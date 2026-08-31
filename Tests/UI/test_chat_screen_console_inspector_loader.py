@@ -13,13 +13,17 @@ over the returned loader callable.
 
 from __future__ import annotations
 
+import inspect
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 from loguru import logger as loguru_logger
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Chat.console_chat_controller import CapturePolicyMutationStatus
 from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
 from tldw_chatbook.Chat.console_exchange_capture import (
@@ -27,6 +31,11 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     ExchangeCapture,
     capture_from_storage,
     capture_to_blob,
+)
+from tldw_chatbook.Chat.console_trace_projection import (
+    ConsoleTraceProjection,
+    LegacyExchangeCall,
+    NormalizedTraceCall,
 )
 from tldw_chatbook.UI.Screens.chat_screen import (
     ChatScreen,
@@ -83,6 +92,10 @@ class _FakeExchangesDB:
         self.calls.append(message_id)
         return self._rows
 
+    def projected_calls(self, message_id: str):
+        projection = ConsoleTraceProjection(legacy_reader=self.get_message_exchanges)
+        return projection.read_calls(message_id)
+
 
 @pytest.mark.asyncio
 async def test_native_captures_win_without_touching_the_db() -> None:
@@ -101,15 +114,47 @@ async def test_native_captures_win_without_touching_the_db() -> None:
 
 
 @pytest.mark.asyncio
+async def test_durable_fallback_consumes_discriminated_projection() -> None:
+    """The screen unwraps injected read models and never receives a DB handle."""
+    normalized = _capture(model="normalized-model")
+    legacy = _capture(model="legacy-model", seq=2)
+    calls: list[str] = []
+
+    def projected_calls(message_id: str):
+        calls.append(message_id)
+        return (
+            NormalizedTraceCall(
+                call_id="call-1",
+                capture=normalized,
+                abandoned=False,
+                verification_status="verified",
+            ),
+            LegacyExchangeCall(capture=legacy, abandoned=True),
+        )
+
+    loader = _build_console_inspector_exchanges_loader(
+        {"n1": _message(exchanges=())}, projected_calls
+    )
+
+    assert await loader("n1") == [(normalized, False), (legacy, True)]
+    assert calls == ["p1"]
+
+
+def test_inspector_cost_builder_has_no_raw_database_dependency() -> None:
+    source = inspect.getsource(ChatScreen._build_console_inspector_cost_data)
+
+    assert "chachanotes_db" not in source
+    assert "projected_trace_calls" in source
+
+
+@pytest.mark.asyncio
 async def test_native_captures_resolve_abandoned_via_the_optional_accessor() -> None:
     """task-9: when ``abandoned_run_tags_for`` IS supplied, a native
     capture's ``abandoned`` flag comes from it (keyed by ``run_tag``)
     rather than always ``False``."""
     abandoned_capture = _capture(model="native-model", run_tag="r-abandoned")
     kept_capture = _capture(model="native-model-2", run_tag="r-kept", seq=2)
-    message = _message(
-        native_id="n1", exchanges=(abandoned_capture, kept_capture)
-    )
+    message = _message(native_id="n1", exchanges=(abandoned_capture, kept_capture))
     loader = _build_console_inspector_exchanges_loader(
         {"n1": message},
         _raising_db_accessor,
@@ -159,7 +204,7 @@ async def test_db_fallback_decodes_captures_via_capture_from_blob() -> None:
     )
     message = _message(native_id="n1", persisted_message_id="p1", exchanges=())
     loader = _build_console_inspector_exchanges_loader(
-        {"n1": message}, lambda: db
+        {"n1": message}, db.projected_calls
     )
 
     result = await loader("n1")
@@ -205,7 +250,7 @@ async def test_db_returns_none_short_circuits_without_reading_rows() -> None:
     calling ``.get_message_exchanges`` on ``None``."""
     message = _message(native_id="n1", persisted_message_id="p1", exchanges=())
     loader = _build_console_inspector_exchanges_loader(
-        {"n1": message}, lambda: None
+        {"n1": message}, lambda _message_id: ()
     )
 
     result = await loader("n1")
@@ -241,7 +286,7 @@ async def test_a_corrupt_blob_is_skipped_not_fatal_to_the_rest() -> None:
     )
     message = _message(native_id="n1", persisted_message_id="p1", exchanges=())
     loader = _build_console_inspector_exchanges_loader(
-        {"n1": message}, lambda: db
+        {"n1": message}, db.projected_calls
     )
 
     result = await loader("n1")
@@ -257,13 +302,21 @@ async def test_column_blob_provenance_mismatch_is_skipped() -> None:
     capture = _capture()
     with pytest.raises(CaptureCorruptError):
         capture_from_storage(capture_to_blob(capture), "full")
-    db = _FakeExchangesDB(rows=[{
-        "run_tag": "run-1", "seq": 1, "status": "complete", "abandoned": False,
-        "capture_detail": "full", "capture_blob": capture_to_blob(capture),
-        "created_at": "t",
-    }])
+    db = _FakeExchangesDB(
+        rows=[
+            {
+                "run_tag": "run-1",
+                "seq": 1,
+                "status": "complete",
+                "abandoned": False,
+                "capture_detail": "full",
+                "capture_blob": capture_to_blob(capture),
+                "created_at": "t",
+            }
+        ]
+    )
     loader = _build_console_inspector_exchanges_loader(
-        {"n1": _message(exchanges=())}, lambda: db
+        {"n1": _message(exchanges=())}, db.projected_calls
     )
     assert await loader("n1") == []
 
@@ -294,7 +347,9 @@ async def test_corrupt_blob_diagnostic_omits_traceback_and_blob_bytes() -> None:
         ]
     )
     message = _message(native_id="n1", persisted_message_id="p1", exchanges=())
-    loader = _build_console_inspector_exchanges_loader({"n1": message}, lambda: db)
+    loader = _build_console_inspector_exchanges_loader(
+        {"n1": message}, db.projected_calls
+    )
 
     diagnostics: list[str] = []
     sink_id = loguru_logger.add(diagnostics.append, level="WARNING")

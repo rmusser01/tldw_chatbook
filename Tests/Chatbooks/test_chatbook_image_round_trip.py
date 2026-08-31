@@ -151,6 +151,19 @@ def test_import_restores_both_storage_tiers(source_env, tmp_path):
         (1, PNG_POS1, "second.png"),
         (2, PNG_POS2, "third.jpg"),
     ]
+    connection = dest_db.get_connection()
+    revisions = connection.execute(
+        "SELECT revision_sequence FROM console_trace_semantic_revisions "
+        "WHERE source_message_id = ? ORDER BY revision_sequence",
+        (str(imported["id"]),),
+    ).fetchall()
+    assert [row["revision_sequence"] for row in revisions] == [0]
+    assert (
+        connection.execute(
+            "SELECT epoch FROM console_trace_graph_epoch WHERE singleton_id = 1"
+        ).fetchone()[0]
+        == 1
+    )
 
 
 def test_import_skips_traversal_attachment_paths(source_env, tmp_path):

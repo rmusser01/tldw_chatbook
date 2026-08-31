@@ -1,7 +1,7 @@
 import base64
 import json
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 
 from loguru import logger as _logger
@@ -54,6 +54,8 @@ from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsoleTransactionContribution,
     _scoped_console_transaction_writer,
 )
+from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
+from tldw_chatbook.Chat.console_semantic_revision import SemanticRevisionCoordinator
 from tldw_chatbook.Chat.library_activity import LibraryActivityContribution
 from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
 from tldw_chatbook.Chat.console_roleplay_metadata import (
@@ -114,6 +116,54 @@ class ChatPersistenceService:
         self.context_repository = ConsoleContextRepository(db)
         self.console_library_policy_repository = ConsoleLibraryPolicyRepository(db)
         self.console_dispatch_repository = ConsoleDispatchRepository(db)
+        self._console_trace_repository = ConsoleTraceRepository()
+        self._semantic_revision_coordinator = SemanticRevisionCoordinator(
+            db,
+            repository=self._console_trace_repository,
+        )
+
+    @property
+    def console_trace_repository(self) -> ConsoleTraceRepository:
+        """Return the cursor-only semantic trace transaction participant."""
+        return self._console_trace_repository
+
+    @property
+    def semantic_revision_coordinator(self) -> SemanticRevisionCoordinator:
+        """Return the shared caller-transaction semantic mutation coordinator."""
+
+        return self._semantic_revision_coordinator
+
+    def settle_provider_response_trace(
+        self,
+        *,
+        coordinator: object,
+        request: object,
+        canonical_message_id: str | None,
+    ) -> bool:
+        """Seal a response after canonical persistence, or trace-own it on failure.
+
+        Callers pass the newly persisted assistant ID only after its create
+        transaction succeeds. Passing ``None`` deliberately leaves the response
+        trace-owned as a sanitized artifact. Settlement remains best-effort and
+        never rolls back the already committed conversation message.
+        """
+
+        from tldw_chatbook.Chat.console_trace_settlement import (
+            ConsoleTraceSettlementCoordinator,
+            TraceSettlementRequest,
+        )
+
+        if not isinstance(coordinator, ConsoleTraceSettlementCoordinator):
+            raise TypeError("coordinator")
+        if type(request) is not TraceSettlementRequest:
+            raise TypeError("request")
+        return coordinator.submit(
+            self.db,
+            replace(
+                cast(TraceSettlementRequest, request),
+                canonical_message_id=canonical_message_id,
+            ),
+        )
 
     @staticmethod
     def thinking_round_trip_version() -> int:
@@ -137,9 +187,7 @@ class ChatPersistenceService:
             ).fetchone()
             if conversation is None or conversation["deleted"]:
                 raise RuntimeError("Durable conversation is unavailable.")
-            with _scoped_console_transaction_writer(
-                cursor, conversation_id
-            ) as writer:
+            with _scoped_console_transaction_writer(cursor, conversation_id) as writer:
                 contribution.write(
                     writer=writer,
                     conversation_id=conversation_id,
@@ -1190,6 +1238,7 @@ class ChatPersistenceService:
             "character_id": configuration.character_id,
             "character_name": configuration.character_name,
             "speech_preferences": configuration.speech_preferences,
+            "thinking_history_policy": configuration.thinking_history_policy,
         }
         if dict(conversation_kwargs) != prepared:
             raise ValueError("Console fork configuration changed.")
@@ -1756,6 +1805,7 @@ class ChatPersistenceService:
         attachments: Optional[Sequence[Mapping[str, Any]]] = None,
         usage_json: Optional[str] = None,
         metadata_json: Optional[str] = None,
+        expected_version: int | None = None,
         expected_roleplay_template_source: str | None = None,
         expected_message_contents: tuple[str, ...] | None = None,
         allow_source_owned_repair: bool = False,
@@ -1836,6 +1886,11 @@ class ChatPersistenceService:
         current_message = self.db.get_message_by_id(message_id)
         if not current_message:
             raise ValueError(f"Message {message_id} not found")
+        if (
+            expected_version is not None
+            and current_message.get("version") != expected_version
+        ):
+            return False
         if (
             expected_roleplay_version is not None
             and current_message.get("version") != expected_roleplay_version
@@ -1923,6 +1978,33 @@ class ChatPersistenceService:
         else:
             extra_rows = []
 
+        def coordinated_update() -> bool:
+            update_version = (
+                current_message["version"]
+                if expected_version is None
+                else expected_version
+            )
+            if attachments is None:
+                return bool(
+                    self.db.update_message(
+                        message_id,
+                        update_data,
+                        expected_version=update_version,
+                        preserve_provider_continuation=preserve_provider_continuation,
+                        preserve_descendants=preserve_descendants,
+                    )
+                )
+            return bool(
+                self.db.update_message_with_attachments(
+                    message_id,
+                    update_data,
+                    expected_version=update_version,
+                    attachments=extra_rows,
+                    preserve_provider_continuation=preserve_provider_continuation,
+                    preserve_descendants=preserve_descendants,
+                )
+            )
+
         if citation_repository is not None:
             # IMMEDIATE (task-21100): `transaction(immediate=...)` is honored
             # only at depth 0, so this OUTER wrapper decides the begin mode for
@@ -1930,17 +2012,7 @@ class ChatPersistenceService:
             # snapshot-upgrade "database is locked" window their own IMMEDIATE
             # closes (see add_message's scoping comment).
             with self.db.transaction(immediate=True) as cursor:
-                result = bool(
-                    self.db.update_message(
-                        message_id,
-                        update_data,
-                        expected_version=current_message["version"],
-                        preserve_provider_continuation=preserve_provider_continuation,
-                        preserve_descendants=preserve_descendants,
-                    )
-                )
-                if result and attachments is not None:
-                    self.db.set_message_attachments(message_id, extra_rows)
+                result = coordinated_update()
                 if result:
                     citation_repository.transition_owner_for_message_update(
                         cursor,
@@ -1964,29 +2036,59 @@ class ChatPersistenceService:
             # IMMEDIATE (task-21100): outer wrappers decide the begin mode for
             # nested writers (immediate= is depth-0 only); DEFERRED here
             # re-opens the snapshot-upgrade window (see add_message).
-            with self.db.transaction(immediate=True):
-                result = bool(
-                    self.db.update_message(
-                        message_id,
-                        update_data,
-                        expected_version=current_message["version"],
-                        preserve_provider_continuation=preserve_provider_continuation,
-                        preserve_descendants=preserve_descendants,
-                    )
-                )
-                if result:
-                    self.db.set_message_attachments(message_id, extra_rows)
+            with self.db.transaction(immediate=True) as cursor:
+                result = coordinated_update()
             return result
 
-        return bool(
-            self.db.update_message(
-                message_id,
-                update_data,
-                expected_version=current_message["version"],
-                preserve_provider_continuation=preserve_provider_continuation,
-                preserve_descendants=preserve_descendants,
+        return coordinated_update()
+
+    def read_canonical_generation_projection(
+        self, message_id: str
+    ) -> Mapping[str, Any] | None:
+        """Read the canonical fields required by body-only generation writers.
+
+        This explicit capability lets adapters hide their database handle while
+        still giving the Console a versioned, deletion-aware CAS boundary.
+        """
+        row = self.db.get_message_by_id(message_id)
+        if row is None:
+            return None
+        return {
+            "id": row.get("id"),
+            "conversation_id": row.get("conversation_id"),
+            "sender": row.get("sender"),
+            "version": row.get("version"),
+            "deleted": row.get("deleted"),
+            "content": row.get("content"),
+            "image_data": row.get("image_data"),
+            "image_mime_type": row.get("image_mime_type"),
+            "assistant_generation_state": row.get("assistant_generation_state"),
+            "thinking_blocks_json": row.get("thinking_blocks_json"),
+            "provider_continuation_json": row.get("provider_continuation_json"),
+            "usage_json": row.get("usage_json"),
+            "metadata_json": row.get("metadata_json"),
+        }
+
+    def read_canonical_generation_projection_bundle(
+        self, message_id: str
+    ) -> Mapping[str, Any] | None:
+        """Read a generation row and ordered sidecars from one SQLite snapshot."""
+
+        with self.db.transaction(immediate=True):
+            row = self.read_canonical_generation_projection(message_id)
+            if row is None:
+                return None
+            attachments = self.db.get_attachments_for_messages([message_id]).get(
+                message_id, []
             )
-        )
+            generation_metadata = self.db.get_generation_metadata_for_messages(
+                [message_id]
+            ).get(message_id, [])
+            return {
+                "message": dict(row),
+                "attachments": [dict(item) for item in attachments],
+                "generation_metadata": [dict(item) for item in generation_metadata],
+            }
 
     def replace_assistant_generation_projection(
         self,
@@ -2218,9 +2320,7 @@ class ChatPersistenceService:
             message_id: Optional explicit message id; the DB generates one
                 when omitted.
             parent_message_id: Optional parent message id for threading.
-            feedback: Optional feedback value applied via a follow-up update
-                once the message exists (feedback is not part of the initial
-                insert payload).
+            feedback: Optional feedback value persisted with the initial row.
             attachments: Optional full 0..N-1 position list of attachment
                 rows (each a mapping with ``position``, ``data``,
                 ``mime_type``, and optional ``display_name``). When
@@ -2273,14 +2373,15 @@ class ChatPersistenceService:
                 writes instead.
         """
         prepared_citation = None
+        citation_repository = self.citation_repository
         if citation_write is not None:
-            if self.citation_repository is None:
+            if citation_repository is None:
                 raise CitationPersistenceUnavailable("citation_repository_unavailable")
-            if self.citation_repository.db is not self.db:
+            if citation_repository.db is not self.db:
                 raise CitationPersistenceUnavailable(
                     "citation_repository_database_mismatch"
                 )
-            prepared_citation = self.citation_repository.prepare_write(citation_write)
+            prepared_citation = citation_repository.prepare_write(citation_write)
 
         # Split addressing: when ``attachments`` is supplied it covers ALL
         # positions (0..N-1) and is authoritative -- position 0 overrides the
@@ -2348,32 +2449,27 @@ class ChatPersistenceService:
                     )
                     created_message_id = existing_message["id"]
                 else:
-                    created_message_id = self.db.add_message(message_payload)
-                    if attachments is not None:
-                        self.db.set_message_attachments(created_message_id, extra_rows)
-                    if generation_metadata is not None:
-                        self.db.set_message_generation_metadata(
-                            created_message_id, list(generation_metadata)
-                        )
-                    if feedback is not None:
-                        # TASK-22226: this readback only feeds the feedback
-                        # update's optimistic lock -- read the DB-normalized
-                        # version without hydrating the image BLOB.
-                        created_message = self.db.get_message_by_id_without_blob(
-                            created_message_id
-                        )
-                        self.db.update_message(
-                            created_message_id,
-                            {"feedback": feedback},
-                            expected_version=created_message["version"],
-                        )
+                    created_message_id = self.db.add_message_with_semantic_sidecars(
+                        message_payload,
+                        attachments=extra_rows if attachments is not None else (),
+                        generation_metadata=(
+                            [dict(row) for row in generation_metadata]
+                            if generation_metadata is not None
+                            else ()
+                        ),
+                        feedback=feedback,
+                    )
+                    if created_message_id is None:
+                        raise RuntimeError("Message persistence did not return an ID.")
                 # TASK-22226: only ``version`` (message_revision) is consumed
                 # here; write_prepared independently re-validates it against
                 # the messages row inside this same transaction.
                 created_message = self.db.get_message_by_id_without_blob(
                     created_message_id
                 )
-                self.citation_repository.write_prepared(
+                if created_message is None or citation_repository is None:
+                    raise RuntimeError("Committed message could not be reloaded.")
+                citation_repository.write_prepared(
                     cursor,
                     prepared_citation,
                     message_id=created_message_id,
@@ -2393,23 +2489,23 @@ class ChatPersistenceService:
             # nested writers (immediate= is depth-0 only); DEFERRED here
             # re-opens the snapshot-upgrade window (see add_message).
             with self.db.transaction(immediate=True):
-                created_message_id = self.db.add_message(message_payload)
-                self.db.set_message_attachments(created_message_id, extra_rows)
-                if generation_metadata is not None:
-                    self.db.set_message_generation_metadata(
-                        created_message_id, list(generation_metadata)
-                    )
+                created_message_id = self.db.add_message_with_semantic_sidecars(
+                    message_payload,
+                    attachments=extra_rows if attachments is not None else (),
+                    generation_metadata=(
+                        [dict(row) for row in generation_metadata]
+                        if generation_metadata is not None
+                        else ()
+                    ),
+                    feedback=feedback,
+                )
         else:
-            created_message_id = self.db.add_message(message_payload)
-        if feedback is not None:
-            # TASK-22226: version-only readback -- never rehydrate the BLOB
-            # that was just written.
-            created_message = self.db.get_message_by_id_without_blob(created_message_id)
-            self.db.update_message(
-                created_message_id,
-                {"feedback": feedback},
-                expected_version=created_message["version"],
+            created_message_id = self.db.add_message_with_semantic_sidecars(
+                message_payload,
+                feedback=feedback,
             )
+        if created_message_id is None:
+            raise RuntimeError("Message persistence did not return an ID.")
         return created_message_id
 
     def _verify_citation_message_retry(

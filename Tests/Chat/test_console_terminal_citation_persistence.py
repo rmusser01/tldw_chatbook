@@ -273,9 +273,7 @@ def real_citation_stack_factory(tmp_path: Path):
             citation_repository=repository,
         )
         store = ConsoleChatStore(persistence=persistence)
-        session = store.ensure_session(
-            settings=ConsoleSessionSettings(provider="llama_cpp")
-        )
+        store.ensure_session(settings=ConsoleSessionSettings(provider="llama_cpp"))
         # Deliberately NOT pre-created. `create_conversation` writes the
         # conversation row but no `console_conversation_library_policy` row,
         # and `commit_durable_turn` then takes its "conversation already
@@ -753,11 +751,11 @@ def test_append_failure_clears_callback_and_deferral_before_reraising() -> None:
             terminal_citation_finalizer=lambda body: None,
         )
 
-    registered_ids = set(store._nodes_by_session[session.id])
-    assert len(registered_ids) == 1
-    message_id = registered_ids.pop()
-    assert message_id not in store._terminal_citation_finalizers
-    assert message_id not in store._terminal_persistence_deferred_ids
+    # A failed durable setup never publishes a ghost tree node.
+    assert store._nodes_by_session[session.id] == {}
+    assert store.messages_for_session(session.id) == []
+    assert store._terminal_citation_finalizers == {}
+    assert store._terminal_persistence_deferred_ids == set()
     _assert_terminal_state_paired(store)
 
 
@@ -977,7 +975,7 @@ def test_ambiguous_first_failure_retries_same_id_and_same_write_once() -> None:
     ],
     ids=["ambiguous", "citation-unavailable"],
 )
-def test_ambiguous_retry_failure_is_abandoned_without_ordinary_insert(
+def test_ambiguous_retry_failure_rolls_back_without_ordinary_insert(
     second_failure: BaseException,
 ) -> None:
     persistence = _ReadyCitationPersistence(
@@ -989,29 +987,29 @@ def test_ambiguous_retry_failure_is_abandoned_without_ordinary_insert(
     store.append_stream_chunk(message_id, _BODY_SENTINEL)
     log_stream, handler_id = _capture_logs()
     try:
-        completed = store.mark_message_complete(message_id)
+        with pytest.raises(RuntimeError, match="did not commit"):
+            store.mark_message_complete(message_id)
     finally:
         logger.remove(handler_id)
 
     output = log_stream.getvalue()
-    assert completed.status == "complete"
-    assert completed.content == _BODY_SENTINEL
-    assert completed.persisted_message_id is None
+    message = store._nodes_by_session[session_id][message_id]
+    assert message.status == "streaming"
+    assert message.content == ""
+    assert message.persisted_message_id is None
     assert len(persistence.create_calls) == 2
     assert all(
         call["message_id"] == message_id and call["citation_write"] is sealed_write
         for call in persistence.create_calls
     )
-    assert message_id not in store._pending_persistence_message_ids
+    assert message_id in store._pending_persistence_message_ids
+    assert message_id in store._terminal_citation_finalizers
+    assert message_id in store._terminal_persistence_deferred_ids
     assert "terminal_citation_persistence_abandoned" in output
     _assert_content_free_diagnostics(output, sealed_write=sealed_write)
 
-    store.get_message(message_id)
-    store.messages_for_session(session_id)
-    assert len(persistence.create_calls) == 2
 
-
-def test_fallback_failure_is_abandoned_without_later_polling_create() -> None:
+def test_fallback_failure_rolls_back_without_later_polling_create() -> None:
     persistence = _ReadyCitationPersistence(
         outcomes=[
             CitationPersistenceUnavailable("deterministic"),
@@ -1023,21 +1021,23 @@ def test_fallback_failure_is_abandoned_without_later_polling_create() -> None:
     session_id, message_id = _append_eligible(store, lambda body: sealed_write)
     store.append_stream_chunk(message_id, _BODY_SENTINEL)
 
-    completed = store.mark_message_complete(message_id)
+    with pytest.raises(RuntimeError, match="did not commit"):
+        store.mark_message_complete(message_id)
 
-    assert completed.status == "complete"
-    assert completed.persisted_message_id is None
+    message = store._nodes_by_session[session_id][message_id]
+    assert message.status == "streaming"
+    assert message.content == ""
+    assert message.persisted_message_id is None
     assert len(persistence.create_calls) == 2
     assert persistence.create_calls[0]["citation_write"] is sealed_write
     assert "citation_write" not in persistence.create_calls[1]
     assert {call["message_id"] for call in persistence.create_calls} == {message_id}
-    assert message_id not in store._pending_persistence_message_ids
-    store.get_message(message_id)
-    store.messages_for_session(session_id)
-    assert len(persistence.create_calls) == 2
+    assert message_id in store._pending_persistence_message_ids
+    assert message_id in store._terminal_citation_finalizers
+    assert message_id in store._terminal_persistence_deferred_ids
 
 
-def test_finalizer_none_ordinary_failure_is_abandoned_without_later_create() -> None:
+def test_finalizer_none_ordinary_failure_rolls_back_without_later_create() -> None:
     persistence = _ReadyCitationPersistence(
         outcomes=[RuntimeError(_EXCEPTION_SENTINEL)]
     )
@@ -1045,17 +1045,19 @@ def test_finalizer_none_ordinary_failure_is_abandoned_without_later_create() -> 
     session_id, message_id = _append_eligible(store, lambda body: None)
     store.append_stream_chunk(message_id, _BODY_SENTINEL)
 
-    completed = store.mark_message_complete(message_id)
+    with pytest.raises(RuntimeError, match="did not commit"):
+        store.mark_message_complete(message_id)
 
-    assert completed.status == "complete"
-    assert completed.persisted_message_id is None
+    message = store._nodes_by_session[session_id][message_id]
+    assert message.status == "streaming"
+    assert message.content == ""
+    assert message.persisted_message_id is None
     assert len(persistence.create_calls) == 1
     assert persistence.create_calls[0]["message_id"] == message_id
     assert "citation_write" not in persistence.create_calls[0]
-    assert message_id not in store._pending_persistence_message_ids
-    store.get_message(message_id)
-    store.messages_for_session(session_id)
-    assert len(persistence.create_calls) == 1
+    assert message_id in store._pending_persistence_message_ids
+    assert message_id in store._terminal_citation_finalizers
+    assert message_id in store._terminal_persistence_deferred_ids
 
 
 def test_empty_terminal_completion_skips_finalizer_and_keeps_ordinary_pending() -> None:
@@ -1285,12 +1287,12 @@ def test_terminal_selected_answer_citations_survive_restart(
             "[S1]",
             "[S99]",
         ]
-        assert [
-            item.evidence_ordinal for item in selected_attempt.occurrences
-        ] == [1, 1, None]
-        assert [
-            item.structural_state for item in selected_attempt.occurrences
-        ] == [
+        assert [item.evidence_ordinal for item in selected_attempt.occurrences] == [
+            1,
+            1,
+            None,
+        ]
+        assert [item.structural_state for item in selected_attempt.occurrences] == [
             StructuralValidationState.VALID,
             StructuralValidationState.VALID,
             StructuralValidationState.UNKNOWN_MARKER,
@@ -1356,9 +1358,11 @@ async def test_real_durable_fail_closed_finalizer_persists_the_body_once(
         f"lost on the fail-closed path: {persisted['content']!r}"
     )
 
-    duplicates = stack.db.get_connection().execute(
-        "SELECT count(*) FROM messages WHERE id = ?", (assistant.id,)
-    ).fetchone()[0]
+    duplicates = (
+        stack.db.get_connection()
+        .execute("SELECT count(*) FROM messages WHERE id = ?", (assistant.id,))
+        .fetchone()[0]
+    )
     assert duplicates == 1, f"the terminal write duplicated the row ({duplicates})"
 
     # Fail CLOSED: an ordinary message, with no citation provenance at all.
@@ -1752,9 +1756,9 @@ def test_repair_deferral_append_failure_releases_both_states() -> None:
             defer_terminal_persistence=True,
         )
 
-    registered_id = next(iter(store._nodes_by_session[session.id]))
-    assert registered_id not in store._provisional_terminal_selection_ids
-    assert registered_id not in store._terminal_persistence_deferred_ids
+    assert store._nodes_by_session[session.id] == {}
+    assert store._provisional_terminal_selection_ids == set()
+    assert store._terminal_persistence_deferred_ids == set()
 
 
 def test_atomic_repair_replaces_one_deferred_row_without_early_persistence() -> None:

@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, replace
 from enum import Enum
 from types import MappingProxyType
-from typing import Literal, Mapping
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence
 
 from tldw_chatbook.Chat.console_library_policy import ConsoleAutoRetrieve
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
@@ -15,6 +15,22 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     dump_console_turn_library_authority_json,
 )
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
+from tldw_chatbook.Chat.console_trace_provenance import (
+    ConsoleRequestRoute,
+    ConsoleTraceCaptureMode,
+    SavedRevisionTraceProvenance,
+    TraceProvenancePersistenceError,
+    admit_message_provenance,
+    request_route_provenance,
+    trace_provenance_admission_transaction,
+)
+from tldw_chatbook.Chat.console_trace_service import TraceCallPersistenceError
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_prepared_request import PreparedConsoleRequest
+    from tldw_chatbook.Chat.console_semantic_revision import (
+        SemanticRevisionCoordinator,
+    )
 
 
 _IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}\Z", re.ASCII)
@@ -47,6 +63,8 @@ class ConsolePreparationPauseKind(str, Enum):
     RETRIEVAL = "retrieval"
     PERSISTENCE = "persistence"
     DESTINATION_CHANGED = "destination_changed"
+    TRACE_PROVENANCE = "trace_provenance"
+    TRACE_CALL = "trace_call"
 
 
 PAUSE_ACTIONS: Mapping[ConsolePreparationPauseKind, tuple[str, ...]] = MappingProxyType(
@@ -54,6 +72,16 @@ PAUSE_ACTIONS: Mapping[ConsolePreparationPauseKind, tuple[str, ...]] = MappingPr
         ConsolePreparationPauseKind.RETRIEVAL: ("retry", "bypass", "cancel"),
         ConsolePreparationPauseKind.PERSISTENCE: ("retry", "cancel"),
         ConsolePreparationPauseKind.DESTINATION_CHANGED: ("retry", "cancel"),
+        ConsolePreparationPauseKind.TRACE_PROVENANCE: (
+            "retry",
+            "send_without_capture",
+            "cancel",
+        ),
+        ConsolePreparationPauseKind.TRACE_CALL: (
+            "retry",
+            "send_without_capture",
+            "cancel",
+        ),
     }
 )
 
@@ -80,6 +108,8 @@ class ConsoleTurnPreparation:
     pause_kind: ConsolePreparationPauseKind | None
     one_shot_bypass: bool
     ephemeral: bool
+    one_shot_capture_off: bool = False
+    capture_mode: ConsoleTraceCaptureMode = ConsoleTraceCaptureMode.CAPTURE_ON
 
     def __post_init__(self) -> None:
         """Reject malformed, mutable, or internally inconsistent state."""
@@ -187,6 +217,178 @@ def apply_preparation_transition(
             else None
         ),
         one_shot_bypass=bypass,
+        one_shot_capture_off=(
+            False
+            if transition.new_attempt_id is not None
+            else preparation.one_shot_capture_off
+        ),
+        capture_mode=(
+            ConsoleTraceCaptureMode.CAPTURE_ON
+            if transition.new_attempt_id is not None
+            and preparation.one_shot_capture_off
+            else preparation.capture_mode
+        ),
+    )
+
+
+def pause_for_trace_provenance_failure(
+    preparation: ConsoleTurnPreparation,
+    failure: TraceProvenancePersistenceError,
+) -> ConsoleTurnPreparation:
+    """Pause an interactive Capture-On admission without exposing failure content."""
+
+    if not isinstance(failure, TraceProvenancePersistenceError):
+        raise TypeError("failure must be TraceProvenancePersistenceError")
+    if preparation.origin != "manual":
+        raise failure
+    return apply_preparation_transition(
+        preparation,
+        ConsolePreparationTransition(
+            preparation_id=preparation.preparation_id,
+            expected_state=ConsoleTurnPreparationState.COMMITTING,
+            new_state=ConsoleTurnPreparationState.PAUSED,
+            pause_kind=ConsolePreparationPauseKind.TRACE_PROVENANCE,
+            new_attempt_id=None,
+        ),
+    )
+
+
+def pause_for_trace_call_failure(
+    preparation: ConsoleTurnPreparation,
+    failure: TraceCallPersistenceError,
+) -> ConsoleTurnPreparation:
+    """Pause an interactive call whose durable boundary was not committed."""
+
+    if not isinstance(failure, TraceCallPersistenceError):
+        raise TypeError("failure must be TraceCallPersistenceError")
+    if preparation.origin != "manual":
+        raise failure
+    return apply_preparation_transition(
+        preparation,
+        ConsolePreparationTransition(
+            preparation_id=preparation.preparation_id,
+            expected_state=preparation.state,
+            new_state=ConsoleTurnPreparationState.PAUSED,
+            pause_kind=ConsolePreparationPauseKind.TRACE_CALL,
+            new_attempt_id=None,
+        ),
+    )
+
+
+def admit_preparation_trace_provenance(
+    preparation: ConsoleTurnPreparation,
+    *,
+    database: object,
+    coordinator: "SemanticRevisionCoordinator",
+    message_ids: tuple[str, ...],
+) -> tuple[ConsoleTurnPreparation, tuple[SavedRevisionTraceProvenance, ...]]:
+    """Admit saved revisions atomically or return the fail-closed turn state."""
+
+    if preparation.state is not ConsoleTurnPreparationState.COMMITTING:
+        raise TraceProvenancePersistenceError()
+    if preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_OFF:
+        return preparation, ()
+    failed = False
+    descriptors: tuple[SavedRevisionTraceProvenance, ...] = ()
+    try:
+        with trace_provenance_admission_transaction(database) as cursor:
+            descriptors = admit_message_provenance(
+                cursor,
+                coordinator=coordinator,
+                message_ids=message_ids,
+            )
+    except Exception:
+        failed = True
+    if failed:
+        return (
+            pause_for_trace_provenance_failure(
+                preparation,
+                TraceProvenancePersistenceError(),
+            ),
+            (),
+        )
+    return preparation, descriptors
+
+
+def build_console_request_for_preparation(
+    preparation: ConsoleTurnPreparation,
+    messages: Sequence[Mapping[str, Any]],
+    *,
+    route: ConsoleRequestRoute,
+    actor_id: str | None = None,
+    chain_id: str | None = None,
+    **request_kwargs: Any,
+) -> "PreparedConsoleRequest":
+    """Build semantics under the exact capture mode admitted by a turn."""
+
+    if not _preparation_is_valid(preparation):
+        raise TraceProvenancePersistenceError()
+    metadata = request_kwargs.pop("metadata_provenance", None)
+    if preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON:
+        metadata = tuple(metadata or ()) + (
+            request_route_provenance(
+                route,
+                actor_id=actor_id,
+                chain_id=chain_id,
+            ),
+        )
+    from tldw_chatbook.Chat.console_prepared_request import build_console_request
+
+    return build_console_request(
+        messages,
+        capture_mode=preparation.capture_mode,
+        metadata_provenance=metadata,
+        **request_kwargs,
+    )
+
+
+def admit_one_shot_capture_off(
+    preparation: ConsoleTurnPreparation,
+    *,
+    new_preparation_id: str,
+    new_attempt_id: str,
+) -> ConsoleTurnPreparation:
+    """Create a fresh interactive preparation for explicit one-shot Capture Off.
+
+    The new identities and detached execution context prevent a partially built
+    Capture-On request, descriptor aggregate, or frozen policy from being reused.
+    Callers must rebuild provider-neutral preparation from this ``READY`` state.
+    """
+
+    if not _preparation_is_valid(preparation):
+        return preparation
+    if (
+        preparation.origin != "manual"
+        or preparation.state is not ConsoleTurnPreparationState.PAUSED
+        or preparation.pause_kind
+        not in {
+            ConsolePreparationPauseKind.TRACE_PROVENANCE,
+            ConsolePreparationPauseKind.TRACE_CALL,
+        }
+    ):
+        return preparation
+    try:
+        _validate_identifier(new_preparation_id, "preparation ID")
+        _validate_identifier(new_attempt_id, "attempt ID")
+    except ConsoleTurnPreparationValidationError:
+        return preparation
+    if (
+        new_preparation_id == preparation.preparation_id
+        or new_attempt_id == preparation.attempt_id
+    ):
+        return preparation
+    return replace(
+        preparation,
+        preparation_id=new_preparation_id,
+        attempt_id=new_attempt_id,
+        execution_context=_execution_context_with_attempt(
+            preparation.execution_context,
+            new_attempt_id,
+        ),
+        state=ConsoleTurnPreparationState.READY,
+        pause_kind=None,
+        one_shot_capture_off=True,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_OFF,
     )
 
 
@@ -212,7 +414,13 @@ def _transition_is_legal(
             return transition.pause_kind in {
                 ConsolePreparationPauseKind.PERSISTENCE,
                 ConsolePreparationPauseKind.DESTINATION_CHANGED,
+                ConsolePreparationPauseKind.TRACE_PROVENANCE,
             }
+        if current in {
+            ConsoleTurnPreparationState.ACCEPTED,
+            ConsoleTurnPreparationState.DISPATCH_STARTED,
+        }:
+            return transition.pause_kind is ConsolePreparationPauseKind.TRACE_CALL
         return False
     if transition.pause_kind is not None:
         return False
@@ -240,6 +448,16 @@ def _transition_is_legal(
         if pause is ConsolePreparationPauseKind.DESTINATION_CHANGED:
             return (
                 new is ConsoleTurnPreparationState.COMMITTING
+                and transition.new_attempt_id is None
+            )
+        if pause is ConsolePreparationPauseKind.TRACE_PROVENANCE:
+            return (
+                new is ConsoleTurnPreparationState.COMMITTING
+                and transition.new_attempt_id is None
+            )
+        if pause is ConsolePreparationPauseKind.TRACE_CALL:
+            return (
+                new is ConsoleTurnPreparationState.ACCEPTED
                 and transition.new_attempt_id is None
             )
         return False
@@ -422,6 +640,14 @@ def _validate_preparation(preparation: ConsoleTurnPreparation) -> None:
         _invalid("one-shot bypass flag")
     if type(preparation.ephemeral) is not bool:
         _invalid("ephemeral flag")
+    if type(preparation.one_shot_capture_off) is not bool:
+        _invalid("one-shot Capture Off flag")
+    if type(preparation.capture_mode) is not ConsoleTraceCaptureMode:
+        _invalid("capture mode")
+    if preparation.one_shot_capture_off and (
+        preparation.capture_mode is not ConsoleTraceCaptureMode.CAPTURE_OFF
+    ):
+        _invalid("Capture Off mode")
 
     _validate_execution_context(preparation)
     auto_retrieve = preparation.execution_context.library_authority.policy.auto_retrieve
@@ -442,6 +668,20 @@ def _validate_preparation(preparation: ConsoleTurnPreparation) -> None:
         )
     ):
         _invalid("one-shot bypass state")
+    if preparation.one_shot_capture_off and (
+        preparation.origin != "manual"
+        or preparation.state is ConsoleTurnPreparationState.PREPARING
+        or (
+            preparation.state is ConsoleTurnPreparationState.PAUSED
+            and preparation.pause_kind
+            in {
+                ConsolePreparationPauseKind.RETRIEVAL,
+                ConsolePreparationPauseKind.TRACE_PROVENANCE,
+                ConsolePreparationPauseKind.TRACE_CALL,
+            }
+        )
+    ):
+        _invalid("one-shot Capture Off state")
 
 
 def _preparation_is_valid(preparation: object) -> bool:

@@ -91,6 +91,22 @@ CORE_OWNER_CASES = (
 )
 
 
+def test_generic_base_connection_does_not_install_console_semantic_guard() -> None:
+    class ConcreteBaseDB(base_db.BaseDB):
+        def _initialize_schema(self) -> None:
+            raise AssertionError("schema initialization was disabled")
+
+    database = ConcreteBaseDB(":memory:", initialize_schema=False)
+    connection = database._get_connection()
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="no such function"):
+            connection.execute(
+                "SELECT console_semantic_mutation_authorized('x', 'message_update')"
+            ).fetchone()
+    finally:
+        connection.close()
+
+
 def _connection_for(case: OwnerCase, database: Any) -> sqlite3.Connection:
     if case.name in {"chachanotes", "media", "prompts"}:
         return database.get_connection()

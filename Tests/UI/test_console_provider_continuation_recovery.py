@@ -156,6 +156,38 @@ async def test_unavailable_replay_is_honest_and_discard_remains_enabled() -> Non
         assert "provider integration" in impact
 
 
+async def test_quarantined_generation_offers_reload_with_accurate_copy() -> None:
+    message = _message()
+    message.provider_continuation = None
+    message.provider_continuation_warning = (
+        "Canonical generation is unavailable; reload required."
+    )
+    message.provider_continuation_message_version = None
+    message.generation_projection_quarantined = True
+    message.generation_projection_quarantine_version = 3
+    app = _RecoveryApp(message)
+
+    async with app.run_test(size=(48, 18)) as pilot:
+        await pilot.pause()
+        title = str(
+            app.screen.query_one("#console-continuation-title", Static).render()
+        )
+        status = str(
+            app.screen.query_one("#console-continuation-status", Static).render()
+        )
+        reload_button = app.screen.query_one("#console-continuation-reload", Button)
+        assert "Generation unavailable" in title
+        assert "unchanged" not in status
+        assert "No action is required" not in status
+        assert reload_button.display
+        assert not reload_button.disabled
+
+        reload_button.focus()
+        await pilot.press("enter")
+        await pilot.app.workers.wait_for_complete()
+        assert app.actions == [("reload", "assistant-owner", 3)]
+
+
 class _RegionApp(App):
     def __init__(
         self,

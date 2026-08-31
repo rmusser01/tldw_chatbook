@@ -1,0 +1,57 @@
+{
+  "environment": {
+    "filesystem": "apfs",
+    "hardware": {
+      "architecture": "arm64",
+      "cpu_model": "Apple M4 Pro",
+      "logical_cpu_count": 14,
+      "memory_bytes": 51539607552,
+      "model_identifier": "Mac16,8"
+    },
+    "python_implementation": "CPython",
+    "python_version": "3.12.11",
+    "sqlite_version": "3.49.1"
+  },
+  "fixture_version": 4,
+  "non_reference_policy": "Fail after writing the complete workload artifact unless TLDW_TRACE_LATENCY_ALLOW_NON_REFERENCE=1 explicitly selects correctness-only execution. Correctness-only execution records environment_mismatches and threshold_gate_applied=false and does not apply release thresholds.",
+  "operation_order": [
+    "warmup_reservation_plus_dispatch_started",
+    "warmup_settlement",
+    "measured_reservation_plus_dispatch_started",
+    "measured_settlement"
+  ],
+  "diagnostic_clocks": [
+    "perf_counter_ns",
+    "process_time_ns",
+    "thread_time_ns"
+  ],
+  "p95_formula": "statistics.quantiles(samples, n=100, method=\"inclusive\")[94]",
+  "reference_machine_identity": "tldw-mac16-8-m4-pro-14c-48gb-apfs-v4",
+  "samples": {
+    "fresh_database_count": 5,
+    "measured_per_operation_per_database": 1000,
+    "warmup_per_operation_per_database": 100
+  },
+  "sqlite_settings": {
+    "cache_size": -2000,
+    "journal_mode": "wal",
+    "page_size": 4096,
+    "synchronous": 1,
+    "wal_autocheckpoint": 1000
+  },
+  "trace_operation_policy": {
+    "checkpoint_owner": "off-UI terminal settlement, a subsequent ordinary connection-default commit, or connection close",
+    "latency_critical_transactions": [
+      "reservation",
+      "dispatch_started",
+      "response_started"
+    ],
+    "latency_critical_wal_autocheckpoint": 0,
+    "settlement_wal_autocheckpoint": "connection_default"
+  },
+  "thresholds_ns": {
+    "reservation_max": 50000000,
+    "reservation_p95": 10000000,
+    "settlement_p95": 25000000
+  }
+}

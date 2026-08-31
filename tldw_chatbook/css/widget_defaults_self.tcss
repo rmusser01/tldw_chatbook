@@ -114,6 +114,40 @@
     }
 
 
+/* ===== WIDGET: TraceCallRecoveryCallout (UI/Console_Modules/trace_call_recovery.py) ===== */
+
+    TraceCallRecoveryCallout {
+        width: 100%;
+        height: auto;
+        border: round $warning;
+        background: $boost;
+        color: $text;
+        padding: 0 1;
+        margin: 0 0 1 0;
+    }
+    TraceCallRecoveryCallout #console-trace-title {
+        width: 100%;
+        height: auto;
+        text-style: bold;
+        color: $warning-lighten-2;
+    }
+    TraceCallRecoveryCallout .console-trace-detail,
+    TraceCallRecoveryCallout #console-trace-status {
+        width: 100%;
+        height: auto;
+    }
+    TraceCallRecoveryCallout #console-trace-actions {
+        width: 100%;
+        height: auto;
+        margin-top: 1;
+    }
+    TraceCallRecoveryCallout Button {
+        width: 100%;
+        min-width: 20;
+        margin-bottom: 1;
+    }
+
+
 /* ===== WIDGET: LLMManagementWindow (UI/LLM_Management_Window.py) ===== */
 
     LLMManagementWindow {

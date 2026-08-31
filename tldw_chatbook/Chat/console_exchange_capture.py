@@ -5,6 +5,7 @@ produce allowlisted, binary-stubbed, blob-serializable records. The
 allowlist is the contract: a kwarg key not named below NEVER persists
 (spec: Docs/superpowers/specs/2026-08-18-console-conversation-inspector-design.md).
 """
+
 from __future__ import annotations
 
 import base64
@@ -12,7 +13,7 @@ import hashlib
 import json
 import re
 import zlib
-from dataclasses import asdict, dataclass, fields, replace
+from dataclasses import dataclass, fields, replace
 from enum import Enum
 from typing import Any, Mapping, Sequence
 
@@ -20,6 +21,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
     EPHEMERAL_ORIGIN_KEY,
     canonical_provider_endpoint_identity,
 )
+from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
 
 #: Value ``EPHEMERAL_ORIGIN_KEY`` carries on an automatically-injected
 #: project-instruction row (``Agents/project_instruction_runtime.py``'s
@@ -30,15 +32,38 @@ from tldw_chatbook.Chat.console_project_instructions import (
 #: neither is this module's natural dependency.
 _PROJECT_INSTRUCTION_ORIGIN = "project_instructions"
 
-CAPTURE_REQUEST_ALLOWLIST: frozenset[str] = frozenset({
-    "api_endpoint", "api_base_url", "system_message", "messages_payload",
-    "tools", "model", "streaming", "temp", "topp", "maxp", "topk", "minp",
-    "max_tokens", "seed", "presence_penalty", "frequency_penalty",
-    "reasoning_effort", "reasoning_summary", "verbosity", "thinking_effort",
-    "thinking_budget_tokens", "prompt_caching", "response_format",
-    "api_mode", "request_timeout", "request_retries", "request_retry_delay",
-    "provider_continuations",
-})
+CAPTURE_REQUEST_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "api_endpoint",
+        "api_base_url",
+        "system_message",
+        "messages_payload",
+        "tools",
+        "model",
+        "streaming",
+        "temp",
+        "topp",
+        "maxp",
+        "topk",
+        "minp",
+        "max_tokens",
+        "seed",
+        "presence_penalty",
+        "frequency_penalty",
+        "reasoning_effort",
+        "reasoning_summary",
+        "verbosity",
+        "thinking_effort",
+        "thinking_budget_tokens",
+        "prompt_caching",
+        "response_format",
+        "api_mode",
+        "request_timeout",
+        "request_retries",
+        "request_retry_delay",
+        "provider_continuations",
+    }
+)
 # Deliberately OFF the allowlist: "api_key" (credential) and
 # "api_key_resolved" (credential-adjacent marker) — they surface in
 # omitted_keys instead.
@@ -64,12 +89,24 @@ CAPTURE_REQUEST_ALLOWLIST: frozenset[str] = frozenset({
 #: Strings at/above this length are candidates for base64 stubbing.
 _STUB_MIN_CHARS = 4096
 _BASE64_RE = re.compile(r"^[A-Za-z0-9+/=\s]+$")
-_DATA_URI_RE = re.compile(r"^data:(?P<mime>[\w.+-]+/[\w.+-]+);base64,(?P<data>.+)$", re.DOTALL)
-_CREDENTIAL_KEYS = frozenset({
-    "api_key", "authorization", "password", "token", "secret",
-    "access_token", "client_secret",
-})
+_DATA_URI_RE = re.compile(
+    r"^data:(?P<mime>[\w.+-]+/[\w.+-]+);base64,(?P<data>.+)$", re.DOTALL
+)
+_CREDENTIAL_KEYS = frozenset(
+    {
+        "api_key",
+        "authorization",
+        "password",
+        "token",
+        "secret",
+        "access_token",
+        "client_secret",
+    }
+)
 _SEMANTIC_JSON_STRING_KEYS = frozenset({"arguments", "input", "result", "output"})
+_CREDENTIAL_OMISSION = {"omitted": True}
+_UNKNOWN_PARAMETER_OMISSION = "unknown_parameter"
+_BOUNDED_DROPPED_PARAMETER_LABELS = _CREDENTIAL_KEYS | {"api_key_resolved"}
 
 EXCHANGE_BLOB_MAX_BYTES = 16 * 1024 * 1024
 CAPTURE_JSON_MAX_BYTES = 64 * 1024 * 1024
@@ -91,10 +128,16 @@ CAPTURE_HISTORY_ELISION_VERSION = 1
 #: anything beyond these — in particular content, snippets, per-row
 #: lengths, hashes/digests, IDs, or timestamps. The shape-guard test pins
 #: this frozen set so a digest cannot be reintroduced silently.
-CAPTURE_HISTORY_MARKER_KEYS = frozenset({
-    "kind", "version", "original_rows", "omitted_rows",
-    "omitted_roles", "retained_positions",
-})
+CAPTURE_HISTORY_MARKER_KEYS = frozenset(
+    {
+        "kind",
+        "version",
+        "original_rows",
+        "omitted_rows",
+        "omitted_roles",
+        "retained_positions",
+    }
+)
 
 #: Normalized role buckets the marker counts omitted rows into. Unknown,
 #: missing, or non-string roles count only toward ``other`` — their raw
@@ -136,7 +179,9 @@ class CaptureBudget:
 
     def retain(self, value: Any) -> bool:
         size = 0
-        for chunk in json.JSONEncoder(default=str, ensure_ascii=False).iterencode(value):
+        for chunk in json.JSONEncoder(default=str, ensure_ascii=False).iterencode(
+            value
+        ):
             size += len(chunk.encode("utf-8"))
             if self.used_bytes + size > self.limit_bytes:
                 return False
@@ -310,14 +355,6 @@ def stub_binary_strings(obj: Any) -> Any:
     return obj
 
 
-def _jsonable(obj: Any) -> Any:
-    try:
-        json.dumps(obj)
-        return obj
-    except (TypeError, ValueError):
-        return json.loads(json.dumps(obj, default=str))
-
-
 def _redact_project_instruction_rows(
     messages_payload: Any, capture_detail: CaptureDetail
 ) -> tuple[Any, tuple[str, ...]]:
@@ -372,7 +409,8 @@ def _remove_nested_credentials(value: Any) -> Any:
     if isinstance(value, Mapping):
         return {
             str(key): _sanitize_semantic_json_string(nested)
-            if str(key).lower() in _SEMANTIC_JSON_STRING_KEYS and isinstance(nested, str)
+            if str(key).lower() in _SEMANTIC_JSON_STRING_KEYS
+            and isinstance(nested, str)
             else _remove_nested_credentials(nested)
             for key, nested in value.items()
             if str(key).lower() not in _CREDENTIAL_KEYS
@@ -397,6 +435,20 @@ def _sanitize_semantic_json_string(value: str) -> str:
     )
 
 
+def sanitize_capture_value_with_omission(
+    value: Any,
+    *,
+    known_credentials: tuple[str, ...] = (),
+) -> tuple[Any, bool]:
+    result = CredentialSanitizer(known_credentials=known_credentials).sanitize(value)
+    if not result.available:
+        return dict(_CREDENTIAL_OMISSION), True
+    return (
+        stub_binary_strings(_remove_nested_credentials(result.value)),
+        result.redacted,
+    )
+
+
 def sanitize_capture_value(value: Any) -> Any:
     """Remove structured credentials and stub binary from an arbitrary value.
 
@@ -407,7 +459,8 @@ def sanitize_capture_value(value: Any) -> Any:
         A JSON-compatible value with credential fields removed and binary or
         base64 strings replaced by bounded stubs.
     """
-    return stub_binary_strings(_remove_nested_credentials(_jsonable(value)))
+    sanitized, _omitted = sanitize_capture_value_with_omission(value)
+    return sanitized
 
 
 def _retain_with_budget(
@@ -541,12 +594,8 @@ def compact_safe_history_rows(
             retained.add(position)
             break
     tail_start = max(0, len(rows) - CAPTURE_SAFE_HISTORY_TAIL_ROWS)
-    retained.update(
-        position for position, _row in real if position >= tail_start
-    )
-    omitted = [
-        (position, row) for position, row in real if position not in retained
-    ]
+    retained.update(position for position, _row in real if position >= tail_start)
+    omitted = [(position, row) for position, row in real if position not in retained]
     if not omitted:
         # Fixed point: nothing new to omit — the list (including any
         # already-present marker) is returned unchanged.
@@ -581,6 +630,7 @@ def build_request_capture(
     *,
     capture_detail: CaptureDetail = CaptureDetail.SAFE,
     budget: CaptureBudget | None = None,
+    known_credentials: tuple[str, ...] = (),
 ) -> tuple[dict, tuple[str, ...]]:
     """Return (allowlisted+stubbed request dict, names of dropped keys).
 
@@ -607,29 +657,38 @@ def build_request_capture(
     for key, value in kwargs.items():
         if key in CAPTURE_REQUEST_ALLOWLIST:
             if key == "messages_payload":
-                value, redacted_paths = _redact_project_instruction_rows(value, capture_detail)
+                value, redacted_paths = _redact_project_instruction_rows(
+                    value, capture_detail
+                )
                 omitted.extend(redacted_paths)
             if key in {"api_endpoint", "api_base_url"} and isinstance(value, str):
                 try:
                     value = canonical_provider_endpoint_identity(value)
                 except ValueError:
                     value = "[invalid endpoint]"
-            value = sanitize_capture_value(value)
+            value, credential_omitted = sanitize_capture_value_with_omission(
+                value,
+                known_credentials=known_credentials,
+            )
+            if credential_omitted:
+                omitted.append(key)
             if key == "messages_payload":
                 # ADR-096 ordering: compaction runs AFTER redaction and
                 # sanitization (so the marker can never describe raw
                 # secret/binary values) and BEFORE the shared budget.
-                value, elided_paths = compact_safe_history_rows(
-                    value, capture_detail
-                )
+                value, elided_paths = compact_safe_history_rows(value, capture_detail)
                 omitted.extend(elided_paths)
             request[key] = _retain_with_budget(
                 value, active_budget, key, truncation_inventory
             )
         else:
-            omitted.append(str(key))
+            omitted.append(
+                key
+                if key in _BOUNDED_DROPPED_PARAMETER_LABELS
+                else _UNKNOWN_PARAMETER_OMISSION
+            )
     request["truncation_inventory"] = tuple(truncation_inventory)
-    return request, tuple(sorted(omitted))
+    return request, tuple(sorted(set(omitted)))
 
 
 def build_response_capture(
@@ -638,6 +697,7 @@ def build_response_capture(
     tool_calls: Sequence[Mapping[str, Any]],
     synthetic_fallback: bool = False,
     budget: CaptureBudget | None = None,
+    known_credentials: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Build a binary-stubbed response under the same capture budget.
 
@@ -652,12 +712,20 @@ def build_response_capture(
     """
     active_budget = budget or CaptureBudget()
     inventory: list[str] = []
+    content_value, content_omitted = sanitize_capture_value_with_omission(
+        content,
+        known_credentials=known_credentials,
+    )
+    tools_value, tools_omitted = sanitize_capture_value_with_omission(
+        tool_calls,
+        known_credentials=known_credentials,
+    )
     response = {
         "content": _retain_with_budget(
-            sanitize_capture_value(content), active_budget, "content", inventory
+            content_value, active_budget, "content", inventory
         ),
         "tool_calls": _retain_with_budget(
-            sanitize_capture_value(tool_calls),
+            tools_value,
             active_budget,
             "tool_calls",
             inventory,
@@ -665,6 +733,14 @@ def build_response_capture(
         "synthetic_fallback": bool(synthetic_fallback),
     }
     response["truncation_inventory"] = tuple(inventory)
+    response["credential_omission_inventory"] = tuple(
+        name
+        for name, omitted in (
+            ("content", content_omitted),
+            ("tool_calls", tools_omitted),
+        )
+        if omitted
+    )
     return response
 
 
@@ -677,8 +753,7 @@ def capture_to_blob(capture: ExchangeCapture) -> bytes:
     is marked separately via a ``truncated: True`` key in the (now
     stubbed) request/response dicts.
     """
-    payload = asdict(capture)
-    payload["capture_detail"] = capture.capture_detail.value
+    payload = _capture_payload(capture)
     try:
         raw = _encode_capture_json(payload)
     except CaptureUnavailableError:
@@ -698,17 +773,62 @@ def capture_to_blob(capture: ExchangeCapture) -> bytes:
 
 
 def _capture_payload(capture: ExchangeCapture) -> dict[str, Any]:
-    payload = asdict(capture)
-    payload["capture_detail"] = capture.capture_detail.value
-    return payload
+    """Apply the mandatory final credential gate before serialization."""
+    payload = {
+        "run_tag": capture.run_tag,
+        "seq": capture.seq,
+        "created_at": capture.created_at,
+        "provider": capture.provider,
+        "model": capture.model,
+        "endpoint": capture.endpoint,
+        "request": capture.request,
+        "response": capture.response,
+        "status": capture.status,
+        "usage_json": capture.usage_json,
+        "omitted_keys": capture.omitted_keys,
+        "capture_detail": capture.capture_detail.value,
+    }
+    result = CredentialSanitizer().sanitize(payload)
+    if result.available and isinstance(result.value, Mapping):
+        sanitized = dict(result.value)
+        if result.redacted:
+            omitted = sanitized.get("omitted_keys")
+            omitted_names = (
+                {item for item in omitted if type(item) is str}
+                if isinstance(omitted, (list, tuple))
+                else set()
+            )
+            omitted_names.add("capture.credential_redacted")
+            sanitized["omitted_keys"] = sorted(omitted_names)
+        return sanitized
+    return {
+        "run_tag": "",
+        "seq": capture.seq if type(capture.seq) is int else 0,
+        "created_at": "",
+        "provider": "",
+        "model": "",
+        "endpoint": None,
+        "request": dict(_CREDENTIAL_OMISSION),
+        "response": dict(_CREDENTIAL_OMISSION),
+        "status": (
+            capture.status
+            if capture.status in {"complete", "stopped", "error"}
+            else "error"
+        ),
+        "usage_json": None,
+        "omitted_keys": ["capture"],
+        "capture_detail": capture.capture_detail.value,
+    }
 
 
 def _truncated_capture_payload(capture: ExchangeCapture) -> dict[str, Any]:
-    return _capture_payload(replace(
-        capture,
-        request={"truncated": True, "reason": "capture exceeds safe encode limit"},
-        response={"truncated": True},
-    ))
+    return _capture_payload(
+        replace(
+            capture,
+            request={"truncated": True, "reason": "capture exceeds safe encode limit"},
+            response={"truncated": True},
+        )
+    )
 
 
 def _encode_capture_json(value: Any) -> bytes:

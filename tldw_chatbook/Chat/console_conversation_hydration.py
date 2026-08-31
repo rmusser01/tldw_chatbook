@@ -582,13 +582,13 @@ async def hydrate_console_session(
         persona_memory_mode=persona_memory_mode,
         character_id=character_id,
         character_name=character_name,
+        user_display_name_override=roleplay_context.user_name_override,
+        character_system_template=roleplay_context.character_system_template,
         activate=False,
     )
     try:
         await store.hydrate_session_library_policy(session.id)
         await store.reconcile_pending_workspace_projection(session.id)
-        session.user_display_name_override = roleplay_context.user_name_override
-        session.character_system_template = roleplay_context.character_system_template
         if activate:
             store.switch_session(session.id)
     except BaseException:

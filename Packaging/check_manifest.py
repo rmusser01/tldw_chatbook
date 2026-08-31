@@ -26,6 +26,12 @@ CHUNKING_TEMPLATES_PREFIX = "tldw_chatbook/Chunking/templates/"
 #     not, and which is what actually decides whether the app starts.
 MIGRATIONS_PREFIX = "tldw_chatbook/DB/migrations/"
 CHACHANOTES_DB_MODULE_PATH = "tldw_chatbook/DB/ChaChaNotes_DB.py"
+SEMANTIC_TRACE_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/chachanotes_v55_to_v56_console_semantic_trace.sql"
+)
+SEMANTIC_MUTATION_GUARD_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/chachanotes_v56_to_v57_semantic_mutation_guard.sql"
+)
 # Matches the ``Path(__file__).parent / "migrations" / "<name>.sql"`` form
 # every file-backed migration step uses to locate its script.
 RUNTIME_MIGRATION_READ = re.compile(r'"migrations"\s*/\s*"([^"\n]+\.sql)"')
@@ -120,6 +126,8 @@ REQUIRED_SDIST_PATHS = {
     # Apache-2.0 re-licensed subtrees whose modules ship (task-19860 review).
     "tldw_chatbook/LLM_Calls/LICENSE",
     "tldw_chatbook/tldw_api/LICENSE",
+    SEMANTIC_TRACE_MIGRATION_PATH,
+    SEMANTIC_MUTATION_GUARD_MIGRATION_PATH,
 } | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
 
 REQUIRED_WHEEL_PATHS = {
@@ -133,6 +141,8 @@ REQUIRED_WHEEL_PATHS = {
     # Apache-2.0 re-licensed subtrees whose modules ship (task-19860 review).
     "tldw_chatbook/LLM_Calls/LICENSE",
     "tldw_chatbook/tldw_api/LICENSE",
+    SEMANTIC_TRACE_MIGRATION_PATH,
+    SEMANTIC_MUTATION_GUARD_MIGRATION_PATH,
 } | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
 
 REQUIRED_SDIST_GLOBS = {

@@ -100,6 +100,7 @@ _CREATE_INDEX = re.compile(
     r"([A-Za-z_][A-Za-z0-9_]*)",
     re.IGNORECASE,
 )
+_INDEX_IDENTIFIER = re.compile(r"\b(?:idx|uq)_[A-Za-z0-9_]+\b")
 
 #: The two halves that together make a plan assertion trustworthy.
 _PLAN_CALL = "EXPLAIN QUERY PLAN"
@@ -294,7 +295,7 @@ def plan_pinning_files() -> dict[str, set[str]]:
         for text in _plan_evidence_strings(tree):
             stripped = _strip_sql_comments(text)
             for name in set(_CREATE_INDEX.findall(stripped)) | set(
-                re.findall(r"\bidx_[A-Za-z0-9_]+\b", text)
+                _INDEX_IDENTIFIER.findall(text)
             ):
                 pins.setdefault(name, set()).add(rel)
     return pins

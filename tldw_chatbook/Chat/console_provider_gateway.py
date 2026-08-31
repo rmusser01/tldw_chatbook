@@ -4,18 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import math
 import threading
 import uuid
 import weakref
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Awaitable, Iterator, Mapping, Sequence
 from contextvars import copy_context
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from types import GeneratorType, MappingProxyType
-from typing import Any, AsyncIterator, Callable, Literal, cast
+from typing import Any, AsyncIterator, Callable, Literal, TypeVar, cast
 from urllib.parse import urlparse, urlunparse
 
 import httpx
@@ -37,7 +38,7 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     ExchangeCapture,
     build_request_capture,
     compact_safe_history_rows,
-    sanitize_capture_value,
+    sanitize_capture_value_with_omission,
 )
 from tldw_chatbook.Chat.console_project_instructions import (
     EPHEMERAL_ORIGIN_KEY,
@@ -62,6 +63,28 @@ from tldw_chatbook.Chat.console_prepared_request import (
     prepare_provider_request,
     resolve_request_capacity,
     thaw_json,
+)
+from tldw_chatbook.Chat.console_trace_provenance import (
+    ConsoleRequestRoute,
+    ConsoleTraceCaptureMode,
+    ProviderRequestProvenance,
+    RequestRouteTraceProvenance,
+    TraceProvenanceAlignmentError,
+    TraceProvenance,
+    request_route_provenance,
+)
+from tldw_chatbook.Chat.console_trace_final_values import (
+    ProviderOverlayProvenance,
+    ProviderRequestShadowBundle,
+    reconstruct_provider_gateway_kwargs,
+    verify_provider_request_shadow,
+)
+from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
+from tldw_chatbook.Chat.console_trace_models import TraceCallState
+from tldw_chatbook.Chat.console_trace_service import TraceCallPersistenceError
+from tldw_chatbook.Chat.console_trace_settlement import (
+    MAX_TRACE_RESPONSE_BYTES,
+    TraceResponseOmission,
 )
 from tldw_chatbook.Chat.console_thinking_history import (
     ProviderThinkingSidecar,
@@ -131,6 +154,8 @@ INVALID_LLAMACPP_BASE_URL_COPY = (
 )
 UNSUPPORTED_PROVIDER_RESPONSE_COPY = "Provider returned an unsupported response shape."
 NO_PROVIDER_CONTENT_COPY = "Provider returned no assistant content."
+MAX_TRACE_RESPONSE_ITEMS = 1_024
+_MAX_TRACE_ACCUMULATED_BYTES = MAX_TRACE_RESPONSE_BYTES - 262_144
 _UNSUPPORTED_RESPONSE = object()
 _EMPTY_RESPONSE = object()
 _CUSTOM_CREDENTIAL_DECISION_PROVIDERS = frozenset(
@@ -150,6 +175,115 @@ _HOSTED_THINKING_FINISH_POLICIES = MappingProxyType(
         "zai": ZAIFinishPolicy,
     }
 )
+_AdapterResult = TypeVar("_AdapterResult")
+
+
+class _ProviderAdapterEntryCancelled(Exception):
+    """Internal signal that stream cancellation won the adapter-entry claim."""
+
+
+class _ProviderAdapterEntryGate:
+    """Linearize cancellation against one adapter authority consumption."""
+
+    __slots__ = ("_cancelled", "_claimed", "_lock")
+
+    def __init__(self) -> None:
+        self._cancelled = False
+        self._claimed = False
+        self._lock = threading.Lock()
+
+    def cancel(self) -> None:
+        """Cancel adapter entry unless the worker already owns the boundary."""
+
+        with self._lock:
+            if not self._claimed:
+                self._cancelled = True
+
+    def consume_or_cancel(
+        self,
+        admission: "_ProviderAdapterAdmission",
+        issuer: object,
+    ) -> None:
+        """Consume the token and decide cancellation versus provider ownership."""
+
+        with self._lock, admission._lock:
+            if admission._issuer is not issuer or admission._consumed:
+                raise TraceCallPersistenceError()
+            admission._consumed = True
+            if self._cancelled:
+                raise _ProviderAdapterEntryCancelled()
+            self._claimed = True
+
+
+class _ProviderAdapterAdmission:
+    """Single-use proof that this gateway admitted one adapter entry."""
+
+    __slots__ = ("_consumed", "_issuer", "_lock", "capture_mode", "route")
+
+    def __init__(
+        self,
+        issuer: object,
+        capture_mode: ConsoleTraceCaptureMode,
+        route: ConsoleRequestRoute | None,
+    ) -> None:
+        self.capture_mode = capture_mode
+        self.route = route
+        self._issuer = issuer
+        self._consumed = False
+        self._lock = threading.Lock()
+
+    def consume(self, issuer: object) -> None:
+        with self._lock:
+            if self._issuer is not issuer or self._consumed:
+                raise TraceCallPersistenceError()
+            self._consumed = True
+
+
+def _validate_request_trace_binding(
+    request: PreparedConsoleRequest | PreparedProviderRequest,
+    *,
+    route: ConsoleRequestRoute | None,
+    route_actor_id: str | None,
+    route_chain_id: str | None,
+    capture_mode: ConsoleTraceCaptureMode,
+) -> None:
+    """Fail closed unless preparation provenance matches this dispatch."""
+
+    if type(capture_mode) is not ConsoleTraceCaptureMode:
+        raise TypeError("capture_mode must be ConsoleTraceCaptureMode")
+    provenance = request.provenance
+    if capture_mode is ConsoleTraceCaptureMode.CAPTURE_OFF:
+        if provenance is not None:
+            raise TraceProvenanceAlignmentError(
+                "Capture Off cannot dispatch a capture-on prepared request"
+            )
+        return
+    if provenance is None:
+        raise TraceProvenanceAlignmentError(
+            "Capture On requires prepared request provenance"
+        )
+    route_descriptor = (
+        request_route_provenance(
+            route,
+            actor_id=route_actor_id,
+            chain_id=route_chain_id,
+        )
+        if route is not None
+        else None
+    )
+    route_descriptors = tuple(
+        item
+        for item in provenance.metadata
+        if type(item) is RequestRouteTraceProvenance
+    )
+    if (
+        route_descriptor is None
+        or len(route_descriptors) != 1
+        or route_descriptors[0] != route_descriptor
+    ):
+        raise TraceProvenanceAlignmentError(
+            "capture-on request route provenance is missing or mismatched"
+        )
 
 
 def _thinking_stream_capability(
@@ -345,6 +479,16 @@ class ConsoleProviderStreamSignals:
         init=False,
         repr=False,
     )
+    _trace_settlement_sink: Callable[[object], object] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+    _trace_settlement_lock: threading.Lock = field(
+        default_factory=threading.Lock,
+        init=False,
+        repr=False,
+    )
 
     @property
     def synthetic_fallback_emitted(self) -> bool:
@@ -410,6 +554,48 @@ class ConsoleProviderStreamSignals:
         """
         return ConsoleProviderCallSignals(self)
 
+    def bind_trace_settlement_sink(self, sink: Callable[[object], object]) -> None:
+        """Bind one run-owned explicit handoff sink before provider dispatch."""
+
+        if not callable(sink):
+            raise TypeError("sink")
+        with self._trace_settlement_lock:
+            self._trace_settlement_sink = sink
+
+    async def _publish_trace_settlement(self, handoff: object) -> bool:
+        with self._trace_settlement_lock:
+            sink = self._trace_settlement_sink
+        if sink is None:
+            return False
+        try:
+            result = sink(handoff)
+            if inspect.isawaitable(result):
+                await result
+        except asyncio.CancelledError:
+            await self._settle_caller_owned_trace_handoff(handoff)
+            raise
+        except Exception as exc:
+            logger.warning("trace_settlement_handoff_failed: {}", type(exc).__name__)
+            await self._settle_caller_owned_trace_handoff(handoff)
+            # A bound sink failure remains caller-owned here. Returning true
+            # prevents the legacy no-sink path from repeating SQLite work on
+            # the event-loop thread after the awaited off-thread attempt.
+            return True
+        return True
+
+    @staticmethod
+    async def _settle_caller_owned_trace_handoff(handoff: object) -> None:
+        settle = getattr(handoff, "settle", None)
+        if not callable(settle):
+            return
+        try:
+            await asyncio.to_thread(settle, None)
+        except Exception as exc:
+            logger.warning(
+                "trace_response_handoff_fallback_failed: {}",
+                type(exc).__name__,
+            )
+
     def _record_scoped_usage_call(
         self,
         token: object,
@@ -466,7 +652,17 @@ class ConsoleProviderStreamSignals:
                 flight = self._active_exchanges.get(token)
                 if flight is not None:
                     retained = flight[key]
-                    for item in sanitize_capture_value(items):
+                    sanitized, omitted = sanitize_capture_value_with_omission(
+                        items,
+                        known_credentials=flight["known_credentials"],
+                    )
+                    if omitted:
+                        path = f"response.{key}"
+                        if path not in flight["credential_omission_inventory"]:
+                            flight["credential_omission_inventory"].append(path)
+                    if not isinstance(sanitized, list):
+                        return
+                    for item in sanitized:
                         if flight["capture_budget"].retain(item):
                             retained.append(item)
                         elif key not in flight["response_truncation_inventory"]:
@@ -555,11 +751,18 @@ class ConsoleProviderCallSignals:
     # per-call and self-clearing, so only the ONE chunk actually generated
     # as fallback UI copy gets labeled, never a later real answer).
     _synthetic_pending: bool = field(default=False, init=False, repr=False)
+    _synthetic_emitted: bool = field(default=False, init=False, repr=False)
 
     @property
     def synthetic_fallback_emitted(self) -> bool:
         """Return whether the aggregate emitted synthetic fallback usage."""
         return self._aggregate.synthetic_fallback_emitted
+
+    @property
+    def synthetic_copy_emitted(self) -> bool:
+        """Return whether this call emitted locally synthesized UI copy."""
+
+        return self._synthetic_emitted
 
     @property
     def exchange_capture_enabled(self) -> bool:
@@ -591,6 +794,7 @@ class ConsoleProviderCallSignals:
         chunk actually generated as fallback UI copy is ever labeled."""
         pending = self._synthetic_pending
         self._synthetic_pending = False
+        self._synthetic_emitted = self._synthetic_emitted or pending
         return pending
 
     def record_usage_payload(self, payload: Mapping[str, Any]) -> None:
@@ -630,6 +834,11 @@ class ConsoleProviderCallSignals:
                 dict(self._usage_payload) if self._usage_payload is not None else None
             )
 
+    async def publish_trace_settlement(self, handoff: object) -> bool:
+        """Publish one sanitized explicit-call handoff to terminal persistence."""
+
+        return await self._aggregate._publish_trace_settlement(handoff)
+
     def begin_exchange(
         self,
         *,
@@ -639,6 +848,8 @@ class ConsoleProviderCallSignals:
         request: dict,
         omitted_keys: tuple[str, ...],
         capture_budget: CaptureBudget | None = None,
+        known_credentials: tuple[str, ...] = (),
+        request_credentials_filtered: bool = False,
     ) -> None:
         """Open this call's capture. ONE stream_chat invocation == one
         exchange; close_exchange in stream_chat's finally is the close site.
@@ -654,18 +865,53 @@ class ConsoleProviderCallSignals:
                 endpoint = canonical_provider_endpoint_identity(endpoint)
             except ValueError:
                 endpoint = "[invalid endpoint]"
+        safe_provider, provider_omitted = sanitize_capture_value_with_omission(
+            provider,
+            known_credentials=known_credentials,
+        )
+        safe_model, model_omitted = sanitize_capture_value_with_omission(
+            model,
+            known_credentials=known_credentials,
+        )
+        safe_endpoint, endpoint_omitted = sanitize_capture_value_with_omission(
+            endpoint,
+            known_credentials=known_credentials,
+        )
+        safe_request, request_omitted = sanitize_capture_value_with_omission(
+            request,
+            # Request builders already applied the known-credential filter
+            # before adding content-free structural capture markers. Avoid
+            # interpreting a one-character test/local key inside those
+            # markers while still applying the full recognized filter here.
+            known_credentials=() if request_credentials_filtered else known_credentials,
+        )
+        omitted = set(omitted_keys)
+        omitted.update(
+            name
+            for name, failed in (
+                ("provider", provider_omitted),
+                ("model", model_omitted),
+                ("endpoint", endpoint_omitted),
+                ("request", request_omitted),
+            )
+            if failed
+        )
         self._aggregate._begin_scoped_exchange(
             self._token,
             {
-                "provider": provider,
-                "model": model,
-                "endpoint": endpoint,
-                "request": request,
-                "omitted_keys": omitted_keys,
+                "provider": safe_provider if isinstance(safe_provider, str) else "",
+                "model": safe_model if isinstance(safe_model, str) else "",
+                "endpoint": safe_endpoint if isinstance(safe_endpoint, str) else None,
+                "request": safe_request
+                if isinstance(safe_request, dict)
+                else {"omitted": True},
+                "omitted_keys": tuple(sorted(omitted)),
                 "content": [],
                 "tool_calls": [],
                 "synthetic_fallback": False,
                 "response_truncation_inventory": [],
+                "credential_omission_inventory": [],
+                "known_credentials": known_credentials,
                 "capture_detail": self.capture_detail,
                 "capture_budget": capture_budget or CaptureBudget(),
                 "created_at": datetime.now(timezone.utc).isoformat(),
@@ -708,6 +954,20 @@ class ConsoleProviderCallSignals:
 
 _ProviderStreamSignals = ConsoleProviderStreamSignals | ConsoleProviderCallSignals
 
+_PROVIDER_REQUEST_FAILED_COPY = "Provider request failed."
+
+
+def _sanitized_provider_diagnostic(
+    value: object,
+    *,
+    known_credentials: tuple[str, ...] = (),
+) -> str:
+    """Return diagnostic copy only when credential filtering changed nothing."""
+    result = CredentialSanitizer(known_credentials=known_credentials).sanitize(value)
+    if not result.available or result.redacted or type(result.value) is not str:
+        return _PROVIDER_REQUEST_FAILED_COPY
+    return result.value
+
 
 def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
     """Return safe user-visible provider failure copy.
@@ -731,9 +991,14 @@ def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
         category = "configuration error"
     elif isinstance(exc, ChatProviderError):
         category = "provider unavailable"
+    provider_copy = _sanitized_provider_diagnostic(provider or "unknown")
+    if provider_copy == _PROVIDER_REQUEST_FAILED_COPY:
+        return provider_copy
     status_code = getattr(exc, "status_code", None)
-    status_copy = f" Status: {status_code}." if isinstance(status_code, int) else ""
-    return f"Provider error from {provider or 'unknown'}: {category}.{status_copy}"
+    status_copy = f" Status: {status_code}." if type(status_code) is int else ""
+    return _sanitized_provider_diagnostic(
+        f"Provider error from {provider_copy}: {category}.{status_copy}"
+    )
 
 
 def _flight_capture(
@@ -757,6 +1022,19 @@ def _flight_capture(
             usage_json = usage.to_json() if usage is not None else None
         except Exception:
             usage_json = None
+    content, content_omitted = sanitize_capture_value_with_omission(
+        "".join(flight["content"]),
+        known_credentials=flight["known_credentials"],
+    )
+    tool_calls, tools_omitted = sanitize_capture_value_with_omission(
+        deepcopy(flight["tool_calls"]),
+        known_credentials=flight["known_credentials"],
+    )
+    credential_omissions = list(flight.get("credential_omission_inventory", ()))
+    if content_omitted:
+        credential_omissions.append("response.content")
+    if tools_omitted:
+        credential_omissions.append("response.tool_calls")
     return ExchangeCapture(
         run_tag=run_tag,
         seq=seq,
@@ -768,16 +1046,19 @@ def _flight_capture(
         response={
             # Sanitize once more after aggregation: individually harmless
             # sub-threshold chunks can form one data URI/base64 body.
-            "content": sanitize_capture_value("".join(flight["content"])),
-            "tool_calls": sanitize_capture_value(deepcopy(flight["tool_calls"])),
+            "content": content,
+            "tool_calls": tool_calls,
             "synthetic_fallback": bool(flight.get("synthetic_fallback", False)),
             "truncation_inventory": tuple(
                 flight.get("response_truncation_inventory", ())
             ),
+            "credential_omission_inventory": tuple(sorted(set(credential_omissions))),
         },
         status=status,
         usage_json=usage_json,
-        omitted_keys=flight["omitted_keys"],
+        omitted_keys=tuple(
+            sorted(set(flight["omitted_keys"]).union(credential_omissions))
+        ),
         capture_detail=flight["capture_detail"],
     )
 
@@ -791,8 +1072,15 @@ def _provider_error_copy_with_model_recovery(
     """Add safe model-specific recovery to provider bad-request copy."""
     if status_code != 400:
         return copy
+    model_result = CredentialSanitizer().sanitize(model or "")
+    if (
+        not model_result.available
+        or model_result.redacted
+        or type(model_result.value) is not str
+    ):
+        return copy
     model_id = "".join(
-        character for character in str(model or "").strip() if character.isprintable()
+        character for character in model_result.value.strip() if character.isprintable()
     )[:PROVIDER_ERROR_MODEL_ID_MAX_CHARS]
     if not model_id:
         return copy
@@ -1118,6 +1406,7 @@ class _QueueItem:
     kind: str
     text: str = ""
     payload: Any = None
+    synthetic: bool = False
     # F5: the real HTTP status, carried alongside the (already-redacted)
     # text -- never re-derived by parsing that text back out. `None` means
     # "no real status available" (a bare RuntimeError, say), which the
@@ -1125,12 +1414,24 @@ class _QueueItem:
     status_code: int | None = None
 
     @classmethod
-    def content(cls, text: str) -> "_QueueItem":
-        return cls("content", text)
+    def content(cls, text: str, *, synthetic: bool = False) -> "_QueueItem":
+        return cls("content", text, synthetic=synthetic)
 
     @classmethod
     def error(cls, text: str, status_code: int | None = None) -> "_QueueItem":
         return cls("error", text, status_code=status_code)
+
+    @classmethod
+    def trace_verification_error(cls) -> "_QueueItem":
+        """Carry only a typed, content-free verification failure."""
+
+        return cls("trace_verification_error")
+
+    @classmethod
+    def trace_persistence_error(cls, boundary: object | None = None) -> "_QueueItem":
+        """Carry only a typed, content-free pre-dispatch write failure."""
+
+        return cls("trace_persistence_error", payload=boundary)
 
     @classmethod
     def done(cls) -> "_QueueItem":
@@ -1177,6 +1478,184 @@ ProviderStreamItem = (
     | ProviderThinkingDelta
     | ProviderProprietaryThinkingEvidence
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _ProviderStreamEmission:
+    """One internal stream item plus whether its UI copy is synthetic."""
+
+    item: ProviderStreamItem = field(repr=False)
+    synthetic: bool = False
+
+
+@dataclass(slots=True)
+class _TraceResponseAccumulator:
+    """Retain only a bounded semantic prefix for trace settlement."""
+
+    _items: list[ProviderStreamItem] = field(default_factory=list, repr=False)
+    _retained_bytes: int = 0
+    omission_reason: str | None = None
+    semantic_observed: bool = False
+    synthetic_observed: bool = False
+
+    @property
+    def items(self) -> tuple[ProviderStreamItem, ...]:
+        return tuple(self._items)
+
+    def observe(self, item: ProviderStreamItem, *, synthetic: bool) -> bool:
+        """Return whether this is the first real provider semantic item."""
+
+        if synthetic:
+            self.synthetic_observed = True
+            return False
+        first_semantic = not self.semantic_observed
+        self.semantic_observed = True
+        if self.omission_reason is not None:
+            return first_semantic
+        if len(self._items) >= MAX_TRACE_RESPONSE_ITEMS:
+            self._omit("response_item_limit")
+            return first_semantic
+        item_bytes = _trace_response_item_bytes(item)
+        if (
+            item_bytes is None
+            or self._retained_bytes + item_bytes > _MAX_TRACE_ACCUMULATED_BYTES
+        ):
+            self._omit("response_accumulation_limit")
+            return first_semantic
+        self._items.append(_retained_trace_response_item(item))
+        self._retained_bytes += item_bytes
+        return first_semantic
+
+    def _omit(self, reason: str) -> None:
+        self._items.clear()
+        self._retained_bytes = 0
+        self.omission_reason = reason
+
+
+def _mark_trace_response_started(boundary: object | None) -> None:
+    marker = getattr(boundary, "mark_response_started", None)
+    if not callable(marker):
+        return
+    try:
+        marker()
+    except Exception as exc:
+        logger.warning("trace_response_checkpoint_failed: {}", type(exc).__name__)
+
+
+async def _settle_trace_response(
+    boundary: object | None,
+    items: Sequence[ProviderStreamItem],
+    *,
+    outcome: TraceCallState,
+    usage: Mapping[str, object] | None,
+    response_omission: str | None = None,
+    signals: ConsoleProviderCallSignals | None = None,
+) -> None:
+    envelope = (
+        TraceResponseOmission(response_omission)
+        if response_omission is not None
+        else None
+        if outcome in {TraceCallState.ERROR, TraceCallState.STOPPED} and not items
+        else _provider_response_envelope(items)
+    )
+    preparer = getattr(boundary, "prepare_response_settlement", None)
+    if callable(preparer):
+        try:
+            handoff = preparer(envelope, outcome, usage)
+            if handoff is not None:
+                if signals is not None and await signals.publish_trace_settlement(
+                    handoff
+                ):
+                    return
+                settle = getattr(handoff, "settle", None)
+                if callable(settle):
+                    settle(None)
+                    return
+        except Exception as exc:
+            logger.warning("trace_response_handoff_failed: {}", type(exc).__name__)
+    settler = getattr(boundary, "settle_response", None)
+    if not callable(settler):
+        return
+    try:
+        settler(envelope, outcome, usage)
+    except Exception as exc:
+        logger.warning("trace_response_settlement_failed: {}", type(exc).__name__)
+
+
+def _provider_response_envelope(
+    items: Sequence[ProviderStreamItem],
+) -> dict[str, object] | None:
+    """Assemble one normalized provider-facing response without UI copy."""
+
+    if not items:
+        return {"role": "assistant", "content": ""}
+    envelope: dict[str, object] = {
+        "role": "assistant",
+        "content": "".join(item for item in items if isinstance(item, str)),
+    }
+    tool_calls = [
+        deepcopy(call)
+        for item in items
+        if isinstance(item, ProviderToolCalls)
+        for call in item.tool_calls
+    ]
+    if tool_calls:
+        envelope["tool_calls"] = tool_calls
+    thinking = [
+        {
+            "text": item.text,
+            "provider": item.provider,
+            "model": item.model,
+            "protocol": item.protocol,
+            "source_format": item.source_format,
+        }
+        for item in items
+        if isinstance(item, ProviderThinkingDelta)
+    ]
+    if thinking:
+        envelope["thinking"] = thinking
+    proprietary = [
+        {
+            "provider": item.provider,
+            "model": item.model,
+            "protocol": item.protocol,
+            "source_format": item.source_format,
+        }
+        for item in items
+        if isinstance(item, ProviderProprietaryThinkingEvidence)
+    ]
+    if proprietary:
+        envelope["proprietary_thinking_evidence"] = proprietary
+    return envelope
+
+
+def _trace_response_item_bytes(item: ProviderStreamItem) -> int | None:
+    """Measure one normalized semantic item without retaining its raw value."""
+
+    try:
+        envelope = _provider_response_envelope((item,))
+        return len(
+            json.dumps(
+                envelope,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _retained_trace_response_item(item: ProviderStreamItem) -> ProviderStreamItem:
+    """Detach bounded semantic tool data from non-envelope metadata."""
+
+    if isinstance(item, ProviderToolCalls):
+        return ProviderToolCalls(
+            tuple(deepcopy(call) for call in item.tool_calls),
+            metadata=None,
+        )
+    return item
 
 
 @dataclass(frozen=True, slots=True)
@@ -1573,7 +2052,14 @@ class ConsoleProviderGateway:
         environ: Optional environment mapping for provider readiness checks.
         chat_api_call_fn: Optional replacement for ``chat_api_call`` in tests.
         safe_error_copy: Optional error redaction callback.
+        trace_shadow_sink: Optional in-memory consumer for verified, sanitized
+            Capture-On provider values. Slice B does not persist this bundle.
+        trace_call_boundary_factory: Optional hard-off normalized-writer seam.
+            When supplied, each Capture-On call must reserve and commit
+            ``dispatch_started`` before adapter entry.
     """
+
+    deferred_dispatch_boundary = True
 
     def __init__(
         self,
@@ -1583,6 +2069,18 @@ class ConsoleProviderGateway:
         environ: Mapping[str, str] | None = None,
         chat_api_call_fn: Callable[..., Any] | None = None,
         safe_error_copy: Callable[[str, BaseException], str] | None = None,
+        trace_shadow_sink: Callable[[ProviderRequestShadowBundle], None] | None = None,
+        trace_call_boundary_factory: (
+            Callable[
+                [
+                    PreparedProviderRequest,
+                    ConsoleProviderResolution,
+                    ConsoleRequestRoute | None,
+                ],
+                object,
+            ]
+            | None
+        ) = None,
     ) -> None:
         self._owns_http_client = http_client is None
         self.http_client = http_client or self._new_owned_http_client()
@@ -1636,6 +2134,77 @@ class ConsoleProviderGateway:
         self._environ = environ
         self._chat_api_call_fn = chat_api_call_fn
         self._safe_error_copy = safe_error_copy or safe_provider_error_copy
+        self._trace_shadow_sink = trace_shadow_sink
+        self._trace_call_boundary_factory = trace_call_boundary_factory
+        self._adapter_admission_issuer = object()
+
+    def _capture_off_admission(
+        self, route: ConsoleRequestRoute | None
+    ) -> _ProviderAdapterAdmission:
+        """Explicitly admit one untraced adapter entry."""
+
+        return _ProviderAdapterAdmission(
+            self._adapter_admission_issuer,
+            ConsoleTraceCaptureMode.CAPTURE_OFF,
+            route,
+        )
+
+    def _enter_provider_adapter(
+        self,
+        admission: _ProviderAdapterAdmission,
+        adapter: Callable[..., _AdapterResult],
+        *args: Any,
+        **kwargs: Any,
+    ) -> _AdapterResult:
+        """Consume one gateway-issued admission immediately before adapter entry."""
+
+        if type(admission) is not _ProviderAdapterAdmission:
+            raise TraceCallPersistenceError()
+        _entry_gate = kwargs.pop("_console_adapter_entry_gate", None)
+        if _entry_gate is not None:
+            if type(_entry_gate) is not _ProviderAdapterEntryGate:
+                raise TraceCallPersistenceError()
+            _entry_gate.consume_or_cancel(
+                admission,
+                self._adapter_admission_issuer,
+            )
+            return adapter(*args, **kwargs)
+        # Consumption is owned by the gateway, not dynamically dispatched to
+        # the presented object's method.  Otherwise a subclass can override
+        # ``consume`` and forge entry without possessing this issuer.
+        with admission._lock:
+            if (
+                admission._issuer is not self._adapter_admission_issuer
+                or admission._consumed
+            ):
+                raise TraceCallPersistenceError()
+            admission._consumed = True
+        return adapter(*args, **kwargs)
+
+    def _reserve_trace_call(
+        self,
+        request: PreparedProviderRequest,
+        resolution: ConsoleProviderResolution,
+        route: ConsoleRequestRoute | None,
+    ) -> object:
+        """Create and reserve one distinct Capture-On call boundary."""
+
+        if self._trace_call_boundary_factory is None:
+            raise TraceCallPersistenceError(reservation_status="not_established")
+        boundary: object | None = None
+        try:
+            boundary = self._trace_call_boundary_factory(request, resolution, route)
+            reserve = getattr(boundary, "reserve", None)
+            if not callable(reserve):
+                raise TraceCallPersistenceError()
+            reserve()
+            return boundary
+        except TraceCallPersistenceError as exc:
+            if exc.boundary is None and boundary is not None:
+                raise TraceCallPersistenceError(boundary=boundary) from None
+            raise
+        except Exception:
+            raise TraceCallPersistenceError(reservation_status="unknown") from None
 
     async def aclose(self) -> None:
         """Close the HTTP client(s) owned by this instance.
@@ -1742,6 +2311,10 @@ class ConsoleProviderGateway:
         thinking_sidecar: tuple[ProviderThinkingSidecar, ...] = (),
         thinking_policy: ThinkingHistoryPolicy | None = None,
         thinking_owner_key: str | None = None,
+        route: ConsoleRequestRoute | None = None,
+        route_actor_id: str | None = None,
+        route_chain_id: str | None = None,
+        capture_mode: ConsoleTraceCaptureMode = ConsoleTraceCaptureMode.CAPTURE_OFF,
     ) -> PreparedProviderRequest:
         """Prepare the one immutable payload later consumed by dispatch.
 
@@ -1837,7 +2410,11 @@ class ConsoleProviderGateway:
                 raise ValueError(
                     "continuation_target is required for provider continuation history"
                 )
-            semantic = build_console_request(messages, tools=tools or ())
+            semantic = build_console_request(
+                messages,
+                tools=tools or (),
+                capture_mode=capture_mode,
+            )
         else:
             continuation_groups = ()
             if sidecar:
@@ -1927,7 +2504,16 @@ class ConsoleProviderGateway:
                 thinking_groups=thinking.groups,
                 thinking_policy=thinking.saved_policy,
                 effective_thinking_policy=thinking.effective_policy,
+                capture_mode=capture_mode,
             )
+
+        _validate_request_trace_binding(
+            semantic,
+            route=route,
+            route_actor_id=route_actor_id,
+            route_chain_id=route_chain_id,
+            capture_mode=capture_mode,
+        )
 
         capabilities: Mapping[str, Any] = {}
         try:
@@ -2109,10 +2695,8 @@ class ConsoleProviderGateway:
                 # nothing more we can do here.
                 return
             if exc is not None:
-                logger.opt(exception=exc).warning(
-                    "Failed to close a stale Console provider HTTP client on "
-                    "its owning loop: {}",
-                    exc,
+                logger.bind(error_type=type(exc).__name__).warning(
+                    "console_provider_stale_client_close_failed"
                 )
 
         future.add_done_callback(_log_close_failure)
@@ -2556,6 +3140,9 @@ class ConsoleProviderGateway:
         min_p: float | None = None,
         top_k: int | None = None,
         max_tokens: int | None = None,
+        seed: int | None = None,
+        presence_penalty: float | None = None,
+        frequency_penalty: float | None = None,
         reasoning_effort: str | None = None,
         thinking_budget_tokens: int | None = None,
         api_key: str | None = None,
@@ -2563,7 +3150,16 @@ class ConsoleProviderGateway:
         protocol: str = "chat_completions",
         thinking_stream_disposition: ReasoningDisposition = "ignored",
         on_fallback_retry_started: "Callable[[], None] | None" = None,
+        on_fallback_transition: "Callable[[bool], Awaitable[None]] | None" = None,
+        on_fallback_request: "Callable[[str, Mapping[str, Any]], None] | None" = None,
         on_fallback_retry: "Callable[[dict[str, Any], str, bool], None] | None" = None,
+        on_synthetic_output: "Callable[[], None] | None" = None,
+        before_adapter: Callable[[], Awaitable[_ProviderAdapterAdmission]]
+        | None = None,
+        before_fallback_adapter: (
+            Callable[[str, Mapping[str, Any]], Awaitable[_ProviderAdapterAdmission]]
+            | None
+        ) = None,
     ) -> AsyncIterator[ProviderStreamItem]:
         """Stream OpenAI-compatible chat completion chunks from llama.cpp.
 
@@ -2576,12 +3172,19 @@ class ConsoleProviderGateway:
             min_p: Optional min-p sampling value.
             top_k: Optional top-k sampling value.
             max_tokens: Optional response token limit.
+            seed: Optional deterministic generation seed.
+            presence_penalty: Optional presence penalty value.
+            frequency_penalty: Optional frequency penalty value.
             reasoning_effort: Optional thinking level forwarded as
                 ``chat_template_kwargs.reasoning_effort``.
             thinking_budget_tokens: Optional thinking token budget sent as
                 the top-level ``reasoning_budget_tokens`` field.
             thinking_stream_disposition: Frozen adapter decision controlling
                 whether start-anchored thinking is split into typed events.
+            before_adapter: Required callback issuing authority for the initial
+                adapter entry.
+            before_fallback_adapter: Required callback issuing distinct authority
+                for a stream-to-completion retry.
 
         Yields:
             Assistant-visible content chunks.
@@ -2599,6 +3202,9 @@ class ConsoleProviderGateway:
             min_p=min_p,
             top_k=top_k,
             max_tokens=max_tokens,
+            seed=seed,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
             reasoning_effort=reasoning_effort,
             thinking_budget_tokens=thinking_budget_tokens,
         )
@@ -2610,13 +3216,22 @@ class ConsoleProviderGateway:
         emitted_content = False
         received_content = False
         stream_error: httpx.HTTPError | None = None
+        client = self._active_http_client()
+        request_url = f"{normalized_base_url.rstrip('/')}/v1/chat/completions"
+        headers = self._authorization_headers(api_key)
+        if before_adapter is None:
+            raise TraceCallPersistenceError()
+        admission = await before_adapter()
         try:
-            async with self._active_http_client().stream(
+            stream_context = self._enter_provider_adapter(
+                admission,
+                client.stream,
                 "POST",
-                f"{normalized_base_url.rstrip('/')}/v1/chat/completions",
+                request_url,
                 json=payload,
-                headers=self._authorization_headers(api_key),
-            ) as response:
+                headers=headers,
+            )
+            async with stream_context as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     chunk = self._content_from_sse_line(line)
@@ -2671,6 +3286,31 @@ class ConsoleProviderGateway:
                 on_fallback_retry_started()
             except Exception:
                 logger.warning("model_retry_capture_failed")
+        if on_fallback_transition is not None:
+            await on_fallback_transition(stream_error is not None)
+        fallback_payload = build_llamacpp_chat_payload(
+            model=model,
+            messages=messages,
+            stream=False,
+            temperature=temperature,
+            top_p=top_p,
+            min_p=min_p,
+            top_k=top_k,
+            max_tokens=max_tokens,
+            seed=seed,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+            reasoning_effort=reasoning_effort,
+            thinking_budget_tokens=thinking_budget_tokens,
+        )
+        fallback_endpoint = f"{normalized_base_url.rstrip('/')}/v1/chat/completions"
+        if on_fallback_request is not None:
+            on_fallback_request(fallback_endpoint, fallback_payload)
+        if before_fallback_adapter is None:
+            raise TraceCallPersistenceError()
+        fallback_admission = await before_fallback_adapter(
+            fallback_endpoint, fallback_payload
+        )
         fallback_result = await self.complete_llamacpp_chat(
             base_url=normalized_base_url,
             model=model,
@@ -2680,6 +3320,9 @@ class ConsoleProviderGateway:
             min_p=min_p,
             top_k=top_k,
             max_tokens=max_tokens,
+            seed=seed,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
             reasoning_effort=reasoning_effort,
             thinking_budget_tokens=thinking_budget_tokens,
             api_key=api_key,
@@ -2687,6 +3330,7 @@ class ConsoleProviderGateway:
             protocol=protocol,
             thinking_stream_disposition=thinking_stream_disposition,
             include_thinking_events=True,
+            adapter_admission=fallback_admission,
         )
         fallback_items, fallback_capture_failed = _unpack_local_completion_result(
             fallback_result
@@ -2700,18 +3344,7 @@ class ConsoleProviderGateway:
         if on_fallback_retry is not None:
             try:
                 on_fallback_retry(
-                    build_llamacpp_chat_payload(
-                        model=model,
-                        messages=messages,
-                        stream=False,
-                        temperature=temperature,
-                        top_p=top_p,
-                        min_p=min_p,
-                        top_k=top_k,
-                        max_tokens=max_tokens,
-                        reasoning_effort=reasoning_effort,
-                        thinking_budget_tokens=thinking_budget_tokens,
-                    ),
+                    fallback_payload,
                     fallback or "",
                     fallback_capture_failed,
                 )
@@ -2756,6 +3389,10 @@ class ConsoleProviderGateway:
         protocol: str = "chat_completions",
         thinking_stream_disposition: ReasoningDisposition = "ignored",
         include_thinking_events: bool = False,
+        before_dispatch: "Callable[[str, Mapping[str, Any]], None] | None" = None,
+        before_adapter: Callable[[], Awaitable[_ProviderAdapterAdmission]]
+        | None = None,
+        adapter_admission: _ProviderAdapterAdmission | None = None,
     ) -> str | _LocalCompletionResult:
         """Request a non-streaming OpenAI-compatible chat completion.
 
@@ -2779,6 +3416,10 @@ class ConsoleProviderGateway:
                 assistant-content shape instead of treating it as empty.
             thinking_stream_disposition: Frozen adapter decision controlling
                 whether start-anchored thinking is split into typed events.
+            before_adapter: Callback issuing adapter-entry authority when
+                ``adapter_admission`` is not supplied.
+            adapter_admission: Explicit issuer-bound authority for this adapter
+                entry.
 
         Returns:
             Assistant-visible completion text.
@@ -2804,20 +3445,38 @@ class ConsoleProviderGateway:
             thinking_budget_tokens=thinking_budget_tokens,
         )
         client = self._active_http_client()
-        response = (
-            await self._post_without_high_level_http_log(
+        headers = self._authorization_headers(api_key)
+        sensitive_request = is_sensitive_llm_request()
+        if before_dispatch is not None:
+            before_dispatch(request_url, payload)
+        admission = adapter_admission
+        if admission is None and before_adapter is not None:
+            admission = await before_adapter()
+        if admission is None:
+            raise TraceCallPersistenceError()
+        request_call = (
+            self._post_without_high_level_http_log if sensitive_request else client.post
+        )
+        request_kwargs = (
+            {"json_payload": payload, "headers": headers}
+            if sensitive_request
+            else {"json": payload, "headers": headers}
+        )
+        if sensitive_request:
+            response = await self._enter_provider_adapter(
+                admission,
+                request_call,
                 client,
                 request_url,
-                json_payload=payload,
-                headers=self._authorization_headers(api_key),
+                **request_kwargs,
             )
-            if is_sensitive_llm_request()
-            else await client.post(
+        else:
+            response = await self._enter_provider_adapter(
+                admission,
+                request_call,
                 request_url,
-                json=payload,
-                headers=self._authorization_headers(api_key),
+                **request_kwargs,
             )
-        )
         response.raise_for_status()
         content = self._content_from_completion_response(response)
         if content is None and strict_response:
@@ -2864,6 +3523,8 @@ class ConsoleProviderGateway:
     async def complete_auxiliary(
         self,
         request: AuxiliaryCompletionRequest,
+        *,
+        route: ConsoleRequestRoute | None = None,
     ) -> AuxiliaryCompletionResult:
         """Run exactly one sensitive, non-streaming completion.
 
@@ -2874,6 +3535,13 @@ class ConsoleProviderGateway:
 
         if not isinstance(request, AuxiliaryCompletionRequest):
             raise TypeError("request must be an AuxiliaryCompletionRequest")
+        if route not in {None, ConsoleRequestRoute.AUTO_COMPACTION}:
+            raise TraceProvenanceAlignmentError(
+                "auxiliary completion route is not capture-off"
+            )
+        if route is not None:
+            request_route_provenance(route)
+        admission = self._capture_off_admission(route)
         resolution = replace(
             request.resolution,
             streaming=False,
@@ -2913,6 +3581,7 @@ class ConsoleProviderGateway:
                             resolution.thinking_stream_disposition
                         ),
                         include_thinking_events=True,
+                        adapter_admission=admission,
                     )
                 else:
                     kwargs = self._auxiliary_chat_api_kwargs(request, resolution)
@@ -2921,6 +3590,7 @@ class ConsoleProviderGateway:
                         context.run,
                         self._complete_sensitive_sync,
                         kwargs,
+                        admission,
                     )
         except asyncio.CancelledError:
             raise
@@ -2984,11 +3654,19 @@ class ConsoleProviderGateway:
             raise ProviderThinkingCaptureError("Provider thinking capture failed.")
         return "".join(item for item in result.items if isinstance(item, str))
 
-    def _complete_sensitive_sync(self, kwargs: Mapping[str, Any]) -> Any:
+    def _complete_sensitive_sync(
+        self,
+        kwargs: Mapping[str, Any],
+        admission: _ProviderAdapterAdmission,
+    ) -> Any:
         """Invoke the final synchronous adapter under the sensitive policy."""
 
         with sensitive_llm_request():
-            return self._chat_api_call(**dict(kwargs))
+            return self._enter_provider_adapter(
+                admission,
+                self._chat_api_call,
+                **dict(kwargs),
+            )
 
     @staticmethod
     def _auxiliary_response_text(response: Any) -> str:
@@ -3075,6 +3753,12 @@ class ConsoleProviderGateway:
         | PreparedProviderRequest,
         tools: list | None = None,
         signals: _ProviderStreamSignals | None = None,
+        *,
+        route: ConsoleRequestRoute | None = None,
+        route_actor_id: str | None = None,
+        route_chain_id: str | None = None,
+        capture_mode: ConsoleTraceCaptureMode = ConsoleTraceCaptureMode.CAPTURE_OFF,
+        before_provider_dispatch: Callable[[], Awaitable[None]] | None = None,
     ) -> AsyncIterator[ProviderStreamItem]:
         """Dispatch streaming for a resolved Console provider.
 
@@ -3105,6 +3789,8 @@ class ConsoleProviderGateway:
             if isinstance(signals, ConsoleProviderCallSignals)
             else signals.new_usage_call()
             if signals is not None
+            else ConsoleProviderStreamSignals().new_usage_call()
+            if capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
             else None
         )
         # Tracks whether the generator drained a provider call normally, vs.
@@ -3115,16 +3801,41 @@ class ConsoleProviderGateway:
         # before enqueueing (token-pop move semantics make the second close
         # here a no-op), so this flag only decides "complete" vs "stopped".
         completed = False
+        provider_failed = False
+        trace_call_boundary: object | None = None
+        response_accumulator = _TraceResponseAccumulator()
+
+        def observe_response(
+            item: ProviderStreamItem, *, synthetic: bool = False
+        ) -> None:
+            if response_accumulator.observe(item, synthetic=synthetic):
+                _mark_trace_response_started(trace_call_boundary)
+
         try:
             if not resolution.ready or not resolution.model:
                 return
             prepared = (
                 messages
                 if isinstance(messages, PreparedProviderRequest)
-                else self.prepare_chat_request(resolution, messages, tools=tools)
+                else self.prepare_chat_request(
+                    resolution,
+                    messages,
+                    tools=tools,
+                    route=route,
+                    route_actor_id=route_actor_id,
+                    route_chain_id=route_chain_id,
+                    capture_mode=capture_mode,
+                )
             )
             if isinstance(messages, PreparedProviderRequest) and tools is not None:
                 raise ValueError("tools are already owned by PreparedProviderRequest")
+            _validate_request_trace_binding(
+                prepared,
+                route=route,
+                route_actor_id=route_actor_id,
+                route_chain_id=route_chain_id,
+                capture_mode=capture_mode,
+            )
             if prepared.provider and prepared.provider != resolution.provider:
                 raise ValueError("Prepared request provider does not match resolution.")
             if prepared.model and prepared.model != resolution.model:
@@ -3145,6 +3856,15 @@ class ConsoleProviderGateway:
                     else None
                 ),
             )
+            capture_off_admission: _ProviderAdapterAdmission | None = None
+            if capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON:
+                trace_call_boundary = self._reserve_trace_call(
+                    prepared,
+                    effective_resolution,
+                    route,
+                )
+            else:
+                capture_off_admission = self._capture_off_admission(route)
             if resolution.provider in {"llama_cpp", "local_llamacpp"}:
                 wire_messages = [thaw_json(item) for item in prepared.messages]
 
@@ -3158,10 +3878,22 @@ class ConsoleProviderGateway:
                     literal ``messages`` list."""
                     captured = deepcopy(raw_wire)
                     if detail is not CaptureDetail.SAFE:
-                        return sanitize_capture_value(captured), ()
+                        sanitized, omitted = sanitize_capture_value_with_omission(
+                            captured,
+                            known_credentials=(resolution.api_key,)
+                            if resolution.api_key
+                            else (),
+                        )
+                        return sanitized, (("wire_payload",) if omitted else ())
                     captured_messages = captured.get("messages")
                     if not isinstance(captured_messages, list):
-                        return sanitize_capture_value(captured), ()
+                        sanitized, omitted = sanitize_capture_value_with_omission(
+                            captured,
+                            known_credentials=(resolution.api_key,)
+                            if resolution.api_key
+                            else (),
+                        )
+                        return sanitized, (("wire_payload",) if omitted else ())
                     semantic_messages = [
                         thaw_json(item)
                         for item in prepared.semantic.flattened_messages()
@@ -3172,10 +3904,7 @@ class ConsoleProviderGateway:
                             if row.get("role") != "system":
                                 break
                             content = str(row.get("content") or "").strip()
-                            if (
-                                row.get(EPHEMERAL_ORIGIN_KEY)
-                                == "project_instructions"
-                            ):
+                            if row.get(EPHEMERAL_ORIGIN_KEY) == "project_instructions":
                                 content = (
                                     "[project instruction body omitted by "
                                     f"capture policy -- {len(content)} chars]"
@@ -3196,7 +3925,16 @@ class ConsoleProviderGateway:
                                     "[project instruction body omitted by "
                                     f"capture policy -- {len(content)} chars]"
                                 )
-                    sanitized = sanitize_capture_value(captured)
+                    sanitized, credential_omitted = (
+                        sanitize_capture_value_with_omission(
+                            captured,
+                            known_credentials=(resolution.api_key,)
+                            if resolution.api_key
+                            else (),
+                        )
+                    )
+                    if credential_omitted:
+                        return sanitized, ("wire_payload",)
                     if isinstance(sanitized, dict):
                         compacted_rows, elided_paths = compact_safe_history_rows(
                             sanitized.get("messages"),
@@ -3208,6 +3946,59 @@ class ConsoleProviderGateway:
                         return sanitized, elided_paths
                     return sanitized, ()
 
+                verified_wire: dict[str, Any] | None = None
+                verified_bundle: ProviderRequestShadowBundle | None = None
+                if capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON:
+                    verified_wire = build_llamacpp_chat_payload(
+                        model=resolution.model,
+                        messages=wire_messages,
+                        stream=resolution.streaming,
+                        temperature=resolution.temperature,
+                        top_p=resolution.top_p,
+                        min_p=resolution.min_p,
+                        top_k=resolution.top_k,
+                        max_tokens=effective_resolution.max_tokens,
+                        seed=resolution.seed,
+                        presence_penalty=resolution.presence_penalty,
+                        frequency_penalty=resolution.frequency_penalty,
+                        reasoning_effort=resolution.reasoning_effort,
+                        thinking_budget_tokens=resolution.thinking_budget_tokens,
+                    )
+                    trace_kwargs = self._trace_surface_kwargs(
+                        trace_call_boundary,
+                        self._chat_api_kwargs_from_prepared(
+                            effective_resolution, prepared
+                        ),
+                    )
+                    verified_bundle = self._verify_trace_shadow(
+                        effective_resolution,
+                        prepared,
+                        trace_kwargs,
+                        capture_mode=capture_mode,
+                        literal_payload=verified_wire,
+                        endpoint_identity=(
+                            f"{normalize_llamacpp_base_url(resolution.base_url).rstrip('/')}"
+                            "/v1/chat/completions"
+                        ),
+                        trace_call_boundary=trace_call_boundary,
+                    )
+
+                async def commit_llama_dispatch() -> _ProviderAdapterAdmission:
+                    admission = self._trace_dispatch_admission(
+                        trace_call_boundary,
+                        verified_bundle,
+                        prepared.provenance,
+                        route=route,
+                        capture_off_admission=capture_off_admission,
+                    )
+                    if before_provider_dispatch is not None:
+                        try:
+                            await before_provider_dispatch()
+                        except BaseException:
+                            self._commit_trace_dispatch_unknown(trace_call_boundary)
+                            raise
+                    return admission
+
                 # This branch builds its own HTTP body -- the one place
                 # capture IS the literal wire payload (spec Non-goals).
                 # `api_key` never enters `build_llamacpp_chat_payload`'s
@@ -3217,7 +4008,7 @@ class ConsoleProviderGateway:
                 if call_signals is not None and call_signals.exchange_capture_enabled:
                     try:
                         budget = CaptureBudget()
-                        wire = build_llamacpp_chat_payload(
+                        wire = verified_wire or build_llamacpp_chat_payload(
                             model=resolution.model,
                             messages=wire_messages,
                             stream=resolution.streaming,
@@ -3226,6 +4017,9 @@ class ConsoleProviderGateway:
                             min_p=resolution.min_p,
                             top_k=resolution.top_k,
                             max_tokens=effective_resolution.max_tokens,
+                            seed=resolution.seed,
+                            presence_penalty=resolution.presence_penalty,
+                            frequency_penalty=resolution.frequency_penalty,
                             reasoning_effort=resolution.reasoning_effort,
                             thinking_budget_tokens=resolution.thinking_budget_tokens,
                         )
@@ -3233,6 +4027,9 @@ class ConsoleProviderGateway:
                             {"model": resolution.model},
                             capture_detail=call_signals.capture_detail,
                             budget=budget,
+                            known_credentials=(resolution.api_key,)
+                            if resolution.api_key
+                            else (),
                         )
                         sanitized_wire, wire_elided = capture_wire_payload(
                             wire, call_signals.capture_detail
@@ -3250,6 +4047,10 @@ class ConsoleProviderGateway:
                             request=capture_request,
                             omitted_keys=omitted,
                             capture_budget=budget,
+                            known_credentials=(resolution.api_key,)
+                            if resolution.api_key
+                            else (),
+                            request_credentials_filtered=True,
                         )
                     except Exception as exc:
                         logger.warning(
@@ -3272,6 +4073,9 @@ class ConsoleProviderGateway:
                             min_p=resolution.min_p,
                             top_k=resolution.top_k,
                             max_tokens=effective_resolution.max_tokens,
+                            seed=resolution.seed,
+                            presence_penalty=resolution.presence_penalty,
+                            frequency_penalty=resolution.frequency_penalty,
                             reasoning_effort=resolution.reasoning_effort,
                             thinking_budget_tokens=resolution.thinking_budget_tokens,
                             api_key=resolution.api_key,
@@ -3281,6 +4085,7 @@ class ConsoleProviderGateway:
                                 resolution.thinking_stream_disposition
                             ),
                             include_thinking_events=True,
+                            before_adapter=commit_llama_dispatch,
                         )
                     except Exception:
                         if call_signals is not None:
@@ -3292,6 +4097,7 @@ class ConsoleProviderGateway:
                     for item in completion_items:
                         if call_signals is not None and isinstance(item, str):
                             call_signals.record_exchange_content(item)
+                        observe_response(item)
                         yield item
                     if completion_capture_failed:
                         if call_signals is not None:
@@ -3315,6 +4121,13 @@ class ConsoleProviderGateway:
                     replaced. Needs the aggregate: a caller that handed us
                     an already-scoped view has no second call to open.
                     """
+                    fallback_provenance = request_route_provenance(
+                        ConsoleRequestRoute.LLAMA_FALLBACK
+                    )
+                    logger.bind(
+                        route=fallback_provenance.route.value,
+                        predicate=fallback_provenance.predicate,
+                    ).debug("console_llama_fallback_request")
                     if signals is None or isinstance(
                         signals, ConsoleProviderCallSignals
                     ):
@@ -3325,6 +4138,9 @@ class ConsoleProviderGateway:
                         {"model": resolution.model},
                         capture_detail=retry_signals.capture_detail,
                         budget=budget,
+                        known_credentials=(resolution.api_key,)
+                        if resolution.api_key
+                        else (),
                     )
                     sanitized_wire, wire_elided = capture_wire_payload(
                         wire_payload, retry_signals.capture_detail
@@ -3345,6 +4161,10 @@ class ConsoleProviderGateway:
                         request=capture_request,
                         omitted_keys=omitted,
                         capture_budget=budget,
+                        known_credentials=(resolution.api_key,)
+                        if resolution.api_key
+                        else (),
+                        request_credentials_filtered=True,
                     )
                     if text:
                         retry_signals.record_exchange_content(text)
@@ -3360,6 +4180,72 @@ class ConsoleProviderGateway:
                     # obvious instead of load-bearing on a future reader.
                     retry_signals.close_usage_call()
 
+                async def _authorize_llamacpp_fallback(
+                    endpoint: str,
+                    wire_payload: Mapping[str, Any],
+                ) -> _ProviderAdapterAdmission:
+                    nonlocal trace_call_boundary
+                    if capture_mode is ConsoleTraceCaptureMode.CAPTURE_OFF:
+                        return self._capture_off_admission(
+                            ConsoleRequestRoute.LLAMA_FALLBACK
+                        )
+                    fallback_resolution = replace(
+                        effective_resolution,
+                        streaming=False,
+                    )
+                    fallback_boundary = self._reserve_trace_call(
+                        prepared,
+                        fallback_resolution,
+                        ConsoleRequestRoute.LLAMA_FALLBACK,
+                    )
+                    trace_call_boundary = fallback_boundary
+                    fallback_provenance = self._provenance_for_route(
+                        prepared.provenance,
+                        ConsoleRequestRoute.LLAMA_FALLBACK,
+                    )
+                    fallback_kwargs = self._trace_surface_kwargs(
+                        fallback_boundary,
+                        self._chat_api_kwargs_from_prepared(
+                            fallback_resolution, prepared
+                        ),
+                    )
+                    fallback_bundle = self._verify_trace_shadow(
+                        fallback_resolution,
+                        prepared,
+                        fallback_kwargs,
+                        capture_mode=capture_mode,
+                        literal_payload=wire_payload,
+                        endpoint_identity=endpoint,
+                        route=ConsoleRequestRoute.LLAMA_FALLBACK,
+                        extra_overlays=(
+                            ProviderOverlayProvenance(
+                                "llama_fallback_retry", "structural"
+                            ),
+                        ),
+                        trace_call_boundary=fallback_boundary,
+                        provenance_override=fallback_provenance,
+                    )
+                    return self._trace_dispatch_admission(
+                        fallback_boundary,
+                        fallback_bundle,
+                        fallback_provenance,
+                        route=ConsoleRequestRoute.LLAMA_FALLBACK,
+                    )
+
+                async def _transition_to_llamacpp_fallback(
+                    _stream_failed: bool,
+                ) -> None:
+                    nonlocal trace_call_boundary
+                    initial_boundary = trace_call_boundary
+                    trace_call_boundary = None
+                    await _settle_trace_response(
+                        initial_boundary,
+                        (),
+                        outcome=TraceCallState.ERROR,
+                        usage=None,
+                        signals=call_signals,
+                    )
+
                 try:
                     async for chunk in self.stream_llamacpp_chat(
                         base_url=resolution.base_url,
@@ -3370,6 +4256,9 @@ class ConsoleProviderGateway:
                         min_p=resolution.min_p,
                         top_k=resolution.top_k,
                         max_tokens=effective_resolution.max_tokens,
+                        seed=resolution.seed,
+                        presence_penalty=resolution.presence_penalty,
+                        frequency_penalty=resolution.frequency_penalty,
                         reasoning_effort=resolution.reasoning_effort,
                         thinking_budget_tokens=resolution.thinking_budget_tokens,
                         api_key=resolution.api_key,
@@ -3383,10 +4272,30 @@ class ConsoleProviderGateway:
                             if isinstance(signals, ConsoleProviderStreamSignals)
                             else None
                         ),
+                        on_fallback_transition=_transition_to_llamacpp_fallback,
+                        on_fallback_request=None,
+                        before_fallback_adapter=_authorize_llamacpp_fallback,
                         on_fallback_retry=_capture_llamacpp_fallback,
+                        on_synthetic_output=(
+                            call_signals.mark_synthetic_fallback
+                            if call_signals is not None
+                            else None
+                        ),
+                        before_adapter=commit_llama_dispatch,
                     ):
+                        synthetic = (
+                            call_signals.take_synthetic_pending()
+                            if call_signals is not None
+                            else False
+                        )
                         if call_signals is not None and isinstance(chunk, str):
-                            call_signals.record_exchange_content(chunk)
+                            call_signals.record_exchange_content(
+                                chunk, synthetic=synthetic
+                            )
+                        observe_response(
+                            chunk,
+                            synthetic=synthetic,
+                        )
                         yield chunk
                 except Exception:
                     # Only real provider/HTTP failures land here -- a
@@ -3400,13 +4309,55 @@ class ConsoleProviderGateway:
                 completed = True
                 return
             if resolution.execution_key:
-                async for chunk in self._stream_generic_chat(
-                    effective_resolution, prepared, signals=call_signals
+                async for emission in self._stream_generic_chat(
+                    effective_resolution,
+                    prepared,
+                    signals=call_signals,
+                    capture_mode=capture_mode,
+                    trace_call_boundary=trace_call_boundary,
+                    capture_off_admission=capture_off_admission,
+                    route=route,
+                    before_provider_dispatch=before_provider_dispatch,
                 ):
-                    yield chunk
+                    observe_response(emission.item, synthetic=emission.synthetic)
+                    yield emission.item
                 completed = True
                 return
+        except Exception:
+            provider_failed = True
+            await _settle_trace_response(
+                trace_call_boundary,
+                response_accumulator.items,
+                outcome=TraceCallState.ERROR,
+                usage=(
+                    call_signals.usage_snapshot()
+                    if isinstance(call_signals, ConsoleProviderCallSignals)
+                    else None
+                ),
+                response_omission=response_accumulator.omission_reason,
+                signals=call_signals,
+            )
+            raise
         finally:
+            if not provider_failed:
+                await _settle_trace_response(
+                    trace_call_boundary,
+                    response_accumulator.items,
+                    outcome=(
+                        TraceCallState.ERROR
+                        if completed and not response_accumulator.semantic_observed
+                        else TraceCallState.COMPLETE
+                        if completed
+                        else TraceCallState.STOPPED
+                    ),
+                    usage=(
+                        call_signals.usage_snapshot()
+                        if isinstance(call_signals, ConsoleProviderCallSignals)
+                        else None
+                    ),
+                    response_omission=response_accumulator.omission_reason,
+                    signals=call_signals,
+                )
             if call_signals is not None:
                 call_signals.close_exchange(
                     status="complete" if completed else "stopped"
@@ -3417,12 +4368,18 @@ class ConsoleProviderGateway:
         self,
         resolution: ConsoleProviderResolution,
         request: PreparedProviderRequest,
-        signals: _ProviderStreamSignals | None = None,
-    ) -> AsyncIterator[ProviderStreamItem]:
+        signals: ConsoleProviderCallSignals | None = None,
+        capture_mode: ConsoleTraceCaptureMode = ConsoleTraceCaptureMode.CAPTURE_OFF,
+        trace_call_boundary: object | None = None,
+        capture_off_admission: _ProviderAdapterAdmission | None = None,
+        route: ConsoleRequestRoute | None = None,
+        before_provider_dispatch: Callable[[], Awaitable[None]] | None = None,
+    ) -> AsyncIterator[_ProviderStreamEmission]:
         """Bridge synchronous chat_api_call responses into async Console chunks."""
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
         stop_event = threading.Event()
+        adapter_entry_gate = _ProviderAdapterEntryGate()
         response_lock = threading.Lock()
         retained_response: Any = None
         close_requested = False
@@ -3463,6 +4420,14 @@ class ConsoleProviderGateway:
         def worker() -> None:
             try:
                 kwargs = self._chat_api_kwargs_from_prepared(resolution, request)
+                kwargs = self._trace_surface_kwargs(trace_call_boundary, kwargs)
+                bundle = self._verify_trace_shadow(
+                    resolution,
+                    request,
+                    kwargs,
+                    capture_mode=capture_mode,
+                    trace_call_boundary=trace_call_boundary,
+                )
                 if signals is not None and signals.exchange_capture_enabled:
                     try:
                         budget = CaptureBudget()
@@ -3472,8 +4437,7 @@ class ConsoleProviderGateway:
                             for item in request.semantic.flattened_messages()
                         ]
                         has_project_instructions = any(
-                            row.get(EPHEMERAL_ORIGIN_KEY)
-                            == "project_instructions"
+                            row.get(EPHEMERAL_ORIGIN_KEY) == "project_instructions"
                             for row in semantic_messages
                         )
                         if (
@@ -3500,13 +4464,16 @@ class ConsoleProviderGateway:
                                     )
                                 if content:
                                     system_parts.append(content)
-                            capture_kwargs["system_message"] = "\n\n".join(
-                                system_parts
-                            ) or None
+                            capture_kwargs["system_message"] = (
+                                "\n\n".join(system_parts) or None
+                            )
                         capture_request, omitted = build_request_capture(
                             capture_kwargs,
                             capture_detail=signals.capture_detail,
                             budget=budget,
+                            known_credentials=(resolution.api_key,)
+                            if resolution.api_key
+                            else (),
                         )
                         signals.begin_exchange(
                             provider=str(resolution.provider or ""),
@@ -3515,12 +4482,53 @@ class ConsoleProviderGateway:
                             request=capture_request,
                             omitted_keys=omitted,
                             capture_budget=budget,
+                            known_credentials=(resolution.api_key,)
+                            if resolution.api_key
+                            else (),
+                            request_credentials_filtered=True,
                         )
                     except Exception as exc:
                         logger.warning(
                             "exchange_capture_begin_failed: {}", type(exc).__name__
                         )
-                response = self._chat_api_call(**kwargs)
+                admission = self._trace_dispatch_admission(
+                    trace_call_boundary,
+                    bundle,
+                    request.provenance,
+                    route=route,
+                    capture_off_admission=capture_off_admission,
+                )
+                if before_provider_dispatch is not None:
+
+                    async def await_provider_dispatch() -> None:
+                        await before_provider_dispatch()
+
+                    dispatch_future = asyncio.run_coroutine_threadsafe(
+                        await_provider_dispatch(), loop
+                    )
+                    try:
+                        dispatch_future.result()
+                    except BaseException:
+                        self._commit_trace_dispatch_unknown(trace_call_boundary)
+                        raise
+                if stop_event.is_set():
+                    # Normalized dispatch is already durable before the
+                    # caller-owned checkpoint.  Cancellation after that wait
+                    # prevents adapter entry, but the committed boundary can
+                    # only be closed as dispatch-unknown without rewriting
+                    # history or widening the persisted lifecycle schema.
+                    self._commit_trace_dispatch_unknown(trace_call_boundary)
+                    return
+                try:
+                    response = self._enter_provider_adapter(
+                        admission,
+                        self._chat_api_call,
+                        _console_adapter_entry_gate=adapter_entry_gate,
+                        **kwargs,
+                    )
+                except _ProviderAdapterEntryCancelled:
+                    self._commit_trace_dispatch_unknown(trace_call_boundary)
+                    return
                 provider_response = response
                 accumulator = _ToolCallAccumulator() if request.tools else None
                 if accumulator is not None:
@@ -3564,6 +4572,11 @@ class ConsoleProviderGateway:
                         )
                     if visible:
                         emitted_content = True
+                    synthetic = (
+                        signals.take_synthetic_pending()
+                        if signals is not None and visible
+                        else False
+                    )
                     if signals is not None and visible:
                         # M3: the fallback UI copy this loop can receive
                         # from `normalize_provider_response` (NO_PROVIDER_
@@ -3574,11 +4587,9 @@ class ConsoleProviderGateway:
                         # fallback() just before that generator's yield),
                         # so the capture records it as such instead of
                         # presenting UI copy as a model answer.
-                        signals.record_exchange_content(
-                            visible, synthetic=signals.take_synthetic_pending()
-                        )
+                        signals.record_exchange_content(visible, synthetic=synthetic)
                     if visible:
-                        enqueue(_QueueItem.content(visible))
+                        enqueue(_QueueItem.content(visible, synthetic=synthetic))
                 if stop_event.is_set():
                     return
                 if think_splitter is not None:
@@ -3630,21 +4641,42 @@ class ConsoleProviderGateway:
                         )
                         if signals is not None:
                             signals.close_exchange(status="error")
+                        try:
+                            raw_error_copy = self._safe_error_copy(
+                                resolution.provider, no_content_exc
+                            )
+                        except BaseException:  # failure context can contain credentials
+                            raw_error_copy = _PROVIDER_REQUEST_FAILED_COPY
                         enqueue(
                             _QueueItem.error(
-                                self._safe_error_copy(
-                                    resolution.provider, no_content_exc
+                                _sanitized_provider_diagnostic(
+                                    raw_error_copy,
+                                    known_credentials=(resolution.api_key or "",),
                                 ),
                                 status_code=no_content_exc.status_code,
                             )
                         )
+            except TraceCallPersistenceError as exc:
+                enqueue(_QueueItem.trace_persistence_error(exc.boundary))
+            except TraceProvenanceAlignmentError:
+                if signals is not None:
+                    signals.close_exchange(status="error")
+                enqueue(_QueueItem.trace_verification_error())
             except BaseException as exc:
                 raw_status = getattr(exc, "status_code", None)
-                status_code = raw_status if isinstance(raw_status, int) else None
+                status_code = raw_status if type(raw_status) is int else None
+                try:
+                    raw_error_copy = self._safe_error_copy(resolution.provider, exc)
+                except BaseException:  # failure context can contain credentials
+                    raw_error_copy = _PROVIDER_REQUEST_FAILED_COPY
                 error_copy = _provider_error_copy_with_model_recovery(
-                    self._safe_error_copy(resolution.provider, exc),
+                    raw_error_copy,
                     model=resolution.model,
                     status_code=status_code,
+                )
+                error_copy = _sanitized_provider_diagnostic(
+                    error_copy,
+                    known_credentials=(resolution.api_key or "",),
                 )
                 if signals is not None:
                     signals.close_exchange(status="error")
@@ -3678,18 +4710,27 @@ class ConsoleProviderGateway:
                         if isinstance(item.status_code, int)
                         else 502,
                     )
+                if item.kind == "trace_verification_error":
+                    raise TraceProvenanceAlignmentError(
+                        "provider request trace verification failed"
+                    )
+                if item.kind == "trace_persistence_error":
+                    raise TraceCallPersistenceError(boundary=item.payload)
                 if item.kind == "tool_calls":
-                    yield cast(ProviderToolCalls, item.payload)
+                    yield _ProviderStreamEmission(cast(ProviderToolCalls, item.payload))
                     continue
                 if item.kind == "thinking":
-                    yield cast(
-                        ProviderThinkingDelta | ProviderProprietaryThinkingEvidence,
-                        item.payload,
+                    yield _ProviderStreamEmission(
+                        cast(
+                            ProviderThinkingDelta | ProviderProprietaryThinkingEvidence,
+                            item.payload,
+                        )
                     )
                     continue
                 if item.text:
-                    yield item.text
+                    yield _ProviderStreamEmission(item.text, synthetic=item.synthetic)
         finally:
+            adapter_entry_gate.cancel()
             stop_event.set()
             close_response()
             if not worker_task.done():
@@ -3765,6 +4806,231 @@ class ConsoleProviderGateway:
 
             return chat_api_call(**kwargs)
         return self._chat_api_call_fn(**kwargs)
+
+    def _verify_trace_shadow(
+        self,
+        resolution: ConsoleProviderResolution,
+        request: PreparedProviderRequest,
+        actual_kwargs: Mapping[str, object],
+        *,
+        capture_mode: ConsoleTraceCaptureMode,
+        literal_payload: object | None = None,
+        endpoint_identity: str | None = None,
+        route: ConsoleRequestRoute | None = None,
+        extra_overlays: tuple[ProviderOverlayProvenance, ...] = (),
+        trace_call_boundary: object | None = None,
+        provenance_override: ProviderRequestProvenance | None = None,
+    ) -> ProviderRequestShadowBundle | None:
+        """Fail Capture On closed before any content-bearing shadow sink."""
+
+        if capture_mode is ConsoleTraceCaptureMode.CAPTURE_OFF:
+            return None
+        if route is not None:
+            request_route_provenance(route)
+        provenance = provenance_override or request.provenance
+        if provenance is None:
+            raise TraceProvenanceAlignmentError(
+                "provider request trace verification failed"
+            )
+        surface_boundary = getattr(trace_call_boundary, "surface_boundary", None)
+        projected = getattr(surface_boundary, "provenance", None)
+        if projected is not None:
+            if not isinstance(projected, ProviderRequestProvenance):
+                raise TraceProvenanceAlignmentError(
+                    "provider request trace verification failed"
+                )
+            provenance = projected
+
+        from tldw_chatbook.Chat.Chat_Functions import PROVIDER_PARAM_MAP
+
+        handler_source_names = {
+            provider_name: generic_name
+            for generic_name, provider_name in PROVIDER_PARAM_MAP.get(
+                resolution.execution_key or "", {}
+            ).items()
+        }
+        handler_source_names.update(
+            api_base_url="api_base_url",
+            provider_name="api_endpoint",
+        )
+
+        def project(values: dict[str, object]) -> Mapping[str, object]:
+            from tldw_chatbook.Chat.Chat_Functions import (
+                project_chat_handler_kwargs,
+            )
+
+            endpoint = values.pop("api_endpoint", None)
+            if not isinstance(endpoint, str):
+                raise ValueError("missing endpoint")
+            return project_chat_handler_kwargs(endpoint, values)
+
+        expected = self._trace_surface_kwargs(
+            trace_call_boundary,
+            reconstruct_provider_gateway_kwargs(resolution, request),
+        )
+        known_credentials = (
+            (resolution.api_key,)
+            if isinstance(resolution.api_key, str) and resolution.api_key
+            else ()
+        )
+        bundle = verify_provider_request_shadow(
+            actual_kwargs=actual_kwargs,
+            expected_kwargs=expected,
+            provenance=provenance,
+            project_handler_kwargs=project,
+            handler_source_names=handler_source_names,
+            known_credentials=known_credentials,
+            literal_payload=literal_payload,
+            endpoint_identity=endpoint_identity or resolution.base_url or None,
+            extra_overlays=extra_overlays,
+            preparation_identity=(
+                getattr(trace_call_boundary, "preparation_identity", None)
+                if trace_call_boundary is not None
+                else None
+            ),
+            surface_boundary=surface_boundary,
+        )
+        if not bundle.available and trace_call_boundary is None:
+            raise TraceProvenanceAlignmentError(
+                "provider request trace verification failed"
+            )
+        if self._trace_shadow_sink is not None:
+            try:
+                self._trace_shadow_sink(bundle)
+            except Exception:  # noqa: BLE001 - shadow sink context may be sensitive
+                raise TraceProvenanceAlignmentError(
+                    "provider request trace verification failed"
+                ) from None
+        return bundle
+
+    @staticmethod
+    def _trace_surface_kwargs(
+        trace_call_boundary: object | None,
+        kwargs: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Use the service-issued surface objects at the final verifier seam."""
+
+        surface_boundary = getattr(trace_call_boundary, "surface_boundary", None)
+        issued_values = getattr(
+            surface_boundary,
+            "_provider_request_surface_values",
+            None,
+        )
+        if not callable(issued_values):
+            return kwargs
+        values = issued_values()
+        if not isinstance(values, Mapping):
+            raise TraceCallPersistenceError()
+        for name in ("messages_payload", "provider_continuations"):
+            value = values.get(name)
+            if not isinstance(value, tuple):
+                raise TraceCallPersistenceError()
+            kwargs[name] = value
+        return kwargs
+
+    @staticmethod
+    def _provenance_for_route(
+        provenance: ProviderRequestProvenance | None,
+        route: ConsoleRequestRoute,
+    ) -> ProviderRequestProvenance:
+        """Replace the single route descriptor for an internal provider call."""
+
+        if provenance is None:
+            raise TraceProvenanceAlignmentError(
+                "provider request trace verification failed"
+            )
+        descriptor = request_route_provenance(route)
+        route_replaced = False
+        metadata: list[TraceProvenance] = []
+        for item in provenance.metadata:
+            if type(item) is RequestRouteTraceProvenance:
+                if route_replaced:
+                    raise TraceProvenanceAlignmentError(
+                        "provider request trace verification failed"
+                    )
+                metadata.append(descriptor)
+                route_replaced = True
+            else:
+                metadata.append(item)
+        if not route_replaced:
+            raise TraceProvenanceAlignmentError(
+                "provider request trace verification failed"
+            )
+        return replace(provenance, metadata=tuple(metadata))
+
+    @staticmethod
+    def _commit_trace_dispatch_started(
+        trace_call_boundary: object | None,
+        bundle: ProviderRequestShadowBundle | None,
+        provenance: object,
+    ) -> None:
+        """Commit the normalized dispatch token as the adapter-adjacent step."""
+
+        if trace_call_boundary is None:
+            return
+        if bundle is None:
+            raise TraceCallPersistenceError()
+        try:
+            mark_dispatch_started = getattr(
+                trace_call_boundary,
+                "mark_dispatch_started",
+                None,
+            )
+            if not callable(mark_dispatch_started):
+                raise TraceCallPersistenceError()
+            mark_dispatch_started(bundle, provenance)
+        except TraceCallPersistenceError as exc:
+            if exc.boundary is None:
+                raise TraceCallPersistenceError(boundary=trace_call_boundary) from None
+            raise
+        except Exception:
+            raise TraceCallPersistenceError() from None
+
+    def _trace_dispatch_admission(
+        self,
+        trace_call_boundary: object | None,
+        bundle: ProviderRequestShadowBundle | None,
+        provenance: object,
+        *,
+        route: ConsoleRequestRoute | None,
+        capture_off_admission: _ProviderAdapterAdmission | None = None,
+    ) -> _ProviderAdapterAdmission:
+        """Return a token only after Capture On commits or Capture Off admits."""
+
+        if trace_call_boundary is None:
+            if capture_off_admission is None:
+                raise TraceCallPersistenceError()
+            return capture_off_admission
+        self._commit_trace_dispatch_started(
+            trace_call_boundary,
+            bundle,
+            provenance,
+        )
+        return _ProviderAdapterAdmission(
+            self._adapter_admission_issuer,
+            ConsoleTraceCaptureMode.CAPTURE_ON,
+            route,
+        )
+
+    @staticmethod
+    def _commit_trace_dispatch_unknown(trace_call_boundary: object | None) -> None:
+        """Make a post-normalized, pre-adapter caller-checkpoint failure honest."""
+
+        if trace_call_boundary is None:
+            return
+        try:
+            mark_dispatch_unknown = getattr(
+                trace_call_boundary,
+                "mark_dispatch_unknown",
+                None,
+            )
+            if not callable(mark_dispatch_unknown):
+                raise TraceCallPersistenceError()
+            mark_dispatch_unknown()
+        except TraceCallPersistenceError:
+            raise
+        except Exception:
+            raise TraceCallPersistenceError() from None
 
     @staticmethod
     def _chat_api_kwargs_from_prepared(

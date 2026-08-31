@@ -13,6 +13,7 @@ from Tests.Chat.test_console_dispatch_continuation_handoff import (
 from Tests.Chat.test_console_dispatch_recovery import (
     _database,
     _insert,
+    _raw_semantic_corruption,
 )
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
@@ -54,7 +55,8 @@ def _install_checkpoint_free_continuation(
 ) -> None:
     connection = db.get_connection()
     connection.execute("DELETE FROM console_dispatch_checkpoints")
-    connection.execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET provider_continuation_json = ?, "
         "assistant_generation_state = NULL, version = 7 WHERE id = ?",
         (dump_provider_continuation_json(_continuation()), owner_id),
@@ -197,9 +199,10 @@ def test_checkpoint_free_restore_quarantines_earlier_orphan_continuation_state(
     db, conversation_id, repository = _database(tmp_path / "earlier-orphan.sqlite")
     _insert(db, repository, _deepseek_acceptance(conversation_id))
     _install_checkpoint_free_continuation(db, conversation_id)
-    db.get_connection().execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET provider_continuation_json = NULL, "
-        "assistant_generation_state = 'continuation_active' WHERE id = 'assistant-1'"
+        "assistant_generation_state = 'continuation_active' WHERE id = 'assistant-1'",
     )
     db.get_connection().commit()
     _append_active_path_pair(
@@ -285,7 +288,8 @@ def test_checkpoint_free_restore_ignores_completed_continuation_history(
     _insert(db, repository, _deepseek_acceptance(conversation_id))
     connection = db.get_connection()
     connection.execute("DELETE FROM console_dispatch_checkpoints")
-    connection.execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET content = 'answer', provider_continuation_json = ?, "
         "assistant_generation_state = 'complete', version = 3 WHERE id = 'assistant-1'",
         (dump_provider_continuation_json(_complete_reasoning_continuation()),),

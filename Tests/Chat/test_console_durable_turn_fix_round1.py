@@ -26,6 +26,7 @@ from Tests.Chat.test_console_first_send_atomicity import _controller
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
     ConsoleRunState,
     ConsoleRunStatus,
     ConsoleSubmissionOrigin,
@@ -85,7 +86,13 @@ async def test_db_none_adapter_without_atomic_capability_fails_closed(
 
     assert result.accepted is False
     assert gateway.calls == 0
-    assert store.messages_for_session("session-1") == []
+    # The refusal is presentation-only: one visible local notice, but no
+    # user/assistant turn and no durable message or semantic revision.
+    messages = store.messages_for_session("session-1")
+    assert len(messages) == 1
+    assert messages[0].role is ConsoleMessageRole.SYSTEM
+    assert messages[0].persisted_message_id is None
+    assert messages[0].content.startswith("Not sent:")
     assert (
         db.get_connection().execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
     )

@@ -536,7 +536,11 @@ exclude = [
 # moment it lands, and only the author of the migration knows it exists;
 # `*.sql` is the only rule that cannot go stale. README.md stays out: the
 # wheel forbids development Markdown.
-"tldw_chatbook.DB" = ["migrations/*.sql"]
+"tldw_chatbook.DB" = [
+    "migrations/chachanotes_v55_to_v56_console_semantic_trace.sql",
+    "migrations/chachanotes_v56_to_v57_semantic_mutation_guard.sql",
+    "migrations/*.sql",
+]
 # Preserve the licenses for vendored packages. Named ON PURPOSE (audited in
 # task-19860): a licence notice is a fixed legal obligation per vendored
 # package, not a growing asset directory. The obligation is what makes the

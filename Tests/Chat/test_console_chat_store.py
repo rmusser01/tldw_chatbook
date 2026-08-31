@@ -1,7 +1,9 @@
 import asyncio
+from copy import deepcopy
 import json
 from dataclasses import FrozenInstanceError, replace
 from datetime import datetime
+from threading import Event, Thread, get_ident
 from types import SimpleNamespace
 
 import pytest
@@ -12,8 +14,14 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleWorkspaceContext,
+    GenerationVariantMeta,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatSession,
+    ConsoleChatStore,
+    ConsoleGenerationProjectionQuarantined,
+)
+from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
 from tldw_chatbook.Chat.console_conversation_hydration import (
     console_messages_from_conversation_tree,
 )
@@ -55,6 +63,12 @@ from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 from tldw_chatbook.tldw_api import SyncV2Envelope
 from tldw_chatbook.TTS.profile_types import CharacterRef
+from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
+from tldw_chatbook.Video_Generation.video_store import video_content_marker
+from tldw_chatbook.Chat.console_speech import (
+    ConsoleSpeechSnapshotRejected,
+    ConsoleSpeechSnapshotRejectionCode,
+)
 from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID, LocalWorkspaceRegistryService
 
 
@@ -1224,6 +1238,67 @@ def test_store_records_message_feedback():
     assert store.get_message(message.id).feedback == "up"
 
 
+@pytest.mark.parametrize("failure", ["false", "exception"])
+def test_store_feedback_publishes_only_after_durable_success(failure: str) -> None:
+    class FeedbackPersistence(FakePersistence):
+        def update_message_content(self, **kwargs):
+            if kwargs.get("update_feedback"):
+                if failure == "exception":
+                    raise RuntimeError("feedback write failed")
+                return False
+            return super().update_message_content(**kwargs)
+
+    persistence = FeedbackPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+        persist=True,
+    )
+    before = deepcopy(store._message_or_raise(message.id))
+
+    if failure == "exception":
+        with pytest.raises(RuntimeError, match="feedback write failed"):
+            store.set_message_feedback(message.id, "up")
+    else:
+        returned = store.set_message_feedback(message.id, "up")
+        assert returned == before
+
+    assert store._message_or_raise(message.id) == before
+    assert message.feedback is None
+    assert all(not call["update_feedback"] for call in persistence.updated_messages)
+
+
+def test_store_feedback_success_is_presentation_only_in_semantic_ledger(
+    tmp_path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "feedback.sqlite", "feedback")
+    try:
+        service = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=service)
+        session = store.create_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+            persist=True,
+        )
+        persisted_id = message.persisted_message_id
+        assert persisted_id is not None
+        before_stats = _message_semantic_stats(db, persisted_id)
+
+        updated = store.set_message_feedback(message.id, "up")
+
+        assert updated.feedback == "up"
+        assert store.get_message(message.id).feedback == "up"
+        assert db.get_message_by_id(persisted_id)["feedback"] == "up"
+        assert _message_semantic_stats(db, persisted_id) == before_stats
+    finally:
+        db.close_connection()
+
+
 def test_store_deletes_message_from_transcript():
     store = ConsoleChatStore()
     session = store.ensure_session()
@@ -1321,6 +1396,63 @@ def test_store_updates_message_content():
 
     assert updated.content == "edited answer"
     assert store.get_message(message.id).content == "edited answer"
+
+
+def test_successful_edit_publishes_one_coherent_node_to_every_transcript_view():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="answer"
+    )
+    marker = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.TOOL,
+        content="tool result",
+    )
+
+    updated = store.update_message_content(message.id, "edited answer")
+
+    node = store._nodes_by_session[session.id][message.id]
+    transcript = store._messages_by_session[session.id]
+    assert updated.content == "edited answer"
+    assert store.get_message(message.id).content == "edited answer"
+    assert [item.content for item in store.messages_for_session(session.id)] == [
+        "edited answer",
+        "tool result",
+    ]
+    assert [item.id for item in transcript] == [message.id, marker.id]
+    assert transcript[0] is node
+    assert store.active_path_message_ids(session.id) == [message.id]
+
+
+def test_store_restores_exact_message_state_when_durable_edit_is_rejected():
+    class RejectingPersistence(FakePersistence):
+        def update_message_content(self, **kwargs):
+            self.updated_messages.append(kwargs)
+            return False
+
+    persistence = RejectingPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="durable original",
+        persist=True,
+    )
+    before = store.get_message(message.id)
+    before_payload_revision = store.payload_revision(session.id)
+    before_context_epoch = store.conversation_context_epoch(session.id)
+    before_speech_revision = store._message_speech_revisions.get(message.id)
+
+    returned = store.update_message_content(message.id, "rejected edit")
+
+    assert returned == before
+    assert store.get_message(message.id) == before
+    assert store.payload_revision(session.id) == before_payload_revision
+    assert store.conversation_context_epoch(session.id) == before_context_epoch
+    assert store._message_speech_revisions.get(message.id) == before_speech_revision
+    assert persistence.updated_messages[-1]["content"] == "rejected edit"
 
 
 def test_store_updates_current_variant_content():
@@ -1939,6 +2071,7 @@ class FakePersistence:
         self.speech_update_result = True
         self.restored_speech_preferences = None
         self.last_create_kwargs = None
+        self._message_versions = {}
 
     def create_conversation(self, **kwargs):
         self.created_conversations.append(kwargs)
@@ -1955,6 +2088,8 @@ class FakePersistence:
         active_leaf_message_id,
         context_summary=None,
         context_summary_boundary_message_id=None,
+        project_context_json=None,
+        context_policy_overrides=None,
         contributions=(),
     ):
         if contributions:
@@ -2043,7 +2178,9 @@ class FakePersistence:
             "metadata_json": metadata_json,
         }
         self.created_messages.append(kwargs)
-        return f"msg-{len(self.created_messages)}"
+        message_id = f"msg-{len(self.created_messages)}"
+        self._message_versions[message_id] = 1
+        return message_id
 
     def update_message_content(
         self,
@@ -2057,7 +2194,11 @@ class FakePersistence:
         update_parent=False,
         update_feedback=False,
         metadata_json=None,
+        expected_version=None,
     ):
+        current_version = self._message_versions.get(message_id, 1)
+        if expected_version is not None and expected_version != current_version:
+            return False
         self.updated_messages.append(
             {
                 "message_id": message_id,
@@ -2069,9 +2210,41 @@ class FakePersistence:
                 "update_parent": update_parent,
                 "update_feedback": update_feedback,
                 "metadata_json": metadata_json,
+                "expected_version": expected_version,
             }
         )
+        self._message_versions[message_id] = current_version + 1
         return True
+
+    def replace_assistant_generation_projection(
+        self,
+        *,
+        message_id,
+        content,
+        thinking_blocks_json,
+        provider_continuation_json,
+        assistant_generation_state,
+        usage_json,
+        expected_version=None,
+    ):
+        current_version = self._message_versions.get(message_id, 1)
+        if expected_version is not None and expected_version != current_version:
+            raise RuntimeError("fake generation version mismatch")
+        self.updated_messages.append(
+            {
+                "message_id": message_id,
+                "content": content,
+                "image_data": None,
+                "image_mime_type": None,
+                "thinking_blocks_json": thinking_blocks_json,
+                "provider_continuation_json": provider_continuation_json,
+                "assistant_generation_state": assistant_generation_state,
+                "usage_json": usage_json,
+            }
+        )
+        committed_version = current_version + 1
+        self._message_versions[message_id] = committed_version
+        return committed_version
 
 
 class FakeChatSyncProducer:
@@ -3418,6 +3591,38 @@ def test_mark_message_send_blocked_rejects_non_user_rows():
         store.mark_message_send_blocked(system.id)
 
 
+@pytest.mark.parametrize("writer_outcome", ("false", "raise"))
+def test_mark_message_send_blocked_rejects_persisted_user_without_mutation(
+    writer_outcome: str,
+) -> None:
+    class OutcomePersistence(FakePersistence):
+        def update_message_content(self, **kwargs):
+            if writer_outcome == "raise":
+                raise RuntimeError("injected update failure")
+            return False
+
+    persistence = OutcomePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.ensure_session()
+    user = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="already durable",
+        persist=True,
+    )
+    before_message = store.get_message(user.id)
+    before_payload = store.payload_revision(session.id)
+    before_speech = store._message_speech_revisions[user.id]
+
+    with pytest.raises(ValueError, match="never-persisted"):
+        store.mark_message_send_blocked(user.id)
+
+    assert store.get_message(user.id) == before_message
+    assert store.payload_revision(session.id) == before_payload
+    assert store._message_speech_revisions[user.id] == before_speech
+    assert persistence.updated_messages == []
+
+
 def test_persist_message_if_needed_flushes_a_deferred_message():
     """TASK-485: a message appended with persist=False stays out of the durable
     store until persist_message_if_needed flushes it (used on send-accept so a
@@ -3478,6 +3683,7 @@ def test_store_enqueues_selected_variant_with_restore_metadata():
         content="first",
         persist=True,
     )
+    store._message_or_raise(message.id).assistant_generation_state = "complete"
     sync_producer.enqueued.clear()
 
     updated = store.add_variant(message.id, "second")
@@ -3648,9 +3854,8 @@ def test_invalid_runtime_source_never_reaches_real_chat_persistence(
                 persist=True,
             )
 
-        message = store.messages_for_session(session.id)[-1]
         assert session.persisted_conversation_id is None
-        assert message.persisted_message_id is None
+        assert store.messages_for_session(session.id) == []
         assert create_calls == []
         assert db.get_all_conversation_ids() == []
         assert db.count_character_cards() == character_count
@@ -3924,6 +4129,7 @@ class RecordingPersistence:
         self.created = []
         self.updated = []
         self._counter = 0
+        self._versions = {}
 
     def create_conversation(self, **kwargs):
         return "conv-1"
@@ -3931,11 +4137,1699 @@ class RecordingPersistence:
     def create_message(self, **kwargs):
         self.created.append(kwargs)
         self._counter += 1
-        return f"msg-{self._counter}"
+        message_id = f"msg-{self._counter}"
+        self._versions[message_id] = 1
+        return message_id
 
     def update_message_content(self, **kwargs):
+        message_id = kwargs["message_id"]
+        version = self._versions.get(message_id, 1)
+        expected_version = kwargs.get("expected_version")
+        if expected_version is not None and expected_version != version:
+            return False
         self.updated.append(kwargs)
+        self._versions[message_id] = version + 1
         return True
+
+    def replace_assistant_generation_projection(self, **kwargs):
+        message_id = kwargs["message_id"]
+        version = self._versions.get(message_id, 1)
+        expected_version = kwargs.get("expected_version")
+        if expected_version is not None and expected_version != version:
+            raise RuntimeError("fake generation version mismatch")
+        if not self.update_message_content(
+            message_id=message_id,
+            content=kwargs["content"],
+            image_data=None,
+            image_mime_type=None,
+            usage_json=kwargs.get("usage_json"),
+            expected_version=expected_version,
+        ):
+            raise RuntimeError("fake generation update failed")
+        return self._versions[message_id]
+
+
+class ExplodingMessagePersistence(RecordingPersistence):
+    def create_message(self, **kwargs):
+        raise RuntimeError("durable create failed")
+
+
+class ExplodingAttachmentPersistence(RecordingPersistence):
+    def append_message_attachment(self, *args, **kwargs):
+        raise RuntimeError("durable attachment append failed")
+
+    def keep_message_attachment(self, *args, **kwargs):
+        raise RuntimeError("durable attachment keep failed")
+
+
+class ExplodingGenerationPersistence(RecordingPersistence):
+    def replace_assistant_generation_projection(self, **kwargs):
+        raise RuntimeError("durable generation failed")
+
+
+class FaultInjectingSemanticPersistence(RecordingPersistence):
+    def __init__(self):
+        super().__init__()
+        self.fail = False
+        self.version = 1
+
+    def replace_assistant_generation_projection(self, **kwargs):
+        if self.fail:
+            raise RuntimeError("durable semantic mutation failed")
+        self.version += 1
+        return self.version
+
+    def delete_message_subtree(self, **kwargs):
+        if self.fail:
+            raise RuntimeError("durable semantic mutation failed")
+        return []
+
+
+def _generation_meta(prompt="image", seed=1):
+    return GenerationVariantMeta(
+        prompt=prompt,
+        negative_prompt=None,
+        backend="test",
+        model="test",
+        seed=seed,
+        style=None,
+        params={},
+    )
+
+
+def _store_route_state(store, session_id):
+    session = store._sessions[session_id]
+    return {
+        "node_ids": tuple(store._nodes_by_session[session_id]),
+        "children": {
+            parent: tuple(children)
+            for parent, children in store._children_by_parent[session_id].items()
+        },
+        "path": tuple(message.id for message in store._messages_by_session[session_id]),
+        "leaf": store._active_leaf_by_session[session_id],
+        "updated_at": session.updated_at,
+        "payload": store.payload_revision(session_id),
+        "context": store.conversation_context_epoch(session_id),
+        "pending": frozenset(store._pending_persistence_message_ids),
+    }
+
+
+@pytest.mark.parametrize("route", ["append", "sibling", "generation"])
+def test_failed_durable_create_does_not_publish_ghost_store_state(route):
+    persistence = ExplodingMessagePersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Atomic create")
+    anchor = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="anchor",
+    )
+    before = _store_route_state(store, session.id)
+
+    with pytest.raises(RuntimeError, match="durable create failed"):
+        if route == "append":
+            store.append_message(
+                session.id,
+                role=ConsoleMessageRole.USER,
+                content="ghost",
+                persist=True,
+            )
+        elif route == "sibling":
+            store.create_sibling(
+                anchor.id,
+                role=ConsoleMessageRole.USER,
+                content="ghost",
+                persist=True,
+            )
+        else:
+            store.append_generation_message(
+                session.id,
+                content="[image] ghost",
+                variants=(
+                    (
+                        b"png",
+                        "image/png",
+                        _generation_meta("ghost"),
+                    ),
+                ),
+                persist=True,
+            )
+
+    assert _store_route_state(store, session.id) == before
+
+
+@pytest.mark.parametrize("route", ["append", "keep"])
+def test_failed_generation_attachment_write_does_not_mutate_memory(route):
+    persistence = ExplodingAttachmentPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Atomic attachments")
+    message = store.append_generation_message(
+        session.id,
+        content="[image] original",
+        variants=(
+            (b"zero", "image/png", _generation_meta("zero", 1)),
+            (b"one", "image/png", _generation_meta("one", 2)),
+        ),
+        persist=True,
+    )
+    before_message = store.get_message(message.id)
+    before_store = _store_route_state(store, session.id)
+
+    with pytest.raises(RuntimeError, match=f"durable attachment {route} failed"):
+        if route == "append":
+            store.append_generation_variant(
+                session.id,
+                message.id,
+                data=b"two",
+                mime_type="image/png",
+                meta=_generation_meta("two", 3),
+            )
+        else:
+            store.keep_generation_variant(session.id, message.id, position=1)
+
+    assert store.get_message(message.id) == before_message
+    assert _store_route_state(store, session.id) == before_store
+
+
+def test_failed_variant_finalization_restores_exact_streaming_state():
+    persistence = ExplodingGenerationPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Atomic regeneration")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="original",
+        persist=True,
+    )
+    token = store.begin_generation_attempt(message.id)
+    store.begin_variant_stream(message.id, generation_token=token)
+    store.append_stream_chunk(message.id, "replacement")
+    before_message = deepcopy(store._message_or_raise(message.id))
+    before_store = _store_route_state(store, session.id)
+    before_chunks = deepcopy(store._stream_chunks_by_message)
+    before_counts = dict(store._stream_materialized_counts)
+    before_bases = deepcopy(store._variant_stream_bases)
+    before_speech = dict(store._message_speech_revisions)
+    before_identity = session.identity_revision
+    before_tokens = dict(store._generation_attempt_tokens)
+
+    with pytest.raises(RuntimeError, match="durable generation failed"):
+        store.finalize_variant_stream(message.id)
+
+    assert store._message_or_raise(message.id) == before_message
+    assert _store_route_state(store, session.id) == before_store
+    assert store._stream_chunks_by_message == before_chunks
+    assert store._stream_materialized_counts == before_counts
+    assert store._variant_stream_bases == before_bases
+    assert store._message_speech_revisions == before_speech
+    assert session.identity_revision == before_identity
+    assert store._generation_attempt_tokens == before_tokens
+
+
+def test_failed_variant_restore_preserves_concurrent_identity_increment(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed owner removes none of another message's identity publication."""
+
+    db = CharactersRAGDB(tmp_path / "variant-identity-race.sqlite", "identity-race")
+    try:
+        persistence = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.create_session(title="Identity race")
+        failing = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="original",
+            persist=True,
+        )
+        greeting = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="Hello User.",
+            persist=True,
+            metadata=MessageMetadata(
+                template_kind="character_greeting",
+                template_source="Hello {{user}}.",
+            ),
+        )
+        token = store.begin_generation_attempt(failing.id)
+        store.begin_variant_stream(failing.id, generation_token=token)
+        store.append_stream_chunk(failing.id, "replacement")
+        baseline_identity = session.identity_revision
+        entered = Event()
+        release = Event()
+        original_writer = persistence.replace_assistant_generation_projection
+
+        def controlled_writer(**kwargs):
+            if kwargs["message_id"] == failing.persisted_message_id:
+                entered.set()
+                assert release.wait(5)
+                return 0
+            return original_writer(**kwargs)
+
+        monkeypatch.setattr(
+            persistence, "replace_assistant_generation_projection", controlled_writer
+        )
+        failure: list[BaseException] = []
+
+        def fail_variant() -> None:
+            try:
+                store.finalize_variant_stream(failing.id)
+            except BaseException as exc:
+                failure.append(exc)
+
+        thread = Thread(target=fail_variant)
+        thread.start()
+        assert entered.wait(5)
+        updated = store.update_message_content(greeting.id, "Manual greeting.")
+        assert updated.metadata == MessageMetadata()
+        assert session.identity_revision == baseline_identity + 1
+        release.set()
+        thread.join(5)
+
+        assert not thread.is_alive()
+        assert failure and "did not commit" in str(failure[0])
+        assert session.identity_revision == baseline_identity + 1
+        assert store.get_message(greeting.id).content == "Manual greeting."
+        assert db.get_message_by_id(greeting.persisted_message_id)["content"] == (
+            "Manual greeting."
+        )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("route", ["finalize", "add", "select"])
+@pytest.mark.parametrize("sidecar", ["metadata", "sync"])
+def test_committed_variant_sidecar_failure_reconciles_live_owner_without_second_revision(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, route: str, sidecar: str
+) -> None:
+    """A post-commit sidecar failure cannot resurrect the pre-commit variant."""
+
+    db = CharactersRAGDB(tmp_path / f"variant-{route}-{sidecar}.sqlite", "variant")
+    try:
+        persistence = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.create_session(title="Committed variant")
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="original",
+            metadata=MessageMetadata(engine="original"),
+            persist=True,
+        )
+        initial_live = store._message_or_raise(assistant.id)
+        initial_live.status = "streaming"
+        initial_live.assistant_generation_state = "streaming"
+        store.mark_message_complete(assistant.id)
+        if route == "finalize":
+            token = store.begin_generation_attempt(assistant.id)
+            store.begin_variant_stream(assistant.id, generation_token=token)
+            store.append_stream_chunk(assistant.id, "replacement")
+            store._message_or_raise(assistant.id).metadata = MessageMetadata(
+                engine="replacement"
+            )
+        elif route == "select":
+            store.add_variant(assistant.id, "replacement")
+
+        def semantic_stats() -> tuple[int, int]:
+            revision_count = (
+                db.get_connection()
+                .execute(
+                    "SELECT COUNT(*) FROM console_trace_semantic_revisions "
+                    "WHERE source_message_id = ?",
+                    (assistant.persisted_message_id,),
+                )
+                .fetchone()[0]
+            )
+            epoch = (
+                db.get_connection()
+                .execute(
+                    "SELECT epoch FROM console_trace_graph_epoch WHERE singleton_id = 1"
+                )
+                .fetchone()[0]
+            )
+            return int(revision_count), int(epoch)
+
+        before_revisions, before_epoch = semantic_stats()
+        if sidecar == "metadata":
+            original_sidecar = persistence.update_message_metadata
+
+            def fail_metadata(**_kwargs):
+                raise RuntimeError("variant metadata sidecar failed")
+
+            monkeypatch.setattr(persistence, "update_message_metadata", fail_metadata)
+        else:
+            original_sidecar = store._enqueue_sync_v2_message_if_ready
+
+            def fail_sync(*_args, **_kwargs):
+                raise RuntimeError("variant sync sidecar failed")
+
+            monkeypatch.setattr(store, "_enqueue_sync_v2_message_if_ready", fail_sync)
+
+        with pytest.raises(RuntimeError, match=f"variant {sidecar} sidecar failed"):
+            if route == "finalize":
+                store.finalize_variant_stream(assistant.id)
+            elif route == "add":
+                store.add_variant(assistant.id, "replacement")
+            else:
+                store.select_variant(assistant.id, 0)
+
+        row = db.get_message_by_id(assistant.persisted_message_id)
+        live = store.get_message(assistant.id)
+        expected_content = "original" if route == "select" else "replacement"
+        assert row["content"] == live.content == expected_content
+        assert row["assistant_generation_state"] == "complete"
+        assert live.status == live.assistant_generation_state == "complete"
+        assert live.provider_continuation_message_version == row["version"]
+        assert live.variants is not None
+        assert live.variants.current.content == expected_content
+        assert [variant.content for variant in live.variants.variants] == [
+            "original",
+            "replacement",
+        ]
+        assert (live.metadata.to_json() if live.metadata is not None else None) == row[
+            "metadata_json"
+        ]
+        assert semantic_stats() == (before_revisions + 1, before_epoch + 1)
+
+        if sidecar == "metadata":
+            monkeypatch.setattr(
+                persistence, "update_message_metadata", original_sidecar
+            )
+        else:
+            monkeypatch.setattr(
+                store, "_enqueue_sync_v2_message_if_ready", original_sidecar
+            )
+        assert store.persist_selected_generation(assistant.id)
+        assert semantic_stats() == (before_revisions + 1, before_epoch + 1)
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("route", ["finalize", "add", "select"])
+@pytest.mark.parametrize("sidecar", ["metadata", "sync"])
+def test_legacy_generation_writer_sidecar_failure_reconciles_committed_owner(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, route: str, sidecar: str
+) -> None:
+    """The content-only adapter fallback records its commit before sidecars."""
+
+    db = CharactersRAGDB(tmp_path / f"legacy-{route}-{sidecar}.sqlite", "legacy")
+    try:
+        persistence = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.create_session(title="Legacy variant")
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="original",
+            metadata=MessageMetadata(engine="original"),
+            persist=True,
+        )
+        live = store._message_or_raise(assistant.id)
+        live.status = "streaming"
+        live.assistant_generation_state = "streaming"
+        store.mark_message_complete(assistant.id)
+        if route == "finalize":
+            token = store.begin_generation_attempt(assistant.id)
+            store.begin_variant_stream(assistant.id, generation_token=token)
+            store.append_stream_chunk(assistant.id, "replacement")
+            store._message_or_raise(assistant.id).metadata = MessageMetadata(
+                engine="replacement"
+            )
+        elif route == "select":
+            store.add_variant(assistant.id, "replacement")
+        monkeypatch.setattr(
+            persistence, "replace_assistant_generation_projection", None
+        )
+
+        def semantic_stats() -> tuple[int, int]:
+            connection = db.get_connection()
+            revisions = connection.execute(
+                "SELECT COUNT(*) FROM console_trace_semantic_revisions "
+                "WHERE source_message_id = ?",
+                (assistant.persisted_message_id,),
+            ).fetchone()[0]
+            epoch = connection.execute(
+                "SELECT epoch FROM console_trace_graph_epoch WHERE singleton_id = 1"
+            ).fetchone()[0]
+            return int(revisions), int(epoch)
+
+        before_revisions, before_epoch = semantic_stats()
+        if sidecar == "metadata":
+            original_sidecar = persistence.update_message_metadata
+
+            def fail_metadata(**_kwargs):
+                raise RuntimeError("legacy metadata sidecar failed")
+
+            monkeypatch.setattr(persistence, "update_message_metadata", fail_metadata)
+        else:
+            original_sidecar = store._enqueue_sync_v2_message_if_ready
+
+            def fail_sync(*_args, **_kwargs):
+                raise RuntimeError("legacy sync sidecar failed")
+
+            monkeypatch.setattr(store, "_enqueue_sync_v2_message_if_ready", fail_sync)
+
+        with pytest.raises(RuntimeError, match=f"legacy {sidecar} sidecar failed"):
+            if route == "finalize":
+                store.finalize_variant_stream(assistant.id)
+            elif route == "add":
+                store.add_variant(assistant.id, "replacement")
+            else:
+                store.select_variant(assistant.id, 0)
+
+        row = db.get_message_by_id(assistant.persisted_message_id)
+        reconciled = store.get_message(assistant.id)
+        expected_content = "original" if route == "select" else "replacement"
+        assert row["content"] == reconciled.content == expected_content
+        assert reconciled.provider_continuation_message_version == row["version"]
+        assert (
+            reconciled.metadata.to_json() if reconciled.metadata is not None else None
+        ) == row["metadata_json"]
+        assert semantic_stats() == (before_revisions + 1, before_epoch + 1)
+
+        if sidecar == "metadata":
+            monkeypatch.setattr(
+                persistence, "update_message_metadata", original_sidecar
+            )
+        else:
+            monkeypatch.setattr(
+                store, "_enqueue_sync_v2_message_if_ready", original_sidecar
+            )
+        assert store.persist_selected_generation(assistant.id)
+        assert semantic_stats() == (before_revisions + 1, before_epoch + 1)
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("route", ["finalize", "add", "select"])
+@pytest.mark.parametrize("durable_state", ["failed", "stopped"])
+def test_legacy_generation_writer_rejects_unsupported_state_transition_precommit(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    route: str,
+    durable_state: str,
+) -> None:
+    """A body-only adapter cannot publish a mismatched terminal state."""
+
+    db = CharactersRAGDB(
+        tmp_path / f"legacy-{durable_state}-{route}.sqlite",
+        "legacy-state",
+    )
+    try:
+        persistence = ChatPersistenceService(db)
+        store = ConsoleChatStore(persistence=persistence)
+        session = store.create_session(title="Legacy state fence")
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="original",
+            persist=True,
+        )
+        if route == "select":
+            store.add_variant(assistant.id, "replacement")
+        live = store._message_or_raise(assistant.id)
+        live.status = "streaming"
+        live.assistant_generation_state = "streaming"
+        if durable_state == "failed":
+            store.mark_message_failed(assistant.id)
+        else:
+            store.mark_message_stopped(assistant.id)
+        if route == "finalize":
+            token = store.begin_generation_attempt(assistant.id)
+            store.begin_variant_stream(assistant.id, generation_token=token)
+            store.append_stream_chunk(assistant.id, "replacement")
+
+        monkeypatch.setattr(
+            persistence, "replace_assistant_generation_projection", None
+        )
+        before_message = deepcopy(store._message_or_raise(assistant.id))
+        before_row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        connection = db.get_connection()
+        before_revisions = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM console_trace_semantic_revisions "
+                "WHERE source_message_id = ?",
+                (assistant.persisted_message_id,),
+            ).fetchone()[0]
+        )
+        before_epoch = int(
+            connection.execute(
+                "SELECT epoch FROM console_trace_graph_epoch WHERE singleton_id = 1"
+            ).fetchone()[0]
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match="Generation projection persistence is unavailable",
+        ):
+            if route == "finalize":
+                store.finalize_variant_stream(assistant.id)
+            elif route == "add":
+                store.add_variant(assistant.id, "replacement")
+            else:
+                store.select_variant(assistant.id, 0)
+
+        assert store._message_or_raise(assistant.id) == before_message
+        assert dict(db.get_message_by_id(assistant.persisted_message_id)) == before_row
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM console_trace_semantic_revisions "
+                "WHERE source_message_id = ?",
+                (assistant.persisted_message_id,),
+            ).fetchone()[0]
+            == before_revisions
+        )
+        assert (
+            connection.execute(
+                "SELECT epoch FROM console_trace_graph_epoch WHERE singleton_id = 1"
+            ).fetchone()[0]
+            == before_epoch
+        )
+    finally:
+        db.close_connection()
+
+
+class _HiddenLegacyGenerationAdapter:
+    """Expose only the explicit legacy projection contract, never ``.db``."""
+
+    def __init__(self, service: ChatPersistenceService) -> None:
+        self._service = service
+        self.update_calls: list[dict[str, object]] = []
+        self.reader_result: object = None
+        self.override_reader = False
+        self.race_before_update = False
+        self.reader_calls = 0
+        self.postwrite_reader_outcome: str | None = None
+        self._first_reader_row: dict[str, object] | None = None
+        self.fail_reader_after_race = False
+        self.persistently_stale_after_write = False
+        self.race_projection: dict[str, object] = {}
+
+    def __getattr__(self, name: str):
+        if name in {"db", "replace_assistant_generation_projection"}:
+            raise AttributeError(name)
+        return getattr(self._service, name)
+
+    def read_canonical_generation_projection(self, message_id: str):
+        self.reader_calls += 1
+        if self.fail_reader_after_race and not self.race_before_update:
+            raise RuntimeError("canonical winner reader unavailable")
+        if self.override_reader:
+            return self.reader_result
+        row = self._service.read_canonical_generation_projection(message_id)
+        if self.reader_calls == 1 and row is not None:
+            self._first_reader_row = dict(row)
+        if (
+            self.persistently_stale_after_write
+            and self.reader_calls >= 2
+            and self._first_reader_row is not None
+        ):
+            return deepcopy(self._first_reader_row)
+        if self.reader_calls == 2:
+            if self.postwrite_reader_outcome == "raise":
+                raise RuntimeError("post-CAS canonical read failed")
+            if self.postwrite_reader_outcome == "malformed":
+                return {"assistant_generation_state": "complete"}
+            if self.postwrite_reader_outcome == "stale":
+                return deepcopy(self._first_reader_row)
+        return row
+
+    def read_canonical_generation_projection_bundle(self, message_id: str):
+        row = self.read_canonical_generation_projection(message_id)
+        if row is None:
+            return None
+        return {
+            "message": dict(row),
+            "attachments": self._service.get_attachments_for_messages([message_id]).get(
+                message_id, []
+            ),
+            "generation_metadata": self._service.get_generation_metadata_for_messages(
+                [message_id]
+            ).get(message_id, []),
+        }
+
+    def update_message_content(self, **kwargs):
+        self.update_calls.append(dict(kwargs))
+        if self.race_before_update:
+            self.race_before_update = False
+            row = self._service.read_canonical_generation_projection(
+                str(kwargs["message_id"])
+            )
+            self._service.replace_assistant_generation_projection(
+                message_id=str(kwargs["message_id"]),
+                content=str(self.race_projection.get("content", "concurrent winner")),
+                thinking_blocks_json=self.race_projection.get("thinking_blocks_json"),
+                provider_continuation_json=self.race_projection.get(
+                    "provider_continuation_json"
+                ),
+                assistant_generation_state=str(
+                    self.race_projection.get("assistant_generation_state", "complete")
+                ),
+                usage_json=self.race_projection.get("usage_json"),
+                expected_version=int(row["version"]),
+            )
+        return self._service.update_message_content(**kwargs)
+
+
+def _legacy_projection_fixture(tmp_path, name: str):
+    db = CharactersRAGDB(tmp_path / f"{name}.sqlite", name)
+    service = ChatPersistenceService(db)
+    store = ConsoleChatStore(persistence=service)
+    session = store.create_session(title=name)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="original",
+        persist=True,
+    )
+    live = store._message_or_raise(assistant.id)
+    live.status = "streaming"
+    live.assistant_generation_state = "streaming"
+    store.mark_message_complete(assistant.id)
+    adapter = _HiddenLegacyGenerationAdapter(service)
+    store.persistence = adapter
+    return db, service, store, assistant, adapter
+
+
+def _message_semantic_stats(db: CharactersRAGDB, message_id: str) -> tuple[int, int]:
+    connection = db.get_connection()
+    revisions = connection.execute(
+        "SELECT COUNT(*) FROM console_trace_semantic_revisions "
+        "WHERE source_message_id = ?",
+        (message_id,),
+    ).fetchone()[0]
+    epoch = connection.execute(
+        "SELECT epoch FROM console_trace_graph_epoch WHERE singleton_id = 1"
+    ).fetchone()[0]
+    return int(revisions), int(epoch)
+
+
+def _quarantine_from_unreadable_cas_winner(
+    store: ConsoleChatStore,
+    assistant: ConsoleChatMessage,
+    adapter: _HiddenLegacyGenerationAdapter,
+) -> None:
+    adapter.race_before_update = True
+    adapter.fail_reader_after_race = True
+    with pytest.raises(RuntimeError, match="unavailable"):
+        store.add_variant(assistant.id, "losing replacement")
+    assert store._message_or_raise(assistant.id).generation_projection_quarantined
+
+
+def test_quarantined_feedback_cannot_overwrite_canonical_winner(tmp_path) -> None:
+    db, _service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, "quarantine-feedback"
+    )
+    try:
+        _quarantine_from_unreadable_cas_winner(store, assistant, adapter)
+        before_row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+        before_feedback = store._message_or_raise(assistant.id).feedback
+
+        with pytest.raises(ConsoleGenerationProjectionQuarantined, match="reload"):
+            store.set_message_feedback(assistant.id, "up")
+
+        assert store._message_or_raise(assistant.id).feedback == before_feedback
+        assert dict(db.get_message_by_id(assistant.persisted_message_id)) == before_row
+        assert (
+            _message_semantic_stats(db, assistant.persisted_message_id) == before_stats
+        )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("durable_state", ["failed", "stopped"])
+def test_hidden_db_legacy_adapter_rejects_stale_live_generation_state(
+    tmp_path, durable_state: str
+) -> None:
+    db, service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, f"hidden-stale-{durable_state}"
+    )
+    try:
+        row = service.read_canonical_generation_projection(
+            assistant.persisted_message_id
+        )
+        service.replace_assistant_generation_projection(
+            message_id=assistant.persisted_message_id,
+            content="external terminal",
+            thinking_blocks_json=None,
+            provider_continuation_json=None,
+            assistant_generation_state=durable_state,
+            usage_json=None,
+            expected_version=int(row["version"]),
+        )
+        before_row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+        before_live = deepcopy(store._message_or_raise(assistant.id))
+
+        with pytest.raises(
+            RuntimeError, match="Generation projection persistence is unavailable"
+        ):
+            store.add_variant(assistant.id, "replacement")
+
+        assert adapter.update_calls == []
+        assert dict(db.get_message_by_id(assistant.persisted_message_id)) == before_row
+        assert (
+            _message_semantic_stats(db, assistant.persisted_message_id) == before_stats
+        )
+        assert store._message_or_raise(assistant.id) == before_live
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize(
+    "reader_result",
+    [
+        {"assistant_generation_state": "complete"},
+        {
+            "id": "wrong-message",
+            "version": 2,
+            "deleted": 0,
+            "assistant_generation_state": "complete",
+            "thinking_blocks_json": None,
+            "provider_continuation_json": None,
+            "content": "original",
+        },
+        {
+            "id": "placeholder",
+            "version": True,
+            "deleted": 0,
+            "assistant_generation_state": "complete",
+            "thinking_blocks_json": None,
+            "provider_continuation_json": None,
+            "content": "original",
+        },
+        {
+            "id": "placeholder",
+            "version": 2,
+            "deleted": 1,
+            "assistant_generation_state": "complete",
+            "thinking_blocks_json": None,
+            "provider_continuation_json": None,
+            "content": "original",
+        },
+        {
+            "id": "placeholder",
+            "version": 2,
+            "deleted": 0,
+            "assistant_generation_state": "complete",
+            "content": "original",
+        },
+    ],
+)
+def test_legacy_generation_reader_rejects_malformed_canonical_mapping(
+    tmp_path, reader_result: dict[str, object]
+) -> None:
+    db, _service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, "malformed-reader"
+    )
+    try:
+        adapter.override_reader = True
+        adapter.reader_result = {
+            key: (assistant.persisted_message_id if value == "placeholder" else value)
+            for key, value in reader_result.items()
+        }
+        before_row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+
+        with pytest.raises(
+            RuntimeError, match="Generation projection persistence is unavailable"
+        ):
+            store.add_variant(assistant.id, "replacement")
+
+        assert adapter.update_calls == []
+        assert dict(db.get_message_by_id(assistant.persisted_message_id)) == before_row
+        assert (
+            _message_semantic_stats(db, assistant.persisted_message_id) == before_stats
+        )
+    finally:
+        db.close_connection()
+
+
+def test_persisted_legacy_adapter_without_canonical_reader_fails_closed(
+    tmp_path,
+) -> None:
+    db, _service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, "missing-reader"
+    )
+    try:
+        adapter.read_canonical_generation_projection = None
+        before_row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+
+        with pytest.raises(
+            RuntimeError, match="Generation projection persistence is unavailable"
+        ):
+            store.add_variant(assistant.id, "replacement")
+
+        assert adapter.update_calls == []
+        assert dict(db.get_message_by_id(assistant.persisted_message_id)) == before_row
+        assert (
+            _message_semantic_stats(db, assistant.persisted_message_id) == before_stats
+        )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("route", ["finalize", "add", "select"])
+def test_hidden_db_legacy_adapter_uses_canonical_version_cas(
+    tmp_path, route: str
+) -> None:
+    db, _service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, f"hidden-success-{route}"
+    )
+    try:
+        if route == "finalize":
+            token = store.begin_generation_attempt(assistant.id)
+            store.begin_variant_stream(assistant.id, generation_token=token)
+            store.append_stream_chunk(assistant.id, "replacement")
+        elif route == "select":
+            store.add_variant(assistant.id, "replacement")
+            adapter.update_calls.clear()
+        before = dict(db.get_message_by_id(assistant.persisted_message_id))
+
+        if route == "finalize":
+            store.finalize_variant_stream(assistant.id)
+        elif route == "add":
+            store.add_variant(assistant.id, "replacement")
+        else:
+            store.select_variant(assistant.id, 0)
+
+        row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        live = store._message_or_raise(assistant.id)
+        assert adapter.update_calls[-1]["expected_version"] == before["version"]
+        assert row["version"] == before["version"] + 1
+        assert live.provider_continuation_message_version == row["version"]
+        assert live.assistant_generation_state == row["assistant_generation_state"]
+        assert live.content == row["content"]
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("winner_read_outcome", [None, "stale"])
+def test_hidden_db_legacy_adapter_cas_race_cannot_overwrite_winner(
+    tmp_path, winner_read_outcome: str | None
+) -> None:
+    db, _service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, "hidden-cas-race"
+    )
+    try:
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+        adapter.race_before_update = True
+        adapter.postwrite_reader_outcome = winner_read_outcome
+
+        with pytest.raises(
+            RuntimeError,
+            match=(
+                "Generation projection persistence (?:did not commit|is unavailable)"
+            ),
+        ):
+            store.add_variant(assistant.id, "losing replacement")
+
+        row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        live = store._message_or_raise(assistant.id)
+        assert row["content"] == "concurrent winner"
+        assert live.content == row["content"]
+        assert live.assistant_generation_state == row["assistant_generation_state"]
+        assert live.provider_continuation_message_version == row["version"]
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+        assert adapter.update_calls[-1]["expected_version"] == row["version"] - 1
+    finally:
+        db.close_connection()
+
+
+def test_hidden_db_legacy_cas_miss_with_unavailable_reader_marks_live_stale(
+    tmp_path,
+) -> None:
+    db, _service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, "hidden-cas-reader-unavailable"
+    )
+    try:
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+        adapter.race_before_update = True
+        adapter.fail_reader_after_race = True
+
+        with pytest.raises(
+            RuntimeError, match="Generation projection persistence is unavailable"
+        ):
+            store.add_variant(assistant.id, "losing replacement")
+
+        row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        live = store._message_or_raise(assistant.id)
+        assert row["content"] == "concurrent winner"
+        assert live.generation_projection_quarantined
+        assert live.provider_continuation_message_version is None
+        assert not live.provider_continuation_actions_enabled
+        assert live.provider_continuation_warning is not None
+        assert "reload" in live.provider_continuation_warning.lower()
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+
+        transcript = store.messages_for_session(
+            store.session_id_for_message(assistant.id)
+        )[-1]
+        assert transcript.generation_projection_quarantined
+        assert transcript.content != "original"
+        assert transcript.content != row["content"]
+        assert "reload" in transcript.content.lower()
+
+        from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+        controller = ConsoleChatController(store=store, provider_gateway=object())
+        with pytest.raises(RuntimeError, match="reload"):
+            controller._provider_messages_for_session(
+                store.session_id_for_message(assistant.id)
+            )
+        with pytest.raises(RuntimeError, match="reload"):
+            controller.provider_messages_for_next_send_estimate(
+                store.session_id_for_message(assistant.id)
+            )
+
+        with pytest.raises(RuntimeError, match="unavailable"):
+            store.reload_quarantined_generation(assistant.id)
+        assert store._message_or_raise(assistant.id).generation_projection_quarantined
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+
+        adapter.fail_reader_after_race = False
+        quarantine_version = live.generation_projection_quarantine_version
+        assert quarantine_version is not None
+        assert not asyncio.run(
+            controller.recover_provider_continuation(
+                "reload", assistant.id, quarantine_version - 1
+            )
+        )
+        assert asyncio.run(
+            controller.recover_provider_continuation(
+                "reload", assistant.id, quarantine_version
+            )
+        )
+        reloaded = store.get_message(assistant.id)
+        assert not reloaded.generation_projection_quarantined
+        assert reloaded.content == row["content"]
+        assert reloaded.assistant_generation_state == row["assistant_generation_state"]
+        assert reloaded.provider_continuation_message_version == row["version"]
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("route", ["finalize", "add", "select"])
+def test_hidden_db_legacy_persistently_stale_post_cas_reader_quarantines_owner(
+    tmp_path, route: str
+) -> None:
+    db, _service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, f"legacy-persistent-stale-{route}"
+    )
+    try:
+        if route == "finalize":
+            token = store.begin_generation_attempt(assistant.id)
+            store.begin_variant_stream(assistant.id, generation_token=token)
+            store.append_stream_chunk(assistant.id, "replacement")
+        elif route == "select":
+            store.add_variant(assistant.id, "replacement")
+        adapter.reader_calls = 0
+        adapter._first_reader_row = None
+        adapter.persistently_stale_after_write = True
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+
+        with pytest.raises(RuntimeError, match="unavailable"):
+            if route == "finalize":
+                store.finalize_variant_stream(assistant.id)
+            elif route == "add":
+                store.add_variant(assistant.id, "replacement")
+            else:
+                store.select_variant(assistant.id, 0)
+
+        durable = dict(db.get_message_by_id(assistant.persisted_message_id))
+        live = store._message_or_raise(assistant.id)
+        assert live.generation_projection_quarantined
+        assert live.generation_projection_quarantine_version == durable["version"]
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+
+        with pytest.raises(RuntimeError, match="reload"):
+            store.persist_selected_generation(assistant.id)
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+
+        with pytest.raises(RuntimeError, match="unavailable"):
+            store.reload_quarantined_generation(assistant.id)
+        assert store._message_or_raise(assistant.id).generation_projection_quarantined
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+
+        adapter.persistently_stale_after_write = False
+        reloaded = store.reload_quarantined_generation(assistant.id)
+        assert not reloaded.generation_projection_quarantined
+        assert reloaded.content == durable["content"]
+        assert reloaded.provider_continuation_message_version == durable["version"]
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+    finally:
+        db.close_connection()
+
+
+def test_quarantine_reload_restores_full_canonical_generation_projection(
+    tmp_path,
+) -> None:
+    db, service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, "quarantine-full-projection"
+    )
+    try:
+        # Position zero has no durable display-name column; the canonical
+        # projection therefore restores its exact persisted empty label.
+        first = MessageAttachment(b"first", "image/png", "", 0)
+        second = MessageAttachment(b"second", "image/webp", "second.webp", 1)
+        metadata = MessageMetadata(engine="canonical-engine")
+        before = dict(db.get_message_by_id(assistant.persisted_message_id))
+        assert service.update_message_content(
+            message_id=assistant.persisted_message_id,
+            content="original",
+            image_data=None,
+            image_mime_type=None,
+            attachments=(
+                {
+                    "position": 0,
+                    "data": first.data,
+                    "mime_type": first.mime_type,
+                    "display_name": first.display_name,
+                },
+                {
+                    "position": 1,
+                    "data": second.data,
+                    "mime_type": second.mime_type,
+                    "display_name": second.display_name,
+                },
+            ),
+            metadata_json=metadata.to_json(),
+            expected_version=int(before["version"]),
+        )
+        setup_row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        live = store._message_or_raise(assistant.id)
+        live.image_data = first.data
+        live.image_mime_type = first.mime_type
+        live.attachment_label = first.display_name
+        live.attachments = (first, second)
+        live.metadata = metadata
+        live.provider_continuation_message_version = int(setup_row["version"])
+        live.assistant_generation_state = setup_row["assistant_generation_state"]
+
+        replacement_usage = ProviderUsage(
+            uncached_input=13,
+            output=17,
+            provider="openai",
+            model="gpt-test",
+        )
+        thinking_json = json.dumps(
+            {
+                "version": 1,
+                "blocks": [
+                    {
+                        "block_id": "canonical-thinking",
+                        "round_ordinal": 0,
+                        "provider": "openai",
+                        "model": "gpt-test",
+                        "protocol": "responses",
+                        "source_format": "summary",
+                        "status": "complete",
+                        "text": "canonical reason",
+                        "visibility": "displayable",
+                    }
+                ],
+            },
+            separators=(",", ":"),
+        )
+        adapter.race_projection = {
+            "content": "concurrent full winner",
+            "assistant_generation_state": "complete",
+            "thinking_blocks_json": thinking_json,
+            "usage_json": replacement_usage.to_json(),
+        }
+        adapter.race_before_update = True
+        adapter.fail_reader_after_race = True
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+
+        with pytest.raises(RuntimeError, match="unavailable"):
+            store.add_variant(assistant.id, "losing replacement")
+        assert adapter.update_calls, "expected the legacy body CAS to be attempted"
+        assert store._message_or_raise(assistant.id).generation_projection_quarantined
+
+        # Quarantine may outlive arbitrarily stale process state.  Reload must
+        # rebuild every generation-owned value from durable rows, not trust
+        # any field left on the hidden live owner.
+        stale = store._message_or_raise(assistant.id)
+        stale.attachments = (MessageAttachment(b"stale", "image/gif", "stale.gif", 0),)
+        stale.image_data = b"stale"
+        stale.image_mime_type = "image/gif"
+        stale.attachment_label = "stale.gif"
+        stale.generation_metadata = (
+            GenerationVariantMeta("stale", "", "stale", None, None, None, {}),
+        )
+        stale.metadata = MessageMetadata(engine="stale-engine")
+        stale.video_metadata = VideoGenerationMetadata(
+            name="stale-video", prompt="stale", backend="local"
+        )
+        stale.usage = None
+        stale.thinking = None
+        stale.variants = None
+
+        adapter.fail_reader_after_race = False
+        canonical = service.read_canonical_generation_projection(
+            assistant.persisted_message_id
+        )
+        assert canonical is not None
+        adapter.override_reader = True
+        adapter.reader_result = {**canonical, "conversation_id": "wrong-owner"}
+        with pytest.raises(RuntimeError, match="unavailable"):
+            store.reload_quarantined_generation(assistant.id)
+        assert store._message_or_raise(assistant.id).generation_projection_quarantined
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+
+        adapter.override_reader = False
+        reloaded = store.reload_quarantined_generation(assistant.id)
+        durable = dict(db.get_message_by_id(assistant.persisted_message_id))
+        assert reloaded.content == durable["content"] == "concurrent full winner"
+        assert reloaded.attachments == (first, second)
+        assert reloaded.image_data == first.data
+        assert reloaded.image_mime_type == first.mime_type
+        assert reloaded.attachment_label is None
+        assert reloaded.generation_metadata == ()
+        assert reloaded.metadata == metadata
+        assert reloaded.video_metadata is None
+        assert reloaded.usage == replacement_usage
+        assert reloaded.thinking is not None
+        assert reloaded.provider_continuation is None
+        assert reloaded.assistant_generation_state == "complete"
+        assert reloaded.provider_continuation_message_version == durable["version"]
+        assert reloaded.variants is not None
+        assert reloaded.variants.current.content == durable["content"]
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+    finally:
+        db.close_connection()
+
+
+def test_quarantine_hides_video_and_reload_restores_only_canonical_video(
+    tmp_path,
+) -> None:
+    db, service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, "quarantine-video"
+    )
+    try:
+        video = VideoGenerationMetadata(
+            name="canonical-video", prompt="waves", backend="local"
+        )
+        row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        assert service.update_message_content(
+            message_id=assistant.persisted_message_id,
+            content=video_content_marker(video.name),
+            image_data=None,
+            image_mime_type=None,
+            metadata_json=video.to_json(),
+            expected_version=int(row["version"]),
+        )
+        live = store._message_or_raise(assistant.id)
+        live.content = video_content_marker(video.name)
+        live.video_metadata = video
+        live.metadata = None
+        live.provider_continuation_message_version = int(
+            db.get_message_by_id(assistant.persisted_message_id)["version"]
+        )
+
+        canonical = dict(db.get_message_by_id(assistant.persisted_message_id))
+        store._quarantine_generation_projection(
+            live,
+            minimum_version=int(canonical["version"]),
+            reason="Canonical generation is unavailable; reload required.",
+        )
+
+        quarantined = store.get_message(assistant.id)
+        assert quarantined.video_metadata is None
+        assert (
+            ConsoleMessageActionService()
+            .action_groups(quarantined, video_file_available=True)
+            .media
+            == ()
+        )
+
+        reloaded = store.reload_quarantined_generation(assistant.id)
+        assert reloaded.video_metadata == video
+        assert reloaded.metadata is None
+        assert {
+            action.action_id
+            for action in ConsoleMessageActionService()
+            .action_groups(reloaded, video_file_available=True)
+            .media
+        } == {"video-play", "video-save-copy"}
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize(
+    ("content", "video", "image_data", "image_mime_type"),
+    [
+        (
+            video_content_marker("wrong-name"),
+            VideoGenerationMetadata(name="clip", prompt="p", backend="local"),
+            None,
+            None,
+        ),
+        (
+            "ordinary text",
+            VideoGenerationMetadata(name="clip", prompt="p", backend="local"),
+            None,
+            None,
+        ),
+        (
+            video_content_marker("clip"),
+            VideoGenerationMetadata(name="clip", prompt="p", backend="local"),
+            b"image",
+            "image/png",
+        ),
+        (video_content_marker("clip"), None, None, None),
+        (
+            video_content_marker("clip"),
+            VideoGenerationMetadata(
+                name="clip", prompt="p", backend="local", is_unavailable_tombstone=True
+            ),
+            None,
+            None,
+        ),
+    ],
+)
+def test_quarantine_reload_rejects_inconsistent_canonical_video_tuple(
+    tmp_path,
+    content: str,
+    video: VideoGenerationMetadata | None,
+    image_data: bytes | None,
+    image_mime_type: str | None,
+) -> None:
+    db, service, store, assistant, _adapter = _legacy_projection_fixture(
+        tmp_path, "quarantine-invalid-video"
+    )
+    try:
+        row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        assert service.update_message_content(
+            message_id=assistant.persisted_message_id,
+            content=content,
+            image_data=image_data,
+            image_mime_type=image_mime_type,
+            metadata_json=video.to_json() if video is not None else None,
+            expected_version=int(row["version"]),
+        )
+        durable = dict(db.get_message_by_id(assistant.persisted_message_id))
+        live = store._message_or_raise(assistant.id)
+        store._quarantine_generation_projection(
+            live,
+            minimum_version=int(durable["version"]),
+            reason="Canonical generation is unavailable; reload required.",
+        )
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+
+        with pytest.raises(RuntimeError, match="unavailable"):
+            store.reload_quarantined_generation(assistant.id)
+
+        quarantined = store.get_message(assistant.id)
+        assert quarantined.generation_projection_quarantined
+        assert quarantined.video_metadata is None
+        assert (
+            ConsoleMessageActionService()
+            .action_groups(quarantined, video_file_available=True)
+            .media
+            == ()
+        )
+        assert (
+            _message_semantic_stats(db, assistant.persisted_message_id) == before_stats
+        )
+    finally:
+        db.close_connection()
+
+
+def test_quarantine_rejects_stale_tts_until_canonical_reload(tmp_path) -> None:
+    db, _service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, "quarantine-tts"
+    )
+    try:
+        issued = store.issue_tts_message_speech_snapshot(assistant.id)
+        _quarantine_from_unreadable_cas_winner(store, assistant, adapter)
+
+        with pytest.raises(ConsoleSpeechSnapshotRejected) as issue_error:
+            store.issue_tts_message_speech_snapshot(assistant.id)
+        assert (
+            issue_error.value.code is ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
+        )
+        with pytest.raises(ConsoleSpeechSnapshotRejected) as validation_error:
+            store.validate_tts_message_speech_snapshot(issued)
+        assert (
+            validation_error.value.code
+            is ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
+        )
+
+        adapter.fail_reader_after_race = False
+        store.reload_quarantined_generation(assistant.id)
+        fresh = store.issue_tts_message_speech_snapshot(assistant.id)
+        assert fresh.raw_content == "concurrent winner"
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize(
+    "route",
+    [
+        "usage",
+        "metadata",
+        "thinking",
+        "continuation",
+        "edit",
+        "reset_stream",
+        "retry",
+        "begin_variant",
+    ],
+)
+def test_quarantine_rejects_generation_owned_late_writes(tmp_path, route: str) -> None:
+    db, _service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, f"quarantine-late-{route}"
+    )
+    try:
+        _quarantine_from_unreadable_cas_winner(store, assistant, adapter)
+        before_row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+
+        token = store._generation_attempt_tokens.get(assistant.id)
+        with pytest.raises(ConsoleGenerationProjectionQuarantined, match="reload"):
+            if route == "usage":
+                store.set_message_usage(
+                    assistant.id,
+                    ProviderUsage(
+                        uncached_input=9,
+                        output=7,
+                        provider="openai",
+                        model="late",
+                    ),
+                )
+            elif route == "metadata":
+                store.set_message_metadata(assistant.id, MessageMetadata(engine="late"))
+            elif route == "thinking":
+                store.replace_message_thinking(assistant.id, None)
+            elif route == "continuation":
+                store.discard_provider_continuation(
+                    assistant.id,
+                    expected_message_version=int(before_row["version"]),
+                )
+            elif route == "edit":
+                store.update_message_content(assistant.id, "late stale edit")
+            elif route == "reset_stream":
+                store.reset_stream_content(assistant.id)
+            elif route == "retry":
+                store.prepare_message_retry(assistant.id, generation_token=token)
+            else:
+                store.begin_variant_stream(assistant.id, generation_token=token)
+
+        assert dict(db.get_message_by_id(assistant.persisted_message_id)) == before_row
+        assert (
+            _message_semantic_stats(db, assistant.persisted_message_id) == before_stats
+        )
+    finally:
+        db.close_connection()
+
+
+def test_quarantine_rejects_image_generation_sidecar_writes(tmp_path) -> None:
+    db, service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, "quarantine-image-sidecars"
+    )
+    try:
+        row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        assert service.update_message_content(
+            message_id=assistant.persisted_message_id,
+            content="original",
+            image_data=None,
+            image_mime_type=None,
+            attachments=(
+                {"position": 0, "data": b"zero", "mime_type": "image/png"},
+                {"position": 1, "data": b"one", "mime_type": "image/png"},
+            ),
+            expected_version=int(row["version"]),
+        )
+        live = store._message_or_raise(assistant.id)
+        store._set_message_attachments(
+            live,
+            (
+                MessageAttachment(b"zero", "image/png", "", 0),
+                MessageAttachment(b"one", "image/png", "", 1),
+            ),
+        )
+        meta = GenerationVariantMeta("p", "", "local", None, None, None, {})
+        live.generation_metadata = (meta, meta)
+        live.provider_continuation_message_version = int(
+            db.get_message_by_id(assistant.persisted_message_id)["version"]
+        )
+        _quarantine_from_unreadable_cas_winner(store, assistant, adapter)
+        before_attachments = db.get_attachments_for_messages(
+            [assistant.persisted_message_id]
+        )
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+
+        with pytest.raises(ConsoleGenerationProjectionQuarantined, match="reload"):
+            store.append_generation_variant(
+                store.session_id_for_message(assistant.id),
+                assistant.id,
+                data=b"late",
+                mime_type="image/png",
+                meta=meta,
+            )
+        with pytest.raises(ConsoleGenerationProjectionQuarantined, match="reload"):
+            store.keep_generation_variant(
+                store.session_id_for_message(assistant.id), assistant.id, position=1
+            )
+
+        assert (
+            db.get_attachments_for_messages([assistant.persisted_message_id])
+            == before_attachments
+        )
+        assert (
+            _message_semantic_stats(db, assistant.persisted_message_id) == before_stats
+        )
+    finally:
+        db.close_connection()
+
+
+def test_quarantine_reload_never_mixes_row_and_sidecar_versions(
+    tmp_path, monkeypatch
+) -> None:
+    db, service, store, assistant, _adapter = _legacy_projection_fixture(
+        tmp_path, "quarantine-atomic-bundle"
+    )
+    try:
+        baseline = dict(db.get_message_by_id(assistant.persisted_message_id))
+        assert service.update_message_content(
+            message_id=assistant.persisted_message_id,
+            content="row-v3",
+            image_data=None,
+            image_mime_type=None,
+            attachments=(
+                {"position": 0, "data": b"image-v3", "mime_type": "image/png"},
+            ),
+            expected_version=int(baseline["version"]),
+        )
+        live = store._message_or_raise(assistant.id)
+        live.provider_continuation_message_version = int(
+            db.get_message_by_id(assistant.persisted_message_id)["version"]
+        )
+        store._quarantine_generation_projection(
+            live,
+            minimum_version=live.provider_continuation_message_version,
+            reason="Canonical generation is unavailable; reload required.",
+        )
+        store.persistence = service
+
+        reader_thread = get_ident()
+        row_read = Event()
+        writer_done = Event()
+        writer_errors: list[BaseException] = []
+        original_get = db.get_message_by_id
+
+        def pausing_get(message_id):
+            row = original_get(message_id)
+            if get_ident() == reader_thread and not row_read.is_set():
+                row_read.set()
+                writer_done.wait(0.5)
+            return row
+
+        monkeypatch.setattr(db, "get_message_by_id", pausing_get)
+
+        def write_v4() -> None:
+            try:
+                assert row_read.wait(2)
+                current = original_get(assistant.persisted_message_id)
+                assert service.update_message_content(
+                    message_id=assistant.persisted_message_id,
+                    content="row-v4",
+                    image_data=None,
+                    image_mime_type=None,
+                    attachments=(
+                        {
+                            "position": 0,
+                            "data": b"image-v4",
+                            "mime_type": "image/png",
+                        },
+                    ),
+                    expected_version=int(current["version"]),
+                )
+            except BaseException as exc:
+                writer_errors.append(exc)
+            finally:
+                writer_done.set()
+
+        writer = Thread(target=write_v4)
+        writer.start()
+        reloaded = store.reload_quarantined_generation(assistant.id)
+        writer.join(timeout=3)
+        assert not writer.is_alive()
+        assert writer_errors == []
+        assert (reloaded.content, reloaded.attachments[0].data) in {
+            ("row-v3", b"image-v3"),
+            ("row-v4", b"image-v4"),
+        }
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("route", ["finalize", "add", "select"])
+@pytest.mark.parametrize("reader_outcome", ["raise", "malformed", "stale"])
+def test_hidden_db_legacy_post_cas_reader_failure_reconciles_committed_owner(
+    tmp_path, route: str, reader_outcome: str
+) -> None:
+    db, _service, store, assistant, adapter = _legacy_projection_fixture(
+        tmp_path, f"legacy-post-cas-{route}-{reader_outcome}"
+    )
+    try:
+        if route == "finalize":
+            token = store.begin_generation_attempt(assistant.id)
+            store.begin_variant_stream(assistant.id, generation_token=token)
+            store.append_stream_chunk(assistant.id, "replacement")
+        elif route == "select":
+            store.add_variant(assistant.id, "replacement")
+        adapter.reader_calls = 0
+        adapter._first_reader_row = None
+        adapter.postwrite_reader_outcome = reader_outcome
+        before_stats = _message_semantic_stats(db, assistant.persisted_message_id)
+        before_row = dict(db.get_message_by_id(assistant.persisted_message_id))
+
+        with pytest.raises(
+            RuntimeError, match="Generation projection persistence is unavailable"
+        ):
+            if route == "finalize":
+                store.finalize_variant_stream(assistant.id)
+            elif route == "add":
+                store.add_variant(assistant.id, "replacement")
+            else:
+                store.select_variant(assistant.id, 0)
+
+        row = dict(db.get_message_by_id(assistant.persisted_message_id))
+        live = store._message_or_raise(assistant.id)
+        expected_content = "original" if route == "select" else "replacement"
+        assert row["version"] == before_row["version"] + 1
+        assert row["content"] == live.content == expected_content
+        assert live.assistant_generation_state == row["assistant_generation_state"]
+        assert live.provider_continuation_message_version == row["version"]
+        assert live.variants is not None
+        assert live.variants.current.content == row["content"]
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+
+        adapter.postwrite_reader_outcome = None
+        assert store.persist_selected_generation(assistant.id)
+        assert _message_semantic_stats(db, assistant.persisted_message_id) == (
+            before_stats[0] + 1,
+            before_stats[1] + 1,
+        )
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("declared_process_local", [False, True])
+def test_unpersisted_legacy_fake_requires_explicit_process_local_marker(
+    declared_process_local: bool,
+) -> None:
+    persistence = SimpleNamespace(
+        console_process_local_only=declared_process_local,
+    )
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(ephemeral=True)
+    assistant = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="original",
+        persist=False,
+    )
+
+    if declared_process_local:
+        updated = store.add_variant(assistant.id, "replacement")
+        assert updated.content == "replacement"
+        assert updated.persisted_message_id is None
+    else:
+        with pytest.raises(
+            RuntimeError, match="Generation projection persistence is unavailable"
+        ):
+            store.add_variant(assistant.id, "replacement")
+
+
+@pytest.mark.parametrize("route", ["add", "select", "delete"])
+def test_failed_generation_or_delete_keeps_fence_and_message_state(route):
+    persistence = FaultInjectingSemanticPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Atomic generation fence")
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="original",
+        persist=True,
+    )
+    if route == "select":
+        store.add_variant(message.id, "alternative")
+    token = store.begin_generation_attempt(message.id)
+    before_message = deepcopy(store._message_or_raise(message.id))
+    before_store = _store_route_state(store, session.id)
+    persistence.fail = True
+
+    with pytest.raises(RuntimeError, match="durable semantic mutation failed"):
+        if route == "add":
+            store.add_variant(message.id, "ghost")
+        elif route == "select":
+            store.select_variant(message.id, 0)
+        else:
+            store.delete_message(message.id)
+
+    assert store._generation_attempt_tokens[message.id] == token
+    assert store._message_or_raise(message.id) == before_message
+    assert _store_route_state(store, session.id) == before_store
 
 
 def test_pending_attachment_is_per_session():

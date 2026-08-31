@@ -99,6 +99,36 @@ def test_chat_api_handler_matrix_strips_or_preserves_ephemeral_marker(
     assert messages[0][EPHEMERAL_ORIGIN_KEY] == "project_instructions"
 
 
+@pytest.mark.parametrize("endpoint", sorted(API_CALL_HANDLERS))
+def test_handler_projection_matches_actual_dispatch_for_every_registered_endpoint(
+    monkeypatch, endpoint
+):
+    captured = {}
+
+    def handler(**kwargs):
+        captured.update(kwargs)
+        return "ok"
+
+    monkeypatch.setitem(chat_functions_module.API_CALL_HANDLERS, endpoint, handler)
+    generic = {
+        "messages_payload": [
+            {
+                "role": "user",
+                "content": "context",
+                EPHEMERAL_ORIGIN_KEY: "project_instructions",
+            }
+        ],
+        "model": "model",
+        "streaming": False,
+        "api_base_url": "https://example.invalid/v1",
+    }
+
+    projected = chat_functions_module.project_chat_handler_kwargs(endpoint, generic)
+    chat_functions_module.chat_api_call(api_endpoint=endpoint, **generic)
+
+    assert projected == captured
+
+
 def test_huggingface_chat_api_call_passes_max_tokens_to_adapter(monkeypatch):
     captured_kwargs = {}
 

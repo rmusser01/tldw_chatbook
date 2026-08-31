@@ -1,7 +1,7 @@
 """Chat screen implementation with comprehensive state management."""
 
 from collections import deque
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -136,6 +136,7 @@ from ..Console_Modules.right_rail import ConsoleInspectorRail
 from ..Console_Modules.provider_continuation_recovery import (
     ProviderContinuationTranscriptRegion as ConsoleTranscriptRegion,
 )
+from ..Console_Modules import trace_call_recovery as trace_recovery
 from ..Console_Modules.retrieval import (
     sanitize_console_library_rag_query as _sanitize_console_library_rag_query,
     source_mentions_rag as _source_mentions_rag,
@@ -215,7 +216,8 @@ from ...Chat.console_cost_tracker import (
     fingerprint_break_reason,
     token_estimate_signature,
 )
-from ...Chat.console_exchange_capture import ExchangeCapture, capture_from_storage
+from ...Chat.console_exchange_capture import ExchangeCapture
+from ...Chat.console_trace_projection import ProjectedTraceCall
 from ...LLM_Calls.pricing_catalog import get_pricing_catalog
 from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
     console_attachable_dictionaries,
@@ -570,9 +572,6 @@ from ...Widgets.Console.console_composer_menu_modal import (
 from ...Widgets.Console.console_prompt_comparison_modal import (
     ConsolePromptComparisonModal,
     PromptComparisonResult,
-)
-from ...Widgets.Console.console_generate_image_modal import (
-    ConsoleGenerateImageModal,
 )
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
 from ...Widgets.Console.console_prompt_queue_modal import ConsolePromptQueueModal
@@ -1410,7 +1409,7 @@ def _console_inspector_turn_preview(content: Any) -> str:
 
 def _build_console_inspector_exchanges_loader(
     messages_by_native_id: Mapping[str, Any],
-    db_accessor: Callable[[], Any],
+    projected_calls_reader: Callable[[str], Sequence[ProjectedTraceCall]],
     abandoned_run_tags_for: Callable[[str], AbstractSet[str]] | None = None,
 ) -> Callable[[str], Awaitable[list[tuple[ExchangeCapture, bool]]]]:
     """Build the Costs-tab ``exchanges_loader`` for
@@ -1424,10 +1423,10 @@ def _build_console_inspector_exchanges_loader(
     Args:
         messages_by_native_id: ``ConsoleChatMessage.id`` -> the matching
             in-memory message, for the native-first check.
-        db_accessor: Zero-arg callable returning the ChaChaNotes DB handle
-            (or ``None``). Called lazily -- only on the DB-fallback path,
-            never for a message resolved natively or with no persisted id
-            -- so an ephemeral session never touches the DB at all.
+        projected_calls_reader: Store-owned persisted-message reader returning
+            discriminated normalized/legacy calls. Called lazily only on the
+            durable fallback path, so this Textual helper never receives a DB
+            handle and an ephemeral session never performs durable I/O.
         abandoned_run_tags_for: Optional ``native_message_id ->
             {run_tag, ...}`` lookup (task-9; ``ConsoleChatStore.
             abandoned_exchange_run_tags`` in production) used ONLY on the
@@ -1451,9 +1450,8 @@ def _build_console_inspector_exchanges_loader(
         ``get_message_exchanges`` + ``capture_from_blob`` read when there
         is no native capture AND the message has a
         ``persisted_message_id`` (an ephemeral session has neither, so it
-        returns ``[]`` without any DB call). A single corrupt/undecodable
-        blob is logged and skipped -- not fatal to the rest of the turn's
-        captures.
+        returns ``[]`` without any durable read). Corrupt legacy isolation and
+        normalized-first selection belong to the injected projection.
     """
 
     async def _exchanges_loader(
@@ -1477,39 +1475,10 @@ def _build_console_inspector_exchanges_loader(
             return []
 
         def _read() -> list[tuple[ExchangeCapture, bool]]:
-            db = db_accessor()
-            if db is None:
-                return []
-            out: list[tuple[ExchangeCapture, bool]] = []
-            for db_row in db.get_message_exchanges(persisted_id):
-                try:
-                    out.append(
-                        (
-                            capture_from_storage(
-                                db_row["capture_blob"],
-                                db_row.get("capture_detail", "safe"),
-                            ),
-                            bool(db_row.get("abandoned", False)),
-                        )
-                    )
-                except Exception as exc:
-                    # No traceback (review finding M8): this frame holds
-                    # `capture_blob` (raw compressed bytes) and, mid-loop,
-                    # already-decoded ExchangeCapture payloads in `out` --
-                    # loguru's diagnose formatter would annotate the
-                    # failing source line's names with their values across
-                    # the whole frame chain. The Exchange tab's own
-                    # handlers (console_conversation_inspector.py's
-                    # ``_load_turn_captures``) deliberately refuse
-                    # tracebacks for the identical reason; this brings the
-                    # loader's own decode failure to the same standard.
-                    # type(exc).__name__ plus the message id is enough to
-                    # diagnose and retry.
-                    logger.warning(
-                        f"exchange_blob_decode_failed: persisted_id="
-                        f"{persisted_id!r}: {type(exc).__name__}"
-                    )
-            return out
+            return [
+                (projected.capture, projected.abandoned)
+                for projected in projected_calls_reader(persisted_id)
+            ]
 
         return await asyncio.to_thread(_read)
 
@@ -2910,6 +2879,7 @@ class ChatScreen(BaseAppScreen):
         """Persist one current immutable plan without off-thread store access."""
         store = self._ensure_console_chat_store()
         if not store.is_roleplay_projection_plan_current(plan):
+            store.abandon_roleplay_projection_plan(plan)
             if self._console_roleplay_repair_plan is plan:
                 self._console_roleplay_repair_plan = None
                 self._console_roleplay_repair_inflight_generation = 0
@@ -3102,6 +3072,9 @@ class ChatScreen(BaseAppScreen):
                 )
             ):
                 self._publish_console_roleplay_repair_marker()
+            pending_plan = self._console_roleplay_pending_plan
+            if pending_plan is not None and self._console_chat_store is not None:
+                self._console_chat_store.abandon_roleplay_projection_plan(pending_plan)
             self._console_roleplay_persistence_task = None
             self._console_roleplay_active_plan = None
             self._console_roleplay_pending_plan = None
@@ -3134,6 +3107,9 @@ class ChatScreen(BaseAppScreen):
                 task.get_name(),
             )
         finally:
+            pending_plan = self._console_roleplay_pending_plan
+            if pending_plan is not None and self._console_chat_store is not None:
+                self._console_chat_store.abandon_roleplay_projection_plan(pending_plan)
             self._console_roleplay_persistence_task = None
             self._console_roleplay_active_plan = None
             self._console_roleplay_pending_plan = None
@@ -3201,7 +3177,10 @@ class ChatScreen(BaseAppScreen):
             if repair_generation > 0:
                 self._console_roleplay_repair_plan = plan
                 self._console_roleplay_repair_inflight_generation = repair_generation
+            previous_plan = self._console_roleplay_pending_plan
             self._console_roleplay_pending_plan = plan
+            if previous_plan is not None and previous_plan is not plan:
+                store.abandon_roleplay_projection_plan(previous_plan)
             self._start_console_roleplay_persistence_drain()
         return plan is not None if force_persistence else True
 
@@ -7277,6 +7256,10 @@ class ChatScreen(BaseAppScreen):
 
     async def _open_console_generate_image_modal(self) -> None:
         """Collect image options, then paste the command into the draft."""
+        from ...Widgets.Console.console_generate_image_modal import (
+            ConsoleGenerateImageModal,
+        )
+
         backends: tuple[str, ...] = ()
         styles: dict[str, str] = {}
         try:
@@ -8542,7 +8525,9 @@ class ChatScreen(BaseAppScreen):
         messages_by_native_id = {message.id: message for message in messages}
         exchanges_loader = _build_console_inspector_exchanges_loader(
             messages_by_native_id,
-            lambda: getattr(self.app_instance, "chachanotes_db", None),
+            store.projected_trace_calls
+            if store is not None
+            else lambda _message_id: (),
             store.abandoned_exchange_run_tags if store is not None else None,
         )
 
@@ -12104,6 +12089,17 @@ class ChatScreen(BaseAppScreen):
                                 action, message_id, version
                             )
                         )
+                    ),
+                    trace_recovery_state_builder=(
+                        lambda: trace_recovery.trace_call_recovery_state(
+                            self._ensure_console_chat_controller().trace_call_recovery_preparation()
+                        )
+                    ),
+                    on_trace_recovery_action=partial(
+                        trace_recovery.dispatch_trace_call_recovery_action,
+                        self._ensure_console_chat_controller(),
+                        on_started=self._start_console_transcript_sync_timer,
+                        on_finished=self._sync_native_console_chat_ui,
                     ),
                 )
                 main_column.styles.width = "13fr"

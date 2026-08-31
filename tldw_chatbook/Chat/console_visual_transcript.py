@@ -35,7 +35,7 @@ than delegated to a version pin.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from hashlib import sha256
 from io import BytesIO
 from typing import Sequence
@@ -51,6 +51,11 @@ from tldw_chatbook.Chat.console_prepared_request import (
     PreparedConsoleRequest,
     PreparedProviderRequest,
     tagged_visual_memory_message,
+)
+from tldw_chatbook.Chat.console_trace_provenance import (
+    TraceProvenanceSource,
+    TraceTransformKind,
+    compaction_transform_provenance,
 )
 
 
@@ -70,6 +75,7 @@ FOOTER_LINES = 2
 LINES_PER_PAGE = (
     (LOGICAL_HEIGHT - (2 * MARGIN_Y)) // LINE_HEIGHT - HEADER_LINES - FOOTER_LINES
 )
+
 
 class VisualRendererFontError(RuntimeError):
     """The host's Pillow cannot supply the fixed-cell font this renderer needs."""
@@ -382,6 +388,22 @@ def plan_visual_compaction(
             [page.png_bytes for page in artifact.pages],
             page_hashes=[page.png_sha256 for page in artifact.pages],
         )
+        visual_provenance = (
+            compaction_transform_provenance(
+                semantic.provenance,
+                selected_units=selected_count,
+                transform=TraceTransformKind.VISUAL_COMPACTION,
+                source=TraceProvenanceSource.VISUAL_TRANSCRIPT,
+                include_memory=False,
+            )
+            if semantic.provenance is not None
+            else None
+        )
+        base_provenance = (
+            replace(without_old.provenance, active_thinking=())
+            if without_old.provenance is not None
+            else None
+        )
         after_semantic = PreparedConsoleRequest(
             system=without_old.system,
             memory=without_old.memory + (visual,),
@@ -390,6 +412,14 @@ def plan_visual_compaction(
             active_request=without_old.active_request,
             active_continuation_groups=without_old.active_continuation_groups,
             tools=without_old.tools,
+            provenance=(
+                replace(
+                    base_provenance,
+                    memory=base_provenance.memory + (visual_provenance,),
+                )
+                if base_provenance is not None and visual_provenance is not None
+                else None
+            ),
         )
         after = prepare_main(after_semantic)
         conversation_tokens = (

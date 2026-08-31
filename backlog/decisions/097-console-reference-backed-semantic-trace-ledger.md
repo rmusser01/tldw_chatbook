@@ -146,22 +146,44 @@ project-instruction bodies never enter default durable capture.
     Retry or an explicit one-shot Send without capture action. Interactive tool/retry
     loops pause for that choice; autonomous runs fail safely. Cold recovery maps an
     untouched reservation to `not_dispatched`, an uncertain started call to
-    `dispatch_unknown`, and a response-bearing open call to `interrupted`.
+    `dispatch_unknown`, and a response-bearing open call to `interrupted`, but only
+    after a bounded inactivity grace period so another live app process cannot have
+    its newly active provider call terminated by startup recovery.
 
     Temporary conversations cannot make a durable Capture On call until Save & Send
-    promotes their in-memory lineage. After dispatch, component capture and sealing are
+    promotes their in-memory lineage. Before dispatch, a component sanitization or
+    descriptor-verification failure may proceed only after a content-free
+    omission/incomplete marker and the remaining boundary/header state commit durably.
+    Inability to persist the boundary, header, or incomplete state blocks dispatch and
+    requires Retry or explicit Capture Off. After dispatch, component capture and sealing are
     best-effort and independently idempotent: they cannot roll back a provider result or
     saved assistant message. Destructive semantic edits/deletes are different: required
     preservation and canonical mutation commit together or all abort.
 
+    A failed post-dispatch handoff remains explicitly owned by the store after its
+    worker returns. App teardown waits for the worker and makes a final idempotent
+    settlement attempt; any still-unsettled handoff remains visible in the definitive
+    teardown diagnostic rather than being silently discarded.
+
 16. **Use shared-owner garbage collection and honest physical maintenance.** Deletion
-    detaches one conversation root. Background mark/sweep reclaims unreachable objects
-    only after a global trace-graph epoch recheck. Every root or reachability-edge
+    detaches one conversation root. Database guards reject ordinary/direct deletion from
+    append-only trace tables; a sweep receives a connection-local deletion grant only
+    after its maintenance lease and exact marked epoch are validated in the sweep
+    transaction. Background mark/sweep reclaims unreachable objects only after a global
+    trace-graph epoch recheck. Every root or reachability-edge
     mutation advances that epoch, and sweep holds maintenance exclusion. SQLite
-    physical compaction runs automatically
-    at a later eligible visible idle pause with connection closure, WAL checkpoint, disk
-    preflight, and maintenance lease. Logical, freelist, WAL, and allocated bytes are
-    reported separately; no action claims forensic erasure from backups or exports.
+   physical compaction uses SQLite same-file `VACUUM` automatically at a later
+   eligible visible idle pause. An app-wide ChaChaNotes connection registry first
+   rejects new acquisitions, waits for all thread-owned connections to return, closes
+   them, pauses provider dispatch, checkpoints WAL with `TRUNCATE`, verifies free disk
+   for SQLite's temporary rewrite plus a safety margin, and retains the maintenance
+   lease through reopen and integrity verification. `VACUUM` runs in a dedicated
+   maintenance worker with bounded progress/cancellation checks where the Python
+   SQLite API supports them. Every failure path reopens the database and resumes
+   connection acquisition/provider dispatch from a `finally` boundary; incomplete
+   admission or compaction remains visibly pending and retryable. Logical, freelist,
+   WAL, and allocated bytes are reported separately; no action claims forensic erasure
+   from backups or exports.
 
 17. **Prove linear growth with the real gateway.** A semi-incompressible 200-turn
     production-shaped benchmark records normalized rows and bytes, legacy bytes,
@@ -171,6 +193,16 @@ project-instruction bodies never enter default durable capture.
     trace-owned live bytes at 200 turns. Reservation p95 is capped at 10 ms, settlement
     p95 at 25 ms, and migration write batches at 100 ms. No normalized call or
     replacement may contain a list or blob proportional to prior transcript length.
+
+    Latency-critical reservation, `dispatch_started`, and `response_started` writes
+    temporarily disable automatic WAL checkpoints on their thread-local connection and
+    restore the caller's exact setting in `finally`. This does not change SQLite
+    durability or the connection default. Terminal settlement remains on the bounded
+    off-UI persistence worker under the caller/default checkpoint policy, so it, a
+    later ordinary commit, or connection close remains an explicit checkpoint owner.
+    The reference benchmark reports phase WAL allocation and close cost as well as the
+    timed samples; long-reader coverage proves the scoped policy does not retune another
+    connection or hide terminal checkpoint behavior.
 
 18. **Migrate disclosure settings conservatively and stage expensive features.** Old
    capture enablement maps to Capture On/Off, but old Safe/Full capture detail remains

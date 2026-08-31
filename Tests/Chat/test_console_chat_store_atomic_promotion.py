@@ -120,7 +120,7 @@ def _conversation_count(db):
 
 def _bundle_counts(db):
     connection = db.get_connection()
-    return tuple(
+    table_counts = tuple(
         connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         for table in (
             "conversations",
@@ -128,8 +128,13 @@ def _bundle_counts(db):
             "console_conversation_library_policy",
             "message_attachments",
             "message_trajectory_metadata",
+            "console_trace_semantic_revisions",
         )
     )
+    epoch = connection.execute(
+        "SELECT epoch FROM console_trace_graph_epoch WHERE singleton_id = 1"
+    ).fetchone()[0]
+    return (*table_counts, epoch)
 
 
 def test_staged_identity_is_immutable_and_staging_does_not_mutate_session():
@@ -525,7 +530,7 @@ def test_chat_failure_never_projects_cross_database_workspace_membership(
     elif failure_point == "attachment":
         monkeypatch.setattr(
             db,
-            "set_message_attachments",
+            "_set_message_attachments_uncoordinated",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(
                 RuntimeError("attachment fail")
             ),
@@ -639,7 +644,7 @@ def test_shadowed_legacy_persist_cannot_escape_atomic_workspace_promotion(
 
     assert shadow_calls == 0
     assert _memory_state(store, session.id) == before
-    assert _bundle_counts(db) == (0, 0, 0, 0, 0)
+    assert _bundle_counts(db) == (0, 0, 0, 0, 0, 0, 0)
     assert registry.list_workspace_conversations("workspace-a") == ()
     binding = store.library_policy_coordinator._holders[session.id]
     assert binding.conversation_id is None
@@ -740,17 +745,20 @@ def test_each_bundle_write_boundary_rolls_back_exactly_and_retries_once(
     elif failure_point == "attachment-0":
         monkeypatch.setattr(
             db,
-            "add_message",
+            "add_message_with_semantic_sidecars",
             fail_once(
-                db.add_message,
-                lambda payload: payload.get("image_data") == b"zero",
+                db.add_message_with_semantic_sidecars,
+                lambda payload, **_kwargs: payload.get("image_data") == b"zero",
             ),
         )
     elif failure_point == "attachment-sidecar":
         monkeypatch.setattr(
             db,
-            "set_message_attachments",
-            fail_once(db.set_message_attachments, lambda _message_id, rows: bool(rows)),
+            "_set_message_attachments_uncoordinated",
+            fail_once(
+                db._set_message_attachments_uncoordinated,
+                lambda _cursor, _message_id, rows: bool(rows),
+            ),
         )
     elif failure_point == "active-leaf":
         monkeypatch.setattr(
@@ -776,14 +784,14 @@ def test_each_bundle_write_boundary_rolls_back_exactly_and_retries_once(
         store.promote_ephemeral_session(session.id, contributions=contributions)
 
     assert _memory_state(store, session.id) == before
-    assert _bundle_counts(db) == (0, 0, 0, 0, 0)
+    assert _bundle_counts(db) == (0, 0, 0, 0, 0, 0, 0)
     for contribution in contributions:
         contribution.fail = False
     conversation_id = store.promote_ephemeral_session(
         session.id, contributions=contributions
     )
     assert conversation_id is not None
-    assert _bundle_counts(db) == (1, 2, 1, 1, 2)
+    assert _bundle_counts(db) == (1, 2, 1, 1, 2, 2, 2)
     row = db.get_message_by_id(
         store._nodes_by_session[session.id][user.id].persisted_message_id
     )

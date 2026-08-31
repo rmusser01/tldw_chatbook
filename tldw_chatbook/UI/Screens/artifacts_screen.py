@@ -41,7 +41,6 @@ from ...Subscriptions.briefing_service import (
     STATUS_FAILED,
     STATUS_GENERATING,
 )
-from ...Subscriptions.daily_reports_view import list_recent_reports
 from ...Subscriptions.html_text import strip_control_characters
 from ...Third_Party.textual_fspicker import FileSave
 from ...TTS.audio_player import play_audio_file
@@ -224,6 +223,8 @@ class ArtifactsScreen(BaseAppScreen):
 
     @work(exclusive=True, thread=True, group="artifacts-daily-reports")
     def _refresh_daily_reports(self, generation: int) -> None:
+        from ...Subscriptions.daily_reports_view import list_recent_reports
+
         db = getattr(self.app_instance, "subscriptions_db", None)
         reports: list[dict[str, Any]] = []
         if db is not None:

@@ -203,6 +203,19 @@ from tldw_chatbook.Chat.console_prepared_request import (
     tagged_memory_message,
     tagged_visual_memory_message,
 )
+from tldw_chatbook.Chat.console_trace_provenance import (
+    ConsoleRequestRoute,
+    ConsoleTraceCaptureMode,
+    ProviderArtifactTraceProvenance,
+    TraceProvenancePersistenceError,
+    TraceProvenanceSource,
+    TraceTransformKind,
+    admit_message_provenance,
+    compaction_transform_provenance,
+    frozen_policy_from_provenance,
+)
+from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
+from tldw_chatbook.Chat.console_trace_redaction import CREDENTIAL_FILTER_VERSION
 from tldw_chatbook.Chat.console_visual_transcript import (
     count_semantic_images,
     plan_visual_compaction,
@@ -259,8 +272,12 @@ from tldw_chatbook.Chat.console_turn_preparation import (
     ConsolePreparationTransition,
     ConsoleTurnPreparation,
     ConsoleTurnPreparationState,
+    admit_one_shot_capture_off,
     initial_preparation_state,
+    build_console_request_for_preparation,
+    pause_for_trace_call_failure,
 )
+from tldw_chatbook.Chat.console_trace_service import TraceCallPersistenceError
 from tldw_chatbook.Chat.library_preparation import (
     LibraryPreparationContribution,
     library_preparation_event_for_outcome,
@@ -399,6 +416,9 @@ from tldw_chatbook.model_capabilities import (
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.agent_models import ToolCall
     from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+    from tldw_chatbook.Agents.raw_shell_tool_provider import RawShellToolProvider
+    from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 
@@ -2143,6 +2163,7 @@ class ConsoleProviderGatewayProtocol(Protocol):
         resolution: Any,
         messages: list[dict[str, Any]],
         signals: ConsoleProviderStreamSignals | None = None,
+        before_provider_dispatch: Callable[[], Awaitable[None]] | None = None,
     ) -> Any:
         """Stream response chunks for provider messages."""
 
@@ -2217,6 +2238,9 @@ class _DurablePostcommitContinuation:
     echoed_user_id: str
     resolution: ConsoleProviderResolution
     provider_messages: list[dict[str, Any]]
+    trace_source_messages: tuple[dict[str, Any], ...]
+    trace_capture_mode: ConsoleTraceCaptureMode
+    trace_request: PreparedConsoleRequest | None
     prefill: str | None
     prefill_from_one_shot: bool
     one_shot_prefill_revision: int | None
@@ -2563,6 +2587,7 @@ class ConsoleChatController:
         self._durable_postcommit_continuations: dict[
             str, _DurablePostcommitContinuation
         ] = {}
+        self._trace_call_boundaries_by_preparation: dict[str, object] = {}
         self._provider_config = provider_config
         #: Task 4 (D2 fix wave, "bonus race"): screen-owned callable that
         #: builds a fresh default `ConsoleSessionSettings` snapshot (mirrors
@@ -4562,13 +4587,23 @@ class ConsoleChatController:
         expected_message_version: int,
     ) -> bool:
         """Perform one explicit, optimistic recovery action."""
-        if action not in {"resume", "take_over", "discard"}:
+        if action not in {"resume", "take_over", "discard", "reload"}:
             return False
         try:
             message = self.store.get_message(message_id)
             checkpoint = message.provider_continuation
             session_id = self.store.session_id_for_message(message_id)
         except KeyError:
+            return False
+        quarantined = message.generation_projection_quarantined
+        if quarantined:
+            if (
+                action != "reload"
+                or message.generation_projection_quarantine_version
+                != expected_message_version
+            ):
+                return False
+        elif action == "reload":
             return False
         if self.provider_continuation_owner_is_live(message_id):
             self.store.set_provider_continuation_warning(
@@ -4584,6 +4619,12 @@ class ConsoleChatController:
             return False
         self._provider_continuation_recovery_sessions.add(session_id)
         try:
+            if quarantined:
+                try:
+                    self.store.reload_quarantined_generation(message_id)
+                except Exception:
+                    return False
+                return True
             if not self._provider_continuation_recovery_target_is_current(
                 session_id=session_id,
                 message_id=message.id,
@@ -5042,6 +5083,13 @@ class ConsoleChatController:
             return self._prepared_action_refusal()
         if preparation.state is not ConsoleTurnPreparationState.PAUSED:
             return self._prepared_action_refusal(preparation)
+        if preparation.pause_kind is ConsolePreparationPauseKind.TRACE_PROVENANCE:
+            return await self._retry_durable_trace_provenance(preparation)
+        if preparation.pause_kind is ConsolePreparationPauseKind.TRACE_CALL:
+            return await self._continue_prepared_submission(
+                preparation_id,
+                trace_call_admission=preparation,
+            )
         if preparation.pause_kind is not ConsolePreparationPauseKind.RETRIEVAL:
             return await self._continue_prepared_submission(preparation_id)
         retried = self.store.compare_and_set_preparation(
@@ -5065,6 +5113,125 @@ class ConsoleChatController:
                 False, False, "Library preparation remains paused."
             )
         return await self._continue_prepared_submission(preparation_id)
+
+    async def _retry_durable_trace_provenance(
+        self,
+        preparation: ConsoleTurnPreparation,
+    ) -> ConsoleSubmitResult:
+        """Rebuild a failed postcommit trace request from its frozen continuation."""
+
+        continuation = self._durable_postcommit_continuations.get(
+            preparation.preparation_id
+        )
+        if continuation is None:
+            return self._prepared_action_refusal(preparation)
+        selection = preparation.execution_context.configuration.provider_selection
+        try:
+            resolution = await self._resolve_for_send_bounded(selection)
+        except BaseException:
+            return self._prepared_action_refusal(
+                preparation,
+                "Prepared destination could not be verified.",
+            )
+        block_copy = self._prepared_continuation_block_copy(
+            resolution,
+            preparation.execution_context.resolved_destination,
+        )
+        if block_copy:
+            return self._prepared_action_refusal(preparation, block_copy)
+        committing = self.store.compare_and_set_preparation(
+            preparation.session_id,
+            ConsolePreparationTransition(
+                preparation_id=preparation.preparation_id,
+                expected_state=ConsoleTurnPreparationState.PAUSED,
+                new_state=ConsoleTurnPreparationState.COMMITTING,
+                pause_kind=None,
+                new_attempt_id=None,
+            ),
+        )
+        if committing is None:
+            return self._prepared_action_refusal(
+                self._preparation_by_id(preparation.preparation_id),
+                "Prepared turn changed before continuation.",
+            )
+        try:
+            trace_request = self._build_durable_trace_request(
+                preparation=committing,
+                provider_messages=continuation.provider_messages,
+                trace_source_messages=continuation.trace_source_messages,
+                echoed_user_id=continuation.echoed_user_id,
+                committed_user_id=continuation.commit.user_message_id,
+            )
+        except Exception:
+            return self._handle_durable_trace_provenance_failure(continuation)
+        with self.store.durable_preparation_lock:
+            current = self._durable_postcommit_continuations.get(
+                preparation.preparation_id
+            )
+            if current is not continuation:
+                raise RuntimeError("Durable continuation owner changed.")
+            continuation = replace(continuation, trace_request=trace_request)
+            self._durable_postcommit_continuations[preparation.preparation_id] = (
+                continuation
+            )
+        accepted = self.store.compare_and_set_preparation(
+            preparation.session_id,
+            ConsolePreparationTransition(
+                preparation_id=preparation.preparation_id,
+                expected_state=ConsoleTurnPreparationState.COMMITTING,
+                new_state=ConsoleTurnPreparationState.ACCEPTED,
+                pause_kind=None,
+                new_attempt_id=None,
+            ),
+        )
+        if accepted is None:
+            return self._prepared_action_refusal(
+                self._preparation_by_id(preparation.preparation_id),
+                "Prepared turn changed before continuation.",
+            )
+        return await self.resume_durable_postcommit(preparation.preparation_id)
+
+    def trace_call_recovery_preparation(self) -> ConsoleTurnPreparation | None:
+        """Return only the active preparation offering trace-call recovery."""
+
+        preparation = self.store.preparation_for_session(self.store.active_session_id)
+        if (
+            preparation is None
+            or preparation.state is not ConsoleTurnPreparationState.PAUSED
+            or preparation.pause_kind
+            not in {
+                ConsolePreparationPauseKind.TRACE_PROVENANCE,
+                ConsolePreparationPauseKind.TRACE_CALL,
+            }
+        ):
+            return None
+        return preparation
+
+    async def send_without_capture(self, preparation_id: str) -> ConsoleSubmitResult:
+        """Run one explicitly admitted Capture-Off attempt after a trace pause."""
+
+        preparation = self._preparation_by_id(preparation_id)
+        if (
+            preparation is None
+            or preparation.state is not ConsoleTurnPreparationState.PAUSED
+            or preparation.pause_kind
+            not in {
+                ConsolePreparationPauseKind.TRACE_PROVENANCE,
+                ConsolePreparationPauseKind.TRACE_CALL,
+            }
+        ):
+            return self._prepared_action_refusal(preparation)
+        capture_off = admit_one_shot_capture_off(
+            preparation,
+            new_preparation_id=str(uuid4()),
+            new_attempt_id=str(uuid4()),
+        )
+        if capture_off is preparation:
+            return self._prepared_action_refusal(preparation)
+        return await self._continue_prepared_submission(
+            preparation_id,
+            trace_call_admission=capture_off,
+        )
 
     async def bypass_library_preparation(
         self, preparation_id: str
@@ -5137,7 +5304,10 @@ class ConsoleChatController:
         return ""
 
     async def _continue_prepared_submission(
-        self, preparation_id: str
+        self,
+        preparation_id: str,
+        *,
+        trace_call_admission: ConsoleTurnPreparation | None = None,
     ) -> ConsoleSubmitResult:
         """Resume the exact frozen send after Retry or one-shot Bypass."""
 
@@ -5165,6 +5335,63 @@ class ConsoleChatController:
             )
             return self._prepared_action_refusal(
                 self._preparation_by_id(preparation_id), block_copy
+            )
+        if trace_call_admission is not None:
+            current = self._preparation_by_id(preparation_id)
+            if (
+                current is None
+                or current.state is not ConsoleTurnPreparationState.PAUSED
+                or current.pause_kind
+                not in {
+                    ConsolePreparationPauseKind.TRACE_PROVENANCE,
+                    ConsolePreparationPauseKind.TRACE_CALL,
+                }
+            ):
+                return self._prepared_action_refusal(current)
+            if current.pause_kind is ConsolePreparationPauseKind.TRACE_PROVENANCE:
+                current = self.store.compare_and_set_preparation(
+                    current.session_id,
+                    ConsolePreparationTransition(
+                        preparation_id=preparation_id,
+                        expected_state=ConsoleTurnPreparationState.PAUSED,
+                        new_state=ConsoleTurnPreparationState.COMMITTING,
+                        pause_kind=None,
+                        new_attempt_id=None,
+                    ),
+                )
+                if current is None:
+                    return self._prepared_action_refusal(
+                        self._preparation_by_id(preparation_id),
+                        "Prepared turn changed before continuation.",
+                    )
+            accepted = self.store.compare_and_set_preparation(
+                current.session_id,
+                ConsolePreparationTransition(
+                    preparation_id=preparation_id,
+                    expected_state=(
+                        ConsoleTurnPreparationState.COMMITTING
+                        if current.state is ConsoleTurnPreparationState.COMMITTING
+                        else ConsoleTurnPreparationState.PAUSED
+                    ),
+                    new_state=ConsoleTurnPreparationState.ACCEPTED,
+                    pause_kind=None,
+                    new_attempt_id=None,
+                ),
+            )
+            if accepted is None:
+                return self._prepared_action_refusal(
+                    self._preparation_by_id(preparation_id),
+                    "Prepared turn changed before continuation.",
+                )
+            return await self.resume_durable_postcommit(
+                preparation_id,
+                capture_mode_override=trace_call_admission.capture_mode,
+                turn_context_override=trace_call_admission.execution_context,
+                dispatch_attempt_id=(
+                    trace_call_admission.attempt_id
+                    if trace_call_admission is not preparation
+                    else None
+                ),
             )
         current = self._preparation_by_id(preparation_id)
         if current is not None and current.state is ConsoleTurnPreparationState.PAUSED:
@@ -5278,6 +5505,15 @@ class ConsoleChatController:
         preparation = self._preparation_by_id(preparation_id)
         if preparation is None:
             return self._prepared_action_refusal()
+        if (
+            preparation.state is ConsoleTurnPreparationState.PAUSED
+            and preparation.pause_kind
+            in {
+                ConsolePreparationPauseKind.TRACE_PROVENANCE,
+                ConsolePreparationPauseKind.TRACE_CALL,
+            }
+        ):
+            return self._cancel_trace_recovery_preparation(preparation)
         cancelled = self.store.cancel_preparation(
             preparation.session_id,
             preparation.preparation_id,
@@ -5292,6 +5528,110 @@ class ConsoleChatController:
             expected_states=frozenset({ConsoleTurnPreparationState.CANCELLED}),
         )
         return self._prepared_action_refusal(None, "Library preparation canceled.")
+
+    def _cancel_trace_recovery_preparation(
+        self,
+        preparation: ConsoleTurnPreparation,
+    ) -> ConsoleSubmitResult:
+        """Terminally discard one trace-blocked send before adapter entry."""
+
+        visible_copy = (
+            "Trace recovery canceled."
+            if preparation.pause_kind is ConsolePreparationPauseKind.TRACE_PROVENANCE
+            else "Trace-captured send canceled."
+        )
+
+        boundary = self._trace_call_boundaries_by_preparation.get(
+            preparation.preparation_id
+        )
+        if boundary is not None:
+            reservation_status = getattr(boundary, "reservation_status", "unknown")
+            if reservation_status not in {"established", "not_established"}:
+                return self._prepared_action_refusal(
+                    preparation, "Trace reservation status is unavailable."
+                )
+            if reservation_status == "established":
+                mark_not_dispatched = getattr(boundary, "mark_not_dispatched", None)
+                if not callable(mark_not_dispatched):
+                    return self._prepared_action_refusal(
+                        preparation, "Trace cancellation could not be saved."
+                    )
+                try:
+                    mark_not_dispatched()
+                except TraceCallPersistenceError:
+                    return self._prepared_action_refusal(
+                        preparation, "Trace cancellation could not be saved."
+                    )
+
+        continuation = self._durable_postcommit_continuations.get(
+            preparation.preparation_id
+        )
+        if continuation is None:
+            return self._prepared_action_refusal(preparation)
+        recovery = self.store.dispatch_recovery_for_session(preparation.session_id)
+        if (
+            recovery is None
+            and preparation.pause_kind is ConsolePreparationPauseKind.TRACE_PROVENANCE
+        ):
+            try:
+                self.store.publish_durable_recovery_owner(
+                    preparation.session_id,
+                    continuation.commit,
+                    terminal_citation_finalizer=None,
+                    defer_terminal_persistence=(
+                        continuation.citation_repair_session is not None
+                    ),
+                )
+            except Exception:  # noqa: BLE001 -- retain the paused recovery owner
+                return self._prepared_action_refusal(
+                    preparation, "Accepted send cancellation could not be saved."
+                )
+            recovery = self.store.dispatch_recovery_for_session(preparation.session_id)
+        if recovery is None:
+            return self._prepared_action_refusal(
+                preparation, "Accepted send cancellation could not be saved."
+            )
+        self.store.mark_dispatch_recovery_needed(
+            preparation.session_id,
+            continuation.commit.assistant_message_id,
+        )
+        claimed = self.store.claim_dispatch_recovery_action(
+            preparation.session_id,
+            ConsoleDispatchRecoveryActionId.DISCARD,
+        )
+        if claimed is None or not self.store.settle_dispatch_recovery(
+            preparation.session_id,
+            assistant_message_id=continuation.commit.assistant_message_id,
+            terminal_state="discarded",
+            content=CONSOLE_DISPATCH_DISCARDED_COPY,
+        ):
+            if claimed is not None:
+                self.store.release_dispatch_recovery_action(
+                    preparation.session_id,
+                    continuation.commit.assistant_message_id,
+                )
+            return self._prepared_action_refusal(
+                preparation, "Accepted send cancellation could not be saved."
+            )
+
+        cancelled = self.store.cancel_preparation(
+            preparation.session_id,
+            preparation.preparation_id,
+            expected_state=ConsoleTurnPreparationState.PAUSED,
+        )
+        if cancelled is not None:
+            self._drop_preparation(
+                preparation.preparation_id,
+                expected_states=frozenset({ConsoleTurnPreparationState.CANCELLED}),
+            )
+        self._retire_live_recovery_continuation(claimed)
+        self.store.release_durable_postcommit_activity(preparation.preparation_id)
+        self._trace_call_boundaries_by_preparation.pop(preparation.preparation_id, None)
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy),
+            session_id=preparation.session_id,
+        )
+        return self._prepared_action_refusal(None, visible_copy)
 
     @staticmethod
     def _prepared_action_refusal(
@@ -5438,6 +5778,7 @@ class ConsoleChatController:
         if removed is not None:
             self._preparation_outcomes.pop(preparation_id, None)
             self._prepared_send_continuations.pop(preparation_id, None)
+            self._trace_call_boundaries_by_preparation.pop(preparation_id, None)
             fingerprint = self.store.durable_acceptance_fingerprint_for(preparation_id)
             if (
                 fingerprint is None
@@ -6149,9 +6490,12 @@ class ConsoleChatController:
             # still sees the probe failure. (A wake echoed nothing: None guard.)
             if echoed_user is not None:
                 if self._shutdown_requested.is_set():
-                    self.store.delete_message(echoed_user.id)
-                    session.title = pre_send_title
-                    session.persisted_conversation_id = pre_send_conversation_id
+                    self.store.rollback_transient_send(
+                        session.id,
+                        echoed_user.id,
+                        title=pre_send_title,
+                        persisted_conversation_id=pre_send_conversation_id,
+                    )
                 else:
                     self._mark_transient_echo_blocked(echoed_user.id)
             raise
@@ -6187,9 +6531,12 @@ class ConsoleChatController:
             # transcript owner nor an auto-derived title behind, so the exact
             # draft can be retried after the persistent backend is upgraded.
             if echoed_user is not None:
-                self.store.delete_message(echoed_user.id)
-            session.title = pre_send_title
-            session.persisted_conversation_id = pre_send_conversation_id
+                self.store.rollback_transient_send(
+                    session.id,
+                    echoed_user.id,
+                    title=pre_send_title,
+                    persisted_conversation_id=pre_send_conversation_id,
+                )
             return thinking_block
 
         if resumed_preparation is not None:
@@ -6273,6 +6620,7 @@ class ConsoleChatController:
                 pause_kind=None,
                 one_shot_bypass=False,
                 ephemeral=session.ephemeral,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_OFF,
             )
             if self._begin_submit_preparation(active_task, preparation) is None:
                 if echoed_user is not None:
@@ -6355,6 +6703,7 @@ class ConsoleChatController:
             provider_messages = self._provider_messages_for_session(
                 session.id, annotate_ids=True, turn_context=turn_context
             )
+            trace_source_messages = tuple(dict(row) for row in provider_messages)
             (
                 provider_messages,
                 refuse,
@@ -6576,6 +6925,7 @@ class ConsoleChatController:
                 staged_attachments=staged_attachments,
                 resolution=resolution,
                 provider_messages=provider_messages,
+                trace_source_messages=trace_source_messages,
                 prefill=prefill,
                 prefill_from_one_shot=prefill_from_one_shot,
                 one_shot_prefill_revision=one_shot_prefill_revision,
@@ -6720,12 +7070,12 @@ class ConsoleChatController:
                     and origin is ConsoleSubmissionOrigin.QUEUED
                 ),
             )
-            if (
-                session.ephemeral
-                and self.store.dispatch_recovery_for_session(session.id) is not None
-            ):
+
+            async def enter_ephemeral_provider_dispatch() -> None:
                 if (
-                    self.store.begin_ephemeral_dispatch(
+                    session.ephemeral
+                    and self.store.dispatch_recovery_for_session(session.id) is not None
+                    and self.store.begin_ephemeral_dispatch(
                         session.id,
                         assistant_message_id=assistant.id,
                         new_attempt_id=turn_context.library_authority.attempt_id,
@@ -6735,7 +7085,35 @@ class ConsoleChatController:
                     raise RuntimeError(
                         "Ephemeral dispatch checkpoint changed before provider entry."
                     )
+                if preparation is not None and not self._transition_preparation(
+                    preparation.preparation_id,
+                    ConsoleTurnPreparationState.ACCEPTED,
+                    ConsoleTurnPreparationState.DISPATCH_STARTED,
+                ):
+                    raise RuntimeError(
+                        "Prepared turn changed before provider dispatch."
+                    )
+
+            deferred_provider_dispatch = bool(
+                getattr(self.provider_gateway, "deferred_dispatch_boundary", False)
+            )
+            if (
+                not deferred_provider_dispatch
+                and session.ephemeral
+                and self.store.dispatch_recovery_for_session(session.id) is not None
+                and self.store.begin_ephemeral_dispatch(
+                    session.id,
+                    assistant_message_id=assistant.id,
+                    new_attempt_id=turn_context.library_authority.attempt_id,
+                )
+                is None
+            ):
+                raise RuntimeError(
+                    "Ephemeral dispatch checkpoint changed before provider entry."
+                )
+
             stream_result = await self._stream_assistant_response(
+                route=ConsoleRequestRoute.FRESH,
                 resolution=resolution,
                 provider_messages=provider_messages,
                 assistant_message_id=assistant.id,
@@ -6750,6 +7128,11 @@ class ConsoleChatController:
                     preparation.preparation_id if preparation is not None else None
                 ),
                 stream_signals=stream_signals,
+                before_provider_dispatch=(
+                    enter_ephemeral_provider_dispatch
+                    if deferred_provider_dispatch
+                    else None
+                ),
             )
             result = replace(
                 stream_result,
@@ -6772,6 +7155,54 @@ class ConsoleChatController:
                         assistant.id,
                     )
                 raise
+            if (
+                isinstance(exc, TraceCallPersistenceError)
+                and origin is ConsoleSubmissionOrigin.MANUAL
+                and preparation is not None
+            ):
+                current = self._preparation_by_id(preparation.preparation_id)
+                if (
+                    current is not None
+                    and current.state is ConsoleTurnPreparationState.ACCEPTED
+                ):
+                    paused_shape = pause_for_trace_call_failure(current, exc)
+                    paused = self.store.compare_and_set_preparation(
+                        current.session_id,
+                        ConsolePreparationTransition(
+                            preparation_id=current.preparation_id,
+                            expected_state=current.state,
+                            new_state=paused_shape.state,
+                            pause_kind=paused_shape.pause_kind,
+                            new_attempt_id=None,
+                        ),
+                    )
+                    if paused is not None:
+                        visible_copy = (
+                            "Trace capture could not start. Retry, Send without "
+                            "capture, or Cancel."
+                        )
+                        self._set_run_state(
+                            ConsoleRunState.blocked(visible_copy),
+                            session_id=session.id,
+                        )
+                        return ConsoleSubmitResult(
+                            True,
+                            True,
+                            visible_copy,
+                            session_id=session.id,
+                            user_message_id=(
+                                echoed_user.id if echoed_user is not None else None
+                            ),
+                            assistant_message_id=(
+                                assistant.id if assistant is not None else None
+                            ),
+                            terminal_status=ConsoleRunStatus.BLOCKED,
+                            origin=origin,
+                            queue_entry_id=queue_entry_id,
+                            committed_context_epoch=committed_context_epoch,
+                            preparation_id=preparation.preparation_id,
+                            provider_started=False,
+                        )
             accepted_cancellation = isinstance(exc, asyncio.CancelledError) and (
                 assistant is not None and echoed_user is not None
             )
@@ -6921,6 +7352,191 @@ class ConsoleChatController:
             return await asyncio.to_thread(call, *args)
         return call(*args)
 
+    def _build_durable_trace_request(
+        self,
+        *,
+        preparation: ConsoleTurnPreparation,
+        provider_messages: list[dict[str, Any]],
+        trace_source_messages: tuple[dict[str, Any], ...],
+        echoed_user_id: str,
+        committed_user_id: str,
+    ) -> PreparedConsoleRequest | None:
+        """Freeze one Capture-On request from the admitted durable inputs."""
+
+        if preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_OFF:
+            return None
+        persistence = self.store.persistence
+        database = getattr(persistence, "db", None)
+        coordinator = getattr(persistence, "semantic_revision_coordinator", None)
+        repository = getattr(persistence, "console_trace_repository", None)
+        if database is None or coordinator is None or repository is None:
+            raise TraceProvenancePersistenceError()
+
+        def provider_row(row: Mapping[str, Any]) -> dict[str, Any]:
+            return {
+                key: value for key, value in row.items() if key != NATIVE_MESSAGE_ID_KEY
+            }
+
+        source_by_owner = {
+            owner_id: provider_row(row)
+            for row in trace_source_messages
+            if type(owner_id := row.get(NATIVE_MESSAGE_ID_KEY)) is str
+        }
+        saved_positions: list[int] = []
+        saved_ids: list[str] = []
+        visible_messages: list[dict[str, Any]] = []
+        for index, row in enumerate(provider_messages):
+            visible = provider_row(row)
+            visible_messages.append(visible)
+            owner_id = row.get(NATIVE_MESSAGE_ID_KEY)
+            if type(owner_id) is not str or source_by_owner.get(owner_id) != visible:
+                continue
+            if owner_id == echoed_user_id:
+                persisted_id = committed_user_id
+            else:
+                try:
+                    persisted_id = self.store.get_message(owner_id).persisted_message_id
+                except KeyError:
+                    persisted_id = None
+            if type(persisted_id) is str and persisted_id:
+                saved_positions.append(index)
+                saved_ids.append(persisted_id)
+
+        policy = FrozenTracePolicy(
+            policy_id=new_opaque_id(),
+            credential_filter_version=CREDENTIAL_FILTER_VERSION,
+            pii_redaction_enabled=False,
+            pii_ruleset_revision_id=None,
+        )
+        try:
+            with database.transaction(immediate=True) as cursor:
+                saved = admit_message_provenance(
+                    cursor,
+                    coordinator=coordinator,
+                    message_ids=tuple(saved_ids),
+                )
+                repository.ensure_policy(cursor, policy)
+        except TraceProvenancePersistenceError:
+            raise
+        except Exception:
+            raise TraceProvenancePersistenceError() from None
+
+        saved_by_position = dict(zip(saved_positions, saved, strict=True))
+        descriptors = tuple(
+            saved_by_position.get(index)
+            or ProviderArtifactTraceProvenance(
+                TraceProvenanceSource.ACTIVE_REQUEST,
+                policy,
+            )
+            for index in range(len(visible_messages))
+        )
+        return build_console_request_for_preparation(
+            preparation,
+            visible_messages,
+            route=ConsoleRequestRoute.FRESH,
+            message_provenance=descriptors,
+            memory_provenance=(),
+            mandatory_provenance=(),
+            tool_provenance=(),
+            capture_policy=policy,
+        )
+
+    def _handle_durable_trace_provenance_failure(
+        self,
+        continuation: _DurablePostcommitContinuation,
+    ) -> ConsoleSubmitResult:
+        """Pause manual recovery or terminally retire an autonomous failure."""
+
+        visible_copy = (
+            "Trace provenance could not be saved. Retry, Send without capture, "
+            "or Cancel."
+        )
+        if continuation.origin is ConsoleSubmissionOrigin.MANUAL:
+            paused = self._pause_prepared_commit(
+                continuation.preparation_id,
+                ConsolePreparationPauseKind.TRACE_PROVENANCE,
+            )
+            if (
+                paused is None
+                or paused.state is not ConsoleTurnPreparationState.PAUSED
+                or paused.pause_kind is not ConsolePreparationPauseKind.TRACE_PROVENANCE
+            ):
+                raise TraceProvenancePersistenceError()
+            self._set_run_state(
+                ConsoleRunState.blocked(visible_copy),
+                session_id=continuation.session_id,
+            )
+            return ConsoleSubmitResult(
+                True,
+                True,
+                visible_copy,
+                session_id=continuation.session_id,
+                user_message_id=continuation.commit.user_message_id,
+                assistant_message_id=continuation.commit.assistant_message_id,
+                terminal_status=ConsoleRunStatus.BLOCKED,
+                origin=continuation.origin,
+                queue_entry_id=continuation.queue_entry_id,
+                committed_context_epoch=continuation.committed_context_epoch,
+                preparation_id=continuation.preparation_id,
+                provider_started=False,
+            )
+
+        if continuation.origin is ConsoleSubmissionOrigin.QUEUED:
+            entry_id = continuation.queue_entry_id
+            if entry_id is None or not (
+                self.prompt_queue_coordinator.acknowledge_durable_acceptance(
+                    continuation.session_id,
+                    entry_id=entry_id,
+                    preparation_id=continuation.preparation_id,
+                    context_epoch=continuation.committed_context_epoch,
+                )
+            ):
+                self.prompt_queue_coordinator.retain_durable_acceptance(
+                    continuation.session_id
+                )
+
+        self._transition_preparation(
+            continuation.preparation_id,
+            ConsoleTurnPreparationState.COMMITTING,
+            ConsoleTurnPreparationState.ACCEPTED,
+        )
+        try:
+            self.store.mark_message_failed(continuation.commit.assistant_message_id)
+        except KeyError:
+            pass
+        terminal_copy = "Accepted turn failed before provider dispatch."
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.FAILED, terminal_copy),
+            session_id=continuation.session_id,
+        )
+        self._settle_accepted_preparation(continuation.preparation_id)
+        with self.store.durable_preparation_lock:
+            current = self._durable_postcommit_continuations.pop(
+                continuation.preparation_id,
+                None,
+            )
+            if current is not None:
+                self._release_retired_prepared_evidence(current)
+                self.store.retire_durable_acceptance(
+                    continuation.preparation_id,
+                    continuation.fingerprint,
+                )
+        self.store.release_durable_postcommit_activity(continuation.preparation_id)
+        return ConsoleSubmitResult(
+            True,
+            True,
+            terminal_copy,
+            session_id=continuation.session_id,
+            user_message_id=continuation.commit.user_message_id,
+            assistant_message_id=continuation.commit.assistant_message_id,
+            terminal_status=ConsoleRunStatus.FAILED,
+            origin=continuation.origin,
+            queue_entry_id=continuation.queue_entry_id,
+            committed_context_epoch=continuation.committed_context_epoch,
+            preparation_id=continuation.preparation_id,
+            provider_started=False,
+        )
+
     async def _accept_durable_turn(
         self,
         *,
@@ -6933,6 +7549,7 @@ class ConsoleChatController:
         staged_attachments: tuple[MessageAttachment, ...],
         resolution: ConsoleProviderResolution,
         provider_messages: list[dict[str, Any]],
+        trace_source_messages: tuple[dict[str, Any], ...],
         prefill: str | None,
         prefill_from_one_shot: bool,
         one_shot_prefill_revision: int | None,
@@ -7073,6 +7690,9 @@ class ConsoleChatController:
             echoed_user_id=echoed_user.id,
             resolution=resolution,
             provider_messages=provider_messages,
+            trace_source_messages=trace_source_messages,
+            trace_capture_mode=preparation.capture_mode,
+            trace_request=None,
             prefill=prefill,
             prefill_from_one_shot=prefill_from_one_shot,
             one_shot_prefill_revision=one_shot_prefill_revision,
@@ -7095,6 +7715,27 @@ class ConsoleChatController:
             self._durable_postcommit_continuations[preparation.preparation_id] = (
                 continuation
             )
+        try:
+            trace_request = self._build_durable_trace_request(
+                preparation=preparation,
+                provider_messages=provider_messages,
+                trace_source_messages=trace_source_messages,
+                echoed_user_id=echoed_user.id,
+                committed_user_id=commit.user_message_id,
+            )
+        except Exception:
+            return self._handle_durable_trace_provenance_failure(continuation)
+        if trace_request is not None:
+            with self.store.durable_preparation_lock:
+                current = self._durable_postcommit_continuations.get(
+                    preparation.preparation_id
+                )
+                if current is not continuation:
+                    raise RuntimeError("Durable continuation owner changed.")
+                continuation = replace(continuation, trace_request=trace_request)
+                self._durable_postcommit_continuations[preparation.preparation_id] = (
+                    continuation
+                )
         return await self.resume_durable_postcommit(preparation.preparation_id)
 
     def _postcommit_stopped_by_close(
@@ -7143,6 +7784,9 @@ class ConsoleChatController:
         preparation_id: str,
         *,
         continue_to_provider: bool = True,
+        capture_mode_override: ConsoleTraceCaptureMode | None = None,
+        turn_context_override: ConsoleTurnExecutionContext | None = None,
+        dispatch_attempt_id: str | None = None,
     ) -> ConsoleSubmitResult:
         """Resume missing postcommit effects without allocating another turn.
 
@@ -7328,7 +7972,9 @@ class ConsoleChatController:
                         current_commit.assistant_message_version
                     ),
                     new_state=ConsoleDispatchCheckpointState.DISPATCH_STARTED,
-                    new_attempt_id=current_commit.checkpoint.attempt_id,
+                    new_attempt_id=(
+                        dispatch_attempt_id or current_commit.checkpoint.attempt_id
+                    ),
                 ),
             )
             if result.status is not ConsoleDispatchResultStatus.COMMITTED:
@@ -7346,6 +7992,14 @@ class ConsoleChatController:
                 ConsoleTurnPreparationState.DISPATCH_STARTED,
             ):
                 raise RuntimeError("Prepared turn changed before provider dispatch.")
+
+        async def enter_provider_dispatch() -> None:
+            await self._run_durable_postcommit_effect(
+                preparation_id,
+                "checkpoint_transition",
+                transition_checkpoint,
+                fingerprint=fingerprint,
+            )
 
         try:
 
@@ -7426,19 +8080,37 @@ class ConsoleChatController:
                     preparation_id=preparation_id,
                     provider_started=False,
                 )
-            await self._run_durable_postcommit_effect(
-                preparation_id,
-                "checkpoint_transition",
-                transition_checkpoint,
-                fingerprint=fingerprint,
-            )
             assistant = assistant_holder.get("assistant")
             if assistant is None:
                 assistant = self.store.get_message(commit.assistant_message_id)
+            effective_capture_mode = (
+                capture_mode_override or continuation.trace_capture_mode
+            )
+            if (
+                effective_capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
+                and continuation.trace_capture_mode
+                is ConsoleTraceCaptureMode.CAPTURE_ON
+                and continuation.trace_request is None
+            ):
+                return ConsoleSubmitResult(
+                    True,
+                    True,
+                    "Trace provenance must be recovered before provider dispatch.",
+                    session_id=session_id,
+                    user_message_id=commit.user_message_id,
+                    assistant_message_id=commit.assistant_message_id,
+                    terminal_status=ConsoleRunStatus.BLOCKED,
+                    origin=continuation.origin,
+                    queue_entry_id=continuation.queue_entry_id,
+                    committed_context_epoch=continuation.committed_context_epoch,
+                    preparation_id=preparation_id,
+                    provider_started=False,
+                )
             stream_result = await self._run_durable_postcommit_effect(
                 preparation_id,
                 "provider_entry",
                 lambda: self._stream_assistant_response(
+                    route=ConsoleRequestRoute.FRESH,
                     resolution=continuation.resolution,
                     provider_messages=continuation.provider_messages,
                     assistant_message_id=assistant.id,
@@ -7448,9 +8120,19 @@ class ConsoleChatController:
                     skill_bindings=continuation.skill_bindings,
                     skill_bundle_block=continuation.skill_bundle_block,
                     citation_repair_session=continuation.citation_repair_session,
-                    turn_context=continuation.turn_context,
+                    turn_context=(turn_context_override or continuation.turn_context),
                     preparation_id=None,
                     stream_signals=continuation.stream_signals,
+                    before_provider_dispatch=enter_provider_dispatch,
+                    capture_mode_override=effective_capture_mode,
+                    trace_request=(
+                        continuation.trace_request
+                        if effective_capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
+                        else None
+                    ),
+                    propagate_trace_call_persistence_errors=(
+                        continuation.origin is ConsoleSubmissionOrigin.MANUAL
+                    ),
                 ),
                 fingerprint=fingerprint,
             )
@@ -7486,7 +8168,7 @@ class ConsoleChatController:
                 preparation_id=preparation_id,
                 provider_started=True,
             )
-        except BaseException:
+        except BaseException as exc:
             # TASK-22587: this lookup runs inside the failure handler, so it
             # must not raise -- a close mid-turn retires the ledger and the
             # raise would REPLACE the failure being handled. The tombstone
@@ -7494,7 +8176,70 @@ class ConsoleChatController:
             completed = self.store.durable_completed_effects_for(
                 preparation_id, fingerprint=fingerprint
             )
-            provider_started = "checkpoint_transition" in completed
+            # Keep two separate truths here.  An earlier retry/tool-loop call
+            # may already have crossed the provider boundary even though the
+            # call that just failed did not.  The latter decides whether this
+            # failure can pause; the former is reported to recovery/UI.
+            any_provider_started = "checkpoint_transition" in completed
+            failed_call_started = any_provider_started
+            if isinstance(exc, TraceCallPersistenceError):
+                boundary_started = getattr(exc.boundary, "dispatch_started", None)
+                if type(boundary_started) is bool:
+                    failed_call_started = boundary_started
+                elif exc.reservation_status is not None:
+                    # Boundary construction/reservation failed before this
+                    # call could cross normalized dispatch. A checkpoint from
+                    # an earlier retry/tool-loop call does not change that.
+                    failed_call_started = False
+            if (
+                isinstance(exc, TraceCallPersistenceError)
+                and continuation.origin is ConsoleSubmissionOrigin.MANUAL
+                and not failed_call_started
+            ):
+                self._trace_call_boundaries_by_preparation[preparation_id] = (
+                    exc.boundary if exc.boundary is not None else exc
+                )
+                current = self._preparation_by_id(preparation_id)
+                if current is not None and current.state in {
+                    ConsoleTurnPreparationState.ACCEPTED,
+                    ConsoleTurnPreparationState.DISPATCH_STARTED,
+                }:
+                    paused_shape = pause_for_trace_call_failure(current, exc)
+                    paused = self.store.compare_and_set_preparation(
+                        current.session_id,
+                        ConsolePreparationTransition(
+                            preparation_id=current.preparation_id,
+                            expected_state=current.state,
+                            new_state=paused_shape.state,
+                            pause_kind=paused_shape.pause_kind,
+                            new_attempt_id=None,
+                        ),
+                    )
+                    if paused is not None:
+                        visible_copy = (
+                            "Trace capture could not start. Retry, Send without "
+                            "capture, or Cancel."
+                        )
+                        self._set_run_state(
+                            ConsoleRunState.blocked(visible_copy),
+                            session_id=session_id,
+                        )
+                        return ConsoleSubmitResult(
+                            True,
+                            True,
+                            visible_copy,
+                            session_id=session_id,
+                            user_message_id=commit.user_message_id,
+                            assistant_message_id=commit.assistant_message_id,
+                            terminal_status=ConsoleRunStatus.BLOCKED,
+                            origin=continuation.origin,
+                            queue_entry_id=continuation.queue_entry_id,
+                            committed_context_epoch=(
+                                continuation.committed_context_epoch
+                            ),
+                            preparation_id=preparation_id,
+                            provider_started=any_provider_started,
+                        )
             if self.store.dispatch_recovery_for_session(session_id) is None:
                 self.store.publish_durable_recovery_owner(
                     session_id,
@@ -7541,7 +8286,7 @@ class ConsoleChatController:
                 queue_entry_id=continuation.queue_entry_id,
                 committed_context_epoch=continuation.committed_context_epoch,
                 preparation_id=preparation_id,
-                provider_started=provider_started,
+                provider_started=any_provider_started,
             )
         # Terminal persistence and checkpoint deletion completed atomically
         # inside the stream finalizer. The volatile preparation can now leave.
@@ -7812,6 +8557,7 @@ class ConsoleChatController:
                     context.resolution,
                 )
             result = await self._stream_assistant_response(
+                route=ConsoleRequestRoute.RETRY,
                 resolution=context.resolution,
                 provider_messages=context.provider_messages,
                 assistant_message_id=claimed.assistant_message_id,
@@ -12145,6 +12891,7 @@ class ConsoleChatController:
         provider_messages = await self._apply_world_info(provider_messages, session_id)
         prefill = self._pinned_prefill_for_session(session_id)
         return await self._stream_assistant_response(
+            route=ConsoleRequestRoute.RETRY,
             resolution=resolution,
             provider_messages=provider_messages,
             assistant_message_id=message_id,
@@ -12298,6 +13045,7 @@ class ConsoleChatController:
             persist=self.store.persistence is not None,
         )
         return await self._stream_assistant_response(
+            route=ConsoleRequestRoute.CONTINUE,
             resolution=resolution,
             provider_messages=provider_messages,
             assistant_message_id=assistant.id,
@@ -12439,6 +13187,7 @@ class ConsoleChatController:
             persist=self.store.persistence is not None,
         )
         result = await self._stream_assistant_response(
+            route=ConsoleRequestRoute.REGENERATE,
             resolution=resolution,
             provider_messages=provider_messages,
             assistant_message_id=new_message.id,
@@ -12918,7 +13667,11 @@ class ConsoleChatController:
             )
         try:
             text = (
-                await self._collect_summary_completion(resolution, messages)
+                await self._collect_summary_completion(
+                    resolution,
+                    messages,
+                    route=ConsoleRequestRoute.IMPERSONATE,
+                )
             ).strip()
         except asyncio.CancelledError:
             raise
@@ -12956,7 +13709,11 @@ class ConsoleChatController:
         return kept or transcript[-1:]
 
     async def _collect_summary_completion(
-        self, resolution: Any, messages: list[dict[str, Any]]
+        self,
+        resolution: Any,
+        messages: list[dict[str, Any]],
+        *,
+        route: ConsoleRequestRoute,
     ) -> str:
         """Collect a NON-streaming completion via the gateway's streaming seam.
 
@@ -12967,7 +13724,9 @@ class ConsoleChatController:
         yields (e.g. tool-call payloads, never requested here) are ignored.
         """
         chunks: list[str] = []
-        async for chunk in self.provider_gateway.stream_chat(resolution, messages):
+        async for chunk in self.provider_gateway.stream_chat(
+            resolution, messages, route=route
+        ):
             if isinstance(
                 chunk,
                 (ProviderThinkingDelta, ProviderProprietaryThinkingEvidence),
@@ -13205,6 +13964,7 @@ class ConsoleChatController:
             persist=self.store.persistence is not None,
         )
         return await self._stream_assistant_response(
+            route=ConsoleRequestRoute.EDIT,
             resolution=resolution,
             provider_messages=provider_messages,
             assistant_message_id=assistant.id,
@@ -16547,7 +17307,24 @@ class ConsoleChatController:
         )
         semantic = prepared_before.semantic
         if memory_rows:
-            semantic = replace(semantic, memory=memory_rows)
+            memory_provenance = (
+                replace(
+                    semantic.provenance,
+                    memory=(
+                        ProviderArtifactTraceProvenance(
+                            TraceProvenanceSource.CONVERSATION_MEMORY,
+                            frozen_policy_from_provenance(semantic.provenance),
+                        ),
+                    ),
+                )
+                if semantic.provenance is not None
+                else None
+            )
+            semantic = replace(
+                semantic,
+                memory=memory_rows,
+                provenance=memory_provenance,
+            )
             prepared_before = prepare(
                 resolution,
                 semantic,
@@ -16815,8 +17592,19 @@ class ConsoleChatController:
             memory_rows_after: tuple[Mapping[str, Any], ...] = (
                 tagged_memory_message(transaction.memory.summary_text),
             )
+            remaining_provenance = planned.plan.remaining_semantic.provenance
+            text_memory_provenance = (
+                compaction_transform_provenance(
+                    semantic.provenance,
+                    selected_units=len(planned.plan.selected_units),
+                    transform=TraceTransformKind.TEXT_COMPACTION,
+                    source=TraceProvenanceSource.CONTEXT_SUMMARY,
+                )
+                if semantic.provenance is not None
+                else None
+            )
+            hybrid_visual_added = False
             if effective_representation is ContextCompactionRepresentation.HYBRID:
-                hybrid_visual_added = False
                 try:
                     image_limit = max_history_images(
                         resolution.provider, resolution.model or ""
@@ -16838,25 +17626,33 @@ class ConsoleChatController:
                             # Wire integrity (exact PNG bytes), not renderer identity.
                             page_hashes=[page.png_sha256 for page in artifact.pages],
                         )
-                        hybrid_semantic = PreparedConsoleRequest(
-                            system=planned.plan.remaining_semantic.system,
+                        visual_memory_provenance = (
+                            compaction_transform_provenance(
+                                semantic.provenance,
+                                selected_units=len(planned.plan.selected_units),
+                                transform=TraceTransformKind.HYBRID_COMPACTION,
+                                source=TraceProvenanceSource.VISUAL_TRANSCRIPT,
+                                include_memory=False,
+                            )
+                            if semantic.provenance is not None
+                            else None
+                        )
+                        hybrid_semantic = replace(
+                            planned.plan.remaining_semantic,
                             memory=memory_rows_after + (visual_row,),
-                            mandatory=planned.plan.remaining_semantic.mandatory,
-                            compactable=planned.plan.remaining_semantic.compactable,
-                            active_request=planned.plan.remaining_semantic.active_request,
-                            active_thinking_groups=(
-                                planned.plan.remaining_semantic.active_thinking_groups
+                            provenance=(
+                                replace(
+                                    remaining_provenance,
+                                    memory=(
+                                        text_memory_provenance,
+                                        visual_memory_provenance,
+                                    ),
+                                )
+                                if remaining_provenance is not None
+                                and text_memory_provenance is not None
+                                and visual_memory_provenance is not None
+                                else None
                             ),
-                            active_continuation_groups=(
-                                planned.plan.remaining_semantic.active_continuation_groups
-                            ),
-                            thinking_policy=(
-                                planned.plan.remaining_semantic.thinking_policy
-                            ),
-                            effective_thinking_policy=(
-                                planned.plan.remaining_semantic.effective_thinking_policy
-                            ),
-                            tools=planned.plan.remaining_semantic.tools,
                         )
                         hybrid_prepared = prepare_main(hybrid_semantic)
                         hybrid_conversation_tokens = (
@@ -16874,23 +17670,34 @@ class ConsoleChatController:
                     pass
                 if not hybrid_visual_added:
                     logger.info("console_visual_compaction_fell_back_to_text")
-            after = PreparedConsoleRequest(
-                system=planned.plan.remaining_semantic.system,
+            final_memory_provenance = (
+                (
+                    text_memory_provenance,
+                    compaction_transform_provenance(
+                        semantic.provenance,
+                        selected_units=len(planned.plan.selected_units),
+                        transform=TraceTransformKind.HYBRID_COMPACTION,
+                        source=TraceProvenanceSource.VISUAL_TRANSCRIPT,
+                        include_memory=False,
+                    ),
+                )
+                if hybrid_visual_added
+                and semantic.provenance is not None
+                and text_memory_provenance is not None
+                else (
+                    (text_memory_provenance,)
+                    if text_memory_provenance is not None
+                    else ()
+                )
+            )
+            after = replace(
+                planned.plan.remaining_semantic,
                 memory=memory_rows_after,
-                mandatory=planned.plan.remaining_semantic.mandatory,
-                compactable=planned.plan.remaining_semantic.compactable,
-                active_request=planned.plan.remaining_semantic.active_request,
-                active_thinking_groups=(
-                    planned.plan.remaining_semantic.active_thinking_groups
+                provenance=(
+                    replace(remaining_provenance, memory=final_memory_provenance)
+                    if remaining_provenance is not None
+                    else None
                 ),
-                active_continuation_groups=(
-                    planned.plan.remaining_semantic.active_continuation_groups
-                ),
-                thinking_policy=planned.plan.remaining_semantic.thinking_policy,
-                effective_thinking_policy=(
-                    planned.plan.remaining_semantic.effective_thinking_policy
-                ),
-                tools=planned.plan.remaining_semantic.tools,
             )
             return _flatten_preflight_messages(after), None
         if (
@@ -16912,6 +17719,7 @@ class ConsoleChatController:
         resolution: Any,
         provider_messages: list[dict[str, str]],
         assistant_message_id: str,
+        route: ConsoleRequestRoute,
         prepare_retry: bool = False,
         variant_mode: bool = False,
         prefill: str | None = None,
@@ -16924,12 +17732,17 @@ class ConsoleChatController:
         preparation_id: str | None = None,
         stream_signals: ConsoleProviderStreamSignals | None = None,
         generation_token: int | None = None,
+        before_provider_dispatch: Callable[[], Awaitable[None]] | None = None,
+        capture_mode_override: ConsoleTraceCaptureMode | None = None,
+        trace_request: PreparedConsoleRequest | None = None,
+        propagate_trace_call_persistence_errors: bool = False,
     ) -> ConsoleSubmitResult:
         try:
             return await self._stream_assistant_response_inner(
                 resolution=resolution,
                 provider_messages=provider_messages,
                 assistant_message_id=assistant_message_id,
+                route=route,
                 prepare_retry=prepare_retry,
                 variant_mode=variant_mode,
                 prefill=prefill,
@@ -16942,6 +17755,12 @@ class ConsoleChatController:
                 preparation_id=preparation_id,
                 stream_signals=stream_signals,
                 generation_token=generation_token,
+                before_provider_dispatch=before_provider_dispatch,
+                capture_mode_override=capture_mode_override,
+                trace_request=trace_request,
+                propagate_trace_call_persistence_errors=(
+                    propagate_trace_call_persistence_errors
+                ),
             )
         finally:
             if isinstance(turn_context, ConsoleTurnExecutionContext):
@@ -16962,6 +17781,7 @@ class ConsoleChatController:
         resolution: Any,
         provider_messages: list[dict[str, str]],
         assistant_message_id: str,
+        route: ConsoleRequestRoute = ConsoleRequestRoute.FRESH,
         prepare_retry: bool = False,
         variant_mode: bool = False,
         prefill: str | None = None,
@@ -16974,6 +17794,10 @@ class ConsoleChatController:
         preparation_id: str | None = None,
         stream_signals: ConsoleProviderStreamSignals | None = None,
         generation_token: int | None = None,
+        before_provider_dispatch: Callable[[], Awaitable[None]] | None = None,
+        capture_mode_override: ConsoleTraceCaptureMode | None = None,
+        trace_request: PreparedConsoleRequest | None = None,
+        propagate_trace_call_persistence_errors: bool = False,
     ) -> ConsoleSubmitResult:
         try:
             owner_id = self.store.session_id_for_message(assistant_message_id)
@@ -17204,6 +18028,12 @@ class ConsoleChatController:
         # the path virtually every real send takes. Cost is not an opt-in
         # feature of one repair mode; every run needs its own signals object.
         stream_signals = stream_signals or self._new_run_stream_signals()
+        stream_signals.bind_trace_settlement_sink(
+            functools.partial(
+                self.store.register_provider_trace_settlement_async,
+                assistant_message_id,
+            )
+        )
         self._active_capture_details[owner_id] = stream_signals.capture_detail
         # Trajectory sidecar (schema v38): arm this turn's timing capture at
         # the single dispatch choke point covering BOTH the direct-provider
@@ -17246,11 +18076,18 @@ class ConsoleChatController:
                     thinking_policy=thinking_policy,
                     preparation_id=preparation_id,
                     generation_token=generation_token,
+                    before_provider_dispatch=before_provider_dispatch,
+                    capture_mode_override=capture_mode_override,
+                    trace_request=trace_request,
+                    propagate_trace_call_persistence_errors=(
+                        propagate_trace_call_persistence_errors
+                    ),
                 )
             return await self._run_direct_provider_reply(
                 resolution=resolution,
                 provider_messages=provider_messages,
                 assistant_message_id=assistant_message_id,
+                route=(ConsoleRequestRoute.DIRECT_PREFILL if prefill else route),
                 prepare_retry=prepare_retry,
                 variant_mode=variant_mode,
                 prefill=prefill,
@@ -17265,6 +18102,8 @@ class ConsoleChatController:
                 character_emote_snapshot=character_emote_snapshot,
                 preparation_id=preparation_id,
                 generation_token=generation_token,
+                before_provider_dispatch=before_provider_dispatch,
+                capture_mode_override=capture_mode_override,
             )
         finally:
             if (
@@ -17796,6 +18635,7 @@ class ConsoleChatController:
         resolution: Any,
         provider_messages: list[dict[str, Any]],
         assistant_message_id: str,
+        route: ConsoleRequestRoute = ConsoleRequestRoute.FRESH,
         prepare_retry: bool,
         variant_mode: bool,
         prefill: str | None,
@@ -17810,6 +18650,8 @@ class ConsoleChatController:
         character_emote_snapshot: CharacterEmoteRunSnapshot | None = None,
         preparation_id: str | None = None,
         generation_token: int | None = None,
+        before_provider_dispatch: Callable[[], Awaitable[None]] | None = None,
+        capture_mode_override: ConsoleTraceCaptureMode | None = None,
     ) -> ConsoleSubmitResult:
         # Dev's citation-repair refactor extracted this streaming body out of
         # the wrapper (`_stream_assistant_response_inner`) into its own
@@ -17833,11 +18675,30 @@ class ConsoleChatController:
                 },
             ]
         dispatch_request: Any = provider_messages
+        capture_mode = capture_mode_override or ConsoleTraceCaptureMode.CAPTURE_OFF
+        if capture_mode_override is None and preparation_id is not None:
+            preparation = self._preparation_by_id(preparation_id)
+            if preparation is not None:
+                capture_mode = preparation.capture_mode
         prepare_request = getattr(self.provider_gateway, "prepare_chat_request", None)
         if callable(prepare_request):
+            preparation_input: Any = provider_messages
+            if (
+                preparation_id is not None
+                and preparation is not None
+                and not continuation_sidecar
+                and not thinking_sidecar
+            ):
+                preparation_input = build_console_request_for_preparation(
+                    preparation,
+                    provider_messages,
+                    route=route,
+                )
             dispatch_request = prepare_request(
                 resolution,
-                provider_messages,
+                preparation_input,
+                route=route,
+                capture_mode=capture_mode,
                 continuation_target=continuation_target,
                 continuation_sidecar=continuation_sidecar,
                 continuation_owner_key=(
@@ -17944,21 +18805,43 @@ class ConsoleChatController:
         def settle_thinking(outcome: Literal["complete", "stopped", "failed"]) -> None:
             project_thinking(thinking_capture.settle(outcome))
 
-        try:
-            if self._teardown_refuses_turn(owner_id):
-                return self._accepted_shutdown_before_dispatch(
-                    assistant_message_id, owner_id
-                )
+        async def enter_provider_dispatch() -> None:
+            if before_provider_dispatch is not None:
+                await before_provider_dispatch()
+                return
             if preparation_id is not None and not self._transition_preparation(
                 preparation_id,
                 ConsoleTurnPreparationState.ACCEPTED,
                 ConsoleTurnPreparationState.DISPATCH_STARTED,
             ):
                 raise RuntimeError("Prepared turn changed before provider dispatch.")
+
+        try:
+            if self._teardown_refuses_turn(owner_id):
+                return self._accepted_shutdown_before_dispatch(
+                    assistant_message_id, owner_id
+                )
+            deferred_boundary = bool(
+                getattr(
+                    self.provider_gateway,
+                    "deferred_dispatch_boundary",
+                    False,
+                )
+            )
+            if not deferred_boundary:
+                await enter_provider_dispatch()
+            gateway_options: dict[str, Any] = {
+                "capture_mode": capture_mode,
+                "before_provider_dispatch": (
+                    enter_provider_dispatch if deferred_boundary else None
+                ),
+            }
             provider_stream = self.provider_gateway.stream_chat(
                 resolution,
                 dispatch_request,
                 signals=stream_signals,
+                route=route,
+                **gateway_options,
             )
             async for chunk in provider_stream:
                 if not chunk:
@@ -18195,6 +19078,8 @@ class ConsoleChatController:
                 return ConsoleSubmitResult(True, True, stopped.content)
             raise
         except ConsoleDispatchSettlementError:
+            raise
+        except TraceCallPersistenceError:
             raise
         except Exception as exc:
             # Provider failures are surfaced as run status plus a transcript
@@ -18491,6 +19376,7 @@ class ConsoleChatController:
                 resolution,
                 repair_messages,
                 signals=stream_signals,
+                route=ConsoleRequestRoute.CITATION_REPAIR,
             ):
                 if cancellation_requested():
                     repaired_chunks.clear()
@@ -18573,6 +19459,10 @@ class ConsoleChatController:
         thinking_policy: ThinkingHistoryPolicy = "auto",
         preparation_id: str | None = None,
         generation_token: int | None = None,
+        before_provider_dispatch: Callable[[], Awaitable[None]] | None = None,
+        capture_mode_override: ConsoleTraceCaptureMode | None = None,
+        trace_request: PreparedConsoleRequest | None = None,
+        propagate_trace_call_persistence_errors: bool = False,
         _generation_handoff: _GenerationTokenHandoff | None = None,
     ) -> ConsoleSubmitResult:
         """Run the agent loop as the reply engine, streaming into the target row."""
@@ -18819,6 +19709,11 @@ class ConsoleChatController:
         # for this run, so a late poll from the surviving thread still
         # sees the cancellation regardless of `_stop_requested`'s state.
         should_cancel = lambda: cancel_event.is_set()  # noqa: E731
+        capture_mode = capture_mode_override or ConsoleTraceCaptureMode.CAPTURE_OFF
+        if capture_mode_override is None and preparation_id is not None:
+            preparation = self._preparation_by_id(preparation_id)
+            if preparation is not None:
+                capture_mode = preparation.capture_mode
 
         # P5-T6: compose this run's MCP tool provider (if eligible) HERE,
         # on the running main loop, BEFORE the bridge is dispatched onto
@@ -18988,7 +19883,9 @@ class ConsoleChatController:
             return self._accepted_shutdown_before_dispatch(
                 assistant_message_id, session_id
             )
-        if preparation_id is not None and not self._transition_preparation(
+        if before_provider_dispatch is not None:
+            await before_provider_dispatch()
+        elif preparation_id is not None and not self._transition_preparation(
             preparation_id,
             ConsoleTurnPreparationState.ACCEPTED,
             ConsoleTurnPreparationState.DISPATCH_STARTED,
@@ -19100,6 +19997,11 @@ class ConsoleChatController:
                     NATIVE_MESSAGE_ID_KEY if thinking_sidecar else None
                 ),
                 generation_token=generation_token,
+                propagate_trace_call_persistence_errors=(
+                    propagate_trace_call_persistence_errors
+                ),
+                capture_mode=capture_mode,
+                trace_request=trace_request,
                 _generation_handoff=_generation_handoff,
             )
         except asyncio.CancelledError:
@@ -19145,6 +20047,10 @@ class ConsoleChatController:
         except ConsoleDispatchSettlementError:
             raise
         except Exception as exc:
+            if propagate_trace_call_persistence_errors and isinstance(
+                exc, TraceCallPersistenceError
+            ):
+                raise
             # Bridge failures can originate OUTSIDE AgentService's own
             # narrow loop guard (agent_service.py wraps only
             # `run_agent_loop`; `db.create_run`, `_persist`
@@ -20164,6 +21070,12 @@ class ConsoleChatController:
         ) = None,
     ) -> list[_LightweightProviderHistoryRow]:
         """Apply provider-history admission without serializing media bytes."""
+        if any(
+            message.generation_projection_quarantined for message in session_messages
+        ):
+            raise RuntimeError(
+                "Canonical generation is unavailable; reload it before sending."
+            )
         selection = (
             turn_context.provider_selection
             if turn_context is not None

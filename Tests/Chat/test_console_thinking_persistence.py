@@ -21,6 +21,7 @@ from tldw_chatbook.Chat.console_chat_store import (
     ConsoleThinkingCompatibilityError,
     require_thinking_persistence_support,
 )
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.thinking_blocks import (
     DisplayableThinkingBlock,
     ThinkingEnvelope,
@@ -94,11 +95,24 @@ def _continuation(content: str) -> ProviderContinuationCheckpoint:
     )
 
 
+def _raw_semantic_corruption(db, sql: str, params: tuple[object, ...] = ()) -> None:
+    """Authorize one deliberate inconsistent-row fixture write only."""
+
+    with db.transaction() as cursor:
+        connection = cursor.connection
+        authorization = db._semantic_mutation_authorization_for_coordinator(connection)
+        with authorization._authorize(
+            message_id="assistant-1", operations={"message_update"}
+        ):
+            cursor.execute(sql, params)
+
+
 def test_restore_hydrates_supported_thinking(tmp_path: Path) -> None:
     db, conversation_id, repository = _database(tmp_path / "supported.sqlite")
     _insert(db, repository, _acceptance(conversation_id))
     canonical = dump_thinking_blocks_json(_thinking("restored reasoning"))
-    db.get_connection().execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET thinking_blocks_json = ? WHERE id = 'assistant-1'",
         (canonical,),
     )
@@ -117,7 +131,8 @@ def test_restore_preserves_unknown_opaque_and_blocks_generation_mutations(
     db, conversation_id, repository = _database(tmp_path / "unknown.sqlite")
     _insert(db, repository, _acceptance(conversation_id))
     raw = '{ "version" : 99, "future" : {"secret":"value"} }'
-    db.get_connection().execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET thinking_blocks_json = ? WHERE id = 'assistant-1'",
         (raw,),
     )
@@ -152,9 +167,10 @@ def test_persist_selected_generation_replaces_projection_and_refreshes_version(
 ) -> None:
     db, conversation_id, repository = _database(tmp_path / "projection.sqlite")
     _insert(db, repository, _acceptance(conversation_id))
-    db.get_connection().execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET content = 'old', assistant_generation_state = 'complete' "
-        "WHERE id = 'assistant-1'"
+        "WHERE id = 'assistant-1'",
     )
     store, _session_id = _restored_store(db, conversation_id)
     message = store._message_or_raise("assistant-1")
@@ -171,13 +187,115 @@ def test_persist_selected_generation_replaces_projection_and_refreshes_version(
     assert message.provider_continuation_message_version == row["version"]
 
 
+@pytest.mark.parametrize("route", ["settle", "persist"])
+@pytest.mark.parametrize("sidecar", ["metadata", "sync"])
+def test_committed_thinking_sidecar_failure_reconciles_exact_generation_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    route: str,
+    sidecar: str,
+) -> None:
+    """Late thinking/public projection errors publish their committed row."""
+
+    db, conversation_id, repository = _database(
+        tmp_path / f"thinking-{route}-{sidecar}.sqlite"
+    )
+    _insert(db, repository, _acceptance(conversation_id))
+    continuation = _continuation("stable answer")
+    original_thinking = _thinking("original reasoning", status="failed")
+    original_metadata = MessageMetadata(engine="original")
+    _raw_semantic_corruption(
+        db,
+        "UPDATE messages SET content = 'stable answer', thinking_blocks_json = ?, "
+        "provider_continuation_json = ?, assistant_generation_state = 'failed', "
+        "metadata_json = ? WHERE id = 'assistant-1'",
+        (
+            dump_thinking_blocks_json(original_thinking),
+            dump_provider_continuation_json(continuation),
+            original_metadata.to_json(),
+        ),
+    )
+    store, _session_id = _restored_store(db, conversation_id)
+    live = store._message_or_raise("assistant-1")
+    live.status = "failed"
+    token = store.begin_generation_attempt(live.id)
+    replacement = _thinking("late reasoning", status="failed")
+    live.metadata = MessageMetadata(engine="replacement")
+    if route == "persist":
+        live.thinking = replacement
+
+    def semantic_stats() -> tuple[int, int]:
+        connection = db.get_connection()
+        revisions = connection.execute(
+            "SELECT COUNT(*) FROM console_trace_semantic_revisions "
+            "WHERE source_message_id = 'assistant-1'"
+        ).fetchone()[0]
+        epoch = connection.execute(
+            "SELECT epoch FROM console_trace_graph_epoch WHERE singleton_id = 1"
+        ).fetchone()[0]
+        return int(revisions), int(epoch)
+
+    before_revisions, before_epoch = semantic_stats()
+    if sidecar == "metadata":
+        original_sidecar = store.persistence.update_message_metadata
+
+        def fail_metadata(**_kwargs: object) -> None:
+            raise RuntimeError("thinking metadata sidecar failed")
+
+        monkeypatch.setattr(store.persistence, "update_message_metadata", fail_metadata)
+    else:
+        original_sidecar = store._enqueue_sync_v2_message_if_ready
+
+        def fail_sync(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("thinking sync sidecar failed")
+
+        monkeypatch.setattr(store, "_enqueue_sync_v2_message_if_ready", fail_sync)
+
+    with pytest.raises(RuntimeError, match=f"thinking {sidecar} sidecar failed"):
+        if route == "settle":
+            store.settle_message_thinking(live.id, replacement, generation_token=token)
+        else:
+            store.persist_selected_generation(live.id)
+
+    row = db.get_message_by_id("assistant-1")
+    reconciled = store.get_message(live.id)
+    assert row["content"] == reconciled.content == "stable answer"
+    assert row["thinking_blocks_json"] == dump_thinking_blocks_json(reconciled.thinking)
+    assert row["thinking_blocks_json"] == dump_thinking_blocks_json(replacement)
+    assert row["provider_continuation_json"] == dump_provider_continuation_json(
+        reconciled.provider_continuation
+    )
+    assert reconciled.provider_continuation_message_version == row["version"]
+    assert row["assistant_generation_state"] == "failed"
+    assert reconciled.status == reconciled.assistant_generation_state == "failed"
+    assert (
+        reconciled.metadata.to_json() if reconciled.metadata is not None else None
+    ) == row["metadata_json"]
+    assert semantic_stats() == (before_revisions + 1, before_epoch + 1)
+
+    if sidecar == "metadata":
+        monkeypatch.setattr(
+            store.persistence, "update_message_metadata", original_sidecar
+        )
+    else:
+        monkeypatch.setattr(
+            store, "_enqueue_sync_v2_message_if_ready", original_sidecar
+        )
+    if route == "settle":
+        store.settle_message_thinking(live.id, replacement, generation_token=token)
+    else:
+        assert store.persist_selected_generation(live.id)
+    assert semantic_stats() == (before_revisions + 1, before_epoch + 1)
+
+
 def test_persisted_variant_swipe_uses_current_row_version_for_every_selection(
     tmp_path: Path,
 ) -> None:
     db, conversation_id, repository = _database(tmp_path / "swipe-version.sqlite")
     _insert(db, repository, _acceptance(conversation_id))
     original_thinking = dump_thinking_blocks_json(_thinking("original reasoning"))
-    db.get_connection().execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET content = 'original answer', thinking_blocks_json = ?, "
         "assistant_generation_state = 'complete' WHERE id = 'assistant-1'",
         (original_thinking,),
@@ -207,7 +325,8 @@ def test_failed_variant_projection_preserves_live_and_durable_selection(
     db, conversation_id, repository = _database(tmp_path / "swipe-failure.sqlite")
     _insert(db, repository, _acceptance(conversation_id))
     original_thinking = dump_thinking_blocks_json(_thinking("original reasoning"))
-    db.get_connection().execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET content = 'original answer', thinking_blocks_json = ?, "
         "assistant_generation_state = 'complete' WHERE id = 'assistant-1'",
         (original_thinking,),
@@ -265,7 +384,8 @@ def test_select_variant_failure_preserves_pending_stream_and_full_generation(
     _insert(db, repository, _acceptance(conversation_id))
     usage = ProviderUsage(uncached_input=2, output=3)
     continuation = _continuation("original answer")
-    db.get_connection().execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET content = 'original answer', thinking_blocks_json = ?, "
         "usage_json = ?, provider_continuation_json = ?, "
         "assistant_generation_state = 'complete' WHERE id = 'assistant-1'",
@@ -333,7 +453,8 @@ def test_successful_variant_projection_discards_superseded_pending_stream(
 ) -> None:
     db, conversation_id, repository = _database(tmp_path / "pending-swipe-ok.sqlite")
     _insert(db, repository, _acceptance(conversation_id))
-    db.get_connection().execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET content = 'original answer', thinking_blocks_json = ?, "
         "assistant_generation_state = 'complete' WHERE id = 'assistant-1'",
         (dump_thinking_blocks_json(_thinking("original reasoning")),),
@@ -379,9 +500,10 @@ def test_generation_outbox_candidate_owns_exact_target_variant_metadata(
         tmp_path / f"candidate-variants-{action}.sqlite"
     )
     _insert(db, repository, _acceptance(conversation_id))
-    db.get_connection().execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET content = 'original answer', "
-        "assistant_generation_state = 'complete' WHERE id = 'assistant-1'"
+        "assistant_generation_state = 'complete' WHERE id = 'assistant-1'",
     )
     store, _session_id = _restored_store(db, conversation_id)
     live = store._message_or_raise("assistant-1")
@@ -438,7 +560,8 @@ def test_generation_with_thinking_refuses_incomplete_sync_producer_before_commit
 ) -> None:
     db, conversation_id, repository = _database(tmp_path / "incomplete-sync.sqlite")
     _insert(db, repository, _acceptance(conversation_id))
-    db.get_connection().execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET content = 'original answer', thinking_blocks_json = ?, "
         "assistant_generation_state = 'complete' WHERE id = 'assistant-1'",
         (dump_thinking_blocks_json(_thinking("original reasoning")),),
@@ -477,7 +600,8 @@ def test_add_variant_writer_failure_keeps_live_variant_owner_unchanged(
 ) -> None:
     db, conversation_id, repository = _database(tmp_path / "candidate-add-fail.sqlite")
     _insert(db, repository, _acceptance(conversation_id))
-    db.get_connection().execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET content = 'original answer', thinking_blocks_json = ?, "
         "assistant_generation_state = 'complete' WHERE id = 'assistant-1'",
         (dump_thinking_blocks_json(_thinking("original reasoning")),),
@@ -517,7 +641,8 @@ def test_content_only_fallback_rejects_clearing_current_generation_evidence(
     )
     _insert(db, repository, _acceptance(conversation_id))
     original_thinking = dump_thinking_blocks_json(_thinking("original reasoning"))
-    db.get_connection().execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET content = 'original answer', thinking_blocks_json = ?, "
         "assistant_generation_state = 'complete' WHERE id = 'assistant-1'",
         (original_thinking,),
@@ -561,7 +686,8 @@ def test_add_variant_persists_one_evidence_free_complete_generation(
     db, conversation_id, repository = _database(tmp_path / "manual-variant.sqlite")
     _insert(db, repository, _acceptance(conversation_id))
     old_thinking = dump_thinking_blocks_json(_thinking("old reasoning"))
-    db.get_connection().execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET content = 'old answer', thinking_blocks_json = ?, "
         "usage_json = ?, assistant_generation_state = 'complete' "
         "WHERE id = 'assistant-1'",
@@ -590,7 +716,8 @@ def test_add_variant_rejects_unknown_thinking_before_live_mutation(
     db, conversation_id, repository = _database(tmp_path / "manual-unknown.sqlite")
     _insert(db, repository, _acceptance(conversation_id))
     raw = '{ "version" : 99, "future" : {"secret":"value"} }'
-    db.get_connection().execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET content = 'durable answer', thinking_blocks_json = ? "
         "WHERE id = 'assistant-1'",
         (raw,),
@@ -618,7 +745,8 @@ def test_prepare_retry_rejects_unreadable_thinking_before_provider_visible_mutat
 ) -> None:
     db, conversation_id, repository = _database(tmp_path / "retry-blocked.sqlite")
     _insert(db, repository, _acceptance(conversation_id))
-    db.get_connection().execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET content = 'failed answer', thinking_blocks_json = ?, "
         "assistant_generation_state = 'failed' WHERE id = 'assistant-1'",
         (raw,),
@@ -699,7 +827,9 @@ def test_failed_atomic_terminal_create_remains_unsaved_retryable_and_unrecorded(
 
     monkeypatch.setattr(service, "create_message", fail_create)
 
-    result = store.mark_message_complete(message.id)
+    with pytest.raises(RuntimeError, match="did not commit"):
+        store.mark_message_complete(message.id)
+    result = store.get_message(message.id)
 
     assert len(calls) == 1
     assert calls[0]["content"] == "retryable answer"
@@ -721,7 +851,8 @@ def test_malformed_known_thinking_is_content_free_and_blocks_generation(
     db, conversation_id, repository = _database(tmp_path / "malformed.sqlite")
     _insert(db, repository, _acceptance(conversation_id))
     raw = json.dumps({"version": 1, "blocks": [{"text": "do-not-leak"}]})
-    db.get_connection().execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET thinking_blocks_json = ? WHERE id = 'assistant-1'",
         (raw,),
     )
@@ -740,7 +871,8 @@ def test_explicit_assistant_edit_clears_generation_provenance(tmp_path: Path) ->
     db, conversation_id, repository = _database(tmp_path / "edit.sqlite")
     _insert(db, repository, _acceptance(conversation_id))
     canonical = dump_thinking_blocks_json(_thinking("old reasoning"))
-    db.get_connection().execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET content = 'old answer', thinking_blocks_json = ?, "
         "assistant_generation_state = 'complete' WHERE id = 'assistant-1'",
         (canonical,),

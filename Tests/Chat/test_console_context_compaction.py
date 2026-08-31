@@ -655,6 +655,53 @@ def test_plan_reconstruction_preserves_active_continuation_group() -> None:
     assert "PRIVATE-PLAN-CANARY" not in repr(planned.remaining_semantic)
 
 
+def test_plan_reconstruction_preserves_capture_off_thinking_wire_behavior() -> None:
+    owner_id = "active-thinking-owner"
+    group = ThinkingOwnerGroup(
+        owner_id,
+        (
+            ResolvedThinkingBlock(
+                owner_message_id=owner_id,
+                source_format="start_anchored_think",
+                text="PRIVATE-THINKING-CANARY",
+            ),
+        ),
+    )
+    semantic = replace(
+        _semantic(),
+        active_request=(
+            {
+                "role": "assistant",
+                "content": "visible answer",
+                THINKING_OWNER_KEY: owner_id,
+            },
+        ),
+        active_thinking_groups=(group,),
+        thinking_policy="include",
+        effective_thinking_policy="include",
+    )
+
+    planned = plan_compaction(
+        semantic=semantic,
+        prepared_before=_prepare(semantic),
+        durable_units=_durable_units(),
+        resolved_policy=_resolved(),
+        prompt=CompactionPromptSnapshot("Preserve decisions."),
+        prior_memory=None,
+        prepare_main=_prepare,
+        prepare_auxiliary=lambda messages, cap: _prepare(
+            PreparedConsoleRequest(active_request=messages), response_tokens=cap
+        ),
+    ).plan
+
+    assert planned is not None
+    assert planned.remaining_semantic.active_thinking_groups == ()
+    assert planned.remaining_semantic.thinking_policy == "auto"
+    assert planned.remaining_semantic.effective_thinking_policy == "auto"
+    prepared = _prepare(planned.remaining_semantic)
+    assert prepared.messages_payload[-1]["content"] == "visible answer"
+
+
 def test_iterative_plan_replaces_prior_memory_and_only_post_boundary_units() -> None:
     earlier = (
         _message("old-u", "user", "old question"),
@@ -1491,7 +1538,7 @@ class _Gateway:
         self.started: asyncio.Event | None = None
         self.release: asyncio.Event | None = None
 
-    async def complete_auxiliary(self, request):
+    async def complete_auxiliary(self, request, *, route=None):
         self.calls += 1
         if self.started is not None:
             self.started.set()
@@ -2866,7 +2913,7 @@ async def test_compaction_diagnostics_are_structured_and_content_free() -> None:
 @pytest.mark.asyncio
 async def test_cancelled_summary_records_cancelled_and_reraises() -> None:
     class CancelledGateway:
-        async def complete_auxiliary(self, _request):
+        async def complete_auxiliary(self, _request, *, route=None):
             raise asyncio.CancelledError
 
     repository = _Repository()
@@ -2934,6 +2981,7 @@ async def test_per_conversation_lock_prevents_second_auxiliary_call() -> None:
 
 class _ControllerPersistence:
     db = None
+    console_process_local_only = True
 
     def __init__(self) -> None:
         self._next = 0
@@ -3076,10 +3124,10 @@ class _ControllerGateway(_Gateway):
         apply_safety_window=True,
         **_kwargs,
     ):
-        if _kwargs.get("continuation_sidecar") or isinstance(
-            messages, PreparedConsoleRequest
-        ) and any(
-            unit.continuation_groups for unit in messages.compactable
+        if (
+            _kwargs.get("continuation_sidecar")
+            or isinstance(messages, PreparedConsoleRequest)
+            and any(unit.continuation_groups for unit in messages.compactable)
         ):
             return self._provider_gateway.prepare_chat_request(
                 resolution,
@@ -3761,9 +3809,7 @@ async def test_bounded_budget_without_older_units_does_not_block_fitting_send() 
     assert snapshots is not None
     repository = controller._context_repository
     assert isinstance(repository, _ControllerRepository)
-    repository.memories.append(
-        _memory(snapshots, boundary=snapshots[-2].message_id)
-    )
+    repository.memories.append(_memory(snapshots, boundary=snapshots[-2].message_id))
 
     output, result = await controller._apply_conversation_memory_preflight(
         session_id=session.id,
@@ -3900,7 +3946,10 @@ def test_context_repository_init_failure_is_observable_without_error_content(
     )
     try:
         controller = ConsoleChatController(
-            store=SimpleNamespace(persistence=SimpleNamespace(db=object())),
+            store=SimpleNamespace(
+                persistence=SimpleNamespace(db=object()),
+                sessions=lambda: (),
+            ),
             provider_gateway=SimpleNamespace(),
         )
     finally:

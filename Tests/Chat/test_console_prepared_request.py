@@ -101,10 +101,84 @@ def test_semantic_request_is_immutable_and_preserves_complete_units() -> None:
         "assistant",
         "tool",
     ]
+    assert [row["role"] for row in request.active_tool_loop] == ["assistant", "tool"]
     with pytest.raises(TypeError):
         request.system[0]["content"] = "changed"  # type: ignore[index]
     with pytest.raises(FrozenInstanceError):
         request.active_request = ()  # type: ignore[misc]
+
+
+def test_fenced_tool_loop_rows_have_a_distinct_provider_neutral_category() -> None:
+    request = build_console_request(
+        [
+            {"role": "user", "content": "Find it"},
+            {
+                "role": "assistant",
+                "content": '```tool_call\n{"name":"lookup","arguments":{}}\n```',
+            },
+            {"role": "user", "content": "Tool result for lookup: found"},
+        ]
+    )
+
+    assert [row["role"] for row in request.active_request] == [
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert [row["role"] for row in request.active_tool_loop] == [
+        "assistant",
+        "user",
+    ]
+    assert [row["role"] for row in request.flattened_messages()] == [
+        "user",
+        "assistant",
+        "user",
+    ]
+
+
+@pytest.mark.parametrize("tag", ("tool", "tool_calls", "tool_call_schema"))
+def test_fenced_tool_lookalikes_remain_ordinary_assistant_text(tag: str) -> None:
+    request = build_console_request(
+        [
+            {"role": "user", "content": "Explain this"},
+            {
+                "role": "assistant",
+                "content": f'```{tag}\n{{"name":"lookup","arguments":{{}}}}\n```',
+            },
+        ]
+    )
+
+    assert request.active_tool_loop == ()
+
+
+def test_completed_tool_loop_keeps_following_assistant_in_message_order() -> None:
+    request = build_console_request(
+        [
+            {"role": "user", "content": "Find it"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "c"}]},
+            {"role": "tool", "tool_call_id": "c", "content": "found"},
+            {"role": "assistant", "content": "The answer is found."},
+            {"role": "user", "content": "Next"},
+        ]
+    )
+
+    assert [row["role"] for row in request.compactable[0].messages] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+    ]
+    assert [row["role"] for row in request.compactable[0].tool_loop] == [
+        "assistant",
+        "tool",
+    ]
+    assert [row["role"] for row in request.flattened_messages()] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+        "user",
+    ]
 
 
 def test_single_preamble_serialization_keeps_original_and_tagged_memory_owned() -> None:
@@ -659,6 +733,10 @@ async def test_gateway_agent_tool_payload_is_prepared_once_as_complete_unit(
     assert len(artifacts) == 1
     assert [row["role"] for row in artifacts[0].semantic.active_request] == [
         "user",
+        "assistant",
+        "tool",
+    ]
+    assert [row["role"] for row in artifacts[0].semantic.active_tool_loop] == [
         "assistant",
         "tool",
     ]

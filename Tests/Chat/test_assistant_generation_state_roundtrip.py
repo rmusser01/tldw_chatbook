@@ -53,6 +53,27 @@ def _active_continuation_json() -> str:
     )
 
 
+def _raw_semantic_corruption(
+    db: CharactersRAGDB, sql: str, params: tuple[object, ...]
+) -> None:
+    """Authorize one deliberate inconsistent-row fixture write only."""
+
+    with db.transaction() as cursor:
+        connection = cursor.connection
+        authorization = db._semantic_mutation_authorization_for_coordinator(connection)
+        connection.create_function(
+            "console_semantic_mutation_authorized", 2, lambda *_args: 1
+        )
+        try:
+            cursor.execute(sql, params)
+        finally:
+            connection.create_function(
+                "console_semantic_mutation_authorized",
+                2,
+                authorization._sqlite_authorized,
+            )
+
+
 @pytest.mark.parametrize(
     ("state", "expected"),
     [
@@ -181,8 +202,16 @@ def test_active_path_import_accepts_legacy_missing_generation_state(tmp_path) ->
 @pytest.mark.parametrize(
     "message",
     [
-        {"role": "assistant", "content": "visible", "assistant_generation_state": "unknown"},
-        {"role": "user", "content": "visible", "assistant_generation_state": "accepted"},
+        {
+            "role": "assistant",
+            "content": "visible",
+            "assistant_generation_state": "unknown",
+        },
+        {
+            "role": "user",
+            "content": "visible",
+            "assistant_generation_state": "accepted",
+        },
     ],
     ids=["malformed", "wrong-role"],
 )
@@ -206,11 +235,11 @@ def test_json_export_normalizes_active_continuation_over_stale_state(tmp_path) -
             }
         )
         assert message_id is not None
-        with db.transaction() as connection:
-            connection.execute(
-                "UPDATE messages SET assistant_generation_state = 'complete' WHERE id = ?",
-                (message_id,),
-            )
+        _raw_semantic_corruption(
+            db,
+            "UPDATE messages SET assistant_generation_state = 'complete' WHERE id = ?",
+            (message_id,),
+        )
 
         ordinary_json = json.loads(
             export_conversation_to_json(db, conversation_id) or "{}"
@@ -255,9 +284,7 @@ def test_trajectory_projection_round_trips_generation_state_without_checkpoint(
 def test_trajectory_projection_preserves_continuation_active_without_private_data(
     tmp_path,
 ) -> None:
-    db = CharactersRAGDB(
-        tmp_path / "trajectory-active.db", client_id="trajectory-test"
-    )
+    db = CharactersRAGDB(tmp_path / "trajectory-active.db", client_id="trajectory-test")
     try:
         conversation_id = db.add_conversation({"title": "Active trajectory state"})
         message_id = db.add_message(

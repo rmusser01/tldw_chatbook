@@ -13,6 +13,7 @@ from Tests.Chat.test_console_dispatch_recovery import (
     _acceptance,
     _database,
     _insert,
+    _raw_semantic_corruption,
     _restored_store,
     _start,
 )
@@ -323,7 +324,8 @@ def test_continuation_handoff_preserves_existing_thinking(tmp_path: Path) -> Non
         _insert(db, repository, _deepseek_acceptance(conversation_id)),
     )
     canonical_thinking = _thinking()
-    db.get_connection().execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET thinking_blocks_json = ? WHERE id = ?",
         (canonical_thinking, started.assistant_message_id),
     )
@@ -729,7 +731,8 @@ def test_reasoning_only_complete_continuation_uses_terminal_settlement(
 def _install_legacy_owner(db, conversation_id: str, *, state: str | None) -> None:
     connection = db.get_connection()
     connection.execute("DELETE FROM console_dispatch_checkpoints")
-    connection.execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET provider_continuation_json = ?, "
         "assistant_generation_state = ?, version = 7 WHERE id = 'assistant-1'",
         (dump_provider_continuation_json(_continuation()), state),
@@ -845,24 +848,27 @@ def test_normalization_conflict_rereads_and_never_leaves_stale_actions(
     def mutate_then_normalize(**kwargs):
         connection = db.get_connection()
         if race == "version":
-            connection.execute(
-                "UPDATE messages SET version = 8 WHERE id = 'assistant-1'"
+            _raw_semantic_corruption(
+                db, "UPDATE messages SET version = 8 WHERE id = 'assistant-1'"
             )
         elif race == "deleted":
-            connection.execute(
-                "UPDATE messages SET deleted = 1, version = 8 WHERE id = 'assistant-1'"
+            _raw_semantic_corruption(
+                db,
+                "UPDATE messages SET deleted = 1, version = 8 WHERE id = 'assistant-1'",
             )
         elif race == "replacement":
             replacement = replace(_continuation(), checkpoint_revision=2)
-            connection.execute(
+            _raw_semantic_corruption(
+                db,
                 "UPDATE messages SET provider_continuation_json = ?, version = 8 "
                 "WHERE id = 'assistant-1'",
                 (dump_provider_continuation_json(replacement),),
             )
         else:
-            connection.execute(
+            _raw_semantic_corruption(
+                db,
                 "UPDATE messages SET provider_continuation_json = '{\"bad\":true}', "
-                "version = 8 WHERE id = 'assistant-1'"
+                "version = 8 WHERE id = 'assistant-1'",
             )
         connection.commit()
         monkeypatch.setattr(repository, "normalize_provider_continuation_owner", real)
@@ -913,7 +919,8 @@ def test_dual_owner_precedence_returns_continuation_and_no_dispatch_actions(
     """Kills exposing two Retry/Discard owner surfaces after reconciliation."""
     db, conversation_id, repository = _database(tmp_path / "dual.sqlite")
     _insert(db, repository, _deepseek_acceptance(conversation_id))
-    db.get_connection().execute(
+    _raw_semantic_corruption(
+        db,
         "UPDATE messages SET provider_continuation_json = ? WHERE id = 'assistant-1'",
         (dump_provider_continuation_json(_continuation()),),
     )
@@ -939,11 +946,17 @@ def test_handoff_expected_message_and_delete_guards_fail_closed(
     db, _, repository, checkpoint, store, session_id, _, _ = _started_portable(tmp_path)
     connection = db.get_connection()
     if guard == "user_version":
-        connection.execute("UPDATE messages SET version = 2 WHERE id = 'user-1'")
+        _raw_semantic_corruption(
+            db, "UPDATE messages SET version = 2 WHERE id = 'user-1'"
+        )
     elif guard == "assistant_version":
-        connection.execute("UPDATE messages SET version = 3 WHERE id = 'assistant-1'")
+        _raw_semantic_corruption(
+            db, "UPDATE messages SET version = 3 WHERE id = 'assistant-1'"
+        )
     else:
-        connection.execute("UPDATE messages SET deleted = 1 WHERE id = 'assistant-1'")
+        _raw_semantic_corruption(
+            db, "UPDATE messages SET deleted = 1 WHERE id = 'assistant-1'"
+        )
     connection.commit()
 
     with pytest.raises(RuntimeError, match="[Cc]ontinuation"):

@@ -60,11 +60,40 @@ from tldw_chatbook.Chat.console_chat_controller import (
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_display_state import format_diff_feedback_disclosure
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleDispatchCheckpointState,
     ConsoleEgressClass,
     ConsoleResolvedDestination,
 )
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
-from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
+from tldw_chatbook.Chat.console_trace_final_values import SurfaceDeltaAdmission
+from tldw_chatbook.Chat.console_prepared_request import (
+    PreparedProviderRequest,
+    build_console_request,
+)
+from tldw_chatbook.Chat.console_trace_models import (
+    FrozenTracePolicy,
+    TraceCallState,
+    new_opaque_id,
+)
+from tldw_chatbook.Chat.console_trace_provenance import (
+    ConsoleRequestRoute,
+    ConsoleTraceCaptureMode,
+    ProviderArtifactTraceProvenance,
+    SavedRevisionTraceProvenance,
+    TraceProvenanceSource,
+)
+from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
+from tldw_chatbook.Chat.console_trace_service import (
+    ConsoleTraceCallBoundary,
+    ConsoleTraceService,
+    TraceCallIdentity,
+    TraceCallPersistenceError,
+)
+from tldw_chatbook.Chat.console_turn_preparation import (
+    ConsolePreparationPauseKind,
+    ConsoleTurnPreparationState,
+    preparation_actions,
+)
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
     ContinuationRestoreTarget,
@@ -408,14 +437,73 @@ class _SignalChunkGateway(_ChunkGateway):
         super().__init__(scripts)
         self.signals_seen = []
         self.signal_states_seen = []
+        self.routes_seen = []
+        self.route_actors_seen = []
 
-    async def stream_chat(self, resolution, messages, tools=None, signals=None):
+    async def stream_chat(
+        self, resolution, messages, tools=None, signals=None, **kwargs
+    ):
         self.signals_seen.append(signals)
         self.signal_states_seen.append(signals.synthetic_fallback_emitted)
+        self.routes_seen.append(kwargs.get("route"))
+        self.route_actors_seen.append(
+            (kwargs.get("route_actor_id"), kwargs.get("route_chain_id"))
+        )
         async for chunk in super().stream_chat(
             resolution,
             messages,
             tools=tools,
+        ):
+            yield chunk
+
+
+class _ToolLoopReservationFailureGateway(_SignalChunkGateway):
+    """Complete the first model call, then fail TOOL_LOOP before its adapter."""
+
+    def __init__(self):
+        super().__init__([[_fence("calculator", {"expression": "6*7"})]])
+        self.failed_boundary = type(
+            "PendingToolLoopBoundary",
+            (),
+            {
+                "dispatch_started": False,
+                "reservation_status": "not_established",
+            },
+        )()
+
+    async def resolve_for_send(self, _selection):
+        return _test_resolution(
+            provider="llama_cpp",
+            execution_key="llama_cpp",
+            model="test-model",
+            resolved_destination=ConsoleResolvedDestination(
+                provider="llama_cpp",
+                model="test-model",
+                endpoint_identity="http://127.0.0.1:9099",
+                egress_class=ConsoleEgressClass.ON_DEVICE,
+            ),
+        )
+
+    async def stream_chat(
+        self, resolution, messages, tools=None, signals=None, **kwargs
+    ):
+        if self.routes_seen:
+            self.signals_seen.append(signals)
+            self.signal_states_seen.append(signals.synthetic_fallback_emitted)
+            self.routes_seen.append(kwargs.get("route"))
+            self.route_actors_seen.append(
+                (kwargs.get("route_actor_id"), kwargs.get("route_chain_id"))
+            )
+            raise TraceCallPersistenceError(
+                boundary=self.failed_boundary,
+                reservation_status="not_established",
+            )
+        async for chunk in super().stream_chat(
+            resolution,
+            messages,
+            tools=tools,
+            signals=signals,
+            **kwargs,
         ):
             yield chunk
 
@@ -1950,6 +2038,367 @@ def test_provider_stream_signal_survives_primary_tool_and_final_turns(tmp_path):
     assert outcome.status == "done"
     assert gateway.signals_seen == [signals, signals]
     assert all(item is signals for item in gateway.signals_seen)
+    assert gateway.routes_seen == [
+        ConsoleRequestRoute.AGENT_FIRST,
+        ConsoleRequestRoute.TOOL_LOOP,
+    ]
+    assert all(actor and chain for actor, chain in gateway.route_actors_seen)
+
+
+@pytest.mark.parametrize(
+    "capture_mode",
+    [
+        ConsoleTraceCaptureMode.CAPTURE_ON,
+        ConsoleTraceCaptureMode.CAPTURE_OFF,
+    ],
+)
+def test_agent_run_freezes_capture_mode_across_first_and_tool_loop_calls(
+    tmp_path,
+    capture_mode,
+):
+    seen_modes = []
+
+    class CaptureModeGateway(_ChunkGateway):
+        def prepare_chat_request(self, _resolution, messages, **_kwargs):
+            return messages.flattened_messages()
+
+        async def stream_chat(
+            self,
+            resolution,
+            messages,
+            tools=None,
+            *,
+            capture_mode=None,
+            **kwargs,
+        ):
+            seen_modes.append(capture_mode)
+            async for chunk in super().stream_chat(
+                resolution,
+                messages,
+                tools=tools,
+                **kwargs,
+            ):
+                yield chunk
+
+    gateway = CaptureModeGateway(
+        [
+            [_fence("calculator", {"expression": "6*7"})],
+            ["42"],
+        ]
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+    trace_request = None
+    if capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON:
+        policy = FrozenTracePolicy(
+            policy_id=new_opaque_id(),
+            credential_filter_version="credentials-v1",
+            pii_redaction_enabled=False,
+            pii_ruleset_revision_id=None,
+        )
+        trace_request = build_console_request(
+            [{"role": "user", "content": "hi"}],
+            message_provenance=(
+                ProviderArtifactTraceProvenance(
+                    TraceProvenanceSource.ACTIVE_REQUEST,
+                    policy,
+                ),
+            ),
+            memory_provenance=(),
+            mandatory_provenance=(),
+            tool_provenance=(),
+            capture_policy=policy,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        capture_mode=capture_mode,
+        trace_request=trace_request,
+    )
+
+    assert outcome.status == RUN_DONE, outcome.steps
+    assert seen_modes == [capture_mode, capture_mode]
+
+
+def test_capture_on_agent_run_reserves_each_real_gateway_call_in_stable_order(
+    tmp_path,
+):
+    trace_db = CharactersRAGDB(tmp_path / "trace.sqlite", "task12-agent-trace")
+    repository = ConsoleTraceRepository()
+    service = ConsoleTraceService(repository)
+    conversation_id = trace_db.add_conversation({"title": "agent trace"})
+    assert conversation_id is not None
+    message_id = trace_db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": "hi",
+        }
+    )
+    assert message_id is not None
+    policy = FrozenTracePolicy(
+        policy_id=new_opaque_id(),
+        credential_filter_version="credentials-v1",
+        pii_redaction_enabled=False,
+        pii_ruleset_revision_id=None,
+    )
+    with trace_db.transaction() as cursor:
+        revision_row = cursor.execute(
+            """SELECT revision_id FROM console_trace_semantic_revisions
+                 WHERE source_message_id = ?
+                 ORDER BY revision_sequence DESC LIMIT 1""",
+            (message_id,),
+        ).fetchone()
+        assert revision_row is not None
+        saved_user = SavedRevisionTraceProvenance(str(revision_row[0]))
+        segment = repository.create_segment(cursor)
+        owner = repository.attach_owner(
+            cursor,
+            conversation_id=conversation_id,
+            root_segment_id=segment.segment_id,
+        )
+        repository.ensure_policy(cursor, policy)
+
+    routes: list[ConsoleRequestRoute] = []
+    provenances = []
+    capture_policies = []
+    adapter_requests = []
+    adapter_entries = 0
+
+    def boundary_factory(request, _resolution, route):
+        sequence = len(routes)
+        provenance = request.provenance
+        assert provenance is not None
+        preparation_identity = new_opaque_id()
+        with trace_db.transaction() as cursor:
+            tail = repository.get_surface_tail(cursor, segment.segment_id)
+            prefix_length = 0 if tail is None else tail.sequence + 1
+            delta = tuple(provenance.messages_payload[prefix_length:])
+            admission = SurfaceDeltaAdmission(
+                owner_id=owner.owner_id,
+                segment_id=segment.segment_id,
+                predecessor_surface_head_id=(None if tail is None else tail.node_id),
+                route_identity=route.value,
+                preparation_identity=preparation_identity,
+                descriptors=delta,
+            )
+            surface_boundary = service.prepare_surface_provenance(
+                cursor,
+                None,
+                provenance=provenance,
+                admission=admission,
+                values=tuple(request.messages_payload),
+            )
+        routes.append(route)
+        provenances.append(provenance)
+        assert request.semantic.provenance is not None
+        capture_policies.append(request.semantic.provenance.capture_policy)
+        return ConsoleTraceCallBoundary(
+            service=service,
+            database=trace_db,
+            identity=TraceCallIdentity(
+                owner_id=owner.owner_id,
+                segment_id=segment.segment_id,
+                turn_id="turn-1",
+                run_id="run-1",
+                call_sequence=sequence,
+                idempotency_key=new_opaque_id(),
+                policy_id=policy.policy_id,
+            ),
+            admission=admission,
+            occurred_at_factory=lambda: "2026-08-29T20:00:00Z",
+            surface_boundary=surface_boundary,
+        )
+
+    def adapter(**kwargs):
+        nonlocal adapter_entries
+        calls = repository.read_calls(
+            trace_db.get_connection().cursor(), owner.owner_id
+        )
+        assert calls[-1].state is TraceCallState.DISPATCH_STARTED
+        adapter_requests.append(tuple(kwargs["messages_payload"]))
+        adapter_entries += 1
+        content = (
+            _fence("calculator", {"expression": "6*7"})
+            if adapter_entries == 1
+            else "42"
+        )
+        return {"choices": [{"message": {"content": content}}]}
+
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter,
+        trace_call_boundary_factory=boundary_factory,
+    )
+    bridge, runs_db, store, session, aid = _bridge_with_gateway(
+        tmp_path / "agent", gateway
+    )
+    try:
+        outcome = _run(
+            bridge,
+            store,
+            session,
+            aid,
+            resolution=_test_resolution(
+                provider="OpenAI",
+                execution_key="openai",
+                base_url="https://api.openai.com/v1",
+                model="test-model",
+                streaming=False,
+            ),
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            propagate_trace_call_persistence_errors=True,
+            trace_request=build_console_request(
+                [{"role": "user", "content": "hi"}],
+                message_provenance=(saved_user,),
+                memory_provenance=(),
+                mandatory_provenance=(),
+                tool_provenance=(),
+                capture_policy=policy,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            ),
+        )
+        calls = repository.read_calls(
+            trace_db.get_connection().cursor(), owner.owner_id
+        )
+        assert outcome.status == RUN_DONE, outcome.steps
+        assert adapter_entries == 2
+        assert routes == [
+            ConsoleRequestRoute.AGENT_FIRST,
+            ConsoleRequestRoute.TOOL_LOOP,
+        ]
+        assert [call.call_sequence for call in calls] == [0, 1]
+        assert all(call.state is TraceCallState.COMPLETE for call in calls)
+        links = [
+            repository.get_response_link(
+                trace_db.get_connection().cursor(), call.call_id
+            )
+            for call in calls
+        ]
+        assert all(link is not None and link.link_kind == "artifact" for link in links)
+        assert capture_policies == [policy, policy]
+        assert provenances[0].messages_payload == (saved_user,)
+        assert provenances[1].messages_payload[0] == saved_user
+        assert [item.source for item in provenances[1].messages_payload[1:]] == [
+            TraceProvenanceSource.TOOL_CALL,
+            TraceProvenanceSource.TOOL_RESULT,
+        ]
+        assert [len(request) for request in adapter_requests] == [1, 3]
+        assert adapter_requests[1][1]["role"] == "assistant"
+        assert adapter_requests[1][2]["role"] == "user"
+    finally:
+        runs_db.close()
+        trace_db.close_connection()
+
+
+def test_interactive_tool_loop_trace_failure_reaches_controller_boundary(tmp_path):
+    gateway = _ToolLoopReservationFailureGateway()
+    bridge, db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+
+    with pytest.raises(TraceCallPersistenceError) as raised:
+        _run(
+            bridge,
+            store,
+            session,
+            aid,
+            provider_stream_signals=ConsoleProviderStreamSignals(),
+            propagate_trace_call_persistence_errors=True,
+        )
+
+    assert raised.value.boundary is gateway.failed_boundary
+    assert gateway.routes_seen == [
+        ConsoleRequestRoute.AGENT_FIRST,
+        ConsoleRequestRoute.TOOL_LOOP,
+    ]
+    assert db.list_runs("conv-1")[0]["status"] == RUN_ERROR
+
+
+def test_autonomous_tool_loop_trace_failure_remains_terminal_error(tmp_path):
+    gateway = _ToolLoopReservationFailureGateway()
+    bridge, db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        provider_stream_signals=ConsoleProviderStreamSignals(),
+    )
+
+    assert outcome.status == RUN_ERROR
+    assert gateway.routes_seen == [
+        ConsoleRequestRoute.AGENT_FIRST,
+        ConsoleRequestRoute.TOOL_LOOP,
+    ], outcome.steps
+    assert db.list_runs("conv-1")[0]["status"] == RUN_ERROR
+
+
+@pytest.mark.asyncio
+async def test_manual_tool_loop_trace_failure_pauses_across_real_bridge_and_controller(
+    tmp_path,
+):
+    chat_db = CharactersRAGDB(tmp_path / "chat.sqlite", "task12-controller")
+    runs_db = AgentRunsDB(tmp_path / "runs.sqlite", client_id="task12-controller")
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(chat_db))
+        session = store.create_session(session_id="session-1", title="Trace loop")
+        gateway = _ToolLoopReservationFailureGateway()
+        bridge = ConsoleAgentBridge(
+            agent_runs_db=runs_db,
+            store=store,
+            provider_gateway=gateway,
+        )
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            agent_bridge=bridge,
+            agent_runtime_enabled=True,
+            provider="llama_cpp",
+            model="test-model",
+        )
+
+        result = await controller.submit_draft("hi", session_id=session.id)
+
+        preparation = store.preparation_for_session(session.id)
+        checkpoint = (
+            chat_db.get_connection()
+            .execute("SELECT * FROM console_dispatch_checkpoints")
+            .fetchone()
+        )
+        assert result.accepted is True
+        # The failed TOOL_LOOP boundary itself never entered the adapter,
+        # so it is legal to pause and retry.  AGENT_FIRST did enter, though,
+        # and the turn result must preserve that durable fact.
+        assert result.provider_started is True
+        assert preparation is not None
+        assert preparation.state is ConsoleTurnPreparationState.PAUSED
+        assert preparation.pause_kind is ConsolePreparationPauseKind.TRACE_CALL
+        assert preparation_actions(preparation) == (
+            "retry",
+            "send_without_capture",
+            "cancel",
+        )
+        assert checkpoint is not None
+        assert (
+            checkpoint["state"] == ConsoleDispatchCheckpointState.DISPATCH_STARTED.value
+        )
+        assert gateway.routes_seen == [
+            ConsoleRequestRoute.AGENT_FIRST,
+            ConsoleRequestRoute.TOOL_LOOP,
+        ]
+        assert (
+            controller._trace_call_boundaries_by_preparation[preparation.preparation_id]
+            is gateway.failed_boundary
+        )
+        assert (
+            runs_db.list_runs(session.persisted_conversation_id)[0]["status"]
+            == RUN_ERROR
+        )
+    finally:
+        runs_db.close()
+        chat_db.close_connection()
 
 
 def test_provider_stream_signal_survives_subagent_turns(tmp_path):
@@ -2733,11 +3182,14 @@ def test_spawn_renders_marker_and_persists_linked_subagent(tmp_path):
     assert [item[1:] for item in live_signature] == [
         item[1:] for item in resumed_signature
     ]
-    child = next(row for row in db.list_runs("conv-1") if row["agent_kind"] == "subagent")
+    child = next(
+        row for row in db.list_runs("conv-1") if row["agent_kind"] == "subagent"
+    )
     assert f"run:{child['id']}" not in live_signature[-1][0]
     assert f"run:{child['id']}" in resumed_signature[-1][0]
-    assert live_signature[-1][0].split(": compute 1+1", 1)[1] == (
-        resumed_signature[-1][0].split(": compute 1+1", 1)[1]
+    assert (
+        live_signature[-1][0].split(": compute 1+1", 1)[1]
+        == (resumed_signature[-1][0].split(": compute 1+1", 1)[1])
     )
     snap = bridge.live_snapshot("conv-1")
     assert any(s.text for s in snap.subagents)
@@ -2981,9 +3433,7 @@ def test_bridge_run_consumers_never_issue_a_broad_secret_bearing_query(
         local_projection_calls.append(conversation_id)
         return original_local_projection(conversation_id)
 
-    monkeypatch.setattr(
-        db, "local_command_resume_records", exact_local_projection
-    )
+    monkeypatch.setattr(db, "local_command_resume_records", exact_local_projection)
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
 
     assert [row["id"] for row in bridge.subagent_runs("conv-1")] == [subagent_id]
@@ -4812,9 +5262,7 @@ def test_skill_tool_call_routes_through_run_scoped_spawn(tmp_path):
         agent_runs=runs,
         agent_steps=agent_steps,
     )
-    event_ids = [
-        record.event_id for turn in snapshot.turns for record in turn.records
-    ]
+    event_ids = [record.event_id for turn in snapshot.turns for record in turn.records]
     assert event_ids.index(child["spawn_event_id"]) < event_ids.index(
         f"agent-run:{child['id']}"
     )
@@ -7626,9 +8074,7 @@ def test_compose_run_registry_registers_library_tools_after_builtins():
     from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 
     service = _BridgeLibraryService()
-    library, authority = _authenticated_library_provider(
-        LibraryToolProvider(service)
-    )
+    library, authority = _authenticated_library_provider(LibraryToolProvider(service))
     registry, allowed_tools, builtin_names, local_names = (
         _compose_run_registry_and_allowed(
             {}, library_provider=library, library_authority=authority
@@ -7695,9 +8141,7 @@ def test_compose_run_registry_library_names_win_skill_and_mcp_collisions():
     from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
 
     service = _BridgeLibraryService()
-    library, authority = _authenticated_library_provider(
-        LibraryToolProvider(service)
-    )
+    library, authority = _authenticated_library_provider(LibraryToolProvider(service))
     registry, allowed_tools, _builtin_names, _local_names = (
         _compose_run_registry_and_allowed(
             context,
@@ -9015,9 +9459,7 @@ def test_a_survivors_own_steps_are_kept_under_its_own_run_id(tmp_path):
         assert child_run_id, "the child's run never attached"
         durable = db.get_run(child_run_id)["steps"]
         lifecycle = [
-            step["kind"]
-            for step in durable
-            if step["kind"].startswith("agent_run_")
+            step["kind"] for step in durable if step["kind"].startswith("agent_run_")
         ]
         assert lifecycle == [
             "agent_run_reserved",

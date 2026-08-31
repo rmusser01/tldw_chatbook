@@ -37,6 +37,10 @@ from tldw_chatbook.Chat.console_project_instructions import (
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
+from tldw_chatbook.Chat.thinking_blocks import (
+    ThinkingHistoryPolicy,
+    normalize_thinking_history_policy,
+)
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events import (
     PAYLOAD_FORMAT_MIME,
@@ -261,6 +265,7 @@ class ConsoleForkConfigurationSnapshot:
     character_system_template: str | None
     speech_preferences: ConsoleSpeechPreferences
     project_instruction_state: ProjectInstructionControlState
+    thinking_history_policy: ThinkingHistoryPolicy = "auto"
 
 
 @dataclass(frozen=True, slots=True)
@@ -416,8 +421,14 @@ def fingerprint_console_fork_configuration(
             "character_name": (str, type(None)),
             "user_display_name_override": (str, type(None)),
             "character_system_template": (str, type(None)),
+            "thinking_history_policy": (str,),
         },
     )
+    if (
+        normalize_thinking_history_policy(configuration.thinking_history_policy)
+        != configuration.thinking_history_policy
+    ):
+        raise ValueError("Fork thinking history policy must be normalized.")
     _validate_console_fork_configuration_identity(configuration)
     if type(configuration.settings) is not ConsoleSessionSettings:
         raise TypeError("Fork settings must be ConsoleSessionSettings.")
@@ -580,6 +591,7 @@ def fingerprint_console_fork_configuration(
         "character_name": configuration.character_name,
         "user_display_name_override": configuration.user_display_name_override,
         "character_system_template": configuration.character_system_template,
+        "thinking_history_policy": configuration.thinking_history_policy,
         "speech_preferences": {
             "auto_speak": configuration.speech_preferences.auto_speak,
             "paused": configuration.speech_preferences.paused,

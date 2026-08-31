@@ -37,18 +37,9 @@ from tldw_chatbook.Chat.console_command_grammar import (
     COMMAND_PREFIX,
     GENERATE_IMAGE_COMMAND_NAME,
 )
-from tldw_chatbook.Media_Creation.generation_templates import (
-    GenerationTemplate,
-    apply_template_to_prompt,
-    get_all_templates,
-    get_template,
-)
-from tldw_chatbook.Media_Creation.image_generation_service import (
-    ImageGenerationService,
-)
-
 if TYPE_CHECKING:
     from tldw_chatbook.Image_Generation.capabilities import ResolvedReferenceImage
+    from tldw_chatbook.Media_Creation.generation_templates import GenerationTemplate
 
 GENERATION_MARKER_PREFIX = "[image] "
 """Prefix identifying a generation card's content marker in a message row."""
@@ -295,6 +286,8 @@ def resolve_style_token(token: str) -> StyleResolution:
         `StyleResolution.ambiguous` are empty/``None`` when the token
         matched nothing.
     """
+    from tldw_chatbook.Media_Creation.generation_templates import get_all_templates
+
     cleaned = token.strip()
     if not cleaned:
         return StyleResolution(template=None)
@@ -351,6 +344,10 @@ def compose_styled_request(
         of the template's `GenerationTemplate.default_params`, safe for the
         caller to mutate.
     """
+    from tldw_chatbook.Media_Creation.generation_templates import (
+        apply_template_to_prompt,
+    )
+
     context = {target: user_prompt for target in template.context_mappings.values()}
     composed, negative, params = apply_template_to_prompt(template.id, context)
     if user_prompt in composed:
@@ -384,6 +381,10 @@ def _apply_template_with_anchor(
     Returns:
         A ``(prompt, negative_prompt, params)`` tuple.
     """
+    from tldw_chatbook.Media_Creation.generation_templates import (
+        apply_template_to_prompt,
+    )
+
     composed, negative, params = apply_template_to_prompt(template.id, context)
     anchor = context.get("last_message", "")
     if anchor and anchor not in composed:
@@ -431,6 +432,10 @@ def build_context_prompt(
         every message's content is empty/whitespace-only (nothing usable to
         build a prompt from).
     """
+    from tldw_chatbook.Media_Creation.image_generation_service import (
+        ImageGenerationService,
+    )
+
     shaped = [
         {"role": role, "content": content}
         for role, content in messages
@@ -917,6 +922,11 @@ def prepare_generation_request(
         case the caller must not dispatch a batch or touch the composer
         draft.
     """
+    from tldw_chatbook.Media_Creation.generation_templates import (
+        get_all_templates,
+        get_template,
+    )
+
     style_template: GenerationTemplate | None = None
     if args.style:
         resolution = resolve_style_token(args.style)

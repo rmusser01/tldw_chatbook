@@ -41,6 +41,12 @@ CHUNKING_TEMPLATES_PREFIX = "tldw_chatbook/Chunking/templates/"
 # aborts at the first.
 MIGRATIONS_PREFIX = "tldw_chatbook/DB/migrations/"
 CHACHANOTES_DB_MODULE_PATH = "tldw_chatbook/DB/ChaChaNotes_DB.py"
+SEMANTIC_TRACE_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/chachanotes_v55_to_v56_console_semantic_trace.sql"
+)
+SEMANTIC_MUTATION_GUARD_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/chachanotes_v56_to_v57_semantic_mutation_guard.sql"
+)
 # Matches ``Path(__file__).parent / "migrations" / "<name>.sql"``, the form
 # every file-backed migration step uses to locate its script.
 RUNTIME_MIGRATION_READ = re.compile(r'"migrations"\s*/\s*"([^"\n]+\.sql)"')
@@ -1738,6 +1744,8 @@ def test_built_artifacts_match_distribution_contract(
         "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
         *APACHE_SUBTREE_LICENSE_PATHS,
         AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
+        SEMANTIC_TRACE_MIGRATION_PATH,
+        SEMANTIC_MUTATION_GUARD_MIGRATION_PATH,
     } | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
     required_wheel = {
         "tldw_chatbook/css/tldw_cli_modular.tcss",
@@ -1747,6 +1755,8 @@ def test_built_artifacts_match_distribution_contract(
         "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
         *APACHE_SUBTREE_LICENSE_PATHS,
         AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
+        SEMANTIC_TRACE_MIGRATION_PATH,
+        SEMANTIC_MUTATION_GUARD_MIGRATION_PATH,
     } | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
     assert not required_sdist - sdist_members
     assert not required_wheel - wheel_members

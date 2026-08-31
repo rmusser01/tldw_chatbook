@@ -134,6 +134,11 @@ class FakeVideoPersistence:
         return True
 
 
+class ExplodingVideoPersistence(FakeVideoPersistence):
+    def create_message(self, **kwargs):
+        raise RuntimeError("durable video create failed")
+
+
 @pytest.fixture
 def store_with_session():
     persistence = FakeVideoPersistence()
@@ -192,6 +197,39 @@ def test_append_video_message_persists_namespaced_payload(store_with_session):
     assert "generation_metadata" not in created
     # The persisted payload round-trips back to the original facts.
     assert VideoGenerationMetadata.from_json(payload) == _video_meta()
+
+
+def test_failed_video_create_does_not_publish_ghost_store_state():
+    store = ConsoleChatStore(persistence=ExplodingVideoPersistence())
+    session = store.create_session(title="Atomic video")
+    anchor = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="anchor",
+    )
+    before_nodes = tuple(store._nodes_by_session[session.id])
+    before_path = tuple(
+        message.id for message in store._messages_by_session[session.id]
+    )
+    before_leaf = store._active_leaf_by_session[session.id]
+    before_updated_at = session.updated_at
+    before_payload = store.payload_revision(session.id)
+
+    with pytest.raises(RuntimeError, match="durable video create failed"):
+        store.append_video_message(
+            session.id,
+            video_metadata=_video_meta(),
+            persist=True,
+        )
+
+    assert tuple(store._nodes_by_session[session.id]) == before_nodes == (anchor.id,)
+    assert (
+        tuple(message.id for message in store._messages_by_session[session.id])
+        == before_path
+    )
+    assert store._active_leaf_by_session[session.id] == before_leaf
+    assert session.updated_at == before_updated_at
+    assert store.payload_revision(session.id) == before_payload
 
 
 @pytest.mark.integration

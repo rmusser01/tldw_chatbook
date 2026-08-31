@@ -7,8 +7,11 @@ local-only additions), and a hard delete of the parent message cascades
 straight through via the FK -- there is no soft-delete/version bookkeeping
 for these rows.
 """
+
+import json
 import sqlite3
 import traceback
+from dataclasses import asdict
 from contextlib import contextmanager
 
 import pytest
@@ -25,6 +28,10 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     ExchangeCapture,
     capture_from_storage,
     capture_to_blob,
+)
+from tldw_chatbook.Chat.console_trace_redaction import (
+    CREDENTIAL_SANITIZER_UNAVAILABLE,
+    CredentialSanitizationResult,
 )
 
 # Matches CharactersRAGDB._SCHEMA_NAME, per the sibling migration tests
@@ -62,15 +69,29 @@ def _seed_message(db) -> str:
 def test_append_and_read_round_trip(db):
     mid = _seed_message(db)
     rows = [
-        {"run_tag": "r1", "seq": 0, "status": "complete", "abandoned": False,
-         "capture_blob": b"blob0", "created_at": "2026-08-18T00:00:00Z"},
-        {"run_tag": "r1", "seq": 1, "status": "stopped", "abandoned": False,
-         "capture_blob": b"blob1", "created_at": "2026-08-18T00:00:01Z"},
+        {
+            "run_tag": "r1",
+            "seq": 0,
+            "status": "complete",
+            "abandoned": False,
+            "capture_blob": b"blob0",
+            "created_at": "2026-08-18T00:00:00Z",
+        },
+        {
+            "run_tag": "r1",
+            "seq": 1,
+            "status": "stopped",
+            "abandoned": False,
+            "capture_blob": b"blob1",
+            "created_at": "2026-08-18T00:00:01Z",
+        },
     ]
     assert db.append_message_exchanges_local(mid, rows) == 2
     stored = db.get_message_exchanges(mid)
     assert [(r["run_tag"], r["seq"], r["capture_blob"]) for r in stored] == [
-        ("r1", 0, b"blob0"), ("r1", 1, b"blob1")]
+        ("r1", 0, b"blob0"),
+        ("r1", 1, b"blob1"),
+    ]
 
 
 def test_lowest_exchange_write_error_boundary_is_content_free(db, monkeypatch):
@@ -147,28 +168,165 @@ def test_lowest_exchange_write_error_boundary_is_content_free(db, monkeypatch):
 def test_full_capture_column_matches_blob_provenance(db):
     mid = _seed_message(db)
     capture = ExchangeCapture(
-        run_tag="full", seq=0, created_at="t", provider="p", model="m", endpoint=None,
-        request={}, response={}, status="complete", usage_json=None, omitted_keys=(),
+        run_tag="full",
+        seq=0,
+        created_at="t",
+        provider="p",
+        model="m",
+        endpoint=None,
+        request={},
+        response={},
+        status="complete",
+        usage_json=None,
+        omitted_keys=(),
         capture_detail=CaptureDetail.FULL,
     )
-    db.append_message_exchanges_local(mid, [{
-        "run_tag": capture.run_tag, "seq": capture.seq, "status": capture.status,
-        "abandoned": False, "capture_detail": capture.capture_detail.value,
-        "capture_blob": capture_to_blob(capture), "created_at": capture.created_at,
-    }])
+    db.append_message_exchanges_local(
+        mid,
+        [
+            {
+                "run_tag": capture.run_tag,
+                "seq": capture.seq,
+                "status": capture.status,
+                "abandoned": False,
+                "capture_detail": capture.capture_detail.value,
+                "capture_blob": capture_to_blob(capture),
+                "created_at": capture.created_at,
+            }
+        ],
+    )
     stored = db.get_message_exchanges(mid)[0]
     assert stored["capture_detail"] == "full"
-    assert capture_from_storage(
-        stored["capture_blob"], stored["capture_detail"]
-    ).capture_detail is CaptureDetail.FULL
+    assert (
+        capture_from_storage(
+            stored["capture_blob"], stored["capture_detail"]
+        ).capture_detail
+        is CaptureDetail.FULL
+    )
+
+
+@pytest.mark.parametrize("detail", [CaptureDetail.SAFE, CaptureDetail.FULL])
+def test_first_durable_exchange_write_contains_only_sanitized_capture(db, detail):
+    message_id = _seed_message(db)
+    credential = "sk-live-first-write-canary"
+    capture = ExchangeCapture(
+        run_tag="canary",
+        seq=0,
+        created_at="2026-08-29T00:00:00Z",
+        provider="openai",
+        model="ordinary-model",
+        endpoint=f"https://user:{credential}@example.test/v1?token={credential}",
+        request={
+            "messages_payload": [
+                {
+                    "role": "user",
+                    "content": f"ordinary request then bearer {credential}",
+                }
+            ]
+        },
+        response={
+            "content": "ordinary response",
+            "tool_calls": [{"function": {"arguments": f"token={credential}"}}],
+        },
+        status="complete",
+        usage_json=None,
+        omitted_keys=(),
+        capture_detail=detail,
+    )
+
+    db.append_message_exchanges_local(
+        message_id,
+        [
+            {
+                "run_tag": capture.run_tag,
+                "seq": capture.seq,
+                "status": capture.status,
+                "abandoned": False,
+                "capture_detail": capture.capture_detail.value,
+                "capture_blob": capture_to_blob(capture),
+                "created_at": capture.created_at,
+            }
+        ],
+    )
+
+    row = db.get_message_exchanges(message_id)[0]
+    restored = capture_from_storage(row["capture_blob"], row["capture_detail"])
+    persisted = json.dumps(asdict(restored), default=str)
+    assert credential not in persisted
+    assert "ordinary request" in persisted
+    assert "ordinary response" in persisted
+    assert "capture.credential_redacted" in restored.omitted_keys
+
+
+def test_capture_serializer_fails_closed_when_credential_filter_is_unavailable(
+    db, monkeypatch
+):
+    message_id = _seed_message(db)
+    credential = "sk-live-sanitizer-failure-canary"
+    capture = ExchangeCapture(
+        run_tag="canary",
+        seq=0,
+        created_at="2026-08-29T00:00:00Z",
+        provider=credential,
+        model=credential,
+        endpoint=f"https://example.test/?token={credential}",
+        request={"messages_payload": [{"content": credential}]},
+        response={"content": credential},
+        status="complete",
+        usage_json=None,
+        omitted_keys=(),
+        capture_detail=CaptureDetail.SAFE,
+    )
+
+    def fail_closed(_self, _value):
+        return CredentialSanitizationResult(
+            available=False,
+            value=None,
+            omission_reason_code=CREDENTIAL_SANITIZER_UNAVAILABLE,
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_exchange_capture.CredentialSanitizer.sanitize",
+        fail_closed,
+    )
+    blob = capture_to_blob(capture)
+    db.append_message_exchanges_local(
+        message_id,
+        [
+            {
+                "run_tag": capture.run_tag,
+                "seq": capture.seq,
+                "status": capture.status,
+                "abandoned": False,
+                "capture_detail": capture.capture_detail.value,
+                "capture_blob": blob,
+                "created_at": capture.created_at,
+            }
+        ],
+    )
+
+    row = db.get_message_exchanges(message_id)[0]
+    restored = capture_from_storage(row["capture_blob"], row["capture_detail"])
+    assert credential not in json.dumps(asdict(restored), default=str)
+    assert restored.request == {"omitted": True}
+    assert restored.response == {"omitted": True}
+    assert "capture" in restored.omitted_keys
 
 
 def test_upsert_idempotent_and_updates_in_place(db):
     mid = _seed_message(db)
-    row = {"run_tag": "r1", "seq": 0, "status": "complete", "abandoned": False,
-           "capture_blob": b"v1", "created_at": "t"}
+    row = {
+        "run_tag": "r1",
+        "seq": 0,
+        "status": "complete",
+        "abandoned": False,
+        "capture_blob": b"v1",
+        "created_at": "t",
+    }
     db.append_message_exchanges_local(mid, [row])
-    db.append_message_exchanges_local(mid, [{**row, "capture_blob": b"v2", "abandoned": True}])
+    db.append_message_exchanges_local(
+        mid, [{**row, "capture_blob": b"v2", "abandoned": True}]
+    )
     stored = db.get_message_exchanges(mid)
     assert len(stored) == 1
     assert stored[0]["capture_blob"] == b"v2" and stored[0]["abandoned"]
@@ -183,9 +341,19 @@ def test_no_sync_log_rows_written(db):
     # otherwise an `after == before` comparison could pass vacuously (e.g.
     # if sync_log were broken/empty for an unrelated reason).
     assert before > 0
-    db.append_message_exchanges_local(mid, [
-        {"run_tag": "r1", "seq": 0, "status": "complete", "abandoned": False,
-         "capture_blob": b"b", "created_at": "t"}])
+    db.append_message_exchanges_local(
+        mid,
+        [
+            {
+                "run_tag": "r1",
+                "seq": 0,
+                "status": "complete",
+                "abandoned": False,
+                "capture_blob": b"b",
+                "created_at": "t",
+            }
+        ],
+    )
     with db.transaction() as cursor:
         after = cursor.execute("SELECT COUNT(*) FROM sync_log").fetchone()[0]
     assert after == before
@@ -193,21 +361,33 @@ def test_no_sync_log_rows_written(db):
 
 def test_hard_delete_cascades(db):
     mid = _seed_message(db)
-    db.append_message_exchanges_local(mid, [
-        {"run_tag": "r1", "seq": 0, "status": "complete", "abandoned": False,
-         "capture_blob": b"b", "created_at": "t"}])
+    db.append_message_exchanges_local(
+        mid,
+        [
+            {
+                "run_tag": "r1",
+                "seq": 0,
+                "status": "complete",
+                "abandoned": False,
+                "capture_blob": b"b",
+                "created_at": "t",
+            }
+        ],
+    )
     with db.transaction() as cursor:
         cursor.execute("DELETE FROM messages WHERE id = ?", (mid,))
-        count = cursor.execute(
-            "SELECT COUNT(*) FROM message_exchanges").fetchone()[0]
+        count = cursor.execute("SELECT COUNT(*) FROM message_exchanges").fetchone()[0]
     assert count == 0
 
 
 def test_full_capture_queries_use_capture_detail_index_without_stats(db):
     connection = db.get_connection()
-    assert connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_stat1'"
-    ).fetchone() is None, (
+    assert (
+        connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_stat1'"
+        ).fetchone()
+        is None
+    ), (
         "the plan must match production's no-ANALYZE state, not a test-only "
         "sqlite_stat1-assisted plan"
     )
@@ -310,8 +490,7 @@ def test_full_exchange_purge_scopes_by_conversation_including_deleted_messages(d
         )
 
     assert db.list_full_exchange_keys_for_conversation(conversation_id) == {
-        (message_id, f"full-{index}", 0)
-        for index, message_id in enumerate(message_ids)
+        (message_id, f"full-{index}", 0) for index, message_id in enumerate(message_ids)
     }
     assert db.delete_full_exchanges_for_conversation(conversation_id) == 4
 
@@ -383,13 +562,9 @@ def test_full_exchange_delete_rolls_back_when_staged_inventory_changed(db):
     conversation_id = db.get_message_by_id(message_id)["conversation_id"]
 
     with pytest.raises(Exception, match="inventory changed"):
-        db.delete_full_exchanges_for_conversation(
-            conversation_id, expected_count=2
-        )
+        db.delete_full_exchanges_for_conversation(conversation_id, expected_count=2)
 
-    assert [row["run_tag"] for row in db.get_message_exchanges(message_id)] == [
-        "full"
-    ]
+    assert [row["run_tag"] for row in db.get_message_exchanges(message_id)] == ["full"]
 
 
 def test_schema_version_is_at_least_43(db):
@@ -450,9 +625,20 @@ def test_upgrade_path_from_v42_recreates_the_table(tmp_path):
     assert "message_exchanges" in tables
     # And the recreated table is genuinely usable, not left half-migrated.
     mid = _seed_message(reopened)
-    assert reopened.append_message_exchanges_local(
-        mid,
-        [{"run_tag": "r1", "seq": 0, "status": "complete", "abandoned": False,
-          "capture_blob": b"b", "created_at": "t"}],
-    ) == 1
+    assert (
+        reopened.append_message_exchanges_local(
+            mid,
+            [
+                {
+                    "run_tag": "r1",
+                    "seq": 0,
+                    "status": "complete",
+                    "abandoned": False,
+                    "capture_blob": b"b",
+                    "created_at": "t",
+                }
+            ],
+        )
+        == 1
+    )
     reopened.close_connection()

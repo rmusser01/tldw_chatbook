@@ -188,6 +188,11 @@ class ConsoleDispatchRepository:
             """,
             [(acceptance.user_message_id, *row) for row in attachments if row[0] >= 1],
         )
+        self.db._ensure_initial_semantic_revision(
+            cursor,
+            message_id=acceptance.user_message_id,
+            creation_reason="durable_turn_user_create",
+        )
         cursor.execute(
             """
             INSERT INTO messages (
@@ -208,6 +213,11 @@ class ConsoleDispatchRepository:
                 now,
                 self.db.client_id,
             ),
+        )
+        self.db._ensure_initial_semantic_revision(
+            cursor,
+            message_id=acceptance.assistant_message_id,
+            creation_reason="durable_turn_assistant_create",
         )
         updated_leaf = cursor.execute(
             """
@@ -402,6 +412,34 @@ class ConsoleDispatchRepository:
             )
 
     def _reconcile_checkpoint_row(
+        self,
+        cursor: sqlite3.Cursor,
+        conversation_id: str,
+        row: sqlite3.Row,
+        *,
+        allow_writes: bool = True,
+    ) -> "ConsoleDispatchRecoveryState | None | _ReconcileWriteNeeded":
+        assistant_id = str(row["assistant_message_id"] or "")
+        if not allow_writes or not assistant_id:
+            return self._reconcile_checkpoint_row_uncoordinated(
+                cursor,
+                conversation_id,
+                row,
+                allow_writes=allow_writes,
+            )
+        return self.db._coordinate_semantic_mutation(
+            cursor,
+            message_id=assistant_id,
+            creation_reason="dispatch_reconcile",
+            mutate=lambda mutation_cursor: self._reconcile_checkpoint_row_uncoordinated(
+                mutation_cursor,
+                conversation_id,
+                row,
+                allow_writes=allow_writes,
+            ),
+        )
+
+    def _reconcile_checkpoint_row_uncoordinated(
         self,
         cursor: sqlite3.Cursor,
         conversation_id: str,
@@ -677,6 +715,25 @@ class ConsoleDispatchRepository:
     def cas_state(
         self, transition: ConsoleDispatchTransition
     ) -> ConsoleDispatchWriteResult:
+        """Coordinate one dispatch-state compare-and-swap."""
+
+        with self.db.transaction(immediate=True) as cursor:
+            exists = cursor.execute(
+                "SELECT 1 FROM messages WHERE id = ?",
+                (transition.assistant_message_id,),
+            ).fetchone()
+            if exists is None:
+                return self._cas_state_uncoordinated(transition)
+            return self.db._coordinate_semantic_mutation(
+                cursor,
+                message_id=transition.assistant_message_id,
+                creation_reason="dispatch_state",
+                mutate=lambda _cursor: self._cas_state_uncoordinated(transition),
+            )
+
+    def _cas_state_uncoordinated(
+        self, transition: ConsoleDispatchTransition
+    ) -> ConsoleDispatchWriteResult:
         """Apply an expected-revision accepted/dispatch-started transition."""
         if (
             not isinstance(transition.expected_state, ConsoleDispatchCheckpointState)
@@ -777,6 +834,27 @@ class ConsoleDispatchRepository:
             )
 
     def settle_with_assistant(
+        self, settlement: ConsoleAssistantSettlement
+    ) -> ConsoleDispatchWriteResult:
+        """Coordinate terminal assistant settlement."""
+
+        with self.db.transaction(immediate=True) as cursor:
+            exists = cursor.execute(
+                "SELECT 1 FROM messages WHERE id = ?",
+                (settlement.assistant_message_id,),
+            ).fetchone()
+            if exists is None:
+                return self._settle_with_assistant_uncoordinated(settlement)
+            return self.db._coordinate_semantic_mutation(
+                cursor,
+                message_id=settlement.assistant_message_id,
+                creation_reason="dispatch_settlement",
+                mutate=lambda _cursor: self._settle_with_assistant_uncoordinated(
+                    settlement
+                ),
+            )
+
+    def _settle_with_assistant_uncoordinated(
         self, settlement: ConsoleAssistantSettlement
     ) -> ConsoleDispatchWriteResult:
         """Commit terminal assistant state and delete its checkpoint atomically."""
@@ -929,6 +1007,27 @@ class ConsoleDispatchRepository:
     def handoff_to_provider_continuation(
         self, handoff: ConsoleContinuationHandoff
     ) -> ConsoleDispatchWriteResult:
+        """Coordinate dispatch-to-continuation ownership handoff."""
+
+        with self.db.transaction(immediate=True) as cursor:
+            exists = cursor.execute(
+                "SELECT 1 FROM messages WHERE id = ?",
+                (handoff.assistant_message_id,),
+            ).fetchone()
+            if exists is None:
+                return self._handoff_to_provider_continuation_uncoordinated(handoff)
+            return self.db._coordinate_semantic_mutation(
+                cursor,
+                message_id=handoff.assistant_message_id,
+                creation_reason="continuation_handoff",
+                mutate=lambda _cursor: (
+                    self._handoff_to_provider_continuation_uncoordinated(handoff)
+                ),
+            )
+
+    def _handoff_to_provider_continuation_uncoordinated(
+        self, handoff: ConsoleContinuationHandoff
+    ) -> ConsoleDispatchWriteResult:
         """Commit ADR-063 ownership and remove dispatch ownership atomically."""
         if not self._positive_versions(
             handoff.expected_checkpoint_revision,
@@ -1017,6 +1116,45 @@ class ConsoleDispatchRepository:
             )
 
     def normalize_provider_continuation_owner(
+        self,
+        *,
+        conversation_id: str,
+        assistant_message_id: str,
+        expected_message_version: int,
+        expected_state: str | None,
+        provider_continuation_json: str,
+    ) -> ConsoleDispatchWriteResult:
+        """Coordinate legacy continuation-owner normalization."""
+
+        with self.db.transaction(immediate=True) as cursor:
+            exists = cursor.execute(
+                "SELECT 1 FROM messages WHERE id = ?",
+                (assistant_message_id,),
+            ).fetchone()
+            if exists is None:
+                return self._normalize_provider_continuation_owner_uncoordinated(
+                    conversation_id=conversation_id,
+                    assistant_message_id=assistant_message_id,
+                    expected_message_version=expected_message_version,
+                    expected_state=expected_state,
+                    provider_continuation_json=provider_continuation_json,
+                )
+            return self.db._coordinate_semantic_mutation(
+                cursor,
+                message_id=assistant_message_id,
+                creation_reason="continuation_normalize",
+                mutate=lambda _cursor: (
+                    self._normalize_provider_continuation_owner_uncoordinated(
+                        conversation_id=conversation_id,
+                        assistant_message_id=assistant_message_id,
+                        expected_message_version=expected_message_version,
+                        expected_state=expected_state,
+                        provider_continuation_json=provider_continuation_json,
+                    )
+                ),
+            )
+
+    def _normalize_provider_continuation_owner_uncoordinated(
         self,
         *,
         conversation_id: str,

@@ -776,8 +776,7 @@ class ChatbookImporter:
         )
         conversation_service, _, _ = build_local_citation_conversation_service(
             db,
-            sidecar_path=get_user_data_dir()
-            / "tldw_chatbook_chat_rag_context.json",
+            sidecar_path=get_user_data_dir() / "tldw_chatbook_chat_rag_context.json",
         )
         conv_dir = extract_dir / "content" / "conversations"
         logger.info(
@@ -819,10 +818,8 @@ class ChatbookImporter:
                     ):
                         raise ValueError("Invalid V2 conversation identity.")
                     graph_messages = self._validate_v2_conversation_graph(conv_data)
-                    thinking_policy, policy_warning = (
-                        preflight_thinking_history_policy(
-                            conv_data.get("thinking_history_policy")
-                        )
+                    thinking_policy, policy_warning = preflight_thinking_history_policy(
+                        conv_data.get("thinking_history_policy")
                     )
                     if policy_warning is not None:
                         status.add_warning(policy_warning)
@@ -965,9 +962,7 @@ class ChatbookImporter:
                                     msg_dict["provider_continuation_json"] = (
                                         continuation
                                     )
-                                thinking_json = msg.get(
-                                    "_thinking_canonical_json"
-                                )
+                                thinking_json = msg.get("_thinking_canonical_json")
                                 if thinking_json is not None:
                                     msg_dict["thinking_blocks_json"] = thinking_json
                                 continuation_checkpoint = (
@@ -1000,9 +995,7 @@ class ChatbookImporter:
                                         or continuation_checkpoint.state != "active"
                                     )
                                 ):
-                                    raise ValueError(
-                                        "Invalid V2 conversation graph."
-                                    )
+                                    raise ValueError("Invalid V2 conversation graph.")
                                 msg_dict["assistant_generation_state"] = (
                                     generation_state.value
                                     if generation_state is not None
@@ -1014,7 +1007,13 @@ class ChatbookImporter:
                                     f"message {ordinal}."
                                 )
                             msg_dict.update(image_kwargs)
-                            new_message_id = db.add_message(msg_dict)
+                            if attachment_rows:
+                                new_message_id = db.add_message_with_semantic_sidecars(
+                                    msg_dict,
+                                    attachments=attachment_rows,
+                                )
+                            else:
+                                new_message_id = db.add_message(msg_dict)
                             if new_message_id:
                                 if graph_messages is not None:
                                     variant_of = msg.get("variant_of")
@@ -1034,10 +1033,6 @@ class ChatbookImporter:
                                             int(msg["deleted"]),
                                             new_message_id,
                                         ),
-                                    )
-                                if attachment_rows:
-                                    db.set_message_attachments(
-                                        str(new_message_id), attachment_rows
                                     )
                                 imported_message_context.append(
                                     (str(new_conv_id), str(new_message_id), msg)
@@ -1191,10 +1186,8 @@ class ChatbookImporter:
                 )
             except ValueError:
                 raise ValueError("Invalid V2 conversation graph.") from None
-            if (
-                generation_state
-                is AssistantGenerationState.CONTINUATION_ACTIVE
-                and (checkpoint is None or checkpoint.state != "active")
+            if generation_state is AssistantGenerationState.CONTINUATION_ACTIVE and (
+                checkpoint is None or checkpoint.state != "active"
             ):
                 raise ValueError("Invalid V2 conversation graph.")
             item["assistant_generation_state"] = (
@@ -1316,9 +1309,7 @@ class ChatbookImporter:
             for dependent in dependents[message_id]:
                 indegrees[dependent] -= 1
                 if indegrees[dependent] == 0:
-                    heapq.heappush(
-                        ready, (int(by_id[dependent]["order"]), dependent)
-                    )
+                    heapq.heappush(ready, (int(by_id[dependent]["order"]), dependent))
         if len(ordered) != len(messages):
             raise ValueError("Invalid V2 conversation graph.")
         return ordered
@@ -2108,12 +2099,17 @@ class ChatbookImporter:
         different moments must still skip as already-present rather than
         spam a conflict.
         """
-        plain_fields = ("preset_name", "roster_snapshot_json", "turns_json", "model_used")
+        plain_fields = (
+            "preset_name",
+            "roster_snapshot_json",
+            "turns_json",
+            "model_used",
+        )
         if any(existing.get(f) != payload.get(f) for f in plain_fields):
             return False
-        return cls._kept_dt_key(existing.get("original_created_at")) == cls._kept_dt_key(
-            payload.get("original_created_at")
-        )
+        return cls._kept_dt_key(
+            existing.get("original_created_at")
+        ) == cls._kept_dt_key(payload.get("original_created_at"))
 
     @staticmethod
     def _kept_briefing_file_path(
@@ -2204,9 +2200,7 @@ class ChatbookImporter:
                         source_briefing_id=source_briefing_id,
                         watchlist_name=payload.get("watchlist_name"),
                         body_markdown=payload["body_markdown"],
-                        covers_through_item_id=payload.get(
-                            "covers_through_item_id"
-                        ),
+                        covers_through_item_id=payload.get("covers_through_item_id"),
                         covers_from_ts=payload.get("covers_from_ts"),
                         selection_mode=payload.get("selection_mode"),
                         model_used=payload.get("model_used"),
@@ -2311,9 +2305,7 @@ class ChatbookImporter:
 
             except Exception as e:
                 status.record_failure(ContentType.KEPT_BRIEFING)
-                status.add_error(
-                    f"Error importing kept briefing {kept_id}: {str(e)}"
-                )
+                status.add_error(f"Error importing kept briefing {kept_id}: {str(e)}")
                 logger.opt(exception=True).error(
                     "ChatbookImporter._import_kept_briefings: Error importing kept briefing {}",
                     kept_id,
