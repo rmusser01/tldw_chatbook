@@ -32,7 +32,8 @@ fallback grant.
 
 `.tldw-tool-pack/v1` contains exactly one flattened Tool policy profile in a
 deterministic two-file ZIP. It carries safe portable ids, effective Allow/Ask/Deny
-states, Ask/Deny fallbacks, stable permission identities, and contract fingerprints.
+states, Ask/Deny fallbacks, stable permission identities, and contract fingerprints
+covering name, description, input schema, and policy-relevant risk tags.
 It excludes tools, skills, plugins, MCP connection/server configuration, credentials,
 commands, environment, endpoints, global kill switch, workspace/Persona data,
 approval history, session grants, and runtime-install instructions.
@@ -43,10 +44,12 @@ ADR, and trust boundary. A V1 Tool-use Pack is never executable content.
 ### 2. Snapshot complete permission-addressable behavior, not visible catalog state
 
 Export inventories only authorities actually governed by `MCPPermissionStore`,
-including code-owned builtins, the built-in MCP server, local tools, and local
-external MCP definitions available live or from validated cache. Display-only
-server-source tools, skills, orchestration tools, and non-addressable capability
-tools are excluded.
+through a code-owned portability registry: code-owned builtins, the built-in MCP
+server, local/raw-shell/Virtual CLI tools, and local external MCP definitions
+available live or from validated cache. Display-only server-source tools, skills,
+orchestration tools, and non-addressable capability tools are excluded and reported.
+A newly permission-addressable but unclassified namespace blocks export instead of
+silently disappearing.
 
 Export resolves named-profile inheritance, rug-pull downgrade, and high-risk floors
 through the existing pure resolvers, then records the flattened effective result.
@@ -54,18 +57,33 @@ Destination/config/Persona/workspace gates and the global kill switch remain out
 the pack. Every future-tool fallback is clamped to Ask or Deny; no broad Allow
 fallback can be exported or installed.
 
+Named-profile propagation is a shipping prerequisite across every included provider.
+Resolution, by-key gates, persistent approvals, and profile-scoped session approvals
+must use the same captured profile id; importing a profile must never cause an
+approval to land in `default` or affect a different workspace.
+
 ### 3. Import is review-first, exact, and unbound
 
-Import inspection is side-effect free. Automatic mapping requires exact authority,
-server key, raw tool name, and contract fingerprint. A user may explicitly map one
-source MCP server to one installed destination server; labels, fuzzy matching,
-many-to-one mapping, connection configuration, and secret transfer are forbidden.
+Import inspection is side-effect free and uses a strict, non-mutating permission
+snapshot. Corrupt or unknown-version live policy bytes are left exactly untouched;
+inspection never invokes the permission store's legacy backup/reset recovery.
+Automatic mapping requires exact authority, server key, raw tool name, and portable
+contract fingerprint. A user may explicitly map one source MCP server to one
+installed destination server; labels, fuzzy matching, many-to-one mapping,
+connection configuration, and secret transfer are forbidden.
 
-Exact Allow and Ask rules may be installed. Missing or changed Allow/Ask rules are
-omitted and never retained for future exact autoactivation. An unresolved Deny may
+Exact Allow and Ask rules may be installed. A risk-tag-only change invalidates an
+exact mapping. The portable fingerprint is validation evidence, not the runtime
+`definition_hash`; activation recomputes the latter from the exact destination
+definition. Missing or changed Allow/Ask rules are omitted and
+never retained for future exact autoactivation. An unresolved Deny may
 be retained under its reviewed identity because it can only restrict. The compiled
 profile uses only Ask/Deny defaults plus exact exceptions and never a server/global
 Allow default.
+
+Activation always writes an explicit safe named MCP-global fallback plus the
+independent builtin and per-server fallbacks, all Ask/Deny only. Therefore an unseen
+destination server cannot inherit a broad Allow from `default`.
 
 Commit repeats archive and destination validation, checks the reviewed destination
 id and store digest, and atomically installs only if the id is still absent and no
@@ -76,32 +94,61 @@ successful result is accurately called an **unbound profile**, not a dormant pro
 
 ### 4. Keep runtime policy and binding authority separate
 
-`MCPPermissionStore` remains the only policy authority. Schema version remains 1;
-minimal additive `profile_metadata` records imported origin, digest/revision,
-first-bind requirement, receipt id, and compact counts. Detailed bounded import
-receipts live outside the hot-path store and are not authority.
+`MCPPermissionStore` remains the only policy authority. Schema version remains 1.
+An imported profile has a durable `profile_kind: "tool_pack_imported"`
+discriminator and a required, validated `tool_pack_lifecycle` object containing the
+first-bind marker, policy digest/revision, receipt link, and compact counts. A
+tombstone has the corresponding tombstone kind/origin. Legacy profiles have neither.
+If one field exists without the other, either is malformed, or kind and origin
+disagree, all resolvers fail closed and the profile cannot bind, export, or edit.
+Detailed bounded import receipts live outside the hot-path store and are provenance,
+never authority.
+
+The store adds `read_snapshot_strict()`: a non-mutating schema/nested-shape read that
+returns immutable policy plus a generation digest and never creates, renames,
+normalizes, backs up, or resets the live file. Tool Pack inspection, export,
+revalidation, and outcome reconciliation use this seam, not legacy `load()`.
 
 All instances targeting the same resolved permission-store path share one
-process-wide reentrant mutator lock. Complete-profile install, metadata update, and
-tombstone replacement reload and validate under that lock, enforce profile and byte
-caps, then atomically replace the file. Chatbook is the single-process authority;
-the decision makes no arbitrary cross-process writer guarantee.
+process-wide reentrant mutator lock/profile fence. Complete-profile install,
+lifecycle update, and tombstone replacement reload and validate under that lock,
+enforce profile and byte caps, then atomically replace the file. The fixed lock order
+is lifecycle coordinator, permission-store fence, then workspace SQLite transaction;
+no code acquires it in reverse. Chatbook is the single-process authority; the
+decision makes no arbitrary cross-process writer guarantee.
 
 Workspace assistant defaults remain binding authority. The first bind of an imported
 profile requires a fresh, one-use, short-lived token bound to the exact profile
-digest/revision, workspace, Persona/memory settings, and intended assistant-default
-payload. The central `set_assistant_defaults` mutation validates and consumes the
-token; UI confirmation alone is insufficient. Existing local/auto-managed profiles
-and workspace backfill are unchanged. Import by itself cannot change any existing
+digest/revision, workspace, Persona/memory settings, action, and complete intended
+assistant-default payload. Every entry point that creates, sets, replaces, clears,
+provisions, or backfills defaults—including inline defaults during workspace
+creation—uses the central guard; UI confirmation alone and direct-service calls
+cannot bypass it. Bind holds the store fence from final strict token/profile
+validation through workspace commit and marker clear, closing the edit-after-review
+race. Existing local/auto-managed profiles are behaviorally unchanged but traverse
+the lifecycle-aware write boundary. Import by itself cannot change any existing
 workspace's effective policy.
+
+Receipts are written through private mode-`0600` temporaries, atomically replaced,
+fsynced, and capacity-reserved before profile
+authority commits. Referenced receipts are not auto-evicted; startup only reclaims
+expired, unreferenced, unowned orphans. A missing receipt degrades provenance without
+changing policy or bypassing the authoritative first-bind marker. Install, removal,
+and publication reconcile exact state after ambiguous post-replace failures and
+report an explicit uncertain outcome rather than guessing.
 
 ### 5. Removal leaves a deny tombstone
 
-A referenced profile cannot be removed, including references from archived
-workspaces, and an active Console/Test Tool runtime lease also blocks removal. An
-unreferenced removable profile is atomically replaced with a hidden, permanent Deny
-tombstone rather than deleted. A validated tombstone sentinel makes every permission
-resolver return Deny before profile inheritance; MCP-global and explicit
+A referenced imported profile cannot be removed, including references from archived
+workspaces, and an active Console/Test Tool runtime lease for its exact captured id
+also blocks removal. V1 does not add deletion for local, legacy, workspace-managed,
+invalid-lifecycle, or already tombstoned profiles. An unreferenced valid imported
+profile is atomically replaced with a hidden, permanent Deny tombstone rather than
+deleted. A compact receipt is staged first under a new id and linked by the tombstone;
+the former detailed receipt becomes eligible for bounded orphan-grace cleanup only
+after strict outcome reconciliation. The validated tombstone
+discriminator/lifecycle pair makes every permission resolver return Deny before
+profile inheritance; MCP-global and explicit
 `agent:builtin` Deny values provide defense in depth for the current namespaces. It
 is not reusable and counts toward storage caps.
 
@@ -116,9 +163,12 @@ another commits.
 
 Settings gains a modular Tool Profiles panel for import/export, origins, references,
 receipts, binding state, and removal. The existing MCP Permissions surface gains a
-Tool policy profile selector and remains the only rule editor. Every read, mutation,
-re-allow, preview, and Test Tool operation is explicitly scoped to the selected
-profile. Deprecated settings surfaces are not extended.
+Tool policy profile selector and remains the only rule editor. Every row/action
+captures the selected profile id, selector generation, and profile digest/revision;
+profile switches or edits make pending actions stale instead of retargeting them.
+Every read, mutation, re-allow, preview, persistent/session approval, and Test Tool
+operation is explicitly scoped to that captured profile. Deprecated settings
+surfaces are not extended.
 
 ## Alternatives considered
 
@@ -132,7 +182,11 @@ profile. Deprecated settings surfaces are not extended.
 | Preserve unresolved Allow or Ask for future tools | A future definition could acquire policy without exact review. Only Deny is safe to retain unmatched. |
 | Hard-delete an unreferenced profile | Unknown named profiles inherit `default`, so stale/in-flight references could widen. A Deny tombstone fails closed. |
 | Bump permission-store schema version | Unknown versions trigger backup/reset and would risk destroying live permissions; the metadata addition is compatible and additive. |
+| Reuse legacy `load()` for inspection | Its recovery path may rename corrupt policy and return defaults. Review must be byte-preserving and fail closed through a strict read seam. |
+| Make lifecycle information optional display metadata | A missing marker could silently convert a reviewed imported policy into an ordinary bindable profile. Kind/lifecycle consistency is runtime authority. |
+| Copy the portable contract digest into runtime `definition_hash` | They intentionally hash different framed fields. Activation validates the portable contract, then recomputes the runtime hash from the destination definition. |
 | Store detailed receipts in the permission file | It duplicates up to 2,000 identities in a hot-path file and increases every resolver load. A separate bounded receipt store preserves review evidence. |
+| Fall back to non-atomic export overwrite | A partial or redirected destination could be published. Unsupported secure primitives must produce a stable failure instead. |
 | Include skills, plugins, or MCP server setup | That carries executable/configuration trust, dependencies, secrets, installation, updates, and revocation—materially different from portable policy. |
 
 ## Consequences
@@ -153,10 +207,12 @@ profile. Deprecated settings surfaces are not extended.
 - Export requires complete definitional inventory, so unavailable authority metadata
   can block export instead of producing a partial pack.
 - Manual external-server mapping adds a review step when local ids differ.
-- Minimal profile metadata plus a separate bounded receipt store add two profile-local
-  persistence concerns without changing the permission schema version.
-- The permission store gains in-process multi-instance serialization; arbitrary
-  concurrent external writers remain unsupported.
+- A profile discriminator/lifecycle object plus a separate bounded receipt store add
+  two profile-local persistence concerns without changing the permission schema
+  version.
+- The permission store gains strict snapshot validation, in-process multi-instance
+  serialization, and profile-scoped accessors; arbitrary concurrent external writers
+  remain unsupported.
 - Tombstones consume permanent profile ids and capacity until a future versioned
   migration defines a stronger safe-reclamation proof.
 - Windows-safe archive validation is covered in V1, but native Windows publication
