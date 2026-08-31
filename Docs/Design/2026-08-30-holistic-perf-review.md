@@ -274,3 +274,102 @@ it is still running. It also sharpens TASK-25812: the CSS ratchet cannot be
 brought back under its limit by a one-off trim if routine traffic adds
 ~1 KB/day to the same path — the fix has to move something structurally off
 the pre-first-paint leg, not shave it.
+
+---
+
+## 5. Implemented: ancestor rejection in the CSS fast path
+
+Finding §2 measured a 60% upper bound from re-keying ancestor-scoped rules
+onto classes — invasive, touching ~180 CSS rules and the widget markup that
+carries the classes. A cheaper route gets most of it with no CSS or markup
+change at all.
+
+`tldw_chatbook/Utils/textual_css_fastpath.py` already owns candidate
+construction. It now rejects candidates whose leading compound names an
+ancestor the node does not have, before upstream evaluates them.
+
+Interleaved A/B, four pairs, filter toggled in place, median of five
+full-screen `stylesheet.update` calls per arm, 502-node Console:
+
+| arm | `update(screen)` | samples |
+|---|---:|---|
+| filter off | 105.0 ms | 103.5 / 104.0 / 105.0 / 108.3 |
+| filter on | **66.2 ms** | 64.8 / 65.8 / 66.2 / 66.8 |
+| **delta** | **−38.8 ms (−37%)** | ranges do not overlap |
+
+Interleaved rather than blocked, so drift (GC, thermal, cache warmth) cannot
+be attributed to whichever arm ran second.
+
+### Why it is safe
+
+A rule survives unless **every** one of its selector sets states a
+requirement that is unmet. Anything not cheaply decidable reports "no
+requirement" — including a leading TYPE selector, because matching a type
+against an ancestor needs MRO walking, which is the cost being avoided.
+
+### Both guards were mutation-tested, and the first one had a hole
+
+* Deleting the one-compound guard — which would demand an *ancestor*
+  `#thing` for `#thing.foo`, whose id is on the SUBJECT — fails the per-node
+  fidelity tour across three real screens.
+* **The new unit test did not initially catch that mutation.** Its
+  `Button.foo` case begins with a TYPE selector, so it returns `None` with
+  or without the guard. Shapes *led* by an id/class (`#thing.foo`,
+  `.foo.bar`) were added; the unit test now fails on that mutation in 0.66 s
+  instead of only via the 9 s full-app tour.
+
+* A third guard covers the runtime case: ancestor names are recomputed on
+  every apply, never cached, because ancestors gain and lose classes
+  constantly (`-active`, `hidden`, ...). Caching them is the obvious
+  "optimisation" here and would silently drop styles that have just become
+  applicable. `test_filter_follows_a_class_added_to_an_ancestor_at_runtime`
+  asserts both directions (a scoped rule becomes a candidate when an
+  ancestor gains the class, and stops being one when it loses it); caching
+  the set fails it, and the fidelity tour independently.
+
+*A test that looks thorough can still be blind to the exact mutation it was
+written for. Mutating it is the only way to find out.*
+
+### Not superseded
+
+CSS-level re-keying (TASK-25810) remains worth doing: the filter does not
+help rules led by a TYPE, and re-keying additionally shrinks the candidate
+*set* rather than building it and discarding. Remaining headroom should be
+measured against the new **66.2 ms** baseline.
+
+### 5a. Verification: a paired-arm run, because a failure list attributes nothing
+
+The fidelity tour covers Chat, Library and Settings. A large share of this
+repo's CSS-sensitive tests exercise Watchlists, Schedules, Personas and
+workbench snapshots — surfaces that tour never visits — so it is strong
+evidence *for the three screens it walks*, and not more.
+
+The 82 CSS-sensitive UI test files (1,105 tests) were therefore run **twice**,
+identically, ~33 minutes per arm: once with the filter installed, once with
+the implementation reverted.
+
+| arm | failed | passed |
+|---|---:|---:|
+| filter ON | 39 | 1,064 |
+| filter OFF (baseline) | 40 | 1,063 |
+
+| comparison | result |
+|---|---|
+| **broken by the filter** | **none** |
+| pre-existing (fail in both arms) | 39 |
+| passed with, failed without | 1 |
+
+That last row is **not** a fix. `test_active_reveal_queue_retains_only_
+identity_across_target_and_rail_removal` fails **4 out of 4** runs in
+isolation *with the filter installed*; it passed in the ON arm through
+ordering luck. Claiming the filter fixed it would have been the easiest
+sentence to write and the wrong one.
+
+Everything that worried me on the ON arm — `test_workbench_visual_snapshots`,
+the eight `test_destination_visual_parity_correction` failures, the CSS
+contract and build-integrity tests, the rail width budgets — fails
+identically without the change.
+
+*A list of failures in a suite you have never run clean says nothing about
+your change. Two earlier long sweeps in this cycle produced exactly that and
+had to be discarded; only the paired arms answered the question.*
