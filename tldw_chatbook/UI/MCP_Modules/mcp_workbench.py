@@ -3648,15 +3648,15 @@ class MCPWorkbench(Container):
         # Critical review fix: the other two `_goto_permission_row()`
         # callers -- the Tools-mode permission block's own "Change in
         # Permissions" button, and the Test Tool panel's blocked/ask
-        # button -- fire from Tools mode, where `#mcp-inspector-tool` (and,
-        # for the Test Tool trigger, a live armed Run/Close panel inside
-        # it) is populated. `set_mode()`'s own `_clear_tool_view()` worker
+        # button -- fire from Tools mode, where `#mcp-inspector-tool` and
+        # its open Test Tool panel are populated. `set_mode()`'s own
+        # `_clear_tool_view()` worker
         # -- which would otherwise hide it via `show_tool(None)` -- is
         # cancelled by this method's SAME exclusive `"mcp-tool-clear"`
         # dispatch before it ever runs (the exact mechanism the comment
         # above already documents for the audit panel), so this must clear
-        # `#mcp-inspector-tool` itself too, or the stale tool detail (and
-        # any armed Test Tool buttons) stays stacked underneath the new
+        # `#mcp-inspector-tool` itself too, or the stale tool detail stays
+        # stacked underneath the new
         # Permissions-mode block. Harmless no-op for the audit-drill
         # caller, where `#mcp-inspector-tool` is already hidden.
         await inspector.show_tool(None)
@@ -4029,7 +4029,11 @@ class MCPWorkbench(Container):
         try:
             await self._sync_audit_log_entries()
         except Exception as exc:
-            logger.warning("MCP audit entries resync after tool test failed: {}", exc)
+            message = _safe_tool_test_text(
+                f"MCP audit entries resync after tool test failed: "
+                f"{_safe_exception_text(exc)}"
+            )
+            logger.warning("{}", message)
 
     @staticmethod
     def _prepared_test_reason(reason: str) -> str:
@@ -4082,29 +4086,22 @@ class MCPWorkbench(Container):
             # so a log line alone left the user with literally nothing on
             # screen and no reason to suspect the run even happened. A
             # toast closes that gap; the log line stays for diagnosis.
-            logger.warning(f"MCP tool test result render failed: {exc}")
+            safe_error = _safe_exception_text(exc)
+            logger.warning(
+                "{}",
+                _safe_tool_test_text(
+                    f"MCP tool test result render failed: {safe_error}"
+                ),
+            )
             self.app.notify(
                 _toast(
                     _safe_tool_test_text(
                         f"{tool_name} finished running, but its result couldn't be "
-                        f"shown: {_safe_exception_text(exc)}"
+                        f"shown: {safe_error}"
                     )
                 ),
                 severity="error",
             )
-            # Review fix (Minor #5): the failing `show_tool_result()` call
-            # above is ALSO what re-enables the Run button on a normal
-            # path -- a render failure must not leave the user stuck with
-            # a permanently disabled Run button (closing and reopening the
-            # panel was the only way out before this). `reenable_test_run`
-            # is already tolerant of a stale/missing panel (I1-style), so
-            # no extra guard is needed here beyond containing whatever it
-            # might itself raise -- this is already inside a failure path,
-            # a second exception here must not escape it.
-            try:
-                self.query_one(MCPInspector).reenable_test_run(server_key, tool_name)
-            except Exception:
-                pass
 
     async def open_add_server_form(self) -> None:
         """Open the Add-server form/panel from outside the overview button.

@@ -3529,6 +3529,7 @@ class ToolTestHubService(FakeHubService):
         self.revoked_nonces: list[str] = []
         self._previews: dict[str, ToolTestAdmissionPreview] = {}
         self._active_tests: set[tuple[str, str]] = set()
+        self.active_calls: list[tuple[str, str]] = []
         self._preview_count = 0
         self.next_prepared_outcome: Any | None = None
 
@@ -3652,6 +3653,7 @@ class ToolTestHubService(FakeHubService):
         self._previews.pop(nonce, None)
 
     def hub_test_active(self, server_key: str, tool_name: str) -> bool:
+        self.active_calls.append((server_key, tool_name))
         return (server_key, tool_name) in self._active_tests
 
     async def execute_prepared_hub_test(
@@ -4330,7 +4332,7 @@ async def test_test_tool_preview_missing_prepared_api_is_unavailable(
 
 
 @pytest.mark.asyncio
-async def test_test_tool_remount_reads_service_active_state():
+async def test_test_tool_panel_open_reads_service_active_state():
     app = ToolTestApp()
     app.unified_mcp_service._active_tests.add(("local:docs", "fetch"))
     async with app.run_test(size=(120, 40)) as pilot:
@@ -4347,6 +4349,7 @@ async def test_test_tool_remount_reads_service_active_state():
         assert str(button.label) == "Running…"
         assert button.disabled is True
         assert app.unified_mcp_service._preview_count == 0
+        assert app.unified_mcp_service.active_calls == [("local:docs", "fetch")]
 
 
 @pytest.mark.asyncio
@@ -4511,6 +4514,42 @@ async def test_test_tool_execution_failure_redacts_secrets_paths_and_bounds_text
 
 
 @pytest.mark.asyncio
+async def test_test_tool_audit_refresh_log_redacts_paths_secrets_and_long_exception(
+    monkeypatch,
+):
+    app = ToolTestApp()
+    secret = "sk-live-audit-log-secret"
+    private_path = "/Users/alice/private/audit.json"
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+
+        async def fail_refresh() -> None:
+            raise RuntimeError(
+                f"api_key={secret} failed at {private_path} " + ("x" * 4_000)
+            )
+
+        monkeypatch.setattr(workbench, "_sync_audit_log_entries", fail_refresh)
+        messages: list[object] = []
+        sink = mcp_workbench_module.logger.add(
+            messages.append, level="WARNING", format="{message}"
+        )
+        try:
+            await workbench._refresh_test_audit()
+        finally:
+            mcp_workbench_module.logger.remove(sink)
+
+        rendered = "".join(str(message) for message in messages)
+        assert secret not in rendered
+        assert private_path not in rendered
+        assert "[redacted]" in rendered
+        assert "[redacted]]" not in rendered
+        assert "[path]" in rendered
+        assert len(rendered) <= 560
+
+
+@pytest.mark.asyncio
 async def test_test_tool_typed_failure_outcome_is_redacted_and_bounded():
     app = ToolTestApp()
     app.unified_mcp_service.next_prepared_outcome = LocalHubExecutionOutcome(
@@ -4563,6 +4602,28 @@ async def _open_fetch_test_preview(app: ToolTestApp, pilot) -> str:
     return preview.nonce
 
 
+async def _wait_for_test_button_label(app: ToolTestApp, pilot, label: str) -> Button:
+    """Wait for the worker-driven preview render, checking observable state."""
+    for _ in range(40):
+        await app.workers.wait_for_complete()
+        buttons = list(app.query("#mcp-inspector-test-run"))
+        if buttons and str(buttons[0].label) == label:
+            return buttons[0]
+        await pilot.pause()
+    pytest.fail(f"Test Tool button never reached {label!r}")
+
+
+async def _wait_for_tools_rows(workbench: MCPWorkbench, pilot) -> DataTable:
+    """Wait for the remounted tools canvas and its worker-fed rows."""
+    for _ in range(40):
+        await workbench.app.workers.wait_for_complete()
+        tables = list(workbench.query("#mcp-tools-table"))
+        if tables and tables[0].row_count:
+            return tables[0]
+        await pilot.pause()
+    pytest.fail("Remounted tools table never populated")
+
+
 @pytest.mark.asyncio
 async def test_test_tool_preview_escape_revokes_nonce_through_mounted_binding():
     app = ToolTestApp()
@@ -4609,12 +4670,21 @@ async def test_test_tool_preview_unmount_and_remount_revokes_old_nonce():
         nonce = await _open_fetch_test_preview(app, pilot)
         old = app.query_one(MCPWorkbench)
         await old.remove()
-        await pilot.pause()
+        app.unified_mcp_service._active_tests.add(("local:docs", "fetch"))
+        preview_count = app.unified_mcp_service._preview_count
         await app.mount(MCPWorkbench(app_instance=app, id="mcp-workbench-remounted"))
-        await pilot.pause()
+        remounted = app.query_one("#mcp-workbench-remounted", MCPWorkbench)
+        await _wait_for_tools_rows(remounted, pilot)
+        remounted.set_mode("tools")
+        await _select_tools_mode_row(app, pilot, 0)
+        await pilot.click("#mcp-inspector-test-tool")
+        button = await _wait_for_test_button_label(app, pilot, "Running…")
 
         assert nonce in app.unified_mcp_service.revoked_nonces
-        assert app.query_one("#mcp-workbench-remounted", MCPWorkbench).is_mounted
+        assert remounted.is_mounted
+        assert button.disabled is True
+        assert app.unified_mcp_service._preview_count == preview_count
+        assert app.unified_mcp_service.active_calls[-1] == ("local:docs", "fetch")
 
 
 @pytest.mark.asyncio
@@ -4852,13 +4922,8 @@ async def test_render_failure_in_show_tool_test_result_notifies_instead_of_only_
     `MCPInspector.show_tool_result()` used to only `logger.warning()` a
     render failure -- the run genuinely completed (this test's fake
     service returns a normal OK result), but a render bug meant the user
-    saw literally nothing: no result, no re-enabled Run button (that write
-    lives inside the same failing call), not even a log line visible from
-    the UI. It must also toast.
-
-    Review fix (Minor #5): the Run button must also come back -- without
-    it, the user is stuck unable to press Run again until they close and
-    reopen the panel, even though they were just told the run finished."""
+    saw literally nothing. It must also toast, redact the diagnostic log,
+    and let the fresh service preview restore the action presentation."""
     app = ToolTestApp()
     app.unified_mcp_service.test_result = {"ok": True}
     async with app.run_test(size=(120, 40)) as pilot:
@@ -4873,20 +4938,42 @@ async def test_render_failure_in_show_tool_test_result_notifies_instead_of_only_
         app.query_one("#mcp-schema-field-0", Input).value = "hello"
         run_button = app.query_one("#mcp-inspector-test-run", Button)
 
+        secret = "sk-live-render-log-secret"
+        private_path = "/Users/alice/private/render.json"
+
         def _raise(*args, **kwargs):
-            raise RuntimeError("render exploded")
+            raise RuntimeError(
+                f"token={secret} exploded at {private_path} " + ("x" * 4_000)
+            )
 
         monkeypatch.setattr(MCPInspector, "show_tool_result", _raise)
 
-        await pilot.click(run_button)
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
+        messages: list[object] = []
+        sink = mcp_workbench_module.logger.add(
+            messages.append, level="WARNING", format="{message}"
+        )
+        try:
+            await pilot.click(run_button)
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+        finally:
+            mcp_workbench_module.logger.remove(sink)
 
         assert any(
             "search" in msg and severity == "error" for msg, severity in notifications
         ), f"expected an error toast naming the tool, got: {notifications!r}"
         assert run_button.disabled is False
+        rendered_log = "".join(
+            str(message)
+            for message in messages
+            if "MCP tool test result render failed" in str(message)
+        )
+        assert secret not in rendered_log
+        assert private_path not in rendered_log
+        assert "[redacted]" in rendered_log
+        assert "[redacted]]" not in rendered_log
+        assert "[path]" in rendered_log
+        assert len(rendered_log) <= 560
 
 
 @pytest.mark.asyncio

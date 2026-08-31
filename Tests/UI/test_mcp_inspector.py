@@ -2784,50 +2784,6 @@ async def test_handle_test_run_panel_not_mounted_toasts():
 
 
 @pytest.mark.asyncio
-async def test_reenable_test_run_reenables_button_for_the_current_tool():
-    """`reenable_test_run()` (Task 3): undoes `_handle_test_run()`'s own
-    disable for a press whose dispatch was swallowed by the workbench's
-    in-flight-duplicate guard."""
-    app = InspectorApp()
-    async with app.run_test(size=(100, 60)) as pilot:
-        inspector = app.query_one(MCPInspector)
-        tool = _tool()
-        await inspector.show_tool(tool)
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        run_button = app.query_one("#mcp-inspector-test-run", Button)
-        run_button.disabled = True
-
-        inspector.reenable_test_run(tool.server_key, tool.name)
-        await pilot.pause()
-
-        assert run_button.disabled is False
-
-
-@pytest.mark.asyncio
-async def test_reenable_test_run_is_a_noop_for_a_different_tool():
-    """I1-style tolerance: must never re-enable a DIFFERENT tool's Run
-    button on this one's behalf (mirrors `show_tool_result()`'s own
-    stale-drop guard)."""
-    app = InspectorApp()
-    async with app.run_test(size=(100, 60)) as pilot:
-        inspector = app.query_one(MCPInspector)
-        tool = _tool(name="search", server_key="local:docs")
-        await inspector.show_tool(tool)
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        run_button = app.query_one("#mcp-inspector-test-run", Button)
-        run_button.disabled = True
-
-        inspector.reenable_test_run("local:docs", "some-other-tool")
-        await pilot.pause()
-
-        assert run_button.disabled is True
-
-
-@pytest.mark.asyncio
 async def test_close_button_removes_test_panel_and_reenables_test_tool_button():
     app = InspectorApp()
     async with app.run_test(size=(100, 60)) as pilot:

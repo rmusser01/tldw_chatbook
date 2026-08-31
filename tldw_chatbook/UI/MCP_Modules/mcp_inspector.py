@@ -60,9 +60,9 @@ from tldw_chatbook.UI.MCP_Modules.mcp_schema_form import MCPSchemaForm, parse_sc
 _TOOL_TEST_TEXT_LIMIT = 480
 _TOOL_TEST_SECRET_ASSIGNMENT = re.compile(
     r"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret)"
-    r"(\s*[:=]\s*)('[^']*'|\"[^\"]*\"|[^\s,;}\]]+)"
+    r"(\s*[:=]\s*)(\[redacted\]|'[^']*'|\"[^\"]*\"|[^\s,;}\]]+)"
 )
-_TOOL_TEST_BEARER = re.compile(r"(?i)\bbearer\s+[^\s,;}\]]+")
+_TOOL_TEST_BEARER = re.compile(r"(?i)\bbearer\s+(?:\[redacted\]|[^\s,;}\]]+)")
 _TOOL_TEST_KEY_VALUE = re.compile(r"\bsk-[A-Za-z0-9_-]{6,}\b")
 _TOOL_TEST_ABSOLUTE_PATH = re.compile(
     r"(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|/)[^\s'\"<>]+"
@@ -2397,39 +2397,6 @@ class MCPInspector(Vertical):
         button.label = label
         button.disabled = True
         status.update(message)
-
-    def reenable_test_run(self, server_key: str, tool_name: str) -> None:
-        """Re-enable the Run button for one tool whose Run press produced
-        no run of its own.
-
-        Task 3 (PR-T3): `MCPWorkbench`'s in-flight-duplicate guard
-        (`on_mcp_inspector_tool_test_requested()`) swallows a SECOND
-        `ToolTestRequested` for a tool that already has a run outstanding
-        with just a toast -- but `_handle_test_run()` already disabled the
-        Run button as a side effect of THAT press. Since this press's own
-        dispatch never reached the worker, that disable must be undone for
-        the panel it belongs to; the earlier, still-in-flight run is
-        unaffected and re-enables the button again itself, harmlessly, on
-        its own completion via `show_tool_result()`.
-
-        I1-style tolerance, mirroring `show_tool_result()`'s own stale-drop
-        guard: a no-op if the panel has since moved on to a different tool
-        (or nothing), or if the Run button isn't mounted at all (panel
-        closed) -- never re-enables a DIFFERENT tool's Run button on this
-        one's behalf.
-        """
-        current = self._current_tool
-        if (
-            current is None
-            or current.server_key != server_key
-            or current.name != tool_name
-        ):
-            return
-        try:
-            run_button = self.query_one("#mcp-inspector-test-run", Button)
-        except NoMatches:
-            return
-        run_button.disabled = False
 
     def _handle_test_run(self) -> None:
         """Handle a Run press: collect arguments and dispatch a test run.
