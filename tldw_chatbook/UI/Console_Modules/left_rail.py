@@ -96,6 +96,9 @@ from ...Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
     DestinationRailSectionHeader,
 )
+from ...Workspaces.conversation_browser_state import (
+    console_rail_section_height_budget,
+)
 from ...Workspaces.display_state import ConsoleWorkspaceContextState
 from .agent import CONSOLE_AGENT_CANCEL_ALL_ID, CONSOLE_AGENT_FLEET_SECTION_ID
 from .frame import frame_console_region
@@ -113,6 +116,11 @@ CONSOLE_RETRY_DEFAULT_SAVE_ID = "console-retry-default-save"
 CONSOLE_DISCARD_DEFAULT_RETRY_ID = "console-discard-default-retry"
 CONSOLE_REFRESH_RUNNING_APP_ID = "console-refresh-running-app"
 CONSOLE_DISMISS_DEFAULT_REFRESH_ID = "console-dismiss-default-refresh"
+#: The two peer list sections whose bounded-section ceilings grow to fill
+#: the rail (half the measured viewport each, via
+#: `console_rail_section_height_budget`). Every other section keeps the
+#: historical fixed ceiling.
+_ADAPTIVE_BUDGET_SECTION_IDS = frozenset({"workspace", "conversations"})
 
 CharacterAvatarBox = tuple[int, int]
 CharacterAvatarWidgetBuilder = Callable[..., Widget]
@@ -1185,6 +1193,17 @@ class ConsoleLeftRail(Vertical):
         if not self.is_mounted:
             self._allocation_reconcile_scheduled = False
             return
+        # The two peer list sections grow to fill the rail: each gets half
+        # the measured viewport as its ceiling (see
+        # `console_rail_section_height_budget`). Applied in the PREPARE pass
+        # so the sections commit their geometry at the new ceiling within
+        # this same refresh cycle -- the run pass below then snapshots
+        # settled totals. An unmeasured viewport (early mount) leaves the
+        # ceilings untouched; the next resize/reconcile converges.
+        adaptive_budget: int | None = None
+        viewport_height = self._snapshot_outer_viewport_height()
+        if viewport_height > 0:
+            adaptive_budget = console_rail_section_height_budget(viewport_height)
         for descriptor in self._mounted_descriptors():
             try:
                 section = self.query_one(
@@ -1193,6 +1212,12 @@ class ConsoleLeftRail(Vertical):
                 )
             except (NoMatches, QueryError):
                 continue
+            if (
+                adaptive_budget is not None
+                and descriptor.section_id in _ADAPTIVE_BUDGET_SECTION_IDS
+                and section.max_content_lines != adaptive_budget
+            ):
+                section.max_content_lines = adaptive_budget
             section.set_allocation(None)
             if section.native_scroll_owner is None:
                 section.styles.height = "auto"

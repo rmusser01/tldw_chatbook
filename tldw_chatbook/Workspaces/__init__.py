@@ -4,6 +4,7 @@ from .conversation_browser_state import (
     CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
     CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
     CONSOLE_CONVERSATION_BROWSER_ROW_HEIGHT,
+    CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES,
     ConsoleConversationBrowserGroup,
     ConsoleConversationBrowserInputRow,
     ConsoleConversationBrowserRow,
@@ -13,6 +14,7 @@ from .conversation_browser_state import (
     console_conversation_browser_group_row_limit,
     console_conversation_starred_recency_sort_key,
     console_persisted_row_updated_sort,
+    console_rail_section_height_budget,
     overlay_console_conversation_markers,
 )
 from .change_review_consent import (
@@ -79,6 +81,7 @@ __all__ = [
     "CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT",
     "CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT",
     "CONSOLE_CONVERSATION_BROWSER_ROW_HEIGHT",
+    "CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES",
     "CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT",
     "BindingNotFound",
     "ChangeReviewAdmission",
@@ -133,6 +136,7 @@ __all__ = [
     "build_console_workspace_state",
     "console_conversation_browser_group_row_limit",
     "console_persisted_row_updated_sort",
+    "console_rail_section_height_budget",
     "console_conversation_starred_recency_sort_key",
     "overlay_console_conversation_markers",
     "console_workspace_conversation_result_copy",

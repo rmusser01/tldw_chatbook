@@ -21,17 +21,53 @@ CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT = 12
 #: see console_workspace_context.py, same contract as
 #: ``CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT`` in display_state.py).
 CONSOLE_CONVERSATION_BROWSER_ROW_HEIGHT = 3
+#: Fixed chrome the Chats tray mounts around its rows (search input, section
+#: header, status copy, frame border). Subtracted from the section budget
+#: before converting to rows so the built list fits its half of the rail
+#: without the bounded section scrolling the tail rows out of view.
+CONSOLE_CONVERSATION_BROWSER_CHROME_LINES = 8
+#: The historical bounded-section ceiling (``MAX_SECTION_CONTENT_LINES`` in
+#: Widgets/Console/console_bounded_section.py). The adaptive budget never
+#: drops below it, so short or unmeasured rails keep today's behaviour.
+CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES = 20
+
+
+def console_rail_section_height_budget(body_height: int | None) -> int:
+    """Return one peer rail section's adaptive height budget in lines.
+
+    The rail's two peer list sections -- Workspaces and Conversations --
+    each get half the measured rail body height as their growth ceiling, so
+    on a tall terminal both expand to fill the available space together
+    instead of stopping at the historical fixed ceilings. Small or
+    unmeasured heights keep the historical ceiling, so short terminals see
+    no change.
+
+    Args:
+        body_height: Available rail body height in terminal lines, or
+            ``None`` when the rail body has not been measured yet.
+
+    Returns:
+        A line budget: never below
+        ``CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES``, and on tall rails about
+        half the available lines.
+    """
+    if body_height is None or int(body_height) <= 0:
+        return CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES
+    return max(
+        CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES,
+        int(body_height) // 2,
+    )
 
 
 def console_conversation_browser_group_row_limit(body_height: int | None) -> int:
-    """Return the adaptive per-section visible-row cap for the browser.
+    """Return the adaptive visible-row cap for the Chats browser section.
 
-    The Chats section shares the rail with the (uncapped, paginated)
-    Workspaces tree, so its cap is about half the measured rail body height:
-    on a tall terminal the list expands to fill its even share of the
-    available space instead of stopping at the historical 12-row default,
-    while the tree takes the other half. Small or unmeasured heights keep
-    that default, so short terminals see no change.
+    Converts the Chats section's share of the rail
+    (`console_rail_section_height_budget`) into visible rows at the nominal
+    row height, minus the tray's fixed chrome, so the list fills its half of
+    a tall rail instead of stopping at the historical 12-row default. Small
+    or unmeasured heights keep that default, so short terminals see no
+    change.
 
     Args:
         body_height: Available rail body height in terminal lines, or
@@ -40,13 +76,12 @@ def console_conversation_browser_group_row_limit(body_height: int | None) -> int
     Returns:
         A visible-row cap: never below
         ``CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT``, and on tall rails
-        about half the available lines converted to rows at the nominal row
-        height.
+        about half the available lines (less chrome) converted to rows.
     """
-    if body_height is None or int(body_height) <= 0:
-        return CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT
-    share = int(body_height) // 2
-    adaptive_rows = share // CONSOLE_CONVERSATION_BROWSER_ROW_HEIGHT
+    budget = console_rail_section_height_budget(body_height)
+    adaptive_rows = (
+        budget - CONSOLE_CONVERSATION_BROWSER_CHROME_LINES
+    ) // CONSOLE_CONVERSATION_BROWSER_ROW_HEIGHT
     return max(CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT, adaptive_rows)
 
 

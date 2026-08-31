@@ -7,10 +7,12 @@ from datetime import datetime, timezone
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
     CONSOLE_CONVERSATION_BROWSER_ROW_HEIGHT,
+    CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES,
     ConsoleConversationBrowserInputRow,
     build_console_conversation_browser_state,
     console_conversation_browser_group_row_limit,
     console_persisted_row_updated_sort,
+    console_rail_section_height_budget,
     format_console_relative_age,
     overlay_console_conversation_markers,
 )
@@ -57,6 +59,30 @@ def _chats(state):
     return state.sections[0]
 
 
+def test_section_budget_defaults_to_the_historical_ceiling_without_a_measurement():
+    assert (
+        console_rail_section_height_budget(None)
+        == CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES
+    )
+    assert (
+        console_rail_section_height_budget(0)
+        == CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES
+    )
+    assert (
+        console_rail_section_height_budget(-5)
+        == CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES
+    )
+
+
+def test_section_budget_splits_a_tall_rail_evenly_between_peer_sections():
+    # 200 available lines: the Workspaces and Conversations sections each
+    # get half the rail as their growth ceiling.
+    assert console_rail_section_height_budget(200) == 100
+    assert console_rail_section_height_budget(120) == 60
+    # A 40-line rail halves below the historical ceiling: unchanged.
+    assert console_rail_section_height_budget(40) == CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES
+
+
 def test_group_row_limit_defaults_to_the_historical_cap_without_a_measurement():
     assert (
         console_conversation_browser_group_row_limit(None)
@@ -73,9 +99,9 @@ def test_group_row_limit_defaults_to_the_historical_cap_without_a_measurement():
 
 
 def test_group_row_limit_keeps_the_default_on_short_rails():
-    # A 40-line rail halves to 20 lines = 6 rows at the nominal 3-line row
-    # height, below the 12-row floor: short terminals are unchanged from
-    # the pre-adaptive behaviour.
+    # A 40-line rail keeps the historical 20-line budget; after the tray's
+    # fixed chrome that is 4 rows, below the 12-row floor: short terminals
+    # are unchanged from the pre-adaptive behaviour.
     assert (
         console_conversation_browser_group_row_limit(40)
         == CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT
@@ -83,13 +109,16 @@ def test_group_row_limit_keeps_the_default_on_short_rails():
 
 
 def test_group_row_limit_scales_a_tall_rail_to_the_chats_share():
-    # 200 available lines: the Chats list gets its even half of the rail
-    # (the Workspaces tree takes the other), and half of 200 lines at the
-    # nominal row height is 33 rows.
+    # 200 available lines: the Chats budget is half the rail (100 lines),
+    # and after the fixed chrome the visible-row cap is (100 - 8) // 3 = 30
+    # rows -- the list fills its half of the rail alongside the Workspaces
+    # section's half.
+    budget = console_rail_section_height_budget(200)
+    assert budget == 100
     assert (
         console_conversation_browser_group_row_limit(200)
-        == (200 // 2) // CONSOLE_CONVERSATION_BROWSER_ROW_HEIGHT
-        == 33
+        == (budget - 8) // CONSOLE_CONVERSATION_BROWSER_ROW_HEIGHT
+        == 30
     )
 
 
