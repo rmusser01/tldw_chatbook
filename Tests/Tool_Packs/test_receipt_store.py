@@ -231,17 +231,26 @@ def test_capacity_uses_strictest_limit_across_store_instances(tmp_path: Path) ->
 
 
 def test_root_creation_directory_sync_failure_is_activation_failed(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def fail(stage: str) -> None:
-        if stage == "before_root_parent_fsync":
-            raise OSError("injected")
-
     root = tmp_path / "receipts"
+    real_fsync = receipt_store_module.os.fsync
+    directory_syncs = 0
+
+    def fail_parent_sync(descriptor: int) -> None:
+        nonlocal directory_syncs
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            directory_syncs += 1
+            if directory_syncs == 2:
+                raise OSError(errno.EIO, "parent directory fsync failed")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(receipt_store_module.os, "fsync", fail_parent_sync)
 
     with pytest.raises(ToolPackError, match=r"activation_failed$"):
-        _store(root, fault=fail)
+        _store(root)
 
+    assert directory_syncs == 2
     assert root.is_dir()
     assert stat.S_IMODE(root.stat().st_mode) == 0o700
 

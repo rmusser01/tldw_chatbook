@@ -457,7 +457,6 @@ class ToolPackReceiptStore:
         )
 
     def _ensure_root(self) -> None:
-        created = False
         try:
             if self.root.exists() or self.root.is_symlink():
                 info = self.root.lstat()
@@ -465,11 +464,8 @@ class ToolPackReceiptStore:
                     raise _fail("activation_failed")
             else:
                 self.root.mkdir(parents=True, mode=0o700)
-                created = True
             self.root.chmod(0o700)
             self._fsync_directory(self.root)
-            if created and self._fault is not None:
-                self._fault("before_root_parent_fsync")
             self._fsync_directory(self.root.parent)
         except ToolPackError:
             raise
