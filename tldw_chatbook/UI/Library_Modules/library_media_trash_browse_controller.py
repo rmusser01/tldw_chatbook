@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 from loguru import logger
@@ -34,6 +35,14 @@ _WORKER_GROUP = "library-media-trash-browse"
 _SERVICE_ERROR = "Could not load Trash."
 _SHRINK_COPY = "Source changed again; try again."
 _STALE_COPY = "List may be out of date."
+
+
+@dataclass(frozen=True)
+class MediaTrashMutationClaim:
+    """One immutable mutation target bound to its claiming lifecycle."""
+
+    target: MediaTrashMutationTarget
+    generation: int
 
 
 class LibraryMediaTrashBrowseController:
@@ -240,7 +249,7 @@ class LibraryMediaTrashBrowseController:
         self.state = cancel_media_trash_delete_confirmation(self.state)
         self._publish(generation, None)
 
-    def claim_mutation(self) -> MediaTrashMutationTarget | None:
+    def claim_mutation(self) -> MediaTrashMutationClaim | None:
         """Fence reads and claim the currently selected fresh target."""
         if not self._request_is_active():
             return None
@@ -255,30 +264,44 @@ class LibraryMediaTrashBrowseController:
         generation = self._generation
         self.state = next_state
         self._publish(generation, None)
-        return target
+        return MediaTrashMutationClaim(target=target, generation=generation)
+
+    def _claim_is_current(self, claim: MediaTrashMutationClaim) -> bool:
+        return (
+            isinstance(claim, MediaTrashMutationClaim)
+            and claim.generation == self._generation
+            and self._current(claim.generation)
+        )
 
     def finish_mutation_failure(
-        self, target: MediaTrashMutationTarget, copy: str
-    ) -> None:
+        self, claim: MediaTrashMutationClaim, copy: str
+    ) -> bool:
         """Publish a recoverable pre-commit mutation failure."""
-        generation = self._generation
-        if not self._current(generation):
-            return
-        self.state = fail_media_trash_mutation(self.state, target, copy=copy)
-        self._publish(generation, None)
+        if not self._claim_is_current(claim):
+            return False
+        self.state = fail_media_trash_mutation(self.state, claim.target, copy=copy)
+        return self._publish(claim.generation, None)
 
     def finish_mutation_commit(
-        self, target: MediaTrashMutationTarget, notice: str
-    ) -> None:
+        self, claim: MediaTrashMutationClaim, notice: str
+    ) -> bool:
         """Publish a committed removal as stale before authoritative refresh."""
-        generation = self._generation
-        if not self._current(generation):
-            return
-        self.state = commit_media_trash_mutation(self.state, target, notice=notice)
-        self._publish(generation, None)
+        if not self._claim_is_current(claim):
+            return False
+        self.state = commit_media_trash_mutation(
+            self.state, claim.target, notice=notice
+        )
+        return self._publish(claim.generation, None)
 
-    def request_after_mutation(self, *, focus_identity: str | None) -> Any | None:
+    def request_after_mutation(
+        self,
+        claim: MediaTrashMutationClaim | None = None,
+        *,
+        focus_identity: str | None,
+    ) -> Any | None:
         """Refresh the applied page after a committed mutation."""
+        if claim is None or not self._claim_is_current(claim):
+            return None
         scope = (
             self.state.applied_result.scope
             if self.state.applied_result is not None

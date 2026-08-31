@@ -346,24 +346,61 @@ async def test_controller_mutation_surface_preserves_failure_and_refreshes_commi
 
     target = controller.open_delete_confirmation()
     assert target is not None
-    assert controller.claim_mutation() == target
-    controller.finish_mutation_failure(target, "Could not delete this item.")
+    failure_claim = controller.claim_mutation()
+    assert failure_claim is not None
+    assert failure_claim.target == target
+    controller.finish_mutation_failure(failure_claim, "Could not delete this item.")
     assert controller.state.selected_id == target.stable_id
     assert controller.state.freshness == "fresh"
 
     assert controller.open_delete_confirmation() == target
-    assert controller.claim_mutation() == target
-    controller.finish_mutation_commit(target, "Deleted 'Trash 2' permanently.")
+    commit_claim = controller.claim_mutation()
+    assert commit_claim is not None
+    assert commit_claim.target == target
+    controller.finish_mutation_commit(commit_claim, "Deleted 'Trash 2' permanently.")
     assert controller.state.freshness == "stale"
     assert controller.state.loading is True
     assert [item["id"] for item in controller.state.retained_items] == ["local:media:1"]
 
-    controller.request_after_mutation(focus_identity="fallback")
+    controller.request_after_mutation(commit_claim, focus_identity="fallback")
     await screen.pending.pop()
 
     assert service.calls[-1]["offset"] == 0
     assert controller.state.freshness == "fresh"
     assert controller.state.committed_notice == "Deleted 'Trash 2' permanently."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["commit", "failure"])
+async def test_invalidated_mutation_completion_cannot_publish_or_refresh(outcome):
+    scope = MediaTrashScope()
+    synced: list[str | None] = []
+    controller, screen, _service = _controller(
+        _page(scope, total=1),
+        _page(scope, total=0),
+        sync=synced.append,
+    )
+    controller.request(scope, origin="entry", focus_identity=None)
+    await screen.pending.pop()
+    claim = controller.claim_mutation()
+    assert claim is not None
+    controller.invalidate()
+    invalidated_state = controller.state
+    synced.clear()
+
+    if outcome == "commit":
+        controller.finish_mutation_commit(claim, "Restored 'Trash 1'.")
+    else:
+        controller.finish_mutation_failure(claim, "Could not restore this item.")
+    pending = controller.request_after_mutation(focus_identity="fallback")
+    if pending is not None:
+        pending.close()
+        screen.pending.remove(pending)
+
+    assert controller.state is invalidated_state
+    assert synced == []
+    assert pending is None
+    assert screen.pending == []
 
 
 @pytest.mark.asyncio
@@ -385,8 +422,9 @@ async def test_mutation_claim_keeps_captured_stable_identity_for_duplicate_title
 
     claimed = controller.claim_mutation()
 
-    assert claimed == captured
-    assert claimed.stable_id != "local:media:1"
+    assert claimed is not None
+    assert claimed.target == captured
+    assert claimed.target.stable_id != "local:media:1"
     assert controller.state.mutation_pending is True
     assert controller.state.confirmation_target is None
 
@@ -398,12 +436,13 @@ async def test_precommit_failure_retains_exact_fresh_page_and_action_authority()
     controller.request(scope, origin="entry", focus_identity=None)
     await screen.pending.pop()
     controller.select("local:media:22")
-    target = controller.claim_mutation()
-    assert target is not None
+    claim = controller.claim_mutation()
+    assert claim is not None
+    target = claim.target
     applied = controller.state.applied_result
     retained = controller.state.retained_items
 
-    controller.finish_mutation_failure(target, "Could not delete this item.")
+    controller.finish_mutation_failure(claim, "Could not delete this item.")
 
     assert controller.state.applied_result is applied
     assert controller.state.retained_items is retained
@@ -424,10 +463,11 @@ async def test_committed_mutation_withdraws_exact_claims_before_refresh():
     controller.request(scope, origin="entry", focus_identity=None)
     await screen.pending.pop()
     controller.select("local:media:22")
-    target = controller.claim_mutation()
-    assert target is not None
+    claim = controller.claim_mutation()
+    assert claim is not None
+    target = claim.target
 
-    controller.finish_mutation_commit(target, "Restored 'Trash 22'.")
+    controller.finish_mutation_commit(claim, "Restored 'Trash 22'.")
 
     assert controller.state.freshness == "stale"
     assert controller.state.loading is True

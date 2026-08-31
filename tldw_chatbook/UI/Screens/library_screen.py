@@ -595,6 +595,7 @@ from ..Library_Modules.library_media_browse_controller import (
 )
 from ..Library_Modules.library_media_trash_browse_controller import (
     LibraryMediaTrashBrowseController,
+    MediaTrashMutationClaim,
 )
 from ..Library_Modules.library_collections_browse_controller import (
     LibraryCollectionsBrowseController,
@@ -3846,6 +3847,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_trash_focus_request_key: (
             tuple[MediaTrashScope, str] | None
         ) = None
+        self._library_media_trash_mounted_authority: bool = False
         self._library_media_detail: Mapping[str, Any] | None = None
         # task-15458: the exact detail object the last viewer compose rendered,
         # compared by IDENTITY. ``_refresh_library_media_detail``'s arrival
@@ -4075,7 +4077,8 @@ class LibraryScreen(BaseAppScreen):
             ),
             sync_view=lambda: self._sync_library_media_trash_state,
             request_is_active=lambda: (
-                self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+                self._library_media_trash_mounted_authority
+                and self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
                 and self._library_media_view == "trash"
             ),
         )
@@ -10488,6 +10491,7 @@ class LibraryScreen(BaseAppScreen):
         viewer) that ``apply_navigation_context`` could not run before mount.
         """
         self._library_conversation_reader_mounted_authority = True
+        self._library_media_trash_mounted_authority = True
         self._register_footer_shortcuts()
         self.call_after_refresh(self._sync_library_media_reader_layout_from_shell)
         self.call_after_refresh(self._sync_library_ordinary_rail_width_contract)
@@ -10704,6 +10708,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_current_owner = None
         self._library_media_geometry_floor_owner_identity = None
         self._library_media_geometry_floor = 0
+        self._library_media_trash_mounted_authority = False
         self._library_media_browse_controller.invalidate()
         self._library_media_trash_browse_controller.invalidate()
         self._library_collections_browse_controller.invalidate()
@@ -27486,21 +27491,22 @@ class LibraryScreen(BaseAppScreen):
         captured = controller.state.confirmation_target
         if captured is None:
             return
-        target = controller.claim_mutation()
-        if target != captured:
+        claim = controller.claim_mutation()
+        if claim is None or claim.target != captured:
             return
         self._library_media_bulk_delete_in_flight = True
         self._begin_library_media_mutation()
         self.run_worker(
-            self._permanently_delete_library_media_from_trash(target),
+            self._permanently_delete_library_media_from_trash(claim),
             exclusive=True,
             group="library_media_bulk_delete",
         )
 
     async def _permanently_delete_library_media_from_trash(
-        self, target: MediaTrashMutationTarget
+        self, claim: MediaTrashMutationClaim
     ) -> None:
         """Permanently delete one captured Trash item through the sole service seam."""
+        target = claim.target
         committed = False
         failure_copy: str | None = None
         try:
@@ -27527,10 +27533,9 @@ class LibraryScreen(BaseAppScreen):
 
             title = LibraryScreen._bounded_library_media_trash_title(target.title)
             notice = f"Deleted '{title}' permanently."
-            self._library_media_trash_browse_controller.finish_mutation_commit(
-                target, notice
+            committed = self._library_media_trash_browse_controller.finish_mutation_commit(
+                claim, notice
             )
-            committed = True
         finally:
             self._complete_library_media_mutation(
                 committed=committed,
@@ -27538,16 +27543,22 @@ class LibraryScreen(BaseAppScreen):
                 stale_normal_media=False,
             )
             if failure_copy is not None:
-                self._library_media_trash_focus_identity = "#library-media-trash-delete"
-                self._library_media_trash_focus_authority_generation = getattr(
-                    self, "_library_notes_focus_intent_generation", 0
+                accepted = (
+                    self._library_media_trash_browse_controller.finish_mutation_failure(
+                        claim, failure_copy
+                    )
                 )
-                self._library_media_trash_browse_controller.finish_mutation_failure(
-                    target, failure_copy
-                )
-                self._notify_library_media_delete_warning(failure_copy)
+                if accepted:
+                    self._library_media_trash_focus_identity = (
+                        "#library-media-trash-delete"
+                    )
+                    self._library_media_trash_focus_authority_generation = getattr(
+                        self, "_library_notes_focus_intent_generation", 0
+                    )
+                    self._notify_library_media_delete_warning(failure_copy)
             elif committed:
                 self._library_media_trash_browse_controller.request_after_mutation(
+                    claim,
                     focus_identity=f"#library-media-trash-row-{target.page_index}"
                 )
 
@@ -27571,19 +27582,19 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._library_media_bulk_delete_in_flight:
             return
-        target = self._library_media_trash_browse_controller.claim_mutation()
-        if target is None:
+        claim = self._library_media_trash_browse_controller.claim_mutation()
+        if claim is None:
             return
         self._library_media_bulk_delete_in_flight = True
         self._begin_library_media_mutation()
         self.run_worker(
-            self._restore_library_media_from_trash(target),
+            self._restore_library_media_from_trash(claim),
             exclusive=True,
             group="library_media_bulk_delete",
         )
 
     async def _restore_library_media_from_trash(
-        self, target: MediaTrashMutationTarget
+        self, claim: MediaTrashMutationClaim
     ) -> None:
         """Restore one trashed item via the existing seam (task-4025).
 
@@ -27606,6 +27617,7 @@ class LibraryScreen(BaseAppScreen):
             target: Immutable row identity captured by the Trash controller
                 before it fences outstanding reads.
         """
+        target = claim.target
         committed = False
         failure_copy: str | None = None
         try:
@@ -27632,6 +27644,14 @@ class LibraryScreen(BaseAppScreen):
                 failure_copy = "Could not restore this media item."
                 return
 
+            title = LibraryScreen._bounded_library_media_trash_title(target.title)
+            notice = f"Restored '{title}'."
+            committed = self._library_media_trash_browse_controller.finish_mutation_commit(
+                claim, notice
+            )
+            if not committed:
+                return
+
             existing_ids = {
                 self._source_record_id(record)
                 for record in self._local_source_records.get("media", ())
@@ -27643,13 +27663,6 @@ class LibraryScreen(BaseAppScreen):
                 self._local_source_counts["media"] = (
                     self._local_source_counts.get("media", 0) + 1
                 )
-
-            title = LibraryScreen._bounded_library_media_trash_title(target.title)
-            notice = f"Restored '{title}'."
-            self._library_media_trash_browse_controller.finish_mutation_commit(
-                target, notice
-            )
-            committed = True
 
             if self.is_mounted:
                 # Full recompose, mirroring ``_undo_library_media_bulk_
@@ -27665,18 +27678,22 @@ class LibraryScreen(BaseAppScreen):
                 stale_normal_media=committed,
             )
             if failure_copy is not None:
-                self._library_media_trash_focus_identity = (
-                    "#library-media-trash-restore"
+                accepted = (
+                    self._library_media_trash_browse_controller.finish_mutation_failure(
+                        claim, failure_copy
+                    )
                 )
-                self._library_media_trash_focus_authority_generation = getattr(
-                    self, "_library_notes_focus_intent_generation", 0
-                )
-                self._library_media_trash_browse_controller.finish_mutation_failure(
-                    target, failure_copy
-                )
-                self._notify_library_media_delete_warning(failure_copy)
+                if accepted:
+                    self._library_media_trash_focus_identity = (
+                        "#library-media-trash-restore"
+                    )
+                    self._library_media_trash_focus_authority_generation = getattr(
+                        self, "_library_notes_focus_intent_generation", 0
+                    )
+                    self._notify_library_media_delete_warning(failure_copy)
             elif committed:
                 self._library_media_trash_browse_controller.request_after_mutation(
+                    claim,
                     focus_identity=f"#library-media-trash-row-{target.page_index}"
                 )
 
