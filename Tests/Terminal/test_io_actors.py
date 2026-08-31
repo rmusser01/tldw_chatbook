@@ -8,9 +8,11 @@ from dataclasses import FrozenInstanceError
 import os
 from statistics import quantiles
 from threading import Barrier
+from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.Terminal import io_actors as io_actors_module
 from tldw_chatbook.Terminal.contracts import (
     MAX_COLUMNS,
     MAX_IO_CHUNK_BYTES,
@@ -58,6 +60,94 @@ def _drain_input(actor: TerminalInputActor) -> list[tuple[InputEventKind, bytes]
         assert event.encoded_size == len(event.data)
         drained.append((event.kind, event.data))
     return drained
+
+
+@pytest.mark.asyncio
+async def test_actors_consume_shared_validation_model_attributes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, object]] = []
+
+    def validate_key(data: object) -> SimpleNamespace:
+        calls.append(("key", data))
+        return SimpleNamespace(data=b"validated-key")
+
+    def validate_paste(text: object, bracketed: object) -> SimpleNamespace:
+        calls.append(("paste", (text, bracketed)))
+        return SimpleNamespace(
+            bracketed=True,
+            classify=lambda: (None, b"validated-paste"),
+        )
+
+    def validate_reply(data: object) -> SimpleNamespace:
+        calls.append(("reply", data))
+        return SimpleNamespace(data=b"validated-reply")
+
+    def validate_resize(columns: object, rows: object) -> SimpleNamespace:
+        calls.append(("resize", (columns, rows)))
+        return SimpleNamespace(columns=80, rows=24)
+
+    def validate_output(data: object) -> SimpleNamespace:
+        calls.append(("output", data))
+        return SimpleNamespace(data=b"validated-output")
+
+    monkeypatch.setattr(
+        io_actors_module, "validate_terminal_key_input", validate_key, raising=False
+    )
+    monkeypatch.setattr(
+        io_actors_module,
+        "validate_terminal_paste_input",
+        validate_paste,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        io_actors_module,
+        "validate_terminal_reply_input",
+        validate_reply,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        io_actors_module,
+        "validate_terminal_resize_input",
+        validate_resize,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        io_actors_module,
+        "validate_terminal_output_input",
+        validate_output,
+        raising=False,
+    )
+
+    input_actor = TerminalInputActor()
+    output_actor = TerminalOutputActor()
+    assert input_actor.offer_key(b"raw-key").accepted is True
+    assert input_actor.offer_paste("raw-paste", bracketed=False).accepted is True
+    assert input_actor.offer_reply(b"raw-reply").accepted is True
+    input_actor.offer_resize(columns=1, rows=1)
+    assert output_actor.offer_output(b"raw-output").accepted is True
+
+    assert _drain_input(input_actor) == [
+        (InputEventKind.KEY, b"validated-key"),
+        (
+            InputEventKind.PASTE,
+            BRACKETED_PASTE_START + b"validated-paste" + BRACKETED_PASTE_END,
+        ),
+        (InputEventKind.REPLY, b"validated-reply"),
+    ]
+    resize = await input_actor.take_resize_debounced()
+    assert resize is not None
+    assert (resize.columns, resize.rows) == (80, 24)
+    consumed: list[bytes] = []
+    output_actor.process_parser_turn(consumed.append, visible=False)
+    assert consumed == [b"validated-output"]
+    assert calls == [
+        ("key", b"raw-key"),
+        ("paste", ("raw-paste", False)),
+        ("reply", b"raw-reply"),
+        ("resize", (1, 1)),
+        ("output", b"raw-output"),
+    ]
 
 
 def test_key_paste_and_reply_share_one_ordered_byte_counted_queue() -> None:
@@ -374,6 +464,27 @@ def test_parser_turn_observes_time_budget_with_cost_proportional_to_bytes() -> N
 
     assert result.processed_bytes <= 2 * 1024
     assert result.pending_bytes >= 6 * 1024
+
+
+def test_parser_exception_retires_ambiguous_slice_without_replaying_it() -> None:
+    actor = TerminalOutputActor(
+        capacity_bytes=8,
+        max_chunk_bytes=8,
+        max_turn_bytes=3,
+    )
+    assert actor.offer_output(b"abcdef").accepted is True
+
+    with pytest.raises(RuntimeError, match="parser failed"):
+        actor.process_parser_turn(
+            lambda _value: (_ for _ in ()).throw(RuntimeError("parser failed")),
+            visible=False,
+        )
+
+    assert actor.pending_bytes == 3
+    consumed: list[bytes] = []
+    result = actor.process_parser_turn(consumed.append, visible=False)
+    assert consumed == [b"def"]
+    assert result.pending_bytes == 0
 
 
 def test_parser_turn_never_exceeds_global_byte_or_time_defaults() -> None:

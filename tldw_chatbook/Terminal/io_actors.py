@@ -11,16 +11,18 @@ from threading import Event, Lock
 from time import monotonic
 
 from .contracts import (
-    MAX_COLUMNS,
     MAX_IO_CHUNK_BYTES,
     MAX_PARSER_TURN_BYTES,
     MAX_PARSER_TURN_SECONDS,
-    MAX_PASTE_BYTES,
     MAX_PENDING_INPUT_BYTES,
     MAX_PENDING_OUTPUT_BYTES,
-    MAX_ROWS,
-    MIN_COLUMNS,
-    MIN_ROWS,
+)
+from tldw_chatbook.Utils.input_validation import (
+    validate_terminal_key_input,
+    validate_terminal_output_input,
+    validate_terminal_paste_input,
+    validate_terminal_reply_input,
+    validate_terminal_resize_input,
 )
 
 
@@ -153,7 +155,11 @@ class TerminalPriorityControl:
 
     @property
     def requested(self) -> bool:
-        """Return whether priority close has been requested."""
+        """Return whether priority close has been requested.
+
+        Returns:
+            Whether the independent close signal is set.
+        """
         return self._event.is_set()
 
     def request_priority_close(self) -> bool:
@@ -181,7 +187,17 @@ class TerminalPriorityControl:
 
 
 class TerminalInputActor:
-    """Thread-safe bounded queue for ordered terminal input events."""
+    """Thread-safe bounded queue for ordered terminal input events.
+
+    Args:
+        capacity_bytes: Input credit in bytes, from one byte through 512 KiB.
+        clock: Injected monotonic clock used by reply-rate accounting.
+        resize_debounce_seconds: Resize debounce from zero through 50 ms.
+
+    Raises:
+        TypeError: If a configured limit has the wrong type.
+        ValueError: If a configured limit is outside its contract.
+    """
 
     def __init__(
         self,
@@ -211,13 +227,21 @@ class TerminalInputActor:
 
     @property
     def pending_bytes(self) -> int:
-        """Return bytes currently consuming input credit."""
+        """Return bytes currently consuming input credit.
+
+        Returns:
+            Number of admitted bytes waiting for transport.
+        """
         with self._lock:
             return self._pending_bytes
 
     @property
     def pending_events(self) -> int:
-        """Return complete ordered events waiting for transport."""
+        """Return complete ordered events waiting for transport.
+
+        Returns:
+            Number of queued key, paste, and reply envelopes.
+        """
         with self._lock:
             return len(self._queue)
 
@@ -229,8 +253,11 @@ class TerminalInputActor:
 
         Returns:
             Content-free admission result.
+
+        Raises:
+            TypeError: If ``data`` is not immutable bytes.
         """
-        _require_bytes("data", data)
+        data = validate_terminal_key_input(data).data
         with self._lock:
             return self._offer_locked(
                 InputEventKind.KEY,
@@ -248,30 +275,24 @@ class TerminalInputActor:
 
         Returns:
             Content-free admission result.
+
+        Raises:
+            TypeError: If ``text`` is not text or ``bracketed`` is not boolean.
         """
-        if not isinstance(text, str):
-            raise TypeError("text must be str")
-        if type(bracketed) is not bool:
-            raise TypeError("bracketed must be bool")
-        if len(text) > MAX_PASTE_BYTES:
+        validated = validate_terminal_paste_input(text, bracketed)
+        violation, payload = validated.classify()
+        if violation == "too_large":
             return InputOfferResult(
                 reason=PasteRefusalReason.TOO_LARGE,
                 safe_message=_PASTE_TOO_LARGE_MESSAGE,
             )
-        if _contains_prohibited_paste_control(text):
+        if violation == "prohibited_control":
             return InputOfferResult(
                 reason=PasteRefusalReason.PROHIBITED_CONTROL,
                 safe_message=_PASTE_CONTROL_MESSAGE,
             )
-
-        payload = text.encode("utf-8", "replace")
-        if len(payload) > MAX_PASTE_BYTES:
-            return InputOfferResult(
-                reason=PasteRefusalReason.TOO_LARGE,
-                safe_message=_PASTE_TOO_LARGE_MESSAGE,
-            )
         with self._lock:
-            return self._offer_paste_locked(payload, bracketed=bracketed)
+            return self._offer_paste_locked(payload, bracketed=validated.bracketed)
 
     def offer_reply(self, data: bytes) -> InputOfferResult:
         """Atomically offer a bounded terminal-protocol reply.
@@ -281,8 +302,11 @@ class TerminalInputActor:
 
         Returns:
             Content-free admission result.
+
+        Raises:
+            TypeError: If ``data`` is not immutable bytes.
         """
-        _require_bytes("data", data)
+        data = validate_terminal_reply_input(data).data
         if not data:
             return InputOfferResult(accepted=True)
         if len(data) > MAX_REPLY_BYTES:
@@ -324,15 +348,12 @@ class TerminalInputActor:
             ValueError: If either dimension is outside the terminal contract.
             TypeError: If either dimension is not an integer.
         """
-        if type(columns) is not int or type(rows) is not int:
-            raise TypeError("terminal dimensions must be integers")
-        if (
-            not MIN_COLUMNS <= columns <= MAX_COLUMNS
-            or not MIN_ROWS <= rows <= MAX_ROWS
-        ):
-            raise ValueError("terminal dimensions are outside contract")
+        validated = validate_terminal_resize_input(columns, rows)
         with self._lock:
-            self._latest_resize = TerminalResize(columns=columns, rows=rows)
+            self._latest_resize = TerminalResize(
+                columns=validated.columns,
+                rows=validated.rows,
+            )
 
     def take_nowait(self) -> TerminalInputEvent | None:
         """Take the oldest complete input event without waiting.
@@ -427,7 +448,19 @@ class _OutputChunk:
 
 
 class TerminalOutputActor:
-    """Thread-safe bounded output queue with parser-turn budgets."""
+    """Thread-safe bounded output queue with parser-turn budgets.
+
+    Args:
+        capacity_bytes: Output credit in bytes, from one byte through 512 KiB.
+        max_chunk_bytes: Maximum backend chunk, up to 64 KiB.
+        max_turn_bytes: Maximum parser work per turn, up to 256 KiB.
+        max_turn_seconds: Maximum parser-turn duration, up to 8 ms.
+        clock: Injected monotonic clock used by parser-turn accounting.
+
+    Raises:
+        TypeError: If a configured limit has the wrong type.
+        ValueError: If a configured limit is outside its contract.
+    """
 
     def __init__(
         self,
@@ -475,25 +508,41 @@ class TerminalOutputActor:
 
     @property
     def pending_bytes(self) -> int:
-        """Return bytes queued or currently being delivered to the parser."""
+        """Return bytes queued or currently being delivered to the parser.
+
+        Returns:
+            Number of admitted bytes still consuming output credit.
+        """
         with self._lock:
             return self._pending_bytes
 
     @property
     def pending_chunks(self) -> int:
-        """Return chunks currently waiting for parser delivery."""
+        """Return chunks currently waiting for parser delivery.
+
+        Returns:
+            Number of queued output envelopes or remainders.
+        """
         with self._lock:
             return len(self._queue)
 
     @property
     def read_credit_bytes(self) -> int:
-        """Return output bytes that may currently be admitted."""
+        """Return output bytes that may currently be admitted.
+
+        Returns:
+            Remaining byte credit for backend output.
+        """
         with self._lock:
             return self.capacity_bytes - self._pending_bytes
 
     @property
     def next_read_size(self) -> int:
-        """Return the maximum safe size for the next backend read."""
+        """Return the maximum safe size for the next backend read.
+
+        Returns:
+            Bounded next-read size, or zero when output credit is full.
+        """
         with self._lock:
             return min(
                 self.max_chunk_bytes,
@@ -508,8 +557,11 @@ class TerminalOutputActor:
 
         Returns:
             Content-free admission result.
+
+        Raises:
+            TypeError: If ``data`` is not immutable bytes.
         """
-        _require_bytes("data", data)
+        data = validate_terminal_output_input(data).data
         encoded_size = len(data)
         if encoded_size > self.max_chunk_bytes:
             return OutputOfferResult(reason=OutputRefusalReason.CHUNK_TOO_LARGE)
@@ -536,6 +588,11 @@ class TerminalOutputActor:
 
         Returns:
             Content-free accounting and refresh-coalescing result.
+
+        Raises:
+            TypeError: If ``consumer`` is not callable or ``visible`` is not boolean.
+            Exception: Re-raises consumer failures after retiring the ambiguous
+                attempted slice; failed parser callbacks must not be retried.
         """
         if not callable(consumer):
             raise TypeError("consumer must be callable")
@@ -596,23 +653,6 @@ class TerminalOutputActor:
                 return False
             self._refresh_pending = False
             return True
-
-
-def _contains_prohibited_paste_control(text: str) -> bool:
-    """Return whether text contains a disallowed C0, DEL, or C1 control."""
-    for character in text:
-        codepoint = ord(character)
-        if codepoint < 0x20 and character not in "\t\n\r":
-            return True
-        if 0x7F <= codepoint <= 0x9F:
-            return True
-    return False
-
-
-def _require_bytes(name: str, value: bytes) -> None:
-    """Require immutable bytes at an actor boundary."""
-    if type(value) is not bytes:
-        raise TypeError(f"{name} must be bytes")
 
 
 def _validate_positive_limit(name: str, value: int, maximum: int) -> None:
