@@ -273,6 +273,7 @@ from tldw_chatbook.Chat.console_turn_preparation import (
     ConsoleTurnPreparation,
     ConsoleTurnPreparationState,
     admit_one_shot_capture_off,
+    pause_temporary_capture_on,
     initial_preparation_state,
     build_console_request_for_preparation,
     pause_for_trace_call_failure,
@@ -3661,6 +3662,31 @@ class ConsoleChatController:
                 )
         return signals
 
+    def _capture_mode_for_preparation(
+        self,
+        session_id: str,
+        origin: ConsoleSubmissionOrigin,
+    ) -> ConsoleTraceCaptureMode:
+        """Freeze Capture On/Off before any temporary send can dispatch."""
+
+        if origin not in {
+            ConsoleSubmissionOrigin.MANUAL,
+            ConsoleSubmissionOrigin.QUEUED,
+        }:
+            return ConsoleTraceCaptureMode.CAPTURE_OFF
+        try:
+            enabled = self.capture_policy_snapshot(session_id).effective.enabled
+        except Exception as exc:
+            logger.bind(error_type=type(exc).__name__).warning(
+                "capture_policy_preparation_failed"
+            )
+            return ConsoleTraceCaptureMode.CAPTURE_OFF
+        return (
+            ConsoleTraceCaptureMode.CAPTURE_ON
+            if enabled
+            else ConsoleTraceCaptureMode.CAPTURE_OFF
+        )
+
     @property
     def run_state(self) -> ConsoleRunState:
         """The ACTIVE session's run state (parallel-agents spec §2).
@@ -5090,6 +5116,8 @@ class ConsoleChatController:
                 preparation_id,
                 trace_call_admission=preparation,
             )
+        if preparation.pause_kind is ConsolePreparationPauseKind.TEMPORARY_CAPTURE:
+            return self._prepared_action_refusal(preparation)
         if preparation.pause_kind is not ConsolePreparationPauseKind.RETRIEVAL:
             return await self._continue_prepared_submission(preparation_id)
         retried = self.store.compare_and_set_preparation(
@@ -5202,6 +5230,7 @@ class ConsoleChatController:
             not in {
                 ConsolePreparationPauseKind.TRACE_PROVENANCE,
                 ConsolePreparationPauseKind.TRACE_CALL,
+                ConsolePreparationPauseKind.TEMPORARY_CAPTURE,
             }
         ):
             return None
@@ -5218,6 +5247,7 @@ class ConsoleChatController:
             not in {
                 ConsolePreparationPauseKind.TRACE_PROVENANCE,
                 ConsolePreparationPauseKind.TRACE_CALL,
+                ConsolePreparationPauseKind.TEMPORARY_CAPTURE,
             }
         ):
             return self._prepared_action_refusal(preparation)
@@ -5228,10 +5258,67 @@ class ConsoleChatController:
         )
         if capture_off is preparation:
             return self._prepared_action_refusal(preparation)
+        if preparation.pause_kind is ConsolePreparationPauseKind.TEMPORARY_CAPTURE:
+            published = self.store.publish_temporary_capture_off_preparation(
+                preparation_id,
+                capture_off,
+            )
+            if published is None:
+                return self._prepared_action_refusal(preparation)
+            return await self._continue_prepared_submission(preparation_id)
         return await self._continue_prepared_submission(
             preparation_id,
             trace_call_admission=capture_off,
         )
+
+    async def save_and_send(self, preparation_id: str) -> ConsoleSubmitResult:
+        """Promote one temporary Capture-On chat before resuming its exact send."""
+
+        preparation = self._preparation_by_id(preparation_id)
+        if (
+            preparation is None
+            or preparation.state is not ConsoleTurnPreparationState.PAUSED
+            or preparation.pause_kind
+            is not ConsolePreparationPauseKind.TEMPORARY_CAPTURE
+            or not preparation.ephemeral
+            or not preparation.transient_user_message_id
+        ):
+            return self._prepared_action_refusal(preparation)
+        try:
+            await self._run_durable_db_call(
+                self.store.promote_ephemeral_session,
+                preparation.session_id,
+                preparation.transient_user_message_id,
+            )
+        except Exception:
+            return self._prepared_action_refusal(
+                preparation,
+                "Chat could not be saved. Nothing was sent.",
+            )
+        if self.store.session_is_ephemeral(preparation.session_id):
+            return self._prepared_action_refusal(
+                preparation,
+                "Chat could not be saved. Nothing was sent.",
+            )
+        promoted_authority = await self._capture_turn_library_authority(
+            preparation.session_id,
+            preparation.execution_context.configuration,
+        )
+        promoted_context = ConsoleTurnExecutionContext(
+            configuration=preparation.execution_context.configuration,
+            library_authority=promoted_authority,
+            resolved_destination=preparation.execution_context.resolved_destination,
+        )
+        promoted = self.store.publish_promoted_capture_preparation(
+            preparation_id,
+            promoted_context,
+        )
+        if promoted is None:
+            return self._prepared_action_refusal(
+                preparation,
+                "Saved chat could not resume its prepared send.",
+            )
+        return await self._continue_prepared_submission(preparation_id)
 
     async def bypass_library_preparation(
         self, preparation_id: str
@@ -5511,6 +5598,7 @@ class ConsoleChatController:
             in {
                 ConsolePreparationPauseKind.TRACE_PROVENANCE,
                 ConsolePreparationPauseKind.TRACE_CALL,
+                ConsolePreparationPauseKind.TEMPORARY_CAPTURE,
             }
         ):
             return self._cancel_trace_recovery_preparation(preparation)
@@ -6620,8 +6708,12 @@ class ConsoleChatController:
                 pause_kind=None,
                 one_shot_bypass=False,
                 ephemeral=session.ephemeral,
-                capture_mode=ConsoleTraceCaptureMode.CAPTURE_OFF,
+                capture_mode=self._capture_mode_for_preparation(
+                    session.id,
+                    origin,
+                ),
             )
+            preparation = pause_temporary_capture_on(preparation)
             if self._begin_submit_preparation(active_task, preparation) is None:
                 if echoed_user is not None:
                     self._mark_transient_echo_blocked(echoed_user.id)
@@ -6674,6 +6766,29 @@ class ConsoleChatController:
             prepared_continuation = self._prepared_send_continuations[
                 preparation.preparation_id
             ]
+            if (
+                preparation.state is ConsoleTurnPreparationState.PAUSED
+                and preparation.pause_kind
+                is ConsolePreparationPauseKind.TEMPORARY_CAPTURE
+            ):
+                visible_copy = (
+                    "Trace capture needs a saved chat. Choose Save & Send, "
+                    "Send without capture, or Cancel."
+                )
+                self._set_run_state(
+                    ConsoleRunState.blocked(visible_copy),
+                    session_id=session.id,
+                )
+                return ConsoleSubmitResult(
+                    False,
+                    False,
+                    visible_copy,
+                    session_id=session.id,
+                    origin=origin,
+                    queue_entry_id=queue_entry_id,
+                    preparation_id=preparation.preparation_id,
+                    provider_started=False,
+                )
             if preparation.state is ConsoleTurnPreparationState.PREPARING:
                 preparation_outcome = await self.prepare_library_for_turn(
                     preparation.preparation_id
@@ -18699,6 +18814,7 @@ class ConsoleChatController:
                 preparation_input,
                 route=route,
                 capture_mode=capture_mode,
+                ephemeral=self.store.session_is_ephemeral(owner_id),
                 continuation_target=continuation_target,
                 continuation_sidecar=continuation_sidecar,
                 continuation_owner_key=(
@@ -18832,6 +18948,7 @@ class ConsoleChatController:
                 await enter_provider_dispatch()
             gateway_options: dict[str, Any] = {
                 "capture_mode": capture_mode,
+                "ephemeral": self.store.session_is_ephemeral(owner_id),
                 "before_provider_dispatch": (
                     enter_provider_dispatch if deferred_boundary else None
                 ),

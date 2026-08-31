@@ -985,6 +985,7 @@ class ConsoleChatMessage:
     content: str
     id: str = field(default_factory=lambda: str(uuid4()))
     turn_id: str | None = None
+    trace_turn_id: str | None = None
     status: ConsoleMessageStatus = "complete"
     persisted_message_id: str | None = None
     #: Persisted id of this node's PARENT in the conversation tree (None for a

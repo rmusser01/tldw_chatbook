@@ -262,6 +262,13 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
                     id="capture-policy-guidance",
                     markup=False,
                 )
+                if self.bindings.target_conversation_id is None:
+                    yield Static(
+                        "Temporary chat: Capture On pauses each send until you choose "
+                        "Save & Send or Send without capture.",
+                        id="capture-policy-temporary-guidance",
+                        markup=False,
+                    )
                 with RadioSet(id="capture-policy-scopes"):
                     yield RadioButton("Next send", id="capture-policy-scope-next")
                     yield RadioButton(

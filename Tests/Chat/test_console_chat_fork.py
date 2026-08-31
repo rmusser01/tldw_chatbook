@@ -35,7 +35,9 @@ from tldw_chatbook.Chat.console_chat_fork import (
     ConsoleForkProjectedMessage,
     ConsoleForkProjectedVideoTombstone,
     default_fork_title,
+    encode_console_fork_message_metadata,
     normalize_fork_title,
+    parse_console_fork_message_metadata,
 )
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_chat_models import (
@@ -112,6 +114,34 @@ class _ForkVersionPersistence:
         if state == "active_required" and source_body != target_body:
             return "unavailable", None
         return state, ("trace-1" if state == "active_required" else None)
+
+
+def test_fork_message_metadata_reads_v1_and_round_trips_v2_trace_turn_id() -> None:
+    legacy = json.dumps(
+        {
+            "console_fork": {
+                "version": 1,
+                "status": "stopped",
+                "attachment_display_name": "legacy.png",
+            }
+        }
+    )
+
+    assert parse_console_fork_message_metadata(legacy) == (
+        "stopped",
+        "legacy.png",
+        None,
+    )
+    encoded = encode_console_fork_message_metadata(
+        "complete",
+        "",
+        "source-trace-turn",
+    )
+    assert parse_console_fork_message_metadata(encoded) == (
+        "complete",
+        "",
+        "source-trace-turn",
+    )
 
 
 def _image_bytes(
@@ -770,6 +800,7 @@ def test_fork_records_are_frozen_slotted_contracts() -> None:
                 "persisted_revision",
                 "persisted_content",
                 "attachment_fingerprint",
+                "trace_turn_id",
             ),
         ),
         (
@@ -792,8 +823,9 @@ def test_fork_records_are_frozen_slotted_contracts() -> None:
                 "source_title",
                 "source_configuration_fingerprint",
                 "boundary_message_id",
-                "lineage",
-                "image_selections",
+                    "lineage",
+                    "image_selections",
+                    "trace_boundary",
             ),
         ),
         (
@@ -812,6 +844,7 @@ def test_fork_records_are_frozen_slotted_contracts() -> None:
                 "role",
                 "status",
                 "content",
+                "trace_turn_id",
                 "attachments",
                 "generation_metadata",
                 "video_tombstone",
@@ -907,8 +940,9 @@ def test_fork_records_are_frozen_slotted_contracts() -> None:
                 "source_boundary_persisted_message_id",
                 "durable",
                 "messages",
-                "configuration",
-                "citation_links",
+                    "configuration",
+                    "citation_links",
+                    "trace_boundary",
             ),
         ),
     ),

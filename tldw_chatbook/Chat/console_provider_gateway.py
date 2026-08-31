@@ -215,6 +215,27 @@ class _ProviderAdapterEntryGate:
             self._claimed = True
 
 
+class TemporaryCaptureRequiresSave(RuntimeError):
+    """A temporary conversation attempted durable Capture On."""
+
+
+def require_durable_capture_admission(
+    *,
+    capture_mode: ConsoleTraceCaptureMode,
+    ephemeral: bool,
+) -> None:
+    """Reject temporary Capture On before request serialization or adapter entry."""
+
+    if type(capture_mode) is not ConsoleTraceCaptureMode:
+        raise TypeError("capture_mode must be ConsoleTraceCaptureMode")
+    if type(ephemeral) is not bool:
+        raise TypeError("ephemeral must be a bool")
+    if ephemeral and capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON:
+        raise TemporaryCaptureRequiresSave(
+            "Temporary Capture On requires Save & Send or explicit Capture Off."
+        )
+
+
 class _ProviderAdapterAdmission:
     """Single-use proof that this gateway admitted one adapter entry."""
 
@@ -2315,6 +2336,7 @@ class ConsoleProviderGateway:
         route_actor_id: str | None = None,
         route_chain_id: str | None = None,
         capture_mode: ConsoleTraceCaptureMode = ConsoleTraceCaptureMode.CAPTURE_OFF,
+        ephemeral: bool = False,
     ) -> PreparedProviderRequest:
         """Prepare the one immutable payload later consumed by dispatch.
 
@@ -2323,6 +2345,10 @@ class ConsoleProviderGateway:
         bound but never labeled as provider-verified.
         """
 
+        require_durable_capture_admission(
+            capture_mode=capture_mode,
+            ephemeral=ephemeral,
+        )
         if isinstance(messages, PreparedConsoleRequest) and tools is not None:
             raise ValueError("tools are already owned by PreparedConsoleRequest")
         sidecar = tuple(continuation_sidecar)
@@ -3758,6 +3784,7 @@ class ConsoleProviderGateway:
         route_actor_id: str | None = None,
         route_chain_id: str | None = None,
         capture_mode: ConsoleTraceCaptureMode = ConsoleTraceCaptureMode.CAPTURE_OFF,
+        ephemeral: bool = False,
         before_provider_dispatch: Callable[[], Awaitable[None]] | None = None,
     ) -> AsyncIterator[ProviderStreamItem]:
         """Dispatch streaming for a resolved Console provider.
@@ -3779,6 +3806,10 @@ class ConsoleProviderGateway:
             passed and the provider returned native tool-calls -- a final
             ``ProviderToolCalls``.
         """
+        require_durable_capture_admission(
+            capture_mode=capture_mode,
+            ephemeral=ephemeral,
+        )
         # ONE invocation of this method == ONE provider call. A turn (agent
         # runs especially) makes N of them through the SAME signals object,
         # so the in-flight usage payload is closed out here, at the only

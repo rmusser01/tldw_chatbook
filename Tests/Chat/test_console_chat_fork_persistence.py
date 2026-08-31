@@ -40,8 +40,8 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_conversation_hydration import (
-    apply_resume_settings_overrides,
     console_messages_from_conversation_tree,
+    hydrate_console_generation_settings,
 )
 from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
@@ -63,6 +63,11 @@ from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_speech_preferences import (
     ConsoleSpeechPreferences,
     parse_console_speech_preferences,
+)
+from tldw_chatbook.Chat.console_trace_models import (
+    FrozenTracePolicy,
+    SemanticRevisionRef,
+    new_opaque_id,
 )
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem, parse_scope
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -635,12 +640,10 @@ def test_durable_fork_commits_ancestry_lineage_policy_and_context(tmp_path) -> N
         "system_prompt": "Keep it concise.",
         "source": "derived",
         "pinned_prefill": None,
+        "persona_memory_mode": None,
     }
-    restored_settings = apply_resume_settings_overrides(
-        ConsoleSessionSettings(provider="caller-default", model="caller-model"),
-        conversation,
-    )
-    assert restored_settings == snapshot.configuration.settings
+    restored_settings = hydrate_console_generation_settings({}, conversation).settings
+    assert restored_settings == replace(snapshot.configuration.settings, source="user")
     assert parse_scope(metadata["rag_scope"]) == snapshot.configuration.rag_scope
     roleplay = parse_console_roleplay_context(metadata)
     assert roleplay.user_name_override == "Rowan"
@@ -654,6 +657,107 @@ def test_durable_fork_commits_ancestry_lineage_policy_and_context(tmp_path) -> N
     assert db.get_conversation_by_id("source")["version"] == (
         snapshot.source_conversation_version
     )
+
+
+def test_durable_fork_commits_shared_trace_prefix_without_payload_copy(tmp_path) -> None:
+    db = CharactersRAGDB(tmp_path / "fork-trace.db", client_id="fork-test")
+    service = ChatPersistenceService(db)
+    snapshot = _snapshot(db)
+    repository = service.console_trace_repository
+    with db.transaction(immediate=True) as cursor:
+        segment = repository.create_segment(cursor)
+        owner = repository.attach_owner(
+            cursor,
+            conversation_id="source",
+            root_segment_id=segment.segment_id,
+        )
+        policy = repository.ensure_policy(
+            cursor,
+            FrozenTracePolicy(
+                policy_id=new_opaque_id(),
+                credential_filter_version="cred-v1",
+                pii_redaction_enabled=False,
+                pii_ruleset_revision_id=None,
+            ),
+        )
+        revision = repository.ensure_semantic_revision(
+            cursor,
+            source_conversation_id="source",
+            source_message_id="source-user",
+            revision_sequence=0,
+            normalized_role="user",
+            content_kind="text",
+            creation_reason="message_create",
+            live_message_id="source-user",
+        )
+        node = repository.append_surface_node(
+            cursor,
+            segment_id=segment.segment_id,
+            sequence=0,
+            predecessor_node_id=None,
+            component_kind="message",
+            reference=SemanticRevisionRef(revision.revision_id),
+        )
+        repository.append_event(
+            cursor,
+            segment_id=segment.segment_id,
+            sequence=0,
+            event_type="surface_append",
+            surface_node_id=node.node_id,
+        )
+        call = repository.reserve_call(
+            cursor,
+            owner_id=owner.owner_id,
+            segment_id=segment.segment_id,
+            turn_id="fork-turn",
+            run_id="run-1",
+            call_sequence=0,
+            idempotency_key="source-fork-call",
+            policy_id=policy.policy_id,
+        )
+        repository.append_event(
+            cursor,
+            segment_id=segment.segment_id,
+            sequence=1,
+            event_type="call_boundary",
+            call_id=call.call_id,
+        )
+        boundary = repository.capture_fork_boundary(
+            cursor,
+            conversation_id="source",
+            included_turn_ids=("fork-turn",),
+        )
+        assert boundary is not None
+        payload_counts = {
+            table: cursor.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in (
+                "console_trace_artifacts",
+                "console_trace_surface_nodes",
+                "console_trace_events",
+                "console_trace_calls",
+            )
+        }
+
+    result = _commit(service, replace(snapshot, trace_boundary=boundary))
+
+    assert result is not None
+    with db.transaction() as cursor:
+        assert {
+            table: cursor.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in payload_counts
+        } == payload_counts
+        child_calls = repository.read_conversation_call_lineage(cursor, "fork")
+        assert [item.call_id for item in child_calls] == [call.call_id]
+        child_owner_row = cursor.execute(
+            "SELECT root_segment_id FROM console_trace_owners WHERE conversation_id = ?",
+            ("fork",),
+        ).fetchone()
+        assert child_owner_row is not None
+        child_segment = repository.get_segment(cursor, child_owner_row[0])
+        assert child_segment is not None
+        assert child_segment.parent_segment_id == segment.segment_id
+        assert child_segment.inherited_through_sequence == 1
+    db.close_connection()
 
 
 def test_same_target_retry_and_resolver_return_the_preallocated_identity(

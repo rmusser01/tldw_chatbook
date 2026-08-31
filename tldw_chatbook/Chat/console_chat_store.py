@@ -113,6 +113,7 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleResolvedDestination,
     ConsoleTurnLibraryAuthority,
 )
+from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
 from tldw_chatbook.Chat.console_library_destination import (
     ConsoleLibraryDestinationRuntimeState,
     settle_console_library_destination_runtime,
@@ -140,6 +141,7 @@ from tldw_chatbook.Chat.console_turn_preparation import (
     ConsolePreparationTransition,
     ConsoleTurnPreparation,
     ConsoleTurnPreparationState,
+    admit_promoted_temporary_capture,
     apply_preparation_transition,
 )
 from tldw_chatbook.Chat.console_transaction_contribution import (
@@ -157,6 +159,8 @@ from tldw_chatbook.Chat.console_trace_projection import (
     ConsoleTraceProjection,
     ProjectedTraceCall,
 )
+from tldw_chatbook.Chat.console_trace_provenance import ConsoleTraceCaptureMode
+from tldw_chatbook.Chat.console_trace_repository import TraceForkBoundary
 from tldw_chatbook.Chat.console_capture_policy_repository import (
     CapturePolicyReadResult,
     CapturePolicyReadStatus,
@@ -296,6 +300,7 @@ FORK_SNAPSHOT_SESSION_FIELDS = frozenset(
         "speech_preferences",
         "project_instruction_state",
         "ephemeral",
+        "fork_trace_boundary",
     }
 )
 
@@ -1333,6 +1338,8 @@ class ConsoleChatSession:
     #: validated fork snapshot. Ordinary temporary sessions must not inherit
     #: fork-only durable metadata conventions during promotion.
     fork_projection: bool = False
+    #: Durable prefix reference retained by a temporary fork until promotion.
+    fork_trace_boundary: TraceForkBoundary | None = None
 
     def __post_init__(self) -> None:
         """Normalize nullable/legacy optional thinking replay preference."""
@@ -4251,6 +4258,57 @@ class ConsoleChatStore:
             self._preparations_by_id[updated.preparation_id] = updated
             return updated
 
+    def publish_promoted_capture_preparation(
+        self,
+        preparation_id: str,
+        execution_context: ConsoleTurnExecutionContext,
+    ) -> ConsoleTurnPreparation | None:
+        """Publish a temporary Capture-On preparation after promotion commits."""
+
+        with self._preparation_lock:
+            current = self._preparations_by_id.get(preparation_id)
+            if current is None:
+                return None
+            session = self._sessions.get(current.session_id)
+            if (
+                session is None
+                or session.ephemeral
+                or session.persisted_conversation_id is None
+            ):
+                return None
+            updated = admit_promoted_temporary_capture(current, execution_context)
+            if updated is current:
+                return None
+            self._preparations_by_session[current.session_id] = updated
+            self._preparations_by_id[preparation_id] = updated
+            return updated
+
+    def publish_temporary_capture_off_preparation(
+        self,
+        preparation_id: str,
+        admitted: ConsoleTurnPreparation,
+    ) -> ConsoleTurnPreparation | None:
+        """Publish one explicit Capture-Off choice before temporary dispatch."""
+
+        if not isinstance(admitted, ConsoleTurnPreparation):
+            raise TypeError("admitted must be ConsoleTurnPreparation")
+        with self._preparation_lock:
+            current = self._preparations_by_id.get(preparation_id)
+            if (
+                current is None
+                or current.session_id != admitted.session_id
+                or current.pause_kind
+                is not ConsolePreparationPauseKind.TEMPORARY_CAPTURE
+                or admitted.capture_mode is not ConsoleTraceCaptureMode.CAPTURE_OFF
+                or admitted.state is not ConsoleTurnPreparationState.READY
+                or not admitted.one_shot_capture_off
+            ):
+                return None
+            updated = replace(admitted, preparation_id=preparation_id)
+            self._preparations_by_session[current.session_id] = updated
+            self._preparations_by_id[preparation_id] = updated
+            return updated
+
     @_fork_session_transition
     def cancel_preparation(
         self,
@@ -6265,6 +6323,15 @@ class ConsoleChatStore:
             persisted_message_id=message.persisted_message_id,
             native_parent_id=parent_id,
             turn_id=message.turn_id,
+            trace_turn_id=(
+                message.trace_turn_id
+                or message.turn_id
+                or (
+                    message.persisted_message_id
+                    if message.role is ConsoleMessageRole.USER
+                    else None
+                )
+            ),
             role=message.role,
             status=message.status,
             visible_content=content,
@@ -6390,6 +6457,35 @@ class ConsoleChatStore:
         active_leaf_persisted_id = (
             self._fork_database_active_leaf(session.id, message_id) if durable else None
         )
+        lineage = tuple(
+            self._fork_lineage_entry(
+                session_id,
+                self._nodes_by_session[session_id][native_id],
+                durable=durable,
+            )
+            for native_id in prefix
+        )
+        trace_boundary = session.fork_trace_boundary if not durable else None
+        trace_boundary_reader = getattr(
+            self.persistence,
+            "get_console_trace_fork_boundary",
+            None,
+        )
+        if (
+            durable
+            and session.persisted_conversation_id is not None
+            and callable(trace_boundary_reader)
+        ):
+            trace_boundary = trace_boundary_reader(
+                conversation_id=session.persisted_conversation_id,
+                included_turn_ids=tuple(
+                    dict.fromkeys(
+                        entry.trace_turn_id
+                        for entry in lineage
+                        if entry.trace_turn_id is not None
+                    )
+                ),
+            )
         return ConsoleForkFence(
             source_session_id=session.id,
             source_conversation_id=session.persisted_conversation_id,
@@ -6410,15 +6506,9 @@ class ConsoleChatStore:
                 )
             ),
             boundary_message_id=message_id,
-            lineage=tuple(
-                self._fork_lineage_entry(
-                    session_id,
-                    self._nodes_by_session[session_id][native_id],
-                    durable=durable,
-                )
-                for native_id in prefix
-            ),
+            lineage=lineage,
             image_selections=selections,
+            trace_boundary=trace_boundary,
         )
 
     def validate_fork_fence(
@@ -6502,9 +6592,35 @@ class ConsoleChatStore:
                 )
                 for native_id in prefix
             )
+            current_trace_boundary = (
+                None if durable else session.fork_trace_boundary
+            )
+            trace_boundary_reader = getattr(
+                self.persistence,
+                "get_console_trace_fork_boundary",
+                None,
+            )
+            if (
+                durable
+                and session.persisted_conversation_id is not None
+                and callable(trace_boundary_reader)
+            ):
+                current_trace_boundary = trace_boundary_reader(
+                    conversation_id=session.persisted_conversation_id,
+                    included_turn_ids=tuple(
+                        dict.fromkeys(
+                            entry.trace_turn_id
+                            for entry in current_lineage
+                            if entry.trace_turn_id is not None
+                        )
+                    ),
+                )
         except (KeyError, TypeError, ValueError):
             return False
-        return current_lineage == fence.lineage
+        return (
+            current_lineage == fence.lineage
+            and current_trace_boundary == fence.trace_boundary
+        )
 
     def stage_fork_snapshot(
         self,
@@ -6513,6 +6629,7 @@ class ConsoleChatStore:
         title: str,
         fork_session_id: str,
         fork_conversation_id: str | None,
+        destination_durable: bool | None = None,
     ) -> ConsoleChatForkSnapshot:
         """Project a validated fence into independently owned immutable values."""
         with self._fork_source_lock:
@@ -6521,6 +6638,7 @@ class ConsoleChatStore:
                 title=title,
                 fork_session_id=fork_session_id,
                 fork_conversation_id=fork_conversation_id,
+                destination_durable=destination_durable,
             )
 
     def _stage_fork_snapshot(
@@ -6530,6 +6648,7 @@ class ConsoleChatStore:
         title: str,
         fork_session_id: str,
         fork_conversation_id: str | None,
+        destination_durable: bool | None = None,
     ) -> ConsoleChatForkSnapshot:
         """Stage a fork while quarantine and source projection are locked."""
         if not self.validate_fork_fence(
@@ -6540,7 +6659,13 @@ class ConsoleChatStore:
         normalized_title = normalize_fork_title(title)
         if type(fork_session_id) is not str or not fork_session_id.strip():
             raise ValueError("Fork session id is invalid.")
-        durable = fence.source_durability != "temporary"
+        if type(destination_durable) not in {bool, type(None)}:
+            raise TypeError("destination_durable must be a bool or None")
+        durable = (
+            fence.source_durability != "temporary"
+            if destination_durable is None
+            else destination_durable
+        )
         if durable and (
             type(fork_conversation_id) is not str or not fork_conversation_id.strip()
         ):
@@ -6657,14 +6782,21 @@ class ConsoleChatStore:
             projected.append(
                 ConsoleForkProjectedMessage(
                     source_native_message_id=entry.native_message_id,
-                    source_persisted_message_id=entry.persisted_message_id,
-                    source_persisted_revision=entry.persisted_revision,
-                    source_persisted_content=entry.persisted_content,
+                    source_persisted_message_id=(
+                        entry.persisted_message_id if durable else None
+                    ),
+                    source_persisted_revision=(
+                        entry.persisted_revision if durable else None
+                    ),
+                    source_persisted_content=(
+                        entry.persisted_content if durable else None
+                    ),
                     native_message_id=target_native,
                     persisted_message_id=target_persisted,
                     native_parent_id=previous_native,
                     persisted_parent_id=previous_persisted,
                     turn_id=target_turn,
+                    trace_turn_id=entry.trace_turn_id,
                     visible_variant_id=target_variant,
                     role=entry.role,
                     status=entry.status,
@@ -6698,18 +6830,21 @@ class ConsoleChatStore:
             fork_conversation_id=fork_conversation_id,
             title=normalized_title,
             source_session_id=fence.source_session_id,
-            source_conversation_id=fence.source_conversation_id,
-            source_conversation_version=fence.source_conversation_version,
+            source_conversation_id=(fence.source_conversation_id if durable else None),
+            source_conversation_version=(
+                fence.source_conversation_version if durable else None
+            ),
             source_active_leaf_persisted_message_id=(
-                fence.source_active_leaf_persisted_message_id
+                fence.source_active_leaf_persisted_message_id if durable else None
             ),
             source_boundary_persisted_message_id=(
-                fence.lineage[-1].persisted_message_id
+                fence.lineage[-1].persisted_message_id if durable else None
             ),
             durable=durable,
             messages=tuple(projected),
             configuration=configuration,
             citation_links=citation_links,
+            trace_boundary=fence.trace_boundary,
         )
         candidate_matches_fence = len(candidate.messages) == len(fence.lineage)
         for entry, message in zip(
@@ -6718,8 +6853,12 @@ class ConsoleChatStore:
         ):
             candidate_matches_fence = candidate_matches_fence and (
                 message.source_native_message_id == entry.native_message_id
-                and message.source_persisted_message_id == entry.persisted_message_id
-                and message.source_persisted_revision == entry.persisted_revision
+                and message.source_persisted_message_id
+                == (entry.persisted_message_id if durable else None)
+                and message.source_persisted_revision
+                == (entry.persisted_revision if durable else None)
+                and message.source_persisted_content
+                == (entry.persisted_content if durable else None)
                 and message.native_message_id == native_ids[entry.native_message_id]
                 and message.persisted_message_id
                 == persisted_ids[entry.native_message_id]
@@ -6727,6 +6866,7 @@ class ConsoleChatStore:
                 and message.persisted_parent_id
                 == persisted_ids.get(entry.native_parent_id)
                 and message.turn_id == turn_ids.get(entry.turn_id)
+                and message.trace_turn_id == entry.trace_turn_id
                 and (message.visible_variant_id is None)
                 == (entry.visible_variant_id is None)
                 and message.role is entry.role
@@ -6997,7 +7137,15 @@ class ConsoleChatStore:
                 or type(projected.content) is not str
                 or not projected.content.strip()
                 or type(projected.turn_id) not in {str, type(None)}
+                or type(projected.trace_turn_id) not in {str, type(None)}
                 or type(projected.visible_variant_id) not in {str, type(None)}
+                or (
+                    projected.trace_turn_id is not None
+                    and (
+                        not projected.trace_turn_id
+                        or len(projected.trace_turn_id.encode("utf-8")) > 256
+                    )
+                )
             ):
                 raise ValueError("Fork message content or state is invalid.")
             if (
@@ -7147,6 +7295,7 @@ class ConsoleChatStore:
                     role=projected.role,
                     content=projected.content,
                     turn_id=projected.turn_id,
+                    trace_turn_id=projected.trace_turn_id,
                     status=projected.status,
                     persisted_message_id=projected.persisted_message_id,
                     parent_message_id=projected.persisted_parent_id,
@@ -7211,6 +7360,9 @@ class ConsoleChatStore:
             thinking_history_policy=configuration.thinking_history_policy,
             ephemeral=not snapshot.durable,
             fork_projection=True,
+            fork_trace_boundary=(
+                snapshot.trace_boundary if not snapshot.durable else None
+            ),
         )
         nodes = {message.id: message for message in built_messages}
         parent_by_message = {
@@ -15757,6 +15909,7 @@ class ConsoleChatStore:
     def promote_ephemeral_session(
         self,
         session_id: str,
+        excluded_transient_message_id: str | None = None,
         *,
         contributions: Sequence[ConsoleTransactionContribution] = (),
     ) -> str | None:
@@ -15771,6 +15924,8 @@ class ConsoleChatStore:
 
         Args:
             session_id: Id of the temporary session to save.
+            excluded_transient_message_id: Optional unsent active USER leaf to
+                leave live for the subsequent durable turn-acceptance commit.
 
         Returns:
             The new persisted conversation id, or ``None`` when the session
@@ -15816,6 +15971,7 @@ class ConsoleChatStore:
             session,
             contributions=combined_contributions,
             activity_contribution=activity_contribution,
+            excluded_transient_message_id=excluded_transient_message_id,
         )
 
     def _promote_ephemeral_session_atomically(
@@ -15824,12 +15980,45 @@ class ConsoleChatStore:
         *,
         contributions: Sequence[ConsoleTransactionContribution],
         activity_contribution: LibraryActivityContribution | None = None,
+        excluded_transient_message_id: str | None = None,
     ) -> str:
-        """Stage a complete temporary transcript and publish after commit only."""
+        """Stage the promotable transcript and publish after commit only."""
         if self.persistence is None:
             raise RuntimeError("Console persistence is unavailable.")
         session_id = session.id
-        messages = self._tree_nodes_parent_first(session_id)
+        all_messages = self._tree_nodes_parent_first(session_id)
+        if excluded_transient_message_id is not None:
+            if (
+                type(excluded_transient_message_id) is not str
+                or not excluded_transient_message_id
+            ):
+                raise ValueError("Excluded transient message id is invalid.")
+            excluded = self._nodes_by_session.get(session_id, {}).get(
+                excluded_transient_message_id
+            )
+            if (
+                excluded is None
+                or excluded.role is not ConsoleMessageRole.USER
+                or excluded.persisted_message_id is not None
+                or self._active_leaf_by_session.get(session_id)
+                != excluded_transient_message_id
+                or any(
+                    parent_id == excluded_transient_message_id
+                    for parent_id in self._native_parent_by_message.values()
+                )
+            ):
+                raise RuntimeError("Only the unsent active USER leaf may be excluded.")
+            messages = tuple(
+                message
+                for message in all_messages
+                if message.id != excluded_transient_message_id
+            )
+            promoted_active_leaf = self._native_parent_by_message.get(
+                excluded_transient_message_id
+            )
+        else:
+            messages = all_messages
+            promoted_active_leaf = self._active_leaf_by_session.get(session_id)
         identity = self.stage_first_persistence(session_id)
         staged_message_ids = {message.id: str(uuid4()) for message in messages}
         prepared_messages: list[dict[str, object]] = []
@@ -15879,6 +16068,7 @@ class ConsoleChatStore:
                 encode_console_fork_message_metadata(
                     message.status,
                     attachment_display_name,
+                    message.trace_turn_id,
                 )
                 if session.fork_projection
                 else None
@@ -15978,8 +16168,8 @@ class ConsoleChatStore:
             conversation_kwargs=conversation_kwargs,
             messages=prepared_messages,
             active_leaf_message_id=(
-                staged_message_ids[self._active_leaf_by_session[session_id]]
-                if self._active_leaf_by_session.get(session_id) is not None
+                staged_message_ids[promoted_active_leaf]
+                if promoted_active_leaf is not None
                 else None
             ),
             context_summary=summary,
@@ -15993,6 +16183,7 @@ class ConsoleChatStore:
             ),
             context_policy_overrides=session.context_policy_overrides,
             contributions=contributions,
+            trace_boundary=session.fork_trace_boundary,
         )
 
         if activity_contribution is not None:

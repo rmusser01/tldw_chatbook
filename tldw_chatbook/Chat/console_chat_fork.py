@@ -36,6 +36,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
     sanitize_fork_project_instruction_state,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_trace_repository import TraceForkBoundary
 from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
 from tldw_chatbook.Chat.thinking_blocks import (
     ThinkingHistoryPolicy,
@@ -66,6 +67,7 @@ ConsoleForkCitationState = Literal["active_required", "unavailable", "none"]
 def encode_console_fork_message_metadata(
     status: ConsoleMessageStatus,
     attachment_display_name: str,
+    trace_turn_id: str | None = None,
 ) -> str | None:
     """Encode the fork-only durable facts that have no schema column."""
 
@@ -73,14 +75,21 @@ def encode_console_fork_message_metadata(
         raise ValueError("Fork message status is not durable.")
     if not isinstance(attachment_display_name, str):
         raise TypeError("Fork attachment display name must be text.")
-    if status == "complete" and not attachment_display_name:
+    if trace_turn_id is not None and (
+        type(trace_turn_id) is not str
+        or not trace_turn_id
+        or len(trace_turn_id.encode("utf-8")) > _CONSOLE_FORK_IDENTITY_TEXT_MAX_BYTES
+    ):
+        raise ValueError("Fork trace turn id is invalid.")
+    if status == "complete" and not attachment_display_name and trace_turn_id is None:
         return None
     return json.dumps(
         {
             CONSOLE_FORK_MESSAGE_METADATA_KEY: {
-                "version": 1,
+                "version": 2,
                 "status": status,
                 "attachment_display_name": attachment_display_name,
+                "trace_turn_id": trace_turn_id,
             }
         },
         sort_keys=True,
@@ -89,7 +98,7 @@ def encode_console_fork_message_metadata(
 
 def parse_console_fork_message_metadata(
     raw: str | None,
-) -> tuple[ConsoleMessageStatus, str] | None:
+) -> tuple[ConsoleMessageStatus, str, str | None] | None:
     """Decode strict fork-only local metadata, degrading foreign rows."""
 
     if not raw:
@@ -103,23 +112,43 @@ def parse_console_fork_message_metadata(
     }:
         return None
     payload = decoded[CONSOLE_FORK_MESSAGE_METADATA_KEY]
-    if not isinstance(payload, dict) or set(payload) != {
-        "version",
-        "status",
-        "attachment_display_name",
-    }:
+    if not isinstance(payload, dict):
+        return None
+    version = payload.get("version")
+    expected_keys = (
+        {"version", "status", "attachment_display_name"}
+        if version == 1
+        else {
+            "version",
+            "status",
+            "attachment_display_name",
+            "trace_turn_id",
+        }
+        if version == 2
+        else set()
+    )
+    if not expected_keys or set(payload) != expected_keys:
         return None
     status = payload.get("status")
     label = payload.get("attachment_display_name")
+    trace_turn_id = payload.get("trace_turn_id") if version == 2 else None
     if (
-        type(payload.get("version")) is not int
-        or payload["version"] != 1
+        type(version) is not int
         or type(status) is not str
         or status not in {"complete", "stopped", "failed"}
         or type(label) is not str
+        or (
+            trace_turn_id is not None
+            and (
+                type(trace_turn_id) is not str
+                or not trace_turn_id
+                or len(trace_turn_id.encode("utf-8"))
+                > _CONSOLE_FORK_IDENTITY_TEXT_MAX_BYTES
+            )
+        )
     ):
         return None
-    return status, label
+    return status, label, trace_turn_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +175,7 @@ class ConsoleForkLineageFence:
     persisted_revision: int | None
     persisted_content: str | None
     attachment_fingerprint: str
+    trace_turn_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +202,7 @@ class ConsoleForkFence:
     boundary_message_id: str
     lineage: tuple[ConsoleForkLineageFence, ...]
     image_selections: tuple[ConsoleForkImageSelectionFence, ...]
+    trace_boundary: TraceForkBoundary | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,6 +271,7 @@ class ConsoleForkProjectedMessage:
     role: ConsoleMessageRole
     status: ConsoleMessageStatus
     content: str
+    trace_turn_id: str | None = None
     attachments: tuple[ConsoleForkProjectedAttachment, ...] = ()
     generation_metadata: tuple[ConsoleForkProjectedGeneration, ...] = ()
     video_tombstone: ConsoleForkProjectedVideoTombstone | None = None
@@ -294,6 +326,7 @@ class ConsoleChatForkSnapshot:
     messages: tuple[ConsoleForkProjectedMessage, ...]
     configuration: ConsoleForkConfigurationSnapshot
     citation_links: tuple[ConsoleForkCitationLink, ...]
+    trace_boundary: TraceForkBoundary | None = None
 
 
 def normalize_fork_title(title: str) -> str:

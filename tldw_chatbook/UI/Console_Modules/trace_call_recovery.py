@@ -25,6 +25,7 @@ class TraceCallRecoveryState:
     """Content-free identity for one blocked send recovery callout."""
 
     preparation_id: str
+    temporary_capture: bool = False
 
 
 def trace_call_recovery_state(
@@ -35,10 +36,20 @@ def trace_call_recovery_state(
     if (
         preparation is None
         or preparation.state is not ConsoleTurnPreparationState.PAUSED
-        or preparation.pause_kind is not ConsolePreparationPauseKind.TRACE_CALL
+        or preparation.pause_kind
+        not in {
+            ConsolePreparationPauseKind.TRACE_CALL,
+            ConsolePreparationPauseKind.TEMPORARY_CAPTURE,
+        }
     ):
         return None
-    return TraceCallRecoveryState(preparation.preparation_id)
+    return TraceCallRecoveryState(
+        preparation.preparation_id,
+        temporary_capture=(
+            preparation.pause_kind
+            is ConsolePreparationPauseKind.TEMPORARY_CAPTURE
+        ),
+    )
 
 
 TraceCallAction = Callable[[str, str], object | Awaitable[object]]
@@ -54,12 +65,14 @@ async def dispatch_trace_call_recovery_action(
 ) -> object:
     """Route a visible action to the existing controller entrypoint."""
 
-    handler = {
-        "retry": controller.retry_library_preparation,
-        "send_without_capture": controller.send_without_capture,
-        "cancel": controller.cancel_library_preparation,
+    handler_name = {
+        "retry": "retry_library_preparation",
+        "save_and_send": "save_and_send",
+        "send_without_capture": "send_without_capture",
+        "cancel": "cancel_library_preparation",
     }.get(action)
-    if handler is None:
+    handler = getattr(controller, handler_name, None) if handler_name else None
+    if not callable(handler):
         return False
     if on_started is not None:
         on_started()
@@ -134,6 +147,11 @@ class TraceCallRecoveryCallout(Vertical):
         )
         yield Static("Choose one action.", id="console-trace-status")
         with Vertical(id="console-trace-actions"):
+            yield Button(
+                "Save & Send",
+                id="console-trace-save-send",
+                variant="warning",
+            )
             yield Button("Retry capture", id="console-trace-retry", variant="warning")
             yield Button(
                 "Send without capture",
@@ -150,9 +168,26 @@ class TraceCallRecoveryCallout(Vertical):
 
         self.recovery_state = state
         self.display = state is not None
+        temporary = bool(state is not None and state.temporary_capture)
+        self.query_one("#console-trace-title", Static).update(
+            "Save chat to capture this send" if temporary else "Trace capture blocked"
+        )
+        detail_rows = tuple(self.query(".console-trace-detail"))
+        if len(detail_rows) >= 2:
+            detail_rows[1].update(
+                (
+                    "Problem: Temporary chats cannot store durable captures."
+                    if temporary
+                    else "Problem: Trace capture could not be saved."
+                )
+            )
         for button in self.query(Button):
             button.display = state is not None
             button.disabled = self._busy or state is None
+        self.query_one("#console-trace-save-send", Button).display = temporary
+        self.query_one("#console-trace-retry", Button).display = (
+            state is not None and not temporary
+        )
         self.query_one("#console-trace-status", Static).update(
             "Working… actions are temporarily disabled."
             if self._busy
@@ -162,6 +197,7 @@ class TraceCallRecoveryCallout(Vertical):
     @on(Button.Pressed)
     def _handle_action(self, event: Button.Pressed) -> None:
         action = {
+            "console-trace-save-send": "save_and_send",
             "console-trace-retry": "retry",
             "console-trace-send-without": "send_without_capture",
             "console-trace-cancel": "cancel",
