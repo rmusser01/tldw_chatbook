@@ -4,7 +4,7 @@ title: 'fs_* local tools: self-recovery wave'
 status: To Do
 assignee: []
 created_date: '2026-08-19 09:55'
-updated_date: '2026-08-19 09:55'
+updated_date: '2026-08-31 15:12'
 labels:
   - agents
   - tools
@@ -26,6 +26,7 @@ Port of hermes-agent's tool self-recovery philosophy (2026-08-19 hermes-release 
 - [ ] #4 fs_grep/fs_glob: a zero-match result includes bounded near-miss suggestions (e.g. closest existing filenames) rather than a bare empty result
 - [ ] #5 Every recovery/hint message is length-bounded and labeled as a tool-generated hint; unit tests include adversarial inputs (huge files, binary content, path edge cases) and assert bounds
 - [ ] #6 No permission-model change: recovery never bypasses Allow/Ask/Off or any approval gate — verified by tests
+- [ ] #7 fs_patch: a context mismatch returns a bounded diagnosis naming the nearest candidate location, not a bare patch_context_mismatch code (Tools/patch_tool_impls.py:211,407)
 <!-- AC:END -->
 
 ## Implementation Plan

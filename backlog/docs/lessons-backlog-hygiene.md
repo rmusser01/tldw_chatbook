@@ -59,6 +59,18 @@ exposed before it is attached to anything real — delete the probe, then leapfr
 the swept maximum. All three P2ab collisions were caught this way, and no file ever
 carried a bad number.
 
+- **2026-08-31, hermes parity filing.** The sweep script itself was wrong and reported a
+  **false-low maximum**. The regex `s#.*task-([0-9]+)([.-].*)?\.md$#\1#p` requires the
+  character after the digits to be `.` or `-`, but task filenames are
+  `task-25712 - Console-….md` — a **space**. Every space-separated filename was silently
+  dropped, so the sweep answered **23113** when the true max was **25835**. Nothing errored;
+  the number just looked plausible. The CLI probe is what exposed it: it offered **25714**,
+  which is *above* the swept "max" — an impossible answer that proved the sweep wrong. Had the
+  probe been skipped, the batch would have collided with 122 IDs held by
+  `origin/fix/console-ux-review-batch1`. **Match on the id prefix only** —
+  `sed -nE 's#.*/task-([0-9]+).*#\1#p'` — and treat "the CLI offers a number above my swept
+  max" as proof the sweep is broken, never as CLI error.
+
 **What to do.** Before filing, sweep **every remote ref** plus every worktree, and
 re-check at merge time — dev moves under you. Never trust the CLI's auto-assignment.
 When a collision is found after both tasks have started, use add-commit provenance:
@@ -670,3 +682,36 @@ ancestor and review the exact commit count and branch-range diff.
 - `lessons-testing-evidence.md`
 - `backlog/decisions/001-adopt-backlog-decisions-as-canonical-adrs.md`
 - `Docs/superpowers/reviews/2026-08-01-task-595-duplicate-implementation-reconciliation.md`
+
+
+---
+
+## `backlog task create`: `-l` and `--ac` have opposite comma semantics
+
+**What happened.** Filing 15 tasks on 2026-08-31, labels were passed as repeated flags
+(`-l agents -l reliability`) by analogy with `--ac`, which CLAUDE.md documents as needing
+repetition because it does *not* split on commas. Every task came out with **only the last
+label** — `-l` does not accumulate across repeats, and it *does* split on commas. The two
+flags are exactly inverted, and neither errors on the wrong form, so 14 tasks were filed with
+silently-wrong labels and needed a `backlog task edit` pass to repair.
+
+**The rule.**
+
+| flag | repeat to accumulate? | splits on comma? | correct form |
+|---|---|---|---|
+| `--ac` | **yes** | no | `--ac "one" --ac "two"` |
+| `-l` / `--labels` | **no** (last wins) | **yes** | `-l one,two` |
+
+**How to apply.** After any batch create, read the frontmatter back and assert it — the CLI
+accepts both wrong forms without complaint. A one-liner over the created files catches it
+before the batch is committed.
+
+**Same session, related trap: `backlog task edit --ac` RENAMES the file.** Adding one
+acceptance criterion to TASK-18927 re-slugified its title and moved
+`task-18927 - Local-fs-tools-self-recovery-wave.md` to
+`task-18927 - fs_-local-tools-self-recovery-wave.md` — the title contains `fs_*`, which the
+slugifier mangles. Nothing warned; it showed up only as an `R` line in `git status`. A task
+filename is referenced by PR bodies, close-out commits, doc links and other tasks'
+`dependencies:`, so a silent rename is a broken-link generator. **After any `backlog task
+edit`, check `git status` for an `R` and `git mv` the file back** if the rename was not the
+point of the edit.
