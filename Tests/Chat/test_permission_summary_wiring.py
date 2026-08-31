@@ -1,6 +1,7 @@
 """ADR-080: fire-once trigger matrix + guarded delivery, no real threads."""
 
 import threading
+from types import SimpleNamespace
 
 from tldw_chatbook.Chat import console_chat_controller as ccc
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
@@ -104,3 +105,106 @@ def test_delivery_drops_resolved_rounds_and_updates_live_ones():
     assert payload2["summary"] == "sum"
     assert ctrl._pending_approval_rounds["r2"]["summary"] == "sum"
     assert seen == [("r2", "sum")]
+
+
+def _parked_controller(monkeypatch, mode, round_id="r1"):
+    """A bare controller whose round is PARKED (stored, never marshalled)."""
+    _armed(monkeypatch, mode)
+    ctrl = _bare_controller()
+    ctrl._pending_approval_rounds[round_id] = {
+        "event": threading.Event(), "summary_fired": False,
+    }
+    payload = _payload()
+    payload["round_id"] = round_id
+    ctrl._parked_approval_payloads = {round_id: payload}
+    mounted = []
+    ctrl.set_pending_approval = mounted.append
+    ctrl.store = SimpleNamespace(active_session_id="s1")
+    return ctrl, payload, mounted
+
+
+def test_parked_round_fires_once_on_attach_remount(monkeypatch):
+    ctrl, payload, mounted = _parked_controller(monkeypatch, "always")
+    assert ctrl.remount_pending_approval_for_active_session() is True
+    assert mounted == [payload]
+    assert _ThreadStub.started == [True]  # never marshalled before: fires now
+    # A later re-attach (second Console view attach) re-mounts but must
+    # NOT re-fire the summarizer.
+    assert ctrl.remount_pending_approval_for_active_session() is True
+    assert mounted == [payload, payload]
+    assert _ThreadStub.started == [True]
+    assert ctrl._pending_approval_rounds["r1"]["summary_fired"] is True
+
+
+def test_consumed_flag_prevents_refire_on_attach_remount(monkeypatch):
+    ctrl, _payload_, mounted = _parked_controller(monkeypatch, "always")
+    ctrl._pending_approval_rounds["r1"]["summary_fired"] = True  # consumed
+    assert ctrl.remount_pending_approval_for_active_session() is True
+    assert len(mounted) == 1
+    assert _ThreadStub.started == []
+
+
+def test_switch_session_promotes_parked_round_and_fires_once(monkeypatch):
+    ctrl, payload, mounted = _parked_controller(monkeypatch, "always")
+    ctrl.store.active_session_id = "s0"  # switching away from s0 onto s1
+    ctrl.store.switch_session = lambda session_id: SimpleNamespace(id=session_id)
+    ctrl.mark_session_visited = lambda session_id: None
+    ctrl._clear_terminal_run_state = lambda **_: None
+    ctrl._remount_parked_skill_install = lambda session_id: None
+    ctrl._remount_parked_skill_script = lambda session_id: None
+    ctrl.switch_session("s1")
+    assert mounted == [payload]
+    assert _ThreadStub.started == [True]
+    # Switching away and back re-mounts unchanged, never re-fires.
+    ctrl.switch_session("s0")
+    assert mounted == [payload, None]
+    assert _ThreadStub.started == [True]
+
+
+def test_remount_head_helper_fires_promoted_sibling_once(monkeypatch):
+    # Teardown/revocation promotion: the resolved head was unparked and its
+    # round popped; `_remount_head` promotes the queued sibling r2.
+    ctrl, _head, mounted = _parked_controller(monkeypatch, "always")
+    parked = ctrl._parked_approval_payloads
+    parked["r2"] = dict(parked["r1"], round_id="r2")
+    parked.pop("r1")
+    ctrl._pending_approval_rounds.pop("r1")
+    ctrl._pending_approval_rounds["r2"] = {
+        "event": threading.Event(), "summary_fired": False,
+    }
+
+    class _InlineApp:
+        @staticmethod
+        def call_from_thread(fn, *args):
+            fn(*args)  # run the UI-thread callback inline
+
+    ctrl.app = _InlineApp()
+    ctrl._remount_head(parked, ctrl.set_pending_approval, "s1")
+    assert mounted == [parked["r2"]]
+    assert _ThreadStub.started == [True]
+    # A second promotion pass (e.g. another sibling resolving) must not
+    # re-fire for r2: its once-flag was consumed above.
+    ctrl._remount_head(parked, ctrl.set_pending_approval, "s1")
+    assert mounted == [parked["r2"], parked["r2"]]
+    assert _ThreadStub.started == [True]
+
+
+def test_remount_head_helper_skips_non_mcp_payloads(monkeypatch):
+    # The skill bridges share `_remount_head`; their payloads' round ids
+    # are unknown to `_pending_approval_rounds`, so nothing may fire.
+    ctrl, _payload_, _mounted = _parked_controller(monkeypatch, "always")
+    skill_payload = {"round_id": "skill-1", "session_id": "s1", "calls": []}
+    parked = {"skill-1": skill_payload}
+    ctrl._pending_approval_rounds.pop("r1")  # no MCP round armed at all
+
+    class _InlineApp:
+        @staticmethod
+        def call_from_thread(fn, *args):
+            fn(*args)
+
+    ctrl.app = _InlineApp()
+    mounted = []
+    ctrl.set_pending_approval = mounted.append
+    ctrl._remount_head(parked, ctrl.set_pending_approval, "s1")
+    assert mounted == [skill_payload]
+    assert _ThreadStub.started == []

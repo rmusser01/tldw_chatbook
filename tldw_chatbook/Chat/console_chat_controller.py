@@ -9738,9 +9738,15 @@ class ConsoleChatController:
         # "card state derives from the run's pending review state" rule
         # every other activation path follows.
         if self.set_pending_approval is not None:
-            self.set_pending_approval(
-                self._head_round_payload(self._parked_approval_payloads, session.id)
+            payload = self._head_round_payload(
+                self._parked_approval_payloads, session.id
             )
+            self.set_pending_approval(payload)
+            # ADR-080: this re-derive bypasses `_marshal_pending_approval`,
+            # so the summary trigger is armed here too (always None for a
+            # fresh session today; fire-once guards any future payload).
+            if isinstance(payload, dict):
+                self._maybe_fire_permission_summary(payload)
         # TASK-910: same re-derive for the skill-install/script cards -- a
         # brand-new session can never itself have a parked confirm, so this
         # always resolves to clearing whatever the session being left behind
@@ -10110,9 +10116,16 @@ class ConsoleChatController:
         # parking -- the round now stays alive until its own resolution
         # (decision, cancel, or timeout).
         if self.set_pending_approval is not None:
-            self.set_pending_approval(
-                self._head_round_payload(self._parked_approval_payloads, session_id)
+            payload = self._head_round_payload(
+                self._parked_approval_payloads, session_id
             )
+            self.set_pending_approval(payload)
+            # ADR-080: this mount of a stored payload bypasses
+            # `_marshal_pending_approval`, so a round that armed while
+            # parked fires its advisory summary HERE (fire-once makes the
+            # switch-away-and-back re-mount safe).
+            if isinstance(payload, dict):
+                self._maybe_fire_permission_summary(payload)
         # TASK-910: skill-install/script confirms now get the SAME park/
         # re-derive treatment as MCP batch approvals above -- a context
         # change (switch away) no longer force-denies either bridge's
@@ -10282,11 +10295,15 @@ class ConsoleChatController:
         if new_active_id is not None and new_active_id != previous_active_id:
             self.mark_session_visited(new_active_id)
             if self.set_pending_approval is not None:
-                self.set_pending_approval(
-                    self._head_round_payload(
-                        self._parked_approval_payloads, new_active_id
-                    )
+                payload = self._head_round_payload(
+                    self._parked_approval_payloads, new_active_id
                 )
+                self.set_pending_approval(payload)
+                # ADR-080: neighbor auto-activation is a mount of a stored
+                # payload outside `_marshal_pending_approval` -- arm the
+                # summary trigger here too (fire-once; None clears no-op).
+                if isinstance(payload, dict):
+                    self._maybe_fire_permission_summary(payload)
             # TASK-910: same re-derive for the skill-install/script cards --
             # closing the ACTIVE session auto-activates a neighbor, which is
             # now the VIEWED session exactly as if `switch_session` had
@@ -11134,12 +11151,16 @@ class ConsoleChatController:
 
         ADR-080 trigger: ``fallback`` only when some pending row lacks a
         rationale, ``always`` for every round with rows. One call per
-        ``round_id`` -- no-call outcomes also consume the once-flag. Fired
-        from ``_marshal_pending_approval`` (the arm-time head mount); the
-        session-activation remounts (``switch_session``/attach) mount via
-        ``set_pending_approval`` directly and never re-fire -- a round that
-        armed while parked fires only if a later marshal-mount reaches it.
-        Never raises.
+        ``round_id`` -- no-call outcomes also consume the once-flag, so
+        exactly one trigger check runs per round no matter how many times
+        it mounts. Called from EVERY path that marshals a stored approval
+        payload to the UI: ``_marshal_pending_approval`` (arm-time head
+        mount), the session-activation mounts (``new_session``/
+        ``switch_session``/``close_session`` neighbor activation,
+        ``remount_pending_approval_for_active_session`` headless attach)
+        and ``_remount_head`` (sibling promotion on resolve/revoke) -- so
+        a round that armed while parked fires when its card actually
+        mounts. Never raises.
         """
         round_id = str(payload.get("round_id") or "")
         rows = payload.get("calls") or []
@@ -11361,13 +11382,21 @@ class ConsoleChatController:
             return
 
         def _apply() -> None:
-            if session_id is None:
-                active = self.store.active_session_id or ""
-                setter(self._head_round_payload(store, active))
+            target = session_id
+            if target is None:
+                target = self.store.active_session_id or ""
+            elif target != (self.store.active_session_id or ""):
                 return
-            if session_id != (self.store.active_session_id or ""):
-                return
-            setter(self._head_round_payload(store, session_id))
+            payload = self._head_round_payload(store, target)
+            setter(payload)
+            # ADR-080: this is the promotion mount (a head resolving or a
+            # run revoking hands the card to the queued sibling) and it
+            # bypasses `_marshal_pending_approval`, so the summary trigger
+            # is armed here too. No-op for non-MCP stores sharing this
+            # helper (skill bridges): their rounds are unknown to
+            # `_pending_approval_rounds`, and fire-once guards repeats.
+            if isinstance(payload, dict):
+                self._maybe_fire_permission_summary(payload)
 
         self.app.call_from_thread(_apply)
 
@@ -11406,6 +11435,11 @@ class ConsoleChatController:
         if payload is None:
             return False
         self.set_pending_approval(payload)
+        # ADR-080: a headless attach is often the FIRST mount a parked
+        # round ever gets -- arm the summary trigger here (bypasses
+        # `_marshal_pending_approval`; fire-once makes re-attaches safe).
+        if isinstance(payload, dict):
+            self._maybe_fire_permission_summary(payload)
         return True
 
     def _approval_view_is_detached(self) -> bool:
