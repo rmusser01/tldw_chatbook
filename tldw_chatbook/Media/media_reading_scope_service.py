@@ -516,7 +516,7 @@ class MediaReadingScopeService:
         return {
             "id": f"local:media:{backing_id}",
             "backing_media_id": backing_id,
-            "title": str(item.get("title") or "Untitled"),
+            "title": str(item.get("title") or "").strip() or "Untitled",
             "media_type": str(item["type"]).strip() if item.get("type") else None,
             "trash_date": str(item["trash_date"]) if item.get("trash_date") else None,
         }

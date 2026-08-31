@@ -7,7 +7,10 @@ from typing import Any
 
 import pytest
 
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Library.library_media_state import MediaTrashScope
+from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
+from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
 from tldw_chatbook.UI.Library_Modules import (
     library_media_trash_browse_controller as controller_module,
 )
@@ -90,6 +93,57 @@ def _controller(
         request_is_active=active,
     )
     return controller, screen, service
+
+
+@pytest.mark.asyncio
+async def test_controller_canonicalizes_real_database_trash_titles(tmp_path):
+    database = MediaDatabase(
+        db_path=tmp_path / "canonical-trash-titles.sqlite",
+        client_id="canonical-trash-titles",
+    )
+    try:
+        padded_id, _uuid, _message = database.add_media_with_keywords(
+            title="  padded title  ",
+            content="padded",
+            media_type="document",
+            keywords=[],
+        )
+        blank_id, _uuid, _message = database.add_media_with_keywords(
+            title="   ",
+            content="blank",
+            media_type="document",
+            keywords=[],
+        )
+        assert database.mark_as_trash(padded_id)
+        assert database.mark_as_trash(blank_id)
+        service = MediaReadingScopeService(
+            local_service=LocalMediaReadingService(database), server_service=None
+        )
+        screen = _Screen()
+        controller = LibraryMediaTrashBrowseController(
+            screen=screen,
+            run_service_call=lambda: _call,
+            media_service=lambda: service,
+            sync_view=lambda: (lambda _focus: None),
+            request_is_active=lambda: True,
+        )
+
+        controller.request(MediaTrashScope(), origin="entry", focus_identity=None)
+        await screen.pending.pop()
+
+        assert controller.state.error_copy == ""
+        assert {
+            item["backing_media_id"]: item["title"]
+            for item in controller.state.retained_items
+        } == {
+            padded_id: "padded title",
+            blank_id: "Untitled",
+        }
+        assert controller.retry(focus_identity=None) is not None
+        await screen.pending.pop()
+        assert controller.state.freshness == "fresh"
+    finally:
+        database.close_connection()
 
 
 @pytest.mark.asyncio
