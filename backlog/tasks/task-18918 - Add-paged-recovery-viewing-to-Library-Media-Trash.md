@@ -1,10 +1,10 @@
 ---
 id: TASK-18918
 title: Add paged recovery viewing to Library Media Trash
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-08-15 02:51'
-updated_date: '2026-08-31 15:41'
+updated_date: '2026-08-31 16:17'
 labels:
   - library
   - pagination
@@ -239,6 +239,78 @@ amendment:
   Tests/Live/test_library_media_trash_paging_closeout.py`, and `git diff
   --check` all passed. The repository virtualenv had to be prepended to `PATH`
   because bare `ruff` and `python` are not exposed by the login shell.
+
+### Final whole-branch review repairs
+
+The final cumulative review found five additional correctness gaps. They were
+reproduced independently and repaired in commits `7972a2e752`, `efbdd171fa`,
+`8a5c31de98`, `c17b64e4ce`, and the test-fixture cleanup `ce3a720fbb`:
+
+- Permanent deletion now owns its Trash eligibility and destructive predicate
+  in one immediate write transaction. The conditional Media delete must match
+  `id`, `deleted=0`, and `is_trash=1` before any FTS or child cleanup; a failed
+  predicate cannot partially clean up or delete a concurrently restored row.
+- The scope boundary canonicalizes every Trash title with
+  `str(raw or "").strip() or "Untitled"` before immutable state validation.
+- Mutation claims carry an immutable lifecycle generation through commit,
+  failure, and post-mutation reads. Invalidated or detached claims publish no
+  state, notices, source changes, canvas work, or refresh, while the shared
+  mutation interlock still releases.
+- Delete acknowledgements require `ok is True` plus the exact captured non-bool
+  integer media ID. Restore acknowledgements require the captured non-bool
+  integer ID, `deleted == 0`, `is_trash == 0`, and valid title/type metadata.
+  Malformed, incomplete, false, and wrong-identity responses fail closed.
+- Trash Restore explicitly requests `include_content=False` and
+  `include_versions=False`. Only a newly built bounded
+  `id/title/type/deleted/is_trash` summary enters the retained Media rail
+  snapshot; response content, documents, and versions are discarded.
+
+Review-repair RED/GREEN evidence:
+
+- Atomic deletion: the focused active-row cleanup regression and the
+  deterministic two-connection restore/delete barrier both failed before the
+  fix because the active row was hard-deleted. After the database transaction
+  became the sole eligibility owner, the atomic race, normal Trash cascade,
+  non-Trash refusal, and privacy cases passed **8**, with **56 deselected** and
+  **1 warning**.
+- Title canonicalization: the real file-backed
+  DB→local-service→scope-service→controller test failed before the fix with
+  `Could not load Trash` for padded/blank titles; after canonicalization its
+  padded and whitespace-only cases passed **2**.
+- Lifecycle fencing: the controller's invalidated commit/failure cases failed
+  **2** before the fix by mutating retained state and scheduling a refresh.
+  After immutable claim propagation, the focused controller plus mounted
+  unmount matrix passed **31**, with **46 deselected** and **2 warnings**.
+- Response validation and bounded restore: the mounted malformed/wrong-ID and
+  large-payload command failed **9**, passed **2**, deselected **63**, and
+  reported **2 warnings** before the fix. After strict validation and bounded
+  reconciliation, the same **11 passed**; the related existing mutation and
+  real-database restore selection passed **8**, with **66 deselected** and
+  **2 warnings**.
+
+Fresh final verification after all five repairs:
+
+- The established pure filter passed **113**, deselected **191**, and reported
+  **1 warning in 4.68s**. The prior **108** remain green; the five added
+  in-filter nodes are the atomic DB guard, controlled service race, real-chain
+  title regression, and two lifecycle terminal outcomes.
+- Every changed DB/service/state/controller/privacy-owner test file passed
+  **341 with 6 warnings in 7.69s**.
+- `Tests/UI/test_library_media_trash.py` first exposed one stale test-double
+  signature that rejected the new bounded Restore flags before call entry.
+  The signature-only repair passed its exact node, then the complete mounted
+  file passed **74 with 2 warnings in 76.33s**.
+- The settlement and side-by-side cross-reader files passed **73 with 2
+  warnings in 104.60s**.
+- The live privacy/hardening closeout file passed **5 with 6 warnings in
+  71.12s**, including its four-size real-database walkthrough.
+- Ruff passed for all ten production/test files changed since `70605f1608`;
+  `py_compile` passed for all five changed production files; both the cumulative
+  committed diff and working-tree `git diff --check` passed.
+
+TASK-18918 remains **In Progress** until the repaired cumulative branch receives
+fresh green spec and quality reviews. The executable evidence is complete; no
+task status claim is made ahead of those review gates.
 
 ### ADR check
 
