@@ -176,16 +176,6 @@ def _home_response_total(result: Any) -> int | None:
     return None
 
 
-def _home_first_record(result: Any) -> Mapping[str, Any] | None:
-    """Return the first record of a list response (list or items-mapping)."""
-    if isinstance(result, Mapping):
-        result = result.get("items")
-    if isinstance(result, Sequence) and not isinstance(result, (str, bytes, bytearray)):
-        first = next(iter(result), None)
-        return first if isinstance(first, Mapping) else None
-    return None
-
-
 def _home_record_timestamp(record: Mapping[str, Any] | None) -> datetime:
     """Parse a record's freshest timestamp for newest-wins comparison."""
     fallback = datetime.min.replace(tzinfo=timezone.utc)
