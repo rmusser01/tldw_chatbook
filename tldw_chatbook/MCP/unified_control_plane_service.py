@@ -11,7 +11,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from loguru import logger
 
@@ -19,22 +19,6 @@ from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 from .execution_log import MCPExecutionLog, build_record
-from .hub_test_execution import (
-    LocalHubDecision,
-    LocalHubExecutionCoordinator,
-    LocalHubExecutionOutcome,
-    LocalHubFinalGate,
-    LocalHubProviderTerminal,
-    LocalHubStatus,
-    OneShotLocalHubApproval,
-    RegisteredToolTestPreview,
-    ToolTestAdmissionBlocked,
-    ToolTestAdmissionPreview,
-    ToolTestAdmissionStale,
-    ToolTestPreviewRegistry,
-    authority_fingerprint,
-    canonicalize_arguments,
-)
 from .hub_tool_catalog import (
     HubTool,
     builtin_tools_from_inventory,
@@ -68,6 +52,19 @@ from .server_target_store import ConfiguredServerTargetStore
 from .unified_context_store import UnifiedMCPContextStore
 from .unified_control_models import ServerAccessContext, UnifiedMCPContext
 from tldw_chatbook.Utils.filesystem_identity import DirectoryChain
+
+if TYPE_CHECKING:
+    from .hub_test_execution import (
+        LocalHubDecision,
+        LocalHubExecutionCoordinator,
+        LocalHubExecutionOutcome,
+        OneShotLocalHubApproval,
+        RegisteredToolTestPreview,
+        ToolTestAdmissionBlocked,
+        ToolTestAdmissionPreview,
+        ToolTestAdmissionStale,
+        ToolTestPreviewRegistry,
+    )
 
 # Task 6 (PR-T3), Route B: refusal copy for the Advanced runner's
 # `tool.execute` action when the Hub's per-tool permission gate resolves the
@@ -246,13 +243,39 @@ class UnifiedMCPControlPlaneService:
         self._execution_log: MCPExecutionLog | None = None
         self._execution_log_init_lock = threading.Lock()
         self._permission_store: MCPPermissionStore | None = None
-        self._hub_test_previews = ToolTestPreviewRegistry()
-        self._local_hub_execution = LocalHubExecutionCoordinator()
+        self._hub_test_state_lock = threading.Lock()
+        self._hub_test_previews: ToolTestPreviewRegistry | None = None
+        self._local_hub_execution: LocalHubExecutionCoordinator | None = None
         # Chat bridge (Phase 5): in-memory-only, app-run-lifetime session
         # approvals. Never persisted -- a fresh process/instance starts
         # empty, and `clear_session_approvals()` is the only other way
         # entries leave this set.
         self._session_approvals: set[tuple[str, str]] = set()
+
+    def _ensure_hub_test_state(
+        self,
+    ) -> tuple[ToolTestPreviewRegistry, LocalHubExecutionCoordinator]:
+        """Create first-use Hub test state without charging app startup."""
+        previews = self._hub_test_previews
+        execution = self._local_hub_execution
+        if previews is not None and execution is not None:
+            return previews, execution
+        with self._hub_test_state_lock:
+            previews = self._hub_test_previews
+            execution = self._local_hub_execution
+            if previews is None:
+                from .hub_test_execution import (
+                    ToolTestPreviewRegistry,
+                )
+
+                previews = ToolTestPreviewRegistry()
+                self._hub_test_previews = previews
+            if execution is None:
+                from .hub_test_execution import LocalHubExecutionCoordinator
+
+                execution = LocalHubExecutionCoordinator()
+                self._local_hub_execution = execution
+            return previews, execution
 
     @property
     def selected_source(self) -> str:
@@ -2648,7 +2671,8 @@ class UnifiedMCPControlPlaneService:
 
     def revoke_hub_test_preview(self, nonce: str) -> None:
         """Revoke one prepared Hub test nonce if it is still live."""
-        self._hub_test_previews.revoke(str(nonce or ""))
+        if self._hub_test_previews is not None:
+            self._hub_test_previews.revoke(str(nonce or ""))
 
     async def execute_prepared_hub_test(
         self,
@@ -2668,8 +2692,15 @@ class UnifiedMCPControlPlaneService:
         the immutable preview before either the legacy MCP seam or the private
         local-Hub seam can be reached.
         """
+        from .hub_test_execution import (
+            ToolTestAdmissionBlocked,
+            ToolTestAdmissionStale,
+            canonicalize_arguments,
+        )
+
         canonical_bytes, dispatch_arguments = canonicalize_arguments(arguments)
-        registered = self._hub_test_previews.consume(str(nonce or ""))
+        previews, _execution = self._ensure_hub_test_state()
+        registered = previews.consume(str(nonce or ""))
         if registered is None:
             return ToolTestAdmissionStale(reason="preview_unavailable")
 
@@ -2861,6 +2892,12 @@ class UnifiedMCPControlPlaneService:
         | ToolTestAdmissionStale
     ):
         """Rebuild and compare one consumed local preview on a worker thread."""
+        from .hub_test_execution import (
+            ToolTestAdmissionBlocked,
+            ToolTestAdmissionStale,
+            canonicalize_arguments,
+        )
+
         public = registered.public
         resolved = self._resolve_hub_test(public.server_key, public.tool_name)
         if resolved is None:
@@ -2958,6 +2995,13 @@ class UnifiedMCPControlPlaneService:
         from tldw_chatbook.Agents.agent_models import ToolResult
         from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
         from . import local_server_tools
+        from .hub_test_execution import (
+            LocalHubExecutionOutcome,
+            LocalHubFinalGate,
+            LocalHubStatus,
+            OneShotLocalHubApproval,
+            authority_fingerprint,
+        )
 
         handle = None
         approval_callback: OneShotLocalHubApproval | None = None
@@ -3151,6 +3195,13 @@ class UnifiedMCPControlPlaneService:
     ) -> LocalHubExecutionOutcome | ToolTestAdmissionBlocked | ToolTestAdmissionStale:
         """Own local review through terminal audit independently of its caller."""
         from tldw_chatbook.Agents.agent_models import ToolResult
+        from .hub_test_execution import (
+            LocalHubExecutionOutcome,
+            LocalHubFinalGate,
+            LocalHubStatus,
+            ToolTestAdmissionBlocked,
+            ToolTestAdmissionStale,
+        )
 
         public = registered.public
         key = (public.server_key, public.tool_name)
@@ -3378,7 +3429,8 @@ class UnifiedMCPControlPlaneService:
                     except BaseException:
                         pass
 
-        owner = self._local_hub_execution.start(key, _owner())
+        _previews, execution = self._ensure_hub_test_state()
+        owner = execution.start(key, _owner())
         if owner is None:
             outcome = LocalHubExecutionOutcome(
                 decision="denied",
@@ -3410,7 +3462,10 @@ class UnifiedMCPControlPlaneService:
 
     def hub_test_active(self, server_key: str, tool_name: str) -> bool:
         """Return whether the service owns an active exact local Hub test."""
-        return self._local_hub_execution.active(server_key, tool_name)
+        execution = self._local_hub_execution
+        return (
+            execution.active(server_key, tool_name) if execution is not None else False
+        )
 
     @staticmethod
     def _safe_local_hub_result(result: Any, root: Path, *, hide_error: bool) -> Any:
@@ -3563,6 +3618,13 @@ class UnifiedMCPControlPlaneService:
         duration_ms: int,
     ) -> LocalHubExecutionOutcome:
         """Derive a terminal exclusively from structured provider facts."""
+        from .hub_test_execution import (
+            LocalHubExecutionOutcome,
+            LocalHubFinalGate,
+            LocalHubProviderTerminal,
+            LocalHubStatus,
+        )
+
         raw_reason = str(getattr(detail.reason_code, "value", detail.reason_code))
         raw_terminal = str(
             getattr(detail.provider_terminal, "value", detail.provider_terminal)
@@ -3828,6 +3890,11 @@ class UnifiedMCPControlPlaneService:
 
     def _preview_fields(self, resolved: _ResolvedHubTest) -> ToolTestAdmissionPreview:
         """Build comparison-only preview fields without registering a nonce."""
+        from .hub_test_execution import (
+            ToolTestAdmissionPreview,
+            authority_fingerprint,
+        )
+
         rendered_gate = "unavailable"
         if resolved.tool.executable and resolved.unavailable_reason is None:
             try:
@@ -3864,7 +3931,8 @@ class UnifiedMCPControlPlaneService:
         self, resolved: _ResolvedHubTest
     ) -> ToolTestAdmissionPreview:
         fields = self._preview_fields(resolved)
-        return self._hub_test_previews.issue(
+        previews, _execution = self._ensure_hub_test_state()
+        return previews.issue(
             server_key=fields.server_key,
             tool_name=fields.tool_name,
             definition_hash=fields.definition_hash,
@@ -3897,6 +3965,8 @@ class UnifiedMCPControlPlaneService:
         reason: str,
         refreshed: ToolTestAdmissionPreview | None = None,
     ) -> ToolTestAdmissionBlocked:
+        from .hub_test_execution import ToolTestAdmissionBlocked
+
         self._record_prepared_hub_block(public, reason)
         return ToolTestAdmissionBlocked(reason=reason, refreshed_preview=refreshed)
 
@@ -3907,6 +3977,8 @@ class UnifiedMCPControlPlaneService:
         reason: str,
         refreshed: ToolTestAdmissionPreview | None = None,
     ) -> ToolTestAdmissionStale:
+        from .hub_test_execution import ToolTestAdmissionStale
+
         self._record_prepared_hub_block(public, reason)
         return ToolTestAdmissionStale(
             reason=reason,
