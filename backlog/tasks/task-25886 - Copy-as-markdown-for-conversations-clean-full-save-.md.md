@@ -1,3 +1,16 @@
+---
+id: TASK-25886
+title: 'Copy-as-markdown for conversations (clean, full, save .md)'
+status: Done
+assignee:
+  - '@Robert'
+created_date: '2026-08-31 14:55'
+updated_date: '2026-08-31 16:01'
+labels: []
+dependencies: []
+---
+
+
 ## Renumbering
 
 TASK-19601 owner rule, twice in one PR: this task first took id 25714,
