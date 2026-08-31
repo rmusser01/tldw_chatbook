@@ -46,6 +46,12 @@ clear and content-free.
 
 **Status:** Complete (Chatbook slice)
 
+**Cross-repository contract pin:** tldw_server commit `a92e12110d` preserves the
+successful bootstrap shape and adds strict, content-free HTTP 409 attention for
+schema range, quota shortfall, and purge-generation mismatch. Chatbook accepts
+only those discriminated typed shapes; malformed or inconsistent bodies remain
+generic failures and never enter the trusted Settings review surface.
+
 ## Stage 4: Verification and review
 
 **Goal:** Complete targeted regressions, static/security gates, task evidence,
@@ -101,6 +107,22 @@ approved bootstrap contract performs zero remote control-plane writes.
 
 **Remediation status:** In Progress — targeted implementation is green; controller
 review remains required before closure.
+
+### Structured bootstrap attention integration (2026-08-30)
+
+- Strictly parses the three server `a92e12110d` attention variants and rejects
+  extra fields, wrong discriminators/error codes, coercion, and inconsistent
+  content-free values.
+- Carries only the typed attention object across the link-service boundary; raw
+  error messages and response bodies are neither logged nor presented.
+- Canonical F9 Settings renders exact schema bounds, required/server quota
+  values and deficits, or expected/current purge generations in the incumbent
+  protected modal. Approval remains disabled; retry and cancel remain available.
+- Malformed 409 responses fall back to the existing content-safe generic
+  notification. They cannot create review/freeze/link state.
+
+**Integration status:** Complete in Chatbook commit `f42c173c55`; controller
+review remains required before TASK-24727 closure.
 
 ## ADR check
 
