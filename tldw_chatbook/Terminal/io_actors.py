@@ -503,6 +503,7 @@ class TerminalOutputActor:
         self._queue: deque[_OutputChunk] = deque()
         self._pending_bytes = 0
         self._refresh_pending = False
+        self._output_closed = False
         self._lock = Lock()
         self._parser_lock = Lock()
 
@@ -565,14 +566,26 @@ class TerminalOutputActor:
         encoded_size = len(data)
         if encoded_size > self.max_chunk_bytes:
             return OutputOfferResult(reason=OutputRefusalReason.CHUNK_TOO_LARGE)
-        if encoded_size == 0:
-            return OutputOfferResult(accepted=True)
         with self._lock:
+            if self._output_closed:
+                return OutputOfferResult()
+            if encoded_size == 0:
+                return OutputOfferResult(accepted=True)
             if self._pending_bytes + encoded_size > self.capacity_bytes:
                 return OutputOfferResult(reason=OutputRefusalReason.BACKPRESSURE)
             self._queue.append(_OutputChunk(data=data, encoded_size=encoded_size))
             self._pending_bytes += encoded_size
             return OutputOfferResult(accepted=True)
+
+    def close_output(self) -> int:
+        """Atomically close admission and return already-admitted pending bytes.
+
+        Returns:
+            Bytes admitted before the output-close boundary that still need parsing.
+        """
+        with self._lock:
+            self._output_closed = True
+            return self._pending_bytes
 
     def process_parser_turn(
         self,

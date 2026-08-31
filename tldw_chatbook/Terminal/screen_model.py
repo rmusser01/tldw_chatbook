@@ -506,6 +506,11 @@ class TerminalScreenModel:
         if decoded:
             self._feed_parser(decoded)
 
+    @property
+    def failure_reason(self) -> TerminalReason | None:
+        """Return the content-free terminal protocol failure category."""
+        return self._failure_reason
+
     def finish(self) -> None:
         """Finalize incremental decoding and discard incomplete controls."""
         if self._failure_reason is not None:
