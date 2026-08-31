@@ -1806,6 +1806,10 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             menu_button.tooltip = f"Actions for {title}"
             menu_button.row_key = row.row_key
             menu_button.conversation_id = row.conversation_id
+            # PR #2262 review: Copy-as-markdown reads open native sessions
+            # live; the asterisk needs the same identity the row button
+            # carries, or unsaved rows gate Copy as empty.
+            menu_button.native_session_id = row.native_session_id
             menu_button.starred = row.starred
             menu_button.marks_available = marks_available
             menu_button.conversation_title = row.title

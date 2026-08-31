@@ -132,10 +132,11 @@ class ConsoleConversationActionMenu(Vertical):
 
     can_focus = True
 
-    #: Painted height of the menu's tallest page (the root: five one-row
-    #: buttons plus the rounded border), used by the screen's anchor
-    #: clamping. Keep in lockstep with the root page's item count.
-    ROOT_PAGE_HEIGHT = 7
+    #: Painted height of the menu's tallest page (the root: six one-row
+    #: buttons plus the rounded border -- Copy as joined in TASK-25886),
+    #: used by the screen's anchor clamping. Keep in lockstep with the
+    #: root page's item count.
+    ROOT_PAGE_HEIGHT = 8
 
 
     #: Anchoring clamps against this; the stylesheet below must declare the
@@ -229,7 +230,7 @@ class ConsoleConversationActionMenu(Vertical):
         """
         for item in build_conversation_menu(self._target, self._page):
             label = f"{item.label} ▸" if item.opens_page and item.action_id.endswith(
-                ("status", "more")
+                ("status", "more", "copy")
             ) else item.label
             if item.is_current:
                 label = f"• {label}"

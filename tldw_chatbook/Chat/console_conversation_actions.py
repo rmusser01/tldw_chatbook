@@ -47,7 +47,7 @@ CONVERSATION_STATE_LABELS: dict[str, str] = {
     "non-viable": "Not viable",
 }
 
-MenuPage = Literal["root", "status", "more"]
+MenuPage = Literal["root", "status", "more", "copy"]
 
 #: Action ids the menu can emit. Kept as plain strings so the widget, the
 #: screen handler and the tests all name them the same way.
@@ -60,6 +60,9 @@ ACTION_DELETE = "delete"
 ACTION_SET_STATE_PREFIX = "set-state:"
 ACTION_PAGE_PREFIX = "page:"
 ACTION_BACK = "page:root"
+ACTION_COPY_CLEAN = "copy-markdown:clean"
+ACTION_COPY_FULL = "copy-markdown:full"
+ACTION_SAVE_MARKDOWN = "save-markdown"
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +103,11 @@ class ConversationMenuTarget:
         starred: Whether the conversation is locally favourited.
         favorites_available: Whether the local marks service can answer at
             all. False replaces the old "Local stars unavailable" line.
+        native_session_id: The open native Console session behind this row,
+            when there is one; Copy-as reads its messages live from the
+            chat store instead of the database.
+        has_messages: Whether any source reports messages for the row, so
+            the copy entries can gate on it.
     """
 
     conversation_id: str | None
@@ -107,6 +115,8 @@ class ConversationMenuTarget:
     state: str = DEFAULT_CONVERSATION_STATE
     starred: bool = False
     favorites_available: bool = True
+    native_session_id: str = ""
+    has_messages: bool = False
 
     @property
     def is_saved(self) -> bool:
@@ -149,6 +159,8 @@ def build_conversation_menu(
         return _status_page(target)
     if page == "more":
         return _more_page(target)
+    if page == "copy":
+        return _copy_page(target)
     return _root_page(target)
 
 
@@ -210,6 +222,11 @@ def _root_page(
             disabled_reason="" if saved else _UNSAVED_REASON,
         ),
         ConversationMenuItem(
+            action_id=f"{ACTION_PAGE_PREFIX}copy",
+            label="Copy as",
+            opens_page="copy",
+        ),
+        ConversationMenuItem(
             action_id=f"{ACTION_PAGE_PREFIX}more",
             label="More",
             opens_page="more",
@@ -237,6 +254,34 @@ def _status_page(
             )
         )
     return tuple(items)
+
+
+def _copy_page(
+    target: ConversationMenuTarget,
+) -> tuple[ConversationMenuItem, ...]:
+    empty = not target.has_messages
+    reason = "This chat has no messages yet." if empty else ""
+    return (
+        ConversationMenuItem(action_id=ACTION_BACK, label="‹ Back", opens_page="root"),
+        ConversationMenuItem(
+            action_id=ACTION_COPY_CLEAN,
+            label="Clean markdown",
+            enabled=not empty,
+            disabled_reason=reason,
+        ),
+        ConversationMenuItem(
+            action_id=ACTION_COPY_FULL,
+            label="Full transcript",
+            enabled=not empty,
+            disabled_reason=reason,
+        ),
+        ConversationMenuItem(
+            action_id=ACTION_SAVE_MARKDOWN,
+            label="Save .md…",
+            enabled=not empty,
+            disabled_reason=reason,
+        ),
+    )
 
 
 def _more_page(
@@ -276,7 +321,7 @@ def page_from_action(action_id: str) -> MenuPage | None:
     if not action_id.startswith(ACTION_PAGE_PREFIX):
         return None
     candidate = action_id[len(ACTION_PAGE_PREFIX) :]
-    return candidate if candidate in ("root", "status", "more") else None
+    return candidate if candidate in ("root", "status", "more", "copy") else None
 
 
 def conversation_state_label(state: str | None) -> str:

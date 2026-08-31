@@ -170,7 +170,7 @@ async def test_unsaved_native_rows_get_none_and_gate_saved_only_actions() -> Non
         selected=True,
         star_enabled=False,
     )
-    conversation_id, title = _menu_conversation_payload(unsaved)
+    conversation_id, title, native_sid = _menu_conversation_payload(unsaved)
     assert conversation_id is None, "native: identity leaked to the menu"
     assert title == "Untitled"
 
@@ -182,9 +182,10 @@ async def test_unsaved_native_rows_get_none_and_gate_saved_only_actions() -> Non
         selected=False,
         star_enabled=True,
     )
-    conversation_id, title = _menu_conversation_payload(saved)
+    conversation_id, title, native_sid = _menu_conversation_payload(saved)
     assert conversation_id == "conv-123"
     assert title == "Real chat"
+    assert native_sid == ""
 
     async with make_console_pilot(size=(160, 44), production_styles=True) as pilot:
         console = pilot.app.screen

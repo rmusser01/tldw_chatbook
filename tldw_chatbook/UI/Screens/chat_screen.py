@@ -1536,6 +1536,37 @@ class _ControllerState:
         setattr(self._owner(instance), self._state_name, value)
 
 
+def _active_lineage_rows(
+    db, conversation_id: str, rows: list[dict]
+) -> list[dict]:
+    """Filter fetched rows to the conversation's active branch.
+
+    PR #2262 review: a conversation can hold off-path branches (regenerate
+    siblings) and unselected variants; the transcript the user sees is the
+    parent-chain from ``active_leaf_message_id``. Falls back to every row
+    for legacy conversations with no leaf pointer.
+    """
+    by_id = {str(row.get("id")): row for row in rows}
+    record = None
+    try:
+        record = db.get_conversation_by_id(conversation_id)
+    except Exception:
+        record = None
+    leaf = str((record or {}).get("active_leaf_message_id") or "") or None
+    if leaf is None or leaf not in by_id:
+        return rows
+    lineage: list[dict] = []
+    seen: set[str] = set()
+    current: str | None = leaf
+    while current is not None and current in by_id and current not in seen:
+        seen.add(current)
+        lineage.append(by_id[current])
+        parent = by_id[current].get("parent_message_id")
+        current = str(parent) if parent else None
+    lineage.reverse()
+    return lineage if len(lineage) == len(seen) else lineage
+
+
 class ChatScreen(BaseAppScreen):
     """
     Chat screen with comprehensive state management.
@@ -4453,7 +4484,7 @@ class ChatScreen(BaseAppScreen):
             estimate_factory=estimate_factory,
             token_estimate=token_estimate,
             in_progress=in_progress,
-            # task-25836: once the snapshot loads, the Next Send header
+            # task-25886: once the snapshot loads, the Next Send header
             # count switches from the draft-only pre-load value to the whole
             # next-send request (system + messages + tools + staged
             # evidence) this estimate computes from the payload. The
@@ -4548,7 +4579,7 @@ class ChatScreen(BaseAppScreen):
     ) -> Optional[int]:
         """Estimate the tokens the snapshot's next-send payload will ship.
 
-        task-25836: the Next Send header's count must answer "what is this
+        task-25886: the Next Send header's count must answer "what is this
         message about to send", which on a first message is dominated by the
         system prompt, project-instruction bodies, tool schemas, and staged
         evidence -- none of which the draft-only estimate sees. Counted via
@@ -4701,12 +4732,17 @@ class ChatScreen(BaseAppScreen):
         conversation_id = (
             str(getattr(opener, "conversation_id", "") or "").strip() or None
         )
+        native_session_id = str(getattr(opener, "native_session_id", "") or "")
         target = ConversationMenuTarget(
             conversation_id=conversation_id,
             title=str(getattr(opener, "conversation_title", "") or ""),
             state=self._console_conversation_state(conversation_id),
             starred=bool(getattr(opener, "starred", False)),
             favorites_available=bool(getattr(opener, "marks_available", True)),
+            native_session_id=native_session_id,
+            has_messages=self._console_target_has_messages(
+                native_session_id, conversation_id
+            ),
         )
         # Clamp into the screen the same way the transcript's overflow menu
         # does: an asterisk near the bottom of a short terminal would
@@ -4882,6 +4918,7 @@ class ChatScreen(BaseAppScreen):
         *,
         conversation_id: str | None,
         title: str,
+        native_session_id: str = "",
         screen_x: int,
         screen_y: int,
     ) -> None:
@@ -4917,6 +4954,10 @@ class ChatScreen(BaseAppScreen):
             state=self._console_conversation_state(conversation_id),
             starred=starred,
             favorites_available=marks_service is not None,
+            native_session_id=native_session_id,
+            has_messages=self._console_target_has_messages(
+                native_session_id, conversation_id
+            ),
         )
         menu_width = ConsoleConversationActionMenu.MENU_WIDTH
         menu_height = ConsoleConversationActionMenu.ROOT_PAGE_HEIGHT
@@ -4991,8 +5032,9 @@ class ChatScreen(BaseAppScreen):
             return
         self.run_worker(
             self._open_console_tree_conversation_action_menu(
-                conversation_id=event.conversation_id,
+                    conversation_id=event.conversation_id,
                 title=event.title,
+                native_session_id=str(getattr(event, "native_session_id", "") or ""),
                 screen_x=event.screen_x,
                 screen_y=event.screen_y,
             ),
@@ -5097,6 +5139,177 @@ class ChatScreen(BaseAppScreen):
             return
         self._restore_console_menu_opener_focus(event.opener_id)
 
+    def _console_target_has_messages(
+        self, native_session_id: str, conversation_id: str | None
+    ) -> bool:
+        """Cheap open-time probe: does this row have any messages?
+
+        TASK-25886: gates the copy entries. A native session asks the live
+        store; a persisted conversation asks the database for a single row.
+        """
+        if native_session_id:
+            try:
+                store = self._ensure_console_chat_store()
+                return bool(store.read_only_messages_for_session(native_session_id))
+            except Exception:
+                return False
+        if not conversation_id:
+            return False
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return False
+        try:
+            return bool(
+                db.get_messages_for_conversation(conversation_id, limit=1)
+            )
+        except Exception:
+            return False
+
+    def _console_markdown_source_messages(self, target) -> list:
+        """Return normalized messages for a copy target, or [].
+
+        Source pick (TASK-25886): an open native session reads the LIVE
+        chat store (richest fidelity -- in-flight tool structure never
+        needed serializing); a persisted conversation reads the database,
+        paginated so long chats are not silently truncated at the default
+        page size.
+        """
+        from tldw_chatbook.Chat.console_conversation_markdown import (
+            markdown_messages_from_db_rows,
+            markdown_messages_from_store,
+        )
+
+        native_session_id = str(getattr(target, "native_session_id", "") or "")
+        if native_session_id:
+            try:
+                store = self._ensure_console_chat_store()
+                live = store.read_only_messages_for_session(native_session_id)
+            except Exception:
+                logger.opt(exception=True).debug(
+                    "copy-markdown live read failed"
+                )
+                live = []
+            if live:
+                return markdown_messages_from_store(live)
+        conversation_id = (target.conversation_id or "").strip()
+        if not conversation_id:
+            return []
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return []
+        rows: list[dict] = []
+        page_size = 200
+        offset = 0
+        # PR #2262 review: one logical read, one transaction (reads use the
+        # shared context manager too), then a lineage filter below.
+        with db.transaction():
+            while True:
+                page = db.get_messages_for_conversation(
+                    conversation_id, limit=page_size, offset=offset
+                )
+                rows.extend(page)
+                if len(page) < page_size:
+                    break
+                offset += page_size
+            active_rows = _active_lineage_rows(db, conversation_id, rows)
+        return markdown_messages_from_db_rows(active_rows)
+
+    def _render_console_conversation_markdown(self, target, fidelity: str):
+        """Render the target chat as markdown, or None when empty."""
+        from tldw_chatbook.Chat.console_conversation_markdown import (
+            render_conversation_markdown,
+        )
+        from datetime import date
+
+        messages = self._console_markdown_source_messages(target)
+        if not messages:
+            return None
+        return render_conversation_markdown(
+            title=str(getattr(target, "title", "") or ""),
+            rendered_at=date.today().isoformat(),
+            messages=messages,
+            fidelity=fidelity,
+        )
+
+    async def _copy_console_conversation_markdown(self, target, fidelity: str) -> None:
+        """Copy one conversation to the clipboard as markdown."""
+        import asyncio
+
+        # PR #2262 review: the paginated read + render are blocking work;
+        # coroutine workers still run on the UI loop, so push them off it.
+        markdown = await asyncio.to_thread(
+            self._render_console_conversation_markdown, target, fidelity
+        )
+        if markdown is None:
+            self.app.notify("This chat has no messages to copy.", severity="warning")
+            return
+        copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
+        if not callable(copy_to_clipboard):
+            self.app.notify("Clipboard is unavailable.", severity="warning")
+            return
+        copy_to_clipboard(markdown)
+        size_kb = max(1, round(len(markdown.encode("utf-8")) / 1024))
+        label = "Clean markdown" if fidelity == "clean" else "Full transcript"
+        self.app.notify(f"Copied {label} ({size_kb} KB).")
+
+    async def _save_console_conversation_markdown(self, target) -> None:
+        """Prompt for a path and write the Clean markdown rendering."""
+        from pathlib import Path
+
+        from tldw_chatbook.Widgets.Console.console_save_markdown_modal import (
+            ConsoleSaveMarkdownModal,
+            markdown_filename_slug,
+        )
+
+        import asyncio
+
+        markdown = await asyncio.to_thread(
+            self._render_console_conversation_markdown, target, "clean"
+        )
+        if markdown is None:
+            self.app.notify("This chat has no messages to save.", severity="warning")
+            return
+        title = str(getattr(target, "title", "") or "")
+        default_path = str(
+            Path.home() / "Downloads" / f"{markdown_filename_slug(title)}.md"
+        )
+
+        def _write(chosen: "str | None") -> None:
+            if not chosen:
+                return
+            self.run_worker(
+                self._write_console_markdown_file(chosen, markdown),
+                exclusive=True,
+                group="console-copy-markdown",
+            )
+
+        self.push_screen(ConsoleSaveMarkdownModal(default_path=default_path), callback=_write)
+
+    async def _write_console_markdown_file(self, path_text: str, markdown: str) -> None:
+        """Validate and write one markdown export off the loop."""
+        from pathlib import Path
+
+        import aiofiles
+
+        from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+        # expanduser FIRST: validate_path_simple rejects unresolved '~'
+        # components, and the expansion is exactly what a user means by it.
+        candidate = Path(path_text).expanduser()
+        try:
+            target_path = validate_path_simple(candidate, require_exists=False)
+        except Exception as exc:
+            self.app.notify(f"Invalid path: {exc}", severity="error")
+            return
+        try:
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            async with aiofiles.open(target_path, "w", encoding="utf-8") as fh:
+                await fh.write(markdown)
+        except Exception as exc:
+            self.app.notify(f"Could not write file: {exc}", severity="error")
+            return
+        self.app.notify(f"Saved {target_path.name}.")
+
     def on_conversation_action_chosen(self, event: Message) -> None:
         """Run the chosen row command against the captured conversation.
 
@@ -5119,6 +5332,25 @@ class ChatScreen(BaseAppScreen):
         target = event.target
         action_id = event.action_id
         conversation_id = (target.conversation_id or "").strip()
+        # TASK-25886: copy/save work for open native sessions too (their
+        # messages come from the live store), so they route BEFORE the
+        # persisted-id guard below.
+        if action_id in ("copy-markdown:clean", "copy-markdown:full"):
+            self.run_worker(
+                self._copy_console_conversation_markdown(
+                    target, "clean" if action_id.endswith("clean") else "full"
+                ),
+                exclusive=True,
+                group="console-copy-markdown",
+            )
+            return
+        if action_id == "save-markdown":
+            self.run_worker(
+                self._save_console_conversation_markdown(target),
+                exclusive=True,
+                group="console-copy-markdown",
+            )
+            return
         if not conversation_id:
             self.app.notify(
                 "Send or save this chat before managing it.", severity="warning"
@@ -8303,7 +8535,7 @@ class ChatScreen(BaseAppScreen):
     def _console_first_send_pseudo_rows(self) -> list[Any]:
         """Return estimated rows for the context a FIRST send will ship.
 
-        task-25836: while a conversation has no answered/billed turns, the
+        task-25886: while a conversation has no answered/billed turns, the
         next request carries the session system prompt, the native tool
         schemas, the effective-memory rows, an optional response prefill,
         and the composer draft -- none of which are transcript rows, so the
@@ -8471,7 +8703,7 @@ class ChatScreen(BaseAppScreen):
                 snapshot_messages = snapshot_messages + [
                     SimpleNamespace(role="user", content=staged_text, usage=None)
                 ]
-            # task-25836: a FIRST send ships the session system prompt, tool
+            # task-25886: a FIRST send ships the session system prompt, tool
             # schemas, and the draft itself on top of the staged evidence
             # above -- none of which existed as transcript rows, so a
             # brand-new conversation with a typed draft still read "0 tok".

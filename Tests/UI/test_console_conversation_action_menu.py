@@ -68,6 +68,7 @@ async def test_asterisk_opens_the_menu_with_the_expected_entries() -> None:
             "Change status ▸",
             "Archive",
             "Rename…",
+            "Copy as ▸",
             "More ▸",
         ]
 
@@ -292,3 +293,241 @@ def test_menu_width_constant_and_stylesheet_cannot_drift() -> None:
         f"{ConsoleConversationActionMenu.MENU_WIDTH}; anchoring and rendering "
         "have drifted apart"
     )
+
+
+# ---- Copy as markdown (TASK-25886) ---------------------------------------
+
+
+def _copy_target(**overrides):
+    from tldw_chatbook.Chat.console_conversation_actions import (
+        ConversationMenuTarget,
+    )
+
+    base = {
+        "conversation_id": "conv-copy",
+        "title": "Copyable chat",
+        "has_messages": True,
+    }
+    base.update(overrides)
+    return ConversationMenuTarget(**base)
+
+
+@pytest.mark.asyncio
+async def test_root_menu_offers_copy_as_with_disclosure_glyph() -> None:
+    """The Copy as opener carries the ▸ like the other page openers."""
+    async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
+        screen = pilot.app.screen
+        _opener(screen).press()
+        await pilot.pause(0.3)
+        labels = [
+            str(button.label).strip()
+            for button in screen.query_one(ConsoleConversationActionMenu).query(Button)
+        ]
+        assert labels[4] == "Copy as ▸"
+
+
+@pytest.mark.asyncio
+async def test_copy_page_offers_clean_full_and_save() -> None:
+    async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
+        screen = pilot.app.screen
+        _opener(screen).press()
+        await pilot.pause(0.3)
+        menu = screen.query_one(ConsoleConversationActionMenu)
+        next(
+            b
+            for b in menu.query(Button)
+            if getattr(b, "console_action_id", "") == "page:copy"
+        ).press()
+        await pilot.pause(0.5)
+        assert menu.page == "copy"
+        actions = [
+            getattr(b, "console_action_id", "") for b in menu.query(Button)
+        ]
+        assert actions == [
+            "page:root",
+            "copy-markdown:clean",
+            "copy-markdown:full",
+            "save-markdown",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_copy_clean_routes_to_clipboard_with_markdown(
+    monkeypatch, tmp_path
+) -> None:
+    async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
+        screen = pilot.app.screen
+        copied: list[str] = []
+        monkeypatch.setattr(
+            screen.app_instance,
+            "copy_to_clipboard",
+            lambda text: copied.append(text),
+        )
+        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+        screen.app_instance.chachanotes_db = CharactersRAGDB(
+            str(tmp_path / "copy.db"), "copy-test"
+        )
+        db = screen.app_instance.chachanotes_db
+        db = screen.app_instance.chachanotes_db
+        conv_id = db.add_conversation({"title": "Copyable chat"})
+        db.add_message(
+            {
+                "conversation_id": conv_id,
+                "sender": "user",
+                "content": "first question",
+            }
+        )
+        db.add_message(
+            {
+                "conversation_id": conv_id,
+                "sender": "assistant",
+                "content": "the answer",
+            }
+        )
+        monkeypatch.setattr(
+            screen,
+            "_console_conversation_state",
+            lambda cid: "in-progress",
+        )
+
+        from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
+            ConversationActionChosen,
+        )
+
+        screen.on_conversation_action_chosen(
+            ConversationActionChosen("copy-markdown:clean", _copy_target(conversation_id=conv_id))
+        )
+        await pilot.pause(1.0)
+
+        assert len(copied) == 1
+        markdown = copied[0]
+        assert markdown.startswith("# ")
+        assert "## User" in markdown and "first question" in markdown
+        assert "## Assistant" in markdown and "the answer" in markdown
+
+
+@pytest.mark.asyncio
+async def test_copy_empty_chat_is_gated_and_copies_nothing(monkeypatch) -> None:
+    from tldw_chatbook.Chat.console_conversation_actions import (
+        build_conversation_menu,
+    )
+
+    items = {
+        item.action_id: item
+        for item in build_conversation_menu(_copy_target(has_messages=False), page="copy")
+    }
+    assert items["copy-markdown:clean"].enabled is False
+    assert items["copy-markdown:clean"].disabled_reason == (
+        "This chat has no messages yet."
+    )
+
+
+@pytest.mark.asyncio
+async def test_save_writes_validated_markdown_file(monkeypatch, tmp_path) -> None:
+    async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
+        screen = pilot.app.screen
+        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+        screen.app_instance.chachanotes_db = CharactersRAGDB(
+            str(tmp_path / "copy.db"), "copy-test"
+        )
+        db = screen.app_instance.chachanotes_db
+        db = screen.app_instance.chachanotes_db
+        conv_id = db.add_conversation({"title": "Copyable chat"})
+        db.add_message(
+            {
+                "conversation_id": conv_id,
+                "sender": "user",
+                "content": "persisted question",
+            }
+        )
+        monkeypatch.setattr(
+            screen,
+            "_console_conversation_state",
+            lambda cid: "in-progress",
+        )
+        target = tmp_path / "exported.md"
+
+        from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
+            ConversationActionChosen,
+        )
+
+        async def _fake_save(t):
+            markdown = screen._render_console_conversation_markdown(t, "clean")
+            assert markdown is not None
+            await screen._write_console_markdown_file(str(target), markdown)
+
+        monkeypatch.setattr(screen, "_save_console_conversation_markdown", _fake_save)
+        screen.on_conversation_action_chosen(
+            ConversationActionChosen("save-markdown", _copy_target(conversation_id=conv_id))
+        )
+        await pilot.pause(1.0)
+
+        written = target.read_text(encoding="utf-8")
+        assert "persisted question" in written
+        assert written.startswith("# ")
+
+
+@pytest.mark.asyncio
+async def test_copy_follows_the_active_branch_not_every_sibling(
+    monkeypatch, tmp_path
+) -> None:
+    """Regenerated branches must not bleed into the export (PR #2262)."""
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
+        ConversationActionChosen,
+    )
+
+    async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
+        screen = pilot.app.screen
+        screen.app_instance.chachanotes_db = CharactersRAGDB(
+            str(tmp_path / "branch.db"), "branch-test"
+        )
+        db = screen.app_instance.chachanotes_db
+        conv_id = db.add_conversation({"title": "Branched chat"})
+        root = db.add_message(
+            {"conversation_id": conv_id, "sender": "user", "content": "question"}
+        )
+        db.add_message(
+            {
+                "conversation_id": conv_id,
+                "sender": "assistant",
+                "content": "first attempt",
+                "parent_message_id": root,
+            }
+        )
+        db.update_conversation(
+            conv_id, {"active_leaf_message_id": root}, expected_version=1
+        )
+        # Direct leaf update (update_conversation whitelists fields): the
+        # leaf points at root, so neither assistant branch exports.
+        import sqlite3 as _sqlite
+
+        conn = _sqlite.connect(str(tmp_path / "branch.db"))
+        second = conn.execute(
+            "SELECT id FROM messages WHERE content='first attempt'"
+        ).fetchone()[0]
+        conn.execute(
+            "UPDATE conversations SET active_leaf_message_id=? WHERE id=?",
+            (second, conv_id),
+        )
+        conn.commit()
+        conn.close()
+
+        copied: list[str] = []
+        monkeypatch.setattr(
+            screen.app_instance, "copy_to_clipboard", lambda t: copied.append(t)
+        )
+        screen.on_conversation_action_chosen(
+            ConversationActionChosen(
+                "copy-markdown:full",
+                _copy_target(conversation_id=conv_id, title="Branched chat"),
+            )
+        )
+        await pilot.pause(1.0)
+
+        assert len(copied) == 1
+        assert "question" in copied[0]
+        assert "first attempt" in copied[0]
+        assert copied[0].count("## Assistant") == 1
