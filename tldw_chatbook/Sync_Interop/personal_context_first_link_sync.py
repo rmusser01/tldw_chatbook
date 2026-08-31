@@ -64,6 +64,7 @@ class PersonalContextFirstLinkSync:
         bootstrap_cursor: str,
         bootstrap_heads: Mapping[str, Mapping[str, str]],
         expected_heads: Mapping[str, Mapping[str, str]],
+        reviewed_lineage: list[list[str]] | tuple[tuple[str, str, str], ...] | None = None,
     ) -> dict[str, Any]:
         """Confirm the exact reviewed, sync-eligible canonical head set.
 
@@ -91,6 +92,10 @@ class PersonalContextFirstLinkSync:
             state.get(key) != value for key, value in binding.items()
         ):
             raise ValueError("personal_context_reconciliation_binding_stale")
+        if reviewed_lineage is not None and state.get("reviewed_lineage") != list(
+            reviewed_lineage
+        ):
+            raise ValueError("personal_context_reconciliation_binding_stale")
         storage_key = self._dataset_keys.get(dataset_id)
         if storage_key is None or len(storage_key) != 32:
             raise ValueError("personal_context_staging_key_unavailable")
@@ -110,6 +115,11 @@ class PersonalContextFirstLinkSync:
             bootstrap_cursor=bootstrap_cursor,
         )
         push_cursor = transport_cursor
+        reviewed_lineage_allowlist = self._reviewed_lineage(
+            bootstrap_heads=bootstrap_heads,
+            expected_heads=expected_heads,
+            durable_lineage=state.get("reviewed_lineage", ()),
+        )
         while True:
             writes = getattr(self._profile, "first_link_reconciliation_writes", None)
             if not callable(writes):
@@ -149,6 +159,18 @@ class PersonalContextFirstLinkSync:
                 envelopes=envelopes,
                 domains=_DOMAINS,
             )
+            for envelope in envelopes:
+                if envelope.object_id is None or envelope.entity_version is None:
+                    raise RuntimeError(
+                        "personal_context_reconciliation_version_missing"
+                    )
+                reviewed_lineage_allowlist.add(
+                    (
+                        envelope.domain,
+                        str(envelope.object_id),
+                        str(envelope.entity_version),
+                    )
+                )
             payloads = [item.model_dump(mode="json") for item in envelopes]
             push = getattr(
                 self._server,
@@ -234,6 +256,15 @@ class PersonalContextFirstLinkSync:
                 envelope_count=len(pulled_envelopes),
             )
             for envelope in pulled_envelopes:
+                if envelope.entity_version is None or envelope.object_id is None:
+                    raise RuntimeError("personal_context_reconciliation_version_missing")
+                identity = (
+                    envelope.domain,
+                    str(envelope.object_id),
+                    str(envelope.entity_version),
+                )
+                if identity not in reviewed_lineage_allowlist:
+                    raise RuntimeError("personal_context_reviewed_lineage_changed")
                 writes = getattr(
                     self._profile, "first_link_reconciliation_writes", None
                 )
@@ -245,8 +276,6 @@ class PersonalContextFirstLinkSync:
                     result = applier.apply(envelope)
                 if result.get("status") not in {"applied", "ignored"}:
                     raise RuntimeError("personal_context_reconciliation_apply_failed")
-                if envelope.entity_version is None or envelope.object_id is None:
-                    raise RuntimeError("personal_context_reconciliation_version_missing")
                 if self._is_reviewed_head(envelope, expected_heads=expected_heads):
                     observed.setdefault(envelope.domain, {})[
                         str(envelope.object_id)
@@ -257,6 +286,31 @@ class PersonalContextFirstLinkSync:
         if observed != dict(expected_heads):
             raise RuntimeError("personal_context_convergence_unconfirmed")
         return {"confirmed_cursor": cursor, "confirmed_heads": observed}
+
+    @staticmethod
+    def _reviewed_lineage(
+        *,
+        bootstrap_heads: Mapping[str, Mapping[str, str]],
+        expected_heads: Mapping[str, Mapping[str, str]],
+        durable_lineage: list[list[str]] | tuple[tuple[str, str, str], ...],
+    ) -> set[tuple[str, str, str]]:
+        """Return exact reviewed heads; pushed reviewed history is added in-cycle."""
+
+        reviewed = {
+            (str(domain), str(object_id), str(version_id))
+            for heads in (bootstrap_heads, expected_heads)
+            for domain, objects in heads.items()
+            for object_id, version_id in objects.items()
+        }
+        for item in durable_lineage:
+            if (
+                not isinstance(item, (list, tuple))
+                or len(item) != 3
+                or any(not isinstance(part, str) or not part for part in item)
+            ):
+                raise ValueError("personal_context_reviewed_lineage_invalid")
+            reviewed.add((item[0], item[1], item[2]))
+        return reviewed
 
     def _dispatch(self, **kwargs: Any) -> None:
         self._dispatcher.dispatch_first_link_reconciliation(

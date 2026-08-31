@@ -49,7 +49,7 @@ _SYNC_V2_CONFLICT_RESOLUTION_STATUSES = {
     "defer-later",
 }
 SYNC_V2_CONFLICT_REVIEW_DEFAULT_LIMIT = 100
-SYNC_STATE_SCHEMA_VERSION = 7
+SYNC_STATE_SCHEMA_VERSION = 8
 _FILTER_UNSET = object()
 _PERSONAL_CONTEXT_LINK_STATES = {
     "review_required",
@@ -397,6 +397,7 @@ class SyncStateRepository(BaseDB):
                     confirmed_cursor TEXT,
                     bootstrap_heads TEXT NOT NULL DEFAULT '{}',
                     expected_heads TEXT NOT NULL DEFAULT '{}',
+                    reviewed_lineage TEXT NOT NULL DEFAULT '[]',
                     plan_id TEXT NOT NULL,
                     rebaseline_version INTEGER NOT NULL,
                     attention_code TEXT,
@@ -1930,6 +1931,7 @@ class SyncStateRepository(BaseDB):
         confirmed_cursor: str | None = None,
         bootstrap_heads: Mapping[str, Mapping[str, str]] | None = None,
         expected_heads: Mapping[str, Mapping[str, str]] | None = None,
+        reviewed_lineage: list[list[str]] | tuple[tuple[str, str, str], ...] | None = None,
     ) -> dict[str, Any]:
         """Persist one content-free first-link state with optional state CAS."""
 
@@ -1966,6 +1968,9 @@ class SyncStateRepository(BaseDB):
         normalized_bootstrap_heads = _validate_personal_context_heads(
             bootstrap_heads or {}
         )
+        normalized_lineage = _validate_personal_context_lineage(
+            reviewed_lineage or ()
+        )
         principal = _scope_value(authenticated_principal_id)
         now = _utc_now()
         with self._get_connection() as conn:
@@ -1994,9 +1999,9 @@ class SyncStateRepository(BaseDB):
                     device_id, dataset_id, authority_id, profile_id,
                     integrity_key_id, key_record_id, purge_generation,
                     bootstrap_cursor, confirmed_cursor, bootstrap_heads,
-                    expected_heads, plan_id,
+                    expected_heads, reviewed_lineage, plan_id,
                     rebaseline_version, attention_code, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(server_profile_id, authenticated_principal_id)
                 DO UPDATE SET
                     state = excluded.state,
@@ -2011,6 +2016,7 @@ class SyncStateRepository(BaseDB):
                     confirmed_cursor = excluded.confirmed_cursor,
                     bootstrap_heads = excluded.bootstrap_heads,
                     expected_heads = excluded.expected_heads,
+                    reviewed_lineage = excluded.reviewed_lineage,
                     plan_id = excluded.plan_id,
                     rebaseline_version = excluded.rebaseline_version,
                     attention_code = excluded.attention_code,
@@ -2031,6 +2037,7 @@ class SyncStateRepository(BaseDB):
                     confirmed_cursor,
                     _json_dumps(normalized_bootstrap_heads),
                     _json_dumps(normalized_heads),
+                    _json_dumps(normalized_lineage),
                     plan_id,
                     rebaseline_version,
                     attention_code,
@@ -2079,6 +2086,7 @@ class SyncStateRepository(BaseDB):
             "confirmed_cursor": row["confirmed_cursor"],
             "bootstrap_heads": json.loads(row["bootstrap_heads"]),
             "expected_heads": json.loads(row["expected_heads"]),
+            "reviewed_lineage": json.loads(row["reviewed_lineage"]),
             "plan_id": row["plan_id"],
             "rebaseline_version": int(row["rebaseline_version"]),
             "attention_code": row["attention_code"],
@@ -2718,6 +2726,7 @@ class SyncStateRepository(BaseDB):
             "confirmed_cursor": "TEXT",
             "bootstrap_heads": "TEXT NOT NULL DEFAULT '{}'",
             "expected_heads": "TEXT NOT NULL DEFAULT '{}'",
+            "reviewed_lineage": "TEXT NOT NULL DEFAULT '[]'",
         }
         for column_name, definition in column_defs.items():
             if column_name not in existing_columns:
@@ -3117,6 +3126,29 @@ def _validate_personal_context_heads(
             normalized_domain[object_id] = version_id
         normalized[domain] = normalized_domain
     return normalized
+
+
+def _validate_personal_context_lineage(
+    value: list[list[str]] | tuple[tuple[str, str, str], ...],
+) -> list[list[str]]:
+    """Validate a bounded content-free reviewed object/version allowlist."""
+
+    if not isinstance(value, (list, tuple)) or len(value) > 50_000:
+        raise ValueError("personal_context_reviewed_lineage_invalid")
+    normalized: list[list[str]] = []
+    for item in value:
+        if (
+            not isinstance(item, (list, tuple))
+            or len(item) != 3
+            or any(
+                not isinstance(part, str) or not part or len(part) > 512
+                for part in item
+            )
+            or not item[0].startswith("personal_context.")
+        ):
+            raise ValueError("personal_context_reviewed_lineage_invalid")
+        normalized.append([str(part) for part in item])
+    return [list(item) for item in sorted({tuple(item) for item in normalized})]
 
 
 def _utc_now() -> str:

@@ -10589,6 +10589,13 @@ class TldwCli(
             **PersonalContextLinkService._key_binding(link)
         )
         service = self.get_personal_context_service(retry_locked=True)
+        custodian.delete(**PersonalContextLinkService._key_binding(link))
+        service.release_first_link_freeze(plan_id=str(link["plan_id"]))
+        service.clear_first_link_rebaseline_commit(
+            plan_id=str(link["plan_id"]),
+            target_profile_id=str(link["profile_id"]),
+            rebaseline_version=int(link["rebaseline_version"]),
+        )
         dispatcher = service.build_personal_context_outbox_dispatcher(
             state_repository=self.sync_state_repository,
             integrity_key_id=str(link["integrity_key_id"]),
@@ -10695,7 +10702,23 @@ class TldwCli(
                 self._reload_personal_context_settings_panel()
                 return
             if existing is not None and existing["state"] == "applying":
-                coordinator.abandon_uncommitted_apply()
+                active_reader = getattr(
+                    coordinator,
+                    "authenticated_committed_rebaseline_version",
+                    None,
+                )
+                active_version = active_reader() if callable(active_reader) else None
+                if active_version is not None:
+                    await coordinator.resume_after_local_activation(
+                        rebaseline_version=active_version
+                    )
+                    self.notify("Profile link completed.")
+                    self._reload_personal_context_settings_panel()
+                    return
+                if not coordinator.abandon_uncommitted_apply():
+                    raise ProfileLockedError(
+                        "Interrupted Personal Context link recovery is pending."
+                    )
             if existing is not None and existing["state"] in {
                 "local_rebaseline_complete",
                 "reconciling",

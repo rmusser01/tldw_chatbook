@@ -357,3 +357,62 @@ Known limitations/skips:
 - Cross-repository behavior is contract-pinned to tldw_server `a92e12110d` and
   covered with real-httpx and production-handler tests; final independent
   controller review remains pending.
+
+## Restart-safety and reviewed-lineage correction (2026-08-30)
+
+Status: implemented locally; controller re-review pending. TASK-24727 remains
+In Progress.
+
+RED evidence:
+
+- The initial three-test correction focus failed as intended: the production
+  repository had no atomic rebaseline marker/recovery classifier; a concurrent
+  post-bootstrap remote version was applied before convergence rejection; and
+  the app continued into replanning when abandonment returned false.
+- Existing cleanup tests then exposed the retry boundary: releasing the freeze
+  before staged-key deletion could permit a new plan while recovery custody was
+  still present. Cleanup was reordered and attention replanning now retries the
+  exact artifacts first.
+
+Implementation:
+
+- Personal Context schema v7 adds `first_link_rebaseline_commit`, containing only
+  exact plan/profile/integrity-key/purge/key-generation identifiers. The same
+  canonical rebaseline transaction writes it. The freeze records source
+  profile/purge/key generation, allowing only exact unchanged source state to be
+  classified as uncommitted. Old in-flight v6 freezes migrate as ambiguous.
+- Applying recovery never interprets `ProfileLockedError` as absence. Exact
+  committed active keys resume via `resume_after_local_activation`; staged-key
+  recovery remains available after a keyring activation interruption. Missing,
+  corrupt, mismatched, or ambiguous evidence preserves applying state, freeze,
+  marker, and staged custody.
+- `reviewed_lineage` is durable content-free Sync state. It carries bootstrap
+  heads, declared remote record ancestors, and approved local materialization
+  history. The dedicated pull rejects any other object/version before entering
+  `first_link_reconciliation_writes`, maps the failure to server-snapshot
+  attention, and leaves local canonical content unchanged.
+- A durable complete receipt is not enough to activate ordinary Sync at startup:
+  lazy runtime loading first retries staged-key deletion, exact freeze release,
+  and exact marker removal. Any cleanup error propagates content-free and leaves
+  dataset keys/dispatcher/service uninstalled for a later idempotent retry.
+
+GREEN evidence:
+
+- Personal Context repository/service/reconciliation/custody group: 123 passed.
+- First-link/Sync/state/adapter/dispatcher/server group: 137 passed, 57
+  deselected by the focused Personal Context/profile/link/state expression.
+- Typed API plus canonical modal/app-flow/Settings group: 97 passed.
+- Focused marker, pre-apply gate, and no-replan RED trio: 3 passed after the
+  correction; combined focused repository/link/sync/app/state group: 98 passed.
+- Ruff over all changed Python source/tests: `All checks passed!`.
+- `compileall`, Bandit high-severity (`-lll`), `git diff --check`, and range diff
+  hygiene: exit 0.
+
+Known limitations/skips:
+
+- No full repository sweep or live external server/keyring/TUI session was run,
+  consistent with repository scoped-verification policy. Production SQLite,
+  production repository/service paths, real-httpx API boundaries, and injected
+  secure-custody failure/retry paths are covered.
+- Server compatibility remains pinned to `a92e12110d`; no server contract was
+  weakened by this client-side correction.

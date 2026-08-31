@@ -150,6 +150,29 @@ Context, Sync/API, and canonical Settings/UI groups. Ruff, compilation, CSS
 reproduction, Bandit high-severity, and both diff-hygiene gates pass. TASK-24727
 remains In Progress for controller review and cross-repository closure.
 
+### Restart and reviewed-lineage safety correction (2026-08-30)
+
+- Added a migration-safe, content-free rebaseline commit marker in the same
+  SQLite transaction as canonical identity/key adoption. The existing freeze
+  now records the exact source profile, purge generation, and key generation so
+  pre-transaction interruption can be proven rather than inferred from a locked
+  facade.
+- Applying-state restart recovery has three fail-closed outcomes: proven old
+  state may be abandoned; an exact committed marker plus authenticated active
+  keys resumes completion; locked, corrupt, mismatched, or ambiguous evidence
+  preserves the freeze and staged key for retry.
+- Persisted reviewed lineage now contains exact bootstrap heads, declared remote
+  record ancestors, and approved local materialization history. Every first-link
+  pull envelope is checked against it before the plan-scoped privileged apply.
+- A durable `complete` receipt performs idempotent staged-key deletion, exact
+  freeze release, and marker removal before lazy startup enables ordinary
+  Personal Context Sync. Cleanup failure leaves runtime disabled and retries on
+  the next startup/access.
+
+**Correction verification:** 357 broad affected tests pass across Personal
+Context, Sync, API, and canonical UI groups. Ruff, compileall, Bandit `-lll`,
+and diff hygiene pass. The task remains In Progress for controller review.
+
 ## ADR check
 
 ADR required: no (existing)

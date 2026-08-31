@@ -128,3 +128,21 @@ attention. Fresh broad verification is 122 Personal Context + 104 Sync + 95
 API/UI tests passing, with Ruff, compileall, CSS reproduction, Bandit `-lll`,
 and both diff-hygiene checks passing. Controller review and cross-repository
 closure remain; TASK-24727 is not marked Done.
+
+Restart-safety and reviewed-lineage hardening is now implemented locally. The
+canonical rebaseline transaction writes an exact content-free commit marker
+(plan, target profile, integrity-key ID, purge generation, and key generation)
+alongside the identity/key rebaseline. Restart cleanup abandons an apply only
+when the durable freeze, source profile/purge state, and encrypted-object key
+generation prove that transaction never committed; locked, corrupt, mismatched,
+or otherwise ambiguous evidence preserves the freeze and staged custody. Exact
+committed active keys resume through the normal authenticated completion path.
+The first-link pull now checks every object/version against a durable reviewed
+lineage allowlist before privileged apply, including approved local history and
+declared server ancestors; an unreviewed concurrent server object returns to
+content-free attention without mutating canonical local content. Durable
+`complete` startup cleanup retries staged-key deletion, exact freeze release,
+and marker removal before ordinary Personal Context Sync collaborators are
+enabled. Fresh broad affected verification is 123 Personal Context + 136 Sync +
+97 API/UI tests passing (357 total); Ruff, compilation, Bandit high-severity, and diff
+hygiene pass. TASK-24727 remains In Progress for controller review.

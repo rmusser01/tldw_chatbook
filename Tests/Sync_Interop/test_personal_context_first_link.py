@@ -252,6 +252,11 @@ class FakeProfileService:
         self.frozen_plan_id = None
         return True
 
+    def first_link_apply_recovery_state(self, **_kwargs):
+        if self.manifest.profile_id == "profile-local":
+            return ("uncommitted", None)
+        return ("committed", 2)
+
 
 class FakeServerSync:
     def __init__(self, *, max_batch_size: int | None = None) -> None:
@@ -606,7 +611,7 @@ class _DeleteFailsOnceCustodian(InMemoryPersonalContextLinkKeyCustodian):
 
 
 @pytest.mark.asyncio
-async def test_complete_receipt_releases_freeze_before_staged_key_cleanup_retry(
+async def test_complete_receipt_preserves_freeze_until_staged_key_cleanup_retry(
     tmp_path,
 ) -> None:
     profile = FakeProfileService()
@@ -630,9 +635,10 @@ async def test_complete_receipt_releases_freeze_before_staged_key_cleanup_retry(
 
     complete = state.get_personal_context_link_state(**SCOPE)
     assert complete["state"] == "complete"
-    assert profile.frozen_plan_id is None
+    assert profile.frozen_plan_id == plan.plan_id
     receipt = await service.resume()
     assert receipt.confirmed_cursor == "cursor-confirmed-9"
+    assert profile.frozen_plan_id is None
 
 
 @pytest.mark.asyncio
@@ -813,7 +819,9 @@ async def test_terminal_attention_cleanup_failure_does_not_mask_convergence_erro
     attention = state.get_personal_context_link_state(**SCOPE)
     assert attention["state"] == "attention_required"
     assert attention["attention_code"] == "server_snapshot_changed"
-    assert profile.frozen_plan_id is None
+    assert profile.frozen_plan_id == plan.plan_id
+    retry = await service.plan()
+    assert retry.plan_id != plan.plan_id
 
 
 @pytest.mark.parametrize(
@@ -1304,7 +1312,43 @@ async def test_apply_failure_is_not_masked_when_staged_key_cleanup_also_fails(
     attention = state.get_personal_context_link_state(**SCOPE)
     assert attention["state"] == "attention_required"
     assert attention["attention_code"] == "local_apply_failed"
-    assert profile.frozen_plan_id is None
+    assert profile.frozen_plan_id == plan.plan_id
+    retry = await service.plan()
+    assert retry.plan_id != plan.plan_id
+
+
+@pytest.mark.asyncio
+async def test_post_rebaseline_auxiliary_failure_preserves_applying_recovery(
+    tmp_path,
+) -> None:
+    profile = FakeProfileService()
+    state = SyncStateRepository(tmp_path / "sync.db")
+
+    def fail_destination_cleanup(**_kwargs):
+        raise RuntimeError("destination cleanup interrupted")
+
+    state.clear_pending_personal_context_outbox = fail_destination_cleanup
+    custodian = InMemoryPersonalContextLinkKeyCustodian()
+    service = PersonalContextLinkService(
+        personal_context_service=profile,
+        server_sync_service=FakeServerSync(),
+        state_repository=state,
+        wrapping_key_provider=FakeWrappingProvider(),
+        key_custodian=custodian,
+        first_link_sync=FakeFirstLinkSync(),
+        server_profile_id="server-config-1",
+        authenticated_principal_id="user-1",
+        display_name="Laptop",
+    )
+    plan = await service.plan()
+
+    with pytest.raises(RuntimeError, match="destination cleanup interrupted"):
+        await service.apply(plan.plan_id, {})
+
+    applying = state.get_personal_context_link_state(**SCOPE)
+    assert applying["state"] == "applying"
+    assert profile.frozen_plan_id == plan.plan_id
+    assert custodian.load(**service._key_binding(applying)) == b"s" * 32
 
 
 @pytest.mark.asyncio
@@ -1362,7 +1406,7 @@ async def test_precommit_interruption_discards_only_the_uncommitted_staged_key(
 
 
 @pytest.mark.asyncio
-async def test_restart_abandons_provisional_apply_when_profile_cannot_compose(
+async def test_restart_preserves_recovery_material_when_profile_cannot_compose(
     tmp_path,
 ) -> None:
     profile = FakeProfileService()
@@ -1380,7 +1424,7 @@ async def test_restart_abandons_provisional_apply_when_profile_cannot_compose(
         authenticated_principal_id="user-1",
         display_name="Laptop",
     )
-    plan = await service.plan()
+    await service.plan()
     review = state.get_personal_context_link_state(**SCOPE)
     applying = state.set_personal_context_link_state(
         **SCOPE,
@@ -1407,10 +1451,8 @@ async def test_restart_abandons_provisional_apply_when_profile_cannot_compose(
     custodian.stage(**binding, integrity_key=b"s" * 32)
     service._profile = PersonalContextService.locked("profile_key_unavailable")
 
-    assert service.abandon_uncommitted_apply() is True
-    attention = state.get_personal_context_link_state(**SCOPE)
-    assert attention["state"] == "attention_required"
-    assert attention["attention_code"] == "local_apply_interrupted"
-    assert fallback_releases == [plan.plan_id]
-    with pytest.raises(ValueError, match="binding_mismatch"):
-        custodian.load(**binding)
+    assert service.abandon_uncommitted_apply() is False
+    interrupted = state.get_personal_context_link_state(**SCOPE)
+    assert interrupted["state"] == "applying"
+    assert fallback_releases == []
+    assert custodian.load(**binding) == b"s" * 32

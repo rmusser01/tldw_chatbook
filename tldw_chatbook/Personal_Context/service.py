@@ -583,7 +583,7 @@ class PersonalContextService:
             repository.list_validated_scope_bindings(),
         )
 
-    def apply_reviewed_link(self, **kwargs: Any) -> dict[str, int]:
+    def apply_reviewed_link(self, **kwargs: Any) -> dict[str, Any]:
         """Apply one explicit first-link decision set through the canonical owner."""
 
         return self._repo().apply_reviewed_link(**kwargs)
@@ -618,10 +618,25 @@ class PersonalContextService:
 
         return self._repo().current_key_version()
 
+    def first_link_apply_recovery_state(self, **kwargs: Any) -> tuple[str, int | None]:
+        """Read exact content-free interrupted-apply evidence."""
+
+        return self._repo().first_link_apply_recovery_state(**kwargs)
+
+    def clear_first_link_rebaseline_commit(self, **kwargs: Any) -> bool:
+        """Clear the exact rebaseline marker after terminal artifact cleanup."""
+
+        return self._repo().clear_first_link_rebaseline_commit(**kwargs)
+
     def first_link_sync_heads(self) -> dict[str, dict[str, str]]:
         """Return content-free eligible canonical heads for link confirmation."""
 
         return self._repo().first_link_sync_heads()
+
+    def first_link_reviewed_lineage(self) -> list[list[str]]:
+        """Return exact content-free reviewed heads and retained history."""
+
+        return self._repo().first_link_reviewed_lineage()
 
     def build_personal_context_sync_adapter(self, integrity_key_id: str):
         """Build an adapter from active protected keys without exposing key bytes."""

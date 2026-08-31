@@ -171,6 +171,7 @@ class PersonalContextLinkService:
                 bootstrap_heads=canonical_snapshot_heads(
                     remote.manifest, remote.scopes, remote.records, remote.proposals
                 ),
+                reviewed_lineage=self._bootstrap_reviewed_lineage(remote),
                 plan_id=plan.plan_id,
                 rebaseline_version=1,
                 attention_code=(
@@ -196,6 +197,9 @@ class PersonalContextLinkService:
             )
             if callable(freeze_owner) and (plan_id := freeze_owner()) is not None:
                 self._release_freeze(str(plan_id))
+            return
+        if existing.get("state") == "attention_required":
+            self._recover_attention_artifacts(existing, original_error=None)
             return
         if existing.get("state") != "review_required":
             return
@@ -270,7 +274,7 @@ class PersonalContextLinkService:
                 "device_id", "dataset_id", "authority_id", "profile_id",
                 "integrity_key_id", "key_record_id", "purge_generation",
                 "bootstrap_cursor", "plan_id", "rebaseline_version",
-                "bootstrap_heads", "expected_heads",
+                "bootstrap_heads", "expected_heads", "reviewed_lineage",
                 "attention_code",
             )},
             state="applying",
@@ -329,6 +333,7 @@ class PersonalContextLinkService:
             state="local_rebaseline_complete",
             rebaseline_version=int(result["rebaseline_version"]),
             expected_heads=self._expected_heads(result),
+            reviewed_lineage=self._reviewed_lineage(applying, result=result),
             attention_code=None,
             expected_states=("applying",),
         )
@@ -377,6 +382,7 @@ class PersonalContextLinkService:
             },
             state="local_rebaseline_complete",
             rebaseline_version=rebaseline_version,
+            reviewed_lineage=self._reviewed_lineage(state),
             attention_code=None,
             expected_states=("applying",),
         )
@@ -402,11 +408,19 @@ class PersonalContextLinkService:
         state = self._state.get_personal_context_link_state(**self._scope)
         if state is None or state["state"] != "applying":
             return False
+        reader = getattr(self._profile, "first_link_apply_recovery_state", None)
+        if not callable(reader):
+            return False
         try:
-            manifest = self._profile.get_manifest()
-        except ProfileLockedError:
-            manifest = None
-        if manifest is not None and manifest.profile_id == state["profile_id"]:
+            recovery_state, _version = reader(
+                plan_id=str(state["plan_id"]),
+                target_profile_id=str(state["profile_id"]),
+                target_integrity_key_id=str(state["integrity_key_id"]),
+                target_purge_generation=int(state["purge_generation"]),
+            )
+        except (ProfileLockedError, RuntimeError, ValueError):
+            return False
+        if recovery_state != "uncommitted":
             return False
         attention = self._state.set_personal_context_link_state(
             **self._scope,
@@ -425,6 +439,7 @@ class PersonalContextLinkService:
                     "rebaseline_version",
                     "bootstrap_heads",
                     "expected_heads",
+                    "reviewed_lineage",
                 )
             },
             state="attention_required",
@@ -434,6 +449,36 @@ class PersonalContextLinkService:
         self._recover_attention_artifacts(attention, original_error=None)
         return True
 
+    def authenticated_committed_rebaseline_version(self) -> int | None:
+        """Return the exact committed generation only when active keys authenticate it."""
+
+        state = self._state.get_personal_context_link_state(**self._scope)
+        if state is None or state["state"] != "applying":
+            return None
+        reader = getattr(self._profile, "first_link_apply_recovery_state", None)
+        version_reader = getattr(self._profile, "first_link_rebaseline_version", None)
+        if not callable(reader) or not callable(version_reader):
+            return None
+        try:
+            recovery_state, version = reader(
+                plan_id=str(state["plan_id"]),
+                target_profile_id=str(state["profile_id"]),
+                target_integrity_key_id=str(state["integrity_key_id"]),
+                target_purge_generation=int(state["purge_generation"]),
+            )
+            manifest = self._profile.get_manifest()
+            active_version = int(version_reader())
+        except (ProfileLockedError, RuntimeError, ValueError, TypeError):
+            return None
+        if (
+            recovery_state == "committed"
+            and version is not None
+            and manifest.profile_id == state["profile_id"]
+            and active_version == version
+        ):
+            return version
+        return None
+
     def _fail_provisional_apply(
         self,
         state: Mapping[str, Any],
@@ -442,6 +487,29 @@ class PersonalContextLinkService:
         original_error: Exception,
     ) -> None:
         """Release the provisional apply gate before best-effort key cleanup."""
+
+        reader = getattr(self._profile, "first_link_apply_recovery_state", None)
+        if not callable(reader):
+            original_error.add_note(
+                "Interrupted Personal Context apply evidence is unavailable; "
+                "recovery material was preserved."
+            )
+            return
+        try:
+            recovery_state, _version = reader(
+                plan_id=str(state["plan_id"]),
+                target_profile_id=str(state["profile_id"]),
+                target_integrity_key_id=str(state["integrity_key_id"]),
+                target_purge_generation=int(state["purge_generation"]),
+            )
+        except (ProfileLockedError, RuntimeError, ValueError, TypeError):
+            recovery_state = "ambiguous"
+        if recovery_state != "uncommitted":
+            original_error.add_note(
+                "Interrupted Personal Context apply may be committed; "
+                "recovery material was preserved."
+            )
+            return
 
         attention = self._state.set_personal_context_link_state(
             **self._scope,
@@ -460,6 +528,7 @@ class PersonalContextLinkService:
                     "rebaseline_version",
                     "bootstrap_heads",
                     "expected_heads",
+                    "reviewed_lineage",
                 )
             },
             state="attention_required",
@@ -479,6 +548,8 @@ class PersonalContextLinkService:
     ) -> None:
         """Best-effort cleanup after the durable link state is already safe."""
 
+        if not self._delete_staged_key(state, original_error=original_error):
+            return
         try:
             self._release_freeze(str(state["plan_id"]))
         except Exception:
@@ -486,24 +557,36 @@ class PersonalContextLinkService:
                 original_error.add_note(
                     "Personal Context review freeze release remains pending."
                 )
+            return
         self._plans.pop(str(state["plan_id"]), None)
-        self._delete_staged_key(state, original_error=original_error)
+        self._clear_rebaseline_marker(state)
 
     def _delete_staged_key(
         self,
         state: Mapping[str, Any],
         *,
         original_error: Exception | None,
-    ) -> None:
+    ) -> bool:
         """Attempt cleanup without undoing an already durable safe state."""
 
         try:
             self._custodian.delete(**self._key_binding(state))
         except Exception:
             if original_error is None:
-                return
+                return False
             original_error.add_note(
                 "Staged Personal Context key cleanup remains pending after safe state recovery."
+            )
+            return False
+        return True
+
+    def _clear_rebaseline_marker(self, state: Mapping[str, Any]) -> None:
+        clear = getattr(self._profile, "clear_first_link_rebaseline_commit", None)
+        if callable(clear):
+            clear(
+                plan_id=str(state["plan_id"]),
+                target_profile_id=str(state["profile_id"]),
+                rebaseline_version=int(state["rebaseline_version"]),
             )
 
     async def _complete(
@@ -545,6 +628,7 @@ class PersonalContextLinkService:
                             "rebaseline_version",
                             "bootstrap_heads",
                             "expected_heads",
+                            "reviewed_lineage",
                         )
                     },
                     state="reconciling",
@@ -566,6 +650,7 @@ class PersonalContextLinkService:
                 bootstrap_cursor=str(state["bootstrap_cursor"]),
                 expected_heads=state["expected_heads"],
                 bootstrap_heads=state["bootstrap_heads"],
+                reviewed_lineage=state["reviewed_lineage"],
             )
             confirmed_cursor = convergence.get("confirmed_cursor")
             confirmed_heads = convergence.get("confirmed_heads")
@@ -602,7 +687,7 @@ class PersonalContextLinkService:
                     "device_id", "dataset_id", "authority_id", "profile_id",
                     "integrity_key_id", "key_record_id", "purge_generation",
                     "bootstrap_cursor", "plan_id", "rebaseline_version",
-                    "expected_heads", "bootstrap_heads",
+                    "expected_heads", "bootstrap_heads", "reviewed_lineage",
                 )},
                 state="complete",
                 confirmed_cursor=confirmed_cursor,
@@ -619,10 +704,7 @@ class PersonalContextLinkService:
                 original_error=exc,
             )
             raise
-        self._release_freeze(str(complete["plan_id"]))
-        self._custodian.delete(**self._key_binding(complete))
-        self._plans.pop(str(complete["plan_id"]), None)
-        return self._receipt(complete)
+        return self._cleanup_complete(complete)
 
     @staticmethod
     def _completion_attention_code(exc: Exception) -> str | None:
@@ -638,6 +720,7 @@ class PersonalContextLinkService:
             "personal_context_reconciliation_version_missing": (
                 "reconciliation_version_missing"
             ),
+            "personal_context_reviewed_lineage_changed": "server_snapshot_changed",
             "personal_context_reconciliation_binding_stale": (
                 "reconciliation_binding_stale"
             ),
@@ -677,7 +760,7 @@ class PersonalContextLinkService:
                 "device_id", "dataset_id", "authority_id", "profile_id",
                 "integrity_key_id", "key_record_id", "purge_generation",
                 "bootstrap_cursor", "plan_id", "rebaseline_version",
-                "bootstrap_heads", "expected_heads",
+                "bootstrap_heads", "expected_heads", "reviewed_lineage",
             )},
             state="attention_required",
             confirmed_cursor=None,
@@ -694,8 +777,9 @@ class PersonalContextLinkService:
     ) -> PersonalContextLinkReceipt:
         """Retry exception-safe local cleanup after a durable complete receipt."""
 
-        self._release_freeze(str(state["plan_id"]))
         self._custodian.delete(**self._key_binding(state))
+        self._release_freeze(str(state["plan_id"]))
+        self._clear_rebaseline_marker(state)
         self._plans.pop(str(state["plan_id"]), None)
         return self._receipt(state)
 
@@ -744,6 +828,60 @@ class PersonalContextLinkService:
             if isinstance(heads, Mapping) and heads:
                 return heads
         raise RuntimeError("personal_context_expected_heads_unavailable")
+
+    def _reviewed_lineage(
+        self,
+        state: Mapping[str, Any],
+        *,
+        result: Mapping[str, Any] | None = None,
+    ) -> list[list[str]]:
+        """Merge durable review ancestry with authenticated local materialization."""
+
+        lineage = {
+            tuple(item)
+            for item in state.get("reviewed_lineage", ())
+            if isinstance(item, (list, tuple)) and len(item) == 3
+        }
+        if result is not None:
+            lineage.update(
+                tuple(item)
+                for item in result.get("reviewed_lineage", ())
+                if isinstance(item, (list, tuple)) and len(item) == 3
+            )
+        reader = getattr(self._profile, "first_link_reviewed_lineage", None)
+        if callable(reader):
+            lineage.update(
+                tuple(item)
+                for item in reader()
+                if isinstance(item, (list, tuple)) and len(item) == 3
+            )
+        return [list(item) for item in sorted(lineage)]
+
+    @staticmethod
+    def _bootstrap_reviewed_lineage(remote: CanonicalBootstrapSnapshot) -> list[list[str]]:
+        """Persist the exact reviewed server heads and declared record ancestors."""
+
+        heads = canonical_snapshot_heads(
+            remote.manifest,
+            remote.scopes,
+            remote.records,
+            remote.proposals,
+        )
+        lineage = {
+            (domain, object_id, version_id)
+            for domain, objects in heads.items()
+            for object_id, version_id in objects.items()
+        }
+        lineage.update(
+            (
+                "personal_context.record",
+                record.record_id,
+                record.parent_version_id,
+            )
+            for record in remote.records
+            if record.parent_version_id is not None
+        )
+        return [list(item) for item in sorted(lineage)]
 
     def _seed_sync_profile(
         self,

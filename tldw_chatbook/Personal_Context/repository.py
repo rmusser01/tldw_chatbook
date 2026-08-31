@@ -46,7 +46,7 @@ from .repository_models import QuarantineEntry
 from .runtime_policy import GLOBAL_POLICY_ID
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 _ENVELOPE_SCHEMA_VERSION = 1
 _WRAP_NONCE_BYTES = 12
 _PEER_ENVELOPE = "chatbook-local-v1"
@@ -183,6 +183,17 @@ _LOCAL_UNLINKED_SCOPE_SCHEMA = """
         reviewed_plan_id TEXT NOT NULL
     )
     """
+_FIRST_LINK_REBASELINE_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS first_link_rebaseline_commit (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        plan_id TEXT NOT NULL,
+        target_profile_id TEXT NOT NULL,
+        target_integrity_key_id TEXT NOT NULL,
+        target_purge_generation INTEGER NOT NULL,
+        rebaseline_version INTEGER NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """
 
 
 _SCHEMA_STATEMENTS = (
@@ -272,9 +283,13 @@ _SCHEMA_STATEMENTS = (
         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
         plan_id TEXT NOT NULL,
         snapshot_token TEXT NOT NULL,
+        source_profile_id TEXT NOT NULL,
+        source_purge_generation INTEGER NOT NULL,
+        source_key_version INTEGER NOT NULL,
         created_at TEXT NOT NULL
     )
     """,
+    _FIRST_LINK_REBASELINE_SCHEMA,
     "CREATE INDEX quarantine_object_idx ON quarantine(object_type, object_id, version_id)",
 )
 
@@ -439,7 +454,7 @@ class PersonalContextRepository:
         if len(rows) != 1 or rows[0]["singleton"] != 1:
             raise RepositorySchemaError("Personal Context schema marker is invalid.")
         version = rows[0]["version"]
-        if version not in {1, 2, 3, 4, 5, SCHEMA_VERSION}:
+        if version not in {1, 2, 3, 4, 5, 6, SCHEMA_VERSION}:
             raise RepositorySchemaError(
                 f"Unsupported Personal Context schema version: {version!r}."
             )
@@ -522,8 +537,25 @@ class PersonalContextRepository:
             tables.add("first_link_freeze")
         if version == 5:
             connection.execute(_LOCAL_UNLINKED_SCOPE_SCHEMA)
-            version = SCHEMA_VERSION
+            version = 6
             tables.add("local_unlinked_scopes")
+        if version == 6:
+            freeze_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(first_link_freeze)")
+            }
+            for column, definition in (
+                ("source_profile_id", "TEXT"),
+                ("source_purge_generation", "INTEGER"),
+                ("source_key_version", "INTEGER"),
+            ):
+                if column not in freeze_columns:
+                    connection.execute(
+                        f"ALTER TABLE first_link_freeze ADD COLUMN {column} {definition}"
+                    )
+            connection.execute(_FIRST_LINK_REBASELINE_SCHEMA)
+            version = SCHEMA_VERSION
+            tables.add("first_link_rebaseline_commit")
         connection.execute(
             "UPDATE personal_context_schema SET version = ? WHERE singleton = 1",
             (version,),
@@ -532,6 +564,7 @@ class PersonalContextRepository:
             "local_undo",
             "local_record_links",
             "local_unlinked_scopes",
+            "first_link_rebaseline_commit",
         }.issubset(tables):
             raise RepositorySchemaError("Personal Context schema is incomplete.")
         profile_meta_columns = {
@@ -690,9 +723,25 @@ class PersonalContextRepository:
             )
             if not hmac.compare_digest(current_token, snapshot_token):
                 raise ValueError("personal_context_link_snapshot_stale")
+            meta = connection.execute(
+                "SELECT profile_id, purge_generation FROM profile_meta "
+                "WHERE singleton = 1"
+            ).fetchone()
+            if meta is None:
+                raise ValueError("personal_context_link_snapshot_stale")
             connection.execute(
-                "INSERT INTO first_link_freeze VALUES (1, ?, ?, ?)",
-                (plan_id, snapshot_token, _now_text()),
+                "INSERT INTO first_link_freeze("
+                "singleton, plan_id, snapshot_token, source_profile_id, "
+                "source_purge_generation, source_key_version, created_at"
+                ") VALUES (1, ?, ?, ?, ?, ?, ?)",
+                (
+                    plan_id,
+                    snapshot_token,
+                    str(meta["profile_id"]),
+                    int(meta["purge_generation"]),
+                    self.current_key_version(),
+                    _now_text(),
+                ),
             )
 
     def release_first_link_freeze(self, *, plan_id: str) -> bool:
@@ -713,6 +762,80 @@ class PersonalContextRepository:
                 "SELECT plan_id FROM first_link_freeze WHERE singleton = 1"
             ).fetchone()
         return None if row is None else str(row["plan_id"])
+
+    def first_link_apply_recovery_state(
+        self,
+        *,
+        plan_id: str,
+        target_profile_id: str,
+        target_integrity_key_id: str,
+        target_purge_generation: int,
+    ) -> tuple[str, int | None]:
+        """Classify an interrupted apply using only exact content-free evidence."""
+
+        with closing(self._connect()) as connection:
+            marker = connection.execute(
+                "SELECT * FROM first_link_rebaseline_commit WHERE singleton = 1"
+            ).fetchone()
+            if marker is not None:
+                exact = (
+                    marker["plan_id"] == plan_id
+                    and marker["target_profile_id"] == target_profile_id
+                    and marker["target_integrity_key_id"] == target_integrity_key_id
+                    and int(marker["target_purge_generation"])
+                    == target_purge_generation
+                    and int(marker["rebaseline_version"]) >= 1
+                )
+                return (
+                    ("committed", int(marker["rebaseline_version"]))
+                    if exact
+                    else ("ambiguous", None)
+                )
+            freeze = connection.execute(
+                "SELECT * FROM first_link_freeze WHERE singleton = 1"
+            ).fetchone()
+            meta = connection.execute(
+                "SELECT profile_id, purge_generation FROM profile_meta "
+                "WHERE singleton = 1"
+            ).fetchone()
+            versions = {
+                int(row["key_version"])
+                for row in connection.execute(
+                    "SELECT DISTINCT key_version FROM encrypted_objects"
+                )
+            }
+        if (
+            freeze is not None
+            and freeze["plan_id"] == plan_id
+            and freeze["source_profile_id"] is not None
+            and freeze["source_purge_generation"] is not None
+            and freeze["source_key_version"] is not None
+            and meta is not None
+            and meta["profile_id"] == freeze["source_profile_id"]
+            and int(meta["purge_generation"])
+            == int(freeze["source_purge_generation"])
+            and versions == {int(freeze["source_key_version"])}
+        ):
+            return ("uncommitted", None)
+        return ("ambiguous", None)
+
+    def clear_first_link_rebaseline_commit(
+        self,
+        *,
+        plan_id: str,
+        target_profile_id: str,
+        rebaseline_version: int,
+    ) -> bool:
+        """Clear only the exact durable marker after safe terminal cleanup."""
+
+        with self._transaction() as connection:
+            deleted = connection.execute(
+                "DELETE FROM first_link_rebaseline_commit WHERE singleton = 1 "
+                "AND plan_id = ? AND target_profile_id = ? "
+                "AND rebaseline_version = ?",
+                (plan_id, target_profile_id, rebaseline_version),
+            )
+        return deleted.rowcount == 1
 
     @contextmanager
     def first_link_reconciliation_writes(self, *, plan_id: str) -> Iterator[None]:
@@ -1227,7 +1350,7 @@ class PersonalContextRepository:
         remote: Any,
         decisions: Mapping[str, str],
         integrity_key: bytes,
-    ) -> dict[str, int]:
+    ) -> dict[str, Any]:
         """Adopt one reviewed canonical snapshot and rebaseline every retained artifact.
 
         SQLite convergence is one transaction. Secure key-custody activation occurs
@@ -1437,6 +1560,30 @@ class PersonalContextRepository:
             key_version=old_keys.key_version + 1,
         )
         old_profile_id = current_manifest.profile_id
+        reviewed_lineage: set[tuple[str, str, str]] = {
+            (
+                "personal_context.manifest",
+                remote.manifest.profile_id,
+                remote.manifest.current_version_id,
+            ),
+            *(
+                ("personal_context.scope", item.scope_id, item.version_id)
+                for item in remote.scopes
+            ),
+            *(
+                ("personal_context.record", item.record_id, item.version_id)
+                for item in remote.records
+            ),
+            *(
+                (
+                    "personal_context.record",
+                    item.record_id,
+                    item.parent_version_id,
+                )
+                for item in remote.records
+                if item.parent_version_id is not None
+            ),
+        }
         try:
             with self._transaction() as connection:
                 freeze = connection.execute(
@@ -1857,6 +2004,9 @@ class PersonalContextRepository:
                     )
                 )
                 for object_type, object_id, version_id, item in materialization:
+                    reviewed_lineage.add(
+                        (f"personal_context.{object_type}", object_id, version_id)
+                    )
                     if remote_heads.get((object_type, object_id)) == version_id:
                         continue
                     self._insert_outbox(
@@ -1869,20 +2019,39 @@ class PersonalContextRepository:
                             object_type: item.model_dump(mode="json"),
                         },
                     )
+                connection.execute(
+                    "INSERT OR REPLACE INTO first_link_rebaseline_commit("
+                    "singleton, plan_id, target_profile_id, "
+                    "target_integrity_key_id, target_purge_generation, "
+                    "rebaseline_version, created_at) VALUES (1, ?, ?, ?, ?, ?, ?)",
+                    (
+                        plan.plan_id,
+                        remote.manifest.profile_id,
+                        remote.integrity_key_id,
+                        remote.purge_generation,
+                        new_keys.key_version,
+                        _now_text(),
+                    ),
+                )
         except BaseException:
             self._keys = old_keys
             raise
 
         replace = getattr(self._protector, "replace", None)
         if not callable(replace):
-            raise ProfileLockedError("Profile key protector cannot activate link keys.")
+            raise ProfileKeyActivationPendingError(
+                "Profile link key activation is pending."
+            )
         try:
             replace(self._profile_ref, new_keys)
         except BaseException as exc:
             raise ProfileKeyActivationPendingError(
                 "Profile link key activation is pending."
             ) from exc
-        return {"rebaseline_version": new_keys.key_version}
+        return {
+            "rebaseline_version": new_keys.key_version,
+            "reviewed_lineage": [list(item) for item in sorted(reviewed_lineage)],
+        }
 
     def first_link_head_rows(self) -> tuple[tuple[str, str, str], ...]:
         """Return content-free canonical head identities for convergence checks."""
@@ -1943,6 +2112,31 @@ class PersonalContextRepository:
             )
         }
         return heads
+
+    def first_link_reviewed_lineage(self) -> list[list[str]]:
+        """Return content-free eligible heads plus retained materialization history."""
+
+        heads = self.first_link_sync_heads()
+        lineage = {
+            (domain, object_id, version_id)
+            for domain, objects in heads.items()
+            for object_id, version_id in objects.items()
+        }
+        with closing(self._connect()) as connection:
+            lineage.update(
+                (
+                    f"personal_context.{row['object_type']}",
+                    str(row["object_id"]),
+                    str(row["version_id"]),
+                )
+                for row in connection.execute(
+                    "SELECT object_type, object_id, version_id "
+                    "FROM encrypted_outbox"
+                )
+                if str(row["object_type"])
+                in {"manifest", "scope", "record", "proposal", "purge"}
+            )
+        return [list(item) for item in sorted(lineage)]
 
     def commit_manifest_version(
         self,
