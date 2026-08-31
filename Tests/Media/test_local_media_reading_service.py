@@ -3,6 +3,7 @@ from importlib.util import module_from_spec, spec_from_file_location
 import io
 import json
 from pathlib import Path
+import threading
 import zipfile
 
 import pytest
@@ -550,6 +551,72 @@ def test_media_trash_permanent_delete_cascades_fts_without_sync_log(
         connection.execute("SELECT COUNT(*) FROM sync_log").fetchone()[0]
         == sync_count_before
     )
+
+
+def test_media_trash_permanent_delete_rechecks_trash_in_delete_transaction(
+    tmp_path, monkeypatch
+):
+    """A concurrent restore must win before the irreversible delete begins."""
+    from tldw_chatbook.DB import Client_Media_DB_v2 as media_db_module
+
+    db_path = tmp_path / "trash-delete-race.sqlite"
+    deleting_db = Database(db_path=db_path, client_id="delete-race")
+    restoring_db = Database(db_path=db_path, client_id="restore-race")
+    entered_delete = threading.Event()
+    resume_delete = threading.Event()
+    outcome: dict[str, object] = {}
+    worker: threading.Thread | None = None
+    try:
+        media_id, _, _ = deleting_db.add_media_with_keywords(
+            title="Concurrent restore target",
+            content="private race content",
+            media_type="document",
+            keywords=[],
+        )
+        assert deleting_db.mark_as_trash(media_id)
+        original_delete = media_db_module.permanently_delete_item
+
+        def coordinated_delete(db_instance, target_id):
+            entered_delete.set()
+            assert resume_delete.wait(5)
+            return original_delete(db_instance, target_id)
+
+        monkeypatch.setattr(
+            media_db_module, "permanently_delete_item", coordinated_delete
+        )
+
+        def delete_in_worker() -> None:
+            try:
+                outcome["result"] = LocalMediaReadingService(
+                    deleting_db
+                ).permanently_delete_media_item(media_id)
+            except Exception as exc:  # surfaced in the test thread below
+                outcome["error"] = exc
+
+        worker = threading.Thread(target=delete_in_worker)
+        worker.start()
+        assert entered_delete.wait(5)
+
+        assert restoring_db.restore_from_trash(media_id)
+        restored = restoring_db.get_media_by_id(media_id)
+        assert restored is not None
+        assert restored["is_trash"] in {0, False}
+
+        resume_delete.set()
+        worker.join(5)
+
+        assert not worker.is_alive()
+        assert "result" not in outcome
+        assert isinstance(outcome.get("error"), ValueError)
+        still_active = restoring_db.get_media_by_id(media_id)
+        assert still_active is not None
+        assert still_active["is_trash"] in {0, False}
+    finally:
+        resume_delete.set()
+        if worker is not None:
+            worker.join(5)
+        restoring_db.close_connection()
+        deleting_db.close_connection()
 
 
 def test_local_service_list_media_items_carries_last_modified_for_list_card_age(

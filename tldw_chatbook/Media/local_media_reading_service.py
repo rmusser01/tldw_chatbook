@@ -683,17 +683,10 @@ class LocalMediaReadingService:
 
         db = self._require_db()
         normalized_media_id = self._coerce_media_id(media_id)
-        current = db.get_media_by_id(normalized_media_id, include_trash=True)
-        if current is None:
-            raise KeyError(f"Local media item not found: {media_id}")
-        if not current.get("is_trash"):
-            raise ValueError(
-                "Local media item must be in trash before permanent deletion."
-            )
         deleted = permanently_delete_item(db, normalized_media_id)
         if not deleted:
             raise ValueError(
-                f"Local media item could not be permanently deleted: {media_id}"
+                "Local media item must exist in trash before permanent deletion."
             )
         return {"ok": True, "media_id": normalized_media_id}
 

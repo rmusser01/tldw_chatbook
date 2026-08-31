@@ -9886,7 +9886,7 @@ def get_all_content_from_database(db_instance: MediaDatabase) -> List[Dict[str, 
 
 def permanently_delete_item(db_instance: MediaDatabase, media_id: int) -> bool:
     """
-    Performs a HARD delete of a media item and its related data via cascades.
+    Permanently deletes one active Trash item and its related data via cascades.
 
     **DANGER:** This operation bypasses the soft delete mechanism and the sync log.
     It physically removes the row from the `Media` table. Foreign key constraints
@@ -9901,7 +9901,7 @@ def permanently_delete_item(db_instance: MediaDatabase, media_id: int) -> bool:
         media_id (int): The ID of the Media item to permanently delete.
 
     Returns:
-        bool: True if the item was found and deleted, False otherwise.
+        bool: True if the item was in Trash and deleted, False otherwise.
 
     Raises:
         TypeError: If `db_instance` is not a Database object.
@@ -9913,18 +9913,23 @@ def permanently_delete_item(db_instance: MediaDatabase, media_id: int) -> bool:
         "Media mutation operation=permanent_delete status=started count=1"
     )
     try:
-        with db_instance.transaction() as conn:
+        with db_instance.transaction(immediate=True) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT 1 FROM Media WHERE id = ?", (media_id,))
-            if not cursor.fetchone():
+            cursor.execute(
+                "DELETE FROM Media "
+                "WHERE id = ? AND deleted = 0 AND is_trash = 1",
+                (media_id,),
+            )
+            deleted_count = cursor.rowcount
+            if deleted_count == 0:
+                cursor.execute("SELECT 1 FROM Media WHERE id = ?", (media_id,))
+                status = "not_in_trash" if cursor.fetchone() else "not_found"
                 logger.warning(
                     "Media mutation operation=permanent_delete "
-                    "status=not_found count=0"
+                    "status={} count=0",
+                    status,
                 )
                 return False
-            # Hard delete - Cascades should handle children via FKs
-            cursor.execute("DELETE FROM Media WHERE id = ?", (media_id,))
-            deleted_count = cursor.rowcount
             # Manually delete from FTS (cascade should work, but belt-and-suspenders)
             db_instance._delete_fts_media(conn, media_id)
         if deleted_count > 0:

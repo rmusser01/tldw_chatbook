@@ -7,7 +7,10 @@ import threading
 
 import pytest
 
-from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.DB.Client_Media_DB_v2 import (
+    MediaDatabase,
+    permanently_delete_item,
+)
 
 
 @pytest.fixture
@@ -46,6 +49,37 @@ def _seed_trash(database: MediaDatabase, *, count: int) -> list[int]:
         )
         for index in range(count)
     ]
+
+
+def test_permanent_delete_rejects_active_media_before_fts_or_cascade_cleanup(
+    media_db, monkeypatch
+):
+    database, _path = media_db
+    media_id, _uuid, _message = database.add_media_with_keywords(
+        title="Active target",
+        media_type="document",
+        content="must remain active",
+        keywords=["must-remain"],
+    )
+    reached_fts_cleanup: list[int] = []
+    original_delete_fts = database._delete_fts_media
+
+    def record_fts_cleanup(connection, target_id):
+        reached_fts_cleanup.append(target_id)
+        return original_delete_fts(connection, target_id)
+
+    monkeypatch.setattr(database, "_delete_fts_media", record_fts_cleanup)
+
+    assert permanently_delete_item(database, media_id) is False
+    assert database.get_media_by_id(media_id) is not None
+    assert reached_fts_cleanup == []
+    connection = database.get_connection()
+    assert connection.execute(
+        "SELECT COUNT(*) FROM media_fts WHERE rowid = ?", (media_id,)
+    ).fetchone()[0] == 1
+    assert connection.execute(
+        "SELECT COUNT(*) FROM MediaKeywords WHERE media_id = ?", (media_id,)
+    ).fetchone()[0] == 1
 
 
 def test_library_trash_pages_filter_before_slicing_and_echo_coordinates(media_db):

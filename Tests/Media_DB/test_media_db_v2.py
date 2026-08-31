@@ -231,6 +231,7 @@ def test_permanent_delete_success_logs_only_fixed_metadata(tmp_path, caplog):
             content="private delete content",
             keywords=[],
         )
+        assert db.mark_as_trash(target_id)
 
         rendered_logs = _capture_permanent_delete_logs(
             caplog,
@@ -278,6 +279,7 @@ def test_permanent_delete_sqlite_failure_logs_category_without_private_values(
             content="private failed delete content",
             keywords=[],
         )
+        assert db.mark_as_trash(target_id)
         with db.transaction() as conn:
             conn.execute(
                 "CREATE TRIGGER block_private_media_delete "
@@ -336,6 +338,7 @@ def test_permanent_delete_fts_failure_logs_categories_without_private_values(
             content="private FTS failure content",
             keywords=[],
         )
+        assert db.mark_as_trash(target_id)
         original_delete_fts = db._delete_fts_media
         reached_fts_sink: list[int] = []
 
