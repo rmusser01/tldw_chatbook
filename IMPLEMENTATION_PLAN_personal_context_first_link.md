@@ -204,6 +204,26 @@ Ruff, compileall, Bandit high-severity, and diff hygiene pass. No TCSS changed,
 so CSS aggregate reproduction was not applicable. The task remains In Progress
 for controller review.
 
+### Legacy v7 terminal-cleanup compatibility correction (2026-08-31)
+
+- A migrated v7 rebaseline marker keeps a nullable key-record binding and
+  remains ambiguous for every `applying` or other nonterminal link.
+- An exact durable `complete` receipt may repair that field only after full
+  storage-key custody authenticates the server/dataset/device/profile/key
+  binding, the active decrypted manifest authenticates profile and purge
+  generation, the active key generation equals the receipt rebaseline version,
+  and every pre-v8 marker field matches.
+- The conditional SQLite update binds only `target_key_record_id IS NULL` while
+  the exact review freeze remains held. Cleanup clears the fully bound marker,
+  releases only the matching freeze, removes staged custody, and then enables
+  ordinary Sync. Missing, corrupt, foreign, or mismatched evidence remains
+  untouched and blocks startup.
+
+**Compatibility correction verification:** 131 Personal Context, 116 focused
+Sync, 29 Sync-state, and 69 canonical UI/Settings tests pass (345 total). Ruff,
+compileall, Bandit high-severity, and diff hygiene pass. TASK-24727 remains In
+Progress.
+
 ## ADR check
 
 ADR required: no (existing)

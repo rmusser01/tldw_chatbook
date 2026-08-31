@@ -895,6 +895,51 @@ class PersonalContextRepository:
             )
         return deleted.rowcount == 1
 
+    def bind_legacy_first_link_rebaseline_commit(
+        self,
+        *,
+        plan_id: str,
+        target_profile_id: str,
+        target_integrity_key_id: str,
+        target_key_record_id: str,
+        target_purge_generation: int,
+        rebaseline_version: int,
+    ) -> bool:
+        """Bind one exact authenticated legacy marker to its durable key record."""
+
+        if not isinstance(target_key_record_id, str) or not target_key_record_id:
+            return False
+        with self._transaction() as connection:
+            updated = connection.execute(
+                "UPDATE first_link_rebaseline_commit "
+                "SET target_key_record_id = ? "
+                "WHERE singleton = 1 AND target_key_record_id IS NULL "
+                "AND plan_id = ? AND target_profile_id = ? "
+                "AND target_integrity_key_id = ? "
+                "AND target_purge_generation = ? AND rebaseline_version = ? "
+                "AND EXISTS ("
+                "SELECT 1 FROM profile_meta WHERE singleton = 1 "
+                "AND profile_id = ? AND purge_generation = ? AND destroyed = 0"
+                ") AND NOT EXISTS ("
+                "SELECT 1 FROM encrypted_objects WHERE key_version != ?"
+                ") AND EXISTS ("
+                "SELECT 1 FROM encrypted_objects WHERE key_version = ?"
+                ")",
+                (
+                    target_key_record_id,
+                    plan_id,
+                    target_profile_id,
+                    target_integrity_key_id,
+                    target_purge_generation,
+                    rebaseline_version,
+                    target_profile_id,
+                    target_purge_generation,
+                    rebaseline_version,
+                    rebaseline_version,
+                ),
+            )
+        return updated.rowcount == 1
+
     @contextmanager
     def first_link_reconciliation_writes(self, *, plan_id: str) -> Iterator[None]:
         """Authorize only dedicated reconciliation writes under the exact freeze."""

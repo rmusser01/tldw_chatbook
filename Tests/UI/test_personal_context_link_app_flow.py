@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -394,7 +395,7 @@ def test_lazy_runtime_retries_complete_cleanup_before_enabling_sync(monkeypatch)
         )
     assert app.sync_v2_dataset_keys == {}
     assert app.local_first_sync_service.personal_context_outbox_dispatcher is None
-    assert events[-3:] == ["release-freeze", "clear-marker", "delete-staged"]
+    assert events[-3:] == ["clear-marker", "release-freeze", "delete-staged"]
 
     TldwCli._load_personal_context_sync_runtime(
         app,
@@ -403,8 +404,8 @@ def test_lazy_runtime_retries_complete_cleanup_before_enabling_sync(monkeypatch)
     )
 
     assert events[-4:] == [
-        "release-freeze",
         "clear-marker",
+        "release-freeze",
         "delete-staged",
         "build-dispatcher",
     ]
@@ -412,6 +413,148 @@ def test_lazy_runtime_retries_complete_cleanup_before_enabling_sync(monkeypatch)
     assert app.local_first_sync_service.personal_context_outbox_dispatcher == (
         "dispatcher"
     )
+
+
+def test_lazy_runtime_repairs_exact_v7_complete_marker_before_enabling_sync(
+    monkeypatch, tmp_path
+) -> None:
+    from tldw_profile_core import ProfileManifest, ProfileScope, ScopeKind
+
+    from tldw_chatbook.Personal_Context.key_protector import (
+        InMemoryProfileKeyProtector,
+    )
+    from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
+    from tldw_chatbook.Personal_Context.service import PersonalContextService
+    from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+
+    now = "2026-08-31T12:00:00.000Z"
+    protector = InMemoryProfileKeyProtector()
+    profile_db = tmp_path / "profile-v7-complete.db"
+    repository = PersonalContextRepository(profile_db, key_protector=protector)
+    repository.create_profile_with_global_scope(
+        ProfileManifest(
+            profile_id="profile-server",
+            revision=1,
+            purge_generation=0,
+            created_at=now,
+            updated_at=now,
+            current_version_id="manifest-v1",
+        ),
+        ProfileScope(
+            profile_id="profile-server",
+            scope_id="scope-global",
+            kind=ScopeKind.GLOBAL,
+            version_id="scope-v1",
+            created_at=now,
+            updated_at=now,
+        ),
+    )
+    with sqlite3.connect(profile_db) as connection:
+        connection.execute(
+            "INSERT INTO first_link_freeze VALUES (1, ?, ?, ?, ?, ?, ?)",
+            (
+                "plan-v7",
+                "snapshot-v7",
+                "profile-server",
+                0,
+                1,
+                now,
+            ),
+        )
+        connection.execute("DROP TABLE first_link_rebaseline_commit")
+        connection.execute(
+            """
+            CREATE TABLE first_link_rebaseline_commit (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                plan_id TEXT NOT NULL,
+                target_profile_id TEXT NOT NULL,
+                target_integrity_key_id TEXT NOT NULL,
+                target_purge_generation INTEGER NOT NULL,
+                rebaseline_version INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO first_link_rebaseline_commit VALUES (1, ?, ?, ?, ?, ?, ?)",
+            ("plan-v7", "profile-server", "integrity-1", 0, 1, now),
+        )
+        connection.execute(
+            "UPDATE personal_context_schema SET version = 7 WHERE singleton = 1"
+        )
+    profile = PersonalContextService(
+        PersonalContextRepository(profile_db, key_protector=protector)
+    )
+    state = SyncStateRepository(tmp_path / "sync.db")
+    state.set_personal_context_link_state(
+        server_profile_id="server-config-1",
+        authenticated_principal_id="user-1",
+        state="complete",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        authority_id="authority-1",
+        profile_id="profile-server",
+        integrity_key_id="integrity-1",
+        key_record_id="record-1",
+        purge_generation=0,
+        bootstrap_cursor="bootstrap-receipt",
+        sync_transport_cursor="transport-bootstrap",
+        confirmed_cursor="transport-confirmed",
+        bootstrap_heads={},
+        expected_heads={},
+        plan_id="plan-v7",
+        rebaseline_version=1,
+        attention_code=None,
+    )
+    events: list[str] = []
+
+    class AuthenticatedCustodian:
+        def load_storage_key(self, **binding):
+            assert binding == {
+                "server_profile_id": "server-config-1",
+                "dataset_id": "dataset-1",
+                "device_id": "device-1",
+                "profile_id": "profile-server",
+                "integrity_key_id": "integrity-1",
+                "key_record_id": "record-1",
+            }
+            events.append("load-storage")
+            return b"k" * 32
+
+        def delete(self, **_binding):
+            events.append("delete-staged")
+
+    monkeypatch.setattr(
+        link_key_custody,
+        "KeyringPersonalContextLinkKeyCustodian",
+        AuthenticatedCustodian,
+    )
+    app = SimpleNamespace(
+        sync_state_repository=state,
+        sync_v2_dataset_keys={},
+        local_first_sync_service=SimpleNamespace(
+            personal_context_outbox_dispatcher=None,
+            personal_context_service=None,
+        ),
+        get_personal_context_service=lambda **_kwargs: profile,
+    )
+
+    TldwCli._load_personal_context_sync_runtime(
+        app,
+        server_profile_id="server-config-1",
+        authenticated_principal_id="user-1",
+    )
+
+    assert events == ["load-storage", "delete-staged"]
+    assert profile.first_link_freeze_plan_id() is None
+    assert profile.first_link_rebaseline_commit_plan_id() is None
+    assert app.sync_v2_dataset_keys == {"dataset-1": b"k" * 32}
+    TldwCli._load_personal_context_sync_runtime(
+        app,
+        server_profile_id="server-config-1",
+        authenticated_principal_id="user-1",
+    )
+    assert profile.first_link_rebaseline_commit_plan_id() is None
 
 
 def test_lazy_runtime_rejects_different_freeze_owner_before_custody_cleanup(
@@ -425,6 +568,7 @@ def test_lazy_runtime_rejects_different_freeze_owner_before_custody_cleanup(
         "profile_id": "profile-server",
         "integrity_key_id": "integrity-1",
         "key_record_id": "record-1",
+        "purge_generation": 0,
         "plan_id": "plan-1",
         "rebaseline_version": 2,
     }

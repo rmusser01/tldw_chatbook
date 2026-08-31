@@ -633,6 +633,36 @@ class PersonalContextService:
 
         return self._repo().clear_first_link_rebaseline_commit(**kwargs)
 
+    def authenticate_legacy_first_link_rebaseline_commit(
+        self,
+        *,
+        plan_id: str,
+        target_profile_id: str,
+        target_integrity_key_id: str,
+        target_key_record_id: str,
+        target_purge_generation: int,
+        rebaseline_version: int,
+    ) -> bool:
+        """Bind an exact v7 marker only after active profile-key authentication."""
+
+        if not isinstance(target_key_record_id, str) or not target_key_record_id:
+            return False
+        manifest = self.get_manifest()
+        if (
+            manifest.profile_id != target_profile_id
+            or manifest.purge_generation != target_purge_generation
+            or self.first_link_rebaseline_version() != rebaseline_version
+        ):
+            return False
+        return self._repo().bind_legacy_first_link_rebaseline_commit(
+            plan_id=plan_id,
+            target_profile_id=target_profile_id,
+            target_integrity_key_id=target_integrity_key_id,
+            target_key_record_id=target_key_record_id,
+            target_purge_generation=target_purge_generation,
+            rebaseline_version=rebaseline_version,
+        )
+
     def first_link_sync_heads(self) -> dict[str, dict[str, str]]:
         """Return content-free eligible canonical heads for link confirmation."""
 
