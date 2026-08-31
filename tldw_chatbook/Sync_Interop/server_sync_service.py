@@ -689,17 +689,21 @@ class ServerSyncService:
             )
         )
         device_id = str(self._dump(device)["device_id"])
-        response = await client.bootstrap_sync_v2_personal_context(
-            SyncPersonalContextBootstrapRequest(
-                device_id=device_id,
-                required_schema_version=required_schema_version,
-                required_quotas=dict(required_quotas or {}),
-                expected_purge_generation=expected_purge_generation,
-            )
+        bootstrap_request = SyncPersonalContextBootstrapRequest(
+            device_id=device_id,
+            required_schema_version=required_schema_version,
+            required_quotas=dict(required_quotas or {}),
+            expected_purge_generation=expected_purge_generation,
         )
+        response = await client.bootstrap_sync_v2_personal_context(bootstrap_request)
         record = self._dump(response)
         if not isinstance(record, dict):
             raise ValueError("personal_context_bootstrap_response_invalid")
+        response_quotas = record.get("quotas")
+        if not isinstance(response_quotas, dict) or not set(
+            bootstrap_request.required_quotas
+        ).issubset(response_quotas):
+            raise ValueError("personal_context_bootstrap_quota_map_incomplete")
         return {
             "device_id": device_id,
             **record,

@@ -206,7 +206,10 @@ class FakeSyncClient:
         self.calls.append(
             ("bootstrap_sync_v2_personal_context", request_data.model_dump(mode="json"))
         )
-        return {"dataset_id": "dataset-personal-context"}
+        return {
+            "dataset_id": "dataset-personal-context",
+            "quotas": dict(request_data.required_quotas),
+        }
 
     async def complete_sync_v2_personal_context_link(self, request_data):
         self.calls.append(
@@ -695,6 +698,7 @@ async def test_personal_context_bootstrap_registers_wrapping_key_without_generic
     assert response == {
         "device_id": "device-1",
         "dataset_id": "dataset-personal-context",
+        "quotas": {"max_record_bytes": 16_384},
         "_sync_capabilities": {"max_batch_size": 17},
     }
     register = next(call for call in client.calls if call[0] == "register_sync_v2_device")
@@ -712,6 +716,40 @@ async def test_personal_context_bootstrap_registers_wrapping_key_without_generic
     }
     assert not any(call[0] == "enroll_sync_v2_dataset" for call in client.calls)
     assert not any(call[0] == "push_sync_v2_envelopes" for call in client.calls)
+
+
+@pytest.mark.asyncio
+async def test_personal_context_bootstrap_rejects_success_missing_requested_quota(
+    tmp_path,
+) -> None:
+    class MissingQuotaClient(FakeSyncClient):
+        async def bootstrap_sync_v2_personal_context(self, request_data):
+            self.calls.append(
+                (
+                    "bootstrap_sync_v2_personal_context",
+                    request_data.model_dump(mode="json"),
+                )
+            )
+            return {"dataset_id": "dataset-personal-context", "quotas": {}}
+
+    client = MissingQuotaClient(
+        capabilities_response=_personal_context_capabilities(available=True)
+    )
+    service = ServerSyncService(
+        client=client,
+        state_repository=SyncStateRepository(tmp_path / "sync_state.db"),
+    )
+
+    with pytest.raises(
+        ValueError, match="personal_context_bootstrap_quota_map_incomplete"
+    ):
+        await service.bootstrap_personal_context_link(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            display_name="Laptop",
+            wrapping_key_provider=FakeWrappingProvider(),
+            required_quotas={"required_unknown_zero": 0},
+        )
 
 
 @pytest.mark.asyncio

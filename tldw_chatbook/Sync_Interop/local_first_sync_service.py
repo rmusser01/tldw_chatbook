@@ -100,6 +100,21 @@ class LocalFirstSyncService:
                 "local_first Sync v2 profile requires device_id and dataset_id"
             )
 
+        uses_personal_context = any(
+            domain.startswith("personal_context.") for domain in domains
+        )
+        if uses_personal_context and (
+            (
+                dataset_key is None
+                and self.dataset_keys.get(str(dataset_id)) is None
+            )
+            or self.personal_context_outbox_dispatcher is None
+            or self.personal_context_service is None
+        ) and callable(self.personal_context_runtime_loader):
+            self.personal_context_runtime_loader(
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+            )
         key = dataset_key or self.dataset_keys.get(str(dataset_id))
         organization_only = bool(domains) and all(
             domain in NOTES_ORGANIZATION_DOMAINS for domain in domains
@@ -129,18 +144,6 @@ class LocalFirstSyncService:
                 workspace_scope=workspace_scope,
                 dataset_id=str(dataset_id),
                 device_id=str(device_id),
-            )
-
-        uses_personal_context = any(
-            domain.startswith("personal_context.") for domain in domains
-        )
-        if uses_personal_context and (
-            self.personal_context_outbox_dispatcher is None
-            or self.personal_context_service is None
-        ) and callable(self.personal_context_runtime_loader):
-            self.personal_context_runtime_loader(
-                server_profile_id=server_profile_id,
-                authenticated_principal_id=authenticated_principal_id,
             )
         if uses_personal_context and (
             self.personal_context_outbox_dispatcher is None

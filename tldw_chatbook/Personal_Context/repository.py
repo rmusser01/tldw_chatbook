@@ -807,6 +807,41 @@ class PersonalContextRepository:
             ).fetchone()
         return None if row is None else str(row["plan_id"])
 
+    def legacy_first_link_rebaseline_commit_matches(
+        self,
+        *,
+        plan_id: str,
+        target_profile_id: str,
+        target_integrity_key_id: str,
+        target_purge_generation: int,
+        rebaseline_version: int,
+    ) -> bool:
+        """Return whether the exact v7 marker still lacks key-record identity."""
+
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT 1 FROM first_link_rebaseline_commit "
+                "WHERE singleton = 1 AND target_key_record_id IS NULL "
+                "AND plan_id = ? AND target_profile_id = ? "
+                "AND target_integrity_key_id = ? "
+                "AND target_purge_generation = ? AND rebaseline_version = ?",
+                (
+                    plan_id,
+                    target_profile_id,
+                    target_integrity_key_id,
+                    target_purge_generation,
+                    rebaseline_version,
+                ),
+            ).fetchone()
+        return row is not None
+
+    def active_integrity_key_matches(self, value: bytes) -> bool:
+        """Authenticate staged integrity material against the active generation."""
+
+        return isinstance(value, bytes) and hmac.compare_digest(
+            value, self._require_keys().integrity_key
+        )
+
     def first_link_apply_recovery_state(
         self,
         *,

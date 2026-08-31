@@ -642,10 +642,13 @@ class PersonalContextService:
         target_key_record_id: str,
         target_purge_generation: int,
         rebaseline_version: int,
+        staged_integrity_key: bytes,
     ) -> bool:
-        """Bind an exact v7 marker only after active profile-key authentication."""
+        """Bind an exact v7 marker after staged and active key authentication."""
 
         if not isinstance(target_key_record_id, str) or not target_key_record_id:
+            return False
+        if not self._repo().active_integrity_key_matches(staged_integrity_key):
             return False
         manifest = self.get_manifest()
         if (
@@ -662,6 +665,11 @@ class PersonalContextService:
             target_purge_generation=target_purge_generation,
             rebaseline_version=rebaseline_version,
         )
+
+    def legacy_first_link_rebaseline_commit_matches(self, **kwargs: Any) -> bool:
+        """Return whether an exact v7 marker needs authenticated key binding."""
+
+        return self._repo().legacy_first_link_rebaseline_commit_matches(**kwargs)
 
     def first_link_sync_heads(self) -> dict[str, dict[str, str]]:
         """Return content-free eligible canonical heads for link confirmation."""

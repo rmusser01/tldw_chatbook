@@ -4,7 +4,8 @@
 
 The final recovery-binding and transport-watermark correction is implemented,
 targeted-test clean, and through scoped static/security verification against
-tldw_server `6455ab08cb12ec239c53b7b9180b1cc1ea5f8375`. Controller
+tldw_server `e3a2e9ea8836ca750336447ced318d7c722cfcc3` (temporary pin; a
+controller follow-up may supersede it). Controller
 cross-repository review and final backlog closure remain. This report does not
 mark TASK-24727 Done.
 
@@ -425,7 +426,8 @@ Known limitations/skips:
 
 Status: implemented and scoped-verification clean; controller re-review pending.
 TASK-24727 remains In Progress. Final server contract pin:
-`6455ab08cb12ec239c53b7b9180b1cc1ea5f8375`.
+`e3a2e9ea8836ca750336447ced318d7c722cfcc3` (temporary pin pending any final
+controller-issued server correction).
 
 ### RED evidence
 
@@ -488,7 +490,7 @@ Context, Sync, state, and canonical UI files.
 - Focused tests cover strict cursor parsing/bounds/persistence, migration,
   retained-history watermarks, mixed-page rejection before mutation, stale
   outbound rejection, exact marker recovery, and ownership/postcondition cleanup.
-- Documentation pins the final server commit in the rollout plan, implementation
+- Documentation pins the current reviewed server commit in the rollout plan, implementation
   plan, backlog task, the shared Task 3a report, and this report.
 
 ### Self-review and known skips
@@ -554,3 +556,56 @@ ADR path: `backlog/decisions/102-personal-context-profile-authority-sync-and-enc
 Reason: this bounded migration/restart correction preserves ADR-102's existing
 authority, encryption, and fail-closed recovery boundaries. TASK-24727 remains
 In Progress.
+
+## Final contract and recovery correction (2026-08-31)
+
+This section supersedes the legacy-cleanup authentication description above.
+
+### RED evidence
+
+- A production `KeyringPersonalContextLinkKeyCustodian` regression built from a
+  real v7 database upgrade showed that terminal cleanup could repair the nullable
+  marker without loading the staged integrity key under the receipt's exact
+  server/dataset/device/profile/integrity-key/key-record binding.
+- `LocalFirstSyncService.sync_once` rejected an empty post-restart dataset-key
+  cache before invoking the existing authenticated Personal Context lazy-runtime
+  loader.
+- Request/response schemas accepted bool/coerced/non-bounded quota values and
+  unsafe or oversized quota maps; the coordinator also accepted a success body
+  missing a requested quota.
+
+### Implementation
+
+- Legacy v7 marker binding now first detects the exact nullable marker, then
+  loads staged integrity-key custody using the durable complete receipt's full
+  binding. The staged key must authenticate the active canonical integrity key
+  before the repository's exact marker/profile/purge/key-generation CAS. Foreign
+  key-record or dataset bindings, corrupt/missing custody, and all ambiguity leave
+  marker, freeze, and staged material untouched.
+- Personal Context `sync_once` invokes the narrow lazy-runtime loader when its
+  exact dataset key or collaborators are absent and then rereads only the exact
+  requested dataset cache entry. Non-Personal-Context datasets never invoke it;
+  missing or wrong-dataset material still fails closed.
+- Bootstrap quota request and success schemas now require at most 32 ASCII-safe
+  names, strict built-in integer values in `0..2**63-1`, and a success map that
+  includes every requested quota before planning proceeds.
+- Cross-repository documentation is temporarily pinned to reviewed server
+  `e3a2e9ea8836ca750336447ced318d7c722cfcc3`; a controller follow-up may
+  supersede that pin. The bootstrap semantic cursor and `sync_transport_cursor`
+  remain distinct.
+
+### GREEN evidence
+
+- API/schema plus server-sync contract: 81 passed.
+- LocalFirst runtime, profile reconciliation/custody, and production-shaped app
+  startup: 79 passed.
+- Broad Personal Context repository/service/runtime/recovery suite: 121 passed.
+- Ruff, focused compileall, Bandit high-severity (`-lll`), and diff hygiene pass.
+
+ADR required: no (existing)
+
+ADR path: `backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md`
+
+Reason: this correction hardens existing ADR-102 contracts and recovery
+authentication; it does not introduce a new storage, authority, or sync policy.
+TASK-24727 remains In Progress and its acceptance criteria remain unchecked.

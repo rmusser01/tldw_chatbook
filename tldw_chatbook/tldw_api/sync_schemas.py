@@ -597,15 +597,45 @@ class SyncV2ProfileBootstrapResponse(SyncV2ProfileResponse):
     created: bool = False
 
 
+_PersonalContextQuotaInteger = Annotated[
+    int, Field(strict=True, ge=0, le=2**63 - 1)
+]
+
+
+def _validate_personal_context_quota_names(quotas: dict[str, int]) -> dict[str, int]:
+    if not all(
+        1 <= len(name) <= 64
+        and name[0].isascii()
+        and name[0].isalpha()
+        and all(
+            character.isascii()
+            and (character.islower() or character.isdigit() or character == "_")
+            for character in name
+        )
+        for name in quotas
+    ):
+        raise ValueError("quota name is invalid")
+    return quotas
+
+
 class SyncPersonalContextBootstrapRequest(BaseModel):
     """Request one cursor-bounded canonical Personal Context snapshot."""
 
     device_id: str = Field(..., min_length=1, max_length=256)
     required_schema_version: int | None = Field(None, ge=1)
-    required_quotas: dict[str, int] = Field(default_factory=dict)
+    required_quotas: dict[StrictStr, _PersonalContextQuotaInteger] = Field(
+        default_factory=dict, max_length=32
+    )
     expected_purge_generation: int | None = Field(None, ge=0)
 
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("required_quotas")
+    @classmethod
+    def _validate_required_quota_names(
+        cls, quotas: dict[str, int]
+    ) -> dict[str, int]:
+        return _validate_personal_context_quota_names(quotas)
 
 
 class SyncPersonalContextBootstrapResponse(BaseModel):
@@ -619,7 +649,9 @@ class SyncPersonalContextBootstrapResponse(BaseModel):
     proposals: list[ProfileProposal] = Field(default_factory=list)
     purge_generation: int = Field(..., ge=0)
     schema_version: int = Field(..., ge=1)
-    quotas: dict[str, int] = Field(default_factory=dict)
+    quotas: dict[StrictStr, _PersonalContextQuotaInteger] = Field(
+        default_factory=dict, max_length=32
+    )
     cursor: str = Field(..., min_length=1, max_length=256)
     sync_transport_cursor: str = Field(..., min_length=1, max_length=32_768)
     integrity_key_id: str = Field(..., min_length=1, max_length=256)
@@ -627,6 +659,11 @@ class SyncPersonalContextBootstrapResponse(BaseModel):
     wrapped_key_blob: str = Field(..., min_length=1, max_length=16_384)
 
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("quotas")
+    @classmethod
+    def _validate_quota_names(cls, quotas: dict[str, int]) -> dict[str, int]:
+        return _validate_personal_context_quota_names(quotas)
 
     @model_validator(mode="after")
     def _validate_canonical_binding(self) -> "SyncPersonalContextBootstrapResponse":
@@ -642,7 +679,7 @@ class SyncPersonalContextBootstrapResponse(BaseModel):
         return self
 
 
-_AttentionInteger = Annotated[int, Field(strict=True, ge=0, le=2**63 - 1)]
+_AttentionInteger = _PersonalContextQuotaInteger
 
 
 class SyncPersonalContextSchemaAttention(BaseModel):
@@ -684,24 +721,10 @@ class SyncPersonalContextQuotaAttention(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    @staticmethod
-    def _valid_quota_name(name: str) -> bool:
-        return (
-            1 <= len(name) <= 64
-            and name[0].isalpha()
-            and name[0].isascii()
-            and all(
-                character.isascii()
-                and (character.islower() or character.isdigit() or character == "_")
-                for character in name
-            )
-        )
-
     @model_validator(mode="after")
     def _validate_exact_shortfall(self) -> "SyncPersonalContextQuotaAttention":
         all_names = set(self.required_quotas) | set(self.available_quotas)
-        if not all(self._valid_quota_name(name) for name in all_names):
-            raise ValueError("quota name is invalid")
+        _validate_personal_context_quota_names({name: 0 for name in all_names})
         if not set(self.required_quotas).issubset(self.available_quotas):
             raise ValueError("available quotas do not cover required quotas")
         expected = {

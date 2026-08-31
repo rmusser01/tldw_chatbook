@@ -415,8 +415,16 @@ def test_lazy_runtime_retries_complete_cleanup_before_enabling_sync(monkeypatch)
     )
 
 
+@pytest.mark.parametrize(
+    ("receipt_dataset_id", "receipt_key_record_id", "succeeds"),
+    (
+        ("dataset-1", "record-1", True),
+        ("dataset-1", "foreign-record", False),
+        ("foreign-dataset", "record-1", False),
+    ),
+)
 def test_lazy_runtime_repairs_exact_v7_complete_marker_before_enabling_sync(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, receipt_dataset_id, receipt_key_record_id, succeeds
 ) -> None:
     from tldw_profile_core import ProfileManifest, ProfileScope, ScopeKind
 
@@ -491,11 +499,11 @@ def test_lazy_runtime_repairs_exact_v7_complete_marker_before_enabling_sync(
         authenticated_principal_id="user-1",
         state="complete",
         device_id="device-1",
-        dataset_id="dataset-1",
+        dataset_id=receipt_dataset_id,
         authority_id="authority-1",
         profile_id="profile-server",
         integrity_key_id="integrity-1",
-        key_record_id="record-1",
+        key_record_id=receipt_key_record_id,
         purge_generation=0,
         bootstrap_cursor="bootstrap-receipt",
         sync_transport_cursor="transport-bootstrap",
@@ -506,28 +514,49 @@ def test_lazy_runtime_repairs_exact_v7_complete_marker_before_enabling_sync(
         rebaseline_version=1,
         attention_code=None,
     )
-    events: list[str] = []
 
-    class AuthenticatedCustodian:
-        def load_storage_key(self, **binding):
-            assert binding == {
-                "server_profile_id": "server-config-1",
-                "dataset_id": "dataset-1",
-                "device_id": "device-1",
-                "profile_id": "profile-server",
-                "integrity_key_id": "integrity-1",
-                "key_record_id": "record-1",
-            }
-            events.append("load-storage")
-            return b"k" * 32
+    class FakeMacOSKeyring:
+        priority = 1
 
-        def delete(self, **_binding):
-            events.append("delete-staged")
+        def __init__(self):
+            self.values = {}
+
+        def get_password(self, service, name):
+            return self.values.get((service, name))
+
+        def set_password(self, service, name, value):
+            self.values[(service, name)] = value
+
+        def delete_password(self, service, name):
+            del self.values[(service, name)]
+
+    FakeMacOSKeyring.__module__ = "keyring.backends.macOS"
+    custodian = link_key_custody.KeyringPersonalContextLinkKeyCustodian(
+        FakeMacOSKeyring()
+    )
+    staged_binding = {
+        "server_profile_id": "server-config-1",
+        "dataset_id": "dataset-1",
+        "device_id": "device-1",
+        "profile_id": "profile-server",
+        "integrity_key_id": "integrity-1",
+        "key_record_id": "record-1",
+    }
+    custodian.stage(
+        **staged_binding,
+        integrity_key=profile._repo()._require_keys().integrity_key,
+    )
+    receipt_binding = {
+        **staged_binding,
+        "dataset_id": receipt_dataset_id,
+        "key_record_id": receipt_key_record_id,
+    }
+    storage_key = custodian.load_or_create_storage_key(**receipt_binding)
 
     monkeypatch.setattr(
         link_key_custody,
         "KeyringPersonalContextLinkKeyCustodian",
-        AuthenticatedCustodian,
+        lambda: custodian,
     )
     app = SimpleNamespace(
         sync_state_repository=state,
@@ -539,16 +568,32 @@ def test_lazy_runtime_repairs_exact_v7_complete_marker_before_enabling_sync(
         get_personal_context_service=lambda **_kwargs: profile,
     )
 
+    if not succeeds:
+        with pytest.raises(ValueError, match="staged_integrity_key_binding_mismatch"):
+            TldwCli._load_personal_context_sync_runtime(
+                app,
+                server_profile_id="server-config-1",
+                authenticated_principal_id="user-1",
+            )
+        assert profile.first_link_freeze_plan_id() == "plan-v7"
+        assert profile.first_link_rebaseline_commit_plan_id() == "plan-v7"
+        assert custodian.load(**staged_binding) == (
+            profile._repo()._require_keys().integrity_key
+        )
+        assert app.sync_v2_dataset_keys == {}
+        return
+
     TldwCli._load_personal_context_sync_runtime(
         app,
         server_profile_id="server-config-1",
         authenticated_principal_id="user-1",
     )
 
-    assert events == ["load-storage", "delete-staged"]
     assert profile.first_link_freeze_plan_id() is None
     assert profile.first_link_rebaseline_commit_plan_id() is None
-    assert app.sync_v2_dataset_keys == {"dataset-1": b"k" * 32}
+    assert app.sync_v2_dataset_keys == {"dataset-1": storage_key}
+    with pytest.raises(ValueError, match="staged_integrity_key_binding_mismatch"):
+        custodian.load(**staged_binding)
     TldwCli._load_personal_context_sync_runtime(
         app,
         server_profile_id="server-config-1",
