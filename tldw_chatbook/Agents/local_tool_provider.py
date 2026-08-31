@@ -15,7 +15,7 @@ import json
 import threading
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
-from enum import StrEnum
+from enum import Enum, StrEnum
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -200,6 +200,50 @@ class LocalApprovalEffect(StrEnum):
     MUTATES_LOCAL = "mutates_local"
     NETWORK = "network"
     LLM_SPEND = "llm_spend"
+
+
+class LocalToolInvocationReason(str, Enum):
+    """Provider-owned reason for one local invocation outcome."""
+
+    UNKNOWN_TOOL = "unknown_tool"
+    INVALID_ARGUMENTS = "invalid_arguments"
+    PERMISSION_OFF = "permission_off"
+    PERMISSION_UNRESOLVED = "permission_unresolved"
+    APPROVAL_REFUSED = "approval_refused"
+    APPROVAL_TIMEOUT = "approval_timeout"
+    ROOT_CHANGED = "root_changed"
+    AUTHORITY_UNAVAILABLE = "authority_unavailable"
+    HANDLER_RETURNED = "handler_returned"
+    HANDLER_RAISED = "handler_raised"
+
+
+class LocalProviderTerminal(str, Enum):
+    """Terminal reached inside the synchronous local provider."""
+
+    NOT_STARTED = "not_started"
+    RETURNED = "returned"
+    RAISED = "raised"
+
+
+@dataclass(frozen=True, slots=True)
+class LocalToolInvocationResult:
+    """Structured local-provider facts alongside the compatible result."""
+
+    result: ToolResult
+    final_gate: str
+    approval_consumed: bool
+    reason_code: LocalToolInvocationReason
+    dispatch_started: bool
+    provider_terminal: LocalProviderTerminal
+
+
+@dataclass(frozen=True, slots=True)
+class _LocalGateDecision:
+    """Internal gate verdict with facts that result text cannot preserve."""
+
+    verdict: str
+    approval_consumed: bool
+    refusal_reason: LocalToolInvocationReason | None = None
 
 
 @dataclass(frozen=True)
@@ -1237,6 +1281,14 @@ class LocalToolProvider:
     # -- invocation -----------------------------------------------------
 
     def invoke(self, tool_id: str, args: dict) -> ToolResult:
+        """Execute one tool call through the compatible result-only seam."""
+        return self._invoke_detailed(tool_id, args).result
+
+    def invoke_detailed(self, tool_id: str, args: dict) -> LocalToolInvocationResult:
+        """Execute one tool call and expose provider-owned terminal facts."""
+        return self._invoke_detailed(tool_id, args)
+
+    def _invoke_detailed(self, tool_id: str, args: dict) -> LocalToolInvocationResult:
         """Execute one tool call. Never raises across the boundary.
 
         Fail-closed: only an explicit "allow" verdict executes; "deny" and
@@ -1260,17 +1312,45 @@ class LocalToolProvider:
         name = tool_id.split(":", 1)[1] if ":" in tool_id else tool_id
         spec = self._specs.get(name)
         if spec is None:
-            return ToolResult(ok=False, error=f"Unknown local tool: {name}")
+            return LocalToolInvocationResult(
+                result=ToolResult(ok=False, error=f"Unknown local tool: {name}"),
+                final_gate="not_checked",
+                approval_consumed=False,
+                reason_code=LocalToolInvocationReason.UNKNOWN_TOOL,
+                dispatch_started=False,
+                provider_terminal=LocalProviderTerminal.NOT_STARTED,
+            )
         try:
             authority, clean_args = self._select_admitted_root(name, args)
         except ValueError as exc:
-            return ToolResult(ok=False, error=str(exc))
+            return LocalToolInvocationResult(
+                result=ToolResult(ok=False, error=str(exc)),
+                final_gate="not_checked",
+                approval_consumed=False,
+                reason_code=LocalToolInvocationReason.INVALID_ARGUMENTS,
+                dispatch_started=False,
+                provider_terminal=LocalProviderTerminal.NOT_STARTED,
+            )
         write = self._is_mutating_path_tool(spec)
         if not self._authority_is_valid(authority, write=write):
-            return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
+            return LocalToolInvocationResult(
+                result=ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL),
+                final_gate="not_checked",
+                approval_consumed=False,
+                reason_code=LocalToolInvocationReason.ROOT_CHANGED,
+                dispatch_started=False,
+                provider_terminal=LocalProviderTerminal.NOT_STARTED,
+            )
         if self._kill_switch_engaged():
             self._record_decision_safe(self.hub_tool_for(name), "denied")
-            return ToolResult.blocked(LOCAL_KILL_SWITCH_REFUSAL)
+            return LocalToolInvocationResult(
+                result=ToolResult.blocked(LOCAL_KILL_SWITCH_REFUSAL),
+                final_gate="kill_switch",
+                approval_consumed=False,
+                reason_code=LocalToolInvocationReason.PERMISSION_OFF,
+                dispatch_started=False,
+                provider_terminal=LocalProviderTerminal.NOT_STARTED,
+            )
         selected_spec = (
             self._path_specs_by_alias[authority.alias][name]
             if authority is not None and name in _PATH_AUTHORITY_LOCAL_NAMES
@@ -1284,30 +1364,57 @@ class LocalToolProvider:
             authority=authority,
         )
         if promotion_result is not None:
-            return promotion_result
+            if promotion_result.ok:
+                return LocalToolInvocationResult(
+                    result=promotion_result,
+                    final_gate="not_checked",
+                    approval_consumed=False,
+                    reason_code=LocalToolInvocationReason.HANDLER_RETURNED,
+                    dispatch_started=True,
+                    provider_terminal=LocalProviderTerminal.RETURNED,
+                )
+            return LocalToolInvocationResult(
+                result=promotion_result,
+                final_gate="not_checked",
+                approval_consumed=False,
+                reason_code=LocalToolInvocationReason.APPROVAL_REFUSED,
+                dispatch_started=False,
+                provider_terminal=LocalProviderTerminal.NOT_STARTED,
+            )
         # PR2a Task 5: only the DISPATCHING run's own stamp may resolve
         # this call. `ToolProvider.invoke` has no run parameter, so the run
         # id rides `run_context` (bound by `AgentService` around each
         # invocation); `""` outside any run matches no stamp a review hook
         # writes, so such a call resolves through the fresh gate below.
-        verdict = self._verdict_for(name, args, current_run_id())
-        if verdict == "allow":
+        gate = self._verdict_for(name, args, current_run_id())
+        if gate.verdict == "allow":
+            dispatch_started = False
+            provider_terminal = LocalProviderTerminal.NOT_STARTED
 
-            def _invoke_allowed() -> ToolResult:
+            def _invoke_allowed() -> LocalToolInvocationResult:
+                nonlocal dispatch_started, provider_terminal
                 if not self._authority_is_valid(authority, write=write):
-                    return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
+                    return LocalToolInvocationResult(
+                        result=ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL),
+                        final_gate=gate.verdict,
+                        approval_consumed=gate.approval_consumed,
+                        reason_code=LocalToolInvocationReason.ROOT_CHANGED,
+                        dispatch_started=False,
+                        provider_terminal=LocalProviderTerminal.NOT_STARTED,
+                    )
                 redaction_root = (
                     authority.root
                     if authority is not None
                     else self._result_redaction_root
                 )
+                dispatch_started = True
                 try:
                     selected_spec = (
                         self._path_specs_by_alias[authority.alias][name]
                         if authority is not None and name in _PATH_AUTHORITY_LOCAL_NAMES
                         else spec
                     )
-                    return ToolResult(
+                    result = ToolResult(
                         ok=True,
                         content=_fit_result(
                             redact_root_locator(
@@ -1316,19 +1423,45 @@ class LocalToolProvider:
                             )
                         ),
                     )
+                    provider_terminal = LocalProviderTerminal.RETURNED
+                    return LocalToolInvocationResult(
+                        result=result,
+                        final_gate=gate.verdict,
+                        approval_consumed=gate.approval_consumed,
+                        reason_code=LocalToolInvocationReason.HANDLER_RETURNED,
+                        dispatch_started=True,
+                        provider_terminal=provider_terminal,
+                    )
                 except WorkspaceToolExecutionError as exc:
-                    return _workspace_execution_error_result(
+                    provider_terminal = LocalProviderTerminal.RAISED
+                    result = _workspace_execution_error_result(
                         exc,
                         redaction_root=redaction_root,
                     )
+                    return LocalToolInvocationResult(
+                        result=result,
+                        final_gate=gate.verdict,
+                        approval_consumed=gate.approval_consumed,
+                        reason_code=LocalToolInvocationReason.HANDLER_RAISED,
+                        dispatch_started=True,
+                        provider_terminal=provider_terminal,
+                    )
                 except Exception as exc:  # noqa: BLE001 — protocol boundary
+                    provider_terminal = LocalProviderTerminal.RAISED
                     error = redact_root_locator(
                         str(exc) or repr(exc),
                         redaction_root,
                     )
-                    return ToolResult(
-                        ok=False,
-                        error=error[:_MAX_ERROR_CHARS],
+                    return LocalToolInvocationResult(
+                        result=ToolResult(
+                            ok=False,
+                            error=error[:_MAX_ERROR_CHARS],
+                        ),
+                        final_gate=gate.verdict,
+                        approval_consumed=gate.approval_consumed,
+                        reason_code=LocalToolInvocationReason.HANDLER_RAISED,
+                        dispatch_started=True,
+                        provider_terminal=provider_terminal,
                     )
 
             authority_scope = (
@@ -1341,20 +1474,27 @@ class LocalToolProvider:
                     with authority_scope():
                         return _invoke_allowed()
                 except Exception:  # noqa: BLE001 - lease failure is fail-closed
-                    return ToolResult.blocked(LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL)
+                    return LocalToolInvocationResult(
+                        result=ToolResult.blocked(LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
+                        final_gate=gate.verdict,
+                        approval_consumed=gate.approval_consumed,
+                        reason_code=LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
+                        dispatch_started=dispatch_started,
+                        provider_terminal=provider_terminal,
+                    )
             return _invoke_allowed()
-        if verdict == "timeout":
+        if gate.verdict == "timeout":
             self._record_decision_safe(self.hub_tool_for(name), "denied-timeout")
-            return ToolResult.blocked(LOCAL_TIMEOUT_REFUSAL)
-        if verdict == "no_callback":
+            result = ToolResult.blocked(LOCAL_TIMEOUT_REFUSAL)
+        elif gate.verdict == "no_callback":
             self._record_decision_safe(self.hub_tool_for(name), "denied-timeout")
             refusal = (
                 self._no_callback_refusal
                 if self._no_callback_refusal is not None
                 else LOCAL_TIMEOUT_REFUSAL
             )
-            return ToolResult.blocked(refusal)
-        if verdict == "gate_error":
+            result = ToolResult.blocked(refusal)
+        elif gate.verdict == "gate_error":
             # Fix Round H, Item 1: the resolver raised rather than
             # genuinely resolving to "deny" -- still fails closed (the tool
             # does not run), but the reason told to the model is honest:
@@ -1364,10 +1504,21 @@ class LocalToolProvider:
             # provider's own `record_decision` docstring); only the
             # returned TEXT distinguishes the two cases.
             self._record_decision_safe(self.hub_tool_for(name), "denied")
-            return ToolResult.blocked(LOCAL_GATE_ERROR_REFUSAL)
-        # "deny" and any unrecognized verdict fail closed the same way.
-        self._record_decision_safe(self.hub_tool_for(name), "denied")
-        return ToolResult.blocked(LOCAL_DENY_REFUSAL)
+            result = ToolResult.blocked(LOCAL_GATE_ERROR_REFUSAL)
+        else:
+            # "deny" and any unrecognized verdict fail closed the same way.
+            self._record_decision_safe(self.hub_tool_for(name), "denied")
+            result = ToolResult.blocked(LOCAL_DENY_REFUSAL)
+        return LocalToolInvocationResult(
+            result=result,
+            final_gate=gate.verdict,
+            approval_consumed=gate.approval_consumed,
+            reason_code=(
+                gate.refusal_reason or LocalToolInvocationReason.APPROVAL_REFUSED
+            ),
+            dispatch_started=False,
+            provider_terminal=LocalProviderTerminal.NOT_STARTED,
+        )
 
     def _invoke_promotion(
         self,
@@ -1564,7 +1715,7 @@ class LocalToolProvider:
             logger.warning(f"LocalToolProvider: kill_switch read failed: {exc}")
             return True
 
-    def _verdict_for(self, name: str, args: dict, run_id: str) -> str:
+    def _verdict_for(self, name: str, args: dict, run_id: str) -> _LocalGateDecision:
         """Resolve this call's gate decision: only "allow" executes.
 
         Never raises: every injected callable is guarded, and a guard trip
@@ -1585,24 +1736,43 @@ class LocalToolProvider:
             # resolver crashed, so the tool's actual state was never
             # determined; it is not necessarily Off at all. invoke() renders
             # this as LOCAL_GATE_ERROR_REFUSAL, not LOCAL_DENY_REFUSAL.
-            return "gate_error"
+            return _LocalGateDecision(
+                verdict="gate_error",
+                approval_consumed=False,
+                refusal_reason=LocalToolInvocationReason.PERMISSION_UNRESOLVED,
+            )
         if state.state == "allow":
-            return "allow"
+            return _LocalGateDecision(verdict="allow", approval_consumed=False)
         if state.state == "deny":
-            return "deny"
+            return _LocalGateDecision(
+                verdict="deny",
+                approval_consumed=False,
+                refusal_reason=LocalToolInvocationReason.PERMISSION_OFF,
+            )
         # ask: per-turn stamp wins; then a live session approval; then the
         # single-call fallback; then fail closed.
         stamp = self.stamped(run_id, name)
         if stamp in ("approve_once", "approve_session", "always_allow"):
             if stamp != "approve_once":
                 self._persist_approval_safe(hub, stamp)
-            return "allow"
+            return _LocalGateDecision(
+                verdict="allow",
+                approval_consumed=stamp == "approve_once",
+            )
         if stamp == "deny":
-            return "deny"
+            return _LocalGateDecision(
+                verdict="deny",
+                approval_consumed=False,
+                refusal_reason=LocalToolInvocationReason.APPROVAL_REFUSED,
+            )
         if stamp == "timeout":
-            return "timeout"
+            return _LocalGateDecision(
+                verdict="timeout",
+                approval_consumed=False,
+                refusal_reason=LocalToolInvocationReason.APPROVAL_TIMEOUT,
+            )
         if self._is_session_approved_safe(hub):
-            return "allow"
+            return _LocalGateDecision(verdict="allow", approval_consumed=False)
         if self._approval_callback is not None:
             # Fix Round H, Item 1 (checked, not fixed -- reported) / Fix
             # Round I, Item 5 (fixed): this is a SECOND, narrower resolve_
@@ -1623,25 +1793,53 @@ class LocalToolProvider:
             gate, resolve_failed = self._resolve_pending_gate(name, args, hub)
             if gate is None:
                 if resolve_failed:
-                    return "gate_error"
+                    return _LocalGateDecision(
+                        verdict="gate_error",
+                        approval_consumed=False,
+                        refusal_reason=(
+                            LocalToolInvocationReason.PERMISSION_UNRESOLVED
+                        ),
+                    )
                 # state re-resolution genuinely flipped away from "ask"
                 # (or a session approval raced in) -- nothing to confirm,
                 # fail closed the same way an unapproved wait would.
-                return "timeout"
+                return _LocalGateDecision(
+                    verdict="timeout",
+                    approval_consumed=False,
+                    refusal_reason=LocalToolInvocationReason.APPROVAL_TIMEOUT,
+                )
             try:
                 decisions = self._approval_callback([gate])
             except Exception:  # noqa: BLE001 — fail closed on a callback failure
                 logger.warning("Local tool approval callback failed")
-                return "timeout"
+                return _LocalGateDecision(
+                    verdict="timeout",
+                    approval_consumed=False,
+                    refusal_reason=LocalToolInvocationReason.APPROVAL_TIMEOUT,
+                )
             decision = (decisions or {}).get(name, "timeout")
             if decision in ("approve_session", "always_allow"):
                 self._persist_approval_safe(hub, decision)
-            return (
-                "allow"
-                if decision in ("approve_once", "approve_session", "always_allow")
-                else decision
+            if decision in ("approve_once", "approve_session", "always_allow"):
+                return _LocalGateDecision(
+                    verdict="allow",
+                    approval_consumed=decision == "approve_once",
+                )
+            final_verdict = decision if isinstance(decision, str) else "deny"
+            return _LocalGateDecision(
+                verdict=final_verdict,
+                approval_consumed=False,
+                refusal_reason=(
+                    LocalToolInvocationReason.APPROVAL_TIMEOUT
+                    if final_verdict == "timeout"
+                    else LocalToolInvocationReason.APPROVAL_REFUSED
+                ),
             )
-        return "no_callback"
+        return _LocalGateDecision(
+            verdict="no_callback",
+            approval_consumed=False,
+            refusal_reason=LocalToolInvocationReason.APPROVAL_TIMEOUT,
+        )
 
     def _is_session_approved_safe(self, hub: HubTool) -> bool:
         """Never-raise session-grant read; absent/failed read means not approved."""
