@@ -90,6 +90,8 @@ from .agent_models import (
     ToolResult,
     ToolSchema,
     format_steering_message,
+    normalize_rationale,
+    with_preamble_rationale,
 )
 from .project_instruction_runtime import (
     PROJECT_INSTRUCTION_ROW_KEY,
@@ -230,11 +232,17 @@ def parse_fenced_tool_call(text: str) -> ToolCall | None:
     call_id = payload.get("call_id", "")
     if not isinstance(call_id, str):
         return None
+    # ADR-080: an optional explicit rationale key; wrong-typed values are
+    # ignored, never fatal -- the call itself must still parse.
+    rationale = payload.get("rationale", "")
+    if not isinstance(rationale, str):
+        rationale = ""
     return ToolCall(
         name=name,
         args=args,
         call_id=call_id,
         raw_arguments=raw_arguments,
+        rationale=normalize_rationale(rationale),
     )
 
 
@@ -1311,11 +1319,18 @@ def run_agent_loop(
             model_turns += 1
             total_tokens += turn.tokens
             calls = list(turn.tool_calls)
+            if calls:
+                # ADR-080: native turns -- the assistant text of the same
+                # turn is the rationale for every call in it.
+                calls = list(with_preamble_rationale(calls, turn.text))
         fenced = None
         if not calls:
             _visible, fenced = split_visible_text_and_tool_call(turn.text)
             if fenced is not None:
-                calls = [fenced]
+                # ADR-080: fence turns -- the visible text preceding the
+                # fence is the fallback rationale (explicit key wins inside
+                # with_preamble_rationale).
+                calls = list(with_preamble_rationale([fenced], _visible))
         candidate = turn.provider_continuation
         if not restoring_batch and calls and candidate is not None:
             context = deps.continuation_context

@@ -10,7 +10,8 @@ import hashlib
 import json
 import math
 import re
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import dataclass, field, replace
 from typing import Callable, Literal, TypeAlias
 
 from tldw_chatbook.Chat.provider_continuation import (
@@ -259,6 +260,32 @@ def normalize_rationale(text: object, cap: int = RATIONALE_CAPTURE_CAP) -> str:
     if len(cleaned) > cap:
         return "\N{HORIZONTAL ELLIPSIS}" + cleaned[-(cap - 1) :]
     return cleaned
+
+
+def with_preamble_rationale(
+    calls: Sequence[ToolCall], preamble: str
+) -> tuple[ToolCall, ...]:
+    """Attach a turn's preamble text as the rationale of calls lacking one.
+
+    The hybrid rule (ADR-080): an explicit fence ``rationale`` key wins, so
+    calls that already carry a rationale pass through untouched; everything
+    else (native turn text, fence preamble) fills in from ``preamble``.
+
+    Args:
+        calls: The turn's parsed tool calls.
+        preamble: The model's visible text for the turn (native text or the
+            fence's preceding text).
+
+    Returns:
+        Tuple of calls with preamble-derived rationale applied.
+    """
+    normalized = normalize_rationale(preamble)
+    if not normalized:
+        return tuple(calls)
+    return tuple(
+        call if call.rationale else replace(call, rationale=normalized)
+        for call in calls
+    )
 
 
 @dataclass(frozen=True)
