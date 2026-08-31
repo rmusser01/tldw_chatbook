@@ -21,6 +21,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from functools import partial
+from types import MappingProxyType
 from typing import Any, Optional, TYPE_CHECKING
 import asyncio
 import inspect
@@ -187,6 +188,7 @@ class PageAttemptState:
     worker: Any = None
 
 
+WORKSPACE_FILES_AVAILABILITY_CACHE_TTL_SECONDS = 1.0
 WORKSPACE_FILES_NO_FOLDERS_COPY = "No local folders are attached. Add one in Settings."
 WORKSPACE_FILES_OTHER_VISIT_COPY = (
     "Close Workspace Files before inspecting another workspace."
@@ -592,6 +594,16 @@ class ConsoleWorkspaceController:
         self._workspace_files_attention_generation = 0
         self._workspace_files_admission_lock = asyncio.Lock()
         self._workspace_files_admission_claim: str | None = None
+        # Folder binding status may touch the filesystem.  Context rendering
+        # runs on Textual's event loop, so it reads only this immutable cache;
+        # one controller-owned worker refreshes it off-loop below.
+        self._workspace_files_availability_by_id: Mapping[str, bool] = (
+            MappingProxyType({})
+        )
+        self._workspace_files_availability_requested_ids: tuple[str, ...] = ()
+        self._workspace_files_availability_generation = 0
+        self._workspace_files_availability_refresh_in_flight = False
+        self._workspace_files_availability_cached_at = 0.0
 
         self._workspace_tree_search = SearchAttemptState()
         self._flat_conversation_search = SearchAttemptState()
@@ -4474,6 +4486,89 @@ class ConsoleWorkspaceController:
         finally:
             self._console_tick_builds = None
 
+    def _request_workspace_files_availability_refresh(
+        self, workspace_ids: Sequence[str]
+    ) -> None:
+        """Coalesce one off-loop local-folder availability snapshot.
+
+        The context rail is refreshed on the Textual loop.  Calling the
+        registry's ``list_folder_bindings`` there recomputes filesystem
+        status and can stall every Console interaction, so renderers only
+        enqueue this best-effort cache refresh and fail closed until it lands.
+        """
+        requested_ids = tuple(sorted({str(item or "").strip() for item in workspace_ids if str(item or "").strip()}))
+        now = time.monotonic()
+        if (
+            requested_ids == self._workspace_files_availability_requested_ids
+            and (
+                self._workspace_files_availability_refresh_in_flight
+                or now - self._workspace_files_availability_cached_at
+                < WORKSPACE_FILES_AVAILABILITY_CACHE_TTL_SECONDS
+            )
+        ):
+            return
+        self._workspace_files_availability_requested_ids = requested_ids
+        self._workspace_files_availability_generation += 1
+        if self._workspace_files_availability_refresh_in_flight:
+            return
+        if not requested_ids or not self._screen_running_accessor():
+            return
+        self._workspace_files_availability_refresh_in_flight = True
+        self.run_worker(
+            self._refresh_workspace_files_availability_snapshot(),
+            group="console-workspace-files-availability",
+            exclusive=False,
+        )
+
+    def _capture_workspace_files_availability(
+        self, workspace_ids: Sequence[str]
+    ) -> dict[str, bool]:
+        """Read folder readiness off-loop into a presentation-only snapshot."""
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        availability: dict[str, bool] = {}
+        for workspace_id in workspace_ids:
+            if registry is None:
+                availability[workspace_id] = False
+                continue
+            try:
+                bindings = registry.list_folder_bindings(workspace_id)
+                availability[workspace_id] = any(
+                    binding.binding_kind is RuntimeBindingKind.LOCAL_FILESYSTEM
+                    and binding.status is RuntimeBindingStatus.READY
+                    for binding in bindings
+                )
+            except Exception:
+                availability[workspace_id] = False
+        return availability
+
+    async def _refresh_workspace_files_availability_snapshot(self) -> None:
+        """Publish only the latest completed folder-availability generation."""
+        try:
+            while self._screen_running_accessor():
+                generation = self._workspace_files_availability_generation
+                workspace_ids = self._workspace_files_availability_requested_ids
+                snapshot = await asyncio.to_thread(
+                    self._capture_workspace_files_availability, workspace_ids
+                )
+                if generation == self._workspace_files_availability_generation:
+                    self._workspace_files_availability_by_id = MappingProxyType(
+                        {
+                            workspace_id: bool(snapshot.get(workspace_id, False))
+                            for workspace_id in workspace_ids
+                        }
+                    )
+                    self._workspace_files_availability_cached_at = time.monotonic()
+                    self._workspace_files_availability_refresh_in_flight = False
+                    self._sync_console_workspace_context()
+                    return
+        except asyncio.CancelledError:
+            raise
+        finally:
+            # A screen-owned worker is cancelled during teardown.  Do not
+            # retain an in-flight claim that would make a resumed screen think
+            # a non-existent worker still owns its snapshot.
+            self._workspace_files_availability_refresh_in_flight = False
+
     def _build_console_workspace_context_state(self) -> ConsoleWorkspaceContextState:
         builds = getattr(self, "_console_tick_builds", None)
         if builds is not None and builds.accepts_current_task():
@@ -4504,18 +4599,18 @@ class ConsoleWorkspaceController:
             state,
             current_conversation_id=current_conversation,
         )
-        registry = getattr(self.app_instance, "workspace_registry_service", None)
-        availability: dict[str, bool] = {}
-        if registry is not None:
-            for workspace in self._console_browser_workspace_records():
-                try:
-                    availability[workspace.workspace_id] = any(
-                        binding.binding_kind is RuntimeBindingKind.LOCAL_FILESYSTEM
-                        and binding.status is RuntimeBindingStatus.READY
-                        for binding in registry.list_folder_bindings(workspace.workspace_id)
-                    )
-                except Exception:
-                    availability[workspace.workspace_id] = False
+        workspace_ids = tuple(
+            str(workspace.workspace_id or "").strip()
+            for workspace in self._console_browser_workspace_records()
+            if str(workspace.workspace_id or "").strip()
+        )
+        self._request_workspace_files_availability_refresh(workspace_ids)
+        availability = {
+            workspace_id: bool(
+                self._workspace_files_availability_by_id.get(workspace_id, False)
+            )
+            for workspace_id in workspace_ids
+        }
         return replace(state, workspace_files_available_by_id=availability)
 
     def _console_workspace_build_fingerprint(self) -> tuple | None:

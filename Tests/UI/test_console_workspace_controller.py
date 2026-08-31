@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from dataclasses import replace
+import time
 from threading import Event
 from types import SimpleNamespace
 
@@ -51,6 +52,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
+import tldw_chatbook.UI.Console_Modules.workspace as workspace_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 from tldw_chatbook.Widgets.Console.console_workspace_files_modal import (
@@ -65,6 +67,8 @@ from tldw_chatbook.Workspaces import (
     DEFAULT_WORKSPACE_ID,
     ConsoleConversationBrowserInputRow,
     ConsoleConversationBrowserRow,
+    RuntimeBindingKind,
+    RuntimeBindingStatus,
     WorkspaceRecord,
     console_conversation_browser_group_row_limit,
     console_rail_section_height_budget,
@@ -96,6 +100,15 @@ class _NoMountScreen:
         self.workers.append((work, kwargs))
         coroutine = work() if callable(work) else work
         coroutine.close()
+
+
+class _AsyncWorkerScreen(_NoMountScreen):
+    """Run controller-owned workers without mounting a Textual app."""
+
+    def run_worker(self, coroutine, **kwargs):
+        task = asyncio.create_task(coroutine)
+        self.workers.append((task, kwargs))
+        return task
 
 
 class _FakeTimer:
@@ -150,6 +163,157 @@ def _workspace_controller(
     )
     dependencies.update(overrides)
     return ConsoleWorkspaceController(screen or _NoMountScreen(), **dependencies)
+
+
+def _minimal_workspace_context_state() -> ConsoleWorkspaceContextState:
+    return ConsoleWorkspaceContextState(
+        heading="Workspaces",
+        workspace_label="Workspace: A",
+        authority_label="Authority: ready",
+        sync_label="Sync: ready",
+        runtime_label="Runtime: ready",
+        conversation_rows=(),
+        conversation_empty_copy="",
+        change_workspace_enabled=True,
+        change_workspace_recovery="",
+        new_conversation_enabled=True,
+        new_conversation_recovery="",
+        recovery_copy="",
+    )
+
+
+def _availability_controller(monkeypatch, registry, screen, records, sync_calls):
+    """Build the real cache owner with all unrelated state derivation inert."""
+    controller = _workspace_controller(
+        screen=screen,
+        app_instance=SimpleNamespace(workspace_registry_service=registry),
+        sync_workspace_context=lambda: sync_calls.append("sync"),
+    )
+    monkeypatch.setattr(
+        workspace_module,
+        "build_console_workspace_state",
+        lambda **_kwargs: _minimal_workspace_context_state(),
+    )
+    monkeypatch.setattr(
+        ConsoleWorkspaceController,
+        "_with_native_console_session_rows",
+        lambda _self, state: state,
+    )
+    monkeypatch.setattr(
+        ConsoleWorkspaceController,
+        "_with_console_conversation_browser_state",
+        lambda _self, state, **_kwargs: state,
+    )
+    monkeypatch.setattr(
+        ConsoleWorkspaceController,
+        "_console_browser_workspace_records",
+        lambda _self: tuple(records[0]),
+    )
+    return controller
+
+
+@pytest.mark.asyncio
+async def test_workspace_files_availability_snapshot_never_blocks_context_build(
+    monkeypatch,
+):
+    """Filesystem status work is owned by one off-loop, fail-closed snapshot."""
+    entered = Event()
+    release = Event()
+
+    class _Registry:
+        def list_folder_bindings(self, workspace_id):
+            entered.set()
+            release.wait(timeout=2)
+            return (
+                SimpleNamespace(
+                    binding_kind=RuntimeBindingKind.LOCAL_FILESYSTEM,
+                    status=RuntimeBindingStatus.READY,
+                ),
+            )
+
+    screen = _AsyncWorkerScreen()
+    records = [[SimpleNamespace(workspace_id="ws-a")]]
+    sync_calls: list[str] = []
+    controller = _availability_controller(
+        monkeypatch, _Registry(), screen, records, sync_calls
+    )
+
+    started = time.monotonic()
+    state = controller._build_console_workspace_context_state()
+    assert time.monotonic() - started < 0.1
+    assert state.workspace_files_available_by_id == {"ws-a": False}
+    assert len(screen.workers) == 1
+    await asyncio.sleep(0)
+    assert entered.is_set()
+
+    # A cadence tick while disk work is blocked is still cache-only and does
+    # not mint a duplicate worker or mutate the Console context.
+    state = controller._build_console_workspace_context_state()
+    assert state.workspace_files_available_by_id == {"ws-a": False}
+    assert len(screen.workers) == 1
+    assert sync_calls == []
+
+    release.set()
+    await screen.workers[0][0]
+    assert controller._workspace_files_availability_by_id == {"ws-a": True}
+    assert sync_calls == ["sync"]
+    assert controller._build_console_workspace_context_state().workspace_files_available_by_id == {
+        "ws-a": True
+    }
+
+
+@pytest.mark.asyncio
+async def test_workspace_files_availability_snapshot_discards_stale_generation(
+    monkeypatch,
+):
+    """Only the current workspace set can publish; absent entries stay false."""
+    first_entered = Event()
+    first_release = Event()
+    second_entered = Event()
+    second_release = Event()
+
+    class _Registry:
+        def list_folder_bindings(self, workspace_id):
+            if workspace_id == "ws-a":
+                first_entered.set()
+                first_release.wait(timeout=2)
+            else:
+                second_entered.set()
+                second_release.wait(timeout=2)
+            return (
+                SimpleNamespace(
+                    binding_kind=RuntimeBindingKind.LOCAL_FILESYSTEM,
+                    status=RuntimeBindingStatus.READY,
+                ),
+            )
+
+    screen = _AsyncWorkerScreen()
+    records = [[SimpleNamespace(workspace_id="ws-a")]]
+    sync_calls: list[str] = []
+    controller = _availability_controller(
+        monkeypatch, _Registry(), screen, records, sync_calls
+    )
+    assert controller._build_console_workspace_context_state().workspace_files_available_by_id == {
+        "ws-a": False
+    }
+    await asyncio.sleep(0)
+    assert first_entered.is_set()
+
+    records[0] = [SimpleNamespace(workspace_id="ws-b")]
+    assert controller._build_console_workspace_context_state().workspace_files_available_by_id == {
+        "ws-b": False
+    }
+    first_release.set()
+    while not second_entered.is_set():
+        await asyncio.sleep(0)
+    second_release.set()
+    await screen.workers[0][0]
+
+    assert controller._workspace_files_availability_by_id == {"ws-b": True}
+    assert controller._build_console_workspace_context_state().workspace_files_available_by_id == {
+        "ws-b": True
+    }
+    assert sync_calls == ["sync"]
 
 
 @pytest.mark.asyncio
