@@ -62,6 +62,7 @@ from .agent_models import (
     WAIT_AGENTS_TOOL_NAME,
 )
 from .run_context import current_run_id
+from .tool_arg_coercion import coerce_tool_args
 from .run_log_search import (
     MAX_CROSS_RUN_RUNS,
     MAX_SLICE_RECORDS,
@@ -1531,11 +1532,39 @@ class ToolCatalogRegistry:
             return None
         return record.tool_id, record.provider
 
+    def _coerce_arguments(self, name, tool_id, provider, args: dict) -> dict:
+        """Repair JSON-string arguments against the tool's declared schema.
+
+        Never raises and never blocks a call: a provider that cannot produce a
+        schema simply gets the arguments unchanged, because failing to repair
+        is strictly better than failing to dispatch.
+        """
+        try:
+            schema = provider.load_schema(tool_id)
+            repaired, coerced = coerce_tool_args(args, getattr(schema, "parameters", None))
+        except Exception:  # noqa: BLE001 -- repair is best-effort by design
+            return args
+        if coerced:
+            # Reported, not masked: a model that systematically mis-encodes
+            # arguments is a prompt/model problem the operator should see.
+            logger.warning(
+                "Repaired JSON-string tool arguments for {} (fields: {}).",
+                name,
+                ", ".join(coerced),
+            )
+        return repaired
+
     def invoke_by_name(self, name: str, args: dict) -> ToolResult:
         record = self._owner_record_for_name(name)
         if record is None:
             return ToolResult(ok=False, error=f"Unknown tool: {name}")
         tool_id, provider = record.tool_id, record.provider
+        # TASK-26005: repair arguments the model JSON-encoded as strings before
+        # anything downstream sees them. Placed here rather than at either
+        # `provider.invoke` below because this method has two dispatch sites and
+        # is the one line every provider is reached through -- the same reason
+        # the ephemeral gate and the call caps live here.
+        args = self._coerce_arguments(name, tool_id, provider, args)
         # Workspace assistant defaults (Task 7): persona-policy call caps,
         # refused BEFORE dispatch in the exact error-`ToolResult` shape the
         # unknown-tool branch above uses. Narrowing-only -- a capped tool is
