@@ -161,18 +161,36 @@ follows the Inspector instead -- `.console-rail-section-header` drops
 the section title gains a column the 27-column rail can use, and the border-top
 rule and 2-row minimum (TASK-23193, reviewer's explicit choice) are untouched.
 
-**Finding 3 -- a lead, not a fix.** The snapshot asserts `'Blocked impact'`, and
-that row is emitted in exactly ONE place: the `if setup_blocker_copy:` branch in
-`chat_screen.py` (~line 10976), which fires only when provider configuration is
-required. Everywhere else the label appears it is being *read* (the auto-open
-predicate at ~10367, the ownership map), never emitted. The same test file
-asserts the fixture is a configured, healthy run (`"Model: gpt-5.6-terra"`,
-`"Send disabled" not in svg`, `"Setup required" not in svg`), so the assertion
-wants a row that only exists in the blocked state while asserting the app is not
-in it. That reads as a stale assertion from when the fixture rendered blocked --
-but confirming which side is wrong needs someone who knows what #2220 intended
-the healthy-run Run group to contain, so it is left as AC #3 rather than guessed
-at.
+**Finding 3 -- REAL BUG, not test drift. Now TASK-25887.**
+
+Two earlier readings here were wrong and are left visible on purpose. First:
+"#2220 renamed or removed the copy" -- it did not. Second, written in this
+task: "the assertion is stale, it wants a blocked row from a healthy fixture"
+-- also wrong; the fixture IS provider-blocked.
+
+Probing from inside pytest settles it. Every row is mounted with the right
+text, and the three that carry the blocked-state message sit one row past the
+rail's visible bottom:
+
+```
+RAIL visible bottom y=34      BODY = 60 rows of content in a 28-row rail
+  y=29 vis      run-recipe        'Run recipe: OpenAI /'
+  y=33 vis      live-work         'Live work: No active work'
+  y=34 CLIPPED  setup             'Setup: Provider configuration'
+  y=36 CLIPPED  blocked-impact    'Blocked impact: Send is'
+  y=41 CLIPPED  next-action       'Next action: Set up provider'
+```
+
+So at 128x40 with no provider configured, the Inspector shows "Run recipe" and
+"Live work: No active work" and says nothing about send being blocked -- which
+is the one thing it exists to say in that state. The snapshot test is correct;
+the app is wrong.
+
+What made it look like drift: the same test asserts
+`next_action.render_line(0) == "Next action: Set up provider"` and that PASSES,
+because it reads the widget rather than the painted screen. A DOM assertion and
+a screenshot assertion on the same row disagree, and the disagreement is the
+bug. AC #3 moves to TASK-25887 with the full probe.
 
 ## Notes
 
