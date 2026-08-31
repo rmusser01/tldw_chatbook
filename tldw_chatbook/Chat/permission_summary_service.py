@@ -258,6 +258,29 @@ def summarize_pending_round(
     return format_context_line(text) or None
 
 
+def permission_summary_settings_payload(
+    mode: str, provider: str, model: str
+) -> dict[str, str]:
+    """Validate the settings-screen trio into a config section payload.
+
+    Args:
+        mode: Raw mode input; invalid values degrade to "off".
+        provider: Raw provider input, stripped.
+        model: Raw model input, stripped.
+
+    Returns:
+        The ``[permission_summary]`` sub-dict for config persistence.
+    """
+    cleaned = str(mode or "").strip().lower()
+    if cleaned not in PERMISSION_SUMMARY_MODES:
+        cleaned = "off"
+    return {
+        "mode": cleaned,
+        "provider": str(provider or "").strip(),
+        "model": str(model or "").strip(),
+    }
+
+
 def _positive_float(value: Any, default: float) -> float:
     try:
         out = float(value)

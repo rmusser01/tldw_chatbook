@@ -95,6 +95,7 @@ from ...Chat.console_provider_support import (
     supported_console_provider_catalog,
 )
 from ...Chat.console_session_settings import CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
+from ...Chat.permission_summary_service import permission_summary_settings_payload
 from ...ACP_Interop.runtime_session import ACPRuntimeSessionState
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...Sync_Interop.sync_promotion_state import (
@@ -771,7 +772,15 @@ RAW_CLI_DISCLOSURE_LINES = (
     "This is not a sandbox and is not limited to your workspace.",
 )
 
-
+# ADR-080: ids of the instant-apply [permission_summary] controls, for the
+# same focus-tracking reason as MODEL_CATALOG_FIELD_IDS above.
+PERMISSION_SUMMARY_FIELD_IDS = frozenset(
+    {
+        "settings-permission-summary-mode",
+        "settings-permission-summary-provider",
+        "settings-permission-summary-model",
+    }
+)
 # TASK-18600: the Console agent's run budget, driven by ONE spec table
 # rather than five copies of the per-setting boilerplate every other
 # numeric Console field uses. Five near-identical settings is where that
@@ -4365,6 +4374,23 @@ class SettingsScreen(BaseAppScreen):
             minimum=MIN_CONSOLE_MAX_PARALLEL_RUNS,
         )
 
+    def _saved_permission_summary_payload(self) -> dict[str, str]:
+        """The normalized saved ``[permission_summary]`` trio (ADR-080).
+
+        Reads the cached ``load_settings()`` config -- the model-catalog
+        group's source (cheap cache hit, and every config write refreshes
+        it) -- and normalizes through the settings payload helper, so
+        compose-time widget values and the instant-apply no-op guard can
+        never disagree about what "saved" means.
+        """
+        section = load_settings().get("permission_summary")
+        section = section if isinstance(section, dict) else {}
+        return permission_summary_settings_payload(
+            str(section.get("mode") or ""),
+            str(section.get("provider") or ""),
+            str(section.get("model") or ""),
+        )
+
     def _loaded_agent_budget_value(self, field: AgentBudgetField) -> float:
         """The saved (or shipped-default) value for one budget field.
 
@@ -5045,6 +5071,56 @@ class SettingsScreen(BaseAppScreen):
             )
         except Exception:
             logger.warning("Failed to persist status_chips_position.")
+
+    def _persist_permission_summary_settings(self) -> None:
+        """Persist the permission-summary trio to ``[permission_summary]`` (ADR-080).
+
+        Instant-apply group (model-catalog pattern, ADR-020/task-1341): the
+        disclosure copy is the consent surface, so changes save immediately
+        instead of staging into the category draft. States matching the
+        saved config are skipped (no-op guard) so merely viewing the
+        category never rewrites config.toml.
+        """
+        try:
+            mode = self._select_text_value(
+                self.query_one("#settings-permission-summary-mode", Select).value
+            )
+            provider = self.query_one(
+                "#settings-permission-summary-provider", Input
+            ).value
+            model = self.query_one("#settings-permission-summary-model", Input).value
+        except QueryError:
+            return
+        section_values = {
+            "permission_summary": permission_summary_settings_payload(
+                mode, provider, model
+            )
+        }
+        if (
+            section_values["permission_summary"]
+            == self._saved_permission_summary_payload()
+        ):
+            return
+        self._persist_permission_summary_section_values(section_values)
+
+    @work(thread=True)
+    def _persist_permission_summary_section_values(
+        self, section_values: dict[str, dict[str, object]]
+    ) -> None:
+        """Write ``[permission_summary]`` off the event loop (task-15470 shape).
+
+        The Inputs are bound to ``Input.Changed``; the actual write is
+        deferred off the event loop while the cheap no-op guard above stays
+        synchronous. Guarded broadly: an uncaught exception in a
+        ``@work(thread=True)`` worker is fatal to the app by default.
+        ``save_settings_to_cli_config`` merges keys, so advanced
+        ``[permission_summary]`` keys (api_key, system_prompt, budgets) are
+        preserved.
+        """
+        try:
+            save_settings_to_cli_config(section_values)
+        except Exception:
+            logger.warning("Failed to persist permission_summary settings.")
 
     def _paste_collapse_threshold_value(self) -> int | str:
         draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
@@ -7503,6 +7579,37 @@ class SettingsScreen(BaseAppScreen):
                     "Newly rendered steps immediately on save -- no "
                     "restart needed. Steps already on screen keep their rendered "
                     "text until the transcript next redraws them.",
+                ),
+            )
+        # ADR-080: one shared branch for the instant-apply permission-summary
+        # group -- the trio is one consent surface (the disclosure copy above
+        # the controls), not three independent fields.
+        if (
+            self._active_settings_field_id
+            in PERMISSION_SUMMARY_FIELD_IDS
+        ):
+            return (
+                (
+                    "Purpose",
+                    "Opt-in advisory summaries on agent approval cards (ADR-080).",
+                ),
+                (
+                    "Consequences",
+                    (
+                        "When enabled, a fast LLM you designate receives a "
+                        "bounded excerpt of this conversation (user and "
+                        "assistant text only) to write the approval summary. "
+                        "Summaries are display-only: never persisted, never a "
+                        "verdict input; failures fail open (no summary)."
+                    ),
+                ),
+                (
+                    "Saved as",
+                    "permission_summary.mode/provider/model (instant-apply)",
+                ),
+                (
+                    "Applies",
+                    "Approval rounds rendered after the change; no Save step.",
                 ),
             )
         return (
@@ -13987,6 +14094,59 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-console-tool-result-display-chars-help",
                 classes="settings-detail-row",
             )
+            # ADR-080: permission summaries. Instant-apply group (the
+            # model-catalog ADR-020/task-1341 pattern): the controls sit in a
+            # bordered group, values initialize inline from the saved config,
+            # and changes persist immediately via the handlers below -- the
+            # disclosure copy is the consent surface, so there is no staged
+            # Save step between opting in and the egress it enables.
+            with Vertical(
+                id="settings-permission-summary-group",
+                classes="settings-instant-apply-group",
+            ):
+                yield Static("Permission summaries", classes="destination-section")
+                yield Static(
+                    INSTANT_APPLY_BEHAVIOR_COPY,
+                    id="settings-permission-summary-instant-hint",
+                    classes="settings-instant-apply-hint",
+                )
+                yield Static(
+                    "When enabled, a fast LLM you designate receives a bounded "
+                    "excerpt of this conversation (your messages and the "
+                    "assistant's, only) to write the approval summary.",
+                    id="settings-permission-summary-disclosure",
+                    classes="settings-detail-row",
+                )
+                with Horizontal(classes="settings-input-row settings-select-row"):
+                    yield Static("Summary mode", classes="settings-input-label")
+                    yield Select(
+                        [
+                            ("Off", "off"),
+                            ("Fallback (no rationale)", "fallback"),
+                            ("Every approval", "always"),
+                        ],
+                        value=self._saved_permission_summary_payload()["mode"],
+                        id="settings-permission-summary-mode",
+                        classes="settings-compact-select",
+                        allow_blank=False,
+                        compact=True,
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Provider", classes="settings-input-label")
+                    yield Input(
+                        value=self._saved_permission_summary_payload()["provider"],
+                        id="settings-permission-summary-provider",
+                        classes="settings-compact-input",
+                        placeholder="e.g. OpenAI",
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Model", classes="settings-input-label")
+                    yield Input(
+                        value=self._saved_permission_summary_payload()["model"],
+                        id="settings-permission-summary-model",
+                        classes="settings-compact-input",
+                        placeholder="empty = the provider's default model",
+                    )
             yield Static("Selection side chat", classes="destination-section")
             yield Static(
                 "Ephemeral chat about selected transcript text (More Details / "
@@ -19309,6 +19469,7 @@ class SettingsScreen(BaseAppScreen):
                 "settings-console-sidechat-model",
                 "settings-console-sidechat-prompt-template",
                 "settings-console-default-user-display-name",
+                *PERMISSION_SUMMARY_FIELD_IDS,
             }
             self._active_settings_field_id = (
                 widget_id if widget_id in console_behavior_field_ids else None
@@ -22974,6 +23135,21 @@ class SettingsScreen(BaseAppScreen):
     def handle_model_catalog_stale_hours_changed(self, event: Input.Changed) -> None:
         event.stop()
         self._persist_model_catalog_settings()
+
+    @on(Select.Changed, "#settings-permission-summary-mode")
+    def handle_permission_summary_mode_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        self._persist_permission_summary_settings()
+
+    @on(Input.Changed, "#settings-permission-summary-provider")
+    def handle_permission_summary_provider_changed(self, event: Input.Changed) -> None:
+        event.stop()
+        self._persist_permission_summary_settings()
+
+    @on(Input.Changed, "#settings-permission-summary-model")
+    def handle_permission_summary_model_changed(self, event: Input.Changed) -> None:
+        event.stop()
+        self._persist_permission_summary_settings()
 
     @on(Button.Pressed, "#settings-check-storage")
     def handle_check_storage(self, event: Button.Pressed) -> None:

@@ -162,3 +162,15 @@ def test_summarize_fails_open():
     assert summarize_pending_round(inactive, [], [{"tool_name": "t"}],
                                    call_fn=lambda **k: (_ for _ in ()).throw(
                                        AssertionError("must not call"))) is None
+
+
+def test_settings_payload_validates_mode():
+    from tldw_chatbook.Chat.permission_summary_service import (
+        permission_summary_settings_payload,
+    )
+
+    out = permission_summary_settings_payload("fallback", " OpenAI ", "gpt-4o-mini")
+    assert out == {
+        "mode": "fallback", "provider": "OpenAI", "model": "gpt-4o-mini"
+    }
+    assert permission_summary_settings_payload("nonsense", "", "")["mode"] == "off"
