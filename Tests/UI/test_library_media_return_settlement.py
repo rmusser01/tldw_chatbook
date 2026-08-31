@@ -179,6 +179,17 @@ def _require_return_protocol():
     )
 
 
+def _require_terminal_outcome_type():
+    """Return Task 3's transient terminal-outcome alias or fail RED."""
+    outcome_type = getattr(
+        library_screen_module,
+        "_LibraryMediaSettlementOutcome",
+        None,
+    )
+    assert outcome_type is not None, "Task 3 settlement outcomes are not implemented"
+    return outcome_type
+
+
 def test_settlement_request_uses_concrete_current_tree_types() -> None:
     _, settlement_type, *_ = _require_return_protocol()
 
@@ -216,7 +227,10 @@ async def test_viewer_return_capture_is_frozen_receipt_from_normal_media(
             int(screen.size.height),
             screen._library_notes_compact,
             screen._library_media_reader_preferences,
-            screen._library_media_reader_layout,
+            library_screen_module.resolve_media_reader_layout(
+                screen._library_media_reader_layout.reader_width,
+                screen._library_media_reader_preferences,
+            ),
         )
 
         capture_views: list[tuple[str, str]] = []
@@ -1086,5 +1100,380 @@ async def test_old_owner_and_below_floor_geometry_cannot_settle(
 
         assert screen.post_message(held[0])
         await pilot.pause()
+        assert screen._library_media_last_exact_settlement is None
+        assert getattr(screen.focused, "media_id", None) != media_id
+
+
+@pytest.mark.asyncio
+async def test_trash_back_exact_scroll_precedes_captured_control_focus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Trash Back has one scroll-then-control commit and retains selection."""
+    _require_terminal_outcome_type()
+    _, _, row_scroll_type, _, _ = _require_return_protocol()
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _wait_for_selector(screen, pilot, "#library-media-row-15")
+        selected = screen.query_one("#library-media-row-15", Button)
+        selected_id = str(selected.media_id)
+        screen._selected_media_id = selected_id
+        owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
+        owner.scroll_to(y=42, animate=False, force=True, immediate=True)
+        scroll_offset = (int(owner.scroll_x), int(owner.scroll_y))
+        assert scroll_offset == (0, 42)
+        opener = screen.query_one("#library-media-trash-open", Button)
+        opener.focus()
+        opener.press()
+        await _wait_for_selector(screen, pilot, "#library-media-trash-back")
+
+        captured_control_scrolls: list[tuple[int, int]] = []
+        real_set_focus = screen.set_focus
+
+        def observe_control_focus(widget, *args, **kwargs):
+            if getattr(widget, "id", None) == "library-media-trash-open":
+                current_owner = screen.query_one(
+                    "#library-media-row-scroll",
+                    row_scroll_type,
+                )
+                captured_control_scrolls.append(
+                    (int(current_owner.scroll_x), int(current_owner.scroll_y))
+                )
+            return real_set_focus(widget, *args, **kwargs)
+
+        monkeypatch.setattr(screen, "set_focus", observe_control_focus)
+        screen.query_one("#library-media-trash-back", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_last_settlement_outcome is not None,
+            message="Trash Back never published its terminal settlement outcome.",
+        )
+
+        replacement_owner = screen.query_one(
+            "#library-media-row-scroll",
+            row_scroll_type,
+        )
+        request_id, outcome, geometry_revision = (
+            screen._library_media_last_settlement_outcome
+        )
+        assert request_id > 0
+        assert outcome == "exact-settled"
+        assert geometry_revision == replacement_owner.latest_geometry.revision
+        assert captured_control_scrolls == [scroll_offset]
+        assert screen.focused.id == "library-media-trash-open"
+        assert screen._selected_media_id == selected_id
+        assert (int(replacement_owner.scroll_x), int(replacement_owner.scroll_y)) == (
+            scroll_offset
+        )
+        assert not hasattr(screen, "_restore_library_media_trash_return_focus")
+
+
+@pytest.mark.asyncio
+async def test_unavailable_trash_control_uses_exact_scroll_row_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A layout-proven unavailable control cannot report full exact success."""
+    _require_terminal_outcome_type()
+    _, _, row_scroll_type, _, _ = _require_return_protocol()
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _wait_for_selector(screen, pilot, "#library-media-row-15")
+        selected = screen.query_one("#library-media-row-15", Button)
+        selected_id = str(selected.media_id)
+        screen._selected_media_id = selected_id
+        owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
+        owner.scroll_to(y=42, animate=False, force=True, immediate=True)
+        scroll_offset = (int(owner.scroll_x), int(owner.scroll_y))
+        opener = screen.query_one("#library-media-trash-open", Button)
+        opener.focus()
+        opener.press()
+        await _wait_for_selector(screen, pilot, "#library-media-trash-back")
+
+        real_on_resize = row_scroll_type.on_resize
+        monkeypatch.setattr(row_scroll_type, "on_resize", lambda _owner, _event: None)
+        screen.query_one("#library-media-trash-back", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_return_settlement is not None,
+            message="Trash Back did not arm control-policy settlement authority.",
+        )
+        replacement_owner = screen.query_one(
+            "#library-media-row-scroll",
+            row_scroll_type,
+        )
+        target_control = screen.query_one("#library-media-trash-open", Button)
+        target_control.disabled = True
+        pre_revision_layout = screen._library_media_layout_signature()
+        monkeypatch.setattr(
+            screen,
+            "_library_media_layout_signature",
+            lambda: pre_revision_layout + (("responsive-control-hidden",),),
+        )
+        monkeypatch.setattr(row_scroll_type, "on_resize", real_on_resize)
+        real_on_resize(
+            replacement_owner,
+            events.Resize(
+                replacement_owner.size,
+                replacement_owner.virtual_size,
+                replacement_owner.container_size,
+            ),
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_last_settlement_outcome is not None,
+            message="Disabled captured control never reached its row fallback.",
+        )
+
+        assert screen._library_media_last_settlement_outcome[1] == (
+            "exact-scroll-focus-fallback"
+        )
+        assert getattr(screen.focused, "media_id", None) == selected_id
+        assert (int(replacement_owner.scroll_x), int(replacement_owner.scroll_y)) == (
+            scroll_offset
+        )
+        assert screen._selected_media_id == selected_id
+
+
+@pytest.mark.asyncio
+async def test_authoritative_content_revision_clamps_once_and_labels_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A proven logical revision gets one current-geometry clamped commit."""
+    _require_terminal_outcome_type()
+    _, _, row_scroll_type, _, geometry_message_type = _require_return_protocol()
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, owner, media_id, _scroll_offset, real_on_resize = (
+            await _open_pending_viewer_return(
+                host,
+                pilot,
+                monkeypatch,
+                row_scroll_type,
+            )
+        )
+        request = screen._library_media_return_settlement
+        assert request is not None
+        original_content_signature = screen._library_media_content_signature
+        revised_signature = original_content_signature() + (("revision",),)
+        monkeypatch.setattr(
+            screen,
+            "_library_media_content_signature",
+            lambda: revised_signature,
+        )
+        geometry = _hold_next_owner_geometry(
+            monkeypatch,
+            owner,
+            row_scroll_type,
+            geometry_message_type,
+            real_on_resize,
+        )
+        clamped_commits = 0
+        real_scroll_to = owner.scroll_to
+
+        def observe_clamped_scroll(*args, **kwargs):
+            nonlocal clamped_commits
+            if kwargs.get("immediate"):
+                clamped_commits += 1
+            return real_scroll_to(*args, **kwargs)
+
+        monkeypatch.setattr(owner, "scroll_to", observe_clamped_scroll)
+        screen._handle_library_media_row_geometry_changed(geometry)
+        screen._handle_library_media_row_geometry_changed(
+            geometry_message_type(owner, owner.latest_geometry)
+        )
+        await pilot.pause()
+
+        assert screen._library_media_last_settlement_outcome == (
+            request.request_id,
+            "clamped-after-revision",
+            geometry.geometry.revision,
+        )
+        assert clamped_commits == 1
+        assert getattr(screen.focused, "media_id", None) == media_id
+
+
+@pytest.mark.asyncio
+async def test_deadline_uses_one_current_geometry_fallback_and_never_requeues(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ABA-bound deadline is one terminal liveness action, not readiness."""
+    _require_terminal_outcome_type()
+    _, _, row_scroll_type, _, geometry_message_type = _require_return_protocol()
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, owner, media_id, _scroll_offset, real_on_resize = (
+            await _open_pending_viewer_return(
+                host,
+                pilot,
+                monkeypatch,
+                row_scroll_type,
+            )
+        )
+        geometry = _hold_next_owner_geometry(
+            monkeypatch,
+            owner,
+            row_scroll_type,
+            geometry_message_type,
+            real_on_resize,
+        )
+        request = screen._library_media_return_settlement
+        assert request is not None
+        rearms: list[int] = []
+        real_arm = screen._arm_library_media_return_settlement
+
+        def observe_rearm(*args, **kwargs):
+            rearms.append(request.request_id)
+            return real_arm(*args, **kwargs)
+
+        monkeypatch.setattr(
+            screen,
+            "_arm_library_media_return_settlement",
+            observe_rearm,
+        )
+        focus_attempts = 0
+        real_set_focus = screen.set_focus
+
+        def observe_focus(widget, *args, **kwargs):
+            nonlocal focus_attempts
+            if getattr(widget, "media_id", None) == media_id:
+                focus_attempts += 1
+            return real_set_focus(widget, *args, **kwargs)
+
+        monkeypatch.setattr(screen, "set_focus", observe_focus)
+        screen._expire_library_media_return_settlement(request.request_id)
+        screen._expire_library_media_return_settlement(request.request_id)
+
+        assert screen._library_media_last_settlement_outcome == (
+            request.request_id,
+            "clamped-after-settlement-failure",
+            geometry.geometry.revision,
+        )
+        assert focus_attempts == 1
+        assert rearms == []
+        assert screen._library_media_return_settlement is None
+        assert screen._library_pending_list_entry_focus is False
+        assert screen._library_pending_list_entry_media_return is None
+        assert screen._library_list_entry_focus_timer is None
+
+
+@pytest.mark.asyncio
+async def test_deadline_without_geometry_fails_once_with_metadata_only_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No eligible geometry yields one warning and no semantic content leak."""
+    _require_terminal_outcome_type()
+    _, _, row_scroll_type, _, _ = _require_return_protocol()
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, _owner, media_id, _scroll_offset, _real_on_resize = (
+            await _open_pending_viewer_return(
+                host,
+                pilot,
+                monkeypatch,
+                row_scroll_type,
+            )
+        )
+        request = screen._library_media_return_settlement
+        assert request is not None
+        notices: list[tuple[str, str | None]] = []
+
+        def capture_notice(message: str, *, severity: str | None = None, **_kwargs):
+            notices.append((message, severity))
+
+        monkeypatch.setattr(app, "notify", capture_notice)
+        screen._expire_library_media_return_settlement(request.request_id)
+        screen._expire_library_media_return_settlement(request.request_id)
+
+        assert screen._library_media_last_settlement_outcome == (
+            request.request_id,
+            "layout-settlement-failed",
+            None,
+        )
+        assert len(notices) == 1
+        assert notices[0][1] == "warning"
+        assert media_id not in notices[0][0]
+        assert screen._library_media_return_settlement is None
+        assert screen._library_pending_list_entry_focus is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stale_fence",
+    ("request", "compose", "lifecycle", "focus", "trash", "items"),
+)
+async def test_stale_request_generation_and_subview_fences_cannot_settle(
+    monkeypatch: pytest.MonkeyPatch,
+    stale_fence: str,
+) -> None:
+    """Each mutable authority fence rejects a real current-owner geometry."""
+    _require_terminal_outcome_type()
+    _, _, row_scroll_type, _, geometry_message_type = _require_return_protocol()
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, owner, media_id, _scroll_offset, real_on_resize = (
+            await _open_pending_viewer_return(
+                host,
+                pilot,
+                monkeypatch,
+                row_scroll_type,
+            )
+        )
+        request = screen._library_media_return_settlement
+        assert request is not None
+        geometry = _hold_next_owner_geometry(
+            monkeypatch,
+            owner,
+            row_scroll_type,
+            geometry_message_type,
+            real_on_resize,
+        )
+
+        if stale_fence == "request":
+            screen._library_media_return_settlement = dataclasses.replace(
+                request,
+                request_id=request.request_id + 1,
+            )
+            screen._settle_library_media_return_from_geometry(
+                request,
+                owner,
+                geometry.geometry,
+            )
+        else:
+            if stale_fence == "compose":
+                screen._library_compose_generation += 1
+            elif stale_fence == "lifecycle":
+                screen._library_media_lifecycle_generation += 1
+            elif stale_fence == "focus":
+                screen._library_notes_focus_intent_generation += 1
+            elif stale_fence == "trash":
+                screen._library_media_view = "trash"
+            elif stale_fence == "items":
+                screen._library_media_reader_layout = dataclasses.replace(
+                    screen._library_media_reader_layout,
+                    items_open=False,
+                )
+            screen._handle_library_media_row_geometry_changed(geometry)
+        await pilot.pause()
+
+        assert screen._library_media_last_settlement_outcome is None
         assert screen._library_media_last_exact_settlement is None
         assert getattr(screen.focused, "media_id", None) != media_id
