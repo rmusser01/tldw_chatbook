@@ -97,14 +97,18 @@ _FAILURE_CATEGORIES = frozenset(
         "connection_error",
     }
 )
+# TASK-25731: these are read by a first-time user deciding what to do next,
+# not by the implementer. Each names what happened in plain language and the
+# one action that addresses it -- "The model listing request had a connection
+# error" named a subsystem and no next step.
 _FAILURE_DETAILS = {
-    "timeout": "The model listing request timed out.",
-    "connection_refused": "The model listing connection was refused.",
-    "unauthorized": "The model listing request was unauthorized.",
-    "forbidden": "The model listing request was forbidden.",
-    "http_status": "The model listing endpoint returned an HTTP status error.",
-    "invalid_payload": "The model listing endpoint returned an invalid response.",
-    "connection_error": "The model listing request had a connection error.",
+    "timeout": "The server did not respond in time. Check it is running and not overloaded.",
+    "connection_refused": "Nothing is listening at that address. Start the server, or check the endpoint and port.",
+    "unauthorized": "The server rejected this API key. Go Back to re-enter it.",
+    "forbidden": "This API key is not allowed to list models. Check its permissions.",
+    "http_status": "The server answered with an error. Check the endpoint, then try again.",
+    "invalid_payload": "The server answered in a format we did not recognise. Check the endpoint points at an OpenAI-compatible API.",
+    "connection_error": "Could not reach the server. Check the endpoint, and that the server is running.",
 }
 _CONFIGURATION_ISSUE_DETAILS = {
     "provider_missing": "Select a provider.",
@@ -236,9 +240,12 @@ def provider_readiness_verdict(
         return ProviderReadinessVerdict(
             "verified", "Model listing reached and selected model confirmed.", True
         )
+    # TASK-25731: "reached; not confirmed" mixes a tick with a failure and
+    # leaves the user unsure whether it is safe to continue. Say which half
+    # worked and what to do about the other half.
     return ProviderReadinessVerdict(
         "model_unconfirmed",
-        "Model listing reached; selected model was not confirmed.",
+        "Reached the server, but your chosen model was not in its list. Pick one on the next step.",
     )
 
 

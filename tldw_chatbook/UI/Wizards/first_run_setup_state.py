@@ -1270,6 +1270,44 @@ def active_step_ids(track: str, *, key_entered: bool) -> tuple[str, ...]:
     return _QUICK_TRACK if track == TRACK_QUICK else _FULL_TRACK
 
 
+def setup_attention_ids(
+    wizard_data: Mapping[str, object] | None,
+    *,
+    probe_failed: bool = False,
+) -> frozenset[str]:
+    """Which visited steps must not wear the completion tick.
+
+    TASK-25716: the tracker only downgraded Provider/Model when a probe had
+    demonstrably failed, so a step the user walked through WITHOUT
+    configuring anything still showed the same ✓ as a finished one. The
+    summary screen already told the truth ("✗ Provider — no credentials or
+    saved endpoint") while the tracker above it showed five ticks, and the
+    tracker is what users read.
+
+    Scoped deliberately to Provider and Model. Skipping voice or key
+    encryption is legitimate under the wizard's skip-safe design, so
+    flagging those would cry wolf; these two decide whether the product can
+    reach a model at all.
+    """
+
+    values = wizard_data if isinstance(wizard_data, Mapping) else {}
+
+    def _configured(step_id: str, field: str) -> bool:
+        step = values.get(step_id)
+        if not isinstance(step, Mapping):
+            return False
+        return bool(str(step.get(field) or "").strip())
+
+    flagged: set[str] = set()
+    if probe_failed:
+        flagged.update({STEP_PROVIDER, STEP_MODEL})
+    if not _configured(STEP_PROVIDER, "provider_key"):
+        flagged.add(STEP_PROVIDER)
+    if not _configured(STEP_MODEL, "model_id"):
+        flagged.add(STEP_MODEL)
+    return frozenset(flagged)
+
+
 def build_setup_progress(
     active_ids: tuple[str, ...],
     current_index: int,

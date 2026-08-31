@@ -1,9 +1,10 @@
 ---
 id: TASK-25716
 title: First-run stepper marks steps complete that were never configured
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-31 05:08'
+updated_date: '2026-08-31 06:45'
 labels:
   - console
   - ux-review
@@ -23,3 +24,9 @@ The setup wizard stamps a checkmark on each step the user passes through, regard
 - [ ] #2 A skipped or incomplete step is visually distinct from a completed one
 - [ ] #3 The stepper and the summary screen never disagree about the same step
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+The three-state tracker already existed (SetupWizardProgress renders complete/attention/upcoming, and build_setup_progress already downgrades completed steps via attention_ids, documented as 'a visited step whose probe demonstrably failed must not wear the ✓'). The defect was that attention_ids was fed ONLY by provider_probe_failure(), so a step walked through without configuring anything still showed ✓ -- while the summary screen reported it as unconfigured. Fix: new pure helper setup_attention_ids(wizard_data, probe_failed=) feeding the same mechanism, flagging a visited-but-unconfigured Provider or Model. Deliberately scoped to those two: skipping voice or key encryption is legitimate under the wizard's skip-safe design (see TASK-25718), so flagging them would cry wolf. 5 unit tests + full wizard suite 392 passed / 0 failed.
+<!-- SECTION:NOTES:END -->

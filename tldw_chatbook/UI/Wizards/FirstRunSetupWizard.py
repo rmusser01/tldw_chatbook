@@ -8747,11 +8747,13 @@ class SetupWizardContainer(WizardContainer):
         try:
             # TASK-21143 (UAT N-7): a visited Provider/Model pair whose
             # probe failed shows "!" instead of the ✓ users read as "OK".
-            attention: frozenset[str] = frozenset()
-            if self.provider_probe_failure():
-                attention = frozenset(
-                    {wizard_state.STEP_PROVIDER, wizard_state.STEP_MODEL}
-                )
+            # TASK-25716 widens that to the step the user simply walked
+            # through without configuring: the summary already reports it as
+            # unconfigured, and the tracker must not disagree.
+            attention = wizard_state.setup_attention_ids(
+                self.wizard_data,
+                probe_failed=bool(self.provider_probe_failure()),
+            )
             items = wizard_state.build_setup_progress(
                 self.active_ids,
                 self._active_position(self.current_step or 0),
