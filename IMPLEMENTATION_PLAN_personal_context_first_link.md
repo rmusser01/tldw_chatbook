@@ -124,6 +124,32 @@ review remains required before closure.
 **Integration status:** Complete in Chatbook commit `f42c173c55`; controller
 review remains required before TASK-24727 closure.
 
+### Final contract-quality remediation (2026-08-30)
+
+- Bootstrap cursors are now immutable review receipts only. First-link push/pull
+  starts from an existing ordinary transport cursor only when its persisted
+  device and dataset binding match exactly; otherwise it performs a full pull.
+  Planning and cancellation preserve the existing ordinary cursor and metadata.
+- The entire source outbox dispatch/quarantine/ack boundary and every confirming
+  inbound apply run under the exact durable `plan_id` reconciliation authority.
+  Missing plan-scoped authority fails closed; cross-database crash replay remains
+  idempotent under the production repositories.
+- Key unwrap, secure staging, local apply, cleanup, and restart recovery now leave
+  a supported content-free attention state and release the exact review freeze.
+  Locked restart recovery can release only the matching content-free freeze even
+  when the encrypted profile facade cannot compose.
+- Replanning preserves already adopted, locally bound canonical workspace scope
+  identities. Retained valid Undo artifacts rebind their schema identity fields
+  and remain usable after canonical adoption.
+- Capability negotiation allows only schema/quota readiness mismatches to reach
+  the authenticated typed bootstrap-attention response. Every mixed or unrelated
+  auth/device/integrity/transport blocker still fails before device registration.
+
+**Remediation verification:** 322 broad affected tests pass across Personal
+Context, Sync/API, and canonical Settings/UI groups. Ruff, compilation, CSS
+reproduction, Bandit high-severity, and both diff-hygiene gates pass. TASK-24727
+remains In Progress for controller review and cross-repository closure.
+
 ## ADR check
 
 ADR required: no (existing)

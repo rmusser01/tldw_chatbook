@@ -342,16 +342,33 @@ def build_reconciliation_plan(
             )
         )
 
+    remote_workspace_ids = {
+        scope.scope_id
+        for scope in remote.scopes
+        if scope.kind is ScopeKind.WORKSPACE
+    }
+    preserved_workspace_ids = {
+        scope.scope_id
+        for scope in local_scopes
+        if scope.kind is ScopeKind.WORKSPACE
+        and scope.profile_id == remote.manifest.profile_id
+        and scope.scope_id in remote_workspace_ids
+        and scope.scope_id in local_workspace_bindings
+    }
     remote_workspaces = tuple(
         sorted(
-            scope.scope_id
-            for scope in remote.scopes
-            if scope.kind is ScopeKind.WORKSPACE
-            and scope.scope_id not in local_workspace_bindings
+            scope_id
+            for scope_id in remote_workspace_ids
+            if scope_id not in local_workspace_bindings
         )
     )
     local_workspaces = tuple(
-        sorted(scope.scope_id for scope in local_scopes if scope.kind is ScopeKind.WORKSPACE)
+        sorted(
+            scope.scope_id
+            for scope in local_scopes
+            if scope.kind is ScopeKind.WORKSPACE
+            and scope.scope_id not in preserved_workspace_ids
+        )
     )
     remote_workspace_scopes = tuple(
         scope for scope in remote.scopes if scope.kind is ScopeKind.WORKSPACE

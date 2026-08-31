@@ -10610,6 +10610,11 @@ class TldwCli(
             PersonalContextLinkAttentionRequired,
             PersonalContextLinkService,
         )
+        from .Personal_Context.key_protector import ProfileLockedError
+        from .Personal_Context.paths import get_personal_context_db_path
+        from .Personal_Context.repository import (
+            release_first_link_freeze_for_recovery,
+        )
         from .Widgets.Settings_Widgets.personal_context_link_modal import (
             PersonalContextLinkModal,
         )
@@ -10632,16 +10637,22 @@ class TldwCli(
             recovered_apply = False
             if existing is not None and existing["state"] == "applying":
                 binding = PersonalContextLinkService._key_binding(existing)
-                staged_integrity_key = key_custodian.load(**binding)
-                from .Personal_Context.bootstrap import (
-                    bootstrap_personal_context_service,
-                )
+                try:
+                    staged_integrity_key = key_custodian.load(**binding)
+                    from .Personal_Context.bootstrap import (
+                        bootstrap_personal_context_service,
+                    )
 
-                recovered_service = bootstrap_personal_context_service(
-                    recovery_integrity_key=staged_integrity_key,
-                    expected_recovery_profile_id=str(existing["profile_id"]),
-                )
-                if recovered_service.status().state.value == "ready":
+                    recovered_service = bootstrap_personal_context_service(
+                        recovery_integrity_key=staged_integrity_key,
+                        expected_recovery_profile_id=str(existing["profile_id"]),
+                    )
+                except (ProfileLockedError, ValueError):
+                    recovered_service = None
+                if (
+                    recovered_service is not None
+                    and recovered_service.status().state.value == "ready"
+                ):
                     self._personal_context_service = recovered_service
                     recovered_apply = True
             coordinator = PersonalContextLinkService(
@@ -10652,6 +10663,11 @@ class TldwCli(
                 state_repository=self.sync_state_repository,
                 wrapping_key_provider=wrapping_provider,
                 key_custodian=key_custodian,
+                freeze_release_fallback=lambda plan_id: (
+                    release_first_link_freeze_for_recovery(
+                        get_personal_context_db_path(), plan_id=plan_id
+                    )
+                ),
                 local_first_sync_service=self.local_first_sync_service,
                 server_profile_id=str(server_profile_id),
                 authenticated_principal_id=scope.get("authenticated_principal_id"),

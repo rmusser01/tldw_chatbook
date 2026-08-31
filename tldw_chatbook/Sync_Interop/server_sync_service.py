@@ -15,6 +15,16 @@ from tldw_chatbook.Sync_Interop.validation import (
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
 
+
+def _bootstrap_attention_safe_blockers(blockers: tuple[str, ...]) -> bool:
+    """Allow only schema/quota facts to reach the typed bootstrap response."""
+
+    return bool(blockers) and all(
+        blocker == "personal_context_schema_incompatible"
+        or blocker.startswith("personal_context_quota_incompatible:")
+        for blocker in blockers
+    )
+
 if TYPE_CHECKING:
     from ..tldw_api import ClientChangesPayload, SyncV2Envelope, TLDWAPIClient
 
@@ -410,6 +420,7 @@ class ServerSyncService:
             PERSONAL_CONTEXT_SYNC_DOMAINS,
             personal_context_sync_readiness,
         )
+        from tldw_profile_core import SERIALIZED_SCHEMA_VERSION
 
         if not server_profile_id or not display_name:
             raise ValueError("personal_context_link_binding_invalid")
@@ -428,7 +439,9 @@ class ServerSyncService:
         readiness = personal_context_sync_readiness(
             capabilities, require_writable=False
         )
-        if not readiness.write_enabled:
+        if not readiness.write_enabled and not _bootstrap_attention_safe_blockers(
+            readiness.blockers
+        ):
             raise ValueError(
                 ",".join(readiness.blockers) or "personal_context_sync_unavailable"
             )
@@ -451,7 +464,8 @@ class ServerSyncService:
                 capabilities={
                     "protocol_version": "sync-v2-m1",
                     "personal_context": {
-                        "schema_version": readiness.negotiated_schema_version,
+                        "schema_version": readiness.negotiated_schema_version
+                        or SERIALIZED_SCHEMA_VERSION,
                     },
                     "personal_context_wrapping_public_key": public_key,
                 },
