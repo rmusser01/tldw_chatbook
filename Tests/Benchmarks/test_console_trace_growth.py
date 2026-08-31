@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 import statistics
+import subprocess
+import sys
+from pathlib import Path
 from typing import TypedDict
 
 import pytest
@@ -27,23 +29,29 @@ from tldw_chatbook.Chat.console_trace_provenance import (
 )
 from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-
+from tldw_chatbook.DB.sql_validation import (
+    escape_identifier,
+    validate_column_name,
+    validate_table_name,
+)
 
 FIXTURE_PATH = Path(__file__).with_name("fixtures") / "console_trace_growth_v1.json"
 FIXTURE_CHECKSUM_PATH = FIXTURE_PATH.with_suffix(".sha256")
 ARTIFACT_NAME = "console_trace_growth.json"
-SCENARIO_EVIDENCE = {
-    "edits": "Tests/Chat/test_console_trace_runtime.py::test_production_factory_persists_one_item_bounded_replacement",
-    "regeneration": "Tests/Chat/test_trajectory_capture.py::test_regenerate_replacement_identity_resolves_after_persistence",
-    "retries": "Tests/Chat/test_console_request_provenance_routes.py::test_fresh_retry_and_agent_rag_absence_is_explicit",
-    "tools": "Tests/Chat/test_console_trace_provenance.py::test_provider_tool_loop_is_an_exact_ordered_message_overlay",
-    "rag_or_project_context": "Tests/Chat/test_console_trace_provenance.py::test_capture_metadata_survives_without_parallel_rag_values_and_reaches_provider",
-    "forks": "Tests/Chat/test_console_trace_fork_lineage.py::test_fork_attaches_shared_boundary_without_copying_trace_payload_rows",
-    "failures": "Tests/Chat/test_console_trace_call_lifecycle.py::test_real_sqlite_adapter_observes_dispatch_started_commit",
-    "credential_filtering": "Tests/Chat/test_console_trace_privacy_owners.py::test_repository_filters_credentials_before_header_and_artifact_identity",
-    "legacy_migration": "Tests/Chat/test_console_trace_legacy_migration.py::test_batches_resume_delete_only_verified_rows_and_finish_idempotently",
-    "logical_garbage_collection": "Tests/Chat/test_console_trace_graph_gc.py::test_completed_request_is_idempotent_and_reports_logical_reclamation",
-}
+EXPECTED_SCENARIOS = frozenset(
+    {
+        "edits",
+        "regeneration",
+        "retries",
+        "tools",
+        "rag_or_project_context",
+        "forks",
+        "failures",
+        "credential_filtering",
+        "legacy_migration",
+        "logical_garbage_collection",
+    }
+)
 
 
 class _TraceSize(TypedDict):
@@ -90,21 +98,40 @@ def _trace_owned_size(database: CharactersRAGDB) -> _TraceSize:
         rows = 0
         byte_count = 0
         for table in tables:
-            if not table.replace("_", "").isalnum():
+            if not validate_table_name(table, "chachanotes"):
                 raise AssertionError(f"unsafe trace table name: {table}")
+            quoted_table = escape_identifier(table)
             columns = tuple(
                 str(row[1])
-                for row in cursor.execute(f'PRAGMA table_info("{table}")').fetchall()
+                for row in cursor.execute(
+                    f"PRAGMA table_info({quoted_table})"
+                ).fetchall()
             )
-            rows += int(cursor.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
+            rows += int(
+                cursor.execute(f"SELECT COUNT(*) FROM {quoted_table}").fetchone()[0]
+            )
             for column in columns:
+                if not validate_column_name(column):
+                    raise AssertionError(f"unsafe trace column name: {column}")
+                quoted_column = escape_identifier(column)
                 byte_count += int(
                     cursor.execute(
-                        f'SELECT COALESCE(SUM(length(CAST("{column}" AS BLOB))), 0) '
-                        f'FROM "{table}"'
+                        "SELECT COALESCE(SUM(length("
+                        f"CAST({quoted_column} AS BLOB))), 0) FROM {quoted_table}"
                     ).fetchone()[0]
                 )
     return {"rows": rows, "bytes": byte_count}
+
+
+def test_trace_owned_size_rejects_unsafe_dynamic_column_name(tmp_path: Path) -> None:
+    database = CharactersRAGDB(tmp_path / "unsafe-column.sqlite", "unsafe-column")
+    with database.transaction(immediate=True) as cursor:
+        cursor.execute(
+            'ALTER TABLE console_trace_graph_epoch ADD COLUMN "bad""name" TEXT'
+        )
+
+    with pytest.raises(AssertionError, match="unsafe trace column name"):
+        _trace_owned_size(database)
 
 
 def _delta(after: _TraceSize, before: _TraceSize) -> _TraceSize:
@@ -303,14 +330,37 @@ def _median(results: list[_RunResult], section: str, metric: str) -> float:
     )
 
 
+@pytest.fixture(scope="module")
+def verified_scenario_evidence() -> tuple[str, ...]:
+    fixture = _fixture()
+    coverage = fixture.get("coverage")
+    assert isinstance(coverage, dict)
+    assert frozenset(coverage) == EXPECTED_SCENARIOS
+    node_ids = tuple(coverage[scenario] for scenario in sorted(coverage))
+    assert all(isinstance(node_id, str) and node_id for node_id in node_ids)
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", *node_ids],
+        cwd=Path(__file__).parents[2],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return node_ids
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("replacement_heavy", [False, True], ids=["append", "replace"])
-async def test_console_trace_growth_release_gate(tmp_path: Path, replacement_heavy: bool) -> None:
+async def test_console_trace_growth_release_gate(
+    tmp_path: Path,
+    replacement_heavy: bool,
+    verified_scenario_evidence: tuple[str, ...],
+) -> None:
     fixture = _fixture()
     database_count = int(fixture["fresh_database_count"])
     thresholds = fixture["thresholds"]
     assert isinstance(thresholds, dict)
-    assert fixture["coverage"] == SCENARIO_EVIDENCE
+    assert verified_scenario_evidence
     results = [
         await _run_fixture(
             tmp_path,

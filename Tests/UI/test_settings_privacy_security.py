@@ -6,7 +6,6 @@ from tldw_chatbook.UI.Screens.settings_privacy_security import (
 )
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 
-
 DUMMY_ENV_SECRET = "env-secret-value-that-must-not-render"
 DUMMY_CONFIG_SECRET = "config-secret-value-that-must-not-render"
 DUMMY_SERVER_SECRET = "server-secret-value-that-must-not-render"
@@ -140,6 +139,25 @@ def test_privacy_posture_reports_compact_trace_rollout_without_content():
 
     assert "Trace storage: compact ledger for new calls; no transcript copies" in rows
     assert "Trace history: compact and legacy traces are readable" in rows
+
+
+def test_privacy_posture_coerces_string_trace_rollout_settings():
+    posture = build_settings_privacy_posture(
+        {
+            "console": {
+                "exchange_capture": "false",
+                "trace_normalized_writes": "false",
+                "trace_normalized_reads": "true",
+                "trace_legacy_writes": "true",
+            }
+        },
+        environ={},
+    )
+
+    assert posture.trace_capture_enabled is False
+    assert posture.trace_normalized_writes_enabled is False
+    assert posture.trace_normalized_reads_enabled is True
+    assert posture.trace_legacy_writes_enabled is True
 
 
 def test_privacy_posture_reports_skill_trust_without_leaking_paths():

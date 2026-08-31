@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
+import json
+import sqlite3
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-import json
-import sqlite3
 from types import MappingProxyType
 from typing import Generic, Literal, TypeAlias, TypeVar, cast, overload
 from weakref import ReferenceType, ref
 
 from tldw_chatbook.Chat.console_prepared_request import freeze_json
+from tldw_chatbook.Chat.console_semantic_revision import (
+    project_semantic_revision_provider_continuations,
+    project_semantic_revision_provider_message,
+    project_semantic_revision_provider_messages,
+)
 from tldw_chatbook.Chat.console_trace_final_values import (
+    _SURFACE_VERIFICATION_ISSUER,
     FinalValueBinding,
     ProviderCredentialSource,
     ProviderOverlayProvenance,
@@ -23,22 +29,16 @@ from tldw_chatbook.Chat.console_trace_final_values import (
     VerifiedSurfaceDeltaItem,
     VerifiedSurfaceReplacement,
     VerifiedSurfaceReplacementRange,
-    _SURFACE_VERIFICATION_ISSUER,
     build_verified_surface_delta,
 )
 from tldw_chatbook.Chat.console_trace_models import (
-    FrozenTracePolicy,
     MAX_SURFACE_REPLACEMENT_SPAN,
+    FrozenTracePolicy,
     SemanticRevisionRef,
     SurfaceReplacement,
     TraceCallState,
     TraceContentRef,
     TraceOmission,
-)
-from tldw_chatbook.Chat.console_trace_redaction import (
-    PII_DETECTOR_UNAVAILABLE,
-    PIIRedactionSpan,
-    redact_pii_value,
 )
 from tldw_chatbook.Chat.console_trace_provenance import (
     DerivedTraceProvenance,
@@ -53,6 +53,11 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     TraceTransformKind,
     _project_verified_provider_request_provenance,
 )
+from tldw_chatbook.Chat.console_trace_redaction import (
+    PII_DETECTOR_UNAVAILABLE,
+    PIIRedactionSpan,
+    redact_pii_value,
+)
 from tldw_chatbook.Chat.console_trace_repository import (
     ConsoleTraceRepository,
     HeaderComponentRef,
@@ -62,16 +67,10 @@ from tldw_chatbook.Chat.console_trace_repository import (
     TraceCallRecord,
     TraceEventType,
 )
-from tldw_chatbook.Chat.console_semantic_revision import (
-    project_semantic_revision_provider_message,
-    project_semantic_revision_provider_continuations,
-    project_semantic_revision_provider_messages,
-)
 from tldw_chatbook.DB.transaction_observer import (
     current_managed_transaction,
     register_transaction_completion,
 )
-
 
 TRACE_VALUE_NORMALIZATION_VERSION = "canonical-json-v1"
 TRACE_VALUE_MEDIA_TYPE = "application/json"
@@ -1631,7 +1630,7 @@ class ConsoleTraceService:
         ):
             raise ValueError("surface_delta_identity")
         self._validate_owner(cursor, owner_id=owner_id, segment_id=segment_id)
-        tail = self.repository.get_surface_tail(cursor, segment_id)
+        tail = self._effective_surface_tail(cursor, segment_id)
         expected_predecessor = None if tail is None else tail.node_id
         for key, child in tuple(self._child_capabilities.items()):
             if (
@@ -2079,7 +2078,7 @@ class ConsoleTraceService:
         domains = ("messages_payload",) * len(provenance.messages_payload) + (
             "provider_continuations",
         ) * len(provenance.continuations)
-        tail = self.repository.get_surface_tail(cursor, segment_id)
+        tail = self._effective_surface_tail(cursor, segment_id)
         projection = self._surface_projection(cursor, segment_id, tail)
         active = projection.entries
         durable_keys = tuple(
@@ -2371,7 +2370,7 @@ class ConsoleTraceService:
                 owner_id=owner_id,
                 segment_id=segment_id,
             )
-            tail = self.repository.get_surface_tail(cursor, segment_id)
+            tail = self._effective_surface_tail(cursor, segment_id)
             expected_head = None if tail is None else tail.node_id
             if getattr(admission, "predecessor_surface_head_id", None) != expected_head:
                 raise ValueError("surface_predecessor_mismatch")
@@ -2443,7 +2442,7 @@ class ConsoleTraceService:
             self._validate_replacement_range(
                 cursor,
                 segment_id=parent.segment_id,
-                tail=self.repository.get_surface_tail(cursor, parent.segment_id),
+                tail=self._effective_surface_tail(cursor, parent.segment_id),
                 plan=VerifiedSurfaceReplacement(
                     predecessor_head_id=replacement_range.predecessor_head_id,
                     start_node_id=replacement_range.start_node_id,
@@ -2966,12 +2965,54 @@ class ConsoleTraceService:
         )
         return capability
 
+    def _effective_surface_tail(
+        self,
+        cursor: sqlite3.Cursor,
+        segment_id: str,
+    ) -> SurfaceNodeRecord | None:
+        """Return the segment-local tail or its immutable inherited head."""
+
+        tail = self.repository.get_surface_tail(cursor, segment_id)
+        if tail is not None:
+            return tail
+        segment = self.repository.get_segment(cursor, segment_id)
+        if segment is None or segment.inherited_surface_head_id is None:
+            return None
+        inherited = self.repository.get_surface_node(
+            cursor,
+            segment.inherited_surface_head_id,
+        )
+        if inherited is None:
+            raise ValueError("inherited_surface_head_unavailable")
+        return inherited
+
     def _surface_projection(
         self,
         cursor: sqlite3.Cursor,
         segment_id: str,
         tail: SurfaceNodeRecord | None,
     ) -> _SurfaceProjection:
+        segment = self.repository.get_segment(cursor, segment_id)
+        if segment is None:
+            raise ValueError("surface_segment_unavailable")
+        inherited_projection: _SurfaceProjection | None = None
+        if (
+            segment.parent_segment_id is not None
+            and segment.inherited_surface_head_id is not None
+        ):
+            inherited_head = self.repository.get_surface_node(
+                cursor,
+                segment.inherited_surface_head_id,
+            )
+            if inherited_head is None:
+                raise ValueError("inherited_surface_head_unavailable")
+            inherited_projection = self._surface_projection(
+                cursor,
+                segment.parent_segment_id,
+                inherited_head,
+            )
+            if tail is None:
+                tail = inherited_head
         head_id = None if tail is None else tail.node_id
         cached = self._surface_ref_cache.get(segment_id)
         if cached is not None and cached.head_id == head_id:
@@ -2988,12 +3029,27 @@ class ConsoleTraceService:
             if page.next_cursor is None:
                 break
             continuation = page.next_cursor
-        replacements = self.repository.read_surface_replacements(cursor, segment_id)
+        if tail is not None:
+            nodes = [node for node in nodes if node.sequence <= tail.sequence]
+        local_node_ids = {node.node_id for node in nodes}
+        replacements = tuple(
+            record
+            for record in self.repository.read_surface_replacements(
+                cursor,
+                segment_id,
+            )
+            if record.replacement.replacement_node_id in local_node_ids
+        )
         replacement_ids = {
             item.replacement.replacement_node_id for item in replacements
         }
         root_node: _SequenceNode | None = None
         active: dict[int, _SequenceNode] = {}
+        if inherited_projection is not None:
+            for sequence, key in inherited_projection.entries:
+                sequence_node = _SequenceNode(sequence, key)
+                root_node = _sequence_merge(root_node, sequence_node)
+                active[sequence] = sequence_node
         for node in nodes:
             if node.node_id in replacement_ids:
                 continue
@@ -3036,10 +3092,16 @@ class ConsoleTraceService:
             active[node.sequence] = sequence_node
         entries = _sequence_entries(root_node)
         root = _ProjectionRoot(None, base=tuple(entries))
+        inherited_lineage = (
+            ()
+            if inherited_projection is None
+            else inherited_projection.lineage_domains
+        )
         projection = _SurfaceProjection(
             head_id,
             root,
-            lineage_domains=tuple(
+            lineage_domains=inherited_lineage
+            + tuple(
                 (
                     node.sequence,
                     _surface_reference_domain(self._node_reference_key(node)),
@@ -3294,19 +3356,20 @@ class ConsoleTraceService:
                 raise ValueError("surface_value_unavailable") from exc
         if reference_kind != "revision":
             raise ValueError("surface_value_unavailable")
-        owner = self.repository.get_owner(cursor, owner_id)
-        if owner is None or owner.conversation_id is None:
+        self._validate_revision_owner(cursor, owner_id, identity)
+        revision = self.repository.get_semantic_revision(cursor, identity)
+        if revision is None:
             raise ValueError("revision_owner_mismatch")
         if key[0] == "continuation":
             return project_semantic_revision_provider_continuations(
                 cursor,
                 revision_ids=(identity,),
-                expected_conversation_id=owner.conversation_id,
+                expected_conversation_id=revision.source_conversation_id,
             )[identity]
         return project_semantic_revision_provider_message(
             cursor,
             revision_id=identity,
-            expected_conversation_id=owner.conversation_id,
+            expected_conversation_id=revision.source_conversation_id,
         )
 
     def _resolve_reference_values(
@@ -3352,12 +3415,19 @@ class ConsoleTraceService:
                     resolved[key] = json.loads(raw)
                 except (TypeError, ValueError, UnicodeDecodeError) as exc:
                     raise ValueError("surface_value_unavailable") from exc
-        if revision_keys:
-            owner = self.repository.get_owner(cursor, owner_id)
-            if owner is None or owner.conversation_id is None:
+        revision_keys_by_conversation: dict[str, list[SurfaceReferenceKey]] = {}
+        for key in revision_keys:
+            self._validate_revision_owner(cursor, owner_id, key[2])
+            revision = self.repository.get_semantic_revision(cursor, key[2])
+            if revision is None:
                 raise ValueError("revision_owner_mismatch")
-            for offset in range(0, len(revision_keys), 256):
-                chunk = revision_keys[offset : offset + 256]
+            revision_keys_by_conversation.setdefault(
+                revision.source_conversation_id,
+                [],
+            ).append(key)
+        for conversation_id, conversation_keys in revision_keys_by_conversation.items():
+            for offset in range(0, len(conversation_keys), 256):
+                chunk = conversation_keys[offset : offset + 256]
                 message_chunk = tuple(key for key in chunk if key[0] != "continuation")
                 continuation_chunk = tuple(
                     key for key in chunk if key[0] == "continuation"
@@ -3366,7 +3436,7 @@ class ConsoleTraceService:
                     projected = project_semantic_revision_provider_messages(
                         cursor,
                         revision_ids=tuple(key[2] for key in message_chunk),
-                        expected_conversation_id=owner.conversation_id,
+                        expected_conversation_id=conversation_id,
                     )
                     resolved.update((key, projected[key[2]]) for key in message_chunk)
                 if continuation_chunk:
@@ -3374,7 +3444,7 @@ class ConsoleTraceService:
                         project_semantic_revision_provider_continuations(
                             cursor,
                             revision_ids=tuple(key[2] for key in continuation_chunk),
-                            expected_conversation_id=owner.conversation_id,
+                            expected_conversation_id=conversation_id,
                         )
                     )
                     resolved.update(
@@ -3742,11 +3812,30 @@ class ConsoleTraceService:
     ) -> None:
         owner = self.repository.get_owner(cursor, owner_id)
         revision = self.repository.get_semantic_revision(cursor, revision_id)
-        if (
-            owner is None
-            or owner.conversation_id is None
-            or revision is None
-            or revision.source_conversation_id != owner.conversation_id
+        if owner is None or owner.conversation_id is None or revision is None:
+            raise ValueError("revision_owner_mismatch")
+        if revision.source_conversation_id == owner.conversation_id:
+            return
+        segment = self.repository.get_segment(cursor, owner.root_segment_id)
+        inherited_head = (
+            None if segment is None else segment.inherited_surface_head_id
+        )
+        head = (
+            None
+            if inherited_head is None
+            else self.repository.get_surface_node(cursor, inherited_head)
+        )
+        if head is None:
+            raise ValueError("revision_owner_mismatch")
+        assert segment is not None and segment.parent_segment_id is not None
+        inherited = self._surface_projection(
+            cursor,
+            segment.parent_segment_id,
+            head,
+        )
+        if not any(
+            key[1] == "revision" and key[2] == revision_id
+            for _sequence, key in inherited.entries
         ):
             raise ValueError("revision_owner_mismatch")
 

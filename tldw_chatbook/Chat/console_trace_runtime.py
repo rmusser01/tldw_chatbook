@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterator
 from datetime import datetime, timezone
-import threading
 
 from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
 from tldw_chatbook.Chat.console_trace_models import new_opaque_id
@@ -84,15 +84,18 @@ class ConsoleTraceBoundaryFactory:
         route_identity = route_record.route.value
         if route is not None and getattr(route, "value", None) != route_identity:
             raise ValueError("trace_route_mismatch")
-        revision_ids = tuple(
+        message_revision_ids = tuple(
             revision_id
-            for descriptor in (
-                tuple(provenance.messages_payload) + tuple(provenance.continuations)
-            )
+            for descriptor in provenance.messages_payload
             for revision_id in _saved_revision_ids(descriptor)
         )
-        if not revision_ids:
+        if not message_revision_ids:
             raise ValueError("trace_owner_unavailable")
+        revision_ids = message_revision_ids + tuple(
+            revision_id
+            for descriptor in provenance.continuations
+            for revision_id in _saved_revision_ids(descriptor)
+        )
         policy = frozen_policy_from_provenance(semantic_provenance)
         preparation_identity = new_opaque_id()
         with self._lock:
@@ -110,13 +113,8 @@ class ConsoleTraceBoundaryFactory:
                 }
                 if any(revision_id not in by_revision for revision_id in revision_ids):
                     raise ValueError("trace_revision_unavailable")
-                conversations = {
-                    by_revision[revision_id][0] for revision_id in revision_ids
-                }
-                if len(conversations) != 1:
-                    raise ValueError("trace_owner_mismatch")
-                conversation_id = conversations.pop()
-                turn_id = by_revision[revision_ids[-1]][1]
+                current_revision_id = message_revision_ids[-1]
+                conversation_id, turn_id = by_revision[current_revision_id]
                 owner = self.repository.get_attached_owner_by_conversation(
                     cursor,
                     conversation_id,

@@ -17,15 +17,15 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     ExchangeCapture,
     capture_to_blob,
 )
-from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from tldw_chatbook.Chat.console_trace_metrics import TraceCompatibilityMetrics
 from tldw_chatbook.Chat.console_trace_projection import (
     ConsoleTraceProjection,
     LegacyExchangeCall,
     NormalizedTraceCall,
     project_capture_for_viewer,
 )
-from tldw_chatbook.Chat.console_trace_metrics import TraceCompatibilityMetrics
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
 
 
@@ -200,15 +200,24 @@ def test_unverified_normalized_call_falls_back_to_matching_legacy_exchange() -> 
         normalized=(_normalized(unverified, call_id="call-1", verified=False),),
         legacy=(_legacy_row(legacy, abandoned=True),),
     )
+    metrics = TraceCompatibilityMetrics()
     projection = ConsoleTraceProjection(
         normalized_reader=readers.read_normalized,
         legacy_reader=readers.read_legacy,
         normalized_reads_enabled=True,
+        compatibility_metrics=metrics,
     )
 
     result = projection.read_calls("message-1")
 
     assert result == (LegacyExchangeCall(capture=legacy, abandoned=True),)
+    assert dict(metrics.snapshot()) == {
+        "normalized_write": 0,
+        "normalized_read": 0,
+        "legacy_read": 1,
+        "fallback_read": 1,
+        "incomplete": 1,
+    }
 
 
 def test_missing_normalized_call_falls_back_to_legacy_exchange() -> None:

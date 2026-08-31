@@ -408,6 +408,8 @@ class ConsoleTraceProjection:
                 selected.append(normalized_claims[0])
                 self._record_metric("normalized_read")
                 continue
+            if len(normalized_claims) == 1:
+                self._record_metric("incomplete")
             if len(normalized_claims) > 1:
                 _warn_ambiguous(source="normalized")
                 if len(legacy_claims) == 1:

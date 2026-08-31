@@ -6,8 +6,8 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 
 from tldw_chatbook import config as config_module
-from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
+from tldw_chatbook.config import ConfigMutationResult
 
 
 def test_config_import_isolated_from_eager_chat_package(tmp_path):
@@ -345,6 +345,35 @@ def test_runtime_capture_policy_projects_independent_trace_rollout_gates(
     policy = config_module.runtime_capture_policy()
 
     assert policy.normalized_writes_enabled is False
+    assert policy.normalized_reads_enabled is True
+    assert policy.legacy_writes_enabled is True
+
+
+def test_runtime_capture_policy_coerces_string_true_capture_and_rollout_gates(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 613)
+    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(
+        config_module,
+        "_published_runtime_config_snapshot",
+        lambda: config_module.RuntimeConfigSnapshot(
+            613,
+            {
+                "console": {
+                    "exchange_capture": "true",
+                    "trace_normalized_writes": "true",
+                    "trace_normalized_reads": "true",
+                    "trace_legacy_writes": "true",
+                }
+            },
+        ),
+    )
+
+    policy = config_module.runtime_capture_policy()
+
+    assert policy.enabled is True
+    assert policy.normalized_writes_enabled is True
     assert policy.normalized_reads_enabled is True
     assert policy.legacy_writes_enabled is True
 

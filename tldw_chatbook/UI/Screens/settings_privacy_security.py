@@ -11,7 +11,6 @@ from tldw_chatbook.Utils.sensitive_config_keys import (
     validate_trace_privacy_config,
 )
 
-
 SAFE_SKILL_TRUST_STATUSES = frozenset(
     {
         "trusted",
@@ -107,6 +106,10 @@ def build_settings_privacy_posture(
     if not isinstance(console, Mapping):
         console = {}
     trace_privacy = validate_trace_privacy_config(console)
+    # Keep this first-paint helper aligned with the runtime policy without
+    # adding config.py to the eager Settings import closure.
+    from tldw_chatbook.config import coerce_bool_setting
+
     return SettingsPrivacyPosture(
         encryption_enabled=encryption_enabled,
         sensitive_config_fields=_sensitive_config_field_count(app_config),
@@ -122,17 +125,23 @@ def build_settings_privacy_posture(
         skill_trust_reduced_rollback_protection=_safe_bool(
             trust.get("reduced_rollback_protection")
         ),
-        trace_capture_enabled=console.get("exchange_capture", True) is not False,
+        trace_capture_enabled=coerce_bool_setting(
+            console.get("exchange_capture", True),
+            True,
+        ),
         trace_pii_masking_enabled=trace_privacy.exchange_capture_pii_redaction,
         trace_viewer_profile=trace_privacy.effective_viewer_profile,
-        trace_normalized_writes_enabled=(
-            console.get("trace_normalized_writes", True) is not False
+        trace_normalized_writes_enabled=coerce_bool_setting(
+            console.get("trace_normalized_writes", True),
+            True,
         ),
-        trace_normalized_reads_enabled=(
-            console.get("trace_normalized_reads", True) is not False
+        trace_normalized_reads_enabled=coerce_bool_setting(
+            console.get("trace_normalized_reads", True),
+            True,
         ),
-        trace_legacy_writes_enabled=(
-            console.get("trace_legacy_writes", False) is True
+        trace_legacy_writes_enabled=coerce_bool_setting(
+            console.get("trace_legacy_writes", False),
+            False,
         ),
     )
 
