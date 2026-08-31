@@ -638,6 +638,10 @@ async def test_failed_geometry_commit_rolls_back_and_same_revision_is_one_shot(
         monkeypatch.setattr(owner, "scroll_to", observe_scroll_to)
         monkeypatch.setattr(screen, "set_focus", perturb_first_target_focus)
 
+        receipt = screen._library_pending_list_entry_media_return
+        request = screen._library_media_return_settlement
+        assert receipt is not None
+        assert request is not None
         screen._handle_library_media_row_geometry_changed(geometry)
         duplicate = geometry_message_type(owner, owner.latest_geometry)
         screen._handle_library_media_row_geometry_changed(duplicate)
@@ -649,6 +653,51 @@ async def test_failed_geometry_commit_rolls_back_and_same_revision_is_one_shot(
         assert screen.focused is pre_focus
         assert screen._library_notes_programmatic_focus_target is None
         assert (int(owner.scroll_x), int(owner.scroll_y)) == pre_scroll
+
+        await pilot.pause()
+
+        assert screen._library_pending_list_entry_focus is True
+        assert screen._library_pending_list_entry_media_return is receipt
+        assert screen._library_media_return_settlement is request
+        assert screen._library_media_last_exact_settlement is None
+        assert screen.focused is pre_focus
+        assert (int(owner.scroll_x), int(owner.scroll_y)) == pre_scroll
+
+        newer_messages: list[object] = []
+
+        def capture_newer_geometry(message) -> bool:
+            if type(message) is geometry_message_type:
+                newer_messages.append(message)
+                return True
+            return row_scroll_type.post_message(owner, message)
+
+        monkeypatch.setattr(owner, "post_message", capture_newer_geometry)
+        owner.virtual_size = Size(
+            owner.virtual_size.width,
+            owner.virtual_size.height + 1,
+        )
+        real_on_resize(
+            owner,
+            events.Resize(owner.size, owner.virtual_size, owner.container_size),
+        )
+        assert len(newer_messages) == 1
+        newer = newer_messages[-1]
+        assert newer.geometry.revision == geometry.geometry.revision + 1
+
+        screen._handle_library_media_row_geometry_changed(newer)
+        screen._handle_library_media_row_geometry_changed(
+            geometry_message_type(owner, owner.latest_geometry)
+        )
+        await pilot.pause()
+
+        assert desired_scroll_commits == 2
+        assert target_focus_attempts == 2
+        assert screen._library_media_last_exact_settlement == (
+            request,
+            newer.geometry.revision,
+        )
+        assert getattr(screen.focused, "media_id", None) == media_id
+        assert (int(owner.scroll_x), int(owner.scroll_y)) == scroll_offset
 
 
 @pytest.mark.asyncio

@@ -11266,6 +11266,11 @@ class LibraryScreen(BaseAppScreen):
         never reach ``on_key`` at all.
         """
         focused = event.widget
+        if focused is not self.focused:
+            # Focus bubbles are queued. A transactional Media rollback may
+            # restore its prior live focus before the abandoned target's
+            # earlier bubble arrives; that stale event owns no authority.
+            return
         self._remember_library_notes_authority_focus(focused)
         target_restore = self._library_notes_programmatic_focus_target is focused
         programmatic = bool(
