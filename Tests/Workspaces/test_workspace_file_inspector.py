@@ -484,10 +484,12 @@ def test_filter_closes_directory_descriptor_when_scandir_construction_fails(
     monkeypatch.setattr(file_inspector.os, "close", track_close)
     monkeypatch.setattr(file_inspector.os, "scandir", lambda descriptor: (_ for _ in ()).throw(OSError()))
 
-    result = inspector.filter_paths(scope, "file")
+    before = len(closed)
+    for _ in range(5):
+        result = inspector.filter_paths(scope, "file")
+        assert result.error_code == "directory_unavailable"
 
-    assert result.error_code == "directory_unavailable"
-    assert len(closed) >= 2
+    assert len(closed) - before >= 10
 
 
 def test_capture_rejects_real_default_workspace_identity(tmp_path: Path) -> None:
