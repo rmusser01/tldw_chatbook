@@ -89,7 +89,8 @@ second authoritative profile was introduced.
 - Added canonical F9 Settings review, attention, retry, cancel, interrupted resume,
   and linked-state behavior with exact content-free identity/version/quota rows.
 - Integrated the final bootstrap contract pinned to tldw_server
-  `6455ab08cb12ec239c53b7b9180b1cc1ea5f8375`. Chatbook strictly validates
+  `e3a2e9ea8836ca750336447ced318d7c722cfcc3` (temporary pin; a controller
+  follow-up may supersede it). Chatbook strictly validates
   schema-range, quota-deficit, and purge-generation 409 variants plus the
   separate successful-bootstrap `sync_transport_cursor`; malformed bodies remain
   generic and no raw response content is logged or displayed.
@@ -172,3 +173,18 @@ active rebaseline generation, and otherwise identical marker fields can bind
 the missing key-record ID. The marker is then cleared before its exact freeze;
 all mismatch, corruption, locked-profile, and missing-evidence cases remain
 fail-closed and preserve recovery artifacts. TASK-24727 remains In Progress.
+
+Final correction supersedes the legacy authentication description above: the
+nullable v7 marker is repairable only after staged integrity-key custody loads
+under the exact durable complete receipt binding (server, dataset, device,
+profile, integrity-key, and key-record) and authenticates the active canonical
+key before the exact repository CAS. Storage-key availability alone is not proof.
+Foreign or corrupt receipt bindings preserve marker, freeze, and custody. The
+manual LocalFirst path now lazily composes Personal Context runtime before
+rejecting an empty restart cache and rereads only the exact dataset key; non-PC
+datasets and wrong/unavailable keys remain fail-closed. Bootstrap quota request
+and success schemas mirror the reviewed server contract (at most 32 ASCII-safe
+names, strict built-in integers in `0..2**63-1`), and planning rejects any success
+map missing a requested quota. The current cross-repository pin is
+`e3a2e9ea8836ca750336447ced318d7c722cfcc3`, which a controller follow-up may
+supersede. TASK-24727 remains In Progress; acceptance criteria remain unchecked.

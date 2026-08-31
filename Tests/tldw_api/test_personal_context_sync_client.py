@@ -139,6 +139,54 @@ def test_personal_context_bootstrap_schemas_are_strict_and_typed() -> None:
 
 
 @pytest.mark.parametrize(
+    "required_quotas",
+    (
+        {"Bad-Name": 1},
+        {1: 1},
+        {"a" * 65: 1},
+        {"max_record_bytes": True},
+        {"max_record_bytes": 1.0},
+        {"max_record_bytes": "1"},
+        {"max_record_bytes": -1},
+        {"max_record_bytes": 2**63},
+        {f"quota_{index}": 0 for index in range(33)},
+    ),
+)
+def test_personal_context_bootstrap_request_rejects_malformed_quota_contract(
+    required_quotas,
+) -> None:
+    with pytest.raises(ValidationError):
+        SyncPersonalContextBootstrapRequest(
+            device_id="device-1",
+            required_quotas=required_quotas,
+        )
+
+
+@pytest.mark.parametrize(
+    "quotas",
+    (
+        {"Bad-Name": 1},
+        {1: 1},
+        {"a" * 65: 1},
+        {"max_record_bytes": True},
+        {"max_record_bytes": 1.0},
+        {"max_record_bytes": "1"},
+        {"max_record_bytes": -1},
+        {"max_record_bytes": 2**63},
+        {f"quota_{index}": 0 for index in range(33)},
+    ),
+)
+def test_personal_context_bootstrap_response_rejects_malformed_quota_contract(
+    quotas,
+) -> None:
+    payload = copy.deepcopy(BOOTSTRAP)
+    payload["quotas"] = quotas
+
+    with pytest.raises(ValidationError):
+        SyncPersonalContextBootstrapResponse.model_validate(payload)
+
+
+@pytest.mark.parametrize(
     "value",
     (None, "", "x" * 32_769),
 )

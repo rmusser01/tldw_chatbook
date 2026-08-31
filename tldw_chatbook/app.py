@@ -10578,6 +10578,7 @@ class TldwCli(
         )
         from .Personal_Context.link_service import (
             PersonalContextLinkService,
+            authenticate_legacy_completed_link_artifacts,
             cleanup_completed_link_artifacts,
         )
 
@@ -10592,6 +10593,7 @@ class TldwCli(
             **PersonalContextLinkService._key_binding(link)
         )
         service = self.get_personal_context_service(retry_locked=True)
+        authenticate_legacy_completed_link_artifacts(service, custodian, link)
         cleanup_completed_link_artifacts(service, link)
         custodian.delete(**PersonalContextLinkService._key_binding(link))
         dispatcher = service.build_personal_context_outbox_dispatcher(

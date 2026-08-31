@@ -92,22 +92,25 @@ class LocalFirstSyncService:
                 "local_first Sync v2 profile requires device_id and dataset_id"
             )
 
-        key = dataset_key or self.dataset_keys.get(str(dataset_id))
-        if key is None:
-            raise ValueError(
-                "dataset key is required for local_first Sync v2 envelopes"
-            )
-
         uses_personal_context = any(
             domain.startswith("personal_context.") for domain in domains
         )
         if uses_personal_context and (
-            self.personal_context_outbox_dispatcher is None
+            (
+                dataset_key is None
+                and self.dataset_keys.get(str(dataset_id)) is None
+            )
+            or self.personal_context_outbox_dispatcher is None
             or self.personal_context_service is None
         ) and callable(self.personal_context_runtime_loader):
             self.personal_context_runtime_loader(
                 server_profile_id=server_profile_id,
                 authenticated_principal_id=authenticated_principal_id,
+            )
+        key = dataset_key or self.dataset_keys.get(str(dataset_id))
+        if key is None:
+            raise ValueError(
+                "dataset key is required for local_first Sync v2 envelopes"
             )
         if uses_personal_context and (
             self.personal_context_outbox_dispatcher is None

@@ -36,6 +36,36 @@ class PersonalContextLinkAttentionRequired(Exception):
         self.attention = attention
 
 
+def authenticate_legacy_completed_link_artifacts(
+    profile: Any,
+    custodian: Any,
+    state: Mapping[str, Any],
+) -> None:
+    """Bind an exact v7 marker only through full staged-key custody."""
+
+    marker_binding = {
+        "plan_id": str(state["plan_id"]),
+        "target_profile_id": str(state["profile_id"]),
+        "target_integrity_key_id": str(state["integrity_key_id"]),
+        "target_purge_generation": int(state["purge_generation"]),
+        "rebaseline_version": int(state["rebaseline_version"]),
+    }
+    legacy_marker = getattr(
+        profile, "legacy_first_link_rebaseline_commit_matches", None
+    )
+    if not callable(legacy_marker) or not legacy_marker(**marker_binding):
+        return
+    key_binding = PersonalContextLinkService._key_binding(state)
+    staged_key = custodian.load(**key_binding)
+    repair = getattr(profile, "authenticate_legacy_first_link_rebaseline_commit", None)
+    if not callable(repair) or not repair(
+        **marker_binding,
+        target_key_record_id=str(state["key_record_id"]),
+        staged_integrity_key=staged_key,
+    ):
+        raise ValueError("personal_context_link_cleanup_mismatch")
+
+
 def cleanup_completed_link_artifacts(
     profile: Any,
     state: Mapping[str, Any],
@@ -62,12 +92,6 @@ def cleanup_completed_link_artifacts(
     clear = getattr(profile, "clear_first_link_rebaseline_commit", None)
     if marker_owner == plan_id or not callable(marker_owner_reader):
         if callable(clear):
-            clear(**marker_binding)
-    if callable(marker_owner_reader) and marker_owner_reader() == plan_id:
-        repair = getattr(
-            profile, "authenticate_legacy_first_link_rebaseline_commit", None
-        )
-        if callable(repair) and repair(**marker_binding) and callable(clear):
             clear(**marker_binding)
     if callable(marker_owner_reader) and marker_owner_reader() is not None:
         raise ValueError("personal_context_link_cleanup_mismatch")
@@ -876,9 +900,13 @@ class PersonalContextLinkService:
     ) -> PersonalContextLinkReceipt:
         """Retry exception-safe local cleanup after a durable complete receipt."""
 
-        self._custodian.load_storage_key(**self._key_binding(state))
+        key_binding = self._key_binding(state)
+        self._custodian.load_storage_key(**key_binding)
+        authenticate_legacy_completed_link_artifacts(
+            self._profile, self._custodian, state
+        )
         cleanup_completed_link_artifacts(self._profile, state)
-        self._custodian.delete(**self._key_binding(state))
+        self._custodian.delete(**key_binding)
         self._plans.pop(str(state["plan_id"]), None)
         return self._receipt(state)
 

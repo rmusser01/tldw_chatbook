@@ -47,7 +47,8 @@ clear and content-free.
 **Status:** Complete (Chatbook slice)
 
 **Cross-repository contract pin:** tldw_server commit
-`6455ab08cb12ec239c53b7b9180b1cc1ea5f8375` is the final reviewed contract. It
+`e3a2e9ea8836ca750336447ced318d7c722cfcc3` is the current reviewed contract pin;
+the controller may supersede it with a final follow-up server commit. It
 retains the strict content-free HTTP 409 attention introduced at `a92e12110d`
 and adds the required `sync_transport_cursor` watermark to successful bootstrap.
 Chatbook accepts only the exact typed success/attention shapes; malformed or

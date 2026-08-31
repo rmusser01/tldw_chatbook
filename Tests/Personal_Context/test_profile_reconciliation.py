@@ -1284,6 +1284,7 @@ def test_authenticated_complete_cleanup_binds_only_exact_legacy_v7_marker(
         target_key_record_id="key-record-1",
         target_purge_generation=0,
         rebaseline_version=1,
+        staged_integrity_key=service._repo()._require_keys().integrity_key,
     ) is True
     assert service.clear_first_link_rebaseline_commit(
         plan_id="plan-v7",
@@ -1300,6 +1301,7 @@ def test_authenticated_complete_cleanup_binds_only_exact_legacy_v7_marker(
         target_key_record_id="key-record-1",
         target_purge_generation=0,
         rebaseline_version=1,
+        staged_integrity_key=service._repo()._require_keys().integrity_key,
     ) is False
 
 
@@ -1359,7 +1361,10 @@ def test_authenticated_complete_cleanup_rejects_ambiguous_legacy_marker(
     }
     expected[field] = value
 
-    assert service.authenticate_legacy_first_link_rebaseline_commit(**expected) is False
+    assert service.authenticate_legacy_first_link_rebaseline_commit(
+        **expected,
+        staged_integrity_key=service._repo()._require_keys().integrity_key,
+    ) is False
     with pytest.raises(ValueError, match="personal_context_link_cleanup_mismatch"):
         cleanup_completed_link_artifacts(
             service,

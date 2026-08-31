@@ -2041,6 +2041,153 @@ async def test_local_first_personal_context_sync_fails_closed_without_compositio
     assert server.calls == []
 
 
+async def test_personal_context_sync_once_lazy_loads_exact_dataset_key_after_restart(
+    tmp_path,
+) -> None:
+    dataset_key = generate_dataset_key()
+    repo = _repo_with_profile(
+        tmp_path,
+        capabilities={"supported_domains": ["personal_context.record"]},
+    )
+    repo.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope=None,
+        profile_mode="local_first_sync",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        dataset_cursors={"sync_v2": "7"},
+        capabilities={"supported_domains": ["personal_context.record"]},
+    )
+    repo.set_personal_context_link_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        state="complete",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        authority_id="authority-1",
+        profile_id="profile-1",
+        integrity_key_id="integrity-1",
+        key_record_id="key-record-1",
+        purge_generation=0,
+        bootstrap_cursor="cursor-bootstrap",
+        sync_transport_cursor="transport-bootstrap",
+        confirmed_cursor="7",
+        bootstrap_heads={},
+        expected_heads={},
+        reviewed_lineage=[],
+        plan_id="plan-1",
+        rebaseline_version=2,
+        attention_code=None,
+    )
+
+    class Dispatcher:
+        adapter = object()
+
+        @staticmethod
+        def dispatch_pending(**_kwargs):
+            return {"dispatched": 0, "quarantined": 0}
+
+    keys: dict[str, bytes] = {}
+    server = FakeLocalFirstServer()
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys=keys,
+    )
+    loader_calls = []
+
+    def load_runtime(**binding) -> None:
+        loader_calls.append(binding)
+        keys["other-dataset"] = generate_dataset_key()
+        keys["dataset-1"] = dataset_key
+        service.personal_context_outbox_dispatcher = Dispatcher()
+        service.personal_context_service = object()
+
+    service.personal_context_runtime_loader = load_runtime
+
+    result = await service.sync_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope=None,
+        domains=["personal_context.record"],
+    )
+
+    assert loader_calls == [
+        {
+            "server_profile_id": "server-a",
+            "authenticated_principal_id": "user-a",
+        }
+    ]
+    assert result["pulled_envelopes"] == 0
+    assert server.personal_context_complete_pulls == 1
+
+
+async def test_sync_once_does_not_lazy_load_for_non_personal_context_dataset(
+    tmp_path,
+) -> None:
+    repo = _repo_with_profile(tmp_path)
+    calls = []
+    service = LocalFirstSyncService(
+        server_service=FakeLocalFirstServer(),
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys={},
+        personal_context_runtime_loader=lambda **kwargs: calls.append(kwargs),
+    )
+
+    with pytest.raises(ValueError, match="dataset key is required"):
+        await service.sync_once(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["notes"],
+        )
+
+    assert calls == []
+
+
+async def test_personal_context_sync_once_rejects_loader_key_for_other_dataset(
+    tmp_path,
+) -> None:
+    repo = _repo_with_profile(
+        tmp_path,
+        capabilities={"supported_domains": ["personal_context.record"]},
+    )
+    keys: dict[str, bytes] = {}
+    service = LocalFirstSyncService(
+        server_service=FakeLocalFirstServer(),
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys=keys,
+    )
+    loader_calls = []
+
+    def load_runtime(**binding) -> None:
+        loader_calls.append(binding)
+        keys["other-dataset"] = generate_dataset_key()
+        service.personal_context_outbox_dispatcher = object()
+        service.personal_context_service = object()
+
+    service.personal_context_runtime_loader = load_runtime
+
+    with pytest.raises(ValueError, match="dataset key is required"):
+        await service.sync_once(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["personal_context.record"],
+        )
+
+    assert loader_calls == [
+        {
+            "server_profile_id": "server-a",
+            "authenticated_principal_id": "user-a",
+        }
+    ]
+
+
 async def test_local_first_complete_binding_uses_private_personal_context_transport(
     tmp_path,
 ):
