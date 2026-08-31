@@ -17,7 +17,11 @@ Merge conversations/notes/media into Home's Recent section from the content snap
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Recent section shows mixed content recents newest-first capped at 8,Banner resumes newest content item incl. media with relative age,Conversation banner/row opens that conversation in Console via nav context,Note/media rows open their Library views,limit-1 resume seam queries retired
+- [x] Recent section shows mixed content recents newest-first capped at 8
+- [x] Banner resumes newest content item incl. media with relative age
+- [x] Conversation banner/row opens that conversation in Console via nav context
+- [x] Note/media rows open their Library views
+- [x] limit-1 resume seam queries retired
 <!-- AC:END -->
 
 ## Implementation Notes

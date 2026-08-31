@@ -17,7 +17,11 @@ Feed pending/failed eval runs and read-it-later count into the next-best-action 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Ladder suggests reviewing eval runs when pending/failed runs exist,Ladder suggests read-it-later when queue non-empty,Terminal suggestion deep-links the newest conversation via nav context,running eval runs never counted,Default adapter and missing services degrade to no suggestion
+- [x] Ladder suggests reviewing eval runs when pending/failed runs exist
+- [x] Ladder suggests read-it-later when queue non-empty
+- [x] Terminal suggestion deep-links the newest conversation via nav context
+- [x] running eval runs never counted
+- [x] Default adapter and missing services degrade to no suggestion
 <!-- AC:END -->
 
 ## Implementation Notes

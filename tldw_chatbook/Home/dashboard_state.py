@@ -433,9 +433,10 @@ def choose_next_best_action(
             "Pending or failed eval runs need attention.",
         )
     if state.read_later_count:
+        item_word = "item" if state.read_later_count == 1 else "items"
         return HomeAction(
             "review_read_later",
-            f"Read-it-later: {state.read_later_count} items",
+            f"Read-it-later: {state.read_later_count} {item_word}",
             TAB_MEDIA,
             "Your saved reading queue is waiting.",
         )
@@ -922,7 +923,7 @@ def summarize_home_dashboard(state: HomeDashboardInput) -> HomeDashboard:
                     if state.has_recent_work
                     else (
                         "No recent work yet",
-                        "Runs, chatbooks, imports, and schedules will appear here.",
+                        "Conversations, notes, media, runs, chatbooks, and imports will appear here.",
                     )
                 ),
             ),

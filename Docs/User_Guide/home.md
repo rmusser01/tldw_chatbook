@@ -60,8 +60,10 @@ counts appear), and buttons — **Resume conversation/note/reading: \<title\>
 - **Running** — in-flight watchlist runs and Library imports
   (queued / parsing / writing).
 - **Recent** — the last 8 things you touched, newest first: conversations,
-  notes, and media you recently worked on or read, terminal runs, done
+  notes, and media you recently worked on, terminal runs, done
   imports, and Chatbook artifacts, each with an age ("Conversations - 3m").
+  (Reading media without editing it does not resurface it — reading counts
+  once the opens journal lands; see the follow-up task.)
   The single newest conversation/note/media item feeds the resume banner
   instead of repeating as the first row.
 
