@@ -42,7 +42,15 @@ from tldw_chatbook.app import TldwCli
 from tldw_chatbook.config import get_cli_config_path, get_cli_log_file_path, get_user_data_dir
 
 
-SIZES = ((160, 50), (120, 35), (100, 30), (80, 24))
+EXPECTED_LAYOUT_BY_SIZE = types.MappingProxyType(
+    {
+        (160, 50): (True, "split-then-library-collapse-delta"),
+        (120, 35): (False, "items-priority-exclusive-optional-pane"),
+        (100, 30): (False, "items-priority-exclusive-optional-pane"),
+        (80, 24): (False, "items-priority-exclusive-optional-pane"),
+    }
+)
+SIZES = tuple(EXPECTED_LAYOUT_BY_SIZE)
 QUERY_SENTINEL = "quartzneedle18918"
 TITLE_SENTINEL = "PRIVATE TITLE 18918 SHOULD NEVER REACH LOGS"
 ID_SENTINEL = "local:media:45"
@@ -344,6 +352,25 @@ def test_reader_width_contract_rejects_one_column_mutation() -> None:
             items_region_width=55,
             reader_region_width=50,
         )
+
+
+def _assert_expected_layout_posture(
+    size: tuple[int, int], actual_wide_posture: bool
+) -> tuple[bool, str]:
+    """Reject a product posture that disagrees with the exact-size oracle."""
+    expected_wide_posture, layout_contract = EXPECTED_LAYOUT_BY_SIZE[size]
+    assert actual_wide_posture is expected_wide_posture, (
+        "layout posture mismatch: "
+        f"size={size!r} expected_wide={expected_wide_posture!r} "
+        f"actual_wide={actual_wide_posture!r}"
+    )
+    return expected_wide_posture, layout_contract
+
+
+def test_layout_posture_oracle_rejects_160_compact_before_branch() -> None:
+    """Mutation proof: 160x50 may not relabel a compact regression as valid."""
+    with pytest.raises(AssertionError, match="layout posture mismatch"):
+        _assert_expected_layout_posture((160, 50), False)
 
 
 def _assert_viewer_target(
@@ -966,12 +993,14 @@ async def _walk_size(
             # two panes mutually exclusive; wide posture proves independent
             # collapse and re-expansion of both.
             initial_layout = screen._library_media_reader_layout
-            wide_posture = bool(
+            actual_wide_posture = bool(
                 initial_layout.library_open and initial_layout.items_open
             )
-            layout_contract = "items-priority"
+            expected_wide_posture, layout_contract = (
+                _assert_expected_layout_posture(size, actual_wide_posture)
+            )
             initial_geometry = _assert_media_reader_geometry(screen)
-            if not wide_posture:
+            if not expected_wide_posture:
                 assert screen._library_media_reader_layout.items_open is True
                 await _toggle_pane(
                     screen, pilot, pane="library", expected_open=True
@@ -1008,7 +1037,6 @@ async def _walk_size(
                 assert compact_geometry["items"] == initial_geometry["items"]
                 await _submit_search(screen, pilot, "")
             else:
-                layout_contract = "exclusive-optional-pane"
                 assert screen._library_media_reader_layout.library_open is True
                 assert screen._library_media_reader_layout.items_open is True
                 split_geometry = _assert_media_reader_geometry(screen)
@@ -1414,7 +1442,13 @@ def test_live_real_database_media_trash_walkthrough(
             "privacy=true path-authority=true zero-db-handles=true"
         )
 
-    assert tuple(observation["size"] for observation in observations) == SIZES
+    assert tuple(
+        (observation["size"], observation["layout_contract"])
+        for observation in observations
+    ) == tuple(
+        (size, layout_contract)
+        for size, (_wide_posture, layout_contract) in EXPECTED_LAYOUT_BY_SIZE.items()
+    )
     assert all(
         observation
         == {

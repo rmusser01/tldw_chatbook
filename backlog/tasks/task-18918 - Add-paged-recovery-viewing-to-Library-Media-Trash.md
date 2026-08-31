@@ -4,7 +4,7 @@ title: Add paged recovery viewing to Library Media Trash
 status: Done
 assignee: []
 created_date: '2026-08-15 02:51'
-updated_date: '2026-08-31 14:47'
+updated_date: '2026-08-31 15:11'
 labels:
   - library
   - pagination
@@ -107,6 +107,14 @@ fresh event loop with a one-worker connection owner followed by zero-handle
 DB/WAL/SHM verification. Painted-copy evidence uses Textual's public SVG
 screenshot exporter rather than the private compositor.
 
+The final geometry review also removed an observed-state oracle: exact sizes
+now have immutable expected postures before the app mounts. The walkthrough
+asserts **160×50** is wide before running its split/collapse-delta branch and
+asserts **120×35**, **100×30**, and **80×24** are compact before running their
+Items-priority/exclusive-optional-pane branch. Branch selection, labels, and the
+final ordered `(size, layout_contract)` aggregate all come from that fixed
+oracle, so a posture regression cannot relabel itself and pass.
+
 Production and focused owners modified across the original work and ADR-104
 amendment:
 
@@ -148,6 +156,16 @@ amendment:
   **5 with 2 warnings in 1.93s**. Its path mutation proves rejection before the
   fake opener runs; its geometry mutation changes one allocated column; and its
   viewer mutation clears the row-produced selection.
+- Fixed layout-posture oracle mutation:
+
+  ```bash
+  PYTHONPATH=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/task-18918-media-trash-paging /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/Live/test_library_media_trash_paging_closeout.py::test_layout_posture_oracle_rejects_160_compact_before_branch --disable-warnings --basetemp=/private/tmp/task18918-layout-oracle-green
+  ```
+
+  RED failed **1 with 2 warnings in 2.05s** because a forced compact
+  observation at **160×50** did not raise and instead projected the compact
+  label. GREEN passed **1 with 2 warnings in 2.00s** after the helper asserted
+  the immutable size oracle before returning its branch contract.
 - Mounted cross-reader gate:
 
   ```bash
@@ -174,16 +192,18 @@ amendment:
   ```
 
   The exact command exited successfully; a concise same-file recording passed
-  **4 with 6 warnings in 71.85s** (the walkthrough plus three mutation proofs).
+  **5 with 6 warnings in 73.98s** (the walkthrough plus four mutation proofs).
   At **160×50, 120×35, 100×30, and
   80×24**, every observation reported `pages=47/3`, `query=5`, `clamp=32`,
   `delete=46`, `restore=45`, exact Trash Back, viewer row return, privacy
   sentinels absent from the live-delete segment, all effective paths inside an
   explicit allowed root, and zero process handles for the target DB/WAL/SHM
   after each size. The **160×50** layout proved both optional panes plus equal
-  Items/row expansion after Library collapse (`exclusive-optional-pane`); the
-  three compact layouts proved the Items-priority allocation and independently
-  hidden Library pane (`items-priority`).
+  Items/row expansion after Library collapse
+  (`split-then-library-collapse-delta`); the three compact layouts proved the
+  Items-priority allocation and independently hidden Library pane
+  (`items-priority-exclusive-optional-pane`). The final aggregate pins those
+  four `(size, layout_contract)` pairs in exact order.
 - Static/inverse gate: the mounted suite included the inverse matrix. `ruff
   check tldw_chatbook/Widgets/Library/library_media_canvas.py
   tldw_chatbook/UI/Screens/library_screen.py
