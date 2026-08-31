@@ -150,6 +150,10 @@ CONSOLE_RUNTIME_ATTR = "console_runtime"
 #: always takes `CONSOLE_RUNTIME_ATTR`.
 _VIEW_RUNTIME_FALLBACK_ATTR = "_console_runtime_fallback"
 
+# Keep migration imports outside the first-interactive-frame measurement even
+# on slower runners where a readiness poll and this task can wake together.
+LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS = 1.0
+
 
 def recover_console_trace_calls(
     database: object,
@@ -808,6 +812,9 @@ class ConsoleRuntime:
         async def run() -> None:
             while not self._disposed and not getattr(self._app, "_ui_ready", True):
                 await asyncio.sleep(0.05)
+            if self._disposed:
+                return
+            await asyncio.sleep(LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS)
             if self._disposed:
                 return
             from tldw_chatbook.Chat.console_trace_maintenance import (

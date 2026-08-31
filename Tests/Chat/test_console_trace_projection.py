@@ -973,6 +973,11 @@ async def test_runtime_starts_legacy_maintenance_only_after_ui_ready(
     module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
     module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, module.__name__, module)
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_runtime."
+        "LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS",
+        0.01,
+    )
     app = SimpleNamespace(_ui_ready=False, persona_buddy_controller=None)
     runtime = ConsoleRuntime(app)
     normalizer = object()
@@ -982,7 +987,9 @@ async def test_runtime_starts_legacy_maintenance_only_after_ui_ready(
     assert started == []
 
     app._ui_ready = True
-    await asyncio.sleep(0.06)
+    await asyncio.sleep(0)
+    assert started == []
+    await asyncio.sleep(0.07)
     assert len(started) == 1
 
     await runtime.dispose()
