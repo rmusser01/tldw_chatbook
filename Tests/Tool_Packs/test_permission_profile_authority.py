@@ -3,16 +3,84 @@
 from __future__ import annotations
 
 import copy
+import errno
+import os
 import threading
 
 import pytest
 
+from tldw_chatbook.MCP import permission_store as permission_store_module
 from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+from tldw_chatbook.Tool_Packs import binding as binding_module
 from tldw_chatbook.Tool_Packs.binding import (
     ProfileMutationError,
     ToolProfileLifecycleCoordinator,
     profile_policy_digest,
 )
+
+
+class _ContestedLockProbe:
+    """Expose exact outer lock acquire attempts without timing assumptions."""
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._local = threading.local()
+        self.first_acquired = threading.Event()
+        self.release_first = threading.Event()
+        self.second_attempted = threading.Event()
+        self.second_acquired = threading.Event()
+        self.order: list[str] = []
+
+    def __enter__(self):
+        depth = getattr(self._local, "depth", 0)
+        thread_name = threading.current_thread().name
+        if depth == 0 and thread_name == "second-mutator":
+            self.second_attempted.set()
+        self._lock.acquire()
+        self._local.depth = depth + 1
+        if depth == 0 and thread_name == "first-mutator":
+            self.order.append("first_acquired")
+            self.first_acquired.set()
+            assert self.release_first.wait(timeout=2)
+        elif depth == 0 and thread_name == "second-mutator":
+            self.order.append("second_acquired")
+            self.second_acquired.set()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        depth = self._local.depth - 1
+        if depth == 0 and threading.current_thread().name == "first-mutator":
+            self.order.append("first_released")
+        self._local.depth = depth
+        self._lock.release()
+
+
+def _temporary_store_paths(path) -> list:
+    private_paths = list(path.parent.glob(f".{path.name}.*.tmp"))
+    predictable_path = path.with_suffix(f"{path.suffix}.tmp")
+    if predictable_path.exists() or predictable_path.is_symlink():
+        private_paths.append(predictable_path)
+    return private_paths
+
+
+def _fail_directory_fsync(monkeypatch, directory, error_number: int) -> None:
+    original_open = permission_store_module.os.open
+    original_fsync = permission_store_module.os.fsync
+    directory_fd: list[int] = []
+
+    def tracked_open(path, flags, mode=0o777):
+        fd = original_open(path, flags, mode)
+        if os.fspath(path) == os.fspath(directory):
+            directory_fd.append(fd)
+        return fd
+
+    def controlled_fsync(fd):
+        if directory_fd and fd == directory_fd[-1]:
+            raise OSError(error_number, os.strerror(error_number))
+        return original_fsync(fd)
+
+    monkeypatch.setattr(permission_store_module.os, "open", tracked_open)
+    monkeypatch.setattr(permission_store_module.os, "fsync", controlled_fsync)
 
 
 def _imported_profile(*, first_bind_required: bool = True) -> dict:
@@ -73,41 +141,35 @@ def _tombstone_profile() -> dict:
 def test_two_store_instances_share_one_path_fence(tmp_path, monkeypatch):
     """A locked reload/save cycle must not lose another instance's write."""
     path = tmp_path / "permissions.json"
+    probe = _ContestedLockProbe()
+    resolved = path.expanduser().resolve(strict=False)
+    monkeypatch.setitem(permission_store_module._PATH_LOCKS, resolved, probe)
     first = MCPPermissionStore(path)
     second = MCPPermissionStore(path)
-    first_loaded = threading.Event()
-    release_first = threading.Event()
-    second_started = threading.Event()
-    original_load = first.load
-
-    def controlled_load():
-        payload = original_load()
-        first_loaded.set()
-        assert release_first.wait(timeout=2)
-        return payload
-
-    monkeypatch.setattr(first, "load", controlled_load)
+    assert first._path_lock is second._path_lock is probe
 
     first_thread = threading.Thread(
         target=first.set_server_default,
         args=("local:first", "deny"),
+        name="first-mutator",
     )
 
     def mutate_second() -> None:
-        second_started.set()
         second.set_server_default("local:second", "ask")
 
-    second_thread = threading.Thread(target=mutate_second)
+    second_thread = threading.Thread(target=mutate_second, name="second-mutator")
     first_thread.start()
-    assert first_loaded.wait(timeout=2)
+    assert probe.first_acquired.wait(timeout=2)
     second_thread.start()
-    assert second_started.wait(timeout=2)
-    release_first.set()
+    assert probe.second_attempted.wait(timeout=2)
+    probe.release_first.set()
+    assert probe.second_acquired.wait(timeout=2)
     first_thread.join(timeout=2)
     second_thread.join(timeout=2)
 
     assert not first_thread.is_alive()
     assert not second_thread.is_alive()
+    assert probe.order == ["first_acquired", "first_released", "second_acquired"]
     servers = MCPPermissionStore(path).load()["profiles"]["default"]["servers"]
     assert servers["local:first"]["default"] == "deny"
     assert servers["local:second"]["default"] == "ask"
@@ -141,6 +203,96 @@ def test_install_profile_if_absent_commits_exact_imported_profile(tmp_path):
             max_profiles=128,
             max_store_bytes=8 * 1024 * 1024,
         )
+
+
+def test_install_requires_initial_first_bind_confirmation_marker(tmp_path):
+    store = MCPPermissionStore(tmp_path / "permissions.json")
+    profile = _imported_profile(first_bind_required=False)
+
+    with pytest.raises(ProfileMutationError, match="first_bind_required"):
+        store.install_profile_if_absent(
+            "research",
+            profile,
+            expected_generation=store.read_snapshot_strict().generation,
+            max_profiles=128,
+            max_store_bytes=8 * 1024 * 1024,
+        )
+
+
+def test_save_does_not_reuse_predictable_symlink_temp(tmp_path):
+    path = tmp_path / "permissions.json"
+    legacy_temp = path.with_suffix(".json.tmp")
+    victim = tmp_path / "victim.txt"
+    victim.write_text("untouched", encoding="utf-8")
+    try:
+        legacy_temp.symlink_to(victim)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+
+    MCPPermissionStore(path).set_kill_switch(True)
+
+    assert victim.read_text(encoding="utf-8") == "untouched"
+    assert legacy_temp.is_symlink()
+    assert list(path.parent.glob(f".{path.name}.*.tmp")) == []
+
+
+@pytest.mark.parametrize("failure", ["write", "file_fsync", "replace"])
+def test_save_cleans_private_temp_before_replace_failures(
+    tmp_path, monkeypatch, failure
+):
+    path = tmp_path / "permissions.json"
+    store = MCPPermissionStore(path)
+
+    def fail(*_args, **_kwargs):
+        raise OSError(f"{failure} failed")
+
+    if failure == "write":
+        monkeypatch.setattr(permission_store_module.json, "dump", fail)
+    elif failure == "file_fsync":
+        monkeypatch.setattr(permission_store_module.os, "fsync", fail)
+    else:
+        monkeypatch.setattr(permission_store_module.os, "replace", fail)
+
+    with pytest.raises(OSError, match=f"{failure} failed"):
+        store.set_kill_switch(True)
+
+    assert not path.exists()
+    assert _temporary_store_paths(path) == []
+
+
+def test_save_propagates_real_directory_fsync_failure(tmp_path, monkeypatch):
+    path = tmp_path / "permissions.json"
+    _fail_directory_fsync(monkeypatch, tmp_path, errno.EIO)
+
+    with pytest.raises(OSError) as caught:
+        MCPPermissionStore(path).set_kill_switch(True)
+
+    assert caught.value.errno == errno.EIO
+    assert path.exists()
+    assert _temporary_store_paths(path) == []
+
+
+@pytest.mark.parametrize(
+    "unsupported_errno",
+    sorted(
+        {
+            errno.EINVAL,
+            errno.ENOSYS,
+            getattr(errno, "ENOTSUP", errno.EINVAL),
+            getattr(errno, "EOPNOTSUPP", errno.EINVAL),
+        }
+    ),
+)
+def test_save_tolerates_unsupported_directory_fsync(
+    tmp_path, monkeypatch, unsupported_errno
+):
+    path = tmp_path / "permissions.json"
+    _fail_directory_fsync(monkeypatch, tmp_path, unsupported_errno)
+
+    MCPPermissionStore(path).set_kill_switch(True)
+
+    assert MCPPermissionStore(path).get_kill_switch() is True
+    assert _temporary_store_paths(path) == []
 
 
 def test_install_rejects_casefold_collision_and_stale_generation(tmp_path):
@@ -364,32 +516,35 @@ def test_tombstone_replacement_contains_no_allow_or_ask_rows(tmp_path):
     assert set(states) == {"deny"}
 
 
-def test_lifecycle_coordinator_is_process_wide_and_counts_exact_profile_leases():
+def test_lifecycle_coordinator_is_process_wide_and_counts_exact_profile_leases(
+    monkeypatch,
+):
     first = ToolProfileLifecycleCoordinator()
     second = ToolProfileLifecycleCoordinator()
-    mutation_entered = threading.Event()
-    release_mutation = threading.Event()
-    second_entered = threading.Event()
+    probe = _ContestedLockProbe()
+    monkeypatch.setattr(binding_module, "_LIFECYCLE_LOCK", probe)
 
     def hold_first() -> None:
         with first.mutation():
-            mutation_entered.set()
-            assert release_mutation.wait(timeout=2)
+            pass
 
     def enter_second() -> None:
         with second.mutation():
-            second_entered.set()
+            pass
 
-    first_thread = threading.Thread(target=hold_first)
-    second_thread = threading.Thread(target=enter_second)
+    first_thread = threading.Thread(target=hold_first, name="first-mutator")
+    second_thread = threading.Thread(target=enter_second, name="second-mutator")
     first_thread.start()
-    assert mutation_entered.wait(timeout=2)
+    assert probe.first_acquired.wait(timeout=2)
     second_thread.start()
-    assert not second_entered.wait(timeout=0.05)
-    release_mutation.set()
-    assert second_entered.wait(timeout=2)
+    assert probe.second_attempted.wait(timeout=2)
+    probe.release_first.set()
+    assert probe.second_acquired.wait(timeout=2)
     first_thread.join(timeout=2)
     second_thread.join(timeout=2)
+    assert not first_thread.is_alive()
+    assert not second_thread.is_alive()
+    assert probe.order == ["first_acquired", "first_released", "second_acquired"]
 
     with first.lease("research"):
         with second.lease("research"):

@@ -63,11 +63,13 @@ here should need to change to accommodate them.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import fnmatch
 import json
 import os
 import re
+import tempfile
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -119,6 +121,14 @@ ProfileLifecycleDisposition = Literal["legacy", "imported", "tombstone", "invali
 
 _PATH_LOCKS_GUARD = threading.Lock()
 _PATH_LOCKS: dict[Path, threading.RLock] = {}
+_UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS = frozenset(
+    {
+        errno.EINVAL,
+        errno.ENOSYS,
+        getattr(errno, "ENOTSUP", errno.EINVAL),
+        getattr(errno, "EOPNOTSUPP", errno.EINVAL),
+    }
+)
 
 
 def _resolved_path_lock(path: Path) -> threading.RLock:
@@ -126,6 +136,24 @@ def _resolved_path_lock(path: Path) -> threading.RLock:
     resolved = path.expanduser().resolve(strict=False)
     with _PATH_LOCKS_GUARD:
         return _PATH_LOCKS.setdefault(resolved, threading.RLock())
+
+
+def _fsync_parent_directory(path: Path) -> None:
+    """Fsync ``path`` or tolerate only an explicitly unsupported operation."""
+    try:
+        parent_fd = os.open(path, os.O_RDONLY)
+    except OSError as exc:
+        if exc.errno in _UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS:
+            return
+        raise
+    try:
+        try:
+            os.fsync(parent_fd)
+        except OSError as exc:
+            if exc.errno not in _UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS:
+                raise
+    finally:
+        os.close(parent_fd)
 
 
 @dataclass(frozen=True)
@@ -676,26 +704,31 @@ class MCPPermissionStore:
     def _save_locked(self, payload: dict[str, Any]) -> None:
         """Durably replace the store while the caller holds the path fence."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
         payload["updated_at"] = _iso_utc_now()
-
-        with temp_path.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-            handle.flush()
-            os.fsync(handle.fileno())
-
-        os.replace(temp_path, self.path)
+        temp_fd, raw_temp_path = tempfile.mkstemp(
+            prefix=f".{self.path.name}.",
+            suffix=".tmp",
+            dir=self.path.parent,
+        )
+        temp_path = Path(raw_temp_path)
         try:
-            parent_fd = os.open(self.path.parent, os.O_RDONLY)
-        except OSError:
-            return
-        try:
-            os.fsync(parent_fd)
-        except OSError:
-            # Some supported hosts/filesystems do not fsync directories.
-            pass
-        finally:
-            os.close(parent_fd)
+            handle = os.fdopen(temp_fd, "w", encoding="utf-8")
+            temp_fd = -1
+            with handle:
+                json.dump(payload, handle, indent=2, sort_keys=True)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_path, self.path)
+        except BaseException:
+            if temp_fd >= 0:
+                os.close(temp_fd)
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
+            raise
+
+        _fsync_parent_directory(self.path.parent)
 
     def _mutate_locked(self, change: Callable[[dict[str, Any]], bool]) -> bool:
         """Load, mutate, and durably save once under the shared path fence."""
@@ -836,6 +869,13 @@ class MCPPermissionStore:
             self._validate_profile_semantics(candidate, expected_disposition="imported")
             if candidate["tool_pack_lifecycle"]["revision"] != 1:
                 raise ProfileMutationError("invalid_revision")
+            if (
+                candidate["tool_pack_lifecycle"][
+                    "first_bind_confirmation_required"
+                ]
+                is not True
+            ):
+                raise ProfileMutationError("first_bind_required")
             snapshot = self.read_snapshot_strict()
             if snapshot.generation != expected_generation:
                 raise ProfileMutationError("stale_store")
