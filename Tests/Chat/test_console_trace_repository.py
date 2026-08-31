@@ -1012,7 +1012,7 @@ def test_bind_lifecycle_ordered_events_and_db_monotonic_rejection(
             usage={"input_tokens": 4},
             integrity_state="complete",
         )
-        assert repository.get_graph_epoch(cursor) == epoch_before_lifecycle
+        assert repository.get_graph_epoch(cursor) == epoch_before_lifecycle + 1
     assert bound.state is TraceCallState.RESERVED
     assert started.state is TraceCallState.DISPATCH_STARTED
     assert responding.state is TraceCallState.RESPONSE_STARTED

@@ -33,7 +33,10 @@ def test_v61_policy_detail_survives_and_new_controls_start_inherit(
         ).fetchone()
         assert row is not None
         assert tuple(row) == ("full", None, None)
-        assert migrated._get_db_version(migrated.get_connection()) == 62
+        assert (
+            migrated._get_db_version(migrated.get_connection())
+            == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        )
     finally:
         migrated.close_connection()
 
