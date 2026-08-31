@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import secrets
 import stat
 from typing import Protocol
 
@@ -160,6 +161,7 @@ class DirectoryContinuation:
     directory_parts: tuple[str, ...]
     directory_revision: DirectoryRevision
     offset: int
+    token: str
 
 
 @dataclass(frozen=True)
@@ -185,6 +187,16 @@ class FilterResult:
     excluded_count: int = 0
     status_copy: str = ""
     error_code: str | None = None
+    progress: "FilterProgress" | None = None
+    excluded_locations_unsearched: bool = False
+
+
+@dataclass(frozen=True)
+class FilterProgress:
+    """Typed incremental filter observation for a caller-owned worker lane."""
+
+    visited_entries: int
+    matched_entries: int
 
 
 @dataclass(frozen=True)
@@ -245,8 +257,9 @@ class WorkspaceFileInspector:
     def __init__(self, registry: WorkspaceRegistry) -> None:
         self._registry = registry
         self._page_cache: dict[
-            tuple[str, tuple[str, ...], FileRevision], OrderedDict[int, str]
+            tuple[str, tuple[str, ...], FileRevision], OrderedDict[int, tuple[str, int]]
         ] = {}
+        self._continuations: dict[str, DirectoryContinuation] = {}
 
     def capture_binding(self, workspace_id: str, binding_id: str) -> BindingScope:
         """Capture one immutable local-folder address for an inspector visit."""
@@ -270,14 +283,21 @@ class WorkspaceFileInspector:
             if (
                 continuation.binding_fingerprint != scope.binding_fingerprint
                 or continuation.directory_parts != directory_parts
+                or continuation.offset < 0
+                or continuation.offset % DIRECTORY_PAGE_SIZE
+                or self._continuations.get(continuation.token) != continuation
             ):
                 return DirectoryPage(DirectoryStatus.FAILED, error_code="invalid_page")
-        directory, error_code = self._resolve_target(current, directory_parts, "dir")
-        if directory is None:
+        root_fd, error_code = _open_root_descriptor(current)
+        if root_fd is None:
             return DirectoryPage(DirectoryStatus.FAILED, error_code=error_code)
-        directory_revision = _directory_revision(directory)
-        if directory_revision is None:
-            return DirectoryPage(DirectoryStatus.FAILED, error_code="missing_target")
+        directory_fd, _directory_file_revision, error_code = _open_target_descriptor(
+            root_fd, directory_parts, "dir"
+        )
+        os.close(root_fd)
+        if directory_fd is None:
+            return DirectoryPage(DirectoryStatus.FAILED, error_code=error_code)
+        directory_revision = _directory_revision_from_stat(os.fstat(directory_fd))
         if (
             continuation is not None
             and continuation.directory_revision != directory_revision
@@ -289,7 +309,7 @@ class WorkspaceFileInspector:
         cache_count = 0
         scanned = 0
         try:
-            with os.scandir(directory) as iterator:
+            with os.scandir(directory_fd) as iterator:
                 for entry in iterator:
                     scanned += 1
                     if scanned > DIRECTORY_SCAN_LIMIT:
@@ -312,6 +332,8 @@ class WorkspaceFileInspector:
                     )
         except OSError:
             return DirectoryPage(DirectoryStatus.FAILED, error_code="directory_unavailable")
+        finally:
+            os.close(directory_fd)
         entries.sort(key=lambda item: (not item.is_directory, item.raw_parts[-1].casefold(), item.raw_parts[-1]))
         offset = continuation.offset if continuation is not None else 0
         page_entries = tuple(entries[offset : offset + DIRECTORY_PAGE_SIZE])
@@ -323,10 +345,13 @@ class WorkspaceFileInspector:
                 directory_parts=directory_parts,
                 directory_revision=directory_revision,
                 offset=offset + len(page_entries),
+                token=secrets.token_urlsafe(24),
             )
             if more_entries
             else None
         )
+        if next_page is not None:
+            self._continuations[next_page.token] = next_page
         if capped:
             status = DirectoryStatus.TRUNCATED
         elif next_page is not None:
@@ -350,6 +375,7 @@ class WorkspaceFileInspector:
         query: str,
         *,
         is_cancelled: Callable[[], bool] | None = None,
+        on_progress: Callable[[FilterProgress], None] | None = None,
     ) -> FilterResult:
         """Literal case-insensitive recursive filter under exactly one binding."""
         current, error_code = self._revalidate(scope)
@@ -358,15 +384,19 @@ class WorkspaceFileInspector:
         if not isinstance(query, str):
             return FilterResult(FilterStatus.FAILED, error_code="invalid_query")
         needle = query.casefold()
-        pending: list[tuple[Path, tuple[str, ...]]] = [(Path(current.canonical_root), ())]
+        root_fd, error_code = _open_root_descriptor(current)
+        if root_fd is None:
+            return FilterResult(FilterStatus.FAILED, error_code=error_code)
+        pending: list[tuple[int, tuple[str, ...]]] = [(root_fd, ())]
         matches: list[FileRef] = []
         visited = 0
         excluded = 0
         while pending:
-            directory, parent_parts = pending.pop()
+            directory_fd, parent_parts = pending.pop()
             try:
-                children = list(os.scandir(directory))
+                iterator = os.scandir(directory_fd)
             except OSError:
+                os.close(directory_fd)
                 return FilterResult(
                     FilterStatus.FAILED,
                     tuple(matches),
@@ -374,56 +404,59 @@ class WorkspaceFileInspector:
                     excluded,
                     error_code="directory_unavailable",
                 )
-            children.sort(key=lambda entry: (entry.name.casefold(), entry.name), reverse=True)
-            for entry in children:
-                if is_cancelled is not None and is_cancelled():
-                    return FilterResult(
-                        FilterStatus.CANCELLED,
-                        tuple(matches),
-                        visited,
-                        excluded,
-                        "Filter cancelled.",
-                    )
-                visited += 1
-                if visited > FILTER_VISIT_LIMIT:
-                    return FilterResult(
-                        FilterStatus.PARTIAL,
-                        tuple(matches),
-                        FILTER_VISIT_LIMIT,
-                        excluded,
-                        "Filter stopped after 50,000 entries.",
-                    )
-                kind = _entry_kind(entry)
-                if kind in {None, "link"}:
-                    continue
-                if kind in {"vcs", "cache"}:
-                    excluded += 1
-                    continue
-                raw_parts = parent_parts + (entry.name,)
-                relative_display = "/".join(raw_parts)
-                if needle in relative_display.casefold():
-                    matches.append(FileRef(raw_parts, _display_parts(raw_parts)))
-                    if len(matches) >= FILTER_RESULT_LIMIT:
+            try:
+                for entry in iterator:
+                    if is_cancelled is not None and is_cancelled():
                         return FilterResult(
-                            FilterStatus.TRUNCATED,
-                            tuple(matches),
-                            visited,
-                            excluded,
-                            "Showing the first 500 matching paths.",
+                            FilterStatus.CANCELLED, tuple(matches), visited, excluded,
+                            "Filter cancelled.", progress=FilterProgress(visited, len(matches)),
                         )
-                if kind == "dir":
-                    pending.append((Path(entry.path), raw_parts))
+                    if visited >= FILTER_VISIT_LIMIT:
+                        return FilterResult(
+                            FilterStatus.PARTIAL, tuple(matches), visited, excluded,
+                            "Filter stopped after 50,000 entries.", progress=FilterProgress(visited, len(matches)),
+                        )
+                    visited += 1
+                    if on_progress is not None:
+                        on_progress(FilterProgress(visited, len(matches)))
+                    kind = _entry_kind(entry)
+                    if kind in {None, "link"}:
+                        continue
+                    if kind in {"vcs", "cache"}:
+                        excluded += 1
+                        continue
+                    raw_parts = parent_parts + (entry.name,)
+                    relative_display = "/".join(raw_parts)
+                    if needle in relative_display.casefold():
+                        matches.append(FileRef(raw_parts, _display_parts(raw_parts)))
+                        if len(matches) >= FILTER_RESULT_LIMIT:
+                            return FilterResult(
+                                FilterStatus.TRUNCATED, tuple(matches), visited, excluded,
+                                "Showing the first 500 matching paths.",
+                                progress=FilterProgress(visited, len(matches)),
+                            )
+                    if kind == "dir":
+                        child_fd, child_error = _open_child_directory(directory_fd, entry.name)
+                        if child_fd is not None:
+                            pending.append((child_fd, raw_parts))
+            finally:
+                iterator.close()
+                os.close(directory_fd)
         matches.sort(key=lambda item: (item.display_path.casefold(), item.display_path))
         if matches:
             status = FilterStatus.COMPLETE
             copy = f"{len(matches)} matching paths."
         elif excluded:
-            status = FilterStatus.ONLY_EXCLUDED
-            copy = "Matches exist only in excluded folders."
+            status = FilterStatus.EMPTY
+            copy = "No matching visible paths. Excluded folders were not searched."
         else:
             status = FilterStatus.EMPTY
             copy = "No matching paths."
-        return FilterResult(status, tuple(matches), visited, excluded, copy)
+        return FilterResult(
+            status, tuple(matches), visited, excluded, copy,
+            progress=FilterProgress(visited, len(matches)),
+            excluded_locations_unsearched=bool(excluded),
+        )
 
     def read_file(
         self,
@@ -437,10 +470,11 @@ class WorkspaceFileInspector:
         current, error_code = self._revalidate(scope)
         if current is None:
             return FileReadResult(FileReadKind.FAILED, error_code=error_code)
-        path, error_code = self._resolve_target(current, raw_parts, "file")
-        if path is None:
+        root_fd, error_code = _open_root_descriptor(current)
+        if root_fd is None:
             return FileReadResult(FileReadKind.FAILED, error_code=error_code)
-        descriptor, revision, error_code = _open_regular_file(path)
+        descriptor, revision, error_code = _open_target_descriptor(root_fd, raw_parts, "file")
+        os.close(root_fd)
         if descriptor is None or revision is None:
             return FileReadResult(FileReadKind.FAILED, error_code=error_code)
         try:
@@ -456,6 +490,21 @@ class WorkspaceFileInspector:
                     FileReadKind.METADATA_ONLY,
                     revision=revision,
                     size_bytes=revision.size,
+                )
+            offset = page_offset or 0
+            cache_key = (scope.binding_fingerprint, raw_parts, revision)
+            cached = self._page_cache.get(cache_key, {}).get(offset)
+            if cached is not None:
+                cached_text, cached_total = cached
+                return FileReadResult(
+                    FileReadKind.PAGED,
+                    revision=revision,
+                    size_bytes=revision.size,
+                    text=safe_filesystem_text(cached_text),
+                    character_range=(offset, min(offset + TEXT_PAGE_SIZE, cached_total)),
+                    total_characters=cached_total,
+                    next_page_offset=(offset + TEXT_PAGE_SIZE if offset + TEXT_PAGE_SIZE < cached_total else None),
+                    previous_page_offset=max(0, offset - TEXT_PAGE_SIZE) if offset else None,
                 )
             decoded_page = _decode_text_page(descriptor, page_offset or 0)
             final_revision = _revision_from_stat(os.fstat(descriptor))
@@ -498,10 +547,10 @@ class WorkspaceFileInspector:
         end = min(offset + TEXT_PAGE_SIZE, total_characters)
         cache_key = (scope.binding_fingerprint, raw_parts, revision)
         cache = self._page_cache.setdefault(cache_key, OrderedDict())
-        cache[offset] = page_text
-        cache.move_to_end(offset)
-        while len(cache) > 3:
-            cache.popitem(last=False)
+        cache[offset] = (page_text, total_characters)
+        for cached_offset in tuple(cache):
+            if abs(cached_offset - offset) > TEXT_PAGE_SIZE:
+                del cache[cached_offset]
         return FileReadResult(
             FileReadKind.PAGED,
             revision=revision,
@@ -650,6 +699,10 @@ def _directory_revision(path: Path) -> DirectoryRevision | None:
     return DirectoryRevision(observed.st_dev, observed.st_ino, observed.st_mtime_ns)
 
 
+def _directory_revision_from_stat(observed: os.stat_result) -> DirectoryRevision:
+    return DirectoryRevision(observed.st_dev, observed.st_ino, observed.st_mtime_ns)
+
+
 def _entry_kind(entry: os.DirEntry[str]) -> str | None:
     """Classify one direct entry without following symlinks."""
     try:
@@ -673,10 +726,89 @@ def _display_parts(raw_parts: tuple[str, ...]) -> str:
     return "/".join(safe_filesystem_text(part) for part in raw_parts)
 
 
+def _safe_open_flags(*, directory: bool) -> int | None:
+    """Return no-follow descriptor flags or fail closed without support."""
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+        return None
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    if directory:
+        flags |= os.O_DIRECTORY
+    return flags
+
+
+def _open_root_descriptor(scope: BindingScope) -> tuple[int | None, str]:
+    flags = _safe_open_flags(directory=True)
+    if flags is None:
+        return None, "safe_descriptor_unavailable"
+    try:
+        descriptor = os.open(scope.canonical_root, flags)
+        observed = os.fstat(descriptor)
+    except OSError:
+        return None, "binding_changed"
+    if (
+        not stat.S_ISDIR(observed.st_mode)
+        or observed.st_dev != scope.root_device
+        or observed.st_ino != scope.root_inode
+    ):
+        os.close(descriptor)
+        return None, "binding_changed"
+    return descriptor, ""
+
+
+def _open_child_directory(parent_fd: int, name: str) -> tuple[int | None, str]:
+    flags = _safe_open_flags(directory=True)
+    if flags is None:
+        return None, "safe_descriptor_unavailable"
+    try:
+        descriptor = os.open(name, flags, dir_fd=parent_fd)
+        observed = os.fstat(descriptor)
+    except OSError:
+        return None, "unsafe_target"
+    if not stat.S_ISDIR(observed.st_mode):
+        os.close(descriptor)
+        return None, "unsafe_target"
+    return descriptor, ""
+
+
+def _open_target_descriptor(
+    root_fd: int, raw_parts: tuple[str, ...], expected_kind: str
+) -> tuple[int | None, FileRevision | None, str]:
+    """Traverse only root-anchored no-follow descriptors, never path strings."""
+    if not _safe_relative_parts(raw_parts):
+        return None, None, "invalid_path"
+    if any(part in _VCS_DIRECTORY_NAMES for part in raw_parts):
+        return None, None, "excluded_path"
+    current_fd = os.dup(root_fd)
+    try:
+        for index, part in enumerate(raw_parts):
+            is_final = index == len(raw_parts) - 1
+            flags = _safe_open_flags(directory=not is_final or expected_kind == "dir")
+            if flags is None:
+                return None, None, "safe_descriptor_unavailable"
+            try:
+                next_fd = os.open(part, flags, dir_fd=current_fd)
+            except FileNotFoundError:
+                return None, None, "missing_target"
+            except OSError:
+                return None, None, "unsafe_target"
+            os.close(current_fd)
+            current_fd = next_fd
+        observed = os.fstat(current_fd)
+        if expected_kind == "dir" and not stat.S_ISDIR(observed.st_mode):
+            return None, None, "unsupported_target"
+        if expected_kind == "file" and not stat.S_ISREG(observed.st_mode):
+            return None, None, "unsafe_target"
+        return current_fd, _revision_from_stat(observed), ""
+    except Exception:
+        os.close(current_fd)
+        raise
+
+
 def _open_regular_file(path: Path) -> tuple[int | None, FileRevision | None, str]:
-    flags = os.O_RDONLY
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    """Compatibility helper retained for callers outside this module."""
+    flags = _safe_open_flags(directory=False)
+    if flags is None:
+        return None, None, "safe_descriptor_unavailable"
     try:
         descriptor = os.open(path, flags)
         observed = os.fstat(descriptor)

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import os
 from pathlib import Path
 import shutil
+import threading
 
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
@@ -15,6 +17,7 @@ from tldw_chatbook.Workspaces.file_inspector import (
     WorkspaceFileInspector,
     safe_filesystem_text,
 )
+import tldw_chatbook.Workspaces.file_inspector as file_inspector
 
 
 def _registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
@@ -180,8 +183,9 @@ def test_filter_is_literal_selected_scope_bounded_and_reports_exclusions(tmp_pat
     assert truncated.status is FilterStatus.TRUNCATED
     assert len(truncated.matches) == 500
     assert "500" in truncated.status_copy
-    assert excluded.status is FilterStatus.ONLY_EXCLUDED
+    assert excluded.status is FilterStatus.EMPTY
     assert excluded.excluded_count >= 1
+    assert excluded.excluded_locations_unsearched is True
     assert inspector.filter_debounce_ms == 150
 
 
@@ -274,3 +278,153 @@ def test_root_replacement_and_disappeared_file_fail_closed(tmp_path: Path) -> No
     shutil.rmtree(root)
     replacement.rename(root)
     assert inspector.list_directory(scope).error_code == "binding_changed"
+
+
+def test_read_rejects_root_symlink_swap_after_scope_revalidation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Catch a root pathname reopened after validation and redirected by a swap."""
+    inspector, _registry_service, root, scope = _scope(tmp_path)
+    (root / "visible.txt").write_text("inside")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "visible.txt").write_text("secret")
+    real_open = file_inspector.os.open
+    swapped = False
+
+    def swap_before_root_open(path, flags, *args, **kwargs):
+        nonlocal swapped
+        if not swapped and Path(path) == root:
+            swapped = True
+            shutil.rmtree(root)
+            root.symlink_to(outside, target_is_directory=True)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(file_inspector.os, "open", swap_before_root_open)
+
+    result = inspector.read_file(scope, ("visible.txt",))
+
+    assert swapped is True
+    assert result.kind is FileReadKind.FAILED
+    assert result.text == ""
+
+
+def test_read_rejects_intermediate_directory_symlink_swap_after_root_open(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Catch intermediate components reopened from a root-derived pathname."""
+    inspector, _registry_service, root, scope = _scope(tmp_path)
+    nested = root / "nested"
+    nested.mkdir()
+    (nested / "visible.txt").write_text("inside")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "visible.txt").write_text("secret")
+    real_open = file_inspector.os.open
+    swapped = False
+
+    def swap_before_intermediate_open(path, flags, *args, **kwargs):
+        nonlocal swapped
+        if not swapped and path == "nested" and kwargs.get("dir_fd") is not None:
+            swapped = True
+            nested.rename(root / "previous-nested")
+            nested.symlink_to(outside, target_is_directory=True)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(file_inspector.os, "open", swap_before_intermediate_open)
+
+    result = inspector.read_file(scope, ("nested", "visible.txt"))
+
+    assert swapped is True
+    assert result.kind is FileReadKind.FAILED
+    assert result.text == ""
+
+
+def test_filter_streams_progress_and_returns_honest_unsearched_exclusion_state(
+    tmp_path: Path,
+) -> None:
+    """Catch eager filtering and an unrelated query reported as excluded-only."""
+    inspector, _registry_service, root, scope = _scope(tmp_path)
+    (root / "ordinary.txt").write_text("x")
+    (root / ".git").mkdir()
+    (root / ".git" / "needle.txt").write_text("hidden")
+    progress = []
+
+    unrelated = inspector.filter_paths(
+        scope, "unrelated", on_progress=progress.append
+    )
+    excluded_name = inspector.filter_paths(scope, "needle", on_progress=progress.append)
+
+    assert unrelated.status is FilterStatus.EMPTY
+    assert unrelated.excluded_locations_unsearched is True
+    assert excluded_name.status is FilterStatus.EMPTY
+    assert excluded_name.excluded_locations_unsearched is True
+    assert progress[-1].visited_entries >= 1
+
+
+def test_filter_checks_the_visit_cap_before_a_huge_directory_is_materialized(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Catch list(scandir(...)) exhausting a huge directory before cancellation."""
+    inspector, _registry_service, root, scope = _scope(tmp_path)
+    for index in range(10):
+        (root / f"entry-{index}").write_text("x")
+    monkeypatch.setattr(file_inspector, "FILTER_VISIT_LIMIT", 3)
+
+    result = inspector.filter_paths(scope, "entry")
+
+    assert result.status is FilterStatus.PARTIAL
+    assert result.visited_entries == 3
+    assert result.progress.visited_entries == 3
+
+
+def test_directory_continuation_is_service_issued_and_validated(tmp_path: Path) -> None:
+    """Catch caller-forged, negative, or cross-service continuation offsets."""
+    inspector, registry, root, scope = _scope(tmp_path)
+    for index in range(205):
+        (root / f"entry-{index}").write_text("x")
+    first = inspector.list_directory(scope)
+    assert first.continuation is not None
+    forged = replace(first.continuation, offset=-200)
+    other_service = WorkspaceFileInspector(registry)
+
+    assert inspector.list_directory(scope, continuation=forged).error_code == "invalid_page"
+    assert other_service.list_directory(scope, continuation=first.continuation).error_code == "invalid_page"
+
+
+def test_large_page_cache_serves_hits_and_evicts_nonadjacent_pages(tmp_path: Path, monkeypatch) -> None:
+    """Catch a nominal page cache that always decodes and retains stale pages."""
+    inspector, _registry_service, root, scope = _scope(tmp_path)
+    (root / "large.txt").write_text("é" * 450_000)
+    first = inspector.read_file(scope, ("large.txt",))
+    calls = 0
+    real_decoder = file_inspector._decode_text_page
+
+    def count_decodes(descriptor, page_offset):
+        nonlocal calls
+        calls += 1
+        return real_decoder(descriptor, page_offset)
+
+    monkeypatch.setattr(file_inspector, "_decode_text_page", count_decodes)
+    hit = inspector.read_file(scope, ("large.txt",), page_offset=0, expected_revision=first.revision)
+    second = inspector.read_file(scope, ("large.txt",), page_offset=100_000, expected_revision=first.revision)
+    fourth = inspector.read_file(scope, ("large.txt",), page_offset=300_000, expected_revision=first.revision)
+
+    assert hit.text == first.text
+    assert calls == 2
+    assert second.kind is FileReadKind.PAGED
+    assert fourth.kind is FileReadKind.PAGED
+    assert inspector.cached_page_offsets(scope, ("large.txt",)) == (300_000,)
+
+
+def test_service_operations_do_not_start_threads_or_workers(tmp_path: Path) -> None:
+    """Catch future service work escaping the modal's owned worker lanes."""
+    inspector, _registry_service, root, scope = _scope(tmp_path)
+    (root / "file.txt").write_text("x")
+    before = {thread.ident for thread in threading.enumerate()}
+
+    inspector.list_directory(scope)
+    inspector.filter_paths(scope, "file")
+    inspector.read_file(scope, ("file.txt",))
+
+    assert {thread.ident for thread in threading.enumerate()} == before
