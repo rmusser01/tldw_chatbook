@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-31 15:44'
-updated_date: '2026-08-31 17:45'
+updated_date: '2026-08-31 19:15'
 labels:
   - agents
   - tools
@@ -61,4 +61,8 @@ The function lives in its own module rather than in `tool_catalog.py`, which is 
 `Tests/Agents/` shows the same 15 baseline failures before and after (2197 passing, up 18); `Tests/MCP/` unchanged at 2 baseline failures / 915 passing.
 
 **Files:** `tldw_chatbook/Agents/tool_arg_coercion.py` (new), `tldw_chatbook/Agents/tool_catalog.py`, `Tests/Agents/test_tool_arg_coercion.py` (new).
+
+## Review round
+
+**AC#5 had no test at all.** The integration test opened a `caplog.at_level(logging.WARNING)` block and never asserted on it — and it would not have worked anyway, since `tool_catalog` logs through loguru, which does not reach pytest's `caplog` without an explicit sink. Added a real test using a loguru sink that asserts exactly one report is emitted for a repaired call, naming the tool and the field, and none for an already-correct call.
 <!-- SECTION:NOTES:END -->

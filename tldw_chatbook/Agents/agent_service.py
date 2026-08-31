@@ -1519,18 +1519,12 @@ def _usage_total_tokens(resp) -> int | None:
 _CANCEL_POLL_SECONDS = 0.5
 
 
-#: Floor for a clamped timeout. The dispatch site treats a falsy timeout as
-#: "run unbounded", so an already-exhausted wall budget must still yield a small
-#: POSITIVE bound rather than zero.
-_EXHAUSTED_BUDGET_TIMEOUT_SECONDS = 0.05
-
-
 def _effective_tool_timeout(
     configured: float,
     run_started: float,
     wall_budget: float | None,
     clock: Callable[[], float],
-) -> tuple[float, bool]:
+) -> tuple[float | None, bool]:
     """Bound a tool call by the lesser of its ceiling and the run's remainder.
 
     `max_wall_seconds` is only checked at the top of the loop, so without this
@@ -1548,13 +1542,19 @@ def _effective_tool_timeout(
         clock: Monotonic clock, injectable for tests.
 
     Returns:
-        ``(seconds, clamped_by_wall_budget)``.
+        ``(seconds, clamped_by_wall_budget)``, where ``seconds`` is None when
+        the budget is already spent and the call must NOT be dispatched. A tiny
+        positive bound was the first attempt and was wrong: it still starts the
+        tool on a daemon thread and abandons it, and an abandoned worker "may
+        still complete and act for real" after a timeout is reported. For a
+        tool that writes files or spends money, that is worse than the overrun
+        this clamp exists to prevent.
     """
     if not wall_budget or wall_budget <= 0:
         return configured, False
     remaining = wall_budget - (clock() - run_started)
     if remaining <= 0:
-        return _EXHAUSTED_BUDGET_TIMEOUT_SECONDS, True
+        return None, True
     if remaining < configured:
         return remaining, True
     return configured, False
@@ -2678,6 +2678,17 @@ class AgentService:
                     getattr(config.budget, "max_wall_seconds", 0),
                     self.clock,
                 )
+                if timeout is None:
+                    # Budget already spent: refuse rather than start work that
+                    # would be abandoned mid-flight and could still take effect.
+                    return ToolResult(
+                        ok=False,
+                        error=(
+                            f"tool call not started: {call.name} "
+                            "(the run's wall-clock budget is exhausted)"
+                        ),
+                        outcome=TOOL_OUTCOME_TIMEOUT,
+                    )
                 return _call_with_timeout(
                     _invoke,
                     timeout,

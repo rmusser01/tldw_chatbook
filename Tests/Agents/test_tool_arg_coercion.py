@@ -202,8 +202,68 @@ def test_registry_repairs_arguments_before_the_provider_sees_them(caplog):
     registry = ToolCatalogRegistry()
     registry.register_provider(_Provider())
 
-    with caplog.at_level(logging.WARNING):
-        result = registry.invoke_by_name("echo", {"items": '["a", "b"]'})
+    result = registry.invoke_by_name("echo", {"items": '["a", "b"]'})
 
     assert result.ok is True
     assert received["items"] == ["a", "b"], "provider saw the raw string"
+
+
+def test_a_repair_is_reported_so_a_bad_model_is_not_masked():
+    """AC#5: a systematically malformed model must be visible.
+
+    Uses a loguru sink, not caplog: `tool_catalog` logs through loguru, which
+    does not reach pytest's caplog without one. The earlier version of the test
+    above opened a `caplog.at_level` block and never asserted on it, so nothing
+    pinned this at all.
+    """
+    from loguru import logger
+
+    from tldw_chatbook.Agents.agent_models import (
+        ToolCatalogEntry,
+        ToolResult,
+        ToolSchema,
+    )
+    from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+
+    class _Provider:
+        source = "test"
+
+        def list_catalog(self):
+            return [
+                ToolCatalogEntry(
+                    id="test:echo",
+                    name="echo",
+                    one_line_description="d",
+                    source="test",
+                )
+            ]
+
+        def load_schema(self, tool_id):
+            return ToolSchema(
+                id=tool_id,
+                name="echo",
+                description="d",
+                parameters={
+                    "type": "object",
+                    "properties": {"items": {"type": "array"}},
+                },
+            )
+
+        def invoke(self, tool_id, args):
+            return ToolResult(ok=True, content="ok")
+
+    registry = ToolCatalogRegistry()
+    registry.register_provider(_Provider())
+
+    emitted: list[str] = []
+    sink_id = logger.add(lambda message: emitted.append(str(message)), level="WARNING")
+    try:
+        registry.invoke_by_name("echo", {"items": '["a"]'})
+        registry.invoke_by_name("echo", {"items": ["already", "fine"]})
+    finally:
+        logger.remove(sink_id)
+
+    reports = [line for line in emitted if "Repaired JSON-string" in line]
+    assert len(reports) == 1, "one repair should report exactly once"
+    assert "echo" in reports[0]
+    assert "items" in reports[0]

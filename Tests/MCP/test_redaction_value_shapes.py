@@ -40,9 +40,28 @@ SECRET_VALUES = [
     pytest.param("postgres://dbuser:hunter2@db.internal:5432/app", id="postgres-uri"),
     pytest.param("mongodb://admin:s3cr3t@10.0.0.5:27017/prod", id="mongodb-uri"),
     pytest.param("Bearer abcdefghijklmnopqrstuvwxyz0123456789", id="bearer-header"),
+    # Review M3: AC#2 says "PEM private-key blocks"; the ` BLOCK` suffix used by
+    # PGP defeated an anchor that assumed the header ends at `-----`.
+    pytest.param(
+        "-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBF...\n-----END PGP PRIVATE KEY BLOCK-----",
+        id="pgp-private-key",
+    ),
+    pytest.param("glpat-abcdefghijklmnopqrst", id="gitlab-pat"),
+    pytest.param("xapp-1-A0123456789-abcdefghijk", id="slack-app-token"),
+    pytest.param("sk_test_EXAMPLEnotreal01", id="stripe-secret-underscore"),
 ]
 
 INNOCENT_VALUES = [
+    # Review C1: the first version of these patterns destroyed all of these on
+    # the model's main MCP input path. `basic ` + any word matched the auth
+    # header pattern; any `sk-`/`pk-`/`rk-` kebab path component matched the
+    # provider-key pattern. Tool results came back as "***" with no signal.
+    pytest.param("The server supports basic authentication and OAuth.", id="prose-basic"),
+    pytest.param("basic http-server configuration", id="prose-basic-hyphen"),
+    pytest.param("/repo/pkgs/sk-core-runtime-helpers/index.ts", id="path-sk-component"),
+    pytest.param("/home/user/sk-notes-archive-2026/readme.md", id="path-sk-dated"),
+    pytest.param("pk-config-defaults-2026.json", id="filename-pk"),
+    pytest.param("rk-means-clustering-explained", id="slug-rk"),
     pytest.param("the quick brown fox jumps over the lazy dog", id="prose"),
     pytest.param("/Users/someone/Documents/GitHub/project/src/main.py", id="abs-path"),
     pytest.param("./relative/path/to/file.txt", id="rel-path"),
@@ -118,9 +137,19 @@ def test_redaction_has_no_io_or_config_dependency():
     """AC#6: pure function. Importing must not touch config or the network."""
     import tldw_chatbook.MCP.redaction as redaction_module
 
+    # Assert on imports, not on the substring "open(" -- that tripped on
+    # `.open(`, `reopen(` and the word in a comment, and passed identically
+    # against the pre-change module, so it pinned nothing.
     source = open(redaction_module.__file__, encoding="utf-8").read()
-    for forbidden in ("import requests", "import httpx", "get_cli_setting", "open("):
+    for forbidden in (
+        "import requests",
+        "import httpx",
+        "import socket",
+        "get_cli_setting",
+    ):
         assert forbidden not in source, f"redaction must stay pure: found {forbidden}"
+    # And it holds no module-level state that could vary between calls.
+    assert redaction_module.redact_mapping({"a": "b"}) == {"a": "b"}
 
 
 # --- AC#4: both boundaries, verified separately -----------------------------
@@ -171,3 +200,59 @@ def test_execution_log_never_stores_argument_values_at_all():
     assert "/tmp/x" not in serialized, "the log must not carry values of any kind"
     # Names are metadata and are expected to survive.
     assert "path" in serialized
+
+
+# --- review follow-ups: I5, I6, M1, M3-bytes --------------------------------
+
+
+def test_url_query_value_is_redacted_by_shape():
+    """AC#1 covers argument names too -- redact_url matched key names only."""
+    from tldw_chatbook.MCP.redaction import redact_url
+
+    out = redact_url("https://h/x?note=sk-live-abcdefghijklmnopqrstuv")
+
+    assert "sk-live-abcdefghijklmnopqrstuv" not in out
+
+
+def test_url_userinfo_credentials_are_redacted():
+    """The connection-URI pattern existed but was unreachable from redact_url."""
+    from tldw_chatbook.MCP.redaction import redact_url
+
+    out = redact_url("https://user:hunter2@host/x?a=1")
+
+    assert "hunter2" not in out
+    assert "host" in out, "only the credentials should go"
+
+
+def test_plain_url_is_untouched():
+    from tldw_chatbook.MCP.redaction import redact_url
+
+    url = "https://example.com/docs/page?section=intro"
+
+    assert redact_url(url) == url
+
+
+@pytest.mark.parametrize(
+    "token",
+    ["-Xy9_abcdefghijklmnopqrs", "-abc-def-ghi-jkl-mno-pqrs", "-9f3a2b1c8d7e6f5a"],
+)
+def test_long_dash_prefixed_value_after_a_secret_flag_is_redacted(token):
+    """I5: _PLAUSIBLE_FLAG_RE accepted letter-leading tokens, so `--api-key
+    -Xy9_...` still leaked. Real flags are short; credentials are not."""
+    result = redact_args(["--api-key", token])
+
+    assert token not in result
+
+
+def test_flag_with_inline_value_after_a_secret_flag_survives():
+    """M1: `--out=file.txt` is a flag, not the api-key's value."""
+    result = redact_args(["--api-key", "--out=file.txt"])
+
+    assert "--out=file.txt" in result
+
+
+def test_bytes_secret_in_a_sequence_is_redacted():
+    """M3: sequence items skipped the shape check for non-str scalars."""
+    result = redact_mapping({"items": [b"ghp_abcdefghijklmnopqrstuvwxyz0123456789"]})
+
+    assert result["items"][0] == REDACTED

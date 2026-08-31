@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-31 15:47'
-updated_date: '2026-08-31 17:14'
+updated_date: '2026-08-31 19:15'
 labels:
   - ops
   - reliability
@@ -63,4 +63,18 @@ Added `Logging_Config.enable_crash_forensics()` and called it at the top of `con
 **Verification:** 8 tests in the new file; 365 pass across `Tests/Metrics/`, `Tests/App/` and the MCP redaction files.
 
 **Files:** `tldw_chatbook/Logging_Config.py`, `Tests/Metrics/test_crash_forensics.py` (new).
+
+## Review round — three tests that could not fail
+
+**AC#1/#2/#3 were pinned by tests that would survive the feature being deleted.**
+- `test_crash_forensics_enables_faulthandler` asserted `faulthandler.is_enabled()`, but pytest's own faulthandler plugin enables it before any test runs, so the assertion held regardless. It now asserts on what this function actually produces — the returned path and the installed stream.
+- The `all_threads` spies defaulted the very keyword under test (`def spy_enable(file=None, all_threads=True)`), so the assertion passed even if production stopped passing it. They now capture `**kwargs` with no defaults.
+
+Verified by mutation: gutting `enable_crash_forensics` to `return None` now fails 6 of 9 tests; before these fixes it failed 3.
+
+**Two hardening fixes.** `os.truncate(path, 0)` follows symlinks, so a link planted at `faulthandler.log` would have had its *target* truncated before the `O_NOFOLLOW` open refused it — bounding now happens through `os.ftruncate` on the already-opened descriptor. The failure path also leaked the file descriptor, and now closes it.
+
+`configure_application_logging` runs twice in a normal boot, so installation is now explicitly idempotent with a test pinning it; the test fixture resets the module-level stream between cases.
+
+Dropped `raising=False` from the `get_cli_log_file_path` patch: the name exists, so it only disabled the guard — if the call were ever refactored, these tests would have silently written into the user's real private log directory and still passed.
 <!-- SECTION:NOTES:END -->

@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-31 15:10'
-updated_date: '2026-08-31 17:55'
+updated_date: '2026-08-31 19:15'
 labels:
   - agents
   - defect
@@ -60,4 +60,16 @@ A tool call is now bounded by the lesser of its own ceiling and the run's remain
 **Verification.** `Tests/Agents/` shows the same 15 baseline failures before and after, verified by diffing sorted failure names (2205 passing, up 8). The budget-configuration consumers in `Tests/Chat/test_console_agent_run_budget.py` and `Tests/UI/test_settings_agent_run_budget.py` pass unchanged.
 
 **Files:** `tldw_chatbook/Agents/agent_service.py`, `Tests/Agents/test_tool_timeout_wall_clamp.py` (new).
+
+## Review round — a false claim in these notes, and a worse-than-the-bug fix
+
+**The 0.05s floor was wrong, and the reasoning in the plan was wrong with it.** Returning a tiny positive bound for an exhausted budget still *starts* the tool on a daemon thread and abandons it 50 ms later. `_call_with_timeout`'s own docstring warns that an abandoned worker "may still complete and act for real" after a timeout is reported — so for a tool that writes files or spends money, dispatch-and-abandon is worse than the overrun this clamp exists to prevent. The guard at `if timeout and timeout > 0` was real, but the answer was a third branch, not a magic float. `_effective_tool_timeout` now returns `None` for "do not dispatch" and the call site refuses without running anything.
+
+**A claim in these notes was false.** They stated: "A test drives a call whose work outlasts its clamped bound while `pauses_deadline` is active and asserts it still succeeds." It did not. The work completed in about a millisecond, comfortably inside the bound, and the test passed with `pauses_deadline` returning False — it exercised nothing about ADR-067. The work now genuinely outlasts the bound, and a companion test with the pause disabled asserts the same call IS stopped; that pair is what stops the first one going vacuous again.
+
+**AC#5 was asserted by a tautology.** The old test re-derived `remaining = budget - elapsed` from hand-picked numbers and asserted the arithmetic it had just performed. It now asserts the property that matters across several dispatch points: whatever bound comes back, running for it cannot end after the budget does.
+
+**Nothing proved the clamp reached a real call.** The source-text pin passed even if the computed value were discarded. Replaced with an integration test that builds a real `AgentService` with an injected clock, drives the real `_make_invoke_tool` closure, and asserts the bound `_call_with_timeout` actually received (60.0 from the remaining budget, not the 3600 ceiling). Verified non-vacuous by mutation: discarding the clamped value makes it fail, restoring it makes it pass. The source-pin test was deleted as redundant.
+
+**Carried forward for the next lane:** `run_started` is a second, independent clock reading taken in `_make_invoke_tool`. Any future path that rebuilds `LoopDeps` mid-run — a retry that reconstructs deps, a fallback provider swap, both upcoming in this lane — would silently reset the clamp's origin and make the bound permissive again, with no test to catch it. Sourcing it from the same value `run_agent_loop` uses for `started` would make that structurally impossible.
 <!-- SECTION:NOTES:END -->

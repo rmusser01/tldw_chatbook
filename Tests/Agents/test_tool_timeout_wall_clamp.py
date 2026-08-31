@@ -52,18 +52,22 @@ def test_no_wall_budget_leaves_the_configured_timeout_untouched():
         assert clamped is False
 
 
-def test_an_already_exhausted_budget_still_bounds_the_call():
-    """Must not fall through to an unbounded invoke.
+def test_an_exhausted_budget_refuses_to_dispatch_at_all():
+    """An exhausted budget must not start the tool.
 
-    The caller dispatches unbounded when the timeout is falsy, so an exhausted
-    budget has to yield a small POSITIVE value rather than zero.
+    The first version returned a 0.05s floor here, reasoning that a falsy value
+    would make the caller dispatch unbounded. But a tiny bound still STARTS the
+    call on a daemon thread and abandons it 50ms later -- `_call_with_timeout`
+    documents that an abandoned worker "may still complete and act for real"
+    after a timeout is reported. For a tool that writes files or spends money,
+    dispatch-and-abandon is worse than the overrun it replaced. None means
+    "do not dispatch", and the caller reports it without running anything.
     """
     seconds, clamped = _effective_tool_timeout(
         configured=3600.0, run_started=0.0, wall_budget=100.0, clock=_clock_at(500.0)
     )
 
-    assert seconds > 0
-    assert seconds < 1
+    assert seconds is None
     assert clamped is True
 
 
@@ -97,77 +101,155 @@ def test_clamped_timeouts_are_reported_distinctly(monkeypatch):
 
 
 def test_a_long_tool_call_cannot_push_a_run_past_its_wall_budget():
-    """AC#5: the end-to-end property the defect violated."""
-    wall_budget = 2.0
-    configured_per_tool = 3600.0
-    elapsed_when_dispatched = 1.5
+    """AC#5, bounded honestly.
 
-    seconds, clamped = _effective_tool_timeout(
-        configured=configured_per_tool,
-        run_started=0.0,
-        wall_budget=wall_budget,
-        clock=_clock_at(elapsed_when_dispatched),
-    )
-
-    assert clamped is True
-    assert elapsed_when_dispatched + seconds <= wall_budget + 0.001
-
-
-def test_approval_wait_still_pauses_a_clamped_call(monkeypatch):
-    """AC#3: ADR-067's refcounted pause must keep working under a clamp.
-
-    The clamp only sets the initial bound. A human decision pending during the
-    call re-arms the per-call clock exactly as before, so a slow approver does
-    not kill a call that is otherwise progressing.
+    The earlier version of this test re-derived `remaining = budget - elapsed`
+    from hand-picked numbers and asserted the arithmetic it had just performed
+    -- a tautology. This asserts the property that actually matters: whatever
+    bound comes back, running for it cannot end after the budget does.
     """
-    import threading
+    wall_budget = 2.0
+    for elapsed in (0.0, 0.5, 1.5, 1.999):
+        seconds, _clamped = _effective_tool_timeout(
+            configured=3600.0,
+            run_started=0.0,
+            wall_budget=wall_budget,
+            clock=_clock_at(elapsed),
+        )
+        assert seconds is not None
+        assert elapsed + seconds <= wall_budget + 1e-6, (
+            f"a call dispatched at {elapsed}s could run until "
+            f"{elapsed + seconds}s, past the {wall_budget}s budget"
+        )
 
-    from tldw_chatbook.Agents import agent_service
+
+def _slow_work(duration: float):
+    """A tool whose work genuinely outlasts a clamped bound."""
+    import time
+
     from tldw_chatbook.Agents.agent_models import ToolResult
 
-    release = threading.Event()
-    waiting = threading.Event()
-
-    def slow_but_approved():
-        waiting.set()
-        release.wait(3.0)
+    def run():
+        time.sleep(duration)
         return ToolResult(ok=True, content="done")
 
-    pauses = {"active": True}
+    return run
 
-    def finish_soon():
-        waiting.wait(2.0)
-        release.set()
 
-    threading.Thread(target=finish_soon, daemon=True).start()
+def test_approval_wait_holds_a_clamped_call_open():
+    """AC#3: ADR-067's refcounted pause must survive the clamp.
+
+    The first version of this test let the work finish in about a millisecond,
+    comfortably inside the bound -- it passed with `pauses_deadline` returning
+    False, so it proved nothing. The work now genuinely outlasts the bound, and
+    `test_without_the_pause_the_same_call_is_stopped` is its control: if that
+    one ever passes too, this one has gone vacuous again.
+    """
+    from tldw_chatbook.Agents import agent_service
 
     result = agent_service._call_with_timeout(
-        slow_but_approved,
-        0.2,                       # far shorter than the work
+        _slow_work(0.6),
+        0.15,                       # genuinely shorter than the work
         "approved_tool",
         lambda: False,
-        pauses_deadline=lambda: pauses["active"],
+        pauses_deadline=lambda: True,
         clamped_by_wall_budget=True,
     )
 
-    assert result.ok is True, f"pause did not hold the call open: {result.error}"
+    assert result.ok is True, f"the pause did not hold the call open: {result.error}"
 
 
-def test_dispatch_site_applies_the_clamp():
-    """Pins the wiring, not just the helper.
+def test_without_the_pause_the_same_call_is_stopped():
+    """Control for the test above -- proves the bound is real."""
+    from tldw_chatbook.Agents import agent_service
 
-    Uses the same source-assertion approach as
-    `Tests/Agents/test_mcp_refusal_provenance.py`: the helper is unit-tested
-    above, and this catches the failure mode where it exists but nothing calls
-    it. Building an AgentService here would need substantially more scaffolding
-    than the three lines under test.
+    result = agent_service._call_with_timeout(
+        _slow_work(0.6),
+        0.15,
+        "approved_tool",
+        lambda: False,
+        pauses_deadline=lambda: False,
+        clamped_by_wall_budget=True,
+    )
+
+    assert result.ok is False
+    assert "budget" in result.error.lower()
+
+
+def test_the_clamp_reaches_a_real_dispatch(monkeypatch):
+    """Proves the clamp is WIRED IN, not merely implemented.
+
+    The helper tests above are arithmetic; this drives the real
+    `_make_invoke_tool` closure with an injected clock and captures the bound
+    `_call_with_timeout` actually received. Without this, every assertion in
+    this file would still pass if the computed value were discarded.
     """
-    from pathlib import Path
+    from types import SimpleNamespace
 
-    import tldw_chatbook.Agents.agent_service as agent_service
+    from tldw_chatbook.Agents import agent_service
+    from tldw_chatbook.Agents.agent_models import (
+        AgentConfig,
+        RunBudget,
+        ToolCall,
+        ToolCatalogEntry,
+        ToolResult,
+        ToolSchema,
+    )
+    from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 
-    source = Path(agent_service.__file__).read_text(encoding="utf-8")
+    class _Provider:
+        source = "test"
 
-    assert "_effective_tool_timeout(" in source
-    assert "run_started = self.clock()" in source
-    assert "clamped_by_wall_budget=clamped_by_wall_budget" in source
+        def list_catalog(self):
+            return [
+                ToolCatalogEntry(
+                    id="test:slow",
+                    name="slow",
+                    one_line_description="d",
+                    source="test",
+                )
+            ]
+
+        def load_schema(self, tool_id):
+            return ToolSchema(id=tool_id, name="slow", description="d", parameters={})
+
+        def invoke(self, tool_id, args):
+            return ToolResult(ok=True, content="ok")
+
+    registry = ToolCatalogRegistry()
+    registry.register_provider(_Provider())
+
+    now = {"t": 0.0}
+    service = agent_service.AgentService(
+        db=SimpleNamespace(),
+        registry=registry,
+        clock=lambda: now["t"],
+    )
+
+    captured = {}
+
+    def spy_call_with_timeout(fn, seconds, tool_name, *args, **kwargs):
+        captured["seconds"] = seconds
+        captured["clamped"] = kwargs.get("clamped_by_wall_budget")
+        return fn()
+
+    monkeypatch.setattr(agent_service, "_call_with_timeout", spy_call_with_timeout)
+
+    config = AgentConfig(
+        model="test-model",
+        system_prompt="",
+        allowed_tools=["slow"],
+        budget=RunBudget(max_wall_seconds=100.0, max_tool_call_seconds=3600.0),
+    )
+    invoke_tool = service._make_invoke_tool(
+        config, {"slow"}, lambda: False, run_id="run-1"
+    )
+
+    now["t"] = 40.0                      # 60s of the 100s budget remains
+    outcome = invoke_tool(ToolCall(name="slow", args={}, call_id="c1"))
+
+    assert captured, f"dispatch never reached the timeout wrapper: {outcome}"
+    assert captured["clamped"] is True
+    assert captured["seconds"] == pytest.approx(60.0), (
+        "the dispatch used the per-tool ceiling, not the remaining budget"
+    )

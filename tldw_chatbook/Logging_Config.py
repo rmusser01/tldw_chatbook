@@ -491,14 +491,16 @@ def enable_crash_forensics():
     """
     global _crash_dump_stream
 
+    if _crash_dump_stream is not None:
+        # `configure_application_logging` runs twice in a normal boot; the
+        # first install is the one that counts.
+        return None
+
+    stream = None
     try:
         log_directory = lexical_path(get_cli_log_file_path()).parent
         secure_private_directory(log_directory, create=True, application_owned=True)
         dump_path = log_directory / CRASH_DUMP_FILENAME
-
-        # Bound the file before handing it to faulthandler.
-        if dump_path.exists() and dump_path.stat().st_size > CRASH_DUMP_MAX_BYTES:
-            os.truncate(dump_path, 0)
 
         descriptor = os.open(
             dump_path,
@@ -506,6 +508,13 @@ def enable_crash_forensics():
             0o600,
         )
         stream = os.fdopen(descriptor, "ab", buffering=0)
+
+        # Bound the file through the descriptor we just opened, not by path.
+        # `os.truncate(path, 0)` follows symlinks, so a link planted at
+        # faulthandler.log would have had its TARGET truncated before the
+        # O_NOFOLLOW open refused it.
+        if os.fstat(stream.fileno()).st_size > CRASH_DUMP_MAX_BYTES:
+            os.ftruncate(stream.fileno(), 0)
 
         faulthandler.enable(file=stream, all_threads=True)
 
@@ -525,6 +534,12 @@ def enable_crash_forensics():
         _crash_dump_stream = stream
         return dump_path
     except Exception as exc:  # noqa: BLE001 -- must never break startup
+        if stream is not None:
+            # Otherwise the descriptor leaks on every failed attempt.
+            try:
+                stream.close()
+            except OSError:
+                pass
         # Swallowing silently would make a misconfiguration invisible -- this
         # branch hid a TypeError during development. Report the class only; the
         # message could carry a path.

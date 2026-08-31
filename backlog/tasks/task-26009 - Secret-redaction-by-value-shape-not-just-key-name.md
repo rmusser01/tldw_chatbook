@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-31 15:44'
-updated_date: '2026-08-31 17:10'
+updated_date: '2026-08-31 19:15'
 labels:
   - security
   - mcp
@@ -59,4 +59,16 @@ Added value-shape secret detection to `MCP/redaction.py` alongside the existing 
 One test-data correction during the work: the Google API key sample was longer than the fixed 39-character form, so an exact `{35}` quantifier plus `\b` could not match it. The quantifier is now `{35,}` rather than the sample being shortened -- a longer lookalike should not escape.
 
 **Files:** `tldw_chatbook/MCP/redaction.py`, `Tests/MCP/test_redaction_value_shapes.py` (new).
+
+## Review round — a Critical I shipped
+
+**AC#5 was checked off and was not met.** The value-shape patterns were broad enough to destroy ordinary content on the model's main MCP input path: `\`(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}\`` matched the English words "supports **basic** authentication", and `\`[sprk]k-...\`` matched any kebab-case path component such as `/repo/pkgs/sk-core-runtime-helpers/index.ts`. A tool result came back as `***` with no signal anything had been removed. The `INNOCENT_VALUES` corpus happened to avoid every failing shape, so the tests were green while the feature was actively wrong. The module docstring named this exact hazard, which makes it worse rather than better: the intent was recorded and the patterns still did not honour it.
+
+Fixed by requiring what actually distinguishes a credential from prose or a path: a long unhyphenated tail for prefixed keys, and a digit plus a length floor for an Authorization value. All six reviewer-supplied false positives are now in the corpus so this cannot regress silently.
+
+**AC#1 was also not met for `redact_url`**, which still matched query-parameter names only — despite the connection-URI pattern existing and simply not being reachable from that function. It now judges query values by shape as well as name, and strips `user:pass@` userinfo.
+
+**AC#3 was narrower than claimed.** The notes said "`-9f3a...` is redacted, `--verbose` and `-v` still survive" — true for the digit-leading sample tested, false for a letter-leading one (`--api-key -Xy9_abcdefghijklmnopqrs` still leaked). Replaced the length heuristic with a dash-count one: long-form flags use `--` and can be wordy, single-dash flags are short, so a single dash followed by twenty-odd characters is a credential. The `redact_args` docstring still described the closed bug as a live "known residual leak" and has been rewritten to state the actual, narrower residual.
+
+Also closed: PGP private-key blocks (the ` BLOCK` suffix defeated the header anchor, so AC#2's "PEM private-key blocks" had a hole), GitLab `glpat-`, Slack `xapp-`, Stripe's underscore form, and `bytes` values inside sequences.
 <!-- SECTION:NOTES:END -->
