@@ -39,9 +39,8 @@ _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _PORTABLE_ID_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}\Z")
 _ERROR_TOKEN_RE = re.compile(r"[a-z][a-z0-9_]*\Z")
 _FALLBACK_KEYS = frozenset({"authority", "server_key", "state"})
-_TOOL_KEYS = frozenset(
-    {"authority", "server_key", "tool_name", "state", "contract_sha256"}
-)
+_TOOL_KEYS = frozenset({"authority", "server_key", "tool_name", "state"})
+_TOOL_KEYS_WITH_FINGERPRINT = _TOOL_KEYS | {"contract_sha256"}
 _PROFILE_KEYS = frozenset({"schema", "fallbacks", "tools"})
 _MANIFEST_KEYS = frozenset(
     {
@@ -61,16 +60,82 @@ Authority = Literal["mcp", "builtin"]
 ToolState = Literal["allow", "ask", "deny"]
 FallbackState = Literal["ask", "deny"]
 
+_ERROR_CATEGORIES = {
+    "export": frozenset(
+        {
+            "profile_unavailable",
+            "profile_invalid",
+            "store_invalid",
+            "inventory_incomplete",
+            "too_large",
+            "destination_invalid",
+            "destination_changed",
+            "cancelled",
+            "publication_unsupported",
+            "publication_failed",
+            "durability_uncertain",
+        }
+    ),
+    "import": frozenset(
+        {
+            "archive_invalid",
+            "schema_unsupported",
+            "feature_unsupported",
+            "manifest_invalid",
+            "inventory_invalid",
+            "payload_invalid",
+            "identity_duplicate",
+            "mapping_invalid",
+            "too_large",
+            "review_stale",
+            "capacity_exceeded",
+            "store_invalid",
+            "store_changed",
+            "destination_referenced",
+            "activation_failed",
+            "activation_uncertain",
+        }
+    ),
+    "bind": frozenset(
+        {
+            "confirmation_required",
+            "confirmation_stale",
+            "confirmation_expired",
+            "confirmation_invalid",
+            "lifecycle_invalid",
+            "binding_uncertain",
+        }
+    ),
+    "remove": frozenset(
+        {"referenced", "in_use", "non_removable", "stale", "outcome_uncertain"}
+    ),
+}
+_VALIDATION_FALLBACK = {
+    "export": "profile_invalid",
+    "import": "payload_invalid",
+    "bind": "confirmation_invalid",
+    "remove": "non_removable",
+}
+
 
 class ToolPackError(ValueError):
     """Path-free Tool Pack failure with a stable public error code."""
 
     def __init__(self, operation: str, category: str) -> None:
-        if not _ERROR_TOKEN_RE.fullmatch(operation) or not _ERROR_TOKEN_RE.fullmatch(
-            category
+        if (
+            type(operation) is not str
+            or not _ERROR_TOKEN_RE.fullmatch(operation)
+            or operation not in _ERROR_CATEGORIES
         ):
             operation = "contract"
-            category = "payload_invalid"
+        if operation == "contract":
+            operation = "import"
+        if (
+            type(category) is not str
+            or not _ERROR_TOKEN_RE.fullmatch(category)
+            or category not in _ERROR_CATEGORIES[operation]
+        ):
+            category = _VALIDATION_FALLBACK[operation]
         self.operation = operation
         self.category = category
         super().__init__(f"tool_pack.{operation}.{category}")
@@ -238,6 +303,7 @@ class PortableToolRule:
             self.tool_name,
             self.state,
             self.contract_sha256,
+            fingerprint_present=self.contract_sha256 is not None,
             operation="import",
             category="payload_invalid",
         )
@@ -250,26 +316,40 @@ class PortableToolRule:
         operation: str = "import",
         category: str = "payload_invalid",
     ) -> PortableToolRule:
-        value = _exact_dict(raw, _TOOL_KEYS, operation=operation, category=category)
+        if type(raw) is not dict:
+            raise _error(operation, category)
+        fingerprint_present = "contract_sha256" in raw
+        raw_state = raw.get("state")
+        expected_keys = (
+            _TOOL_KEYS
+            if raw_state == "deny" and not fingerprint_present
+            else _TOOL_KEYS_WITH_FINGERPRINT
+        )
+        value = _exact_dict(raw, expected_keys, operation=operation, category=category)
+        if raw_state == "deny" and fingerprint_present and value["contract_sha256"] is None:
+            raise _error(operation, category)
         fields = _validate_rule_fields(
             value["authority"],
             value["server_key"],
             value["tool_name"],
             value["state"],
-            value["contract_sha256"],
+            value.get("contract_sha256"),
+            fingerprint_present=fingerprint_present,
             operation=operation,
             category=category,
         )
         return cls(*fields)
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        value: dict[str, object] = {
             "authority": self.authority,
             "server_key": self.server_key,
             "tool_name": self.tool_name,
             "state": self.state,
-            "contract_sha256": self.contract_sha256,
         }
+        if self.contract_sha256 is not None:
+            value["contract_sha256"] = self.contract_sha256
+        return value
 
 
 def _validate_rule_fields(
@@ -279,6 +359,7 @@ def _validate_rule_fields(
     raw_state: object,
     raw_contract_sha256: object,
     *,
+    fingerprint_present: bool = False,
     operation: str,
     category: str,
 ) -> tuple[Authority, str, str, ToolState, str | None]:
@@ -286,13 +367,17 @@ def _validate_rule_fields(
     server_key = _identity(raw_server_key, operation=operation, category=category)
     tool_name = _identity(raw_tool_name, operation=operation, category=category)
     state = _state(raw_state, operation=operation, category=category)
-    contract_sha256 = _sha256(
-        raw_contract_sha256,
-        operation=operation,
-        category=category,
-        optional=state == "deny",
-    )
-    if state != "deny" and contract_sha256 is None:
+    if raw_contract_sha256 is None:
+        if state != "deny" or fingerprint_present:
+            raise _error(operation, category)
+        contract_sha256 = None
+    else:
+        contract_sha256 = _sha256(
+            raw_contract_sha256,
+            operation=operation,
+            category=category,
+        )
+    if state != "deny" and (not fingerprint_present or contract_sha256 is None):
         raise _error(operation, category)
     _validate_server_authority(
         authority,
@@ -436,6 +521,22 @@ class ToolPackManifest:
     payload_sha256: str
     content_digest: str
 
+    def __post_init__(self) -> None:
+        _validate_manifest_fields(
+            self.schema,
+            self.producer_name,
+            self.producer_version,
+            self.required_features,
+            self.suggested_id,
+            self.display_name,
+            self.payload_path,
+            self.payload_size,
+            self.payload_sha256,
+            self.content_digest,
+            operation="import",
+            category="manifest_invalid",
+        )
+
     @classmethod
     def from_dict(
         cls,
@@ -551,6 +652,58 @@ class ToolPackManifest:
         return value
 
 
+def _validate_manifest_fields(
+    schema: object,
+    producer_name: object,
+    producer_version: object,
+    required_features: object,
+    suggested_id: object,
+    display_name: object,
+    payload_path: object,
+    payload_size: object,
+    payload_sha256: object,
+    content_digest: object,
+    *,
+    operation: str,
+    category: str,
+) -> None:
+    if schema != TOOL_PACK_SCHEMA:
+        raise _error(operation, "schema_unsupported")
+    _nfc_text(
+        producer_name,
+        operation=operation,
+        category=category,
+        max_bytes=MAX_PRODUCER_BYTES,
+    )
+    _nfc_text(
+        producer_version,
+        operation=operation,
+        category=category,
+        max_bytes=MAX_PRODUCER_BYTES,
+    )
+    if type(required_features) is not tuple or any(
+        type(item) is not str for item in required_features
+    ):
+        raise _error(operation, category)
+    if required_features:
+        raise _error(operation, "feature_unsupported")
+    _portable_id(suggested_id, operation=operation, category=category)
+    checked_display = _nfc_text(
+        display_name,
+        operation=operation,
+        category=category,
+        max_bytes=MAX_PROFILE_BYTES,
+    )
+    if not checked_display.strip() or len(checked_display) > MAX_DISPLAY_CODEPOINTS:
+        raise _error(operation, category)
+    if payload_path != PROFILE_PATH:
+        raise _error(operation, category)
+    if type(payload_size) is not int or not 0 < payload_size <= MAX_PROFILE_BYTES:
+        raise _error(operation, category)
+    _sha256(payload_sha256, operation=operation, category=category)
+    _sha256(content_digest, operation=operation, category=category)
+
+
 def _portable_id(value: object, *, operation: str, category: str) -> str:
     identifier = _nfc_text(
         value,
@@ -574,6 +727,15 @@ class ToolPackDocument:
     manifest: ToolPackManifest
     profile: ToolProfilePayload
 
+    def __post_init__(self) -> None:
+        if type(self.manifest) is not ToolPackManifest or type(
+            self.profile
+        ) is not ToolProfilePayload:
+            raise _error("import", "payload_invalid")
+        _validate_document_relationships(
+            self.manifest, self.profile, operation="import"
+        )
+
     @classmethod
     def from_dicts(
         cls,
@@ -595,24 +757,36 @@ class ToolPackDocument:
             raise _error(operation, "payload_invalid") from None
         if profile_bytes != expected_bytes:
             raise _error(operation, "payload_invalid")
-        if (
-            manifest.payload_size != len(profile_bytes)
-            or manifest.payload_sha256 != hashlib.sha256(profile_bytes).hexdigest()
-        ):
-            raise _error(operation, "manifest_invalid")
-        preimage = (
-            TOOL_PACK_SCHEMA.encode("ascii")
-            + b"\0"
-            + canonical_json_bytes(manifest.to_dict(include_content_digest=False))
-            + b"\0"
-            + profile_bytes
-        )
-        if manifest.content_digest != hashlib.sha256(preimage).hexdigest():
-            raise _error(operation, "manifest_invalid")
+        _validate_document_relationships(manifest, profile, operation=operation)
         return cls(manifest, profile)
 
 
-def canonical_json_bytes(value: object) -> bytes:
+def _validate_document_relationships(
+    manifest: ToolPackManifest,
+    profile: ToolProfilePayload,
+    *,
+    operation: str,
+) -> None:
+    profile_bytes = canonical_json_bytes(profile.to_dict(), operation=operation)
+    if (
+        manifest.payload_size != len(profile_bytes)
+        or manifest.payload_sha256 != hashlib.sha256(profile_bytes).hexdigest()
+    ):
+        raise _error(operation, "manifest_invalid")
+    preimage = (
+        TOOL_PACK_SCHEMA.encode("ascii")
+        + b"\0"
+        + canonical_json_bytes(
+            manifest.to_dict(include_content_digest=False), operation=operation
+        )
+        + b"\0"
+        + profile_bytes
+    )
+    if manifest.content_digest != hashlib.sha256(preimage).hexdigest():
+        raise _error(operation, "manifest_invalid")
+
+
+def canonical_json_bytes(value: object, *, operation: str = "import") -> bytes:
     """Return deterministic, NFC-normalized, LF-terminated canonical JSON."""
 
     try:
@@ -626,9 +800,9 @@ def canonical_json_bytes(value: object) -> bytes:
         )
         return (encoded + "\n").encode("utf-8")
     except ToolPackError:
-        raise
+        raise _error(operation, "payload_invalid") from None
     except (MemoryError, OverflowError, RecursionError, TypeError, UnicodeError, ValueError):
-        raise _error("contract", "payload_invalid") from None
+        raise _error(operation, "payload_invalid") from None
 
 
 def strict_json_object(
@@ -793,7 +967,10 @@ def _contains_surrogate(value: str) -> bool:
 
 
 def portable_contract_sha256(
-    tool: HubTool, *, risk_tags: Iterable[str] | None = None
+    tool: HubTool,
+    *,
+    risk_tags: Iterable[str] | None = None,
+    operation: str = "import",
 ) -> str:
     """Hash the destination-independent portable tool contract preimage."""
 
@@ -822,9 +999,9 @@ def portable_contract_sha256(
         }
         return hashlib.sha256(canonical_json_bytes(preimage)).hexdigest()
     except ToolPackError:
-        raise
+        raise _error(operation, "payload_invalid") from None
     except (MemoryError, OverflowError, RecursionError, TypeError, UnicodeError, ValueError):
-        raise _error("contract", "payload_invalid") from None
+        raise _error(operation, "payload_invalid") from None
 
 
 def validate_tool_pack_manifest(
