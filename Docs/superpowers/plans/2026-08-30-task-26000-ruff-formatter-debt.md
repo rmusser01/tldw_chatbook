@@ -48,7 +48,7 @@ pytest task-ID guard.
   export task26000_python task26000_resolved_python
   ```
 
-- Current pin is `872a325483679d2880fcfe2a6e2b9fc82e12f42d`.
+- Current pin is `05c858e87cc1f11c96d6b384b34fdaf914efc51e`.
   Rebase, repin, and rerun the current census if `origin/dev` advances before the
   characterization records are committed.
 - TASK-22514 evidence commit is
@@ -120,7 +120,7 @@ The temporary census tool consumes:
 ```text
 "${task26000_python}" "${task26000_tmp_root}/task26000_ruff_census.py" \
   --checkout "${task26000_tmp_root}/checkouts/current" \
-  --revision 872a325483679d2880fcfe2a6e2b9fc82e12f42d \
+  --revision 05c858e87cc1f11c96d6b384b34fdaf914efc51e \
   --label current \
   --output "${task26000_tmp_root}/raw/current.json"
 ```
@@ -375,6 +375,14 @@ The closeout/current merge base remained
 `f0e8961222fe1a7a3ac7566f7f78142e717358f3`, so historical/common raws stayed
 unchanged while the detached current checkout, current raw census, and complete
 lineage were rebuilt.
+
+Bounded TASK-26000 current refresh (2026-08-31): the recorded task base and
+current pin advanced from `872a325483679d2880fcfe2a6e2b9fc82e12f42d` to
+`05c858e87cc1f11c96d6b384b34fdaf914efc51e`. The clean TASK-26000 committed
+range was rebased only from that recorded base onto the new pin. The
+closeout/current merge base remained `f0e8961222fe1a7a3ac7566f7f78142e717358f3`,
+so the historical/common raws stayed unchanged while the detached current checkout,
+current raw census, and complete lineage were rebuilt.
 
 ---
 
@@ -638,9 +646,9 @@ lineage were rebuilt.
   pre-closeout `1f4f72ac5ff02f5237a4946745e82e8932cd41cf`, closeout
   `642b1c782fe6c066a781314dae669a55b05b62ad`, common
   `f0e8961222fe1a7a3ac7566f7f78142e717358f3`, and current
-  `872a325483679d2880fcfe2a6e2b9fc82e12f42d`; the first evidence run was pinned at
+  `05c858e87cc1f11c96d6b384b34fdaf914efc51e`; the first evidence run was pinned at
   `3e5e75e4aa884d4f362aa63c1e151c3855f07a36`, then the current census and lineage
-  were regenerated after all seven post-initial authority advances.
+  were regenerated after all eight post-initial authority advances.
 - The no-network clone `/tmp/task26000.b0z8M0/evidence-repo` had a distinct Git
   common directory, local `core.excludesFile` rc 1, no active `info/exclude`
   patterns, and clean detached worktrees under `/tmp/task26000.b0z8M0/checkouts/`.
@@ -659,8 +667,8 @@ lineage were rebuilt.
   (`5d29afd7294cbf7149676287edbf7b1f1c3a13824634d98eea7668579fd74e56`),
   common `4,643/1,746`
   (`c34c5fe9d8e3154c3450f1cf28d4c9a6f1f631feb4735296fc6b891af5de1b15`),
-  and current `4,952/1,923`
-  (`52314e1c405d6b83824066cd58ddb221518daf364cb4e02a8b9c8c0ff6d18a11`);
+  and current `4,988/1,903`
+  (`a4484533728c2caae2a90454bd7f4e09720ad956c1afd4f54036a939fc4c864f`);
   every snapshot had zero blockers and aggregate exit 1 reconciled with per-path
   membership. All five were rerun with the final portability-corrected producer;
   the four historical snapshots remained byte-identical because their schema does
@@ -677,7 +685,7 @@ lineage were rebuilt.
   `tldw_chatbook/UI/Console_Modules/session.py`; the later portability correction
   repin held the tracked-Python count at 4,947 and added two formatter failures.
 - `/tmp/task26000.b0z8M0/m-identities.json` is deterministic at SHA-256
-  `6e6515a6ff0d9da771649de498aeb862e9b5d8decec9c15282ab14bb2a54b5cf`.
+  `c0ab0afef8c9726ef3751c28f41d91a0e9c90d66b4040cf0468392463f018f78`.
   Identity arithmetic is `M=99`, `B=64`, `C=77`, `C-B=16`, `B-C=3`, and
   `H=61`. Complete lineage contains 94 M identities projected through common and
   current, five feature-branch-only additions, and all 1,746 common failures:
