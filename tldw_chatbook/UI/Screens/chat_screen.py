@@ -134,7 +134,9 @@ from ..Console_Modules.left_rail import (
 from ..Console_Modules.message import ConsoleMessageController
 from ..Console_Modules.right_rail import ConsoleInspectorRail
 from ..Console_Modules.provider_continuation_recovery import (
+    ProviderContinuationRecoveryCallout,
     ProviderContinuationTranscriptRegion as ConsoleTranscriptRegion,
+    TraceCallRecoveryCallout,
     dispatch_trace_call_recovery_action,
     trace_call_recovery_state,
 )
@@ -3341,6 +3343,10 @@ class ChatScreen(BaseAppScreen):
 
     async def action_show_workbench_help(self) -> None:
         """Open contextual help for visible Console Workbench actions."""
+        # TASK-25715: help over an unanswered decision card put a third layer
+        # on screen with nothing indicating which surface owned input.
+        if self._console_decision_blocking():
+            return
         control_state = self._build_console_control_state(
             self._pending_console_launch_context
         )
@@ -3709,7 +3715,7 @@ class ChatScreen(BaseAppScreen):
 
     async def action_open_console_session_switcher(self) -> None:
         """Open the Ctrl+K fuzzy session switcher."""
-        if self._console_setup_modal_blocking():
+        if self._console_setup_modal_blocking() or self._console_decision_blocking():
             return
         self.app.push_screen(
             ConsoleSessionSwitcherModal(
@@ -11660,6 +11666,32 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return False
         return bool(getattr(modal, "display", False)) and modal.is_blocking
+
+    def _console_decision_blocking(self) -> bool:
+        """Return True while a recovery card is waiting on an explicit choice.
+
+        TASK-25715: the trace/continuation recovery callouts ask "Choose one
+        action" and hold the turn until the user answers, but they are mounted
+        INSIDE the workbench rather than pushed as screens, so nothing stopped
+        Ctrl+K or F1 from opening a panel over the top -- three layers deep
+        with the original decision unresolved. This mirrors
+        `_console_setup_modal_blocking`, which the same actions already honour
+        for the first-run modal.
+        """
+
+        for selector in (
+            TraceCallRecoveryCallout,
+            ProviderContinuationRecoveryCallout,
+        ):
+            try:
+                callout = self.query_one(selector)
+            except QueryError:
+                continue
+            if bool(getattr(callout, "display", False)) and (
+                getattr(callout, "recovery_state", None) is not None
+            ):
+                return True
+        return False
 
     def _apply_console_setup_block(self, blocking: bool) -> None:
         """Disable composer focus/typing while the setup modal is up."""
