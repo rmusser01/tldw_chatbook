@@ -207,3 +207,48 @@ applies.
 
 Findings 2 and 3 compound: the outgoing-screen restyle is itself paying the
 93% candidate overhead from finding 2.
+
+### 3a. Root cause: the outgoing screen is resumed, then suspended
+
+Tracing `Screen._on_screen_resume` / `_on_screen_suspend` with instance
+identity across one Console → Library navigation:
+
+```
+RESUME  ChatScreen#7872      <- the screen being LEFT, resumed first
+SUSPEND LibraryScreen#8560   <- an older RETAINED Library instance
+RESUME  LibraryScreen#8624   <- the incoming screen
+SUSPEND ChatScreen#7872      <- the outgoing screen, suspended right after
+```
+
+The outgoing screen is **resumed at the start of a navigation that is about
+to replace it**, and suspended moments later. That resume runs
+`_on_screen_resume -> dom.update_node_styles -> app.update_styles` over its
+whole 207-node subtree.
+
+Attributing the outgoing screen's 1,107 applies by call stack:
+
+| applies | trigger |
+|---:|---|
+| 499 (45%) | `_on_screen_resume` → `update_node_styles` → `app.update_styles` |
+| 306 (28%) | `widget.mount` → `_compose` (widgets mounted INTO the screen being left) |
+| 116 (10%) | `widget.update_styles` → `update_node_styles` |
+| 57 | `stylesheet.update_nodes` |
+| 31 | `widget.mount` → `app._register` |
+
+Every one of those is discarded when the screen is suspended and replaced.
+
+Note the older retained `LibraryScreen#8560` still participating in the
+lifecycle — retained instances are not inert.
+
+### 3b. Two probe bugs found here, both worth the rule
+
+* **A navigation helper that polled on node count returned before the
+  switch.** `go()` waited "until the screen has >40 nodes", but the CURRENT
+  screen already did, so it returned immediately and a later probe reported
+  `INCOMING == OUTGOING`. Any probe that navigates must wait for the screen
+  **identity** to change, and assert it did.
+* **An attribution probe classified the incoming screen as "elsewhere"**,
+  producing 334/1,377 and appearing to refute the 1,107 figure. Re-running
+  with explicit OUTGOING / INCOMING / RETAINED roles confirmed the original
+  1,107 (71.6%). *When two measurements disagree, the bug is usually in the
+  newer one's bucketing, not in the phenomenon.*

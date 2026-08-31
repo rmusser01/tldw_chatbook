@@ -75,3 +75,51 @@ Full method: `Docs/Design/2026-08-30-holistic-perf-review.md` §3.
 Interacts with TASK-25810: the outgoing-screen restyle pays that finding's
 93% candidate overhead too, so landing 25810 first will shrink this
 number without addressing its cause. Measure them independently.
+
+## Root cause (AC #1 — established 2026-08-30)
+
+Tracing `Screen._on_screen_resume` / `_on_screen_suspend` with instance
+identity across one Console → Library navigation:
+
+```
+RESUME  ChatScreen#7872      <- the screen being LEFT, resumed FIRST
+SUSPEND LibraryScreen#8560   <- an older RETAINED Library instance
+RESUME  LibraryScreen#8624   <- the incoming screen
+SUSPEND ChatScreen#7872      <- the outgoing screen, suspended right after
+```
+
+**The outgoing screen is resumed at the start of a navigation that is about
+to replace it, then suspended moments later.** The resume runs
+`_on_screen_resume -> dom.update_node_styles -> app.update_styles` across
+its whole 207-node subtree, and all of that work is discarded.
+
+Stack attribution of the outgoing screen's 1,107 applies:
+
+| applies | trigger |
+|---:|---|
+| 499 (45%) | `_on_screen_resume` → `update_node_styles` → `app.update_styles` |
+| 306 (28%) | `widget.mount` → `_compose` (widgets mounted INTO the screen being left) |
+| 116 (10%) | `widget.update_styles` → `update_node_styles` |
+| 57 | `stylesheet.update_nodes` |
+| 31 | `widget.mount` → `app._register` |
+
+Two leads for the resume itself, neither yet confirmed — establish which
+before fixing: `_handle_screen_navigation_locked` calls
+`_dismiss_navigation_overlays()` **before** `switch_screen`, and popping an
+overlay resumes the screen beneath it; alternatively Textual's own
+`switch_screen` stack handling may resume the top before replacing it. The
+stack was `['Screen', 'ChatScreen']` (depth 2) at measurement time with no
+overlay open, which argues against the first lead but does not settle it.
+
+The 306 mount/compose applies are a separate question worth its own answer:
+why are widgets being composed into a screen that is being replaced?
+
+## Probe hazards for whoever picks this up
+
+* A navigation helper that waits "until the screen has > N nodes" returns
+  **immediately** when the current screen already qualifies. Wait for the
+  screen **identity** to change and assert it did — one probe here reported
+  `INCOMING == OUTGOING` because of exactly this.
+* Bucket applies by explicit OUTGOING / INCOMING / RETAINED role. Lumping
+  "not the outgoing screen" together produced 334/1,377 and appeared to
+  refute the 1,107 figure; the corrected bucketing reproduced it exactly.
