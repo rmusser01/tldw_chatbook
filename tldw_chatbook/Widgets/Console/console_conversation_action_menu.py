@@ -133,7 +133,7 @@ class ConsoleConversationActionMenu(Vertical):
     can_focus = True
 
     #: Painted height of the menu's tallest page (the root: six one-row
-    #: buttons plus the rounded border -- Copy as joined in TASK-25836),
+    #: buttons plus the rounded border -- Copy as joined in TASK-25886),
     #: used by the screen's anchor clamping. Keep in lockstep with the
     #: root page's item count.
     ROOT_PAGE_HEIGHT = 8

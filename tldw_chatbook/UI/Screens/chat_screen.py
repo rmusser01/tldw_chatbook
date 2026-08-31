@@ -4484,7 +4484,7 @@ class ChatScreen(BaseAppScreen):
             estimate_factory=estimate_factory,
             token_estimate=token_estimate,
             in_progress=in_progress,
-            # task-25836: once the snapshot loads, the Next Send header
+            # task-25886: once the snapshot loads, the Next Send header
             # count switches from the draft-only pre-load value to the whole
             # next-send request (system + messages + tools + staged
             # evidence) this estimate computes from the payload. The
@@ -4579,7 +4579,7 @@ class ChatScreen(BaseAppScreen):
     ) -> Optional[int]:
         """Estimate the tokens the snapshot's next-send payload will ship.
 
-        task-25836: the Next Send header's count must answer "what is this
+        task-25886: the Next Send header's count must answer "what is this
         message about to send", which on a first message is dominated by the
         system prompt, project-instruction bodies, tool schemas, and staged
         evidence -- none of which the draft-only estimate sees. Counted via
@@ -5144,7 +5144,7 @@ class ChatScreen(BaseAppScreen):
     ) -> bool:
         """Cheap open-time probe: does this row have any messages?
 
-        TASK-25836: gates the copy entries. A native session asks the live
+        TASK-25886: gates the copy entries. A native session asks the live
         store; a persisted conversation asks the database for a single row.
         """
         if native_session_id:
@@ -5168,7 +5168,7 @@ class ChatScreen(BaseAppScreen):
     def _console_markdown_source_messages(self, target) -> list:
         """Return normalized messages for a copy target, or [].
 
-        Source pick (TASK-25836): an open native session reads the LIVE
+        Source pick (TASK-25886): an open native session reads the LIVE
         chat store (richest fidelity -- in-flight tool structure never
         needed serializing); a persisted conversation reads the database,
         paginated so long chats are not silently truncated at the default
@@ -5332,7 +5332,7 @@ class ChatScreen(BaseAppScreen):
         target = event.target
         action_id = event.action_id
         conversation_id = (target.conversation_id or "").strip()
-        # TASK-25836: copy/save work for open native sessions too (their
+        # TASK-25886: copy/save work for open native sessions too (their
         # messages come from the live store), so they route BEFORE the
         # persisted-id guard below.
         if action_id in ("copy-markdown:clean", "copy-markdown:full"):
@@ -8535,7 +8535,7 @@ class ChatScreen(BaseAppScreen):
     def _console_first_send_pseudo_rows(self) -> list[Any]:
         """Return estimated rows for the context a FIRST send will ship.
 
-        task-25836: while a conversation has no answered/billed turns, the
+        task-25886: while a conversation has no answered/billed turns, the
         next request carries the session system prompt, the native tool
         schemas, the effective-memory rows, an optional response prefill,
         and the composer draft -- none of which are transcript rows, so the
@@ -8703,7 +8703,7 @@ class ChatScreen(BaseAppScreen):
                 snapshot_messages = snapshot_messages + [
                     SimpleNamespace(role="user", content=staged_text, usage=None)
                 ]
-            # task-25836: a FIRST send ships the session system prompt, tool
+            # task-25886: a FIRST send ships the session system prompt, tool
             # schemas, and the draft itself on top of the staged evidence
             # above -- none of which existed as transcript rows, so a
             # brand-new conversation with a typed draft still read "0 tok".

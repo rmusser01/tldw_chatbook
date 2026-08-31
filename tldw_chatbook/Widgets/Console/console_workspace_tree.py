@@ -232,7 +232,7 @@ def _menu_conversation_payload(
     synthetic key to the database. The title is the row's first physical
     line, so rename/delete/confirmations name the chat the user pressed.
 
-    TASK-25836: the synthetic key's suffix IS the open session's id --
+    TASK-25886: the synthetic key's suffix IS the open session's id --
     returned separately so Copy-as-markdown can read the live chat-store
     transcript for open tabs instead of the database.
     """
