@@ -538,7 +538,7 @@ git commit -m "feat(ui): make Hub Ask approval one click"
 - Test: `Tests/UI/test_mcp_workbench.py`
 - Test: `Tests/Architecture/test_persistent_diagnostic_inventory.py`
 
-- [ ] **Step 1: Run the complete targeted feature matrix**
+- [x] **Step 1: Run the complete targeted feature matrix**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -558,7 +558,7 @@ git commit -m "feat(ui): make Hub Ask approval one click"
 
 Expected: PASS. If a joined-only UI failure appears, preserve the failing interleaving and follow the stable-focus/recomposition lessons rather than weakening the product assertion.
 
-- [ ] **Step 2: Run static checks on every touched Python file**
+- [x] **Step 2: Run static checks on every touched Python file**
 
 ```bash
 ../../.venv/bin/python -m ruff check \
@@ -591,7 +591,7 @@ Expected: PASS. If a joined-only UI failure appears, preserve the failing interl
 
 Expected: clean.
 
-- [ ] **Step 3: Run compilation, diagnostics, and diff hygiene**
+- [x] **Step 3: Run compilation, diagnostics, and diff hygiene**
 
 ```bash
 ../../.venv/bin/python -m compileall -q \
@@ -608,7 +608,7 @@ git diff --check origin/dev...HEAD
 
 Expected: clean. If the diagnostic inventory changes because new diagnostics are intentional, inspect the semantic delta before running its documented `--write` flow; never hand-edit the inventory.
 
-- [ ] **Step 4: Review security invariants explicitly**
+- [x] **Step 4: Review security invariants explicitly**
 
 Inspect the final diff and confirm:
 
@@ -623,11 +623,11 @@ Inspect the final diff and confirm:
 - definitive-after-start execution remains service-owned;
 - no full test sweep is run unless the user requests it or the merge gate requires it.
 
-- [ ] **Step 5: Request independent code review**
+- [x] **Step 5: Request independent code review**
 
 Use `superpowers:requesting-code-review` against `origin/dev...HEAD`. Resolve every valid finding with a focused regression test before continuing.
 
-- [ ] **Step 6: Commit any verification-only corrections**
+- [x] **Step 6: Commit any verification-only corrections**
 
 Stage only the files changed by the correction, naming each path explicitly, then run:
 
@@ -638,21 +638,30 @@ git commit -m "test(mcp): close Hub local execution verification"
 
 Skip this commit when verification produces no changes.
 
+Task 7 evidence: the complete feature matrix passed 1,110 tests and the
+persistent-diagnostic architecture suite passed 67 tests. Touched-file Ruff
+check/format, compilation, diagnostic-inventory, and diff-hygiene gates were
+clean. Independent security/static review corrections were closed in
+`f789c2455c` (`test(mcp): close Hub local execution verification`), including
+pre-admission nonce revocation, honest unresolved-gate copy, lifecycle/audit
+ownership, and path/secret redaction hardening. The generated diagnostic
+inventory changed intentionally and was regenerated through its checker.
+
 ## Task 8: Close the Backlog task and prepare the PR
 
 **Files:**
 - Modify: `backlog/tasks/task-3605 - Enable-fail-closed-MCP-Hub-execution-for-local-agent-tools.md`
 - Modify: `backlog/docs/lessons-testing-evidence.md` only if implementation reveals a genuinely new, incident-backed lesson.
 
-- [ ] **Step 1: Confirm every acceptance criterion from evidence**
+- [x] **Step 1: Confirm every acceptance criterion from evidence**
 
 Map each checked criterion to a passing test or explicit static inspection. Do not check a criterion based only on code review.
 
-- [ ] **Step 2: Add concise implementation notes**
+- [x] **Step 2: Add concise implementation notes**
 
 Document the provider seam, preview registry, authority binding, coordinator ownership, one-click UI, audit/redaction behavior, touched files, focused test counts, static checks, independent review, and any plan deviation. Re-link ADR-032 and the design/plan.
 
-- [ ] **Step 3: Mark the task Done only after all Definition of Done gates pass**
+- [x] **Step 3: Mark the task Done only after all Definition of Done gates pass**
 
 Use the Backlog CLI first so it cannot overwrite hand-authored notes later:
 
@@ -662,7 +671,7 @@ backlog task edit 3605 -s Done --notes "Implemented fail-closed MCP Hub executio
 
 Then inspect the exact printed file path, restore/expand notes if the CLI replaced them, and check every `- [ ]` to `- [x]` with `apply_patch`.
 
-- [ ] **Step 4: Verify task rendering and clean tree**
+- [x] **Step 4: Verify task rendering and clean tree**
 
 ```bash
 backlog task 3605 --plain
@@ -672,7 +681,7 @@ git status --short
 
 Expected: TASK-3605 is Done, all criteria checked, implementation plan/notes present, and only intended closeout files are modified.
 
-- [ ] **Step 5: Commit closeout**
+- [x] **Step 5: Commit closeout**
 
 ```bash
 git add \
