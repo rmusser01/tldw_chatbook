@@ -205,6 +205,10 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         Binding("right", "expand_selected", "Expand"),
     ]
     AUTO_FOCUS = None
+    NO_FOLDERS_COPY = "No local folders are attached. Add one in Settings."
+    UNAVAILABLE_BINDINGS_COPY = (
+        "This local folder is unavailable or its access changed. Update it in Settings."
+    )
 
     def __init__(
         self,
@@ -232,12 +236,17 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         self._visit_closed_notified = False
         self._attention_generation = 0
         first_available = next((item for item in self._workspace_bindings if item.available), None)
+        no_available_bindings_copy = (
+            self.UNAVAILABLE_BINDINGS_COPY
+            if self._workspace_bindings
+            else self.NO_FOLDERS_COPY
+        )
         self._state = WorkspaceFilesViewState(
             selected_binding_id=first_available.binding_id if first_available else None,
             status_copy=(
                 "Loading folder…"
                 if first_available
-                else "No local folders are attached. Add one in Settings."
+                else no_available_bindings_copy
             ),
         )
         self._generation = 0
@@ -296,7 +305,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
                     yield Static(
                         "Loading folder…"
                         if self._state.selected_binding_id is not None
-                        else "No local folders are attached. Add one in Settings.",
+                        else self._state.status_copy,
                         markup=False,
                     )
                 with VerticalScroll(id="console-workspace-files-viewer"):
@@ -680,7 +689,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         self.query_one("#console-workspace-files-next", Button).disabled = result.next_page_offset is None
 
     def _sync_status(self) -> None:
-        if not self.is_mounted:
+        if not self.is_attached:
             return
         self.query_one("#console-workspace-files-status", Static).update(self._state.status_copy)
 

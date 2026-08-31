@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence
 
 from loguru import logger
@@ -242,7 +243,9 @@ class ConsoleWorkspaceContextState:
     #: sentinel states below, which have no real ``workspace_id`` to scope.
     rag_scope_enabled: bool = False
     workspace_files_available: bool = False
-    workspace_files_available_by_id: Mapping[str, bool] = field(default_factory=dict)
+    workspace_files_available_by_id: Mapping[str, bool] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     server_readiness_label: str = "Server: local fallback"
     server_readiness_detail: str = (
         "Local registry is authoritative. No background sync is running."
@@ -251,6 +254,14 @@ class ConsoleWorkspaceContextState:
     acp_handoff_label: str = "ACP task/run: unavailable"
     acp_handoff_detail: str = "ACP task/run package handoff is not wired."
     acp_handoff_audit: str = "Audit: no ACP package was sent."
+
+    def __post_init__(self) -> None:
+        """Keep nested presentation maps immutable with the frozen snapshot."""
+        object.__setattr__(
+            self,
+            "workspace_files_available_by_id",
+            MappingProxyType(dict(self.workspace_files_available_by_id)),
+        )
 
 
 @dataclass(frozen=True)
@@ -431,10 +442,10 @@ def build_console_workspace_state(
             acp_handoff_audit=acp_state[2],
         )
 
-    runtime_bindings = (
-        tuple(runtime_bindings_by_workspace.get(active_workspace.workspace_id, ()))
-        if runtime_bindings_by_workspace is not None
-        else _safe_runtime_bindings(registry_service, active_workspace)
+    # Filesystem status belongs to the controller's off-loop snapshot worker.
+    # A pure UI-loop state build must fail closed when no snapshot is ready.
+    runtime_bindings = tuple(
+        (runtime_bindings_by_workspace or {}).get(active_workspace.workspace_id, ())
     )
     missing_folder_count = _missing_folder_count(runtime_bindings)
     workspaces = _safe_workspaces(registry_service)

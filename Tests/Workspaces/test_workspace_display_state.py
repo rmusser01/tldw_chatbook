@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import (
     ConsoleWorkspaceACPHandoffState,
@@ -135,6 +137,9 @@ def test_console_workspace_state_reports_active_workspace_and_runtime(
     state = build_console_workspace_state(
         registry_service=service,
         current_conversation="conv-1",
+        runtime_bindings_by_workspace={
+            "ws-a": service.list_runtime_bindings("ws-a"),
+        },
         conversations=(
             ConsoleWorkspaceConversationRow(
                 conversation_id="conv-1",
@@ -155,18 +160,10 @@ def test_console_workspace_state_reports_active_workspace_and_runtime(
     assert state.new_conversation_recovery == ""
 
 
-def test_console_workspace_state_recomputes_stale_filesystem_binding_status(
+def test_console_workspace_state_renders_the_off_loop_refreshed_filesystem_snapshot(
     tmp_path: Path,
 ) -> None:
-    """Finding 4 (final review): the Console tray's runtime label must not
-    trust a local-filesystem binding's STORED status forever.
-
-    `list_runtime_bindings` returns whatever status was last persisted
-    (READY at bind time); it never checks disk again. The moment the bound
-    folder is deleted out from under the binding, the tray must still
-    report it as missing -- mirrors `list_folder_bindings`' own
-    disk-recompute semantics instead of trusting the stale row.
-    """
+    """The pure builder renders a caller's refreshed folder-status snapshot."""
     service = _registry(tmp_path)
     service.create_workspace(workspace_id="ws-a", name="Research Sprint")
     service.set_active_workspace("ws-a")
@@ -177,6 +174,7 @@ def test_console_workspace_state_recomputes_stale_filesystem_binding_status(
     state = build_console_workspace_state(
         registry_service=service,
         current_conversation=None,
+        runtime_bindings_by_workspace={"ws-a": service.list_folder_bindings("ws-a")},
     )
     assert state.runtime_label == "Local file tools: Private scratch + 1 folder"
 
@@ -185,9 +183,57 @@ def test_console_workspace_state_recomputes_stale_filesystem_binding_status(
     state = build_console_workspace_state(
         registry_service=service,
         current_conversation=None,
+        runtime_bindings_by_workspace={"ws-a": service.list_folder_bindings("ws-a")},
     )
     assert state.runtime_label == "Local file tools: Private scratch"
     assert "1 bound folder is missing" in state.recovery_copy
+
+
+def test_console_workspace_state_without_snapshot_never_reads_runtime_bindings_on_ui_thread(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An omitted snapshot fails closed instead of reaching the filesystem seam."""
+    service = _registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Research Sprint")
+    service.set_active_workspace("ws-a")
+    folder = tmp_path / "project"
+    folder.mkdir()
+    service.add_folder_binding("ws-a", folder)
+
+    def unexpected_runtime_read(*_args, **_kwargs):
+        raise AssertionError("synchronous runtime binding read")
+
+    monkeypatch.setattr(display_state, "_safe_runtime_bindings", unexpected_runtime_read)
+
+    state = build_console_workspace_state(
+        registry_service=service,
+        current_conversation=None,
+    )
+
+    assert state.workspace_files_available is False
+    assert state.runtime_label == "Runtime: none"
+
+
+def test_console_workspace_state_freezes_caller_availability_mapping() -> None:
+    """The frozen render state must not expose a mutable nested availability map."""
+    state = display_state.ConsoleWorkspaceContextState(
+        heading="Workspaces",
+        workspace_label="Workspace: A",
+        authority_label="Authority: local-only",
+        sync_label="Sync: ready",
+        runtime_label="Runtime: none",
+        conversation_rows=(),
+        conversation_empty_copy="",
+        change_workspace_enabled=False,
+        change_workspace_recovery="",
+        new_conversation_enabled=True,
+        new_conversation_recovery="",
+        recovery_copy="",
+        workspace_files_available_by_id={"ws-a": True},
+    )
+
+    with pytest.raises(TypeError):
+        state.workspace_files_available_by_id["ws-a"] = False
 
 
 def test_console_workspace_state_enables_switching_with_multiple_workspaces(

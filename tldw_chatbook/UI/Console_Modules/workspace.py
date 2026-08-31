@@ -4648,12 +4648,14 @@ class ConsoleWorkspaceController:
             )
         )
         self._request_workspace_files_availability_refresh(workspace_ids)
-        availability = {
-            workspace_id: bool(
-                self._workspace_files_availability_by_id.get(workspace_id, False)
-            )
-            for workspace_id in workspace_ids
-        }
+        availability = MappingProxyType(
+            {
+                workspace_id: bool(
+                    self._workspace_files_availability_by_id.get(workspace_id, False)
+                )
+                for workspace_id in workspace_ids
+            }
+        )
         return replace(
             state,
             workspace_files_available=bool(

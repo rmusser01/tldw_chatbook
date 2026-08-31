@@ -9,7 +9,7 @@ from threading import Event
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.containers import Vertical
+from textual.containers import Vertical, VerticalScroll
 from textual.events import Resize
 from textual.geometry import Size
 from textual.widgets import Button, Input, Static
@@ -134,6 +134,41 @@ async def test_unavailable_binding_is_selected_without_falling_back_to_another_s
         assert modal.state.selected_binding_id == "binding-b"
         assert modal.state.status_copy == "Selected binding is unavailable."
         assert [name for name, _call in inspector.calls] == ["list"]
+
+
+@pytest.mark.asyncio
+async def test_all_unavailable_bindings_show_access_changed_guidance_without_hiding_identity() -> None:
+    """A stale nonempty binding set must not be presented as no folders at all."""
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=_Inspector([]),
+        inspected_workspace_id="ws-a",
+        inspected_workspace_name="Workspace A",
+        active_workspace_id="ws-a",
+        active_workspace_name="Workspace A",
+        bindings=(
+            WorkspaceFilesBinding(
+                "binding-a",
+                "Project folder",
+                None,
+                available=False,
+                availability_copy="Unavailable",
+            ),
+        ),
+    )
+    app = _Host()
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        guidance = "This local folder is unavailable or its access changed. Update it in Settings."
+        assert modal.state.status_copy == guidance
+        assert "Project folder · Read-only · Unavailable" in str(
+            modal.query_one("#console-workspace-files-binding-0", Button).label
+        )
+        assert str(modal.query_one("#console-workspace-files-status", Static).renderable) == guidance
+        tree = modal.query_one("#console-workspace-files-tree", VerticalScroll)
+        assert str(tree.query(Static).first(Static).renderable) == guidance
 
 
 @pytest.mark.asyncio

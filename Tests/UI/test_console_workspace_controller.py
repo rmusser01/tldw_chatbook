@@ -243,6 +243,8 @@ async def test_workspace_files_availability_snapshot_never_blocks_context_build(
     state = controller._build_console_workspace_context_state()
     assert time.monotonic() - started < 0.1
     assert state.workspace_files_available_by_id == {"ws-a": False}
+    with pytest.raises(TypeError):
+        state.workspace_files_available_by_id["ws-a"] = True
     assert len(screen.workers) == 1
     await asyncio.sleep(0)
     assert entered.is_set()
