@@ -1405,6 +1405,57 @@ def _collect_mcp_pending(
     return pending
 
 
+def _build_approval_payload(
+    round_id: str,
+    session_id: str,
+    run_id: str,
+    pending: "list[MCPPendingCall]",
+    timeout_seconds: float,
+    deadline: float | None,
+) -> dict[str, Any]:
+    """Marshal one approval round's card payload.
+
+    ADR-080: rows carry ``rationale`` (the model's advisory context) and
+    ``description`` (the tool definition's own text, for the external
+    summarizer); the payload carries a ``summary`` slot that starts ``None``
+    and is filled by the advisory summarizer -- payload-carried so any
+    remount re-renders it rather than depending on a live patch surviving.
+    """
+    return {
+        "round_id": round_id,
+        "session_id": session_id,
+        "run_id": run_id,
+        "calls": [
+            {
+                "llm_name": call.llm_name,
+                "server_key": call.server_key,
+                "tool_name": call.tool_name,
+                "server_label": call.server_label,
+                "arguments": dict(call.arguments or {}),
+                "reason": call.reason,
+                "options": list(call.options),
+                "effects": list(call.effects),
+                "execution_policy": (
+                    call.execution_policy.value
+                    if isinstance(call.execution_policy, ToolExecutionPolicy)
+                    else ToolExecutionPolicy.BOUNDED_ABANDONABLE.value
+                ),
+                "path_precheck_failed": call.path_precheck_failed,
+                "call_id": call.call_id,
+                "full_command": call.full_command,
+                "warning": call.warning,
+                "scope_notice": call.scope_notice,
+                "rationale": str(getattr(call, "rationale", "") or ""),
+                "description": str(getattr(call, "description", "") or ""),
+            }
+            for call in pending
+        ],
+        "timeout_seconds": timeout_seconds,
+        "deadline_monotonic": deadline,
+        "summary": None,
+    }
+
+
 def build_mcp_review_hook(
     provider: MCPToolProvider,
     request_mcp_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
@@ -10778,40 +10829,18 @@ class ConsoleChatController:
         # card renders no countdown copy for 0; see
         # `format_approval_deadline`).
         deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
-        payload = {
-            "round_id": round_id,
-            "session_id": owning_session_id,
-            "run_id": owning_run_id,
-            "calls": [
-                {
-                    "llm_name": call.llm_name,
-                    "server_key": call.server_key,
-                    "tool_name": call.tool_name,
-                    "server_label": call.server_label,
-                    "arguments": dict(call.arguments or {}),
-                    "reason": call.reason,
-                    "options": list(call.options),
-                    "effects": list(call.effects),
-                    "execution_policy": (
-                        call.execution_policy.value
-                        if isinstance(call.execution_policy, ToolExecutionPolicy)
-                        else ToolExecutionPolicy.BOUNDED_ABANDONABLE.value
-                    ),
-                    "path_precheck_failed": call.path_precheck_failed,
-                    "call_id": call.call_id,
-                    "full_command": call.full_command,
-                    "warning": call.warning,
-                    "scope_notice": call.scope_notice,
-                }
-                for call in pending
-            ],
-            "timeout_seconds": timeout_seconds,
-            # Qodo PR #1836 finding 1: the absolute deadline, so a mount
-            # that happens AFTER arm (promotion, switch-back, attach) can
-            # show the remaining window instead of the arm-time total --
-            # see `_head_round_payload`'s snapshot.
-            "deadline_monotonic": deadline,
-        }
+        # Qodo PR #1836 finding 1: the absolute deadline, so a mount
+        # that happens AFTER arm (promotion, switch-back, attach) can
+        # show the remaining window instead of the arm-time total --
+        # see `_head_round_payload`'s snapshot.
+        payload = _build_approval_payload(
+            round_id,
+            owning_session_id,
+            owning_run_id,
+            pending,
+            timeout_seconds,
+            deadline,
+        )
         # Task 9: park rather than mount when this round's session is a
         # DIFFERENT, background session -- `session_id is None` (a legacy
         # caller with no session context) always mounts, matching every
