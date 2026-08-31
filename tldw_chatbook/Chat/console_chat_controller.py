@@ -11166,16 +11166,20 @@ class ConsoleChatController:
         rows = payload.get("calls") or []
         if not round_id or not rows:
             return
+        # Lock order: config lock FIRST, then `_approval_state_lock` (see
+        # `run_if_runtime_config_generation_current` in config.py) -- so the
+        # config read happens before the approval lock is taken.
+        try:
+            resolution = resolve_permission_summary(
+                get_runtime_config_snapshot().values
+            )
+        except Exception:  # noqa: BLE001 -- advisory only
+            resolution = None
+        # A wasted resolve when the once-flag is already consumed is harmless.
         with self._approval_state_lock:
             state = self._pending_approval_rounds.get(round_id)
             if state is None or state.get("summary_fired"):
                 return
-            try:
-                resolution = resolve_permission_summary(
-                    get_runtime_config_snapshot().values
-                )
-            except Exception:  # noqa: BLE001 -- advisory only
-                resolution = None
             if resolution is None or not resolution.active:
                 state["summary_fired"] = True
                 return
@@ -11185,12 +11189,17 @@ class ConsoleChatController:
             state["summary_fired"] = True
             if not needs:
                 return
-        threading.Thread(
-            target=self._permission_summary_worker,
-            args=(round_id, payload, resolution),
-            daemon=True,
-            name=f"permission-summary-{round_id}",
-        ).start()
+        try:
+            threading.Thread(
+                target=self._permission_summary_worker,
+                args=(round_id, payload, resolution),
+                daemon=True,
+                name=f"permission-summary-{round_id}",
+            ).start()
+        except Exception:  # noqa: BLE001 -- advisory only
+            # A failed spawn must not destroy the approval round; the summary
+            # lane is advisory-only, so swallow it (content-free log below).
+            logger.debug("permission summary thread spawn failed")
 
     def _permission_summary_worker(
         self, round_id: str, payload: dict[str, Any], resolution: object
