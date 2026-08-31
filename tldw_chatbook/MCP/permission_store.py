@@ -66,10 +66,12 @@ from __future__ import annotations
 import hashlib
 import fnmatch
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from types import MappingProxyType
+from typing import Any, Literal, Mapping
 
 from loguru import logger
 
@@ -98,6 +100,31 @@ HIGH_RISK_TAGS = frozenset({"mutates", "process"})
 BUILTIN_HIGH_RISK_TAGS = HIGH_RISK_TAGS | frozenset({"reads", "network"})
 
 _DEFAULT_PROFILE_ID = "default"
+_SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+_RECEIPT_ID_RE = re.compile(r"tp-[0-9a-f]{32}\Z")
+_UTC_TIMESTAMP_RE = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\Z"
+)
+_LIFECYCLE_SCHEMA = "tldw.tool-pack-lifecycle/v1"
+
+ProfileLifecycleDisposition = Literal["legacy", "imported", "tombstone", "invalid"]
+
+
+@dataclass(frozen=True)
+class PermissionStoreSnapshot:
+    """Immutable permission-store bytes admitted by strict schema validation."""
+
+    payload: Mapping[str, Any]
+    generation: str
+    file_exists: bool
+
+
+class PermissionStoreSnapshotError(ValueError):
+    """A strict permission-store snapshot could not be read safely."""
+
+    def __init__(self, category: str) -> None:
+        super().__init__(category)
+        self.category = category
 
 
 def _iso_utc_now() -> str:
@@ -115,6 +142,202 @@ def _fresh_payload() -> dict[str, Any]:
             }
         },
     }
+
+
+def _is_sha256(value: Any) -> bool:
+    return isinstance(value, str) and _SHA256_RE.fullmatch(value) is not None
+
+
+def _is_positive_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _is_nonnegative_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _is_utc_timestamp(value: Any) -> bool:
+    """Return whether ``value`` is a valid UTC ISO-8601 timestamp."""
+    if not isinstance(value, str) or _UTC_TIMESTAMP_RE.fullmatch(value) is None:
+        return False
+    try:
+        datetime.fromisoformat(value.removesuffix("Z") + "+00:00")
+    except ValueError:
+        return False
+    return True
+
+
+def _has_exact_keys(value: Mapping[str, Any], keys: frozenset[str]) -> bool:
+    return set(value) == keys
+
+
+def profile_lifecycle_disposition(
+    profile: Mapping[str, Any],
+) -> ProfileLifecycleDisposition:
+    """Classify the authoritative lifecycle pair carried by ``profile``.
+
+    Legacy profiles carry neither ``profile_kind`` nor ``tool_pack_lifecycle``.
+    Either field alone, an unknown discriminator, or a malformed exact lifecycle
+    variant is invalid rather than silently inheriting as a local profile.
+    """
+    has_kind = "profile_kind" in profile
+    has_lifecycle = "tool_pack_lifecycle" in profile
+    if not has_kind and not has_lifecycle:
+        return "legacy"
+    if not has_kind or not has_lifecycle:
+        return "invalid"
+
+    kind = profile.get("profile_kind")
+    lifecycle = profile.get("tool_pack_lifecycle")
+    if not isinstance(lifecycle, Mapping):
+        return "invalid"
+
+    common_keys = frozenset(
+        {
+            "schema",
+            "origin",
+            "pack_digest",
+            "imported_at",
+            "first_bind_confirmation_required",
+            "receipt_id",
+            "receipt_digest",
+            "policy_digest",
+            "revision",
+        }
+    )
+    if kind == "tool_pack_imported":
+        expected_keys = common_keys | {"counts"}
+        if (
+            not _has_exact_keys(lifecycle, expected_keys)
+            or lifecycle.get("schema") != _LIFECYCLE_SCHEMA
+            or lifecycle.get("origin") != "imported"
+            or not _is_sha256(lifecycle.get("pack_digest"))
+            or not _is_utc_timestamp(lifecycle.get("imported_at"))
+            or not isinstance(lifecycle.get("first_bind_confirmation_required"), bool)
+            or not isinstance(lifecycle.get("receipt_id"), str)
+            or _RECEIPT_ID_RE.fullmatch(lifecycle["receipt_id"]) is None
+            or not _is_sha256(lifecycle.get("receipt_digest"))
+            or not _is_sha256(lifecycle.get("policy_digest"))
+            or not _is_positive_int(lifecycle.get("revision"))
+        ):
+            return "invalid"
+        counts = lifecycle.get("counts")
+        if not isinstance(counts, Mapping) or not _has_exact_keys(
+            counts, frozenset({"matched", "omitted", "pending_deny"})
+        ):
+            return "invalid"
+        if not all(_is_nonnegative_int(counts[key]) for key in counts):
+            return "invalid"
+        return "imported"
+
+    if kind == "tool_pack_tombstone":
+        if (
+            not _has_exact_keys(lifecycle, common_keys | {"removed_at"})
+            or lifecycle.get("schema") != _LIFECYCLE_SCHEMA
+            or lifecycle.get("origin") != "tombstone"
+            or not _is_sha256(lifecycle.get("pack_digest"))
+            or not _is_utc_timestamp(lifecycle.get("imported_at"))
+            or not _is_utc_timestamp(lifecycle.get("removed_at"))
+            or lifecycle.get("first_bind_confirmation_required") is not False
+            or not isinstance(lifecycle.get("receipt_id"), str)
+            or _RECEIPT_ID_RE.fullmatch(lifecycle["receipt_id"]) is None
+            or not _is_sha256(lifecycle.get("receipt_digest"))
+            or not _is_sha256(lifecycle.get("policy_digest"))
+            or not _is_positive_int(lifecycle.get("revision"))
+        ):
+            return "invalid"
+        return "tombstone"
+
+    return "invalid"
+
+
+def _freeze_snapshot(value: Any) -> Any:
+    """Recursively freeze a JSON value without sharing mutable containers."""
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_snapshot(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_snapshot(item) for item in value)
+    return value
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Build one JSON object, failing closed when a key appears twice."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise PermissionStoreSnapshotError("duplicate_key")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> None:
+    raise PermissionStoreSnapshotError("invalid_json")
+
+
+def _validate_strict_profile(profile: Mapping[str, Any], *, is_default: bool) -> bool:
+    allowed_keys = {"global_default", "servers", "profile_kind", "tool_pack_lifecycle"}
+    if not set(profile).issubset(allowed_keys) or not isinstance(profile.get("servers"), Mapping):
+        return False
+    if is_default and "global_default" not in profile:
+        return False
+    if "global_default" in profile and profile["global_default"] not in STORE_STATES:
+        return False
+    if profile_lifecycle_disposition(profile) == "invalid":
+        return False
+
+    for server_key, server_entry in profile["servers"].items():
+        if not isinstance(server_key, str) or not server_key or not isinstance(server_entry, Mapping):
+            return False
+        if not set(server_entry).issubset({"default", "tools"}):
+            return False
+        if "default" in server_entry and server_entry["default"] not in STORE_STATES:
+            return False
+        if "tools" not in server_entry:
+            continue
+        tools = server_entry["tools"]
+        if not isinstance(tools, Mapping):
+            return False
+        for tool_name, tool_entry in tools.items():
+            if not isinstance(tool_name, str) or not tool_name or not isinstance(tool_entry, Mapping):
+                return False
+            if not set(tool_entry).issubset({"state", "definition_hash", "config_changed"}):
+                return False
+            if tool_entry.get("state") not in STORE_STATES:
+                return False
+            if "definition_hash" in tool_entry and not _is_sha256(tool_entry["definition_hash"]):
+                return False
+            if "config_changed" in tool_entry and not isinstance(tool_entry["config_changed"], bool):
+                return False
+            if (
+                tool_entry["state"] == "allow"
+                and server_key not in HASH_FREE_SERVER_KEYS
+                and "definition_hash" not in tool_entry
+            ):
+                return False
+    return True
+
+
+def _validate_strict_payload(payload: Any) -> bool:
+    if not isinstance(payload, Mapping) or set(payload) - {
+        "schema_version", "kill_switch", "profiles", "updated_at"
+    }:
+        return False
+    if payload.get("schema_version") != SCHEMA_VERSION or isinstance(payload.get("schema_version"), bool):
+        return False
+    if not isinstance(payload.get("kill_switch"), bool) or not isinstance(payload.get("profiles"), Mapping):
+        return False
+    if "updated_at" in payload and not isinstance(payload["updated_at"], str):
+        return False
+    profiles = payload["profiles"]
+    if _DEFAULT_PROFILE_ID not in profiles:
+        return False
+    return all(
+        isinstance(profile_id, str)
+        and bool(profile_id)
+        and isinstance(profile, Mapping)
+        and _validate_strict_profile(profile, is_default=profile_id == _DEFAULT_PROFILE_ID)
+        for profile_id, profile in profiles.items()
+    )
 
 
 def _validate_state(state: str) -> None:
@@ -217,6 +440,32 @@ def _profile_chain(payload: dict[str, Any], profile_id: str) -> list[dict[str, A
     return chain
 
 
+def _lifecycle_resolution_block(
+    payload: Mapping[str, Any], profile_id: str
+) -> str | None:
+    """Return a fail-closed resolver origin before profile inheritance.
+
+    The selected named profile is authoritative: an invalid discriminator pair
+    cannot fall through to ``default``, and a validated tombstone permanently
+    denies. The inherited default profile is checked too whenever it may take
+    part in the subsequent chain.
+    """
+    profiles = _as_mapping(payload.get("profiles"))
+    profile_ids = [profile_id]
+    if profile_id != _DEFAULT_PROFILE_ID:
+        profile_ids.append(_DEFAULT_PROFILE_ID)
+    for candidate_id in profile_ids:
+        profile = profiles.get(candidate_id)
+        if not isinstance(profile, Mapping):
+            continue
+        disposition = profile_lifecycle_disposition(profile)
+        if disposition == "invalid":
+            return "lifecycle_invalid"
+        if disposition == "tombstone":
+            return "tombstone"
+    return None
+
+
 class MCPPermissionStore:
     """Read-modify-write accessor over the on-disk permission-store JSON file.
 
@@ -272,6 +521,53 @@ class MCPPermissionStore:
             return _fresh_payload()
 
         return _normalize_payload_shape(payload)
+
+    def read_snapshot_strict(self) -> PermissionStoreSnapshot:
+        """Read schema 1 once without creating, renaming, normalizing, or saving.
+
+        Unlike :meth:`load`, this authority seam never invokes legacy recovery.
+        Callers can therefore use its immutable payload and generation token for
+        review or concurrency checks without an inspection changing disk state.
+
+        Raises:
+            PermissionStoreSnapshotError: If the store cannot be read as an
+                exact, schema-1 permission payload.
+        """
+        try:
+            raw_bytes = self.path.read_bytes()
+        except FileNotFoundError:
+            fresh = _fresh_payload()
+            frozen = _freeze_snapshot(fresh)
+            digest = hashlib.sha256(
+                json.dumps(fresh, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            return PermissionStoreSnapshot(
+                payload=frozen,
+                generation=f"missing:{digest}",
+                file_exists=False,
+            )
+        except OSError as exc:
+            raise PermissionStoreSnapshotError("io_error") from exc
+
+        try:
+            payload = json.loads(
+                raw_bytes.decode("utf-8"),
+                object_pairs_hook=_reject_duplicate_keys,
+                parse_constant=_reject_json_constant,
+            )
+        except PermissionStoreSnapshotError:
+            raise
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            raise PermissionStoreSnapshotError("invalid_json") from exc
+
+        if not _validate_strict_payload(payload):
+            raise PermissionStoreSnapshotError("invalid_shape")
+
+        return PermissionStoreSnapshot(
+            payload=_freeze_snapshot(payload),
+            generation=f"sha256:{hashlib.sha256(raw_bytes).hexdigest()}",
+            file_exists=True,
+        )
 
     def save(self, payload: dict[str, Any]) -> None:
         """Atomically write ``payload`` to disk, stamping ``updated_at``.
@@ -384,13 +680,19 @@ class MCPPermissionStore:
 
     # -- global default -----------------------------------------------------
 
-    def get_global_default(self) -> str:
+    def get_global_default(self, *, profile_id: str = _DEFAULT_PROFILE_ID) -> str:
         """Return the profile's global default permission state.
+
+        Args:
+            profile_id: Profile to inspect without creating or normalizing it.
 
         Returns:
             One of ``STORE_STATES``, or ``DEFAULT_GLOBAL`` when unset.
         """
-        return self._profile(self.load()).get("global_default", DEFAULT_GLOBAL)
+        payload = self.load()
+        profiles = _as_mapping(payload.get("profiles"))
+        profile = _as_mapping(profiles.get(profile_id))
+        return profile.get("global_default", DEFAULT_GLOBAL)
 
     def set_global_default(
         self, state: str, *, profile_id: str = _DEFAULT_PROFILE_ID
@@ -413,18 +715,24 @@ class MCPPermissionStore:
 
     # -- server default -----------------------------------------------------
 
-    def get_server_entry(self, server_key: str) -> dict[str, Any] | None:
+    def get_server_entry(
+        self, server_key: str, *, profile_id: str = _DEFAULT_PROFILE_ID
+    ) -> dict[str, Any] | None:
         """Return the raw stored entry for a server, if any.
 
         Args:
             server_key: Server's stable key (``<source>:<server_id>``).
+            profile_id: Profile to inspect without creating or normalizing it.
 
         Returns:
             The server's entry dict (an optional ``"default"`` and/or
             ``"tools"`` key), or None when the server has no entry at all
             (fully "Inherit").
         """
-        servers = self._profile(self.load()).get("servers", {})
+        payload = self.load()
+        profiles = _as_mapping(payload.get("profiles"))
+        profile = _as_mapping(profiles.get(profile_id))
+        servers = _as_mapping(profile.get("servers"))
         return servers.get(server_key)
 
     def set_server_default(
@@ -470,21 +778,31 @@ class MCPPermissionStore:
 
     # -- tool state -----------------------------------------------------
 
-    def get_tool_entry(self, server_key: str, tool_name: str) -> dict[str, Any] | None:
+    def get_tool_entry(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        profile_id: str = _DEFAULT_PROFILE_ID,
+    ) -> dict[str, Any] | None:
         """Return the raw stored entry for one tool, if any.
 
         Args:
             server_key: Owning server's stable key.
             tool_name: Tool name within that server.
+            profile_id: Profile to inspect without creating or normalizing it.
 
         Returns:
             The tool's entry dict (``"state"`` guaranteed; ``"definition_hash"``
             and ``"config_changed"`` optional), or None when the tool has
             no explicit entry (inherits from the server/global default).
         """
-        servers = self._profile(self.load()).get("servers", {})
-        entry = servers.get(server_key, {})
-        tools = entry.get("tools", {})
+        payload = self.load()
+        profiles = _as_mapping(payload.get("profiles"))
+        profile = _as_mapping(profiles.get(profile_id))
+        servers = _as_mapping(profile.get("servers"))
+        entry = _as_mapping(servers.get(server_key))
+        tools = _as_mapping(entry.get("tools"))
         return tools.get(tool_name)
 
     def set_tool_state(
@@ -908,6 +1226,10 @@ def resolve_effective_state(
     Returns:
         The resolved ``EffectiveToolState``.
     """
+    lifecycle_block = _lifecycle_resolution_block(payload, profile_id)
+    if lifecycle_block is not None:
+        return EffectiveToolState(state="deny", origin=lifecycle_block)
+
     config_changed = False
     state: str | None = None
     origin = ""
@@ -1095,6 +1417,10 @@ def resolve_builtin_state(
     Returns:
         The resolved ``EffectiveToolState``.
     """
+    lifecycle_block = _lifecycle_resolution_block(payload, profile_id)
+    if lifecycle_block is not None:
+        return EffectiveToolState(state="deny", origin=lifecycle_block)
+
     state: str | None = None
     origin = ""
 
@@ -1240,6 +1566,10 @@ def resolve_effective_state_by_key(
     Returns:
         The resolved ``EffectiveToolState``.
     """
+    lifecycle_block = _lifecycle_resolution_block(payload, profile_id)
+    if lifecycle_block is not None:
+        return EffectiveToolState(state="deny", origin=lifecycle_block)
+
     state: str | None = None
     origin = ""
 

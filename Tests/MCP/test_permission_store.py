@@ -17,6 +17,7 @@ from tldw_chatbook.MCP.permission_store import (
     SCHEMA_VERSION,
     STORE_STATES,
     MCPPermissionStore,
+    PermissionStoreSnapshotError,
     definition_hash,
 )
 
@@ -44,6 +45,26 @@ def test_load_returns_fresh_default_payload_when_file_missing(tmp_path):
     assert payload["profiles"]["default"]["global_default"] == "ask"
     assert payload["profiles"]["default"]["servers"] == {}
     assert not (tmp_path / "mcp_permissions.json").exists()
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"{",
+        b'{"schema_version":99}',
+        b'{"schema_version":1,"profiles":null}',
+    ],
+)
+def test_strict_snapshot_rejects_without_touching_bytes(tmp_path, raw):
+    """Reject invalid strict snapshots without invoking legacy recovery."""
+    path = tmp_path / "mcp_permissions.json"
+    path.write_bytes(raw)
+
+    with pytest.raises(PermissionStoreSnapshotError):
+        MCPPermissionStore(path).read_snapshot_strict()
+
+    assert path.read_bytes() == raw
+    assert not path.with_suffix(".json.bak").exists()
 
 
 def test_load_backs_up_corrupt_json_and_returns_fresh_default(tmp_path):
@@ -125,6 +146,23 @@ def test_global_default_validates_and_round_trips(tmp_path):
 
     with pytest.raises(ValueError):
         store.set_global_default("nonsense")
+
+
+def test_raw_getters_read_the_requested_profile_without_seeding(tmp_path):
+    """Profile-specific inspection must not read from or create ``default``."""
+    path = tmp_path / "mcp_permissions.json"
+    store = MCPPermissionStore(path)
+    store.ensure_profile("portable")
+    store.set_global_default("deny", profile_id="portable")
+    store.set_server_default("local:docs", "ask", profile_id="portable")
+    store.set_tool_state("local:docs", "search", "allow", definition_hash="a" * 64, profile_id="portable")
+    before_bytes = path.read_bytes()
+
+    assert store.get_global_default(profile_id="portable") == "deny"
+    assert store.get_server_entry("local:docs", profile_id="portable")["default"] == "ask"
+    assert store.get_tool_entry("local:docs", "search", profile_id="portable")["state"] == "allow"
+    assert store.get_server_entry("local:missing", profile_id="unseeded") is None
+    assert path.read_bytes() == before_bytes
 
 
 def test_set_server_default_and_inherit_prunes_entry(tmp_path):
