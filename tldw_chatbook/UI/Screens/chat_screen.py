@@ -9053,6 +9053,26 @@ class ChatScreen(BaseAppScreen):
             browser_config["collapsed_groups"] = {}
         return browser_config
 
+    def _console_rail_body_height(self) -> int | None:
+        """Return the Console rail body's visible height, or ``None``.
+
+        Feeds the conversation browser's adaptive visible-row cap
+        (`console_conversation_browser_group_row_limit`): the Chats list's
+        cap scales to about half this measured height -- its even share of
+        the rail alongside the Workspaces tree -- so it expands to fill the
+        available vertical space instead of stopping at the 12-row default.
+        Unmeasured (pre-layout, collapsed rail) returns ``None`` so the cap
+        keeps its default until a real measurement exists.
+        """
+        try:
+            rail_body = self.query_one("#console-left-rail-body")
+        except (NoMatches, QueryError):
+            return None
+        region = getattr(rail_body, "content_region", None)
+        if region is not None and region.height > 0:
+            return int(region.height)
+        return None
+
     def _console_conversation_browser_collapse_preferences(self) -> dict[str, bool]:
         """Return persisted grouped browser collapse preferences."""
         app_config = getattr(self.app_instance, "app_config", None)
@@ -16650,6 +16670,11 @@ class ChatScreen(BaseAppScreen):
         popup = self._console_command_popup_or_none()
         if popup is not None and popup.is_open:
             popup.reposition()
+        # A taller/shorter terminal changes the rail body's measured height
+        # and with it the conversation browser's adaptive visible-row cap;
+        # re-sync so the Chats list re-fills its share of the new space.
+        # The sync's own state-equality guard makes no-op resizes cheap.
+        self._sync_console_workspace_context()
 
     def _persist_console_composer_draft_after_history_navigation(
         self, composer: ConsoleComposerBar

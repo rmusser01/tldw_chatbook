@@ -49,6 +49,7 @@ from tldw_chatbook.Widgets.Console.console_inspector_section import (
 )
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     build_console_conversation_browser_state,
+    console_rail_section_height_budget,
 )
 from tldw_chatbook.Workspaces.display_state import ConsoleWorkspaceContextState
 from tldw_chatbook.Workspaces.workspace_tree_state import (
@@ -569,7 +570,19 @@ async def test_all_open_context_sections_keep_their_own_complete_ceiling_and_out
         outer = rail.query_one("#console-left-rail-body")
         cue = rail.query_one("#console-left-rail-outer-hint", Static)
         initial_state = rail._rail_state
-        ceilings = dict(zip(SECTION_IDS, (20, 20, 15, 15, 15, 35), strict=True))
+        # The two peer list sections' ceilings grow to fill the rail (half
+        # the measured viewport each, floored at the historical 20-line
+        # ceiling); every other section keeps its fixed ceiling.
+        adaptive_budget = console_rail_section_height_budget(
+            rail._snapshot_outer_viewport_height()
+        )
+        ceilings = dict(
+            zip(
+                SECTION_IDS,
+                (adaptive_budget, adaptive_budget, 15, 15, 15, 35),
+                strict=True,
+            )
+        )
 
         sections = list(_sections(rail))
         assert [section.section_id for section in sections] == list(SECTION_IDS)

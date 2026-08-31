@@ -67,6 +67,7 @@ from ...Workspaces import (
     WorkspaceTreeWorkspace,
     build_console_conversation_browser_state,
     build_workspace_tree_state,
+    console_conversation_browser_group_row_limit,
     console_persisted_row_updated_sort,
     overlay_console_conversation_markers,
 )
@@ -422,6 +423,7 @@ class ConsoleWorkspaceController:
         ensure_chat_controller: Callable[[], Any] | None = None,
         set_conversation_row_loading: Callable[[str, bool], None] | None = None,
         mark_conversation_row_broken: Callable[[str], None] | None = None,
+        rail_body_height_accessor: Callable[[], int | None] | None = None,
     ) -> None:
         """Bind canonical Workspace state and its late-bound dependencies.
 
@@ -476,6 +478,10 @@ class ConsoleWorkspaceController:
             ensure_chat_controller: Resolve or create the native chat controller.
             set_conversation_row_loading: Paint persisted-row loading state.
             mark_conversation_row_broken: Mark a missing persisted record.
+            rail_body_height_accessor: Return the Console rail body height in
+                terminal lines (or ``None`` before layout) so the browser's
+                per-section/group visible-row cap can adapt to fill the
+                available space.
         """
         self._screen = screen
         self.app_instance = app_instance
@@ -544,6 +550,7 @@ class ConsoleWorkspaceController:
         self._mark_conversation_row_broken_fn = mark_conversation_row_broken or (
             lambda _conversation_id: None
         )
+        self._rail_body_height_accessor = rail_body_height_accessor
 
         self._workspace_tree_search = SearchAttemptState()
         self._flat_conversation_search = SearchAttemptState()
@@ -952,6 +959,10 @@ class ConsoleWorkspaceController:
     @property
     def _console_conversation_browser_collapse_preferences(self) -> Any:
         return self._conversation_browser_collapse_preferences_fn
+
+    def _console_rail_body_height(self) -> int | None:
+        accessor = self._rail_body_height_accessor
+        return accessor() if accessor is not None else None
 
     def _workspace_tree_owner_token(self) -> object | None:
         accessor = self._workspace_tree_owner_accessor
@@ -2954,6 +2965,13 @@ class ConsoleWorkspaceController:
             result_total_count=total,
             result_limit=CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
             subagent_counts=subagent_counts,
+            # The visible-row cap grows with the measured rail body height so
+            # the Chats section expands to fill its even share of the rail
+            # alongside the Workspaces tree; the historical 12-row default
+            # still floors it on short/unmeasured rails.
+            group_row_limit=console_conversation_browser_group_row_limit(
+                self._console_rail_body_height()
+            ),
         )
         return replace(
             state,
