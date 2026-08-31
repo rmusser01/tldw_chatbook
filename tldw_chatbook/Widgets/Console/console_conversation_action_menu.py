@@ -63,7 +63,17 @@ _LIVE_MENUS: "WeakSet[ConsoleConversationActionMenu]" = WeakSet()
 def conversation_action_menus_on_screen(
     screen: "Screen[object]",
 ) -> list["ConsoleConversationActionMenu"]:
-    """Return attached conversation action menus owned by ``screen``."""
+    """Return the conversation action menus currently attached to ``screen``.
+
+    Args:
+        screen: The screen whose mounted menus are wanted (usually the
+            Console ``ChatScreen``).
+
+    Returns:
+        Every registry-registered menu still attached to that screen, in
+        registry iteration order. Detached menus (``parent is None`` or no
+        resolvable screen) are skipped.
+    """
     menus: list[ConsoleConversationActionMenu] = []
     for menu in _LIVE_MENUS:
         if menu.parent is None:
