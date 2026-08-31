@@ -165,8 +165,8 @@ class ToolTestPreviewRegistry:
         safe_authority_label: str | None,
     ) -> ToolTestAdmissionPreview:
         """Mint and retain one immutable preview, evicting oldest entries."""
-        now = time.monotonic()
         with self._lock:
+            now = time.monotonic()
             self._purge_expired_locked(now)
             while len(self._entries) >= self._max_entries:
                 self._entries.popitem(last=False)
@@ -193,8 +193,8 @@ class ToolTestPreviewRegistry:
 
     def consume(self, nonce: str) -> RegisteredToolTestPreview | None:
         """Atomically remove and return one unexpired preview."""
-        now = time.monotonic()
         with self._lock:
+            now = time.monotonic()
             self._purge_expired_locked(now)
             return self._entries.pop(nonce, None)
 

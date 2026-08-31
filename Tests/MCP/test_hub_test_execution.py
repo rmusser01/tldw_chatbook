@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError, asdict
 from pathlib import Path
@@ -18,6 +19,21 @@ from tldw_chatbook.MCP.hub_test_execution import (
     canonicalize_arguments,
 )
 from tldw_chatbook.Utils.filesystem_identity import DirectoryChain, DirectoryIdentity
+
+
+class _ContendedLock:
+    """Lock test double that exposes when a worker reaches acquisition."""
+
+    def __init__(self) -> None:
+        self.backing = threading.Lock()
+        self.attempted = threading.Event()
+
+    def __enter__(self) -> None:
+        self.attempted.set()
+        self.backing.acquire()
+
+    def __exit__(self, *_exc_info: object) -> None:
+        self.backing.release()
 
 
 def _identity(
@@ -207,6 +223,49 @@ def test_expired_preview_is_removed_and_unavailable(monkeypatch):
 
     assert registry.consume(preview.nonce) is None
     assert registry.consume(preview.nonce) is None
+
+
+def test_consume_checks_expiry_after_entering_its_lock(monkeypatch):
+    now = 100.0
+    monkeypatch.setattr(hub_test_execution.time, "monotonic", lambda: now)
+    registry = ToolTestPreviewRegistry(max_entries=4, ttl_seconds=5)
+    preview = _issue(registry)
+
+    contended = _ContendedLock()
+    registry._lock = contended  # type: ignore[assignment]
+    contended.backing.acquire()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        pending = executor.submit(registry.consume, preview.nonce)
+        try:
+            assert contended.attempted.wait(timeout=1)
+            now = 106.0
+        finally:
+            contended.backing.release()
+        consumed = pending.result(timeout=1)
+
+    assert consumed is None
+    assert registry.consume(preview.nonce) is None
+
+
+def test_issue_starts_its_ttl_after_entering_the_registry_lock(monkeypatch):
+    now = 100.0
+    monkeypatch.setattr(hub_test_execution.time, "monotonic", lambda: now)
+    registry = ToolTestPreviewRegistry(max_entries=4, ttl_seconds=5)
+
+    contended = _ContendedLock()
+    registry._lock = contended  # type: ignore[assignment]
+    contended.backing.acquire()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        pending = executor.submit(_issue, registry)
+        try:
+            assert contended.attempted.wait(timeout=1)
+            now = 106.0
+        finally:
+            contended.backing.release()
+        preview = pending.result(timeout=1)
+
+    now = 110.0
+    assert registry.consume(preview.nonce) is not None
 
 
 def test_capacity_evicts_the_oldest_preview():
