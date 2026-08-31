@@ -11375,7 +11375,10 @@ class TldwCli(
             KeyringPersonalContextLinkKeyCustodian,
             KeyringPersonalContextWrappingKeyProvider,
         )
-        from .Personal_Context.link_service import PersonalContextLinkService
+        from .Personal_Context.link_service import (
+            PersonalContextLinkAttentionRequired,
+            PersonalContextLinkService,
+        )
         from .Widgets.Settings_Widgets.personal_context_link_modal import (
             PersonalContextLinkModal,
         )
@@ -11456,9 +11459,20 @@ class TldwCli(
                 return
             while True:
                 manifest = self.get_personal_context_service().get_manifest()
-                plan = await coordinator.plan(
-                    expected_purge_generation=manifest.purge_generation
-                )
+                try:
+                    plan = await coordinator.plan(
+                        expected_purge_generation=manifest.purge_generation
+                    )
+                except PersonalContextLinkAttentionRequired as exc:
+                    attention_result = await self.push_screen_wait(
+                        PersonalContextLinkModal.for_bootstrap_attention(
+                            exc.attention,
+                            retry_callback=True,
+                        )
+                    )
+                    if attention_result is not None and attention_result.retry:
+                        continue
+                    return
                 result = await self.push_screen_wait(
                     PersonalContextLinkModal(plan, retry_callback=True)
                 )

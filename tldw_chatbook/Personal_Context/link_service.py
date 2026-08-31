@@ -26,6 +26,14 @@ class PersonalContextLinkReceipt:
     rebaseline_version: int
 
 
+class PersonalContextLinkAttentionRequired(Exception):
+    """Carry one validated content-free bootstrap attention result to Settings."""
+
+    def __init__(self, attention: Any) -> None:
+        super().__init__("personal_context_link_attention_required")
+        self.attention = attention
+
+
 class PersonalContextLinkService:
     """Own planning, explicit approval, local rebaseline, and server completion."""
 
@@ -80,16 +88,21 @@ class PersonalContextLinkService:
             )
 
             required_quotas = PERSONAL_CONTEXT_MINIMUM_QUOTAS
-        response = await self._server.bootstrap_personal_context_link(
-            server_profile_id=self._server_profile_id,
-            authenticated_principal_id=self._principal_id,
-            display_name=self._display_name,
-            wrapping_key_provider=self._wrapping,
-            client_version=self._client_version,
-            required_schema_version=required_schema_version,
-            required_quotas=dict(required_quotas),
-            expected_purge_generation=expected_purge_generation,
-        )
+        from ..tldw_api.exceptions import PersonalContextBootstrapAttentionError
+
+        try:
+            response = await self._server.bootstrap_personal_context_link(
+                server_profile_id=self._server_profile_id,
+                authenticated_principal_id=self._principal_id,
+                display_name=self._display_name,
+                wrapping_key_provider=self._wrapping,
+                client_version=self._client_version,
+                required_schema_version=required_schema_version,
+                required_quotas=dict(required_quotas),
+                expected_purge_generation=expected_purge_generation,
+            )
+        except PersonalContextBootstrapAttentionError as exc:
+            raise PersonalContextLinkAttentionRequired(exc.attention) from None
         if not isinstance(response, Mapping):
             device_id = str(getattr(response, "device_id"))
         else:

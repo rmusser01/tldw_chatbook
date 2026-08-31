@@ -10,6 +10,11 @@ from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Widgets.Settings_Widgets.personal_context_link_modal import (
     PersonalContextLinkModal,
 )
+from tldw_chatbook.tldw_api.sync_schemas import (
+    SyncPersonalContextPurgeAttention,
+    SyncPersonalContextQuotaAttention,
+    SyncPersonalContextSchemaAttention,
+)
 
 
 class _Host(ConsolidatedCSSApp):
@@ -162,3 +167,104 @@ async def test_modal_shows_reviewed_new_scope_and_disables_collision_mapping() -
         assert not modal.query_one(
             "#personal-context-link-approve", Button
         ).disabled
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("attention", "exact_rows"),
+    (
+        (
+            SyncPersonalContextSchemaAttention(
+                kind="schema_incompatible",
+                required_schema_version=3,
+                server_min_schema_version=1,
+                server_max_schema_version=2,
+            ),
+            (
+                "Required schema version · 3",
+                "Server minimum schema version · 1",
+                "Server maximum schema version · 2",
+            ),
+        ),
+        (
+            SyncPersonalContextQuotaAttention(
+                kind="quota_incompatible",
+                required_quotas={
+                    "max_record_bytes": 16_384,
+                    "max_search_results": 20,
+                },
+                available_quotas={
+                    "max_record_bytes": 8_192,
+                    "max_search_results": 20,
+                },
+                insufficient_quotas=["max_record_bytes"],
+            ),
+            (
+                "max_record_bytes · required 16384 · server 8192 · insufficient",
+                "max_search_results · required 20 · server 20 · satisfied",
+                "Insufficient quotas · max_record_bytes",
+            ),
+        ),
+        (
+            SyncPersonalContextPurgeAttention(
+                kind="purge_generation_mismatch",
+                expected_purge_generation=4,
+                current_purge_generation=5,
+            ),
+            (
+                "Expected purge generation · 4",
+                "Current server purge generation · 5",
+            ),
+        ),
+    ),
+)
+async def test_bootstrap_attention_modal_shows_exact_safe_rows_and_only_allows_retry_or_cancel(
+    attention,
+    exact_rows: tuple[str, ...],
+) -> None:
+    app = _Host()
+    results = []
+    async with app.run_test(size=(104, 34)) as pilot:
+        modal = PersonalContextLinkModal.for_bootstrap_attention(
+            attention,
+            retry_callback=True,
+        )
+        await app.push_screen(modal, callback=results.append)
+        await pilot.pause()
+
+        visible = " ".join(str(widget.renderable) for widget in modal.query(Static))
+        assert "Profile Link Needs Attention" in visible
+        for exact_row in exact_rows:
+            assert exact_row in visible
+        assert modal.query_one("#personal-context-link-approve", Button).disabled
+        assert not modal.query_one("#personal-context-link-retry", Button).disabled
+
+        await pilot.click("#personal-context-link-retry")
+        await pilot.pause()
+
+    assert len(results) == 1
+    assert results[0].retry is True
+    assert results[0].plan_id is None
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_attention_modal_cancel_returns_none() -> None:
+    app = _Host()
+    results = []
+    attention = SyncPersonalContextPurgeAttention(
+        kind="purge_generation_mismatch",
+        expected_purge_generation=4,
+        current_purge_generation=5,
+    )
+    async with app.run_test(size=(100, 28)) as pilot:
+        modal = PersonalContextLinkModal.for_bootstrap_attention(
+            attention,
+            retry_callback=True,
+        )
+        await app.push_screen(modal, callback=results.append)
+        await pilot.pause()
+
+        await pilot.click("#personal-context-link-cancel")
+        await pilot.pause()
+
+    assert results == [None]

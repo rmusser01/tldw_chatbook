@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     AliasChoices,
@@ -639,6 +639,136 @@ class SyncPersonalContextBootstrapResponse(BaseModel):
         if any(proposal.profile_id != profile_id for proposal in self.proposals):
             raise ValueError("bootstrap proposal profile identity mismatch")
         return self
+
+
+_AttentionInteger = Annotated[int, Field(strict=True, ge=0, le=2**63 - 1)]
+
+
+class SyncPersonalContextSchemaAttention(BaseModel):
+    """Content-free server schema incompatibility details."""
+
+    kind: Literal["schema_incompatible"]
+    required_schema_version: Annotated[int, Field(strict=True, ge=1)]
+    server_min_schema_version: Annotated[int, Field(strict=True, ge=1)]
+    server_max_schema_version: Annotated[int, Field(strict=True, ge=1)]
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    @model_validator(mode="after")
+    def _validate_incompatible_range(self) -> "SyncPersonalContextSchemaAttention":
+        if self.server_min_schema_version > self.server_max_schema_version:
+            raise ValueError("server schema range is invalid")
+        if (
+            self.server_min_schema_version
+            <= self.required_schema_version
+            <= self.server_max_schema_version
+        ):
+            raise ValueError("required schema version is compatible")
+        return self
+
+
+class SyncPersonalContextQuotaAttention(BaseModel):
+    """Content-free server quota incompatibility details."""
+
+    kind: Literal["quota_incompatible"]
+    required_quotas: dict[StrictStr, _AttentionInteger] = Field(
+        ..., min_length=1, max_length=32
+    )
+    available_quotas: dict[StrictStr, _AttentionInteger] = Field(
+        ..., min_length=1, max_length=32
+    )
+    insufficient_quotas: list[StrictStr] = Field(
+        ..., min_length=1, max_length=32
+    )
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    @staticmethod
+    def _valid_quota_name(name: str) -> bool:
+        return (
+            1 <= len(name) <= 64
+            and name[0].isalpha()
+            and name[0].isascii()
+            and all(
+                character.isascii()
+                and (character.islower() or character.isdigit() or character == "_")
+                for character in name
+            )
+        )
+
+    @model_validator(mode="after")
+    def _validate_exact_shortfall(self) -> "SyncPersonalContextQuotaAttention":
+        all_names = set(self.required_quotas) | set(self.available_quotas)
+        if not all(self._valid_quota_name(name) for name in all_names):
+            raise ValueError("quota name is invalid")
+        if not set(self.required_quotas).issubset(self.available_quotas):
+            raise ValueError("available quotas do not cover required quotas")
+        expected = {
+            name
+            for name, required in self.required_quotas.items()
+            if required > self.available_quotas[name]
+        }
+        actual = set(self.insufficient_quotas)
+        if len(actual) != len(self.insufficient_quotas) or actual != expected:
+            raise ValueError("insufficient quotas do not match the quota values")
+        return self
+
+
+class SyncPersonalContextPurgeAttention(BaseModel):
+    """Content-free server purge-generation mismatch details."""
+
+    kind: Literal["purge_generation_mismatch"]
+    expected_purge_generation: _AttentionInteger
+    current_purge_generation: _AttentionInteger
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    @model_validator(mode="after")
+    def _validate_mismatch(self) -> "SyncPersonalContextPurgeAttention":
+        if self.expected_purge_generation == self.current_purge_generation:
+            raise ValueError("purge generations match")
+        return self
+
+
+SyncPersonalContextBootstrapAttention = Annotated[
+    SyncPersonalContextSchemaAttention
+    | SyncPersonalContextQuotaAttention
+    | SyncPersonalContextPurgeAttention,
+    Field(discriminator="kind"),
+]
+
+
+class SyncPersonalContextBootstrapErrorDetail(BaseModel):
+    """Strict, content-free detail for a Personal Context bootstrap rejection."""
+
+    error_code: StrictStr = Field(..., min_length=1, max_length=128)
+    message: StrictStr = Field(..., min_length=1, max_length=512)
+    attention: SyncPersonalContextBootstrapAttention | None = None
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    @model_validator(mode="after")
+    def _validate_attention_error_code(
+        self,
+    ) -> "SyncPersonalContextBootstrapErrorDetail":
+        if self.attention is None:
+            return self
+        expected_codes = {
+            "schema_incompatible": "personal_context_schema_incompatible",
+            "quota_incompatible": "personal_context_quota_incompatible",
+            "purge_generation_mismatch": "personal_context_purge_generation_stale",
+        }
+        if self.error_code != expected_codes[self.attention.kind]:
+            raise ValueError("attention kind does not match error code")
+        return self
+
+
+class SyncPersonalContextBootstrapErrorResponse(BaseModel):
+    """Strict wrapper for a server bootstrap error response."""
+
+    detail: SyncPersonalContextBootstrapErrorDetail
+
+    model_config = ConfigDict(extra="forbid", strict=True)
 
 
 class SyncPersonalContextLinkCompleteRequest(BaseModel):
