@@ -252,3 +252,25 @@ lifecycle — retained instances are not inert.
   with explicit OUTGOING / INCOMING / RETAINED roles confirmed the original
   1,107 (71.6%). *When two measurements disagree, the bug is usually in the
   newer one's bucketing, not in the phenomenon.*
+
+---
+
+## 4. Postscript: the ratchets moved again during this review
+
+The baseline in §0 was taken at pin `0ef6f3fd4e`. Re-running the same two
+guards after rebasing onto dev **21 commits later, the same day**:
+
+| guard | at pin | +21 commits | limit |
+|---|---:|---:|---:|
+| boot CSS bytes | 878,333 | **879,439** | 860,000 (already breached) |
+| `_ui_ready` census | 969 (headroom 3) | **970 (headroom 2)** | 972 |
+
+The CSS breach deepened by 1,106 B and the `_ui_ready` census consumed a
+third of its remaining headroom, in a single day's ordinary merge traffic
+and without either guard being touched.
+
+This is precisely the consumption pattern ADR-097 was written to stop, and
+it is still running. It also sharpens TASK-25812: the CSS ratchet cannot be
+brought back under its limit by a one-off trim if routine traffic adds
+~1 KB/day to the same path — the fix has to move something structurally off
+the pre-first-paint leg, not shave it.
