@@ -13,7 +13,7 @@ from urllib.parse import quote
 #
 # 3rd-party Libraries
 import httpx
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 #
 # Local Imports
@@ -413,6 +413,10 @@ from .text2sql_schemas import Text2SQLRequest, Text2SQLResponse
 from .sync_schemas import (
     ClientChangesPayload,
     ServerChangesResponse,
+    SyncPersonalContextBootstrapRequest,
+    SyncPersonalContextBootstrapErrorResponse,
+    SyncPersonalContextBootstrapResponse,
+    SyncPersonalContextLinkCompleteRequest,
     SyncV2AttachmentUploadRequest,
     SyncV2AttachmentUploadResponse,
     SyncV2CapabilitiesResponse,
@@ -1033,6 +1037,7 @@ from .exceptions import (
     APIRequestError,
     APIResponseError,
     AuthenticationError,
+    PersonalContextBootstrapAttentionError,
 )
 from .utils import model_to_form_data, prepare_files_for_httpx, cleanup_file_objects
 #
@@ -15884,8 +15889,15 @@ class TLDWAPIClient:
         )
         return ServerChangesResponse.model_validate(response)
 
-    async def get_sync_v2_capabilities(self) -> SyncV2CapabilitiesResponse:
+    async def get_sync_v2_capabilities(
+        self,
+        *,
+        dataset_id: str | None = None,
+    ) -> SyncV2CapabilitiesResponse:
         """Fetch server-advertised Sync v2 protocol capabilities.
+
+        Args:
+            dataset_id: Optional authorized dataset used to calculate current writability.
 
         Returns:
             Parsed capability record with protocol versions, supported domains, and limits.
@@ -15894,7 +15906,14 @@ class TLDWAPIClient:
             Exception: Propagates request failures and response validation errors.
         """
 
-        response = await self._request("GET", "/api/v1/sync/capabilities")
+        if dataset_id is None:
+            response = await self._request("GET", "/api/v1/sync/capabilities")
+        else:
+            response = await self._request(
+                "GET",
+                "/api/v1/sync/capabilities",
+                params={"dataset_id": dataset_id},
+            )
         return SyncV2CapabilitiesResponse.model_validate(response)
 
     async def get_sync_v2_profile(
@@ -15947,6 +15966,46 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(mode="json"),
         )
         return SyncV2ProfileBootstrapResponse.model_validate(response)
+
+    async def bootstrap_sync_v2_personal_context(
+        self,
+        request_data: SyncPersonalContextBootstrapRequest,
+    ) -> SyncPersonalContextBootstrapResponse:
+        """Fetch one authenticated, cursor-bounded canonical profile snapshot."""
+
+        try:
+            response = await self._request(
+                "POST",
+                "/api/v1/sync/personal-context/bootstrap",
+                json_data=request_data.model_dump(mode="json"),
+            )
+        except APIResponseError as exc:
+            if exc.status_code != 409:
+                raise
+            try:
+                error_response = SyncPersonalContextBootstrapErrorResponse.model_validate(
+                    exc.response_data
+                )
+            except ValidationError:
+                raise exc from None
+            if error_response.detail.attention is None:
+                raise
+            raise PersonalContextBootstrapAttentionError(
+                error_response.detail.attention
+            ) from None
+        return SyncPersonalContextBootstrapResponse.model_validate(response)
+
+    async def complete_sync_v2_personal_context_link(
+        self,
+        request_data: SyncPersonalContextLinkCompleteRequest,
+    ) -> None:
+        """Confirm that this device completed the exact reviewed bootstrap."""
+
+        await self._request(
+            "POST",
+            "/api/v1/sync/personal-context/complete",
+            json_data=request_data.model_dump(mode="json"),
+        )
 
     async def register_sync_v2_device(
         self,

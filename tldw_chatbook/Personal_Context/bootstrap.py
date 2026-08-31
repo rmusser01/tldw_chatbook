@@ -26,6 +26,8 @@ def bootstrap_personal_context_service(
     *,
     db_path: str | os.PathLike[str] | None = None,
     key_protector: ProfileKeyProtector | None = None,
+    recovery_integrity_key: bytes | None = None,
+    expected_recovery_profile_id: str | None = None,
 ) -> PersonalContextService:
     """Return an available service or a locked fail-closed facade."""
 
@@ -34,6 +36,8 @@ def bootstrap_personal_context_service(
         repository = PersonalContextRepository(
             destination,
             key_protector=key_protector,
+            recovery_integrity_key=recovery_integrity_key,
+            expected_recovery_profile_id=expected_recovery_profile_id,
         )
     except ProfileLockedError as exc:
         return PersonalContextService.locked(

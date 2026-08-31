@@ -48,6 +48,14 @@ device expiry/rebootstrap, first-link ownership, and global purge convergence.
 - Purge generations are monotonic and content-free. A device below the current
   generation cannot upload profile objects and must purge/rebootstrap first.
 
+Implementation contract pin (2026-08-31): tldw_server commit
+`6455ab08cb12ec239c53b7b9180b1cc1ea5f8375` returns strict content-free HTTP 409
+attention for schema incompatibility, quota shortfall, or purge-generation
+mismatch and requires a separate opaque `sync_transport_cursor` in every
+successful Personal Context bootstrap. Chatbook must validate the complete
+discriminated shape, keep the semantic bootstrap receipt distinct from the
+transport watermark, and fail closed on malformed or missing fields.
+
 ---
 
 ### Task 1: Negotiate Personal Context Sync capabilities on both peers

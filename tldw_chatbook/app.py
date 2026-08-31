@@ -9291,6 +9291,9 @@ class TldwCli(
             state_repository=self.sync_state_repository,
             local_store=getattr(self, "sync_v2_local_store", None),
             dataset_keys=self.sync_v2_dataset_keys,
+            personal_context_runtime_loader=(
+                self._load_personal_context_sync_runtime
+            ),
         )
         self.manual_sync_control_service = ManualSyncControlService(
             state_repository=self.sync_state_repository,
@@ -10551,6 +10554,219 @@ class TldwCli(
         except QueryError:
             return
         panel.load_records(retry_locked=True)
+
+    def launch_personal_context_link(self) -> None:
+        """Open the reviewed home-server link flow from canonical Settings."""
+
+        self.run_worker(
+            self._run_personal_context_link(),
+            group="personal-context-first-link",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    def _load_personal_context_sync_runtime(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+    ) -> None:
+        """Restore exact protected Personal Context Sync collaborators after restart."""
+
+        from .Personal_Context.link_key_custody import (
+            KeyringPersonalContextLinkKeyCustodian,
+        )
+        from .Personal_Context.link_service import (
+            PersonalContextLinkService,
+            authenticate_legacy_completed_link_artifacts,
+            cleanup_completed_link_artifacts,
+        )
+
+        link = self.sync_state_repository.get_personal_context_link_state(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+        )
+        if link is None or link["state"] != "complete":
+            raise ValueError("personal_context_link_incomplete")
+        custodian = KeyringPersonalContextLinkKeyCustodian()
+        storage_key = custodian.load_storage_key(
+            **PersonalContextLinkService._key_binding(link)
+        )
+        service = self.get_personal_context_service(retry_locked=True)
+        authenticate_legacy_completed_link_artifacts(service, custodian, link)
+        cleanup_completed_link_artifacts(service, link)
+        custodian.delete(**PersonalContextLinkService._key_binding(link))
+        dispatcher = service.build_personal_context_outbox_dispatcher(
+            state_repository=self.sync_state_repository,
+            integrity_key_id=str(link["integrity_key_id"]),
+        )
+        self.sync_v2_dataset_keys[str(link["dataset_id"])] = storage_key
+        self.local_first_sync_service.personal_context_outbox_dispatcher = dispatcher
+        self.local_first_sync_service.personal_context_service = service
+
+    async def _run_personal_context_link(self) -> None:
+        """Plan, review, and apply one content-safe first-link attempt."""
+
+        import platform
+
+        from .Personal_Context.link_key_custody import (
+            KeyringPersonalContextLinkKeyCustodian,
+            KeyringPersonalContextWrappingKeyProvider,
+        )
+        from .Personal_Context.link_service import (
+            PersonalContextLinkAttentionRequired,
+            PersonalContextLinkService,
+        )
+        from .Personal_Context.key_protector import ProfileLockedError
+        from .Personal_Context.paths import get_personal_context_db_path
+        from .Personal_Context.repository import (
+            release_first_link_freeze_for_recovery,
+        )
+        from .Widgets.Settings_Widgets.personal_context_link_modal import (
+            PersonalContextLinkModal,
+        )
+
+        scope = self._server_notification_event_scope()
+        server_profile_id = scope.get("server_profile_id")
+        if not server_profile_id:
+            self.notify(
+                "Choose and authenticate a home server before linking your profile.",
+                severity="warning",
+            )
+            return
+        try:
+            wrapping_provider = KeyringPersonalContextWrappingKeyProvider()
+            key_custodian = KeyringPersonalContextLinkKeyCustodian()
+            existing = self.sync_state_repository.get_personal_context_link_state(
+                server_profile_id=str(server_profile_id),
+                authenticated_principal_id=scope.get("authenticated_principal_id"),
+            )
+            recovered_apply = False
+            if existing is not None and existing["state"] == "applying":
+                binding = PersonalContextLinkService._key_binding(existing)
+                try:
+                    staged_integrity_key = key_custodian.load(**binding)
+                    from .Personal_Context.bootstrap import (
+                        bootstrap_personal_context_service,
+                    )
+
+                    recovered_service = bootstrap_personal_context_service(
+                        recovery_integrity_key=staged_integrity_key,
+                        expected_recovery_profile_id=str(existing["profile_id"]),
+                    )
+                except (ProfileLockedError, ValueError):
+                    recovered_service = None
+                if (
+                    recovered_service is not None
+                    and recovered_service.status().state.value == "ready"
+                ):
+                    self._personal_context_service = recovered_service
+                    recovered_apply = True
+            coordinator = PersonalContextLinkService(
+                personal_context_service=self.get_personal_context_service(
+                    retry_locked=True
+                ),
+                server_sync_service=self.server_sync_service,
+                state_repository=self.sync_state_repository,
+                wrapping_key_provider=wrapping_provider,
+                key_custodian=key_custodian,
+                freeze_release_fallback=lambda plan_id: (
+                    release_first_link_freeze_for_recovery(
+                        get_personal_context_db_path(), plan_id=plan_id
+                    )
+                ),
+                local_first_sync_service=self.local_first_sync_service,
+                server_profile_id=str(server_profile_id),
+                authenticated_principal_id=scope.get("authenticated_principal_id"),
+                display_name=platform.node() or "Chatbook",
+            )
+            if existing is not None and existing["state"] == "complete":
+                await coordinator.resume()
+                self._load_personal_context_sync_runtime(
+                    server_profile_id=str(server_profile_id),
+                    authenticated_principal_id=scope.get(
+                        "authenticated_principal_id"
+                    ),
+                )
+                self.notify("Profile is already linked. Sync is ready.")
+                self._reload_personal_context_settings_panel()
+                return
+            if recovered_apply:
+                await coordinator.resume_after_local_activation(
+                    rebaseline_version=(
+                        self.get_personal_context_service()
+                        .first_link_rebaseline_version()
+                    )
+                )
+                self.notify("Profile link completed.")
+                self._reload_personal_context_settings_panel()
+                return
+            if existing is not None and existing["state"] == "applying":
+                active_reader = getattr(
+                    coordinator,
+                    "authenticated_committed_rebaseline_version",
+                    None,
+                )
+                active_version = active_reader() if callable(active_reader) else None
+                if active_version is not None:
+                    await coordinator.resume_after_local_activation(
+                        rebaseline_version=active_version
+                    )
+                    self.notify("Profile link completed.")
+                    self._reload_personal_context_settings_panel()
+                    return
+                if not coordinator.abandon_uncommitted_apply():
+                    mark_attention = getattr(
+                        coordinator, "mark_ambiguous_apply_attention", None
+                    )
+                    if callable(mark_attention):
+                        mark_attention()
+                    raise ProfileLockedError(
+                        "Interrupted Personal Context link recovery is pending."
+                    )
+            if existing is not None and existing["state"] in {
+                "local_rebaseline_complete",
+                "reconciling",
+            }:
+                await coordinator.resume()
+                self.notify("Profile link completed.")
+                self._reload_personal_context_settings_panel()
+                return
+            while True:
+                manifest = self.get_personal_context_service().get_manifest()
+                try:
+                    plan = await coordinator.plan(
+                        expected_purge_generation=manifest.purge_generation
+                    )
+                except PersonalContextLinkAttentionRequired as exc:
+                    attention_result = await self.push_screen_wait(
+                        PersonalContextLinkModal.for_bootstrap_attention(
+                            exc.attention,
+                            retry_callback=True,
+                        )
+                    )
+                    if attention_result is not None and attention_result.retry:
+                        continue
+                    return
+                result = await self.push_screen_wait(
+                    PersonalContextLinkModal(plan, retry_callback=True)
+                )
+                if result is None:
+                    coordinator.cancel(plan.plan_id)
+                    return
+                if result.retry:
+                    coordinator.cancel(plan.plan_id)
+                    continue
+                await coordinator.apply(result.plan_id, result.decisions)
+                break
+        except Exception:
+            self.notify(
+                "Profile linking needs attention. No profile content was shown; retry from Settings.",
+                severity="error",
+            )
+            return
+        self.notify("Profile linked to the home server.")
+        self._reload_personal_context_settings_panel()
 
     def get_personal_context_service(self, *, retry_locked: bool = False):
         """Return the app-owned service, explicitly retrying a locked facade."""

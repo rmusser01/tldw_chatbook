@@ -215,7 +215,9 @@ def test_failed_cas_rolls_back_object_and_outbox_insert(
             == 0
         )
         assert (
-            connection.execute("SELECT COUNT(*) FROM encrypted_outbox").fetchone()[0]
+            connection.execute(
+                "SELECT COUNT(*) FROM encrypted_outbox WHERE object_type = 'record'"
+            ).fetchone()[0]
             == 0
         )
 
@@ -255,7 +257,9 @@ def test_record_parent_must_match_expected_head_without_partial_writes(
             == 0
         )
         assert (
-            connection.execute("SELECT COUNT(*) FROM encrypted_outbox").fetchone()[0]
+            connection.execute(
+                "SELECT COUNT(*) FROM encrypted_outbox WHERE object_type = 'record'"
+            ).fetchone()[0]
             == 0
         )
         head = connection.execute(
@@ -441,7 +445,9 @@ def test_device_only_record_does_not_create_outbox(
     )
     with repo._connect() as connection:
         assert (
-            connection.execute("SELECT COUNT(*) FROM encrypted_outbox").fetchone()[0]
+            connection.execute(
+                "SELECT COUNT(*) FROM encrypted_outbox WHERE object_type = 'record'"
+            ).fetchone()[0]
             == 0
         )
 
@@ -610,7 +616,7 @@ def test_destruction_fence_rejects_every_stale_repository_mutation(
             )
 
 
-@pytest.mark.parametrize("version", [0, 3])
+@pytest.mark.parametrize("version", [0, repository_module.SCHEMA_VERSION + 1])
 def test_repository_fails_closed_on_foreign_or_newer_schema(
     tmp_path, memory_protector, version
 ) -> None:
@@ -657,7 +663,7 @@ def test_v1_repository_migrates_atomically_and_preserves_encrypted_objects(
     with sqlite3.connect(db_path) as connection:
         assert connection.execute(
             "SELECT version FROM personal_context_schema WHERE singleton = 1"
-        ).fetchone() == (2,)
+        ).fetchone() == (repository_module.SCHEMA_VERSION,)
         assert connection.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'local_undo'"
         ).fetchone() == ("local_undo",)
@@ -665,6 +671,34 @@ def test_v1_repository_migrates_atomically_and_preserves_encrypted_objects(
             "SELECT name FROM sqlite_master "
             "WHERE type = 'table' AND name = 'local_record_links'"
         ).fetchone() == ("local_record_links",)
+
+
+def test_v5_repository_adds_explicit_unlinked_workspace_state(
+    tmp_path, memory_protector
+) -> None:
+    db_path = tmp_path / "personal-context.db"
+    original = PersonalContextRepository(db_path, key_protector=memory_protector)
+    manifest = original.create_provisional_profile()
+    original.close()
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("DROP TABLE local_unlinked_scopes")
+        connection.execute(
+            "UPDATE personal_context_schema SET version = 5 WHERE singleton = 1"
+        )
+
+    migrated = PersonalContextRepository(db_path, key_protector=memory_protector)
+
+    assert migrated.get_manifest() == manifest
+    assert migrated.is_scope_explicitly_unlinked("scope-unknown") is False
+    with sqlite3.connect(db_path) as connection:
+        assert connection.execute(
+            "SELECT version FROM personal_context_schema WHERE singleton = 1"
+        ).fetchone() == (repository_module.SCHEMA_VERSION,)
+        assert connection.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'local_unlinked_scopes'"
+        ).fetchone() == ("local_unlinked_scopes",)
 
 
 def test_existing_repository_with_missing_protector_never_creates_replacement(
@@ -780,6 +814,8 @@ def test_interview_batch_stale_head_rolls_back_every_record_manifest_and_outbox(
     assert repo.get_manifest() == manifest
     with repo._connect() as connection:
         assert (
-            connection.execute("SELECT COUNT(*) FROM encrypted_outbox").fetchone()[0]
+            connection.execute(
+                "SELECT COUNT(*) FROM encrypted_outbox WHERE object_type = 'record'"
+            ).fetchone()[0]
             == 0
         )

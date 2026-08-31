@@ -564,6 +564,10 @@ def test_sync_v2_schema_migration_updates_v3_without_losing_existing_rows(tmp_pa
             "SELECT name FROM sqlite_master WHERE type = 'table' "
             "AND name = 'sync_v2_source_projection_receipts'"
         ).fetchone()
+        remote_heads = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'sync_v2_remote_heads'"
+        ).fetchone()
         preserved_outbox = conn.execute(
             "SELECT client_envelope_id FROM sync_v2_local_outbox"
         ).fetchone()[0]
@@ -597,12 +601,13 @@ def test_sync_v2_schema_migration_updates_v3_without_losing_existing_rows(tmp_pa
     assert outbox is not None
     assert conflict_reviews is not None
     assert receipts is not None
+    assert remote_heads is not None
     assert preserved_outbox == "device-1:chat:message-1:sha256:old"
     assert preserved_profile == "preserved-profile"
     assert preserved_cursor == "preserved-cursor"
     assert preserved_conflict == "preserved-conflict"
-    assert schema_version == 4
-    assert schema_versions == [4]
+    assert schema_version == 9
+    assert schema_versions == [9]
 
 
 def test_sync_state_repository_exposes_explicit_durability(tmp_path):
