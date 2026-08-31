@@ -241,6 +241,7 @@ class ConsoleWorkspaceContextState:
     #: workspace) -- never for the "Local Default"/error/no-registry
     #: sentinel states below, which have no real ``workspace_id`` to scope.
     rag_scope_enabled: bool = False
+    workspace_files_available: bool = False
     server_readiness_label: str = "Server: local fallback"
     server_readiness_detail: str = (
         "Local registry is authoritative. No background sync is running."
@@ -448,6 +449,11 @@ def build_console_workspace_state(
         scope_detail=scope_detail,
         new_workspace_enabled=True,
         rag_scope_enabled=True,
+        workspace_files_available=any(
+            str(getattr(binding, "binding_kind", "")) == "local-filesystem"
+            and str(getattr(binding, "status", "")) == "ready"
+            for binding in runtime_bindings
+        ),
         authority_label=f"Authority: {active_workspace.authority.value}",
         sync_label=_workspace_sync_label(active_workspace),
         runtime_label=(

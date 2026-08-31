@@ -576,9 +576,10 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     class WorkspaceFilesRequested(Message):
         """Typed request to inspect one stable workspace without activation."""
 
-        def __init__(self, workspace_id: str) -> None:
+        def __init__(self, workspace_id: str, *, expected_available: bool = False) -> None:
             super().__init__()
             self.workspace_id = str(workspace_id or "").strip()
+            self.expected_available = bool(expected_available)
 
     class Relabeled(Message):
         """Posted after a width-driven relabel recompose.
@@ -1473,7 +1474,14 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 compact=True,
             )
             files_button.workspace_id = self.state.workspace_id
-            files_button.tooltip = "No local folders are attached. Add one in Settings."
+            files_button.workspace_files_expected_available = bool(
+                self.state.workspace_files_available
+            )
+            files_button.tooltip = (
+                "Show files for this workspace"
+                if self.state.workspace_files_available
+                else "No local folders are attached. Add one in Settings."
+            )
             yield self._record_composed_node(files_button)
 
         if self.state.recovery_copy:
@@ -1850,7 +1858,14 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         workspace_id = str(
             getattr(event.button, "workspace_id", "") or DEFAULT_WORKSPACE_ID
         ).strip()
-        self.post_message(self.WorkspaceFilesRequested(workspace_id))
+        self.post_message(
+            self.WorkspaceFilesRequested(
+                workspace_id,
+                expected_available=bool(
+                    getattr(event.button, "workspace_files_expected_available", False)
+                ),
+            )
+        )
 
     def _compose_conversation_browser_row(
         self,

@@ -812,7 +812,9 @@ class ConsoleWorkspaceController:
         self.push_screen(modal)
         return modal
 
-    async def request_workspace_files(self, workspace_id: str) -> None:
+    async def request_workspace_files(
+        self, workspace_id: str, *, expected_available: bool = False
+    ) -> None:
         """Admit one non-activating Workspace Files visit for ``workspace_id``.
 
         Registry and binding inspection happens off the event loop.  The only
@@ -843,7 +845,9 @@ class ConsoleWorkspaceController:
             resolution = await asyncio.to_thread(
                 self._resolve_workspace_files_visit, requested_id
             )
-            if resolution is None or not resolution.had_bindings:
+            if resolution is None or (
+                not resolution.had_bindings and not expected_available
+            ):
                 self.app_instance.notify(
                     WORKSPACE_FILES_NO_FOLDERS_COPY, severity="warning"
                 )

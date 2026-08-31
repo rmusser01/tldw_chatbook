@@ -10851,8 +10851,14 @@ class ChatScreen(BaseAppScreen):
         """Route a typed non-activating Workspace Files request once."""
         event.stop()
         self.run_worker(
-            self._workspace.request_workspace_files(event.workspace_id),
-            exclusive=True,
+            self._workspace.request_workspace_files(
+                event.workspace_id,
+                expected_available=event.expected_available,
+            ),
+            # Admission owns same/different-workspace serialization. An
+            # exclusive worker would cancel A merely because B was clicked,
+            # bypassing that policy and letting B retarget the visit.
+            exclusive=False,
             group="console-workspace-files-open",
         )
 
