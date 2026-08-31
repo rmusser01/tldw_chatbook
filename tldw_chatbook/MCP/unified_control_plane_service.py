@@ -4,15 +4,14 @@ import asyncio
 import inspect
 import json
 import math
-import re
 import secrets
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from loguru import logger
 
@@ -21,8 +20,12 @@ from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 from .execution_log import MCPExecutionLog, build_record
 from .hub_test_execution import (
+    LocalHubDecision,
     LocalHubExecutionCoordinator,
     LocalHubExecutionOutcome,
+    LocalHubFinalGate,
+    LocalHubProviderTerminal,
+    LocalHubStatus,
     OneShotLocalHubApproval,
     RegisteredToolTestPreview,
     ToolTestAdmissionBlocked,
@@ -59,7 +62,7 @@ from .permission_store import (
     resolve_effective_state,
     resolve_effective_state_by_key,
 )
-from .redaction import redact_mapping
+from .redaction import is_secret_key, redact_mapping
 from .readiness import BUILTIN_SERVER_KEY
 from .server_target_store import ConfiguredServerTargetStore
 from .unified_context_store import UnifiedMCPContextStore
@@ -2667,6 +2670,18 @@ class UnifiedMCPControlPlaneService:
 
         public = registered.public
         if intent not in {"run", "approve_once"}:
+            if public.server_key == "local:__local__":
+                refreshed = await asyncio.to_thread(
+                    self._refresh_hub_test_preview, public
+                )
+                result = ToolTestAdmissionBlocked(
+                    reason="intent_invalid", refreshed_preview=refreshed
+                )
+                await self._attempt_local_hub_audit(
+                    lambda: self._record_prepared_hub_block(public, result.reason),
+                    "Local Hub intent review",
+                )
+                return result
             return self._hub_test_blocked(
                 public,
                 reason="intent_invalid",
@@ -2778,6 +2793,22 @@ class UnifiedMCPControlPlaneService:
             registered_argument_names=schema_argument_names(resolved.tool.input_schema),
         )
 
+    @staticmethod
+    async def _attempt_local_hub_audit(
+        callback: Callable[[], None], label: str
+    ) -> None:
+        """Await one off-loop local audit attempt without ever retrying it."""
+        audit_task = asyncio.create_task(asyncio.to_thread(callback))
+        try:
+            await asyncio.shield(audit_task)
+        except asyncio.CancelledError:
+            try:
+                await asyncio.shield(audit_task)
+            except BaseException:
+                logger.warning("{} audit failed", label)
+        except BaseException:
+            logger.warning("{} audit failed", label)
+
     def _review_prepared_local_hub_test(
         self,
         *,
@@ -2875,14 +2906,13 @@ class UnifiedMCPControlPlaneService:
         fresh_gate: str,
         canonical_arguments: bytes,
         arguments: dict[str, Any],
-        decision: str,
         started_at: float,
         cancellation_requested: threading.Event,
         caller_task: asyncio.Task[Any] | None,
         handler_started: threading.Event,
         definitive_after_start: threading.Event,
-        timeout_ready: threading.Event,
-        effective_timeout: dict[str, float],
+        deadline_ready: threading.Event,
+        effective_deadline: dict[str, float],
         approval_state: dict[str, OneShotLocalHubApproval | None],
     ) -> LocalHubExecutionOutcome:
         """Construct, invoke, sanitize, and close one local provider in-worker."""
@@ -2899,20 +2929,24 @@ class UnifiedMCPControlPlaneService:
         def _synthetic(
             status: str, category: str, message: str
         ) -> LocalHubExecutionOutcome:
+            approval_consumed = (
+                approval_callback.consumed if approval_callback is not None else False
+            )
             return LocalHubExecutionOutcome(
-                decision=decision,
-                status=status,
+                decision=(
+                    "approved"
+                    if approval_consumed
+                    else "allowed"
+                    if handler_started.is_set()
+                    else "denied"
+                ),
+                status=cast(LocalHubStatus, status),
                 error_category=category,
-                final_gate=(
-                    "allow"
-                    if approval_callback is not None and approval_callback.consumed
-                    else fresh_gate
+                final_gate=cast(
+                    LocalHubFinalGate,
+                    "allow" if approval_consumed else fresh_gate,
                 ),
-                approval_consumed=(
-                    approval_callback.consumed
-                    if approval_callback is not None
-                    else False
-                ),
+                approval_consumed=approval_consumed,
                 dispatch_started=handler_started.is_set(),
                 provider_terminal="not_started",
                 duration_ms=_duration_ms(),
@@ -3035,11 +3069,11 @@ class UnifiedMCPControlPlaneService:
                 and math.isfinite(float(timeout_floor))
                 and float(timeout_floor) > 0
             ):
-                effective_timeout["seconds"] = max(
-                    effective_timeout["seconds"], float(timeout_floor)
+                effective_deadline["value"] = max(
+                    effective_deadline["value"],
+                    started_at + float(timeout_floor),
                 )
-            effective_timeout["started_at"] = time.monotonic()
-            timeout_ready.set()
+            deadline_ready.set()
             if _cancelled():
                 return _synthetic(
                     "cancelled",
@@ -3053,7 +3087,6 @@ class UnifiedMCPControlPlaneService:
                 with approval_callback.invocation_scope():
                     detail = provider.invoke_detailed(tool.name, arguments)
             return self._local_hub_outcome_from_detail(
-                decision,
                 detail,
                 handle.authority.canonical_root,
                 _duration_ms(),
@@ -3082,7 +3115,6 @@ class UnifiedMCPControlPlaneService:
 
         public = registered.public
         key = (public.server_key, public.tool_name)
-        decision = "approved" if public.rendered_gate == "ask" else "allowed"
         started_at = time.monotonic()
         loop = asyncio.get_running_loop()
         presentation: asyncio.Future[Any] = loop.create_future()
@@ -3090,8 +3122,8 @@ class UnifiedMCPControlPlaneService:
         caller_task = asyncio.current_task()
         handler_started = threading.Event()
         definitive_after_start = threading.Event()
-        timeout_ready = threading.Event()
-        effective_timeout = {"seconds": 45.0, "started_at": started_at}
+        deadline_ready = threading.Event()
+        effective_deadline = {"value": started_at + 45.0}
         approval_state: dict[str, OneShotLocalHubApproval | None] = {"callback": None}
         gate_state = {"value": public.rendered_gate}
         audit_tool = {
@@ -3118,18 +3150,22 @@ class UnifiedMCPControlPlaneService:
             message: str,
         ) -> LocalHubExecutionOutcome:
             callback = approval_state["callback"]
+            approval_consumed = callback.consumed if callback is not None else False
             return LocalHubExecutionOutcome(
-                decision=decision,
-                status=status,
+                decision=(
+                    "approved"
+                    if approval_consumed
+                    else "allowed"
+                    if handler_started.is_set()
+                    else "denied"
+                ),
+                status=cast(LocalHubStatus, status),
                 error_category=category,
-                final_gate=(
-                    "allow"
-                    if callback is not None and callback.consumed
-                    else gate_state["value"]
+                final_gate=cast(
+                    LocalHubFinalGate,
+                    "allow" if approval_consumed else gate_state["value"],
                 ),
-                approval_consumed=(
-                    callback.consumed if callback is not None else False
-                ),
+                approval_consumed=approval_consumed,
                 dispatch_started=handler_started.is_set(),
                 provider_terminal="not_started",
                 duration_ms=_duration_ms(),
@@ -3146,29 +3182,31 @@ class UnifiedMCPControlPlaneService:
                 ),
             )
 
-        def _seal_local(outcome: LocalHubExecutionOutcome) -> None:
+        async def _seal_local(outcome: LocalHubExecutionOutcome) -> None:
             nonlocal sealed
             if sealed:
                 return
             sealed = True
-            try:
-                self._record_local_hub_outcome(audit_tool["value"], arguments, outcome)
-            except BaseException:
-                logger.warning("Local Hub terminal audit failed")
+            await self._attempt_local_hub_audit(
+                lambda: self._record_local_hub_outcome(
+                    audit_tool["value"], arguments, outcome
+                ),
+                "Local Hub terminal",
+            )
             if not presentation.done():
                 presentation.set_result(outcome)
 
-        def _seal_review(
+        async def _seal_review(
             result: ToolTestAdmissionBlocked | ToolTestAdmissionStale,
         ) -> None:
             nonlocal sealed
             if sealed:
                 return
             sealed = True
-            try:
-                self._record_prepared_hub_block(public, result.reason)
-            except BaseException:
-                logger.warning("Local Hub review audit failed")
+            await self._attempt_local_hub_audit(
+                lambda: self._record_prepared_hub_block(public, result.reason),
+                "Local Hub review",
+            )
             if not presentation.done():
                 presentation.set_result(result)
 
@@ -3180,7 +3218,8 @@ class UnifiedMCPControlPlaneService:
                     lifecycle_timeout = 45.0
                 if not math.isfinite(lifecycle_timeout) or lifecycle_timeout <= 0:
                     lifecycle_timeout = 45.0
-                effective_timeout["seconds"] = float(lifecycle_timeout)
+                effective_deadline["value"] = started_at + float(lifecycle_timeout)
+                deadline_ready.set()
                 if cancellation_requested.is_set():
                     return _synthetic(
                         "cancelled",
@@ -3213,14 +3252,13 @@ class UnifiedMCPControlPlaneService:
                     fresh_gate=fresh_gate,
                     canonical_arguments=canonical_arguments,
                     arguments=dispatch_copy,
-                    decision=decision,
                     started_at=started_at,
                     cancellation_requested=cancellation_requested,
                     caller_task=caller_task,
                     handler_started=handler_started,
                     definitive_after_start=definitive_after_start,
-                    timeout_ready=timeout_ready,
-                    effective_timeout=effective_timeout,
+                    deadline_ready=deadline_ready,
+                    effective_deadline=effective_deadline,
                     approval_state=approval_state,
                 )
             except BaseException:
@@ -3237,7 +3275,7 @@ class UnifiedMCPControlPlaneService:
                         definitive_after_start.is_set() and handler_started.is_set()
                     )
                     if cancellation_requested.is_set() and not definitive_running:
-                        _seal_local(
+                        await _seal_local(
                             _synthetic(
                                 "cancelled",
                                 "cancelled",
@@ -3246,13 +3284,12 @@ class UnifiedMCPControlPlaneService:
                         )
                         return
                     if (
-                        timeout_ready.is_set()
-                        and time.monotonic() - effective_timeout["started_at"]
-                        >= effective_timeout["seconds"]
+                        deadline_ready.is_set()
+                        and time.monotonic() >= effective_deadline["value"]
                         and not definitive_running
                     ):
                         cancellation_requested.set()
-                        _seal_local(
+                        await _seal_local(
                             _synthetic(
                                 "timeout", "timeout", "Local tool test timed out."
                             )
@@ -3263,7 +3300,7 @@ class UnifiedMCPControlPlaneService:
                 if cancellation_requested.is_set() and not (
                     definitive_after_start.is_set() and handler_started.is_set()
                 ):
-                    _seal_local(
+                    await _seal_local(
                         _synthetic(
                             "cancelled",
                             "cancelled",
@@ -3271,11 +3308,11 @@ class UnifiedMCPControlPlaneService:
                         )
                     )
                 elif isinstance(result, LocalHubExecutionOutcome):
-                    _seal_local(result)
+                    await _seal_local(result)
                 else:
-                    _seal_review(result)
+                    await _seal_review(result)
             except BaseException:
-                _seal_local(
+                await _seal_local(
                     _synthetic(
                         "error", "execution_failed", "Local tool execution failed."
                     )
@@ -3302,10 +3339,12 @@ class UnifiedMCPControlPlaneService:
                     "A test for this local tool is already active."
                 ),
             )
-            try:
-                self._record_local_hub_outcome(audit_tool["value"], arguments, outcome)
-            except BaseException:
-                logger.warning("Local Hub duplicate audit failed")
+            await self._attempt_local_hub_audit(
+                lambda: self._record_local_hub_outcome(
+                    audit_tool["value"], arguments, outcome
+                ),
+                "Local Hub duplicate",
+            )
             return outcome
         try:
             return await asyncio.shield(presentation)
@@ -3334,6 +3373,81 @@ class UnifiedMCPControlPlaneService:
                 return tuple(_sanitize_json(item) for item in value)
             return value
 
+        def _scrub_secret_fragments(value: str) -> str:
+            """Scrub secret-key assignments even in provider-truncated JSON."""
+
+            def _quoted_end(start: int) -> tuple[int, bool]:
+                quote = value[start]
+                index = start + 1
+                escaped = False
+                while index < len(value):
+                    character = value[index]
+                    if escaped:
+                        escaped = False
+                    elif character == "\\":
+                        escaped = True
+                    elif character == quote:
+                        return index + 1, True
+                    index += 1
+                return len(value), False
+
+            def _key_at(start: int) -> tuple[str, int] | None:
+                if value[start] in {'"', "'"}:
+                    end, closed = _quoted_end(start)
+                    if not closed:
+                        return None
+                    raw = value[start:end]
+                    try:
+                        key = json.loads(raw) if raw.startswith('"') else raw[1:-1]
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        key = raw[1:-1]
+                    return str(key), end
+                if not (value[start].isalnum() or value[start] in "_-"):
+                    return None
+                end = start + 1
+                while end < len(value) and (value[end].isalnum() or value[end] in "_-"):
+                    end += 1
+                return value[start:end], end
+
+            output: list[str] = []
+            retained_from = 0
+            index = 0
+            while index < len(value):
+                candidate = _key_at(index)
+                if candidate is None:
+                    index += 1
+                    continue
+                key, key_end = candidate
+                separator = key_end
+                while separator < len(value) and value[separator].isspace():
+                    separator += 1
+                if (
+                    not is_secret_key(key)
+                    or separator >= len(value)
+                    or value[separator] not in ":="
+                ):
+                    index = key_end
+                    continue
+                secret_start = separator + 1
+                while secret_start < len(value) and value[secret_start].isspace():
+                    secret_start += 1
+                output.append(value[retained_from:secret_start])
+                if secret_start < len(value) and value[secret_start] in {'"', "'"}:
+                    secret_end, closed = _quoted_end(secret_start)
+                    quote = value[secret_start]
+                    output.append(f"{quote}***{quote if closed else ''}")
+                else:
+                    secret_end = secret_start
+                    while secret_end < len(value) and value[secret_end] not in (
+                        ",;\r\n}]"
+                    ):
+                        secret_end += 1
+                    output.append("***")
+                retained_from = secret_end
+                index = secret_end
+            output.append(value[retained_from:])
+            return "".join(output)
+
         def _safe_text(value: str, limit: int) -> str:
             rooted = str(redact_root_locator(str(value), root))
             try:
@@ -3342,11 +3456,7 @@ class UnifiedMCPControlPlaneService:
                 decoded = None
             if isinstance(decoded, (Mapping, list, tuple)):
                 rooted = json.dumps(_sanitize_json(decoded), sort_keys=True)
-            rooted = re.sub(
-                r"(?i)((?:token|secret|passw(?:or)?d|api[-_]?key|authorization|credential)\s*[:=]\s*)[^\s,;]+",
-                r"\1***",
-                rooted,
-            )
+            rooted = _scrub_secret_fragments(rooted)
             encoded = rooted.encode("utf-8")
             if len(encoded) <= limit:
                 return rooted
@@ -3365,7 +3475,6 @@ class UnifiedMCPControlPlaneService:
 
     def _local_hub_outcome_from_detail(
         self,
-        decision: str,
         detail: Any,
         root: Path,
         duration_ms: int,
@@ -3425,14 +3534,23 @@ class UnifiedMCPControlPlaneService:
             }
             else "unresolved"
         )
+        approval_consumed = bool(detail.approval_consumed)
+        dispatch_started = bool(detail.dispatch_started)
+        decision: LocalHubDecision = (
+            "approved"
+            if approval_consumed
+            else "allowed"
+            if dispatch_started
+            else "denied"
+        )
         return LocalHubExecutionOutcome(
             decision=decision,
-            status=status,
+            status=cast(LocalHubStatus, status),
             error_category=category,
-            final_gate=final_gate,
-            approval_consumed=bool(detail.approval_consumed),
-            dispatch_started=bool(detail.dispatch_started),
-            provider_terminal=terminal,
+            final_gate=cast(LocalHubFinalGate, final_gate),
+            approval_consumed=approval_consumed,
+            dispatch_started=dispatch_started,
+            provider_terminal=cast(LocalHubProviderTerminal, terminal),
             duration_ms=max(0, int(duration_ms)),
             result=safe_result,
         )

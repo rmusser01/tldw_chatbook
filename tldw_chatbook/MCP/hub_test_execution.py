@@ -21,6 +21,22 @@ from tldw_chatbook.Agents.agent_models import ToolResult
 from tldw_chatbook.Utils.filesystem_identity import DirectoryChain
 
 
+LocalHubDecision = Literal["allowed", "approved", "denied"]
+LocalHubStatus = Literal["success", "blocked", "error", "timeout", "cancelled"]
+LocalHubFinalGate = Literal[
+    "allow",
+    "ask",
+    "deny",
+    "gate_error",
+    "kill_switch",
+    "no_callback",
+    "not_checked",
+    "timeout",
+    "unresolved",
+]
+LocalHubProviderTerminal = Literal["not_started", "returned", "raised"]
+
+
 _LOCAL_HUB_APPROVAL_BINDING: ContextVar[tuple[str, ...] | None] = ContextVar(
     "local_hub_approval_binding",
     default=None,
@@ -71,13 +87,13 @@ class ToolTestAdmissionStale:
 class LocalHubExecutionOutcome:
     """One bounded terminal shared by local-Hub presentation and audit."""
 
-    decision: str
-    status: str
+    decision: LocalHubDecision
+    status: LocalHubStatus
     error_category: str | None
-    final_gate: str
+    final_gate: LocalHubFinalGate
     approval_consumed: bool
     dispatch_started: bool
-    provider_terminal: str
+    provider_terminal: LocalHubProviderTerminal
     duration_ms: int
     result: ToolResult
 
