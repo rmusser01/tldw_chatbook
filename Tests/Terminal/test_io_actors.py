@@ -398,6 +398,20 @@ def test_output_credit_race_never_exceeds_capacity() -> None:
     assert actor.pending_chunks == 1
 
 
+def test_output_close_atomically_refuses_future_chunks_without_dropping_pending() -> (
+    None
+):
+    actor = TerminalOutputActor(capacity_bytes=64, max_chunk_bytes=64)
+    assert actor.offer_output(b"before eof").accepted is True
+
+    pending_at_close = actor.close_output()
+    late = actor.offer_output(b"after eof")
+
+    assert pending_at_close == len(b"before eof")
+    assert late.accepted is False
+    assert actor.pending_bytes == len(b"before eof")
+
+
 def test_parser_turn_splits_a_chunk_at_the_exact_byte_budget() -> None:
     actor = TerminalOutputActor(
         capacity_bytes=64,

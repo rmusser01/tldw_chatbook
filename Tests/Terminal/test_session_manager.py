@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError
@@ -21,7 +22,7 @@ from tldw_chatbook.Terminal.contracts import (
     TerminalLifecycle,
     TerminalReason,
 )
-from tldw_chatbook.Terminal.io_actors import InputEventKind
+from tldw_chatbook.Terminal.io_actors import InputEventKind, TerminalOutputActor
 from tldw_chatbook.Terminal.session_manager import (
     ManagedProcessIdentity,
     TerminalArmResult,
@@ -129,6 +130,14 @@ def create_running_session(
     assert result.admitted is True
     assert result.projection is not None
     return result.projection.session_id
+
+
+def test_create_session_docstring_documents_parameter_and_result() -> None:
+    docstring = inspect.getdoc(TerminalSessionManager.create_session)
+
+    assert docstring is not None
+    assert "Args:" in docstring
+    assert "Returns:" in docstring
 
 
 def test_terminal_arm_is_independent_and_resets_per_manager() -> None:
@@ -906,6 +915,86 @@ async def test_resize_is_coalesced_and_applied_outside_the_view_callback() -> No
 
 
 @pytest.mark.asyncio
+async def test_concurrent_resize_workers_never_enter_backend_out_of_order() -> None:
+    first_resize_started = Event()
+    second_resize_started = Event()
+    release_first_resize = Event()
+    call_lock = Lock()
+
+    class OrderedResizeBackend(RecordingBackend):
+        def resize(self, columns: int, rows: int) -> None:
+            with call_lock:
+                call_number = len(self.resizes) + 1
+                self.resizes.append((columns, rows))
+            if call_number == 1:
+                first_resize_started.set()
+                assert release_first_resize.wait(1)
+            else:
+                second_resize_started.set()
+
+    backend = OrderedResizeBackend()
+    terminal = TerminalSessionManager(lambda: True, lambda: backend)
+    terminal.arm(acknowledge_disclosure=True)
+    session_id = create_running_session(terminal, "ordered-resize")
+    view = terminal.attach_view()
+    assert terminal.resize_session(session_id, columns=90, rows=25, view=view)
+
+    first = asyncio.create_task(terminal.apply_pending_resize(session_id, view=view))
+    assert await asyncio.to_thread(first_resize_started.wait, 1)
+    assert terminal.resize_session(session_id, columns=100, rows=30, view=view)
+    second = asyncio.create_task(terminal.apply_pending_resize(session_id, view=view))
+
+    second_entered_while_first_blocked = await asyncio.to_thread(
+        second_resize_started.wait,
+        0.2,
+    )
+    release_first_resize.set()
+
+    assert second_entered_while_first_blocked is False
+    assert await first is True
+    assert await second is True
+    assert backend.resizes == [(90, 25), (100, 30)]
+
+
+@pytest.mark.asyncio
+async def test_model_resize_failure_starts_cleanup_instead_of_leaving_split_state() -> (
+    None
+):
+    class ResizeFailingScreen:
+        failure_reason = None
+
+        def feed(self, data: bytes) -> None:
+            del data
+
+        def take_pending_replies(self) -> tuple[bytes, ...]:
+            return ()
+
+        def resize(self, *, columns: int, rows: int) -> None:
+            del columns, rows
+            raise RuntimeError("model resize failed")
+
+    backend = RecordingBackend(cleanup_proof=CleanupProof())
+    terminal = TerminalSessionManager(
+        lambda: True,
+        lambda: backend,
+        screen_model_factory=lambda _columns, _rows: ResizeFailingScreen(),
+    )
+    terminal.arm(acknowledge_disclosure=True)
+    session_id = create_running_session(terminal, "failed-model-resize")
+    view = terminal.attach_view()
+    assert terminal.resize_session(session_id, columns=100, rows=30, view=view)
+
+    assert await terminal.apply_pending_resize(session_id, view=view) is False
+    assert terminal.wait_for_cleanup(session_id, timeout_seconds=1)
+
+    retained = terminal.projection(session_id)
+    assert backend.resizes == [(100, 30)]
+    assert len(backend.cleanup_attempts) == 1
+    assert retained is not None
+    assert retained.lifecycle is TerminalLifecycle.CLEANUP_UNPROVEN
+
+
+@pytest.mark.asyncio
 async def test_blocked_backend_resize_cannot_delay_disarm_cleanup() -> None:
     resize_started = Event()
     release_resize = Event()
@@ -1232,11 +1321,12 @@ def test_disarm_during_backend_start_never_resurrects_a_running_record() -> None
         )
         assert start_entered.wait(1)
         terminal.disarm()
-        assert cleanup_started.wait(1)
+        assert cleanup_started.wait(0.2) is False
         release_start.set()
         result = creating.result(timeout=1)
 
     assert result.admitted is False
+    assert cleanup_started.wait(1)
     assert all(
         projection.lifecycle is not TerminalLifecycle.RUNNING
         for projection in terminal.projections()
@@ -1279,15 +1369,52 @@ def test_start_failure_after_disarm_cannot_erase_cleanup_uncertainty() -> None:
         )
         assert start_entered.wait(1)
         terminal.disarm()
-        assert cleanup_finished.wait(1)
+        assert cleanup_finished.wait(0.2) is False
         release_start.set()
         result = creating.result(timeout=1)
 
     assert result == TerminalCreateResult(reason=TerminalReason.SPAWN_FAILED)
+    assert cleanup_finished.wait(1)
     assert len(terminal.projections()) == 1
     retained = terminal.projections()[0]
     assert retained.lifecycle is TerminalLifecycle.CLEANUP_UNPROVEN
     assert retained.reason is TerminalReason.CLEANUP_UNPROVEN
+
+
+@pytest.mark.parametrize("mismatched_identity", [False, True])
+def test_attempted_start_failure_runs_cleanup_before_releasing_ownership(
+    mismatched_identity: bool,
+) -> None:
+    cleanup_finished = Event()
+
+    class FailedStartBackend(RecordingBackend):
+        def start(
+            self,
+            request: TerminalLaunchRequest,
+            admission: AdmissionGate,
+        ) -> BackendIdentity:
+            self.started.append((request, admission))
+            if mismatched_identity:
+                return BackendIdentity(session_id="wrong-session")
+            raise RuntimeError("failed after partial spawn")
+
+        def cleanup(self, attempt: CleanupAttempt) -> CleanupProof:
+            self.cleanup_attempts.append(attempt)
+            cleanup_finished.set()
+            return CleanupProof(True, True, True)
+
+    backend = FailedStartBackend()
+    terminal = TerminalSessionManager(lambda: True, lambda: backend)
+    terminal.arm(acknowledge_disclosure=True)
+
+    result = terminal.create_session(launch_request("failed-start"))
+
+    assert result == TerminalCreateResult(reason=TerminalReason.SPAWN_FAILED)
+    assert cleanup_finished.wait(1)
+    session_id = backend.started[0][1].token
+    assert terminal.wait_for_cleanup(session_id, timeout_seconds=1)
+    assert len(backend.cleanup_attempts) == 1
+    assert terminal.projections() == ()
 
 
 def test_shell_exit_without_eof_retains_cleanup_unproven_not_exited() -> None:
@@ -1374,6 +1501,39 @@ def test_output_is_refused_after_stream_closure_is_proven() -> None:
     assert exited is not None
     assert exited.stream_closed is True
     assert terminal.offer_output(session_id, b"late bytes").accepted is False
+
+
+def test_offer_delayed_after_manager_check_is_refused_by_actor_eof_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    offer_reached_actor = Event()
+    release_offer = Event()
+    original_offer = TerminalOutputActor.offer_output
+
+    def delayed_offer(actor: TerminalOutputActor, data: bytes):
+        offer_reached_actor.set()
+        assert release_offer.wait(1)
+        return original_offer(actor, data)
+
+    monkeypatch.setattr(TerminalOutputActor, "offer_output", delayed_offer)
+    backend = RecordingBackend(cleanup_proof=CleanupProof(True, True, True))
+    terminal = TerminalSessionManager(lambda: True, lambda: backend)
+    terminal.arm(acknowledge_disclosure=True)
+    session_id = create_running_session(terminal, "eof-offer-race")
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        offering = executor.submit(terminal.offer_output, session_id, b"late bytes")
+        assert offer_reached_actor.wait(1)
+        terminal.shell_exited(session_id, exit_code=0)
+        assert terminal.wait_for_cleanup(session_id, timeout_seconds=1)
+        release_offer.set()
+        result = offering.result(timeout=1)
+
+    assert result.accepted is False
+    exited = terminal.projection(session_id)
+    assert exited is not None
+    assert exited.stream_closed is True
+    assert exited.output_complete is True
 
 
 def test_view_snapshot_failure_is_contained_and_closes_the_session() -> None:

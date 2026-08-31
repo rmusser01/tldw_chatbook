@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
-from threading import Lock, RLock
+from threading import Event, Lock, RLock
 from time import monotonic
 from typing import Any
 from uuid import uuid4
@@ -125,6 +125,8 @@ class _SessionRecord:
     backend: TerminalBackend | None = None
     model: Any | None = None
     model_lock: Any = field(default_factory=Lock, repr=False)
+    resize_lock: Any = field(default_factory=asyncio.Lock, repr=False)
+    startup_done: Event = field(default_factory=Event, repr=False)
     input_actor: TerminalInputActor | None = None
     output_actor: TerminalOutputActor | None = None
     receipt: TerminalReceipt | None = None
@@ -220,7 +222,14 @@ class TerminalSessionManager:
         self._notify_subscribers()
 
     def create_session(self, request: TerminalLaunchRequest) -> TerminalCreateResult:
-        """Atomically reserve and start one admitted terminal session."""
+        """Atomically reserve and start one admitted terminal session.
+
+        Args:
+            request: Validated name, shell, directory, and initial dimensions.
+
+        Returns:
+            Content-free admission result and immutable projection when admitted.
+        """
         with self._lock:
             refusal = self._creation_refusal_locked()
             if refusal is not None:
@@ -275,14 +284,33 @@ class TerminalSessionManager:
                 self._sessions.pop(session_id, None)
                 return TerminalCreateResult(reason=TerminalReason.BACKEND_UNAVAILABLE)
             self._replace_lifecycle_locked(session_id, TerminalLifecycle.ADMITTING)
+            startup_done = record.startup_done
 
         admission = AdmissionGate(admitted=True, token=session_id)
+        startup_failed = False
         try:
             identity = backend.start(admitted_request, admission)
             if identity.session_id != session_id:
                 raise RuntimeError("backend returned a mismatched session identity")
         except Exception:
-            self._release_failed_reservation(session_id)
+            startup_failed = True
+        finally:
+            startup_done.set()
+
+        if startup_failed:
+            with self._lock:
+                record = self._sessions.get(session_id)
+                if (
+                    record is not None
+                    and record.backend is backend
+                    and record.cleanup_future is None
+                ):
+                    self._begin_cleanup_locked(
+                        session_id,
+                        action="spawn_failed",
+                        t0=self._clock(),
+                    )
+            self._notify_subscribers()
             return TerminalCreateResult(reason=TerminalReason.SPAWN_FAILED)
 
         with self._lock:
@@ -639,60 +667,74 @@ class TerminalSessionManager:
             if record is None or record.input_actor is None:
                 return False
             actor = record.input_actor
+            resize_lock = record.resize_lock
 
-        resize = await actor.take_resize_debounced()
-        if resize is None:
-            return False
+        async with resize_lock:
+            with self._lock:
+                if not self._valid_view_locked(view):
+                    return False
+                record = self._sessions.get(session_id)
+                if (
+                    record is None
+                    or record.input_actor is not actor
+                    or record.resize_lock is not resize_lock
+                ):
+                    return False
 
-        with self._lock:
-            if not self._valid_view_locked(view):
+            resize = await actor.take_resize_debounced()
+            if resize is None:
                 return False
-            record = self._sessions.get(session_id)
-            if (
-                record is None
-                or record.input_actor is not actor
-                or record.backend is None
-                or record.model is None
-                or not self._armed
-                or not self.permitted
-                or record.projection.lifecycle is not TerminalLifecycle.RUNNING
-            ):
-                return False
-            backend = record.backend
-            model = record.model
-            model_lock = record.model_lock
 
-        applied = await asyncio.to_thread(
-            self._apply_resize,
-            backend,
-            model,
-            model_lock,
-            resize.columns,
-            resize.rows,
-        )
-        if not applied:
-            return False
+            with self._lock:
+                if not self._valid_view_locked(view):
+                    return False
+                record = self._sessions.get(session_id)
+                if (
+                    record is None
+                    or record.input_actor is not actor
+                    or record.resize_lock is not resize_lock
+                    or record.backend is None
+                    or record.model is None
+                    or not self._armed
+                    or not self.permitted
+                    or record.projection.lifecycle is not TerminalLifecycle.RUNNING
+                ):
+                    return False
+                backend = record.backend
+                model = record.model
+                model_lock = record.model_lock
 
-        with self._lock:
-            record = self._sessions.get(session_id)
-            if (
-                not self._valid_view_locked(view)
-                or record is None
-                or record.backend is not backend
-                or record.model is not model
-                or record.projection.lifecycle is not TerminalLifecycle.RUNNING
-            ):
+            applied = await asyncio.to_thread(
+                self._apply_resize,
+                backend,
+                model,
+                model_lock,
+                resize.columns,
+                resize.rows,
+            )
+            if not applied:
+                self._fail_resize(session_id, backend=backend, model=model)
                 return False
-            try:
+
+            with self._lock:
+                record = self._sessions.get(session_id)
+                if (
+                    record is None
+                    or record.backend is not backend
+                    or record.model is not model
+                ):
+                    return False
                 record.request = replace(
                     record.request,
                     columns=resize.columns,
                     rows=resize.rows,
                 )
-            except Exception:
-                return False
+                remains_current = (
+                    self._valid_view_locked(view)
+                    and record.projection.lifecycle is TerminalLifecycle.RUNNING
+                )
         self._notify_subscribers()
-        return True
+        return remains_current
 
     def focus_session(self, session_id: str, *, view: TerminalViewToken) -> bool:
         """Select a retained session only from the current view generation."""
@@ -966,6 +1008,7 @@ class TerminalSessionManager:
             self._run_cleanup,
             session_id,
             record.backend,
+            record.startup_done,
             attempt,
         )
         record.cleanup_future = future
@@ -975,8 +1018,10 @@ class TerminalSessionManager:
         self,
         session_id: str,
         backend: TerminalBackend,
+        startup_done: Event,
         attempt: CleanupAttempt,
     ) -> None:
+        startup_done.wait()
         try:
             proof = backend.cleanup(attempt)
             if not isinstance(proof, CleanupProof):
@@ -1021,10 +1066,22 @@ class TerminalSessionManager:
                 or record.projection.parser_failed
             ):
                 return False
-            record.projection = replace(record.projection, stream_closed=True)
             actor = record.output_actor
             model = record.model
             model_lock = record.model_lock
+
+        actor.close_output()
+
+        with self._lock:
+            record = self._sessions.get(session_id)
+            if (
+                record is None
+                or record.output_actor is not actor
+                or record.model is not model
+                or record.projection.parser_failed
+            ):
+                return False
+            record.projection = replace(record.projection, stream_closed=True)
 
         try:
             while actor.pending_bytes:
@@ -1115,6 +1172,35 @@ class TerminalSessionManager:
         except Exception:
             return False
         return True
+
+    def _fail_resize(
+        self,
+        session_id: str,
+        *,
+        backend: TerminalBackend,
+        model: Any,
+    ) -> None:
+        """Fail and clean a session whose backend/model resize did not agree."""
+        with self._lock:
+            record = self._sessions.get(session_id)
+            if (
+                record is None
+                or record.backend is not backend
+                or record.model is not model
+                or record.projection.lifecycle is not TerminalLifecycle.RUNNING
+            ):
+                return
+            record.projection = replace(
+                record.projection,
+                reason=TerminalReason.IO_FAILED,
+                output_complete=False,
+            )
+            self._begin_cleanup_locked(
+                session_id,
+                action="resize_failure",
+                t0=self._clock(),
+            )
+        self._notify_subscribers()
 
     def _select_after_removal_locked(self, removed_session_id: str) -> None:
         if self._selected_session_id != removed_session_id:
