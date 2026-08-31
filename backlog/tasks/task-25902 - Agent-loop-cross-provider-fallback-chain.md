@@ -1,11 +1,11 @@
 ---
 id: TASK-25902
 title: 'Agent loop: cross-provider fallback chain'
-status: To Do
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-31 15:08'
-updated_date: '2026-08-31 23:05'
+updated_date: '2026-08-31 23:12'
 labels:
   - agents
   - reliability
@@ -33,7 +33,7 @@ When a provider is exhausted or down, chatbook has no way to continue on another
 - [x] #9 Fallback does not rebuild LoopDeps - the wall-budget origin TASK-25913's tool clamp reads from is unchanged by a provider switch
 - [x] #10 With no fallback chain configured, behaviour is byte-identical to today and no projection code runs
 - [x] #11 Round-trip property tests (native->fence->native) assert semantic equivalence, driven from provider_supports_native_tools' own provider list rather than a hand-copied one
-- [ ] #12 Verified against a real second provider before the task is closed
+- [x] #12 Verified against a real second provider before the task is closed
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -77,4 +77,51 @@ Verified non-vacuous by mutation: replacing the projection call with a passthrou
 **AC#12 is NOT met and is not checkable by me.** It requires verification against a real second provider with live credentials. Everything above is exercised against fakes and the real code paths, but no request has been made to an actual fallback provider. That check is the owner's, and the AC is deliberately left unticked.
 
 **Files:** `tldw_chatbook/Agents/history_projection.py` (new), `tldw_chatbook/Agents/fallback_chain.py` (new), `tldw_chatbook/Agents/agent_service.py`, `tldw_chatbook/Agents/agent_models.py`, `Tests/Agents/test_history_projection.py` (new), `Tests/Agents/test_fallback_chain.py` (new).
+
+## Live verification (AC#12) — 2026-08-31
+
+Run against a real second provider using an owner-supplied key. Primary was made to fail with a transient 503; the fallback was Cohere with a real credential.
+
+```
+readiness(cohere)                    = True
+readiness(definitely-not-configured) = False
+WARNING  Model provider fallback: anthropic -> cohere (after ChatProviderError).
+switches recorded: [('anthropic', 'cohere', 'after ChatProviderError')]
+RESULT: {... 'model': 'command-a-03-2025', 'choices': [{'message':
+         {'role': 'assistant', 'content': 'FALLBACK-OK'}, ...}],
+         'usage': {'prompt_tokens': 24, 'completion_tokens': 5, ...}}
+```
+
+Two runs: one with a plain history, one carrying a native `tool_calls` /
+`role:"tool"` pair. The second reported 24 prompt tokens against the first's 11,
+confirming the tool history really was included in the request rather than
+silently dropped, and Cohere answered correctly from it.
+
+That exercises live: the readiness gate (AC#3), the switch and its report
+(AC#2), the chain walk (AC#1), and a real request built from projected history
+(AC#4).
+
+**Scope limit, stated plainly.** All three available keys (anthropic, cohere,
+google) are providers `provider_supports_native_tools` reports as NATIVE. So the
+native→fence crossing — the exact case ADR-110 exists for — is covered by unit
+tests only and has NOT been exercised live. Verifying it needs a credential for
+a fence provider (groq, mistral, deepseek, ...) or a local Ollama endpoint.
+Until then the highest-risk path in this task rests on unit coverage.
+
+**Incidental finding, pre-existing and not caused by this task.** Two providers
+report readiness `True` from an environment variable and then fail inside their
+own handler with "API key is missing". `chat_with_cohere` resolves
+`api_key or cohere_config.get("api_key")` (`LLM_Calls/LLM_API_Calls.py:2282`) —
+the config table only, never the environment. CLAUDE.md documents this for
+google as "a known open case (env var set, readiness ready, nothing reaches
+`chat_with_google`)"; this run reproduced it independently for google AND found
+cohere has the same shape, so the documented open case is broader than one
+provider. Both worked once the key was placed in config instead. Not filed as a
+task — raised to the owner.
+
+Credential handling: keys were read from the owner's gitignored
+`*-api-key.txt` files (`.gitignore:213`), used via a scratch profile OUTSIDE the
+repository at mode 0600, and that file was overwritten and deleted immediately
+afterwards. No key value appears in any script, test, task file, commit message
+or log line; verified by a full-key grep across the worktree.
 <!-- SECTION:NOTES:END -->
