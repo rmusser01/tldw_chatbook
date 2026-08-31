@@ -66,16 +66,24 @@ from __future__ import annotations
 import hashlib
 import fnmatch
 import json
+import os
 import re
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Literal, Mapping
+from typing import Any, Callable, Iterator, Literal, Mapping
 
 from loguru import logger
 
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+from tldw_chatbook.Tool_Packs.binding import (
+    ProfileMutationError,
+    ProfileMutationResult,
+    profile_policy_digest,
+)
 
 SCHEMA_VERSION = 1
 STORE_STATES: tuple[str, ...] = ("allow", "ask", "deny")
@@ -108,6 +116,16 @@ _UTC_TIMESTAMP_RE = re.compile(
 _LIFECYCLE_SCHEMA = "tldw.tool-pack-lifecycle/v1"
 
 ProfileLifecycleDisposition = Literal["legacy", "imported", "tombstone", "invalid"]
+
+_PATH_LOCKS_GUARD = threading.Lock()
+_PATH_LOCKS: dict[Path, threading.RLock] = {}
+
+
+def _resolved_path_lock(path: Path) -> threading.RLock:
+    """Return the one process-wide reentrant lock for ``path``."""
+    resolved = path.expanduser().resolve(strict=False)
+    with _PATH_LOCKS_GUARD:
+        return _PATH_LOCKS.setdefault(resolved, threading.RLock())
 
 
 @dataclass(frozen=True)
@@ -258,6 +276,37 @@ def _freeze_snapshot(value: Any) -> Any:
     if isinstance(value, list):
         return tuple(_freeze_snapshot(item) for item in value)
     return value
+
+
+def _thaw_snapshot(value: Any) -> Any:
+    """Recursively copy a frozen snapshot into ordinary JSON containers."""
+    if isinstance(value, Mapping):
+        return {key: _thaw_snapshot(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_snapshot(item) for item in value]
+    return value
+
+
+def _projected_store_size(payload: Mapping[str, Any]) -> int:
+    """Return the bytes written by the canonical permission-store writer."""
+    projected = _thaw_snapshot(payload)
+    projected["updated_at"] = _iso_utc_now()
+    return len(json.dumps(projected, indent=2, sort_keys=True).encode("utf-8"))
+
+
+def _profile_has_permissive_policy(profile: Mapping[str, Any]) -> bool:
+    """Return whether a tombstone candidate carries any Allow/Ask posture."""
+    if profile.get("global_default") in {"allow", "ask"}:
+        return True
+    for server in _as_mapping(profile.get("servers")).values():
+        if not isinstance(server, Mapping):
+            continue
+        if server.get("default") in {"allow", "ask"}:
+            return True
+        for tool in _as_mapping(server.get("tools")).values():
+            if isinstance(tool, Mapping) and tool.get("state") in {"allow", "ask"}:
+                return True
+    return False
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -471,13 +520,14 @@ def _lifecycle_resolution_block(
 class MCPPermissionStore:
     """Read-modify-write accessor over the on-disk permission-store JSON file.
 
-    Single-instance usage is assumed (the Hub UI); across concurrent
-    instances, last write wins — every mutator reloads the full payload,
-    applies its change, and saves the full payload back.
+    Every instance for the same resolved path shares one process-wide reentrant
+    mutation fence. Mutators reload and durably replace the full payload while
+    holding that fence, preventing in-process lost updates.
     """
 
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
+        self._path_lock = _resolved_path_lock(self.path)
 
     # -- raw load/save -----------------------------------------------------
 
@@ -497,6 +547,11 @@ class MCPPermissionStore:
             The payload dict, always shaped so ``profiles["default"]`` and
             its ``servers`` key are dicts. Never raises.
         """
+        with self.mutation_fence():
+            return self._load_locked()
+
+    def _load_locked(self) -> dict[str, Any]:
+        """Load with legacy recovery while the resolved-path fence is held."""
         if not self.path.exists():
             return _fresh_payload()
 
@@ -591,21 +646,65 @@ class MCPPermissionStore:
             return _fresh_payload()
         return _normalize_payload_shape(payload)
 
-    def save(self, payload: dict[str, Any]) -> None:
+    @contextmanager
+    def mutation_fence(self) -> Iterator[None]:
+        """Hold the process-wide reentrant lock for this resolved store path."""
+        with self._path_lock:
+            yield
+
+    def save(
+        self,
+        payload: dict[str, Any],
+        *,
+        expected_generation: str | None = None,
+    ) -> None:
         """Atomically write ``payload`` to disk, stamping ``updated_at``.
 
         Args:
             payload: Full store payload to persist. Mutated in place to
                 add/overwrite ``updated_at`` before it is written.
+            expected_generation: Optional generation captured before deriving
+                ``payload``. A changed store is rejected rather than replaced.
         """
+        with self.mutation_fence():
+            if expected_generation is not None:
+                current = self.read_snapshot_strict()
+                if current.generation != expected_generation:
+                    raise ProfileMutationError("stale_store")
+            self._save_locked(payload)
+
+    def _save_locked(self, payload: dict[str, Any]) -> None:
+        """Durably replace the store while the caller holds the path fence."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
         payload["updated_at"] = _iso_utc_now()
 
         with temp_path.open("w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
 
-        temp_path.replace(self.path)
+        os.replace(temp_path, self.path)
+        try:
+            parent_fd = os.open(self.path.parent, os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(parent_fd)
+        except OSError:
+            # Some supported hosts/filesystems do not fsync directories.
+            pass
+        finally:
+            os.close(parent_fd)
+
+    def _mutate_locked(self, change: Callable[[dict[str, Any]], bool]) -> bool:
+        """Load, mutate, and durably save once under the shared path fence."""
+        with self.mutation_fence():
+            payload = self.load()
+            changed = change(payload)
+            if changed:
+                self._save_locked(payload)
+            return changed
 
     def _backup_corrupt_file(self) -> None:
         backup_path = self.path.with_suffix(f"{self.path.suffix}.bak")
@@ -649,6 +748,249 @@ class MCPPermissionStore:
         profile.setdefault("servers", {})
         return profile
 
+    @staticmethod
+    def _validate_profile_semantics(
+        profile: Mapping[str, Any],
+        *,
+        expected_disposition: ProfileLifecycleDisposition | None = None,
+    ) -> ProfileLifecycleDisposition:
+        """Validate exact profile shape and its lifecycle policy identity."""
+        disposition = profile_lifecycle_disposition(profile)
+        if disposition == "invalid":
+            raise ProfileMutationError("lifecycle_invalid")
+        if expected_disposition is not None and disposition != expected_disposition:
+            raise ProfileMutationError("lifecycle_invalid")
+        if disposition in {"imported", "tombstone"}:
+            if not _validate_strict_profile(profile, is_default=False):
+                raise ProfileMutationError("lifecycle_invalid")
+            lifecycle = profile["tool_pack_lifecycle"]
+            if lifecycle["policy_digest"] != profile_policy_digest(profile):
+                raise ProfileMutationError("policy_digest_mismatch")
+        return disposition
+
+    def _mutate_profile_locked(
+        self,
+        profile_id: str,
+        change: Callable[[dict[str, Any]], bool],
+        *,
+        expected_profile_digest: str | None,
+        expected_revision: int | None,
+    ) -> bool:
+        """Apply one field edit with profile-scoped CAS and lifecycle upkeep."""
+        with self.mutation_fence():
+            payload = self.load()
+            profiles = payload.setdefault("profiles", {})
+            existing = profiles.get(profile_id)
+            if isinstance(existing, Mapping):
+                disposition = self._validate_profile_semantics(existing)
+                if disposition == "tombstone":
+                    raise ProfileMutationError("profile_tombstone")
+                current_digest = profile_policy_digest(existing)
+                if (
+                    expected_profile_digest is not None
+                    and current_digest != expected_profile_digest
+                ):
+                    raise ProfileMutationError("stale_profile")
+                if expected_revision is not None:
+                    current_revision = (
+                        existing["tool_pack_lifecycle"]["revision"]
+                        if disposition == "imported"
+                        else None
+                    )
+                    if current_revision != expected_revision:
+                        raise ProfileMutationError("stale_revision")
+            else:
+                if expected_profile_digest is not None:
+                    raise ProfileMutationError("stale_profile")
+                if expected_revision is not None:
+                    raise ProfileMutationError("stale_revision")
+                disposition = "legacy"
+
+            profile = self._profile(payload, profile_id)
+            changed = change(profile)
+            if not changed:
+                return False
+            if disposition == "imported":
+                lifecycle = profile["tool_pack_lifecycle"]
+                lifecycle["revision"] += 1
+                lifecycle["policy_digest"] = profile_policy_digest(profile)
+                self._validate_profile_semantics(
+                    profile, expected_disposition="imported"
+                )
+            self._save_locked(payload)
+            return True
+
+    def install_profile_if_absent(
+        self,
+        profile_id: str,
+        imported_profile: Mapping[str, Any],
+        *,
+        expected_generation: str,
+        max_profiles: int,
+        max_store_bytes: int,
+    ) -> ProfileMutationResult:
+        """Atomically install one reviewed imported profile if its id is free."""
+        candidate = _thaw_snapshot(imported_profile)
+
+        with self.mutation_fence():
+            self._validate_profile_semantics(candidate, expected_disposition="imported")
+            if candidate["tool_pack_lifecycle"]["revision"] != 1:
+                raise ProfileMutationError("invalid_revision")
+            snapshot = self.read_snapshot_strict()
+            if snapshot.generation != expected_generation:
+                raise ProfileMutationError("stale_store")
+            payload = _thaw_snapshot(snapshot.payload)
+            profiles = payload["profiles"]
+            if profile_id in profiles:
+                raise ProfileMutationError("profile_exists")
+            folded = profile_id.casefold()
+            if any(existing_id.casefold() == folded for existing_id in profiles):
+                raise ProfileMutationError("profile_id_collision")
+            if len(profiles) + 1 > max_profiles:
+                raise ProfileMutationError("profile_limit")
+
+            profiles[profile_id] = candidate
+            if _projected_store_size(payload) > max_store_bytes:
+                raise ProfileMutationError("store_bytes_limit")
+            self._save_locked(payload)
+            generation = self.read_snapshot_strict().generation
+
+        lifecycle = candidate["tool_pack_lifecycle"]
+        return ProfileMutationResult(
+            profile_id=profile_id,
+            revision=lifecycle["revision"],
+            policy_digest=lifecycle["policy_digest"],
+            store_generation=generation,
+        )
+
+    def update_imported_profile(
+        self,
+        profile_id: str,
+        replacement_profile: Mapping[str, Any],
+        *,
+        expected_revision: int,
+        max_store_bytes: int,
+        expected_generation: str | None = None,
+        expected_profile_digest: str | None = None,
+    ) -> ProfileMutationResult:
+        """Atomically replace an imported profile's complete policy fields."""
+        replacement = _thaw_snapshot(replacement_profile)
+
+        with self.mutation_fence():
+            self._validate_profile_semantics(
+                replacement, expected_disposition="imported"
+            )
+            snapshot = self.read_snapshot_strict()
+            if (
+                expected_generation is not None
+                and snapshot.generation != expected_generation
+            ):
+                raise ProfileMutationError("stale_store")
+            payload = _thaw_snapshot(snapshot.payload)
+            current = payload["profiles"].get(profile_id)
+            if not isinstance(current, Mapping):
+                raise ProfileMutationError("profile_missing")
+            self._validate_profile_semantics(current, expected_disposition="imported")
+            current_lifecycle = current["tool_pack_lifecycle"]
+            if current_lifecycle["revision"] != expected_revision:
+                raise ProfileMutationError("stale_revision")
+            current_digest = profile_policy_digest(current)
+            if (
+                expected_profile_digest is not None
+                and current_digest != expected_profile_digest
+            ):
+                raise ProfileMutationError("stale_profile")
+
+            lifecycle = _thaw_snapshot(current_lifecycle)
+            lifecycle["revision"] += 1
+            replacement["tool_pack_lifecycle"] = lifecycle
+            lifecycle["policy_digest"] = profile_policy_digest(replacement)
+            self._validate_profile_semantics(
+                replacement, expected_disposition="imported"
+            )
+            payload["profiles"][profile_id] = replacement
+            if _projected_store_size(payload) > max_store_bytes:
+                raise ProfileMutationError("store_bytes_limit")
+            self._save_locked(payload)
+            generation = self.read_snapshot_strict().generation
+
+        return ProfileMutationResult(
+            profile_id=profile_id,
+            revision=lifecycle["revision"],
+            policy_digest=lifecycle["policy_digest"],
+            store_generation=generation,
+        )
+
+    def replace_profile_with_tombstone(
+        self,
+        profile_id: str,
+        tombstone_profile: Mapping[str, Any],
+        *,
+        expected_revision: int,
+        max_store_bytes: int,
+        expected_generation: str | None = None,
+        expected_profile_digest: str | None = None,
+    ) -> ProfileMutationResult:
+        """Atomically replace a valid imported profile with a deny tombstone."""
+        tombstone = _thaw_snapshot(tombstone_profile)
+
+        with self.mutation_fence():
+            self._validate_profile_semantics(
+                tombstone, expected_disposition="tombstone"
+            )
+            builtin = _as_mapping(
+                _as_mapping(tombstone.get("servers")).get(BUILTIN_TOOL_SERVER_KEY)
+            )
+            if (
+                tombstone.get("global_default") != "deny"
+                or builtin.get("default") != "deny"
+                or _profile_has_permissive_policy(tombstone)
+            ):
+                raise ProfileMutationError("tombstone_permissive")
+            snapshot = self.read_snapshot_strict()
+            if (
+                expected_generation is not None
+                and snapshot.generation != expected_generation
+            ):
+                raise ProfileMutationError("stale_store")
+            payload = _thaw_snapshot(snapshot.payload)
+            current = payload["profiles"].get(profile_id)
+            if not isinstance(current, Mapping):
+                raise ProfileMutationError("profile_missing")
+            self._validate_profile_semantics(current, expected_disposition="imported")
+            current_lifecycle = current["tool_pack_lifecycle"]
+            if current_lifecycle["revision"] != expected_revision:
+                raise ProfileMutationError("stale_revision")
+            current_digest = profile_policy_digest(current)
+            if (
+                expected_profile_digest is not None
+                and current_digest != expected_profile_digest
+            ):
+                raise ProfileMutationError("stale_profile")
+            lifecycle = tombstone["tool_pack_lifecycle"]
+            if (
+                lifecycle["pack_digest"] != current_lifecycle["pack_digest"]
+                or lifecycle["imported_at"] != current_lifecycle["imported_at"]
+            ):
+                raise ProfileMutationError("lifecycle_provenance_mismatch")
+            lifecycle["revision"] = current_lifecycle["revision"] + 1
+            lifecycle["policy_digest"] = profile_policy_digest(tombstone)
+            self._validate_profile_semantics(
+                tombstone, expected_disposition="tombstone"
+            )
+            payload["profiles"][profile_id] = tombstone
+            if _projected_store_size(payload) > max_store_bytes:
+                raise ProfileMutationError("store_bytes_limit")
+            self._save_locked(payload)
+            generation = self.read_snapshot_strict().generation
+
+        return ProfileMutationResult(
+            profile_id=profile_id,
+            revision=lifecycle["revision"],
+            policy_digest=lifecycle["policy_digest"],
+            store_generation=generation,
+        )
+
     def ensure_profile(self, profile_id: str) -> None:
         """Create the named profile if it does not exist.
 
@@ -663,10 +1005,15 @@ class MCPPermissionStore:
         """
         if profile_id == _DEFAULT_PROFILE_ID or not profile_id:
             return
-        payload = self.load()
-        profiles = payload.setdefault("profiles", {})
-        profiles.setdefault(profile_id, {"servers": {}})
-        self.save(payload)
+
+        def change(payload: dict[str, Any]) -> bool:
+            profiles = payload.setdefault("profiles", {})
+            if profile_id in profiles:
+                return False
+            profiles[profile_id] = {"servers": {}}
+            return True
+
+        self._mutate_locked(change)
 
     def list_profiles(self) -> list[str]:
         """Return every stored profile id, sorted.
@@ -696,9 +1043,15 @@ class MCPPermissionStore:
             value: True to block all tool execution; False to re-enable
                 normal precedence-based resolution.
         """
-        payload = self.load()
-        payload["kill_switch"] = bool(value)
-        self.save(payload)
+
+        def change(payload: dict[str, Any]) -> bool:
+            normalized = bool(value)
+            if payload.get("kill_switch") is normalized:
+                return False
+            payload["kill_switch"] = normalized
+            return True
+
+        self._mutate_locked(change)
 
     # -- global default -----------------------------------------------------
 
@@ -717,7 +1070,12 @@ class MCPPermissionStore:
         return profile.get("global_default", DEFAULT_GLOBAL)
 
     def set_global_default(
-        self, state: str, *, profile_id: str = _DEFAULT_PROFILE_ID
+        self,
+        state: str,
+        *,
+        profile_id: str = _DEFAULT_PROFILE_ID,
+        expected_profile_digest: str | None = None,
+        expected_revision: int | None = None,
     ) -> None:
         """Persist a profile's global default permission state.
 
@@ -730,10 +1088,19 @@ class MCPPermissionStore:
             ValueError: If ``state`` is not one of ``STORE_STATES``.
         """
         _validate_state(state)
-        payload = self.load()
-        profile = self._profile(payload, profile_id)
-        profile["global_default"] = state
-        self.save(payload)
+
+        def change(profile: dict[str, Any]) -> bool:
+            if profile.get("global_default") == state:
+                return False
+            profile["global_default"] = state
+            return True
+
+        self._mutate_profile_locked(
+            profile_id,
+            change,
+            expected_profile_digest=expected_profile_digest,
+            expected_revision=expected_revision,
+        )
 
     # -- server default -----------------------------------------------------
 
@@ -763,6 +1130,8 @@ class MCPPermissionStore:
         state: str | None,
         *,
         profile_id: str = _DEFAULT_PROFILE_ID,
+        expected_profile_digest: str | None = None,
+        expected_revision: int | None = None,
     ) -> None:
         """Set or clear a server-level default permission state.
 
@@ -782,21 +1151,29 @@ class MCPPermissionStore:
         if state is not None:
             _validate_state(state)
 
-        payload = self.load()
-        profile = self._profile(payload, profile_id)
-        servers = profile.setdefault("servers", {})
-
-        if state is None:
-            entry = servers.get(server_key)
-            if entry is not None:
-                entry.pop("default", None)
+        def change(profile: dict[str, Any]) -> bool:
+            servers = profile.setdefault("servers", {})
+            if state is None:
+                entry = servers.get(server_key)
+                if entry is None or "default" not in entry:
+                    return False
+                entry.pop("default")
                 if _entry_is_empty(entry):
                     servers.pop(server_key, None)
-        else:
-            entry = servers.setdefault(server_key, {})
-            entry["default"] = state
+                return True
 
-        self.save(payload)
+            entry = servers.setdefault(server_key, {})
+            if entry.get("default") == state:
+                return False
+            entry["default"] = state
+            return True
+
+        self._mutate_profile_locked(
+            profile_id,
+            change,
+            expected_profile_digest=expected_profile_digest,
+            expected_revision=expected_revision,
+        )
 
     # -- tool state -----------------------------------------------------
 
@@ -835,6 +1212,8 @@ class MCPPermissionStore:
         *,
         definition_hash: str | None = None,
         profile_id: str = _DEFAULT_PROFILE_ID,
+        expected_profile_digest: str | None = None,
+        expected_revision: int | None = None,
     ) -> None:
         """Set or clear a tool-level permission override.
 
@@ -868,30 +1247,38 @@ class MCPPermissionStore:
             ):
                 raise ValueError("definition_hash is required when state is 'allow'")
 
-        payload = self.load()
-        profile = self._profile(payload, profile_id)
-        servers = profile.setdefault("servers", {})
-
-        if state is None:
-            entry = servers.get(server_key)
-            if entry is not None:
+        def change(profile: dict[str, Any]) -> bool:
+            servers = profile.setdefault("servers", {})
+            if state is None:
+                entry = servers.get(server_key)
+                if entry is None:
+                    return False
                 tools = entry.get("tools", {})
-                tools.pop(tool_name, None)
+                if tool_name not in tools:
+                    return False
+                tools.pop(tool_name)
                 if not tools:
                     entry.pop("tools", None)
                 if _entry_is_empty(entry):
                     servers.pop(server_key, None)
-        else:
+                return True
+
             entry = servers.setdefault(server_key, {})
             tools = entry.setdefault("tools", {})
-            # Replacing the entry wholesale (rather than mutating in place)
-            # is what clears any persisted `config_changed` marker.
             tool_entry: dict[str, Any] = {"state": state}
             if state == "allow":
                 tool_entry["definition_hash"] = definition_hash
+            if tools.get(tool_name) == tool_entry:
+                return False
             tools[tool_name] = tool_entry
+            return True
 
-        self.save(payload)
+        self._mutate_profile_locked(
+            profile_id,
+            change,
+            expected_profile_digest=expected_profile_digest,
+            expected_revision=expected_revision,
+        )
 
 
     def add_tool_arg_rule(
@@ -950,6 +1337,8 @@ class MCPPermissionStore:
         tool_name: str,
         *,
         profile_id: str = _DEFAULT_PROFILE_ID,
+        expected_profile_digest: str | None = None,
+        expected_revision: int | None = None,
     ) -> bool:
         """Set ``config_changed: true`` on a tool entry.
 
@@ -967,22 +1356,28 @@ class MCPPermissionStore:
             over a tool that is already downgraded does not rewrite the
             store file on every call.
         """
-        payload = self.load()
-        profile = self._profile(payload, profile_id)
-        servers = profile.get("servers", {})
-        entry = servers.get(server_key, {})
-        tools = entry.get("tools", {})
-        tool_entry = tools.get(tool_name, {})
-        if bool(tool_entry.get("config_changed")):
-            return False
 
-        servers = profile.setdefault("servers", {})
-        entry = servers.setdefault(server_key, {})
-        tools = entry.setdefault("tools", {})
-        tool_entry = tools.setdefault(tool_name, {})
-        tool_entry["config_changed"] = True
-        self.save(payload)
-        return True
+        def change(profile: dict[str, Any]) -> bool:
+            servers = profile.get("servers", {})
+            entry = servers.get(server_key, {})
+            tools = entry.get("tools", {})
+            tool_entry = tools.get(tool_name, {})
+            if bool(tool_entry.get("config_changed")):
+                return False
+
+            servers = profile.setdefault("servers", {})
+            entry = servers.setdefault(server_key, {})
+            tools = entry.setdefault("tools", {})
+            tool_entry = tools.setdefault(tool_name, {})
+            tool_entry["config_changed"] = True
+            return True
+
+        return self._mutate_profile_locked(
+            profile_id,
+            change,
+            expected_profile_digest=expected_profile_digest,
+            expected_revision=expected_revision,
+        )
 
 
 # -- effective-state resolution (pure; no store I/O) -------------------------
