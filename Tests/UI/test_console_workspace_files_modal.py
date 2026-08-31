@@ -620,6 +620,107 @@ async def test_binding_change_discards_filter_snapshot_and_old_tree_before_clear
 
 
 @pytest.mark.asyncio
+async def test_load_more_merges_unique_entries_without_losing_page_one() -> None:
+    """Continuation results append by raw identity and carry their new token."""
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=_Inspector([]), inspected_workspace_id="ws-a", inspected_workspace_name="A",
+        active_workspace_id="ws-a", active_workspace_name="A",
+        bindings=(WorkspaceFilesBinding("binding-a", "Project", _scope()),),
+    )
+    continuation_one = DirectoryContinuation(
+        "fingerprint", (), DirectoryRevision(1, 2, 3), 200, "page-one"
+    )
+    continuation_two = DirectoryContinuation(
+        "fingerprint", (), DirectoryRevision(1, 2, 3), 400, "page-two"
+    )
+    first = DirectoryEntry(("first.txt",), "first.txt", False)
+    duplicate = DirectoryEntry(("first.txt",), "first duplicate", False)
+    second = DirectoryEntry(("second.txt",), "second.txt", False)
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal._next_generation()
+        await modal._publish_directory(
+            DirectoryPage(DirectoryStatus.PARTIAL, (first,), continuation_one)
+        )
+        await modal._publish_directory(
+            DirectoryPage(DirectoryStatus.PARTIAL, (duplicate, second), continuation_two),
+            continuation=continuation_one,
+        )
+        await pilot.pause()
+        page = modal.state.directory_page
+        assert page is not None
+        assert [entry.raw_parts for entry in page.entries] == [
+            ("first.txt",), ("second.txt",)
+        ]
+        assert page.continuation == continuation_two
+        assert len(modal.query(".console-workspace-files-entry")) == 2
+
+
+def test_load_more_caps_merged_entries_and_marks_truncation_honestly() -> None:
+    existing = DirectoryPage(
+        DirectoryStatus.PARTIAL,
+        tuple(
+            DirectoryEntry((f"{index}.txt",), f"{index}.txt", False)
+            for index in range(10_000)
+        ),
+    )
+    incoming = DirectoryPage(
+        DirectoryStatus.PARTIAL,
+        (DirectoryEntry(("overflow.txt",), "overflow.txt", False),),
+    )
+
+    merged = ConsoleWorkspaceFilesModal._merge_directory_page(existing, incoming)
+
+    assert merged.status is DirectoryStatus.TRUNCATED
+    assert len(merged.entries) == 10_000
+    assert merged.continuation is None
+
+
+@pytest.mark.asyncio
+async def test_directory_scoped_a_then_b_list_results_publish_in_order() -> None:
+    """B becoming latest must not stale an already-expanded A request."""
+    entered_a = Event()
+    release_a = Event()
+
+    class _TwoDirectoryInspector(_Inspector):
+        def list_directory(self, scope, directory_parts=(), *, continuation=None):
+            self.calls.append(("list", (scope, directory_parts, continuation)))
+            if directory_parts == ("a",):
+                entered_a.set()
+                release_a.wait()
+                return DirectoryPage(DirectoryStatus.COMPLETE, (DirectoryEntry(("a", "a.txt"), "a.txt", False),))
+            if directory_parts == ("b",):
+                return DirectoryPage(DirectoryStatus.COMPLETE, (DirectoryEntry(("b", "b.txt"), "b.txt", False),))
+            return DirectoryPage(DirectoryStatus.COMPLETE, (
+                DirectoryEntry(("a",), "a", True), DirectoryEntry(("b",), "b", True),
+            ))
+
+    inspector = _TwoDirectoryInspector([])
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=inspector, inspected_workspace_id="ws-a", inspected_workspace_name="A",
+        active_workspace_id="ws-a", active_workspace_name="A",
+        bindings=(WorkspaceFilesBinding("binding-a", "Project", _scope()),),
+    )
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.pause()
+        root = modal.state.directory_page.entries
+        modal._expand_directory(root[0])
+        while not entered_a.is_set():
+            await asyncio.sleep(0)
+        modal._expand_directory(root[1])
+        release_a.set()
+        await pilot.pause()
+        await pilot.pause()
+        assert modal._page_for(("a",)) is not None
+        assert modal._page_for(("b",)) is not None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("size", "compact", "short"),
     [((80, 24), True, True), ((100, 30), True, False), ((120, 40), False, False), ((160, 50), False, False)],

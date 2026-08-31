@@ -29,6 +29,7 @@ from tldw_chatbook.Workspaces.file_inspector import (
     BindingScope,
     DirectoryContinuation,
     DirectoryPage,
+    DirectoryStatus,
     FileReadKind,
     FileReadResult,
     FileRef,
@@ -376,7 +377,11 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
                 del self._directory_request_tokens[parts]
 
     def _can_publish_directory(
-        self, binding_id: str, directory_parts: tuple[str, ...], token: int
+        self,
+        binding_id: str,
+        directory_parts: tuple[str, ...],
+        token: int,
+        continuation: DirectoryContinuation | None,
     ) -> bool:
         if self._workspace_files_closing or not self.is_mounted:
             return False
@@ -384,7 +389,31 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
             return False
         if self._directory_request_tokens.get(directory_parts) != token:
             return False
+        if continuation is not None:
+            page = self._page_for(directory_parts)
+            if page is None or page.continuation != continuation:
+                return False
         return directory_parts == () or directory_parts in self._state.expanded_directory_parts
+
+    @staticmethod
+    def _merge_directory_page(
+        previous: DirectoryPage, incoming: DirectoryPage
+    ) -> DirectoryPage:
+        """Append a continuation page by raw identity under the service bound."""
+        seen: set[tuple[str, ...]] = set()
+        entries = []
+        for entry in (*previous.entries, *incoming.entries):
+            if entry.raw_parts not in seen:
+                seen.add(entry.raw_parts)
+                entries.append(entry)
+        if len(entries) > 10_000:
+            return replace(
+                incoming,
+                status=DirectoryStatus.TRUNCATED,
+                entries=tuple(entries[:10_000]),
+                continuation=None,
+            )
+        return replace(incoming, entries=tuple(entries))
 
     def _request_directory(
         self,
@@ -407,8 +436,18 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
             self._state,
             directory_parts=directory_parts,
             status_copy="Loading folder…",
-            directory_page=None if directory_parts == () else self._state.directory_page,
-            directory_pages=self._replace_directory_page(directory_parts, None),
+            directory_page=(
+                self._state.directory_page
+                if continuation is not None
+                else None
+                if directory_parts == ()
+                else self._state.directory_page
+            ),
+            directory_pages=(
+                self._state.directory_pages
+                if continuation is not None
+                else self._replace_directory_page(directory_parts, None)
+            ),
             filter_result=None,
         )
         self._sync_status()
@@ -419,9 +458,13 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
                 lambda: self._inspector.list_directory(
                     binding.scope, directory_parts, continuation=continuation
                 ),
-                lambda page: self._publish_directory(page, directory_parts=directory_parts),
+                lambda page: self._publish_directory(
+                    page,
+                    directory_parts=directory_parts,
+                    continuation=continuation,
+                ),
                 lambda: self._can_publish_directory(
-                    binding.binding_id, directory_parts, token
+                    binding.binding_id, directory_parts, token, continuation
                 ),
             )
         )
@@ -431,12 +474,18 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         page: DirectoryPage,
         *,
         directory_parts: tuple[str, ...] | None = None,
+        continuation: DirectoryContinuation | None = None,
     ) -> None:
         directory_parts = (
             self._state.directory_parts
             if directory_parts is None
             else directory_parts
         )
+        if continuation is not None:
+            previous = self._page_for(directory_parts)
+            if previous is None or previous.continuation != continuation:
+                return
+            page = self._merge_directory_page(previous, page)
         copy = {
             "empty": "Folder is empty.", "partial": "More folder entries available.",
             "truncated": "Folder listing reached its safety limit.", "failed": "Folder is unavailable.",
