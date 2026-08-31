@@ -6,7 +6,7 @@ import json
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, TypeVar
 
 from loguru import logger
 
@@ -16,11 +16,16 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     capture_from_storage,
 )
 if TYPE_CHECKING:
-    from tldw_chatbook.Chat.console_trace_metrics import TraceCompatibilityMetrics
     from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
 else:
-    TraceCompatibilityMetrics = Any
     TraceViewerProfile = Any
+
+
+class TraceCompatibilityRecorder(Protocol):
+    """Content-free metric sink used by normalized/legacy read selection."""
+
+    def record(self, path: str, count: int = 1) -> None:
+        """Increment one compatibility path."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -338,7 +343,7 @@ class ConsoleTraceProjection:
         normalized_reader: NormalizedCallReader | None = None,
         normalized_reads_enabled: RolloutGate = False,
         normalized_writes_enabled: RolloutGate = False,
-        compatibility_metrics: TraceCompatibilityMetrics | None = None,
+        compatibility_metrics: TraceCompatibilityRecorder | None = None,
     ) -> None:
         self._legacy_reader = legacy_reader
         self._normalized_reader = normalized_reader
@@ -349,7 +354,7 @@ class ConsoleTraceProjection:
     def _record_metric(self, path: str) -> None:
         metrics = self._compatibility_metrics
         if metrics is not None:
-            metrics.record(path)  # type: ignore[arg-type]
+            metrics.record(path)
 
     @staticmethod
     def _gate_enabled(gate: RolloutGate) -> bool:

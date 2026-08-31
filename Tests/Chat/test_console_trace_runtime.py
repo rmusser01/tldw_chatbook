@@ -70,8 +70,10 @@ def test_console_runtime_wires_production_boundary_for_durable_database(tmp_path
     gateway = runtime.ensure_provider_gateway(config_provider=lambda: {})
 
     assert gateway.supports_durable_capture is True
+    lazy_factory = gateway._trace_call_boundary_factory
+    assert callable(lazy_factory)
     assert isinstance(
-        gateway._trace_call_boundary_factory,
+        lazy_factory._get_delegate(),
         ConsoleTraceBoundaryFactory,
     )
 

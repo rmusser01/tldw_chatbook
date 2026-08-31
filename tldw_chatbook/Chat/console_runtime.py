@@ -123,6 +123,7 @@ import asyncio
 from datetime import datetime, timezone
 import inspect
 from dataclasses import dataclass
+from threading import Lock
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 from loguru import logger
@@ -156,6 +157,72 @@ _VIEW_RUNTIME_FALLBACK_ATTR = "_console_runtime_fallback"
 # delay: legacy normalization is idle maintenance, never readiness work.
 LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS = 5.0
 LEGACY_TRACE_MAINTENANCE_RETRY_DELAY_SECONDS = 1.0
+
+
+class _LazyTraceCompatibilityMetrics:
+    """Load the rollout counter implementation on its first actual use."""
+
+    def __init__(self) -> None:
+        self._delegate: Any | None = None
+        self._lock = Lock()
+
+    def _get_delegate(self) -> Any:
+        delegate = self._delegate
+        if delegate is not None:
+            return delegate
+        with self._lock:
+            delegate = self._delegate
+            if delegate is None:
+                from tldw_chatbook.Chat.console_trace_metrics import (
+                    TraceCompatibilityMetrics,
+                )
+
+                delegate = TraceCompatibilityMetrics()
+                self._delegate = delegate
+        return delegate
+
+    def record(self, path: str, count: int = 1) -> None:
+        """Record a content-free compatibility path."""
+
+        self._get_delegate().record(path, count)
+
+    def snapshot(self) -> Mapping[str, int]:
+        """Return the current immutable compatibility counts."""
+
+        return self._get_delegate().snapshot()
+
+
+class _LazyTraceBoundaryFactory:
+    """Load normalized write planning only when a provider call reserves."""
+
+    def __init__(self, database: Any, repository: Any | None) -> None:
+        self._database = database
+        self._repository = repository
+        self._delegate: Any | None = None
+        self._lock = Lock()
+
+    def _get_delegate(self) -> Any:
+        delegate = self._delegate
+        if delegate is not None:
+            return delegate
+        with self._lock:
+            delegate = self._delegate
+            if delegate is None:
+                from tldw_chatbook.Chat.console_trace_runtime import (
+                    ConsoleTraceBoundaryFactory,
+                )
+
+                delegate = ConsoleTraceBoundaryFactory(
+                    self._database,
+                    repository=self._repository,
+                )
+                self._delegate = delegate
+        return delegate
+
+    def __call__(self, request: Any, resolution: Any, route: Any) -> object:
+        """Create one provider-call boundary through the shared delegate."""
+
+        return self._get_delegate()(request, resolution, route)
 
 
 def recover_console_trace_calls(
@@ -584,9 +651,7 @@ class ConsoleRuntime:
         self._change_review_coordinator: Any | None = None
         self._chat_controller: Any | None = None
         self._legacy_trace_maintenance_task: asyncio.Task[None] | None = None
-        from tldw_chatbook.Chat.console_trace_metrics import TraceCompatibilityMetrics
-
-        self.trace_compatibility_metrics = TraceCompatibilityMetrics()
+        self.trace_compatibility_metrics = _LazyTraceCompatibilityMetrics()
         self._scratch_spaces = ConsoleScratchSpaceManager()
         self._raw_cli_refusal_stash_bank: dict[str, list[Any]] = {}
         self._persona_buddy_sink = PersonaBuddyConsoleAdapter(
@@ -908,17 +973,13 @@ class ConsoleRuntime:
                 if database is not None and callable(
                     getattr(database, "transaction", None)
                 ):
-                    from tldw_chatbook.Chat.console_trace_runtime import (
-                        ConsoleTraceBoundaryFactory,
-                    )
-
                     persistence = getattr(self._chat_store, "persistence", None)
                     repository = getattr(
                         persistence,
                         "console_trace_repository",
                         None,
                     )
-                    trace_call_boundary_factory = ConsoleTraceBoundaryFactory(
+                    trace_call_boundary_factory = _LazyTraceBoundaryFactory(
                         database,
                         repository=repository,
                     )
