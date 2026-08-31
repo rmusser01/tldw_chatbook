@@ -1731,6 +1731,18 @@
 
 
 
+/* ===== WIDGET: ConsoleTracePrivacyDialog (Widgets/Console/console_capture_policy_dialog.py) ===== */
+
+    ConsoleTracePrivacyDialog { align: center middle; }
+
+
+
+
+
+
+
+
+
 /* ===== WIDGET: ConsoleConversationActionMenu (Widgets/Console/console_conversation_action_menu.py) ===== */
 
     ConsoleConversationActionMenu {

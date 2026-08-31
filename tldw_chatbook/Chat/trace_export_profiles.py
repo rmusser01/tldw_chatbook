@@ -37,7 +37,14 @@ from __future__ import annotations
 
 from enum import Enum
 
-__all__ = ["TraceExportProfile"]
+__all__ = ["TraceExportProfile", "TraceViewerProfile"]
+
+
+class TraceViewerProfile(str, Enum):
+    """Local disclosure choice over one stored semantic trace."""
+
+    SAFE = "safe"
+    FULL = "full"
 
 
 class TraceExportProfile(str, Enum):

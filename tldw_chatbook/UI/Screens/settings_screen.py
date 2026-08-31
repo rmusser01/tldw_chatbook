@@ -59,7 +59,7 @@ from tldw_chatbook.UI.focus_ownership import (
 from ...Chat.Chat_Deps import ChatConfigurationError
 from ...Chat.console_chat_models import CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
 from ...Chat.console_chat_controller import CapturePolicyMutationStatus
-from ...Chat.console_exchange_capture import CaptureDetail, resolve_capture_policy
+from ...Chat.console_exchange_capture import CaptureDetail
 from ...Chat.console_context_policy import (
     CompactionFailureBehavior,
     ContextBudgetMode,
@@ -122,10 +122,6 @@ from ...Workspaces.registry_service import (
     WorkspaceRegistryServiceError,
 )
 from ...Widgets.confirmation_dialog import ConfirmationDialog
-from ...Widgets.Console.console_capture_policy_dialog import (
-    global_full_capture_confirmation,
-    off_to_on_confirmation,
-)
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Chat.provider_catalog import (
     PROVIDER_CUSTOM_GROUP_KEYS,
@@ -4082,6 +4078,9 @@ class SettingsScreen(BaseAppScreen):
                     "console.stack_collapsed_rail_labels",
                     "console.exchange_capture",
                     "console.exchange_capture_detail",
+                    "console.exchange_capture_pii_redaction",
+                    "console.trace_viewer_profile",
+                    "console.trace_viewer_profile_version",
                     "console.show_model_thinking",
                     "console.thinking_history_policy_default",
                     "console.collapse_large_pastes",
@@ -13782,19 +13781,44 @@ class SettingsScreen(BaseAppScreen):
                 value=self._console_capture_policy.enabled,
                 id="settings-console-exchange-capture-enabled",
             )
+            legacy_detail = Select(
+                (("Safe", "safe"), ("Full", "full")),
+                value=self._console_capture_policy.detail.value,
+                allow_blank=False,
+                id="settings-console-exchange-capture-detail",
+                classes="settings-compact-select",
+                compact=True,
+            )
+            legacy_detail.display = False
+            yield legacy_detail
+            yield Checkbox(
+                "Mask detected PII in traces (future calls)",
+                value=getattr(
+                    self._console_capture_policy,
+                    "pii_redaction_enabled",
+                    False,
+                ),
+                id="settings-console-trace-pii-redaction",
+            )
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("Capture detail", classes="settings-input-label")
+                yield Static("Trace viewer", classes="settings-input-label")
                 yield Select(
                     (("Safe", "safe"), ("Full", "full")),
-                    value=self._console_capture_policy.detail.value,
+                    value=getattr(
+                        self._console_capture_policy,
+                        "viewer_profile",
+                        "safe",
+                    ),
                     allow_blank=False,
-                    id="settings-console-exchange-capture-detail",
+                    id="settings-console-trace-viewer-profile",
                     classes="settings-compact-select",
                     compact=True,
                 )
             yield Static(
-                "Safe is the default. Capture Off keeps the selected detail dormant; "
-                "turning it back On may resume Full.",
+                "Capture, PII masking, and viewing are separate. PII masking is "
+                "irreversible for provider-only trace data but never rewrites the "
+                "saved conversation. Safe and Full view the same trace; credentials "
+                "stay blocked in both.",
                 id="settings-console-exchange-capture-help",
                 classes="settings-help-copy",
             )
@@ -20765,6 +20789,12 @@ class SettingsScreen(BaseAppScreen):
         raw_detail = self.query_one(
             "#settings-console-exchange-capture-detail", Select
         ).value
+        pii_redaction_enabled = self.query_one(
+            "#settings-console-trace-pii-redaction", Checkbox
+        ).value
+        viewer_profile = str(
+            self.query_one("#settings-console-trace-viewer-profile", Select).value
+        )
         try:
             detail = CaptureDetail(str(raw_detail))
         except ValueError:
@@ -20783,40 +20813,28 @@ class SettingsScreen(BaseAppScreen):
             if controller is not None and session_id is not None
             else None
         )
-        dormant = (
-            resolve_capture_policy(
-                enabled=True,
-                next_send=live_snapshot.next_detail,
-                conversation=live_snapshot.conversation_detail,
-                global_default=detail,
-            )
-            if live_snapshot is not None
-            else None
-        )
-        needs_global_ack = enabled and detail is CaptureDetail.FULL
-        was_enabled = live_snapshot.enabled if live_snapshot is not None else current.enabled
-        resumes_override_full = (
-            enabled
-            and not was_enabled
-            and dormant is not None
-            and dormant.detail is CaptureDetail.FULL
-            and not needs_global_ack
-        )
-        if needs_global_ack:
+        needs_viewer_ack = viewer_profile == "full" and getattr(
+            current,
+            "viewer_profile",
+            "safe",
+        ) != "full"
+        if needs_viewer_ack:
             confirmed = await self.app.push_screen_wait(
-                global_full_capture_confirmation()
+                ConfirmationDialog(
+                    title="Switch the Trace viewer to Full?",
+                    message=(
+                        "Full may reveal persisted prompts, tool arguments/results, "
+                        "automatic instructions, local paths, and sensitive prose "
+                        "that PII detectors missed. Credentials and frozen masks "
+                        "remain blocked."
+                    ),
+                    confirm_label="View Full",
+                    cancel_label="Keep Safe",
+                )
             )
             if not confirmed:
-                self._set_console_capture_status("Full policy change cancelled")
+                self._set_console_capture_status("Full viewer change cancelled")
                 return
-        elif resumes_override_full:
-            confirmed = await self.app.push_screen_wait(
-                off_to_on_confirmation()
-            )
-            if not confirmed:
-                self._set_console_capture_status("Full capture resume cancelled")
-                return
-
         self._console_capture_applying = True
         event.button.disabled = True
         self._set_console_capture_status("Applying")
@@ -20828,6 +20846,8 @@ class SettingsScreen(BaseAppScreen):
                     detail=detail,
                     expected_config_generation=live_snapshot.config_generation,
                     expected_policy_revision=live_snapshot.policy_revision,
+                    pii_redaction_enabled=bool(pii_redaction_enabled),
+                    viewer_profile=viewer_profile,
                 )
                 if mutation.status is CapturePolicyMutationStatus.STALE:
                     self._set_console_capture_status(
@@ -20861,6 +20881,8 @@ class SettingsScreen(BaseAppScreen):
                 enabled=bool(enabled),
                 detail=detail,
                 expected_generation=current.generation,
+                pii_redaction_enabled=bool(pii_redaction_enabled),
+                viewer_profile=viewer_profile,
             )
             if result.conflict:
                 self._set_console_capture_status(
@@ -25153,6 +25175,20 @@ class SettingsScreen(BaseAppScreen):
             self.query_one(
                 "#settings-console-exchange-capture-detail", Select
             ).value = self._console_capture_policy.detail.value
+            self.query_one(
+                "#settings-console-trace-pii-redaction", Checkbox
+            ).value = getattr(
+                self._console_capture_policy,
+                "pii_redaction_enabled",
+                False,
+            )
+            self.query_one(
+                "#settings-console-trace-viewer-profile", Select
+            ).value = getattr(
+                self._console_capture_policy,
+                "viewer_profile",
+                "safe",
+            )
         except QueryError:
             pass
         self._set_static_text(

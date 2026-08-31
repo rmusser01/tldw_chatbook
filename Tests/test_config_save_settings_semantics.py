@@ -295,3 +295,113 @@ def test_runtime_capture_policy_concurrent_generation_refresh_is_equivalent(
     assert set(policies) == {
         config_module.RuntimeCapturePolicy(False, CaptureDetail.SAFE, 51)
     }
+
+
+def test_legacy_full_capture_never_migrates_to_full_viewer(monkeypatch) -> None:
+    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 61)
+    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(
+        config_module,
+        "_published_runtime_config_snapshot",
+        lambda: config_module.RuntimeConfigSnapshot(
+            61,
+            {
+                "console": {
+                    "exchange_capture": True,
+                    "exchange_capture_detail": "full",
+                }
+            },
+        ),
+    )
+
+    policy = config_module.runtime_capture_policy()
+
+    assert policy.detail is CaptureDetail.FULL
+    assert policy.viewer_profile == "safe"
+    assert policy.pii_redaction_enabled is False
+
+
+def test_versioned_viewer_and_pii_choices_restore_independently(monkeypatch) -> None:
+    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 62)
+    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(
+        config_module,
+        "_published_runtime_config_snapshot",
+        lambda: config_module.RuntimeConfigSnapshot(
+            62,
+            {
+                "console": {
+                    "exchange_capture": False,
+                    "exchange_capture_detail": "safe",
+                    "exchange_capture_pii_redaction": True,
+                    "trace_viewer_profile": "full",
+                    "trace_viewer_profile_version": 1,
+                }
+            },
+        ),
+    )
+
+    policy = config_module.runtime_capture_policy()
+
+    assert policy.enabled is False
+    assert policy.pii_redaction_enabled is True
+    assert policy.viewer_profile == "full"
+
+
+def test_malformed_privacy_config_falls_back_to_all_safe_defaults(monkeypatch) -> None:
+    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 63)
+    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(
+        config_module,
+        "_published_runtime_config_snapshot",
+        lambda: config_module.RuntimeConfigSnapshot(
+            63,
+            {
+                "console": {
+                    "exchange_capture": True,
+                    "exchange_capture_detail": "full",
+                    "exchange_capture_pii_redaction": "true",
+                    "trace_viewer_profile": "full",
+                    "trace_viewer_profile_version": "1",
+                }
+            },
+        ),
+    )
+
+    policy = config_module.runtime_capture_policy()
+
+    assert policy.detail is CaptureDetail.FULL
+    assert policy.pii_redaction_enabled is False
+    assert policy.viewer_profile == "safe"
+
+
+def test_failed_more_revealing_privacy_change_is_not_published(monkeypatch) -> None:
+    config_module._publish_runtime_capture_policy(
+        False,
+        CaptureDetail.SAFE,
+        70,
+        pii_redaction_enabled=True,
+        viewer_profile="safe",
+    )
+    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 70)
+
+    def mutate(*_args, **kwargs):
+        assert kwargs["before_replace"] is None
+        assert kwargs["after_replace"] is not None
+        return ConfigMutationResult(False, False, "before_replace")
+
+    monkeypatch.setattr(config_module, "apply_settings_mutation_to_cli_config", mutate)
+
+    result = config_module.apply_console_capture_settings(
+        enabled=True,
+        detail=CaptureDetail.SAFE,
+        expected_generation=70,
+        pii_redaction_enabled=False,
+        viewer_profile="full",
+    )
+
+    assert result.failure_phase == "before_replace"
+    policy = config_module.runtime_capture_policy()
+    assert policy.enabled is False
+    assert policy.pii_redaction_enabled is True
+    assert policy.viewer_profile == "safe"

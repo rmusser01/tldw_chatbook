@@ -256,6 +256,44 @@ def resolve_capture_policy(
     )
 
 
+def resolve_scoped_boolean(
+    *,
+    global_default: bool,
+    conversation: bool | None = None,
+    next_send: bool | None = None,
+    allow_next_send: bool = True,
+) -> bool:
+    """Resolve a strict bool through next-send, conversation, and global scope.
+
+    Args:
+        global_default: Required fallback used when no sparse override applies.
+        conversation: Optional conversation-scoped override.
+        next_send: Optional one-shot override with highest precedence.
+        allow_next_send: Whether the one-shot scope is eligible for this caller.
+
+    Returns:
+        The highest-precedence applicable boolean value.
+
+    Raises:
+        TypeError: If a supplied non-None value is not exactly ``bool``.
+    """
+
+    if type(global_default) is not bool:
+        raise TypeError("global_default")
+    candidates = (
+        next_send if allow_next_send else None,
+        conversation,
+        global_default,
+    )
+    for value in candidates:
+        if value is None:
+            continue
+        if type(value) is not bool:
+            raise TypeError("scoped boolean override")
+        return value
+    return global_default
+
+
 @dataclass(frozen=True)
 class ExchangeCapture:
     """One provider call's captured request/response pair."""

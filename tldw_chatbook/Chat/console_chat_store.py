@@ -1106,6 +1106,11 @@ class CapturePolicyState:
     policy_revision: int
     capture_revision: int
     save_pending: bool
+    next_capture_enabled: bool | None
+    next_pii_redaction_enabled: bool | None
+    conversation_capture_enabled: bool | None
+    conversation_pii_redaction_enabled: bool | None
+    next_privacy_revision: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -1294,6 +1299,11 @@ class ConsoleChatSession:
     capture_detail_override: CaptureDetail | None = None
     next_capture_detail: CaptureDetail | None = None
     next_capture_detail_revision: int = 0
+    capture_enabled_override: bool | None = None
+    pii_redaction_enabled_override: bool | None = None
+    next_capture_enabled: bool | None = None
+    next_pii_redaction_enabled: bool | None = None
+    next_privacy_revision: int = 0
     capture_revision: int = 0
     capture_policy_save_pending: bool = False
     #: RAG retrieval scope (task-9) for a not-yet-persisted session -- see
@@ -8548,6 +8558,13 @@ class ConsoleChatStore:
                 policy_revision=self._capture_policy_revision,
                 capture_revision=session.capture_revision,
                 save_pending=session.capture_policy_save_pending,
+                next_capture_enabled=session.next_capture_enabled,
+                next_pii_redaction_enabled=session.next_pii_redaction_enabled,
+                conversation_capture_enabled=session.capture_enabled_override,
+                conversation_pii_redaction_enabled=(
+                    session.pii_redaction_enabled_override
+                ),
+                next_privacy_revision=session.next_privacy_revision,
             )
 
     def capture_revision(self, session_id: str) -> int:
@@ -8715,27 +8732,54 @@ class ConsoleChatStore:
                     )
                 else:
                     session.capture_detail_override = result.policy.detail
+                    session.capture_enabled_override = result.policy.capture_enabled
+                    session.pii_redaction_enabled_override = (
+                        result.policy.pii_redaction_enabled
+                    )
                     session.capture_policy_save_pending = False
             elif result.status is CapturePolicyReadStatus.ABSENT:
                 session.capture_detail_override = None
+                session.capture_enabled_override = None
+                session.pii_redaction_enabled_override = None
                 session.capture_policy_save_pending = False
             else:
                 session.capture_detail_override = CaptureDetail.SAFE
+                # Preserve the established fail-Safe behavior: storage
+                # uncertainty suppresses legacy Full detail without silently
+                # changing the independent Capture or PII controls.
+                session.capture_enabled_override = None
+                session.pii_redaction_enabled_override = None
                 session.capture_policy_save_pending = True
             return result
 
     def _flush_staged_capture_policy(self, session: ConsoleChatSession) -> None:
         """Best-effort flush of an ephemeral policy after identity publication."""
-        if session.capture_detail_override is None:
+        if (
+            session.capture_detail_override is None
+            and session.capture_enabled_override is None
+            and session.pii_redaction_enabled_override is None
+        ):
             return
         repository = self.capture_policy_repository
         if repository is None or session.persisted_conversation_id is None:
             session.capture_policy_save_pending = True
             return
-        result = repository.replace(
+        result = repository.replace_privacy(
             session.persisted_conversation_id,
-            session.capture_detail_override,
+            capture_enabled=session.capture_enabled_override,
+            pii_redaction_enabled=session.pii_redaction_enabled_override,
         )
+        if (
+            result.status in {
+                CapturePolicyWriteStatus.STORED,
+                CapturePolicyWriteStatus.UNCHANGED,
+            }
+            and session.capture_detail_override is not None
+        ):
+            result = repository.replace(
+                session.persisted_conversation_id,
+                session.capture_detail_override,
+            )
         session.capture_policy_save_pending = result.status not in {
             CapturePolicyWriteStatus.STORED,
             CapturePolicyWriteStatus.UNCHANGED,
@@ -8766,6 +8810,77 @@ class ConsoleChatStore:
                 session.next_capture_detail_revision,
                 self._capture_policy_revision,
             )
+
+    def set_session_next_trace_privacy(
+        self,
+        session_id: str,
+        *,
+        capture_enabled: bool | None,
+        pii_redaction_enabled: bool | None,
+        expected_policy_revision: int,
+    ) -> int:
+        """Replace the eligible next-send Capture/PII override atomically."""
+
+        for value in (capture_enabled, pii_redaction_enabled):
+            if value is not None and type(value) is not bool:
+                raise TypeError("privacy override must be bool or None")
+        with self._capture_policy_lock:
+            session = self._session_or_raise(session_id)
+            if (
+                self._capture_policy_mutation is not None
+                or self._capture_policy_revision != expected_policy_revision
+            ):
+                raise CapturePolicyStaleError
+            session.next_capture_enabled = capture_enabled
+            session.next_pii_redaction_enabled = pii_redaction_enabled
+            session.next_privacy_revision += 1
+            self._capture_policy_revision += 1
+            return self._capture_policy_revision
+
+    def consume_session_next_trace_privacy(
+        self,
+        session_id: str,
+        *,
+        expected_next_revision: int,
+    ) -> bool:
+        """Consume only the exact Capture/PII one-shot frozen at admission."""
+
+        with self._capture_policy_lock:
+            session = self._session_or_raise(session_id)
+            if session.next_privacy_revision != expected_next_revision:
+                return False
+            session.next_capture_enabled = None
+            session.next_pii_redaction_enabled = None
+            session.next_privacy_revision += 1
+            self._capture_policy_revision += 1
+            return True
+
+    def replace_session_trace_privacy_override(
+        self,
+        session_id: str,
+        *,
+        capture_enabled: bool | None,
+        pii_redaction_enabled: bool | None,
+        expected_policy_revision: int,
+        save_pending: bool = False,
+    ) -> int:
+        """Replace sparse conversation Capture/PII overrides in memory."""
+
+        for value in (capture_enabled, pii_redaction_enabled):
+            if value is not None and type(value) is not bool:
+                raise TypeError("privacy override must be bool or None")
+        with self._capture_policy_lock:
+            session = self._session_or_raise(session_id)
+            if (
+                self._capture_policy_mutation is not None
+                or self._capture_policy_revision != expected_policy_revision
+            ):
+                raise CapturePolicyStaleError
+            session.capture_enabled_override = capture_enabled
+            session.pii_redaction_enabled_override = pii_redaction_enabled
+            session.capture_policy_save_pending = bool(save_pending)
+            self._capture_policy_revision += 1
+            return self._capture_policy_revision
 
     def consume_session_next_capture_detail(
         self,
@@ -8813,11 +8928,18 @@ class ConsoleChatStore:
                 raise CapturePolicyStaleError
             changed = False
             for session in self._sessions.values():
-                if session.next_capture_detail is None:
-                    continue
-                session.next_capture_detail = None
-                session.next_capture_detail_revision += 1
-                changed = True
+                if session.next_capture_detail is not None:
+                    session.next_capture_detail = None
+                    session.next_capture_detail_revision += 1
+                    changed = True
+                if (
+                    session.next_capture_enabled is not None
+                    or session.next_pii_redaction_enabled is not None
+                ):
+                    session.next_capture_enabled = None
+                    session.next_pii_redaction_enabled = None
+                    session.next_privacy_revision += 1
+                    changed = True
             if changed:
                 self._capture_policy_revision += 1
             return self._capture_policy_revision
@@ -8883,6 +9005,7 @@ class ConsoleChatStore:
         detail: CaptureDetail | None = None,
         save_pending: bool = False,
         disarm_next: bool = False,
+        privacy_update: tuple[bool | None, bool | None] | None = None,
     ) -> int:
         """Publish a reserved durable mutation and release its owner."""
         with self._capture_policy_lock:
@@ -8892,12 +9015,24 @@ class ConsoleChatStore:
                 if session_id is not None:
                     session = self._session_or_raise(session_id)
                     session.capture_detail_override = detail
+                    if privacy_update is not None:
+                        (
+                            session.capture_enabled_override,
+                            session.pii_redaction_enabled_override,
+                        ) = privacy_update
                     session.capture_policy_save_pending = bool(save_pending)
                 if disarm_next:
                     for session in self._sessions.values():
                         if session.next_capture_detail is not None:
                             session.next_capture_detail = None
                             session.next_capture_detail_revision += 1
+                        if (
+                            session.next_capture_enabled is not None
+                            or session.next_pii_redaction_enabled is not None
+                        ):
+                            session.next_capture_enabled = None
+                            session.next_pii_redaction_enabled = None
+                            session.next_privacy_revision += 1
                 return self._capture_policy_revision
             finally:
                 self._capture_policy_mutation = None

@@ -72,6 +72,24 @@ def build_capture_policy_bindings(
             expected_policy_revision=expected_policy_revision,
         )
 
+    def apply_next_privacy(capture_enabled, pii_enabled, expected_policy_revision):
+        return controller.set_next_trace_privacy(
+            session_id,
+            capture_enabled=capture_enabled,
+            pii_redaction_enabled=pii_enabled,
+            expected_policy_revision=expected_policy_revision,
+        )
+
+    async def apply_conversation_privacy(
+        capture_enabled, pii_enabled, expected_policy_revision
+    ):
+        return await controller.replace_conversation_trace_privacy(
+            session_id,
+            capture_enabled=capture_enabled,
+            pii_redaction_enabled=pii_enabled,
+            expected_policy_revision=expected_policy_revision,
+        )
+
     def apply_global(enabled, detail, config_generation, policy_revision):
         if controller.store.active_session_id != session_id:
             return CapturePolicyMutationResult(
@@ -83,6 +101,25 @@ def build_capture_policy_bindings(
         return controller.apply_global_capture_settings(
             enabled=enabled,
             detail=detail,
+            expected_config_generation=config_generation,
+            expected_policy_revision=policy_revision,
+        )
+
+    def apply_global_privacy(
+        capture_enabled, pii_enabled, config_generation, policy_revision
+    ):
+        if controller.store.active_session_id != session_id:
+            return CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.TARGET_MISSING,
+                read(),
+                True,
+                "opener_session_not_active",
+            )
+        snapshot = read()
+        return controller.apply_global_capture_settings(
+            enabled=capture_enabled,
+            detail=snapshot.global_detail,
+            pii_redaction_enabled=pii_enabled,
             expected_config_generation=config_generation,
             expected_policy_revision=policy_revision,
         )
@@ -115,6 +152,9 @@ def build_capture_policy_bindings(
         purge_full=purge_full,
         capture_revision=lambda: controller.capture_revision(session_id),
         purge_availability=lambda: controller.capture_purge_availability(session_id),
+        apply_next_privacy=apply_next_privacy,
+        apply_conversation_privacy=apply_conversation_privacy,
+        apply_global_privacy=apply_global_privacy,
     )
 
 

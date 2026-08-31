@@ -106,6 +106,24 @@ def test_privacy_posture_handles_malformed_config_safely():
     assert "Redaction: active; raw secret values hidden" in rows
 
 
+def test_privacy_posture_fails_safe_for_malformed_trace_privacy_fields():
+    posture = build_settings_privacy_posture(
+        {
+            "console": {
+                "exchange_capture": True,
+                "exchange_capture_pii_redaction": "true",
+                "trace_viewer_profile": "full",
+                "trace_viewer_profile_version": "1",
+            }
+        },
+        environ={},
+    )
+
+    assert posture.trace_capture_enabled is True
+    assert posture.trace_pii_masking_enabled is False
+    assert posture.trace_viewer_profile == "safe"
+
+
 def test_privacy_posture_reports_skill_trust_without_leaking_paths():
     posture = build_settings_privacy_posture(
         {"encryption": {"enabled": True}},

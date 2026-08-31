@@ -88,8 +88,8 @@ def test_real_v60_reopen_adds_empty_content_free_seed_state(tmp_path: Path) -> N
     migrated = CharactersRAGDB(path, client_id="agent-lessons-v61-migrate")
     try:
         connection = migrated.get_connection()
-        assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 61
-        assert _schema_version(connection) == 61
+        assert CharactersRAGDB._CURRENT_SCHEMA_VERSION >= 61
+        assert _schema_version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         assert SEED_TABLE in _table_names(connection)
         assert tuple(
             str(row[1]) for row in connection.execute(f"PRAGMA table_info({SEED_TABLE})")

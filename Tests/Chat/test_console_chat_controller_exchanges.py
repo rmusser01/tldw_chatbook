@@ -165,6 +165,175 @@ def test_capture_policy_precedence_and_wake_one_shot_exclusion(monkeypatch):
     assert controller.capture_policy_snapshot(session.id).next_detail is None
 
 
+def test_trace_privacy_scopes_resolve_independently_and_one_shot_is_consumed(
+    monkeypatch,
+) -> None:
+    controller = _new_controller()
+    session = controller.store.ensure_session()
+    monkeypatch.setattr(
+        controller_module,
+        "runtime_capture_policy",
+        lambda: SimpleNamespace(
+            enabled=True,
+            detail=CaptureDetail.SAFE,
+            generation=7,
+            pii_redaction_enabled=False,
+            viewer_profile="safe",
+        ),
+    )
+    snapshot = controller.capture_policy_snapshot(session.id)
+    controller.store.replace_session_trace_privacy_override(
+        session.id,
+        capture_enabled=False,
+        pii_redaction_enabled=True,
+        expected_policy_revision=snapshot.policy_revision,
+    )
+    snapshot = controller.capture_policy_snapshot(session.id)
+    assert snapshot.effective_capture_enabled is False
+    assert snapshot.pii_redaction_enabled is True
+
+    result = controller.set_next_trace_privacy(
+        session.id,
+        capture_enabled=True,
+        pii_redaction_enabled=False,
+        expected_policy_revision=snapshot.policy_revision,
+    )
+    assert result.snapshot.effective_capture_enabled is True
+    assert result.snapshot.pii_redaction_enabled is False
+
+    signals = controller._admit_capture_policy(
+        session.id, ConsoleSubmissionOrigin.MANUAL
+    )
+
+    assert signals.exchange_capture_enabled is True
+    after = controller.capture_policy_snapshot(session.id)
+    assert after.next_capture_enabled is None
+    assert after.next_pii_redaction_enabled is None
+    assert after.effective_capture_enabled is False
+    assert after.pii_redaction_enabled is True
+
+
+def test_frozen_next_send_capture_survives_one_shot_consumption(monkeypatch) -> None:
+    controller = _new_controller()
+    session = controller.store.ensure_session()
+    monkeypatch.setattr(
+        controller_module,
+        "runtime_capture_policy",
+        lambda: SimpleNamespace(
+            enabled=False,
+            detail=CaptureDetail.SAFE,
+            generation=8,
+            pii_redaction_enabled=False,
+            viewer_profile="safe",
+        ),
+    )
+    snapshot = controller.capture_policy_snapshot(session.id)
+    controller.set_next_trace_privacy(
+        session.id,
+        capture_enabled=True,
+        pii_redaction_enabled=True,
+        expected_policy_revision=snapshot.policy_revision,
+    )
+    frozen = controller.capture_policy_snapshot(session.id)
+    signals = controller._admit_capture_policy(
+        session.id,
+        ConsoleSubmissionOrigin.MANUAL,
+        frozen_capture_enabled=frozen.effective_capture_enabled,
+        frozen_pii_redaction_enabled=frozen.pii_redaction_enabled,
+        frozen_next_trace_privacy_revision=frozen.next_privacy_revision,
+    )
+
+    assert signals.exchange_capture_enabled is True
+    assert signals.pii_redaction_enabled is True
+    assert controller.capture_policy_snapshot(session.id).effective_capture_enabled is False
+
+
+def test_frozen_turn_does_not_consume_a_newer_next_send_privacy_choice(
+    monkeypatch,
+) -> None:
+    controller = _new_controller()
+    session = controller.store.ensure_session()
+    monkeypatch.setattr(
+        controller_module,
+        "runtime_capture_policy",
+        lambda: SimpleNamespace(
+            enabled=False,
+            detail=CaptureDetail.SAFE,
+            generation=8,
+            pii_redaction_enabled=False,
+            viewer_profile="safe",
+        ),
+    )
+    initial = controller.capture_policy_snapshot(session.id)
+    first = controller.set_next_trace_privacy(
+        session.id,
+        capture_enabled=True,
+        pii_redaction_enabled=True,
+        expected_policy_revision=initial.policy_revision,
+    ).snapshot
+    newer = controller.set_next_trace_privacy(
+        session.id,
+        capture_enabled=False,
+        pii_redaction_enabled=False,
+        expected_policy_revision=first.policy_revision,
+    ).snapshot
+
+    signals = controller._admit_capture_policy(
+        session.id,
+        ConsoleSubmissionOrigin.MANUAL,
+        frozen_capture_enabled=first.effective_capture_enabled,
+        frozen_pii_redaction_enabled=first.pii_redaction_enabled,
+        frozen_next_trace_privacy_revision=first.next_privacy_revision,
+    )
+
+    assert signals.exchange_capture_enabled is True
+    assert signals.pii_redaction_enabled is True
+    after = controller.capture_policy_snapshot(session.id)
+    assert after.next_privacy_revision == newer.next_privacy_revision
+    assert after.next_capture_enabled is False
+    assert after.next_pii_redaction_enabled is False
+
+
+def test_frozen_turn_without_override_does_not_consume_later_privacy_choice(
+    monkeypatch,
+) -> None:
+    controller = _new_controller()
+    session = controller.store.ensure_session()
+    monkeypatch.setattr(
+        controller_module,
+        "runtime_capture_policy",
+        lambda: SimpleNamespace(
+            enabled=False,
+            detail=CaptureDetail.SAFE,
+            generation=8,
+            pii_redaction_enabled=False,
+            viewer_profile="safe",
+        ),
+    )
+    initial = controller.capture_policy_snapshot(session.id)
+    armed = controller.set_next_trace_privacy(
+        session.id,
+        capture_enabled=True,
+        pii_redaction_enabled=True,
+        expected_policy_revision=initial.policy_revision,
+    ).snapshot
+
+    signals = controller._admit_capture_policy(
+        session.id,
+        ConsoleSubmissionOrigin.MANUAL,
+        frozen_capture_enabled=False,
+        frozen_pii_redaction_enabled=False,
+        frozen_next_trace_privacy_revision=None,
+    )
+
+    assert signals.exchange_capture_enabled is False
+    assert signals.pii_redaction_enabled is False
+    after = controller.capture_policy_snapshot(session.id)
+    assert after.next_privacy_revision == armed.next_privacy_revision
+    assert after.next_capture_enabled is True
+    assert after.next_pii_redaction_enabled is True
+
+
 @pytest.mark.asyncio
 async def test_temporary_capture_on_pauses_real_submit_before_gateway(
     monkeypatch,
@@ -192,9 +361,17 @@ async def test_temporary_capture_on_pauses_real_submit_before_gateway(
         "runtime_capture_policy",
         lambda: SimpleNamespace(enabled=True, detail=CaptureDetail.SAFE, generation=7),
     )
+    snapshot = controller.capture_policy_snapshot(session.id)
+    controller.set_next_trace_privacy(
+        session.id,
+        capture_enabled=True,
+        pii_redaction_enabled=True,
+        expected_policy_revision=snapshot.policy_revision,
+    )
 
     result = await controller.submit_draft("capture this", session_id=session.id)
     preparation = store.preparation_for_session(session.id)
+    privacy = controller.capture_policy_snapshot(session.id)
 
     assert result.accepted is False
     assert result.provider_started is False
@@ -202,6 +379,8 @@ async def test_temporary_capture_on_pauses_real_submit_before_gateway(
     assert preparation is not None
     assert preparation.state is ConsoleTurnPreparationState.PAUSED
     assert preparation.pause_kind is ConsolePreparationPauseKind.TEMPORARY_CAPTURE
+    assert privacy.next_capture_enabled is True
+    assert privacy.next_pii_redaction_enabled is True
     assert preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
 
 

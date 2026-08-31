@@ -10,14 +10,20 @@ import pytest
 from loguru import logger
 
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture, capture_to_blob
+from tldw_chatbook.Chat.console_exchange_capture import (
+    CaptureDetail,
+    ExchangeCapture,
+    capture_to_blob,
+)
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat.console_trace_projection import (
     ConsoleTraceProjection,
     LegacyExchangeCall,
     NormalizedTraceCall,
+    project_capture_for_viewer,
 )
+from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
 
 
 def _capture(*, run_tag: str, seq: int, created_at: str, model: str) -> ExchangeCapture:
@@ -82,6 +88,67 @@ def _normalized(
         abandoned=abandoned,
         verification_status="verified" if verified else "unverified",
     )
+
+
+def test_safe_and_full_are_credential_safe_views_of_the_same_trace() -> None:
+    source = replace(
+        _capture(
+            run_tag="viewer-run",
+            seq=0,
+            created_at="2026-08-30T00:00:00Z",
+            model="viewer-model",
+        ),
+        capture_detail=CaptureDetail.FULL,
+        endpoint="https://user:password@example.test/v1?api_key=secret-value",
+        request={
+            "system_message": "provider-only system body",
+            "messages_payload": [
+                {"role": "user", "content": "provider-only message body"}
+            ],
+            "tools": [{"name": "private-tool", "token": "secret-value"}],
+        },
+        response={"content": "provider-only response body"},
+    )
+
+    safe = project_capture_for_viewer(source, TraceViewerProfile.SAFE)
+    full = project_capture_for_viewer(source, TraceViewerProfile.FULL)
+
+    assert "provider-only message body" not in repr(safe)
+    assert "provider-only response body" not in repr(safe)
+    assert "provider-only message body" in repr(full)
+    assert "provider-only response body" in repr(full)
+    assert "secret-value" not in repr(safe)
+    assert "secret-value" not in repr(full)
+    assert source.request["messages_payload"][0]["content"] == (
+        "provider-only message body"
+    )
+
+
+def test_both_viewer_profiles_preserve_frozen_pii_masks() -> None:
+    source = replace(
+        _capture(
+            run_tag="masked-run",
+            seq=0,
+            created_at="2026-08-30T00:00:00Z",
+            model="viewer-model",
+        ),
+        capture_detail=CaptureDetail.FULL,
+        request={
+            "system_message": "",
+            "messages_payload": [
+                {"role": "user", "content": "Email [REDACTED PII]"}
+            ],
+            "tools": [],
+        },
+        response={"content": "[REDACTED PII]"},
+    )
+
+    safe = project_capture_for_viewer(source, TraceViewerProfile.SAFE)
+    full = project_capture_for_viewer(source, TraceViewerProfile.FULL)
+
+    assert "person@example.test" not in repr(safe)
+    assert "person@example.test" not in repr(full)
+    assert "[REDACTED PII]" in repr(full)
 
 
 def test_verified_normalized_call_replaces_matching_legacy_exchange() -> None:

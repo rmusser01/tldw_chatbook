@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal, TypeAlias, TypeVar
 
 from loguru import logger
@@ -20,6 +20,10 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     CaptureDetail,
     ExchangeCapture,
     capture_from_storage,
+)
+from tldw_chatbook.Chat.trace_export_profiles import (
+    TraceExportProfile,
+    TraceViewerProfile,
 )
 
 
@@ -73,6 +77,102 @@ _USAGE_FIELDS = (
         "partial",
     }
 )
+_SAFE_BODY_OMISSION = "[hidden by Safe trace viewer]"
+
+
+def project_capture_for_viewer(
+    capture: ExchangeCapture,
+    profile: TraceViewerProfile,
+) -> ExchangeCapture:
+    """Return a credential-safe disclosure projection of one stored call.
+
+    Safe keeps structural facts but never returns sensitive provider-only
+    bodies. Full returns every persisted non-credential field available in
+    the stored call; legacy Safe captures remain irrecoverably reduced.
+
+    Args:
+        capture: Stored legacy exchange capture to disclose.
+        profile: Explicit local Safe or Full viewer profile.
+
+    Returns:
+        A credential-safe capture containing only fields allowed by ``profile``.
+
+    Raises:
+        TypeError: If ``profile`` is not a :class:`TraceViewerProfile`.
+    """
+
+    # Keep the Inspector's first-paint import closure small. Export projection is
+    # needed only when a call body is actually opened.
+    from tldw_chatbook.Chat.console_exchange_export import project_exchange_export
+
+    if not isinstance(profile, TraceViewerProfile):
+        raise TypeError("profile")
+    export_profile = (
+        TraceExportProfile.FULL_TRACE
+        if profile is TraceViewerProfile.FULL
+        and capture.capture_detail is CaptureDetail.FULL
+        else TraceExportProfile.REDACTED_DIAGNOSTIC
+    )
+    payload = project_exchange_export(capture, export_profile).payload
+    request = payload.get("request")
+    response = payload.get("response")
+    request_mapping = dict(request) if isinstance(request, Mapping) else {}
+    response_mapping = dict(response) if isinstance(response, Mapping) else {}
+    if "truncation_inventory" not in capture.request:
+        request_mapping.pop("truncation_inventory", None)
+    if "truncation_inventory" not in capture.response:
+        response_mapping.pop("truncation_inventory", None)
+    if profile is TraceViewerProfile.SAFE:
+        messages = request_mapping.get("messages_payload")
+        message_count = len(messages) if isinstance(messages, list) else 0
+        tools = request_mapping.get("tools")
+        tool_count = len(tools) if isinstance(tools, list) else 0
+        tool_calls = response_mapping.get("tool_calls")
+        tool_call_count = len(tool_calls) if isinstance(tool_calls, list) else 0
+        request_mapping = {
+            "system_message": (
+                _SAFE_BODY_OMISSION
+                if request_mapping.get("system_message")
+                else ""
+            ),
+            "messages_payload": [
+                {"role": "hidden", "content": _SAFE_BODY_OMISSION}
+                for _index in range(message_count)
+            ],
+            "tools": [
+                {"schema": _SAFE_BODY_OMISSION} for _index in range(tool_count)
+            ],
+            "truncation_inventory": list(
+                request_mapping.get("truncation_inventory") or ()
+            ),
+        }
+        response_mapping = {
+            "content": (
+                _SAFE_BODY_OMISSION if response_mapping.get("content") else ""
+            ),
+            "tool_calls": [
+                {"call": _SAFE_BODY_OMISSION}
+                for _index in range(tool_call_count)
+            ],
+            "synthetic_fallback": bool(
+                response_mapping.get("synthetic_fallback", False)
+            ),
+            "truncation_inventory": list(
+                response_mapping.get("truncation_inventory") or ()
+            ),
+        }
+    projected = replace(
+        capture,
+        provider=str(payload.get("provider") or ""),
+        model=str(payload.get("model") or ""),
+        endpoint=(
+            str(payload["endpoint"]) if payload.get("endpoint") is not None else None
+        ),
+        request=request_mapping,
+        response=response_mapping,
+        omitted_keys=tuple(str(item) for item in payload.get("omitted_keys") or ()),
+    )
+    return capture if projected == capture else projected
 
 
 def _semantic_key(call: ProjectedTraceCall) -> tuple[str, int]:

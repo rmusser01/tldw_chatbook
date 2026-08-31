@@ -111,6 +111,7 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     CaptureDetail,
     CapturePolicyResolution,
     resolve_capture_policy,
+    resolve_scoped_boolean,
 )
 from tldw_chatbook.Chat.console_capture_policy_repository import (
     CapturePolicyReadStatus,
@@ -215,7 +216,15 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     frozen_policy_from_provenance,
 )
 from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
-from tldw_chatbook.Chat.console_trace_redaction import CREDENTIAL_FILTER_VERSION
+from tldw_chatbook.Chat.console_trace_redaction import (
+    BUILTIN_PII_RULESET_REVISION_ID,
+    CREDENTIAL_FILTER_VERSION,
+    CREDENTIAL_SANITIZER_UNAVAILABLE,
+    PII_DETECTOR_UNAVAILABLE,
+    PIIRedactionSpan,
+    CredentialSanitizer,
+    redact_pii_value,
+)
 from tldw_chatbook.Chat.console_visual_transcript import (
     count_semantic_images,
     plan_visual_compaction,
@@ -2443,6 +2452,15 @@ class CapturePolicySnapshot:
     queued_consumer: bool
     save_pending: bool
     error_code: str | None
+    pii_redaction_enabled: bool = False
+    viewer_profile: str = "safe"
+    effective_capture_enabled: bool | None = None
+    next_capture_enabled: bool | None = None
+    next_pii_redaction_enabled: bool | None = None
+    conversation_capture_enabled: bool | None = None
+    conversation_pii_redaction_enabled: bool | None = None
+    global_pii_redaction_enabled: bool = False
+    next_privacy_revision: int = 0
 
 
 class CapturePolicyMutationStatus(str, Enum):
@@ -2467,6 +2485,7 @@ class CapturePurgeStatus(str, Enum):
 
 
 _MISSING_CAPTURE_REVISION = -1
+_UNFROZEN_TRACE_PRIVACY_REVISION = -1
 
 
 @dataclass(frozen=True, slots=True)
@@ -3339,6 +3358,16 @@ class ConsoleChatController:
             conversation=state.conversation_detail,
             global_default=runtime.detail,
         )
+        effective_capture_enabled = resolve_scoped_boolean(
+            global_default=runtime.enabled,
+            conversation=state.conversation_capture_enabled,
+            next_send=state.next_capture_enabled,
+        )
+        effective_pii_redaction_enabled = resolve_scoped_boolean(
+            global_default=bool(getattr(runtime, "pii_redaction_enabled", False)),
+            conversation=state.conversation_pii_redaction_enabled,
+            next_send=state.next_pii_redaction_enabled,
+        )
         queue = self.prompt_queue_registry.snapshot(session_id)
         return CapturePolicySnapshot(
             session_id=session_id,
@@ -3361,6 +3390,19 @@ class ConsoleChatController:
                 if effective.invalid_sources
                 else None
             ),
+            pii_redaction_enabled=effective_pii_redaction_enabled,
+            viewer_profile=str(getattr(runtime, "viewer_profile", "safe")),
+            effective_capture_enabled=effective_capture_enabled,
+            next_capture_enabled=state.next_capture_enabled,
+            next_pii_redaction_enabled=state.next_pii_redaction_enabled,
+            conversation_capture_enabled=state.conversation_capture_enabled,
+            conversation_pii_redaction_enabled=(
+                state.conversation_pii_redaction_enabled
+            ),
+            global_pii_redaction_enabled=bool(
+                getattr(runtime, "pii_redaction_enabled", False)
+            ),
+            next_privacy_revision=state.next_privacy_revision,
         )
 
     def capture_revision(self, session_id: str) -> int:
@@ -3490,6 +3532,141 @@ class ConsoleChatController:
             False,
             None,
         )
+
+    def set_next_trace_privacy(
+        self,
+        session_id: str,
+        *,
+        capture_enabled: bool | None,
+        pii_redaction_enabled: bool | None,
+        expected_policy_revision: int,
+    ) -> CapturePolicyMutationResult:
+        """Arm sparse Capture/PII choices for the next eligible send.
+
+        Args:
+            session_id: Live Console session receiving the one-shot override.
+            capture_enabled: Sparse Capture choice, or None to inherit.
+            pii_redaction_enabled: Sparse PII choice, or None to inherit.
+            expected_policy_revision: Optimistic policy revision to replace.
+
+        Returns:
+            Applied or stale mutation result with a fresh policy snapshot.
+        """
+
+        try:
+            self.store.set_session_next_trace_privacy(
+                session_id,
+                capture_enabled=capture_enabled,
+                pii_redaction_enabled=pii_redaction_enabled,
+                expected_policy_revision=expected_policy_revision,
+            )
+        except CapturePolicyStaleError:
+            return CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.STALE,
+                self.capture_policy_snapshot(session_id),
+                True,
+                "stale_policy_revision",
+            )
+        return CapturePolicyMutationResult(
+            CapturePolicyMutationStatus.APPLIED,
+            self.capture_policy_snapshot(session_id),
+            False,
+            None,
+        )
+
+    async def replace_conversation_trace_privacy(
+        self,
+        session_id: str,
+        *,
+        capture_enabled: bool | None,
+        pii_redaction_enabled: bool | None,
+        expected_policy_revision: int,
+    ) -> CapturePolicyMutationResult:
+        """Persist sparse conversation Capture/PII overrides fail-closed.
+
+        Args:
+            session_id: Live Console session whose conversation policy changes.
+            capture_enabled: Sparse Capture override, or None to inherit.
+            pii_redaction_enabled: Sparse PII override, or None to inherit.
+            expected_policy_revision: Optimistic policy revision to replace.
+
+        Returns:
+            Applied, stale, target-missing, or safer-session-only result with
+            the resulting policy snapshot.
+        """
+
+        before = self.capture_policy_snapshot(session_id)
+        if before.policy_revision != expected_policy_revision:
+            return CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.STALE,
+                before,
+                True,
+                "stale_policy_revision",
+            )
+        try:
+            reservation = self.store.reserve_capture_policy_mutation(
+                expected_policy_revision=expected_policy_revision
+            )
+        except CapturePolicyStaleError:
+            return CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.STALE,
+                self.capture_policy_snapshot(session_id),
+                True,
+                "stale_policy_revision",
+            )
+        try:
+            session_only = before.conversation_id is None
+            if before.conversation_id is not None:
+                repository = self._capture_policy_repository
+                if repository is None:
+                    session_only = True
+                else:
+                    result = await asyncio.to_thread(
+                        repository.replace_privacy,
+                        before.conversation_id,
+                        capture_enabled=capture_enabled,
+                        pii_redaction_enabled=pii_redaction_enabled,
+                    )
+                    if result.status is CapturePolicyWriteStatus.MISSING_CONVERSATION:
+                        self.store.abandon_capture_policy_mutation(reservation)
+                        return CapturePolicyMutationResult(
+                            CapturePolicyMutationStatus.TARGET_MISSING,
+                            before,
+                            False,
+                            "conversation_missing",
+                        )
+                    session_only = result.status is CapturePolicyWriteStatus.UNAVAILABLE
+            active_values = (
+                (False, True)
+                if session_only and before.conversation_id is not None
+                else (capture_enabled, pii_redaction_enabled)
+            )
+            self.store.finish_capture_policy_mutation(
+                reservation,
+                session_id=session_id,
+                detail=before.conversation_detail,
+                privacy_update=active_values,
+                save_pending=session_only and before.conversation_id is not None,
+            )
+            if before.conversation_id is not None and not session_only:
+                self._capture_policy_hydrated.add(session_id)
+                self._capture_policy_hydration_errors.pop(session_id, None)
+            return CapturePolicyMutationResult(
+                CapturePolicyMutationStatus.SAFE_SESSION_ONLY
+                if session_only and before.conversation_id is not None
+                else CapturePolicyMutationStatus.APPLIED,
+                self.capture_policy_snapshot(session_id),
+                session_only and before.conversation_id is not None,
+                "save_failed"
+                if session_only and before.conversation_id is not None
+                else None,
+            )
+        except BaseException:
+            try:
+                self.store.abandon_capture_policy_mutation(reservation)
+            except CapturePolicyStaleError:
+                pass
+            raise
 
     async def replace_conversation_capture_detail(
         self,
@@ -3698,6 +3875,8 @@ class ConsoleChatController:
         detail: CaptureDetail,
         expected_config_generation: int,
         expected_policy_revision: int,
+        pii_redaction_enabled: bool | None = None,
+        viewer_profile: str | None = None,
     ) -> CapturePolicyMutationResult:
         session_id = self.store.active_session_id
         if session_id is None:
@@ -3726,6 +3905,8 @@ class ConsoleChatController:
                 enabled=enabled,
                 detail=detail,
                 expected_generation=expected_config_generation,
+                pii_redaction_enabled=pii_redaction_enabled,
+                viewer_profile=viewer_profile,
             )
         except BaseException:
             self.store.abandon_capture_policy_mutation(reservation)
@@ -3739,8 +3920,20 @@ class ConsoleChatController:
                 "stale_config_generation",
                 config_result,
             )
-        active = (
-            not enabled or detail is CaptureDetail.SAFE or config_result.file_replaced
+        active_policy = runtime_capture_policy()
+        requested_pii = (
+            before.global_pii_redaction_enabled
+            if pii_redaction_enabled is None
+            else pii_redaction_enabled
+        )
+        requested_viewer = (
+            before.viewer_profile if viewer_profile is None else viewer_profile
+        )
+        active = config_result.file_replaced or (
+            active_policy.enabled is enabled
+            and active_policy.detail is detail
+            and active_policy.pii_redaction_enabled is requested_pii
+            and active_policy.viewer_profile == requested_viewer
         )
         if not active:
             self.store.abandon_capture_policy_mutation(reservation)
@@ -3773,6 +3966,12 @@ class ConsoleChatController:
         self,
         session_id: str,
         origin: ConsoleSubmissionOrigin,
+        *,
+        frozen_capture_enabled: bool | None = None,
+        frozen_pii_redaction_enabled: bool | None = None,
+        frozen_next_trace_privacy_revision: int | None = (
+            _UNFROZEN_TRACE_PRIVACY_REVISION
+        ),
     ) -> ConsoleProviderStreamSignals:
         """Freeze capture detail once, after an accepted owner exists."""
         eligible = origin in {
@@ -3790,7 +3989,16 @@ class ConsoleChatController:
             state = self.store.capture_policy_state(session_id)
             runtime = runtime_capture_policy()
             resolution = resolve_capture_policy(
-                enabled=runtime.enabled,
+                enabled=(
+                    frozen_capture_enabled
+                    if frozen_capture_enabled is not None
+                    else resolve_scoped_boolean(
+                        global_default=runtime.enabled,
+                        conversation=state.conversation_capture_enabled,
+                        next_send=state.next_capture_enabled,
+                        allow_next_send=eligible,
+                    )
+                ),
                 next_send=state.next_detail,
                 conversation=state.conversation_detail,
                 global_default=runtime.detail,
@@ -3808,6 +4016,18 @@ class ConsoleChatController:
         signals = ConsoleProviderStreamSignals(
             exchange_capture_enabled=resolution.enabled,
             capture_detail=resolution.detail,
+            pii_redaction_enabled=(
+                frozen_pii_redaction_enabled
+                if frozen_pii_redaction_enabled is not None
+                else resolve_scoped_boolean(
+                    global_default=bool(
+                        getattr(runtime, "pii_redaction_enabled", False)
+                    ),
+                    conversation=state.conversation_pii_redaction_enabled,
+                    next_send=state.next_pii_redaction_enabled,
+                    allow_next_send=eligible,
+                )
+            ),
         )
         if eligible and state.next_detail is not None:
             try:
@@ -3824,32 +4044,26 @@ class ConsoleChatController:
                     exchange_capture_enabled=False,
                     capture_detail=CaptureDetail.SAFE,
                 )
-        return signals
-
-    def _capture_mode_for_preparation(
-        self,
-        session_id: str,
-        origin: ConsoleSubmissionOrigin,
-    ) -> ConsoleTraceCaptureMode:
-        """Freeze Capture On/Off before any temporary send can dispatch."""
-
-        if origin not in {
-            ConsoleSubmissionOrigin.MANUAL,
-            ConsoleSubmissionOrigin.QUEUED,
-        }:
-            return ConsoleTraceCaptureMode.CAPTURE_OFF
-        try:
-            enabled = self.capture_policy_snapshot(session_id).effective.enabled
-        except Exception as exc:
-            logger.bind(error_type=type(exc).__name__).warning(
-                "capture_policy_preparation_failed"
+        privacy_revision = frozen_next_trace_privacy_revision
+        if privacy_revision == _UNFROZEN_TRACE_PRIVACY_REVISION:
+            privacy_revision = (
+                state.next_privacy_revision
+                if state.next_capture_enabled is not None
+                or state.next_pii_redaction_enabled is not None
+                else None
             )
-            return ConsoleTraceCaptureMode.CAPTURE_OFF
-        return (
-            ConsoleTraceCaptureMode.CAPTURE_ON
-            if enabled
-            else ConsoleTraceCaptureMode.CAPTURE_OFF
-        )
+        if eligible and privacy_revision is not None:
+            try:
+                self.store.consume_session_next_trace_privacy(
+                    session_id,
+                    expected_next_revision=privacy_revision,
+                )
+            except Exception as exc:
+                logger.bind(
+                    phase="privacy_one_shot_consumption",
+                    error_type=type(exc).__name__,
+                ).warning("capture_policy_resolution_failed")
+        return signals
 
     @property
     def run_state(self) -> ConsoleRunState:
@@ -6845,11 +7059,53 @@ class ConsoleChatController:
                     self.store.delete_message(echoed_user.id)
                 return self._block(session.id, "Provider destination is incomplete.")
 
-        capture_mode = (
-            resumed_preparation.capture_mode
-            if resumed_preparation is not None
-            else self._capture_mode_for_preparation(session.id, origin)
-        )
+        admission_policy: CapturePolicySnapshot | None = None
+        if resumed_preparation is not None:
+            capture_mode = resumed_preparation.capture_mode
+        else:
+            try:
+                admission_policy = self.capture_policy_snapshot(session.id)
+                capture_mode = (
+                    ConsoleTraceCaptureMode.CAPTURE_ON
+                    if origin
+                    in {
+                        ConsoleSubmissionOrigin.MANUAL,
+                        ConsoleSubmissionOrigin.QUEUED,
+                    }
+                    and admission_policy.effective_capture_enabled
+                    else ConsoleTraceCaptureMode.CAPTURE_OFF
+                )
+            except Exception as exc:
+                logger.bind(error_type=type(exc).__name__).warning(
+                    "capture_policy_preparation_failed"
+                )
+                capture_mode = ConsoleTraceCaptureMode.CAPTURE_OFF
+        if resumed_preparation is not None:
+            pii_redaction_enabled = resumed_preparation.pii_redaction_enabled
+            pii_ruleset_revision_id = resumed_preparation.pii_ruleset_revision_id
+            next_trace_privacy_revision = (
+                resumed_preparation.next_trace_privacy_revision
+            )
+        else:
+            pii_redaction_enabled = (
+                capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
+                and admission_policy is not None
+                and admission_policy.pii_redaction_enabled
+            )
+            pii_ruleset_revision_id = (
+                BUILTIN_PII_RULESET_REVISION_ID
+                if pii_redaction_enabled
+                else None
+            )
+            next_trace_privacy_revision = (
+                admission_policy.next_privacy_revision
+                if admission_policy is not None
+                and (
+                    admission_policy.next_capture_enabled is not None
+                    or admission_policy.next_pii_redaction_enabled is not None
+                )
+                else None
+            )
         if (
             resumed_preparation is None
             and session.ephemeral
@@ -6959,6 +7215,9 @@ class ConsoleChatController:
                 one_shot_bypass=False,
                 ephemeral=session.ephemeral,
                 capture_mode=capture_mode,
+                pii_redaction_enabled=pii_redaction_enabled,
+                pii_ruleset_revision_id=pii_ruleset_revision_id,
+                next_trace_privacy_revision=next_trace_privacy_revision,
             )
             preparation = pause_temporary_capture_on(preparation)
             if self._begin_submit_preparation(active_task, preparation) is None:
@@ -7418,7 +7677,17 @@ class ConsoleChatController:
                 ConsoleTurnPreparationState.ACCEPTED,
             ):
                 raise RuntimeError("Prepared turn changed before acceptance.")
-            stream_signals = self._admit_capture_policy(session.id, origin)
+            stream_signals = self._admit_capture_policy(
+                session.id,
+                origin,
+                frozen_capture_enabled=(
+                    preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
+                ),
+                frozen_pii_redaction_enabled=preparation.pii_redaction_enabled,
+                frozen_next_trace_privacy_revision=(
+                    preparation.next_trace_privacy_revision
+                ),
+            )
             self._release_prepared_evidence(prepared_continuation)
             for pending in pendings:
                 self.store.consume_pending_attachment(session.id, pending.attachment_id)
@@ -7767,8 +8036,8 @@ class ConsoleChatController:
         policy = FrozenTracePolicy(
             policy_id=new_opaque_id(),
             credential_filter_version=CREDENTIAL_FILTER_VERSION,
-            pii_redaction_enabled=False,
-            pii_ruleset_revision_id=None,
+            pii_redaction_enabled=preparation.pii_redaction_enabled,
+            pii_ruleset_revision_id=preparation.pii_ruleset_revision_id,
         )
         try:
             with database.transaction(immediate=True) as cursor:
@@ -7778,6 +8047,46 @@ class ConsoleChatController:
                     message_ids=tuple(saved_ids),
                 )
                 repository.ensure_policy(cursor, policy)
+                if policy.pii_redaction_enabled:
+                    for position, descriptor in zip(
+                        saved_positions,
+                        saved,
+                        strict=True,
+                    ):
+                        credential_projection = CredentialSanitizer().sanitize(
+                            visible_messages[position]
+                        )
+                        if not credential_projection.available:
+                            repository.bind_revision_policy(
+                                cursor,
+                                revision_id=descriptor.revision_id,
+                                policy_id=policy.policy_id,
+                                omission_reason_code=(
+                                    CREDENTIAL_SANITIZER_UNAVAILABLE
+                                ),
+                            )
+                            continue
+                        redaction = redact_pii_value(credential_projection.value)
+                        if not redaction.available:
+                            repository.bind_revision_policy(
+                                cursor,
+                                revision_id=descriptor.revision_id,
+                                policy_id=policy.policy_id,
+                                omission_reason_code=PII_DETECTOR_UNAVAILABLE,
+                            )
+                            continue
+                        by_path: dict[str, list[PIIRedactionSpan]] = {}
+                        for item in redaction.field_redactions:
+                            by_path.setdefault(item.field_path, []).append(item.span)
+                        for field_path, spans in sorted(by_path.items()):
+                            repository.ensure_redaction_spans(
+                                cursor,
+                                policy_id=policy.policy_id,
+                                semantic_revision_id=descriptor.revision_id,
+                                artifact_id=None,
+                                field_path=field_path,
+                                spans=spans,
+                            )
         except TraceProvenancePersistenceError:
             raise
         except Exception:
@@ -8064,7 +8373,17 @@ class ConsoleChatController:
             turn_context=turn_context,
             prepared=prepared_continuation,
             committed_context_epoch=committed_context_epoch,
-            stream_signals=self._admit_capture_policy(session.id, origin),
+            stream_signals=self._admit_capture_policy(
+                session.id,
+                origin,
+                frozen_capture_enabled=(
+                    preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
+                ),
+                frozen_pii_redaction_enabled=preparation.pii_redaction_enabled,
+                frozen_next_trace_privacy_revision=(
+                    preparation.next_trace_privacy_revision
+                ),
+            ),
             terminal_citation_finalizer=terminal_citation_finalizer,
         )
         with self.store.durable_preparation_lock:
@@ -18535,6 +18854,9 @@ class ConsoleChatController:
         return ConsoleProviderStreamSignals(
             exchange_capture_enabled=runtime.enabled,
             capture_detail=CaptureDetail.SAFE,
+            pii_redaction_enabled=bool(
+                getattr(runtime, "pii_redaction_enabled", False)
+            ),
         )
 
     def _watch_post_turn_usage(

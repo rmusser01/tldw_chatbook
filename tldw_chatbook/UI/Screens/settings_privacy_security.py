@@ -6,7 +6,10 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
+from tldw_chatbook.Utils.sensitive_config_keys import (
+    is_sensitive_config_key,
+    validate_trace_privacy_config,
+)
 
 
 SAFE_SKILL_TRUST_STATUSES = frozenset(
@@ -61,6 +64,9 @@ class SettingsPrivacyPosture:
     skill_trust_status: str = "unavailable"
     skill_trust_keyring_convenience_enabled: bool = False
     skill_trust_reduced_rollback_protection: bool = False
+    trace_capture_enabled: bool = True
+    trace_pii_masking_enabled: bool = False
+    trace_viewer_profile: str = "safe"
 
 
 def build_settings_privacy_posture(
@@ -94,6 +100,10 @@ def build_settings_privacy_posture(
         env,
     )
     trust = skill_trust if isinstance(skill_trust, Mapping) else {}
+    console = app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
+    if not isinstance(console, Mapping):
+        console = {}
+    trace_privacy = validate_trace_privacy_config(console)
     return SettingsPrivacyPosture(
         encryption_enabled=encryption_enabled,
         sensitive_config_fields=_sensitive_config_field_count(app_config),
@@ -109,6 +119,9 @@ def build_settings_privacy_posture(
         skill_trust_reduced_rollback_protection=_safe_bool(
             trust.get("reduced_rollback_protection")
         ),
+        trace_capture_enabled=console.get("exchange_capture", True) is not False,
+        trace_pii_masking_enabled=trace_privacy.exchange_capture_pii_redaction,
+        trace_viewer_profile=trace_privacy.effective_viewer_profile,
     )
 
 
@@ -182,6 +195,13 @@ def build_privacy_posture_rows(posture: SettingsPrivacyPosture) -> tuple[str, ..
             if posture.skill_trust_reduced_rollback_protection
             else "Skill trust rollback protection: full"
         ),
+        f"Trace capture: {'On' if posture.trace_capture_enabled else 'Off'}",
+        (
+            "Trace PII masking: On for future calls; saved conversation unchanged"
+            if posture.trace_pii_masking_enabled
+            else "Trace PII masking: Off"
+        ),
+        f"Trace viewer: {posture.trace_viewer_profile.title()} disclosure profile",
         f"Data boundary: {posture.data_boundary}",
         f"Server boundary: {posture.server_boundary}",
         "Privacy safety: no secret values were printed or written.",

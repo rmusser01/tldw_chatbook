@@ -27,6 +27,12 @@ from tldw_chatbook.Chat.console_trace_models import (
     new_opaque_id,
     validate_call_transition,
 )
+from tldw_chatbook.Chat.console_trace_redaction import (
+    CREDENTIAL_SANITIZER_UNAVAILABLE,
+    PIIRedactionSpan,
+    CredentialSanitizer,
+    merge_pii_spans,
+)
 
 _TOKEN = re.compile(r"[a-z][a-z0-9]*(?:[_-][a-z0-9]+)*\Z", re.ASCII)
 _TOKEN_MAX = 64
@@ -48,6 +54,10 @@ IntegrityState: TypeAlias = Literal["pending", "complete", "incomplete"]
 SurfaceNodeCursor: TypeAlias = tuple[int, str]
 DEFAULT_SURFACE_NODE_PAGE_SIZE = 128
 MAX_SURFACE_NODE_PAGE_SIZE = 256
+_CANONICAL_TRACE_JSON = "canonical-json-v1"
+_CONTENT_FREE_CREDENTIAL_OMISSION = {
+    "omitted": CREDENTIAL_SANITIZER_UNAVAILABLE,
+}
 
 
 class TraceIdentityConflict(ValueError):
@@ -239,6 +249,24 @@ class TraceResponseLinkRecord:
     verification_outcome: Literal["verified_equal", "sanitized_artifact"]
 
 
+@dataclass(frozen=True, slots=True)
+class TraceRedactionSpanRecord:
+    """One immutable content-free mask bound to a source and policy."""
+
+    span_id: str
+    policy_id: str
+    source_kind: Literal["revision", "artifact"]
+    semantic_revision_id: str | None
+    artifact_id: str | None
+    field_path: str
+    start_codepoint: int
+    end_codepoint: int
+    category: str
+    rule_id: str
+    detector_version: str
+    outcome: Literal["applied", "omitted", "unavailable"]
+
+
 def _validate_token(value: str, field_name: str) -> None:
     if (
         type(value) is not str
@@ -252,6 +280,52 @@ def _nonempty(value: str, field_name: str) -> str:
     if type(value) is not str or not value:
         raise ValueError(field_name)
     return value
+
+
+def _sanitize_trace_scalar(value: str, field_name: str) -> str:
+    """Return a mandatory credential-safe durable scalar."""
+
+    value = _nonempty(value, field_name)
+    result = CredentialSanitizer().sanitize(value)
+    if not result.available or type(result.value) is not str or not result.value:
+        return "[credential omitted]"
+    return result.value
+
+
+def _sanitize_trace_artifact_bytes(
+    value: bytes,
+    *,
+    media_type: str,
+    normalization_version: str,
+) -> bytes:
+    """Sanitize canonical JSON before its durable identity is calculated."""
+
+    if (
+        normalization_version != _CANONICAL_TRACE_JSON
+        or media_type.split(";", 1)[0].strip().lower() != "application/json"
+    ):
+        return value
+    try:
+        decoded = json.loads(value.decode("utf-8"))
+        result = CredentialSanitizer().sanitize(decoded)
+        sanitized = (
+            result.value
+            if result.available
+            else _CONTENT_FREE_CREDENTIAL_OMISSION
+        )
+        return json.dumps(
+            sanitized,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError, RecursionError):
+        return json.dumps(
+            _CONTENT_FREE_CREDENTIAL_OMISSION,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
 
 
 def _json_object(
@@ -268,8 +342,14 @@ def _json_object(
             field_name,
             allow_frozen=allow_frozen,
         )
+        result = CredentialSanitizer().sanitize(canonical)
+        sanitized = (
+            result.value
+            if result.available
+            else _CONTENT_FREE_CREDENTIAL_OMISSION
+        )
         encoded = json.dumps(
-            canonical, allow_nan=False, separators=(",", ":"), sort_keys=True
+            sanitized, allow_nan=False, separators=(",", ":"), sort_keys=True
         )
         if not isinstance(json.loads(encoded), dict):
             raise ValueError(field_name)
@@ -814,6 +894,185 @@ class ConsoleTraceRepository:
             else FrozenTracePolicy(row[0], row[1], bool(row[2]), row[3])
         )
 
+    def ensure_redaction_spans(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        policy_id: str,
+        semantic_revision_id: str | None,
+        artifact_id: str | None,
+        field_path: str,
+        spans: Sequence[PIIRedactionSpan],
+        outcome: Literal["applied", "omitted", "unavailable"] = "applied",
+    ) -> tuple[TraceRedactionSpanRecord, ...]:
+        """Persist or reuse immutable content-free masks for one frozen policy.
+
+        Args:
+            cursor: Caller-owned write transaction.
+            policy_id: Frozen trace policy governing these masks.
+            semantic_revision_id: Canonical revision source, or None for an artifact.
+            artifact_id: Provider artifact source, or None for a revision.
+            field_path: Stable structured path within the source value.
+            spans: Content-free merged or unmerged PII codepoint spans.
+            outcome: Persisted detector outcome for the supplied ranges.
+
+        Returns:
+            The existing or newly appended immutable rows in codepoint order.
+
+        Raises:
+            ValueError: If the source, policy, path, spans, or outcome is invalid.
+            TraceIdentityConflict: If the source-policy-path already has
+                different immutable masks.
+        """
+
+        if (semantic_revision_id is None) == (artifact_id is None):
+            raise ValueError("redaction_source")
+        if type(field_path) is not str or not field_path or len(field_path) > 512:
+            raise ValueError("field_path")
+        if outcome not in {"applied", "omitted", "unavailable"}:
+            raise ValueError("outcome")
+        merged = merge_pii_spans(spans)
+        policy = self.get_policy(cursor, policy_id)
+        if policy is None or not policy.pii_redaction_enabled:
+            raise ValueError("pii_policy")
+        source_kind: Literal["revision", "artifact"] = (
+            "revision" if semantic_revision_id is not None else "artifact"
+        )
+        source_column = (
+            "semantic_revision_id" if semantic_revision_id is not None else "artifact_id"
+        )
+        source_id = semantic_revision_id or artifact_id
+        assert source_id is not None
+        rows = cursor.execute(
+            f"""SELECT span_id, policy_id, source_kind, semantic_revision_id,
+                       artifact_id, field_path, start_codepoint, end_codepoint,
+                       category, rule_id, detector_version, outcome
+                  FROM console_trace_redaction_spans
+                 WHERE policy_id = ? AND {source_column} = ? AND field_path = ?
+                 ORDER BY start_codepoint, end_codepoint, span_id""",
+            (policy_id, source_id, field_path),
+        ).fetchall()
+        existing = tuple(TraceRedactionSpanRecord(*row) for row in rows)
+        expected = tuple(
+            (
+                span.start_codepoint,
+                span.end_codepoint,
+                span.category,
+                span.rule_id,
+                span.detector_version,
+                outcome,
+            )
+            for span in merged
+        )
+        if existing:
+            stored = tuple(
+                (
+                    row.start_codepoint,
+                    row.end_codepoint,
+                    row.category,
+                    row.rule_id,
+                    row.detector_version,
+                    row.outcome,
+                )
+                for row in existing
+            )
+            if stored != expected:
+                raise TraceIdentityConflict("redaction_spans")
+            return existing
+        if not merged:
+            return ()
+        self._claim_write_intent(cursor)
+        for span in merged:
+            cursor.execute(
+                """INSERT INTO console_trace_redaction_spans(
+                       span_id, policy_id, source_kind, semantic_revision_id,
+                       artifact_id, field_path, start_codepoint, end_codepoint,
+                       category, rule_id, detector_version, outcome)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    new_opaque_id(),
+                    policy_id,
+                    source_kind,
+                    semantic_revision_id,
+                    artifact_id,
+                    field_path,
+                    span.start_codepoint,
+                    span.end_codepoint,
+                    span.category,
+                    span.rule_id,
+                    span.detector_version,
+                    outcome,
+                ),
+            )
+        rows = cursor.execute(
+            f"""SELECT span_id, policy_id, source_kind, semantic_revision_id,
+                       artifact_id, field_path, start_codepoint, end_codepoint,
+                       category, rule_id, detector_version, outcome
+                  FROM console_trace_redaction_spans
+                 WHERE policy_id = ? AND {source_column} = ? AND field_path = ?
+                 ORDER BY start_codepoint, end_codepoint, span_id""",
+            (policy_id, source_id, field_path),
+        ).fetchall()
+        return tuple(TraceRedactionSpanRecord(*row) for row in rows)
+
+    def read_redaction_spans(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        policy_id: str,
+        semantic_revision_id: str | None,
+        artifact_id: str | None,
+        field_path: str,
+    ) -> tuple[TraceRedactionSpanRecord, ...]:
+        """Read immutable masks for exactly one source, policy, and field path."""
+
+        if (semantic_revision_id is None) == (artifact_id is None):
+            raise ValueError("redaction_source")
+        source_column = (
+            "semantic_revision_id" if semantic_revision_id is not None else "artifact_id"
+        )
+        source_id = semantic_revision_id or artifact_id
+        rows = cursor.execute(
+            f"""SELECT span_id, policy_id, source_kind, semantic_revision_id,
+                       artifact_id, field_path, start_codepoint, end_codepoint,
+                       category, rule_id, detector_version, outcome
+                  FROM console_trace_redaction_spans
+                 WHERE policy_id = ? AND {source_column} = ? AND field_path = ?
+                 ORDER BY start_codepoint, end_codepoint, span_id""",
+            (policy_id, source_id, field_path),
+        ).fetchall()
+        return tuple(TraceRedactionSpanRecord(*row) for row in rows)
+
+    def read_source_redaction_spans(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        policy_id: str,
+        semantic_revision_id: str | None,
+        artifact_id: str | None,
+    ) -> tuple[TraceRedactionSpanRecord, ...]:
+        """Read every bounded field mask for one source under one policy."""
+
+        if (semantic_revision_id is None) == (artifact_id is None):
+            raise ValueError("redaction_source")
+        source_column = (
+            "semantic_revision_id" if semantic_revision_id is not None else "artifact_id"
+        )
+        source_id = semantic_revision_id or artifact_id
+        rows = cursor.execute(
+            f"""SELECT span_id, policy_id, source_kind, semantic_revision_id,
+                       artifact_id, field_path, start_codepoint, end_codepoint,
+                       category, rule_id, detector_version, outcome
+                  FROM console_trace_redaction_spans
+                 WHERE policy_id = ? AND {source_column} = ?
+                 ORDER BY field_path, start_codepoint, end_codepoint, span_id
+                 LIMIT 10001""",
+            (policy_id, source_id),
+        ).fetchall()
+        if len(rows) > 10_000:
+            raise ValueError("redaction_span_limit")
+        return tuple(TraceRedactionSpanRecord(*row) for row in rows)
+
     def ensure_semantic_revision(
         self,
         cursor: sqlite3.Cursor,
@@ -897,6 +1156,11 @@ class ConsoleTraceRepository:
             raise TypeError("sanitized_bytes")
         _nonempty(media_type, "media_type")
         _nonempty(normalization_version, "normalization_version")
+        sanitized_bytes = _sanitize_trace_artifact_bytes(
+            sanitized_bytes,
+            media_type=media_type,
+            normalization_version=normalization_version,
+        )
         self._claim_write_intent(cursor)
         identity_digest = hashlib.sha256(sanitized_bytes).hexdigest()
         existing = self.find_sanitized_artifact(
@@ -935,6 +1199,15 @@ class ConsoleTraceRepository:
     ) -> TraceArtifactRecord | None:
         """Return an exact existing artifact without claiming write intent."""
 
+        if type(sanitized_bytes) is not bytes:
+            raise TypeError("sanitized_bytes")
+        _nonempty(media_type, "media_type")
+        _nonempty(normalization_version, "normalization_version")
+        sanitized_bytes = _sanitize_trace_artifact_bytes(
+            sanitized_bytes,
+            media_type=media_type,
+            normalization_version=normalization_version,
+        )
         identity_digest = hashlib.sha256(sanitized_bytes).hexdigest()
         rows = cursor.execute(
             """SELECT artifact_id, identity_digest, media_type, normalization_version,
@@ -1237,10 +1510,10 @@ class ConsoleTraceRepository:
         previous_header_id: str | None = None,
     ) -> RequestHeaderRecord:
         scalars = (
-            _nonempty(provider_name, "provider_name"),
-            _nonempty(model_name, "model_name"),
-            _nonempty(route_identity, "route_identity"),
-            _nonempty(endpoint_identity, "endpoint_identity"),
+            _sanitize_trace_scalar(provider_name, "provider_name"),
+            _sanitize_trace_scalar(model_name, "model_name"),
+            _sanitize_trace_scalar(route_identity, "route_identity"),
+            _sanitize_trace_scalar(endpoint_identity, "endpoint_identity"),
             _json_object(generation_parameters, "generation_parameters"),
             _json_object(adapter_defaults, "adapter_defaults"),
             _json_object(response_format, "response_format"),

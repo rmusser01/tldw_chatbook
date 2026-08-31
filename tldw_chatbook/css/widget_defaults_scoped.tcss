@@ -2122,6 +2122,23 @@
     GlobalFullCaptureConfirmation #global-full-actions Button { min-width: 14; margin-left: 1; }
 
 
+/* ===== WIDGET: ConsoleTracePrivacyDialog (Widgets/Console/console_capture_policy_dialog.py) ===== */
+
+
+    ConsoleTracePrivacyDialog #trace-privacy-dialog {
+        width: 76; max-width: 96%; height: 24; max-height: 96%;
+        border: tall $primary; background: $surface; padding: 1 2;
+    }
+    ConsoleTracePrivacyDialog #trace-privacy-title { height: 1; text-style: bold; }
+    ConsoleTracePrivacyDialog #trace-privacy-help, ConsoleTracePrivacyDialog #trace-privacy-effective, ConsoleTracePrivacyDialog #trace-privacy-status {
+        height: auto;
+    }
+    ConsoleTracePrivacyDialog #trace-privacy-body { height: 1fr; scrollbar-gutter: stable; }
+    ConsoleTracePrivacyDialog #trace-privacy-actions { height: 3; min-height: 3; align-horizontal: right; }
+    ConsoleTracePrivacyDialog #trace-privacy-actions Button { min-width: 10; margin-left: 1; }
+    ConsoleTracePrivacyDialog #trace-privacy-status.-error { color: $error; }
+
+
 /* ===== WIDGET: ConsoleConversationInspector (Widgets/Console/console_conversation_inspector.py) ===== */
 
 
