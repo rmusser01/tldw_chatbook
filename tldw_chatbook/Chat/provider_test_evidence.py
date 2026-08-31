@@ -104,7 +104,11 @@ _FAILURE_CATEGORIES = frozenset(
 _FAILURE_DETAILS = {
     "timeout": "The request timed out - the server did not answer in time. Check it is running and not overloaded.",
     "connection_refused": "The connection was refused - nothing is listening at that address. Start the server, or check the endpoint and port.",
-    "unauthorized": "Unauthorized - the server rejected this API key. Go Back to re-enter it.",
+    # Qodo review (PR #2256): "Go Back" was wrong -- this verdict renders on
+    # the Provider step, which already contains the key input, and Back goes to
+    # Welcome. Source-agnostic too: the credential may be stored or from the
+    # environment, where "re-enter it" is not the remedy either.
+    "unauthorized": "Unauthorized - the server rejected this API key. Check the Authentication section on this step.",
     "forbidden": "Forbidden - this API key is not allowed to list models. Check its permissions.",
     "http_status": "The server returned an HTTP status error. Check the endpoint, then try again.",
     "invalid_payload": "The server returned an invalid response - not an OpenAI-compatible model list. Check the endpoint.",

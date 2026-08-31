@@ -1288,6 +1288,17 @@ def setup_attention_ids(
     encryption is legitimate under the wizard's skip-safe design, so
     flagging those would cry wolf; these two decide whether the product can
     reach a model at all.
+
+    Args:
+        wizard_data: Collected per-step values, keyed by step id. A
+            non-mapping (or missing step) counts as unconfigured.
+        probe_failed: Whether the provider probe demonstrably failed, which
+            flags both steps regardless of what was configured.
+
+    Returns:
+        frozenset[str]: Step ids that must render the attention marker
+        instead of the completion tick. Empty when both steps are
+        configured and no probe failure is known.
     """
 
     values = wizard_data if isinstance(wizard_data, Mapping) else {}

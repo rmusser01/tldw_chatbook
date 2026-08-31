@@ -306,6 +306,15 @@ class ConsoleLibraryAccessModal(SafeModalDismissMixin, ModalScreen[None]):
             or self._operation_pending
             or not self._state.editing_enabled
         )
+        # TASK-25722 / Qodo review (PR #2256): the cancel control is relabelled
+        # "Keep editing" when a dirty close is refused. Returning to a clean
+        # state -- a successful save, or the user reverting by hand -- makes a
+        # cancel dismiss immediately, so the label and the discard option have
+        # to come back with it. Leaving "Keep editing" on a button that
+        # dismisses recreates exactly the ambiguity this relabel removed.
+        if not self._dirty:
+            self.query_one("#library-access-cancel", Button).label = "Cancel"
+            self.query_one("#library-access-discard", Button).display = False
 
     @on(RadioSet.Changed)
     def _policy_changed(self, event: RadioSet.Changed) -> None:
