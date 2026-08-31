@@ -63,6 +63,7 @@ from ...Widgets.Console.console_workspace_files_modal import (
     WorkspaceFilesBinding,
     WorkspaceFilesService,
 )
+from ...Workspaces.file_inspector import ScopeCaptureError, WorkspaceFileInspector
 from ...Widgets.project_skills_import_modal import maybe_offer_project_skills_import
 from ...Workspaces import (
     CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
@@ -183,6 +184,25 @@ class PageAttemptState:
     retry_cursor: int | None = None
     membership_unknown: bool = False
     worker: Any = None
+
+
+WORKSPACE_FILES_NO_FOLDERS_COPY = "No local folders are attached. Add one in Settings."
+WORKSPACE_FILES_OTHER_VISIT_COPY = (
+    "Close Workspace Files before inspecting another workspace."
+)
+WORKSPACE_FILES_MINIMUM_COPY = "Workspace Files needs at least 80 × 24 terminal cells."
+
+
+@dataclass(frozen=True)
+class _WorkspaceFilesResolution:
+    """Off-loop registry snapshot used to construct one pinned visit."""
+
+    workspace_id: str
+    workspace_name: str
+    active_workspace_id: str | None
+    active_workspace_name: str
+    bindings: tuple[WorkspaceFilesBinding, ...]
+    had_bindings: bool
 
 
 def _normalized_console_workspace_id(workspace_id: str | None) -> str:
@@ -566,6 +586,9 @@ class ConsoleWorkspaceController:
             lambda _conversation_id: None
         )
         self._rail_body_height_accessor = rail_body_height_accessor
+        self._workspace_files_visit_workspace_id: str | None = None
+        self._workspace_files_modal: ConsoleWorkspaceFilesModal | None = None
+        self._workspace_files_attention_generation = 0
 
         self._workspace_tree_search = SearchAttemptState()
         self._flat_conversation_search = SearchAttemptState()
@@ -748,6 +771,7 @@ class ConsoleWorkspaceController:
         active_workspace_name: str,
         bindings: Sequence[WorkspaceFilesBinding],
         attention: WorkspaceFilesAttention | None = None,
+        on_back_to_console: Callable[[], None] | None = None,
     ) -> Any:
         """Push one already-resolved, read-only Workspace Files visit.
 
@@ -771,17 +795,134 @@ class ConsoleWorkspaceController:
             )
             for binding in bindings
         )
-        return self.push_screen(
-            ConsoleWorkspaceFilesModal(
-                inspector=inspector,
-                inspected_workspace_id=inspected_workspace_id,
-                inspected_workspace_name=inspected_workspace_name,
-                active_workspace_id=active_workspace_id,
-                active_workspace_name=active_workspace_name,
-                bindings=safe_bindings,
-                attention=attention,
-            )
+        modal = ConsoleWorkspaceFilesModal(
+            inspector=inspector,
+            inspected_workspace_id=inspected_workspace_id,
+            inspected_workspace_name=inspected_workspace_name,
+            active_workspace_id=active_workspace_id,
+            active_workspace_name=active_workspace_name,
+            bindings=safe_bindings,
+            attention=attention,
+            on_back_to_console=on_back_to_console,
         )
+        self.push_screen(modal)
+        return modal
+
+    async def request_workspace_files(self, workspace_id: str) -> None:
+        """Admit one non-activating Workspace Files visit for ``workspace_id``.
+
+        Registry and binding inspection happens off the event loop.  The only
+        main-loop effects are the modal push/focus and a generic notification;
+        neither changes the Console workspace, session, or staged context.
+        """
+        requested_id = str(workspace_id or "").strip()
+        if not requested_id:
+            return
+        size = self._screen.size
+        if size.width < 80 or size.height < 24:
+            self.app_instance.notify(WORKSPACE_FILES_MINIMUM_COPY, severity="warning")
+            return
+
+        modal = self._workspace_files_modal
+        # A push is asynchronous.  The object is the visit ledger from the
+        # moment it is created, not only after Textual marks it mounted, so a
+        # second request in that interval cannot stack a second modal.
+        if modal is not None:
+            if self._workspace_files_visit_workspace_id == requested_id:
+                if modal.is_mounted:
+                    modal.query_one("#console-workspace-files-back").focus()
+            else:
+                self.app_instance.notify(WORKSPACE_FILES_OTHER_VISIT_COPY, severity="warning")
+            return
+
+        resolution = await asyncio.to_thread(
+            self._resolve_workspace_files_visit, requested_id
+        )
+        if resolution is None:
+            self.app_instance.notify(WORKSPACE_FILES_NO_FOLDERS_COPY, severity="warning")
+            return
+        if not resolution.had_bindings:
+            self.app_instance.notify(WORKSPACE_FILES_NO_FOLDERS_COPY, severity="warning")
+            return
+
+        attention = self._workspace_files_attention_snapshot()
+
+        def _closed() -> None:
+            if self._workspace_files_visit_workspace_id == resolution.workspace_id:
+                self._workspace_files_visit_workspace_id = None
+                self._workspace_files_modal = None
+
+        self._workspace_files_visit_workspace_id = resolution.workspace_id
+        self._workspace_files_modal = self.open_workspace_files_modal(
+            inspector=WorkspaceFileInspector(
+                getattr(self.app_instance, "workspace_registry_service", None)
+            ),
+            inspected_workspace_id=resolution.workspace_id,
+            inspected_workspace_name=resolution.workspace_name,
+            active_workspace_id=resolution.active_workspace_id,
+            active_workspace_name=resolution.active_workspace_name,
+            bindings=resolution.bindings,
+            attention=attention,
+            on_back_to_console=_closed,
+        )
+
+    def _resolve_workspace_files_visit(
+        self, workspace_id: str
+    ) -> _WorkspaceFilesResolution | None:
+        """Read current workspace/bindings and capture safe scopes off-loop."""
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None or workspace_id == DEFAULT_WORKSPACE_ID:
+            return None
+        try:
+            workspace = registry.get_workspace(workspace_id)
+            if workspace is None or workspace.archived:
+                return None
+            raw_bindings = tuple(registry.list_folder_bindings(workspace_id))
+            active = registry.get_active_workspace()
+        except Exception:
+            return None
+        inspector = WorkspaceFileInspector(registry)
+        bindings: list[WorkspaceFilesBinding] = []
+        for binding in raw_bindings:
+            try:
+                scope = inspector.capture_binding(workspace_id, binding.binding_id)
+            except ScopeCaptureError:
+                bindings.append(
+                    WorkspaceFilesBinding(
+                        binding_id=binding.binding_id,
+                        label=binding.label,
+                        scope=None,
+                        available=False,
+                        availability_copy="Unavailable: folder access changed.",
+                    )
+                )
+            else:
+                bindings.append(
+                    WorkspaceFilesBinding(
+                        binding_id=binding.binding_id,
+                        label=binding.label,
+                        scope=scope,
+                    )
+                )
+        return _WorkspaceFilesResolution(
+            workspace_id=workspace.workspace_id,
+            workspace_name=workspace.name,
+            active_workspace_id=(active.workspace_id if active is not None else None),
+            active_workspace_name=(active.name if active is not None else "Local Default"),
+            bindings=tuple(bindings),
+            had_bindings=bool(raw_bindings),
+        )
+
+    def _workspace_files_attention_snapshot(self) -> WorkspaceFilesAttention:
+        """Return only generic Console-attention copy; never payload details."""
+        count_getter = getattr(self._screen, "_console_pending_approval_count", None)
+        count = int(count_getter()) if callable(count_getter) else 0
+        if count:
+            noun = "approval" if count == 1 else "approvals"
+            return WorkspaceFilesAttention(
+                f"Console needs attention · {count} {noun} waiting"
+            )
+        return WorkspaceFilesAttention()
 
     @property
     def call_after_refresh(self) -> Any:

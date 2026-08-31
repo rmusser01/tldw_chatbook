@@ -10841,6 +10841,18 @@ class ChatScreen(BaseAppScreen):
             )
         )
 
+    @on(ConsoleWorkspaceContextTray.WorkspaceFilesRequested)
+    def _on_console_workspace_files_requested(
+        self, event: ConsoleWorkspaceContextTray.WorkspaceFilesRequested
+    ) -> None:
+        """Route a typed non-activating Workspace Files request once."""
+        event.stop()
+        self.run_worker(
+            self._workspace.request_workspace_files(event.workspace_id),
+            exclusive=True,
+            group="console-workspace-files-open",
+        )
+
     @staticmethod
     def _launch_targets_chatbook_artifact(
         pending_launch: Optional[ConsoleLiveWorkLaunch],

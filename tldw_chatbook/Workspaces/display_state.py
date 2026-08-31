@@ -225,6 +225,9 @@ class ConsoleWorkspaceContextState:
     new_conversation_recovery: str
     recovery_copy: str
     workspace_name: str = ""
+    #: Stable identity for non-activating workspace actions.  Display text is
+    #: intentionally not used to address a workspace.
+    workspace_id: str = ""
     scope_label: str = ""
     #: TASK-373: raw conversation identifier kept out of the primary
     #: Conversation row (RAG-45: renamed from "Scope"), surfaced only as a
@@ -440,6 +443,7 @@ def build_console_workspace_state(
         workspace_label=f"Workspace: {active_workspace.name}",
         workspace_name=active_workspace.name,
         active_workspace_id=str(active_workspace.workspace_id),
+        workspace_id=active_workspace.workspace_id,
         scope_label=scope_label,
         scope_detail=scope_detail,
         new_workspace_enabled=True,

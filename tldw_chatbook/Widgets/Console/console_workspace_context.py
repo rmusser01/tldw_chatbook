@@ -572,6 +572,13 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     #: Live collector for the compose pass currently running, or None.
     _composing_fixed_signature: list[str] | None = None
 
+    class WorkspaceFilesRequested(Message):
+        """Typed request to inspect one stable workspace without activation."""
+
+        def __init__(self, workspace_id: str) -> None:
+            super().__init__()
+            self.workspace_id = str(workspace_id or "").strip()
+
     class Relabeled(Message):
         """Posted after a width-driven relabel recompose.
 
@@ -1450,6 +1457,24 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                     )
                 )
 
+        # This is deliberately its own row: the Switch/New row is geometry
+        # constrained and must remain byte-for-byte a two-action row.
+        with self._record_composed_node(
+            Horizontal(
+                id="console-workspace-files-row",
+                classes="console-workspace-action-row",
+            )
+        ):
+            files_button = Button(
+                "Show Files",
+                id="console-workspace-files-open",
+                classes="console-workspace-action",
+                compact=True,
+            )
+            files_button.workspace_id = self.state.workspace_id
+            files_button.tooltip = "No local folders are attached. Add one in Settings."
+            yield self._record_composed_node(files_button)
+
         if self.state.recovery_copy:
             yield self._record_composed_node(
                 self._static(
@@ -1777,6 +1802,18 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 classes="console-conversation-browser-group-title",
             )
             yield title
+            files = Button(
+                "Files",
+                id=f"console-conversation-browser-group-files-{index}",
+                classes="console-workspace-action console-workspace-group-files",
+                compact=True,
+            )
+            files.workspace_id = group.workspace_id
+            files.styles.width = 7
+            files.styles.min_width = 7
+            files.styles.max_width = 7
+            files.tooltip = "Show files for this workspace"
+            yield files
             toggle = Button(
                 resolve_glyph(GLYPH_COLLAPSED if group.collapsed else GLYPH_EXPANDED),
                 id=f"console-conversation-browser-group-toggle-{index}",
@@ -1786,6 +1823,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 compact=True,
             )
             toggle.group_id = group.group_id
+            toggle.styles.width = 3
+            toggle.styles.min_width = 3
+            toggle.styles.max_width = 3
             # TASK-1233 AC#1: same collapsed/capped aggregate-marker split
             # as the label above, decoded into the already-existing toggle
             # tooltip rather than a new tooltip surface.
@@ -1797,6 +1837,18 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 f"{action_verb} {group.label}", header_marker
             )
             yield toggle
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Translate only the two Files controls into a typed intent."""
+        button_id = str(event.button.id or "")
+        if button_id != "console-workspace-files-open" and not button_id.startswith(
+            "console-conversation-browser-group-files-"
+        ):
+            return
+        event.stop()
+        workspace_id = str(getattr(event.button, "workspace_id", "") or "").strip()
+        if workspace_id:
+            self.post_message(self.WorkspaceFilesRequested(workspace_id))
 
     def _compose_conversation_browser_row(
         self,

@@ -49,6 +49,7 @@ async def test_workspace_action_buttons_fit_inside_their_rows(terminal_size) -> 
             ("#console-workspace-action-row", "#console-change-workspace"),
             ("#console-workspace-action-row", "#console-new-workspace"),
             ("#console-workspace-action-row", "#console-workspace-rag-scope-open"),
+            ("#console-workspace-files-row", "#console-workspace-files-open"),
         ]
         for row_selector, button_selector in checks:
             row = console.query_one(row_selector)
@@ -84,3 +85,25 @@ async def test_workspace_action_row_holds_switch_and_new_side_by_side() -> None:
         assert switch.region.right <= new.region.x
         assert switch.region.width >= len("Switch")
         assert new.region.width >= len("New")
+
+
+@pytest.mark.asyncio
+async def test_workspace_files_is_a_dedicated_row_after_rag_scope() -> None:
+    """Files remains a complete, keyboard-reachable rail action.
+
+    It must not consume space in the width-sensitive Switch/New row.
+    """
+    app = _build_test_app()
+    host = StyledConsoleHarness(app)
+
+    async with host.run_test(size=(235, 52)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        await pilot.pause()
+
+        rag = console.query_one("#console-workspace-rag-scope-row")
+        files_row = console.query_one("#console-workspace-files-row")
+        files = console.query_one("#console-workspace-files-open")
+        assert files.disabled is False
+        assert rag.region.bottom <= files_row.region.y
+        assert files.region.right <= files_row.content_region.right
