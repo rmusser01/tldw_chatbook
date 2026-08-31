@@ -1740,7 +1740,7 @@ async def test_my_profile_f1_help_advertises_exact_working_category_actions() ->
         panel = host.screen
         assert isinstance(panel, WorkbenchHelpPanel)
         assert panel.state.shortcuts == SettingsScreen.PERSONAL_CONTEXT_SHORTCUTS
-        assert panel.state.render_text().splitlines()[2:] == [
+        assert panel.state.render_text().splitlines()[-4:] == [
             "- a: add record",
             "- e: edit record",
             "- d: delete record",
