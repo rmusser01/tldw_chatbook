@@ -242,6 +242,7 @@ class UnifiedMCPControlPlaneService:
             else UnifiedMCPContext()
         )
         self._execution_log: MCPExecutionLog | None = None
+        self._execution_log_init_lock = threading.Lock()
         self._permission_store: MCPPermissionStore | None = None
         self._hub_test_previews = ToolTestPreviewRegistry()
         self._local_hub_execution = LocalHubExecutionCoordinator()
@@ -2294,8 +2295,10 @@ class UnifiedMCPControlPlaneService:
         if store is None:
             return None
         log_path = Path(store.path).with_name("mcp_execution_log.jsonl")
-        self._execution_log = MCPExecutionLog(log_path)
-        return self._execution_log
+        with self._execution_log_init_lock:
+            if self._execution_log is None:
+                self._execution_log = MCPExecutionLog(log_path)
+            return self._execution_log
 
     def _record_tool_execution(
         self,
@@ -2797,17 +2800,31 @@ class UnifiedMCPControlPlaneService:
     async def _attempt_local_hub_audit(
         callback: Callable[[], None], label: str
     ) -> None:
-        """Await one off-loop local audit attempt without ever retrying it."""
+        """Await one off-loop audit attempt, preserving caller cancellation."""
         audit_task = asyncio.create_task(asyncio.to_thread(callback))
-        try:
-            await asyncio.shield(audit_task)
-        except asyncio.CancelledError:
+        cancelled: asyncio.CancelledError | None = None
+        failed = False
+        while not audit_task.done():
             try:
                 await asyncio.shield(audit_task)
+            except asyncio.CancelledError as exc:
+                if audit_task.cancelled():
+                    failed = True
+                    break
+                if cancelled is None:
+                    cancelled = exc
             except BaseException:
-                logger.warning("{} audit failed", label)
-        except BaseException:
+                failed = True
+                break
+        if not failed:
+            try:
+                audit_task.result()
+            except BaseException:
+                failed = True
+        if failed:
             logger.warning("{} audit failed", label)
+        if cancelled is not None:
+            raise cancelled
 
     def _review_prepared_local_hub_test(
         self,
@@ -3187,14 +3204,16 @@ class UnifiedMCPControlPlaneService:
             if sealed:
                 return
             sealed = True
-            await self._attempt_local_hub_audit(
-                lambda: self._record_local_hub_outcome(
-                    audit_tool["value"], arguments, outcome
-                ),
-                "Local Hub terminal",
-            )
-            if not presentation.done():
-                presentation.set_result(outcome)
+            try:
+                await self._attempt_local_hub_audit(
+                    lambda: self._record_local_hub_outcome(
+                        audit_tool["value"], arguments, outcome
+                    ),
+                    "Local Hub terminal",
+                )
+            finally:
+                if not presentation.done():
+                    presentation.set_result(outcome)
 
         async def _seal_review(
             result: ToolTestAdmissionBlocked | ToolTestAdmissionStale,
@@ -3203,12 +3222,14 @@ class UnifiedMCPControlPlaneService:
             if sealed:
                 return
             sealed = True
-            await self._attempt_local_hub_audit(
-                lambda: self._record_prepared_hub_block(public, result.reason),
-                "Local Hub review",
-            )
-            if not presentation.done():
-                presentation.set_result(result)
+            try:
+                await self._attempt_local_hub_audit(
+                    lambda: self._record_prepared_hub_block(public, result.reason),
+                    "Local Hub review",
+                )
+            finally:
+                if not presentation.done():
+                    presentation.set_result(result)
 
         def _transaction():
             try:
@@ -3311,6 +3332,17 @@ class UnifiedMCPControlPlaneService:
                     await _seal_local(result)
                 else:
                     await _seal_review(result)
+            except asyncio.CancelledError:
+                try:
+                    await _seal_local(
+                        _synthetic(
+                            "cancelled",
+                            "cancelled",
+                            "Local tool test was cancelled before dispatch.",
+                        )
+                    )
+                finally:
+                    raise
             except BaseException:
                 await _seal_local(
                     _synthetic(
@@ -3391,6 +3423,32 @@ class UnifiedMCPControlPlaneService:
                     index += 1
                 return len(value), False
 
+            def _container_end(start: int) -> tuple[int, bool]:
+                pairs = {"{": "}", "[": "]"}
+                stack = [pairs[value[start]]]
+                index = start + 1
+                quote: str | None = None
+                escaped = False
+                while index < len(value):
+                    character = value[index]
+                    if quote is not None:
+                        if escaped:
+                            escaped = False
+                        elif character == "\\":
+                            escaped = True
+                        elif character == quote:
+                            quote = None
+                    elif character in {'"', "'"}:
+                        quote = character
+                    elif character in pairs:
+                        stack.append(pairs[character])
+                    elif character == stack[-1]:
+                        stack.pop()
+                        if not stack:
+                            return index + 1, True
+                    index += 1
+                return len(value), False
+
             def _key_at(start: int) -> tuple[str, int] | None:
                 if value[start] in {'"', "'"}:
                     end, closed = _quoted_end(start)
@@ -3436,6 +3494,9 @@ class UnifiedMCPControlPlaneService:
                     secret_end, closed = _quoted_end(secret_start)
                     quote = value[secret_start]
                     output.append(f"{quote}***{quote if closed else ''}")
+                elif secret_start < len(value) and value[secret_start] in "[{":
+                    secret_end, _closed = _container_end(secret_start)
+                    output.append('"***"')
                 else:
                     secret_end = secret_start
                     while secret_end < len(value) and value[secret_end] not in (

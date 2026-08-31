@@ -2114,6 +2114,75 @@ async def test_local_hub_terminal_audit_append_is_awaited_off_loop_before_releas
 
 
 @pytest.mark.asyncio
+async def test_local_hub_concurrent_first_audits_share_one_execution_log(
+    tmp_path, monkeypatch
+):
+    service, _fake, _client, _store = _service(tmp_path)
+    constructor_started = threading.Event()
+    release_constructor = threading.Event()
+    instances = []
+    rows = []
+    rows_lock = threading.Lock()
+
+    class _RacingExecutionLog:
+        def __init__(self, path):
+            self.path = path
+            instances.append(self)
+            constructor_started.set()
+            release_constructor.wait(timeout=2)
+
+        def append(self, record):
+            with rows_lock:
+                rows.append(record)
+
+    monkeypatch.setattr(control_plane_module, "MCPExecutionLog", _RacingExecutionLog)
+    outcome = LocalHubExecutionOutcome(
+        decision="allowed",
+        status="success",
+        error_category=None,
+        final_gate="allow",
+        approval_consumed=False,
+        dispatch_started=True,
+        provider_terminal="returned",
+        duration_ms=1,
+        result=ToolResult(ok=True, content="done"),
+    )
+
+    def _tool(name):
+        return HubTool(
+            server_key="local:__local__",
+            server_label="Local workspace",
+            source="local",
+            name=name,
+            description=name,
+            input_schema={"type": "object", "properties": {}},
+            tags=(),
+            stale=False,
+            executable=True,
+        )
+
+    audits = [
+        asyncio.create_task(
+            service._attempt_local_hub_audit(
+                lambda tool=_tool(name): service._record_local_hub_outcome(
+                    tool, {}, outcome
+                ),
+                f"audit {name}",
+            )
+        )
+        for name in ("fs_read", "fs_list")
+    ]
+    assert await asyncio.to_thread(constructor_started.wait, 1)
+    await asyncio.sleep(0.03)
+    release_constructor.set()
+    await asyncio.gather(*audits)
+
+    assert len(instances) == 1
+    assert {row.tool_name for row in rows} == {"fs_read", "fs_list"}
+    assert len(rows) == 2
+
+
+@pytest.mark.asyncio
 async def test_local_hub_review_audit_append_is_awaited_off_loop(tmp_path, monkeypatch):
     service, _fake, _client, _store = _service(tmp_path)
     ui_thread = threading.get_ident()
@@ -2185,6 +2254,99 @@ async def test_local_hub_invalid_intent_audit_append_is_awaited_off_loop(
 
 
 @pytest.mark.asyncio
+async def test_local_hub_invalid_intent_cancellation_waits_audit_then_propagates(
+    tmp_path, monkeypatch
+):
+    service, _fake, _client, _store = _service(tmp_path)
+    append_started = threading.Event()
+    append_finished = threading.Event()
+    release_append = threading.Event()
+    attempts = []
+
+    class _BlockingLog:
+        def append(self, _record):
+            attempts.append(True)
+            append_started.set()
+            release_append.wait(timeout=2)
+            append_finished.set()
+
+    tool, _callbacks, _guards, _closed = _install_local_hub_execution_provider(
+        monkeypatch,
+        tmp_path,
+        service,
+        invoke_detailed=lambda *_args: pytest.fail("invalid intent reached invocation"),
+    )
+    preview = service.prepare_hub_test(tool)
+    service._execution_log = _BlockingLog()
+    task = asyncio.create_task(
+        service.execute_prepared_hub_test(
+            preview.nonce,
+            "invalid",
+            {},  # type: ignore[arg-type]
+        )
+    )
+    assert await asyncio.to_thread(append_started.wait, 1)
+    task.cancel()
+    await asyncio.sleep(0.01)
+    assert task.done() is False
+    release_append.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert append_finished.is_set()
+    assert attempts == [True]
+    retry = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+    assert isinstance(retry, ToolTestAdmissionStale)
+    assert attempts == [True]
+    assert service.hub_test_active("local:__local__", "fs_read") is False
+
+
+@pytest.mark.asyncio
+async def test_local_hub_owner_cancellation_publishes_review_before_propagating(
+    tmp_path, monkeypatch
+):
+    service, _fake, _client, _store = _service(tmp_path)
+    gate = {"value": "allow"}
+    append_started = threading.Event()
+    release_append = threading.Event()
+    attempts = []
+
+    class _BlockingLog:
+        def append(self, _record):
+            attempts.append(True)
+            append_started.set()
+            release_append.wait(timeout=2)
+
+    tool, _callbacks, _guards, _closed = _install_local_hub_execution_provider(
+        monkeypatch,
+        tmp_path,
+        service,
+        invoke_detailed=lambda *_args: pytest.fail("review reached invocation"),
+        gate=lambda: gate["value"],
+    )
+    preview = service.prepare_hub_test(tool)
+    gate["value"] = "deny"
+    service._execution_log = _BlockingLog()
+    caller = asyncio.create_task(
+        service.execute_prepared_hub_test(preview.nonce, "run", {})
+    )
+    assert await asyncio.to_thread(append_started.wait, 1)
+    [owner] = list(service._local_hub_execution._tasks)
+    owner.cancel()
+    release_append.set()
+
+    outcome = await caller
+    await asyncio.sleep(0)
+
+    assert isinstance(outcome, ToolTestAdmissionStale)
+    assert outcome.reason == "gate_changed"
+    assert owner.cancelled() is True
+    assert attempts == [True]
+    assert service.hub_test_active("local:__local__", "fs_read") is False
+
+
+@pytest.mark.asyncio
 async def test_local_hub_duplicate_audit_append_is_awaited_off_loop_once(
     tmp_path, monkeypatch
 ):
@@ -2242,6 +2404,75 @@ async def test_local_hub_duplicate_audit_append_is_awaited_off_loop_once(
     await first
     assert len(attempts) == 2
     assert all(thread_id != ui_thread for thread_id in attempts)
+    assert service.hub_test_active("local:__local__", "fs_read") is False
+
+
+@pytest.mark.asyncio
+async def test_local_hub_duplicate_cancellation_waits_audit_then_propagates(
+    tmp_path, monkeypatch
+):
+    service, _fake, _client, _store = _service(tmp_path)
+    handler_started = threading.Event()
+    release_handler = threading.Event()
+    append_started = threading.Event()
+    append_finished = threading.Event()
+    release_append = threading.Event()
+    attempts = []
+
+    class _BlockingLog:
+        def append(self, _record):
+            attempts.append(True)
+            if len(attempts) == 1:
+                append_started.set()
+                release_append.wait(timeout=2)
+                append_finished.set()
+
+    def _invoke(_provider, _tool_id, _arguments):
+        handler_started.set()
+        release_handler.wait(timeout=2)
+        return LocalToolInvocationResult(
+            result=ToolResult(ok=True, content="done"),
+            final_gate="allow",
+            approval_consumed=False,
+            reason_code=LocalToolInvocationReason.HANDLER_RETURNED,
+            dispatch_started=True,
+            provider_terminal=LocalProviderTerminal.RETURNED,
+        )
+
+    tool, _callbacks, _guards, _closed = _install_local_hub_execution_provider(
+        monkeypatch, tmp_path, service, invoke_detailed=_invoke
+    )
+    first_preview = service.prepare_hub_test(tool)
+    first = asyncio.create_task(
+        service.execute_prepared_hub_test(first_preview.nonce, "run", {})
+    )
+    assert await asyncio.to_thread(handler_started.wait, 1)
+    duplicate_preview = service.prepare_hub_test(tool)
+    service._execution_log = _BlockingLog()
+    duplicate = asyncio.create_task(
+        service.execute_prepared_hub_test(duplicate_preview.nonce, "run", {})
+    )
+    try:
+        assert await asyncio.to_thread(append_started.wait, 1)
+        duplicate.cancel()
+        await asyncio.sleep(0.01)
+        assert duplicate.done() is False
+        release_append.set()
+        with pytest.raises(asyncio.CancelledError):
+            await duplicate
+        retry = await service.execute_prepared_hub_test(
+            duplicate_preview.nonce, "run", {}
+        )
+        assert isinstance(retry, ToolTestAdmissionStale)
+        assert append_finished.is_set()
+        assert attempts == [True]
+        assert service.hub_test_active("local:__local__", "fs_read") is True
+    finally:
+        release_append.set()
+        release_handler.set()
+        await first
+
+    assert attempts == [True, True]
     assert service.hub_test_active("local:__local__", "fs_read") is False
 
 
@@ -2329,6 +2560,17 @@ def test_local_hub_recursive_result_redaction_shares_one_payload_with_audit(
             + ("y" * 40_000)
             + '"}]'
         ),
+        (
+            '{"credentials":{"safe":"comma, bracket ]",'
+            '"quoted":"escaped \\" bracket ] comma,",'
+            '"opaque":"TOPSECRET_CONTAINER"},"padding":"' + ("z" * 40_000) + '"}'
+        ),
+        (
+            '{"api_key_parts":["TOPSECRET_PART_ONE",'
+            '"quoted comma, bracket ]",'
+            '"escaped \\" bracket ] comma,","TOPSECRET_PART_TWO",'
+            '{"opaque":"TOPSECRET_NESTED"},"padding ' + ("w" * 40_000)
+        ),
     ],
 )
 def test_real_local_provider_truncated_json_fragments_are_secret_safe(
@@ -2388,6 +2630,10 @@ def test_real_local_provider_truncated_json_fragments_are_secret_safe(
         "TOPSECRET_TOKEN",
         "TOPSECRET_PASSWORD",
         "multi token secret value",
+        "TOPSECRET_CONTAINER",
+        "TOPSECRET_PART_ONE",
+        "TOPSECRET_PART_TWO",
+        "TOPSECRET_NESTED",
     ):
         assert secret not in combined
     assert len(outcome.result.content.encode("utf-8")) < 33_000
