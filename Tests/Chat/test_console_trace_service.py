@@ -3199,7 +3199,7 @@ def test_replacement_validates_range_reopens_and_is_bounded(
             provenance=provenance,
             bundle=bundle,
         )
-        nodes = repository.read_surface_nodes(cursor, segment_id)
+        nodes = repository.read_surface_nodes(cursor, segment_id, page_size=200)
         replacement_descriptor = ProviderArtifactTraceProvenance(
             TraceProvenanceSource.CONTEXT_SUMMARY, policy
         )
@@ -3268,7 +3268,7 @@ def test_reopen_replays_overlapping_replacements_in_causal_order(
                 messages=[{"role": "user", "content": str(i)} for i in range(200)],
             ),
         )
-        nodes = repository.read_surface_nodes(cursor, segment_id)
+        nodes = repository.read_surface_nodes(cursor, segment_id, page_size=200)
         summary = ProviderArtifactTraceProvenance(
             TraceProvenanceSource.CONTEXT_SUMMARY, policy
         )

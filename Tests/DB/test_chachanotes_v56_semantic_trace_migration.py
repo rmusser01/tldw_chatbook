@@ -82,6 +82,7 @@ EXPECTED_TRIGGERS = {
     "console_trace_calls_set_once_guard",
     "console_trace_calls_immutable_guard",
     "console_trace_calls_terminal_guard",
+    "console_trace_conversations_detach_owner",
     "console_trace_events_append_order",
     "console_trace_events_lineage_guard",
     "console_trace_events_owner_guard",

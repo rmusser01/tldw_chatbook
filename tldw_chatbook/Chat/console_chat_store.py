@@ -1512,6 +1512,9 @@ class ConsoleChatStore:
         self._provider_trace_settlement_work: OrderedDict[
             str, tuple[object, str | None]
         ] = OrderedDict()
+        self._provider_trace_settlement_failed_work: OrderedDict[
+            str, tuple[object, str | None]
+        ] = OrderedDict()
         self._provider_trace_settlement_capacity_waiters: set[
             tuple[asyncio.AbstractEventLoop, asyncio.Event]
         ] = set()
@@ -9167,6 +9170,7 @@ class ConsoleChatStore:
                 self._dispatch_recovery_generation_tokens.clear()
                 self._dispatch_recovery_queue_hydration_pending.clear()
         self._close_provider_trace_settlement_executor()
+        self._retry_failed_provider_trace_settlements_on_teardown()
 
     @staticmethod
     def _set_message_attachments(
@@ -16409,7 +16413,9 @@ class ConsoleChatStore:
         """Return submitted or running handoffs still owned by the scheduler."""
 
         with self._provider_trace_settlement_lock:
-            return len(self._provider_trace_settlement_work)
+            return len(self._provider_trace_settlement_work) + len(
+                self._provider_trace_settlement_failed_work
+            )
 
     def _settle_provider_trace_settlements(
         self,
@@ -16441,11 +16447,13 @@ class ConsoleChatStore:
     def _run_provider_trace_settlement(
         handoff: object,
         canonical_message_id: str | None,
-    ) -> None:
+    ) -> bool:
         try:
-            handoff.settle(canonical_message_id)  # type: ignore[attr-defined]
+            result = handoff.settle(canonical_message_id)  # type: ignore[attr-defined]
+            return result is not False
         except Exception as exc:
             logger.warning("provider_trace_settlement_failed: {}", type(exc).__name__)
+            return False
 
     def _submit_provider_trace_settlement(
         self,
@@ -16456,7 +16464,20 @@ class ConsoleChatStore:
     ) -> None:
         executor = self._provider_trace_settlement_executor
         if executor is None:
-            self._run_provider_trace_settlement(handoff, canonical_message_id)
+            settled = self._run_provider_trace_settlement(
+                handoff,
+                canonical_message_id,
+            )
+            if not settled:
+                call_id = getattr(handoff, "call_id", None)
+                if not isinstance(call_id, str) or not call_id:
+                    raise TypeError("trace settlement handoff")
+                with self._provider_trace_settlement_lock:
+                    self._provider_trace_settlement_owned_call_ids.add(call_id)
+                    self._provider_trace_settlement_failed_work.setdefault(
+                        call_id,
+                        (handoff, canonical_message_id),
+                    )
             return
         call_id = getattr(handoff, "call_id", None)
         if not isinstance(call_id, str) or not call_id:
@@ -16467,6 +16488,8 @@ class ConsoleChatStore:
                     "provider trace settlement scheduler is closed"
                 )
             if call_id in self._provider_trace_settlement_work:
+                return
+            if call_id in self._provider_trace_settlement_failed_work:
                 return
             if (
                 not already_owned
@@ -16512,13 +16535,22 @@ class ConsoleChatStore:
                 call_id, (handoff, canonical_message_id) = next(
                     iter(self._provider_trace_settlement_work.items())
                 )
-            self._run_provider_trace_settlement(handoff, canonical_message_id)
+            settled = self._run_provider_trace_settlement(
+                handoff,
+                canonical_message_id,
+            )
             with self._provider_trace_settlement_lock:
                 self._provider_trace_settlement_work.pop(call_id, None)
-                self._provider_trace_settlement_owned_call_ids.discard(call_id)
-                self._wake_provider_trace_settlement_capacity_waiters_locked(
-                    all_waiters=True
-                )
+                if settled:
+                    self._provider_trace_settlement_owned_call_ids.discard(call_id)
+                    self._wake_provider_trace_settlement_capacity_waiters_locked(
+                        all_waiters=True
+                    )
+                else:
+                    self._provider_trace_settlement_failed_work.setdefault(
+                        call_id,
+                        (handoff, canonical_message_id),
+                    )
 
     def _close_provider_trace_settlement_executor(self) -> None:
         executor = self._provider_trace_settlement_executor
@@ -16567,12 +16599,40 @@ class ConsoleChatStore:
             )
             self._provider_trace_settlements.clear()
         for call_id, handoff in retained:
-            self._run_provider_trace_settlement(handoff, None)
+            settled = self._run_provider_trace_settlement(handoff, None)
             with self._provider_trace_settlement_lock:
+                if settled:
+                    self._provider_trace_settlement_owned_call_ids.discard(call_id)
+                    self._wake_provider_trace_settlement_capacity_waiters_locked(
+                        all_waiters=True
+                    )
+                else:
+                    self._provider_trace_settlement_failed_work.setdefault(
+                        call_id,
+                        (handoff, None),
+                    )
+
+    def _retry_failed_provider_trace_settlements_on_teardown(self) -> None:
+        """Make one final synchronous pass over worker-owned failed handoffs."""
+
+        with self._provider_trace_settlement_lock:
+            failed = tuple(self._provider_trace_settlement_failed_work.items())
+        for call_id, (handoff, canonical_message_id) in failed:
+            if not self._run_provider_trace_settlement(handoff, canonical_message_id):
+                continue
+            with self._provider_trace_settlement_lock:
+                self._provider_trace_settlement_failed_work.pop(call_id, None)
                 self._provider_trace_settlement_owned_call_ids.discard(call_id)
                 self._wake_provider_trace_settlement_capacity_waiters_locked(
                     all_waiters=True
                 )
+        with self._provider_trace_settlement_lock:
+            remaining = len(self._provider_trace_settlement_failed_work)
+        if remaining:
+            logger.error(
+                "provider_trace_settlement_teardown_incomplete: count={}",
+                remaining,
+            )
 
     def _citation_persistence_ready(self) -> bool:
         """Return whether terminal citation writes can be accepted safely."""

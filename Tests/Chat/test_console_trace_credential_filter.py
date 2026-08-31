@@ -57,6 +57,35 @@ def test_sanitizer_removes_nested_credential_fields_urls_and_free_text() -> None
     assert result.detector_version == CREDENTIAL_FILTER_VERSION
 
 
+def test_sanitizer_drops_compound_credential_field_names() -> None:
+    canaries = {
+        "token_value": "opaque-token-canary",
+        "password_value": "opaque-password-canary",
+        "api_token_value": "opaque-api-token-canary",
+        "refresh_token_metadata": "opaque-refresh-token-canary",
+    }
+
+    result = CredentialSanitizer().sanitize({**canaries, "safe_value": "keep"})
+
+    assert result.available is True
+    assert result.redacted is True
+    assert result.value == {"safe_value": "keep"}
+    assert all(canary not in _serialized(result) for canary in canaries.values())
+
+
+def test_sanitizer_does_not_treat_credential_substrings_as_components() -> None:
+    result = CredentialSanitizer().sanitize(
+        {"tokenizer_value": "keep", "secretary_note": "keep too"}
+    )
+
+    assert result.available is True
+    assert result.redacted is False
+    assert result.value == {
+        "tokenizer_value": "keep",
+        "secretary_note": "keep too",
+    }
+
+
 def test_sanitizer_failure_returns_only_content_free_marker() -> None:
     recursive: list[object] = []
     recursive.append(recursive)

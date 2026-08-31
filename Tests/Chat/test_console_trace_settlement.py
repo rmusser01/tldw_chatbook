@@ -1199,6 +1199,38 @@ def test_failed_post_dispatch_seal_queues_and_retries_without_rolling_back_resul
     )  # type: ignore[union-attr]
 
 
+def test_store_teardown_retries_worker_settlement_failure(
+    db: CharactersRAGDB,
+) -> None:
+    first_failure = threading.Event()
+
+    class FailOnceRepository(ConsoleTraceRepository):
+        failed = False
+
+        def store_response_link(self, *args, **kwargs):
+            if not self.failed:
+                self.failed = True
+                first_failure.set()
+                raise RuntimeError("PRIVATE-RESPONSE-CANARY")
+            return super().store_response_link(*args, **kwargs)
+
+    repository = FailOnceRepository()
+    coordinator = ConsoleTraceSettlementCoordinator(repository, max_pending=4)
+    store = ConsoleChatStore(settle_provider_traces_off_thread=True)
+    _conversation_id, _segment_id, call_id = _call(db, repository)
+    handoff = coordinator.prepare_handoff(db, _request(call_id))
+
+    store.register_provider_trace_settlement("missing-message", handoff)
+    assert first_failure.wait(3)
+    store.end_app_runtime()
+
+    assert coordinator.pending_count == 0
+    assert store.pending_provider_trace_settlement_work_count() == 0
+    settled = repository.get_call(db.get_connection().cursor(), call_id)
+    assert settled is not None
+    assert settled.state is TraceCallState.COMPLETE
+
+
 def test_exact_pending_submission_retries_after_repository_fault_clears(
     db: CharactersRAGDB,
 ) -> None:
@@ -1400,7 +1432,7 @@ def test_cold_restart_recovers_open_calls_monotonically_and_idempotently(
     coordinator = ConsoleTraceSettlementCoordinator(repository)
     recovered = recover_console_trace_calls(
         reopened,
-        occurred_at="2026-08-30T02:00:00Z",
+        occurred_at="2026-08-31T02:00:00Z",
         repository=repository,
     )
     assert {record.call_id: record.state for record in recovered} == {
@@ -1409,7 +1441,7 @@ def test_cold_restart_recovers_open_calls_monotonically_and_idempotently(
         response_id: TraceCallState.INTERRUPTED,
     }
     assert (
-        coordinator.recover_open_calls(reopened, occurred_at="2026-08-30T02:00:01Z")
+        coordinator.recover_open_calls(reopened, occurred_at="2026-08-31T02:00:01Z")
         == ()
     )
     assert (
@@ -1417,3 +1449,33 @@ def test_cold_restart_recovers_open_calls_monotonically_and_idempotently(
         is TraceCallState.COMPLETE
     )  # type: ignore[union-attr]
     reopened.close_connection()
+
+
+def test_startup_recovery_leaves_recent_cross_process_call_open(
+    db: CharactersRAGDB,
+) -> None:
+    repository = ConsoleTraceRepository()
+    coordinator = ConsoleTraceSettlementCoordinator(repository)
+    _conversation_id, _segment_id, call_id = _call(
+        db,
+        repository,
+        state=TraceCallState.DISPATCH_STARTED,
+    )
+
+    assert (
+        coordinator.recover_open_calls(
+            db,
+            occurred_at="2026-08-30T01:04:59Z",
+        )
+        == ()
+    )
+    assert repository.get_call(db.get_connection().cursor(), call_id).state is (
+        TraceCallState.DISPATCH_STARTED
+    )  # type: ignore[union-attr]
+
+    recovered = coordinator.recover_open_calls(
+        db,
+        occurred_at="2026-08-30T01:05:01Z",
+    )
+    assert [record.call_id for record in recovered] == [call_id]
+    assert recovered[0].state is TraceCallState.DISPATCH_UNKNOWN

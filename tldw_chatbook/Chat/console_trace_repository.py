@@ -6,7 +6,7 @@ completes a transaction, so trace writes compose with the caller's Chat mutation
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 import hashlib
 import json
@@ -45,6 +45,9 @@ TraceEventType: TypeAlias = Literal[
     "gap",
 ]
 IntegrityState: TypeAlias = Literal["pending", "complete", "incomplete"]
+SurfaceNodeCursor: TypeAlias = tuple[int, str]
+DEFAULT_SURFACE_NODE_PAGE_SIZE = 128
+MAX_SURFACE_NODE_PAGE_SIZE = 256
 
 
 class TraceIdentityConflict(ValueError):
@@ -111,6 +114,32 @@ class SurfaceNodeRecord:
     semantic_revision_id: str | None
     artifact_id: str | None
     omission_reason_code: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class SurfaceNodePage(Sequence[SurfaceNodeRecord]):
+    """One bounded seek page of segment-local surface nodes."""
+
+    items: tuple[SurfaceNodeRecord, ...]
+    next_cursor: SurfaceNodeCursor | None
+
+    def __iter__(self) -> Iterator[SurfaceNodeRecord]:
+        return iter(self.items)
+
+    def __len__(self) -> int:
+        return len(self.items)
+
+    def __getitem__(
+        self, index: int | slice
+    ) -> SurfaceNodeRecord | tuple[SurfaceNodeRecord, ...]:
+        return self.items[index]
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, SurfaceNodePage):
+            return self.items == other.items and self.next_cursor == other.next_cursor
+        if isinstance(other, Sequence):
+            return self.items == tuple(other)
+        return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -756,16 +785,63 @@ class ConsoleTraceRepository:
         self,
         cursor: sqlite3.Cursor,
         segment_id: str,
-    ) -> tuple[SurfaceNodeRecord, ...]:
+        *,
+        page_size: int = DEFAULT_SURFACE_NODE_PAGE_SIZE,
+        after: SurfaceNodeCursor | None = None,
+    ) -> SurfaceNodePage:
+        """Read one bounded seek page of segment-local surface nodes.
+
+        Args:
+            cursor: Caller-owned SQLite cursor.
+            segment_id: Segment whose nodes should be read.
+            page_size: Requested page size, capped at
+                ``MAX_SURFACE_NODE_PAGE_SIZE``.
+            after: Exclusive ``(sequence, node_id)`` continuation cursor.
+
+        Returns:
+            A bounded page plus a continuation cursor when more rows exist.
+
+        Raises:
+            ValueError: If ``page_size`` or ``after`` is malformed.
+        """
+
+        if (
+            type(page_size) is not int
+            or not 1 <= page_size <= MAX_SURFACE_NODE_PAGE_SIZE
+        ):
+            raise ValueError("page_size")
+        if after is not None and (
+            type(after) is not tuple
+            or len(after) != 2
+            or type(after[0]) is not int
+            or after[0] < 0
+            or type(after[1]) is not str
+            or not after[1]
+        ):
+            raise ValueError("after")
+        continuation_clause = ""
+        parameters: tuple[object, ...] = (segment_id, page_size + 1)
+        if after is not None:
+            continuation_clause = (
+                " AND (sequence > ? OR (sequence = ? AND node_id > ?))"
+            )
+            parameters = (segment_id, after[0], after[0], after[1], page_size + 1)
         rows = cursor.execute(
-            """SELECT node_id, segment_id, sequence, predecessor_node_id,
-                      component_kind, reference_kind, semantic_revision_id,
-                      artifact_id, omission_reason_code
-                 FROM console_trace_surface_nodes WHERE segment_id = ?
-                ORDER BY sequence, node_id""",
-            (segment_id,),
+            f"""SELECT node_id, segment_id, sequence, predecessor_node_id,
+                       component_kind, reference_kind, semantic_revision_id,
+                       artifact_id, omission_reason_code
+                  FROM console_trace_surface_nodes WHERE segment_id = ?
+                       {continuation_clause}
+                 ORDER BY sequence, node_id LIMIT ?""",
+            parameters,
         ).fetchall()
-        return tuple(SurfaceNodeRecord(*row) for row in rows)
+        records = tuple(SurfaceNodeRecord(*row) for row in rows[:page_size])
+        next_cursor = (
+            (records[-1].sequence, records[-1].node_id)
+            if len(rows) > page_size
+            else None
+        )
+        return SurfaceNodePage(records, next_cursor)
 
     def append_surface_replacement(
         self,
@@ -809,7 +885,8 @@ class ConsoleTraceRepository:
                  JOIN console_trace_surface_nodes AS n
                    ON n.node_id = r.replacement_node_id
                 WHERE r.segment_id = ?
-                ORDER BY n.sequence, r.replacement_id""",
+                ORDER BY n.sequence, r.start_sequence, r.end_sequence,
+                         r.replacement_id""",
             (segment_id,),
         ).fetchall()
         return tuple(
@@ -978,6 +1055,13 @@ class ConsoleTraceRepository:
         )
         if existing is not None:
             return existing
+        effective_owner = self.get_effective_owner(cursor, segment_id)
+        if (
+            effective_owner is None
+            or effective_owner.owner_id != owner_id
+            or not effective_owner.attached
+        ):
+            raise TraceIdentityConflict("call_owner")
         call_id = new_opaque_id()
         try:
             cursor.execute(

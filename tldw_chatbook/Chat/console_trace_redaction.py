@@ -145,11 +145,19 @@ class CredentialSanitizer:
 
     @staticmethod
     def _credential_key(key: str) -> bool:
+        if "://" in key:
+            return False
         normalized = re.sub(r"[^a-z0-9]+", "_", key.strip().lower()).strip("_")
-        return any(
-            normalized == credential or normalized.endswith(f"_{credential}")
-            for credential in _CREDENTIAL_KEYS
-        )
+        components = tuple(part for part in normalized.split("_") if part)
+        for credential in _CREDENTIAL_KEYS:
+            credential_components = tuple(credential.split("_"))
+            width = len(credential_components)
+            if any(
+                components[index : index + width] == credential_components
+                for index in range(len(components) - width + 1)
+            ):
+                return True
+        return False
 
     def _known_credential_key(self, key: str) -> bool:
         return any(credential in key for credential in self._known_credentials)

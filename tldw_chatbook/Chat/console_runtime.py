@@ -156,8 +156,19 @@ def recover_console_trace_calls(
     *,
     occurred_at: str | None = None,
     repository: object | None = None,
+    recovery_grace_seconds: int = 300,
 ) -> tuple[object, ...]:
-    """Monotonically close normalized provider calls left open at startup."""
+    """Close normalized provider calls stale at startup.
+
+    Args:
+        database: Trace database to recover.
+        occurred_at: Optional recovery timestamp override.
+        repository: Optional repository override for tests.
+        recovery_grace_seconds: Minimum inactivity before a call is stale.
+
+    Returns:
+        Calls transitioned by the recovery pass.
+    """
 
     from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
     from tldw_chatbook.Chat.console_trace_settlement import (
@@ -175,6 +186,7 @@ def recover_console_trace_calls(
     return ConsoleTraceSettlementCoordinator(trace_repository).recover_open_calls(
         database,
         occurred_at=timestamp,
+        recovery_grace_seconds=recovery_grace_seconds,
     )
 
 

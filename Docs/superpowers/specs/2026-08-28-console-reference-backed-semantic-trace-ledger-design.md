@@ -376,10 +376,13 @@ already-reserved call; it never falls back to persisting the raw kwargs wholesal
 9. **Seal independently.** Commit response reference/artifact, outcome, usage, omissions, and policy
    provenance in an idempotent trace transaction independent of conversation-message settlement.
 10. **Settle failures honestly.** A failed post-dispatch trace write enters a bounded best-effort
-    settlement queue. Process death leaves the durable reservation open or incomplete; cold recovery
-    maps `reserved` to `not_dispatched`, maps `dispatch_started` without provider evidence to
+    settlement queue, remains store-owned after worker failure, and receives a final idempotent retry
+    after the worker drains during app teardown. Process death leaves the durable reservation open or
+    incomplete; cold recovery considers only calls older than the inactivity grace period, maps
+    `reserved` to `not_dispatched`, maps `dispatch_started` without provider evidence to
     `dispatch_unknown`, and maps `response_started` to `interrupted`. It never claims whether an
-    unknown dispatch reached the remote provider.
+    unknown dispatch reached the remote provider or terminates a newly active call owned by another
+    app process.
 
 Reservation retries use the immutable call idempotency key: after an ambiguous local commit result,
 the gateway queries that identity before creating another row. For the initial manually initiated
@@ -544,7 +547,8 @@ not imply forensic erasure.
   failure blocks automatic dispatch until Retry or an explicit one-shot Capture Off confirmation.
 - Cold recovery maps a committed `reserved` row with no dispatch transition to `not_dispatched`, a
   `dispatch_started` row without provider evidence to `dispatch_unknown`, and a `response_started`
-  row without a terminal seal to `interrupted`; already durable events remain immutable.
+  row without a terminal seal to `interrupted`; only calls older than the inactivity grace period
+  are eligible, and already durable events remain immutable.
 - Provider success and assistant-message persistence are not transactional with post-dispatch trace
   settlement. Destructive semantic message mutations are transactionally coupled to required trace
   preservation and fail closed.

@@ -1199,6 +1199,21 @@ BEGIN
   SELECT RAISE(ABORT, 'trace owner updates are limited to one-way detach');
 END;
 
+CREATE TRIGGER console_trace_conversations_detach_owner
+BEFORE DELETE ON conversations
+BEGIN
+  UPDATE console_trace_owners
+     SET conversation_id = NULL,
+         attached = 0,
+         detached_at = CURRENT_TIMESTAMP
+   WHERE conversation_id = OLD.id
+     AND attached = 1;
+  UPDATE console_trace_graph_epoch
+     SET epoch = epoch + 1
+   WHERE singleton_id = 1
+     AND changes() > 0;
+END;
+
 CREATE TRIGGER console_trace_migration_state_immutable_key
 BEFORE UPDATE ON console_trace_migration_state
 WHEN OLD.migration_name IS NOT NEW.migration_name

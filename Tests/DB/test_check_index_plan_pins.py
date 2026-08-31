@@ -188,6 +188,19 @@ def test_a_positive_plan_assertion_is_a_pin(repo):
     }
 
 
+def test_a_positive_unique_plan_assertion_is_a_pin(repo):
+    repo.write_test(
+        "test_unique.py",
+        PLAN_HEADER
+        + '\nNAME = "uq_zz_identity"\n'
+        "def test_plan(conn):\n"
+        "    assert NAME in _plan(conn, 'SELECT 1')\n",
+    )
+    assert repo.module.plan_pinning_files()["uq_zz_identity"] == {
+        "Tests/test_unique.py"
+    }
+
+
 def test_a_negative_assertion_is_not_a_pin(repo):
     """The reported defect, in its smallest form.
 

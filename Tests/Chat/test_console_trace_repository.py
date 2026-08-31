@@ -58,6 +58,30 @@ def _conversation_with_message(db: CharactersRAGDB) -> tuple[str, str]:
     return conversation_id, message_id
 
 
+def _untracked_message(
+    db: CharactersRAGDB,
+    *,
+    conversation_id: str | None = None,
+    content: str = "must never enter semantic revision metadata",
+) -> tuple[str, str]:
+    """Insert a message without invoking the semantic revision coordinator."""
+
+    if conversation_id is None:
+        conversation_id = db.add_conversation({"title": "semantic trace"})
+        assert conversation_id is not None
+    message_id = db._generate_uuid()
+    now = db._get_current_utc_timestamp_iso()
+    with db.transaction(immediate=True) as cursor:
+        cursor.execute(
+            """INSERT INTO messages(
+                   id, conversation_id, sender, content, timestamp,
+                   last_modified, client_id, version, deleted, role)
+                 VALUES (?, ?, 'user', ?, ?, ?, ?, 1, 0, 'user')""",
+            (message_id, conversation_id, content, now, now, db.client_id),
+        )
+    return conversation_id, message_id
+
+
 def _policy() -> FrozenTracePolicy:
     return FrozenTracePolicy(
         policy_id=new_opaque_id(),
@@ -100,7 +124,7 @@ def _surface_and_header(
         revision_sequence=0,
         normalized_role="user",
         content_kind="text",
-        creation_reason="message_created",
+        creation_reason="message_create",
         live_message_id=message_id,
     )
     node = repository.append_surface_node(
@@ -241,7 +265,7 @@ def test_revision_policy_binding_reuses_exact_and_rejects_incompatible(
             revision_sequence=0,
             normalized_role="user",
             content_kind="text",
-            creation_reason="message_created",
+            creation_reason="message_create",
             live_message_id=message_id,
         )
         artifact = repository.store_sanitized_artifact(
@@ -278,7 +302,7 @@ def test_semantic_revision_is_opaque_metadata_without_body_or_digest(
     db: CharactersRAGDB,
     repository: ConsoleTraceRepository,
 ) -> None:
-    conversation_id, message_id = _conversation_with_message(db)
+    conversation_id, message_id = _untracked_message(db)
     with db.transaction() as cursor:
         first = repository.ensure_semantic_revision(
             cursor,
@@ -326,17 +350,14 @@ def test_semantic_revision_epoch_matrix_counts_live_and_predecessor_edges_once(
     db: CharactersRAGDB,
     repository: ConsoleTraceRepository,
 ) -> None:
-    conversation_id, no_edge_message = _conversation_with_message(db)
+    conversation_id, no_edge_message = _untracked_message(db)
     message_ids = [no_edge_message]
     for label in ("live", "predecessor", "both"):
-        message_id = db.add_message(
-            {
-                "conversation_id": conversation_id,
-                "sender": "user",
-                "content": label,
-            }
+        _conversation_id, message_id = _untracked_message(
+            db,
+            conversation_id=conversation_id,
+            content=label,
         )
-        assert message_id is not None
         message_ids.append(message_id)
 
     with db.transaction() as cursor:
@@ -664,6 +685,61 @@ def test_call_reservation_reuses_exact_key_and_rejects_ambiguous_identity(
                 policy_id=policy_id,
             )
     assert exact.call_id == first.call_id
+
+
+def test_call_reservation_rejects_cross_owner_segment_without_durable_row(
+    db: CharactersRAGDB,
+    repository: ConsoleTraceRepository,
+) -> None:
+    _first_conversation, _first_message, first_owner = _owned_root(db, repository)
+    with db.transaction() as cursor:
+        owner = repository.get_owner(cursor, first_owner)
+        assert owner is not None
+        segment_id = owner.root_segment_id
+        policy_id = repository.ensure_policy(cursor, _policy()).policy_id
+
+    _second_conversation, _second_message, second_owner = _owned_root(db, repository)
+    with db.transaction() as cursor:
+        with pytest.raises(TraceIdentityConflict, match="call_owner"):
+            repository.reserve_call(
+                cursor,
+                owner_id=second_owner,
+                segment_id=segment_id,
+                turn_id="turn-cross-owner",
+                run_id="run-cross-owner",
+                call_sequence=0,
+                idempotency_key="cross-owner-reservation",
+                policy_id=policy_id,
+            )
+
+        assert cursor.execute(
+            "SELECT COUNT(*) FROM console_trace_calls WHERE idempotency_key = ?",
+            ("cross-owner-reservation",),
+        ).fetchone()[0] == 0
+
+
+def test_hard_deleted_conversation_atomically_detaches_trace_owner(
+    db: CharactersRAGDB,
+    repository: ConsoleTraceRepository,
+) -> None:
+    conversation_id = db.add_conversation({"title": "hard delete trace owner"})
+    assert conversation_id is not None
+    with db.transaction() as cursor:
+        segment = repository.create_segment(cursor)
+        owner = repository.attach_owner(
+            cursor,
+            conversation_id=conversation_id,
+            root_segment_id=segment.segment_id,
+        )
+        before_epoch = repository.get_graph_epoch(cursor)
+        cursor.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+
+        detached = repository.get_owner(cursor, owner.owner_id)
+        assert detached is not None
+        assert detached.attached is False
+        assert detached.conversation_id is None
+        assert detached.detached_at is not None
+        assert repository.get_graph_epoch(cursor) == before_epoch + 1
 
 
 def test_call_reservation_rejects_reverse_and_crossed_identity_conflicts(
@@ -1183,7 +1259,7 @@ def test_child_segment_inherits_surface_and_nearest_owner_detach_shadows_parent(
             revision_sequence=0,
             normalized_role="user",
             content_kind="text",
-            creation_reason="message_created",
+            creation_reason="message_create",
             live_message_id=child_message,
         )
         inherited_append = repository.append_surface_node(
@@ -1207,6 +1283,60 @@ def test_child_segment_inherits_surface_and_nearest_owner_detach_shadows_parent(
     assert effective is not None
     assert effective.owner_id == child_owner.owner_id
     assert effective.attached is False
+
+
+def test_surface_node_reads_use_bounded_seek_pagination(
+    db: CharactersRAGDB,
+    repository: ConsoleTraceRepository,
+) -> None:
+    _conversation_id, message_id, owner_id = _owned_root(db, repository)
+    with db.transaction() as cursor:
+        owner = repository.get_owner(cursor, owner_id)
+        assert owner is not None
+        segment_id = owner.root_segment_id
+        revision_row = cursor.execute(
+            """SELECT revision_id FROM console_trace_semantic_revisions
+                 WHERE live_message_id = ?
+                ORDER BY revision_sequence DESC LIMIT 1""",
+            (message_id,),
+        ).fetchone()
+        assert revision_row is not None
+        revision_id = revision_row[0]
+        first_node_id = repository.append_surface_node(
+            cursor,
+            segment_id=segment_id,
+            sequence=0,
+            predecessor_node_id=None,
+            component_kind="message",
+            reference=SemanticRevisionRef(revision_id),
+        ).node_id
+        predecessor = first_node_id
+        for sequence in range(1, 4):
+            predecessor = repository.append_surface_node(
+                cursor,
+                segment_id=segment_id,
+                sequence=sequence,
+                predecessor_node_id=predecessor,
+                component_kind="message",
+                reference=SemanticRevisionRef(revision_id),
+            ).node_id
+
+    cursor = db.get_connection().cursor()
+    first_page = repository.read_surface_nodes(cursor, segment_id, page_size=2)
+    second_page = repository.read_surface_nodes(
+        cursor,
+        segment_id,
+        page_size=2,
+        after=first_page.next_cursor,
+    )
+
+    assert [node.sequence for node in first_page] == [0, 1]
+    assert first_page.next_cursor == (1, first_page[-1].node_id)
+    assert [node.sequence for node in second_page] == [2, 3]
+    assert second_page.next_cursor is None
+
+    with pytest.raises(ValueError, match="page_size"):
+        repository.read_surface_nodes(cursor, segment_id, page_size=257)
 
 
 def test_surface_replacement_and_reads_preserve_frozen_shape(
@@ -1356,9 +1486,9 @@ def test_epoch_changes_only_for_new_reachability_roots_and_edges(
 ) -> None:
     conversation_id, _message_id = _conversation_with_message(db)
     with db.transaction() as cursor:
-        assert repository.get_graph_epoch(cursor) == 0
+        baseline = repository.get_graph_epoch(cursor)
         segment = repository.create_segment(cursor)
-        assert repository.get_graph_epoch(cursor) == 0
+        assert repository.get_graph_epoch(cursor) == baseline
         policy = repository.ensure_policy(cursor, _policy())
         artifact = repository.store_sanitized_artifact(
             cursor,
@@ -1366,23 +1496,23 @@ def test_epoch_changes_only_for_new_reachability_roots_and_edges(
             media_type="text/plain",
             normalization_version="text-v1",
         )
-        assert repository.get_graph_epoch(cursor) == 0
+        assert repository.get_graph_epoch(cursor) == baseline
         owner = repository.attach_owner(
             cursor,
             conversation_id=conversation_id,
             root_segment_id=segment.segment_id,
         )
-        assert repository.get_graph_epoch(cursor) == 1
+        assert repository.get_graph_epoch(cursor) == baseline + 1
         repository.get_owner(cursor, owner.owner_id)
         repository.get_artifact(cursor, artifact.artifact_id)
         repository.ensure_policy(cursor, policy)
-        assert repository.get_graph_epoch(cursor) == 1
+        assert repository.get_graph_epoch(cursor) == baseline + 1
         repository.detach_owner(
             cursor,
             owner_id=owner.owner_id,
             detached_at="2026-08-28T12:00:00Z",
         )
-        assert repository.get_graph_epoch(cursor) == 2
+        assert repository.get_graph_epoch(cursor) == baseline + 2
 
 
 def test_chat_persistence_service_exposes_same_database_repository(

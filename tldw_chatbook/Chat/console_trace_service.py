@@ -2791,7 +2791,18 @@ class ConsoleTraceService:
         cached = self._surface_ref_cache.get(segment_id)
         if cached is not None and cached.head_id == head_id:
             return cached
-        nodes = self.repository.read_surface_nodes(cursor, segment_id)
+        nodes: list[SurfaceNodeRecord] = []
+        continuation = None
+        while True:
+            page = self.repository.read_surface_nodes(
+                cursor,
+                segment_id,
+                after=continuation,
+            )
+            nodes.extend(page)
+            if page.next_cursor is None:
+                break
+            continuation = page.next_cursor
         replacements = self.repository.read_surface_replacements(cursor, segment_id)
         replacement_ids = {
             item.replacement.replacement_node_id for item in replacements

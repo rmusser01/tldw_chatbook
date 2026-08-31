@@ -146,7 +146,9 @@ project-instruction bodies never enter default durable capture.
     Retry or an explicit one-shot Send without capture action. Interactive tool/retry
     loops pause for that choice; autonomous runs fail safely. Cold recovery maps an
     untouched reservation to `not_dispatched`, an uncertain started call to
-    `dispatch_unknown`, and a response-bearing open call to `interrupted`.
+    `dispatch_unknown`, and a response-bearing open call to `interrupted`, but only
+    after a bounded inactivity grace period so another live app process cannot have
+    its newly active provider call terminated by startup recovery.
 
     Temporary conversations cannot make a durable Capture On call until Save & Send
     promotes their in-memory lineage. Before dispatch, a component sanitization or
@@ -157,6 +159,11 @@ project-instruction bodies never enter default durable capture.
     best-effort and independently idempotent: they cannot roll back a provider result or
     saved assistant message. Destructive semantic edits/deletes are different: required
     preservation and canonical mutation commit together or all abort.
+
+    A failed post-dispatch handoff remains explicitly owned by the store after its
+    worker returns. App teardown waits for the worker and makes a final idempotent
+    settlement attempt; any still-unsettled handoff remains visible in the definitive
+    teardown diagnostic rather than being silently discarded.
 
 16. **Use shared-owner garbage collection and honest physical maintenance.** Deletion
     detaches one conversation root. Database guards reject ordinary/direct deletion from

@@ -37,6 +37,7 @@ from tldw_chatbook.Chat.console_trace_repository import (
 TRACE_RESPONSE_MEDIA_TYPE = "application/json"
 TRACE_RESPONSE_NORMALIZATION_VERSION = "canonical-json-v1"
 DEFAULT_MAX_PENDING_SETTLEMENTS = 64
+DEFAULT_OPEN_CALL_RECOVERY_GRACE_SECONDS = 300
 MAX_TRACE_RESPONSE_BYTES = 1_048_576
 MAX_TRACE_USAGE_BYTES = 65_536
 _TERMINAL_SETTLEMENT_STATES = frozenset(
@@ -322,15 +323,43 @@ class ConsoleTraceSettlementCoordinator:
         database: object,
         *,
         occurred_at: str,
+        recovery_grace_seconds: int = DEFAULT_OPEN_CALL_RECOVERY_GRACE_SECONDS,
     ) -> tuple[TraceCallRecord, ...]:
-        """Monotonically close durable calls left open by process death."""
+        """Close stale durable calls left open by process death.
+
+        A startup in another app process must not terminate a recently active
+        provider call. Calls therefore become recovery candidates only after a
+        bounded inactivity grace period.
+
+        Args:
+            database: Trace database that owns the open calls.
+            occurred_at: Timestamp recorded on recovered terminal states.
+            recovery_grace_seconds: Minimum inactivity before recovery.
+
+        Returns:
+            Calls transitioned by this recovery pass.
+
+        Raises:
+            ValueError: If ``recovery_grace_seconds`` is invalid.
+        """
+
+        if type(recovery_grace_seconds) is not int or recovery_grace_seconds < 0:
+            raise ValueError("recovery_grace_seconds")
 
         recovered: list[TraceCallRecord] = []
         with database.transaction(immediate=True) as cursor:  # type: ignore[attr-defined]
             rows = cursor.execute(
                 """SELECT call_id FROM console_trace_calls
                     WHERE state IN ('reserved', 'dispatch_started', 'response_started')
-                    ORDER BY owner_id, turn_id, run_id, call_sequence, call_id"""
+                      AND julianday(
+                            COALESCE(
+                              response_started_at,
+                              dispatch_started_at,
+                              created_at
+                            )
+                          ) <= julianday(?, ?)
+                    ORDER BY owner_id, turn_id, run_id, call_sequence, call_id""",
+                (occurred_at, f"-{recovery_grace_seconds} seconds"),
             ).fetchall()
             for row in rows:
                 existing = self.repository.get_call(cursor, str(row[0]))

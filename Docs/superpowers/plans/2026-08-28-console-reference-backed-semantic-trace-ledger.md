@@ -333,8 +333,8 @@ Avoid a second event vocabulary in codecs or UI. Every layer consumes the same t
 - [ ] Write failing tests for response_started, complete/stopped/error/interrupted outcomes, usage, duplicate settlement, seal failure, and process-restart recovery.
 - [ ] After canonical assistant persistence, re-read its immutable revision and link it only when the sanitized provider-facing envelope matches exactly.
 - [ ] Otherwise store one sanitized response artifact and label the relationship. Never link by timing or message position alone.
-- [ ] Put failed post-dispatch settlements in a bounded, idempotent in-process queue. Do not roll back a provider result or saved assistant message.
-- [ ] On cold start map untouched reserved to not_dispatched, uncertain dispatch_started to dispatch_unknown, and open response_started to interrupted. Never move a state backward.
+- [ ] Put failed post-dispatch settlements in a bounded, idempotent in-process queue, retain worker failures through a final teardown retry, and never roll back a provider result or saved assistant message.
+- [ ] On cold start, after an inactivity grace period, map untouched reserved to not_dispatched, uncertain dispatch_started to dispatch_unknown, and open response_started to interrupted. Never move a state backward or terminate a newly active call from another process.
 - [ ] Verify response data can remain trace-owned when canonical assistant persistence fails.
 - [ ] Run settlement, persistence, and gateway tests; confirm PASS.
 - [ ] Commit: feat(console): settle and recover provider call traces
