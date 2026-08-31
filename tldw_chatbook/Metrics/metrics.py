@@ -23,9 +23,12 @@ of time series, overwhelming your Prometheus server.
 #
 # Imports
 import functools
+import os
 import threading
 import time
 import logging
+from typing import Any, Dict, Optional
+
 import psutil  #
 
 # Third-party Imports
@@ -242,24 +245,96 @@ def log_resource_usage(labels=None):
     )
 
 
-def init_metrics_server(port: int = 8000) -> bool:
-    """Start the Prometheus server and report whether it is available.
+#: Shipped defaults for the metrics listener. Disabled, and loopback-only when
+#: enabled -- ``prometheus_client.start_http_server`` defaults to ``0.0.0.0``,
+#: which we deliberately do not inherit.
+_METRICS_DEFAULT_ENABLED = False
+_METRICS_DEFAULT_PORT = 8000
+_METRICS_DEFAULT_BIND_ADDRESS = "127.0.0.1"
+
+
+def _get_cli_setting(section: str, key: str, default: Any) -> Any:
+    """Read one config value.
+
+    Indirection on purpose: it keeps the ``config`` import lazy (this module is
+    imported early) and lets tests exercise resolution without a config file on
+    disk.
+    """
+    from tldw_chatbook.config import get_cli_setting
+
+    return get_cli_setting(section, key, default)
+
+
+def _metrics_server_config() -> Dict[str, Any]:
+    """Resolve whether to listen, and where.
+
+    ``METRICS_PORT`` continues to override the port because it predates this
+    function, but it does NOT enable the listener -- enabling is a config
+    decision (TASK-25914 AC#1). Invalid values fall back to the default rather
+    than raising during startup.
+    """
+    port = _get_cli_setting("metrics", "port", _METRICS_DEFAULT_PORT)
+    env_port = os.environ.get("METRICS_PORT")
+    if env_port:
+        port = env_port
+    try:
+        resolved_port = int(port)
+    except (TypeError, ValueError):
+        resolved_port = _METRICS_DEFAULT_PORT
+
+    return {
+        "enabled": bool(
+            _get_cli_setting("metrics", "enabled", _METRICS_DEFAULT_ENABLED)
+        ),
+        "port": resolved_port,
+        "bind_address": str(
+            _get_cli_setting(
+                "metrics", "bind_address", _METRICS_DEFAULT_BIND_ADDRESS
+            )
+        ),
+    }
+
+
+def init_metrics_server(port: Optional[int] = None, addr: Optional[str] = None) -> bool:
+    """Start the Prometheus listener if the user has asked for one.
+
+    Binding a network socket is opt-in. Having ``prometheus_client`` installed
+    -- which the ``dev`` and ``debugging`` extras both do -- is not consent, so
+    the config gate is checked before anything is bound (TASK-25914).
 
     Args:
-        port: TCP port on which the metrics server should listen.
+        port: Overrides the configured port when given.
+        addr: Overrides the configured bind address when given.
 
     Returns:
-        True when the server starts, or False when the optional Prometheus
-        dependency is unavailable.
+        True when a listener was started, False otherwise.
     """
-    if not PROMETHEUS_AVAILABLE:
-        logging.info(
-            "Prometheus metrics are unavailable. "
-            "Install tldw_chatbook[debugging] to enable them."
+    settings = _metrics_server_config()
+
+    if not settings["enabled"]:
+        logging.debug(
+            "Prometheus metrics listener disabled; set [metrics] enabled = true "
+            "to expose one. Metric collection is unaffected."
         )
         return False
-    start_http_server(port)
-    logging.info("Prometheus metrics server started on port %s", port)
+
+    if not PROMETHEUS_AVAILABLE:
+        logging.info(
+            "Prometheus metrics listener is enabled in config but the optional "
+            "dependency is missing. Install tldw_chatbook[debugging] to use it."
+        )
+        return False
+
+    bind_port = settings["port"] if port is None else port
+    bind_address = settings["bind_address"] if addr is None else addr
+
+    start_http_server(bind_port, addr=bind_address)
+    logging.info(
+        "Prometheus metrics listener started on %s:%s (unauthenticated -- "
+        "bind address is configurable via [metrics] bind_address)",
+        bind_address,
+        bind_port,
+    )
     return True
 
 

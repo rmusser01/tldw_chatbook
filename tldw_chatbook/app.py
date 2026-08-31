@@ -16895,9 +16895,11 @@ if __name__ == "__main__":
     # --- Initialize Metrics Systems ---
     # Initialize Prometheus metrics server
     try:
-        # Start Prometheus metrics server on port 8000 (or configure via env/config)
-        metrics_port = int(os.environ.get("METRICS_PORT", "8000"))
-        init_metrics_server(port=metrics_port)
+        # Opt-in only: init_metrics_server checks [metrics] enabled before it
+        # binds anything, and resolves port/bind address itself (TASK-25914).
+        # It previously read METRICS_PORT here with a "8000" fallback, which
+        # meant the env default silently overrode a configured port.
+        init_metrics_server()
     except Exception as exc:
         loguru_logger.warning(
             "Prometheus metrics initialization failed (exception_type={}).",

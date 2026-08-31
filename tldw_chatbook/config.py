@@ -3451,6 +3451,18 @@ file_log_level = "INFO" # File Log Level: DEBUG, INFO, WARNING, ERROR, CRITICAL
 log_max_bytes = 10485760 # 10 MB
 log_backup_count = 5
 
+[metrics]
+# Prometheus metrics listener. OFF by default: having the optional
+# `prometheus_client` dependency installed (the `dev` and `debugging` extras
+# both pull it in) is not consent to open a network socket.
+# Metric collection itself is unaffected by this setting -- it only controls
+# whether an HTTP endpoint is exposed for scraping.
+enabled = false
+# Bind address. Loopback by default; prometheus_client's own default is
+# 0.0.0.0, which would expose the endpoint to your whole network.
+bind_address = "127.0.0.1"
+port = 8000
+
 [database]
 # scheduled_tasks_db_path = "/custom/path.db"  # optional override
 # tts_profiles_db_path = "/custom/path.db"  # optional override
