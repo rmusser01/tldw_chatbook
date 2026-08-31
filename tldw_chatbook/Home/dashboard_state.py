@@ -11,7 +11,10 @@ from datetime import datetime, timezone  # noqa: E402
 from rich.markup import escape as escape_markup  # noqa: E402
 
 from tldw_chatbook.Constants import (  # noqa: E402
+    TAB_CHAT,
+    TAB_EVALS,
     TAB_LLM,
+    TAB_MEDIA,
     TAB_SETTINGS,
     TAB_STUDY,
     get_tab_display_label,
@@ -237,6 +240,13 @@ class HomeDashboardInput:
     active_work_items: tuple[HomeActiveWorkItem, ...] = ()
     recent_work_items: tuple[HomeActiveWorkItem, ...] = ()
     flashcards_due_count: int = 0
+    # Open-task queue feeds (spec §4). Eval counts include only
+    # pending/failed -- 'running' rows are orphaned forever by a crash and
+    # would pin the review suggestion. read_later None = unknown, renders
+    # nothing.
+    pending_eval_run_count: int = 0
+    failed_eval_run_count: int = 0
+    read_later_count: int | None = None
     # T190: Console provider readiness from FRESH config (the readiness
     # seams Console itself uses -- build_console_settings_readiness over
     # load_settings(), never a boot snapshot). Distinct from ``model_ready``,
@@ -415,6 +425,20 @@ def choose_next_best_action(
             "subscriptions",
             "Unread notifications need review.",
         )
+    if state.pending_eval_run_count or state.failed_eval_run_count:
+        return HomeAction(
+            "review_eval_runs",
+            "Review eval runs",
+            TAB_EVALS,
+            "Pending or failed eval runs need attention.",
+        )
+    if state.read_later_count:
+        return HomeAction(
+            "review_read_later",
+            f"Read-it-later: {state.read_later_count} items",
+            TAB_MEDIA,
+            "Your saved reading queue is waiting.",
+        )
     if not state.has_library_content:
         return HomeAction(
             "import_sources",
@@ -432,7 +456,17 @@ def choose_next_best_action(
     if state.console_ready:
         # T190: with the provider verifiably ready (fresh-config readiness,
         # not the boot snapshot), the terminal suggestion reads as the
-        # user's actual next step rather than a destination name.
+        # user's actual next step rather than a destination name. With a
+        # recent conversation, "resume where you left off" IS that step
+        # (spec §4) -- the primary-action dispatch attaches the
+        # conversation id to the Console nav context.
+        if state.resume_kind == HOME_RESUME_KIND_CONVERSATION and state.resume_id:
+            return HomeAction(
+                "resume_last_conversation",
+                "Resume last conversation",
+                TAB_CHAT,
+                "Pick up where you left off.",
+            )
         return HomeAction(
             "start_console",
             "Start a conversation",
@@ -1397,8 +1431,14 @@ def build_home_triage_state(
             # Primary emphasis lands on whichever button actually starts a
             # conversation: the dedicated idle control when present,
             # otherwise the canvas's own next-action button (which IS the
-            # start-console suggestion in the ready+content case).
-            if any(
+            # start-console suggestion in the ready+content case). With a
+            # recent conversation the terminal suggestion IS the resume
+            # (spec §4), so the next-action button takes primary over the
+            # generic start control -- the emphasized button should match
+            # the suggestion the canvas is showing.
+            if next_action.action_id == "resume_last_conversation":
+                primary_control_id = HOME_PRIMARY_ACTION_ID
+            elif any(
                 control.control_id == HOME_START_CONVERSATION_CONTROL_ID
                 for control in canvas_actions
             ):

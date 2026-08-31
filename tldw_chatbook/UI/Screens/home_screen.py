@@ -106,10 +106,19 @@ def _home_runtime_status_label(state: HomeDashboardInput) -> str:
     return f"Server: {server_label}" if server_label else "Server"
 
 
-def _home_primary_action_context(action: object) -> dict[str, object]:
+def _home_primary_action_context(
+    action: object,
+    dashboard_input: HomeDashboardInput | None = None,
+) -> dict[str, object]:
     action_id = getattr(action, "action_id", None)
     if action_id == "fix_model_setup":
         return {"category": SettingsCategoryId.PROVIDERS_MODELS.value}
+    if action_id == "resume_last_conversation":
+        # The terminal suggestion deep-links the newest conversation into
+        # Console via the ADR-079 nav-context seam (spec §4).
+        resume_id = str(getattr(dashboard_input, "resume_id", "") or "")
+        if resume_id:
+            return {CONSOLE_NAV_CONTEXT_CONVERSATION_ID: resume_id}
     if action_id == "review_notifications" and getattr(
         action, "target_route", None
     ) in {
@@ -371,9 +380,16 @@ class HomeScreen(BaseAppScreen):
             else:
                 refresh_flashcards_due()
         refresh_snapshot = getattr(adapter, "refresh_chatbook_artifact_snapshot", None)
+        if callable(refresh_snapshot):
+            refresh_snapshot()
+        # Open-task queue counts (spec §4): same thread-worker placement as
+        # the chatbook snapshot -- the providers hit the evals/media DBs
+        # synchronously, so they must not run on the UI thread.
+        refresh_open_tasks = getattr(adapter, "refresh_open_tasks_snapshot", None)
+        if callable(refresh_open_tasks):
+            refresh_open_tasks()
         if not callable(refresh_snapshot):
             return
-        refresh_snapshot()
         self.app.call_from_thread(self._refresh_after_chatbook_artifact_snapshot)
 
     def _refresh_after_chatbook_artifact_snapshot(self) -> None:
@@ -829,7 +845,9 @@ class HomeScreen(BaseAppScreen):
         self.post_message(
             NavigateToScreen(
                 dashboard.next_action.target_route,
-                screen_context=_home_primary_action_context(dashboard.next_action),
+                screen_context=_home_primary_action_context(
+                    dashboard.next_action, self._current_dashboard_input
+                ),
             )
         )
 

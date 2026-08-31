@@ -8612,6 +8612,36 @@ class TldwCli(
             logger.opt(exception=True).debug("Home flashcards-due count failed.")
             return None
 
+    def _local_eval_open_run_counts(self) -> dict[str, int]:
+        """Count pending/failed local eval runs for Home (spec §4).
+
+        Never counts 'running' -- a crashed app orphans running rows
+        forever, which would permanently pin the review suggestion.
+        """
+        service = getattr(self, "local_evaluation_service", None)
+        list_runs = getattr(service, "list_runs", None)
+        if not callable(list_runs):
+            return {"pending": 0, "failed": 0}
+        try:
+            pending = len(list_runs(status="pending", limit=50))
+            failed = len(list_runs(status="failed", limit=50))
+        except Exception:
+            logger.opt(exception=True).debug("Home eval run counts failed.")
+            return {"pending": 0, "failed": 0}
+        return {"pending": pending, "failed": failed}
+
+    def _local_read_later_count(self) -> int | None:
+        """Count read-it-later media for Home; None when the DB is absent."""
+        db = getattr(self, "media_db", None)
+        lister = getattr(db, "list_read_it_later_media_ids", None)
+        if not callable(lister):
+            return None
+        try:
+            return len(lister())
+        except Exception:
+            logger.opt(exception=True).debug("Home read-it-later count failed.")
+            return None
+
     def open_active_home_item_details(
         self,
         *,
@@ -9638,6 +9668,11 @@ class TldwCli(
             # lambda closes over self so it resolves lazily on first Home
             # compose rather than at wiring time here.
             ingest_jobs_provider=lambda: self.library_ingest_jobs.jobs(),
+            # Open-task queue feeds (spec §4); same lazy-self closure reason
+            # as ingest_jobs_provider -- local_evaluation_service and
+            # media_db are assigned later in __init__.
+            eval_open_runs_provider=lambda: self._local_eval_open_run_counts(),
+            read_later_count_provider=lambda: self._local_read_later_count(),
         )
         try:
             self.server_claims_service = ServerClaimsService.from_config(

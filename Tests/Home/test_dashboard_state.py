@@ -1,7 +1,9 @@
+from tldw_chatbook.Constants import TAB_CHAT, TAB_EVALS, TAB_MEDIA
 from tldw_chatbook.Home.dashboard_state import (
     HOME_FLASHCARDS_DUE_ROW_ID,
     HOME_OPEN_ITEM_CONTROL_ID,
     HOME_RECENT_WORK_LIMIT,
+    HOME_RESUME_KIND_CONVERSATION,
     HOME_RESUME_KIND_MEDIA,
     HOME_RESUME_LATEST_CONTROL_ID,
     HOME_START_CONVERSATION_CONTROL_ID,
@@ -1415,13 +1417,13 @@ def test_triage_idle_canvas_ready_with_content_start_primary_and_counts_line():
     triage = build_home_triage_state(state)
 
     canvas = triage.canvas
-    assert canvas.title == "Start a conversation"
+    # With a recent conversation the terminal suggestion IS the resume
+    # (spec §4); the start-conversation control appears beside it.
+    assert canvas.title == "Resume last conversation"
     assert "Conversations: 5 · Notes: 3" in canvas.lines
     control_ids = [control.control_id for control in canvas.actions]
     assert HOME_RESUME_LATEST_CONTROL_ID in control_ids
-    # The next-action button IS the start control here -- no duplicate
-    # home-start-conversation button beside it.
-    assert HOME_START_CONVERSATION_CONTROL_ID not in control_ids
+    assert HOME_START_CONVERSATION_CONTROL_ID in control_ids
     assert canvas.primary_control_id == "home-primary-action"
     assert canvas.next_action_is_canvas is True
 
@@ -1555,3 +1557,70 @@ def test_resume_control_supports_media_kind_with_age():
     assert control.target_route == "library"
     assert control.target_id == "local:media:9"
     assert control.label == "Resume reading: Long read (30m)"
+
+
+def test_ladder_suggests_eval_runs_over_import_sources():
+    action = choose_next_best_action(
+        HomeDashboardInput(
+            model_ready=True,
+            has_library_content=True,
+            rag_ready=True,
+            console_ready=True,
+            pending_eval_run_count=2,
+        )
+    )
+    assert action.action_id == "review_eval_runs"
+    assert action.target_route == TAB_EVALS
+
+
+def test_ladder_never_counts_running_eval_runs():
+    action = choose_next_best_action(
+        HomeDashboardInput(
+            model_ready=True,
+            has_library_content=True,
+            rag_ready=True,
+            console_ready=True,
+            pending_eval_run_count=0,
+            failed_eval_run_count=0,
+        )
+    )
+    assert action.action_id != "review_eval_runs"
+
+
+def test_ladder_suggests_read_later():
+    action = choose_next_best_action(
+        HomeDashboardInput(
+            model_ready=True,
+            has_library_content=True,
+            rag_ready=True,
+            console_ready=True,
+            read_later_count=3,
+        )
+    )
+    assert action.action_id == "review_read_later"
+    assert action.target_route == TAB_MEDIA
+
+
+def test_ladder_terminal_suggestion_resumes_last_conversation():
+    action = choose_next_best_action(
+        HomeDashboardInput(
+            model_ready=True,
+            has_library_content=True,
+            console_ready=True,
+            resume_kind=HOME_RESUME_KIND_CONVERSATION,
+            resume_id="42",
+        )
+    )
+    assert action.action_id == "resume_last_conversation"
+    assert action.target_route == TAB_CHAT
+
+
+def test_ladder_terminal_falls_back_to_start_conversation_without_recents():
+    action = choose_next_best_action(
+        HomeDashboardInput(
+            model_ready=True,
+            has_library_content=True,
+            console_ready=True,
+        )
+    )
+    assert action.action_id == "start_console"

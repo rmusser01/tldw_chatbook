@@ -1796,9 +1796,10 @@ async def test_home_recent_only_item_selection_gets_open_details_control():
 
 @pytest.mark.asyncio
 async def test_home_ready_idle_canvas_primary_start_conversation_routes_to_console():
-    """AC1+AC2: with the provider verifiably ready over real content, the
-    idle canvas leads with a primary "Start a conversation" control that
-    routes to Console, above a compact real-content counts line."""
+    """AC1+AC2: with the provider verifiably ready over real content and a
+    recent conversation, the idle canvas leads with a primary
+    "Resume last conversation" control that deep-links that conversation
+    into Console (spec §4), above a compact real-content counts line."""
     app = _build_test_app()
     app._home_dashboard_test_input = HomeDashboardInput(
         model_ready=True,
@@ -1820,18 +1821,19 @@ async def test_home_ready_idle_canvas_primary_start_conversation_routes_to_conso
 
         canvas_title = str(home.query_one("#home-canvas-title").renderable)
         canvas_lines = str(home.query_one("#home-canvas-lines").renderable)
-        assert "Start a conversation" in canvas_title
+        assert "Resume last conversation" in canvas_title
         assert "Conversations: 5 · Notes: 3" in canvas_lines
         assert "Media" not in canvas_lines
 
         primary = home.query_one("#home-primary-action")
-        assert "Start a conversation" in str(primary.label)
+        assert "Resume last conversation" in str(primary.label)
         assert primary.has_class("console-action-primary")
 
         await pilot.click("#home-primary-action")
         await pilot.pause(HOME_MOUNT_PAUSE)
 
     assert seen[-1] == "chat"
+    assert host.seen_contexts[-1] == {CONSOLE_NAV_CONTEXT_CONVERSATION_ID: "conv-9"}
 
 
 @pytest.mark.asyncio
