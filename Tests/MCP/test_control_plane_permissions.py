@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -22,6 +23,12 @@ from tldw_chatbook.Agents.local_tool_provider import (
 )
 from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
 from tldw_chatbook.MCP.execution_log import MCPExecutionLog
+from tldw_chatbook.MCP.hub_test_execution import (
+    ToolTestAdmissionBlocked,
+    ToolTestAdmissionPreview,
+    ToolTestAdmissionStale,
+    authority_fingerprint,
+)
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.local_store import LocalMCPStore
 from tldw_chatbook.MCP.permission_store import (
@@ -32,6 +39,7 @@ from tldw_chatbook.MCP.permission_store import (
 from tldw_chatbook.MCP.unified_control_plane_service import (
     UnifiedMCPControlPlaneService,
 )
+from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 
 
 def _tool(
@@ -812,3 +820,208 @@ def test_set_server_and_global_defaults_write_to_named_profile(tmp_path):
     assert named["servers"]["local:other"]["default"] == "deny"
     assert named["global_default"] == "ask"
     assert payload["profiles"]["default"]["servers"] == {}
+
+
+# -- immutable Hub Test Tool admission --------------------------------------
+
+
+def test_admission_preview_resolves_live_exact_definition_gate_and_authority(
+    tmp_path, monkeypatch
+):
+    import tldw_chatbook.MCP.local_server_tools as local_server_tools
+    import tldw_chatbook.MCP.unified_control_plane_service as service_module
+
+    service, _store = _service(tmp_path)
+    rendered = _tool(
+        server_key=LOCAL_SERVER_KEY,
+        name="fs_read",
+        description="stale panel definition",
+    )
+    live = _tool(
+        server_key=LOCAL_SERVER_KEY,
+        name="fs_read",
+        description="current provider definition",
+    )
+    authority = capture_directory_chain(tmp_path)
+
+    class _Provider:
+        def hub_tools(self):
+            return [live]
+
+    class _Handle:
+        provider = _Provider()
+
+        def __init__(self):
+            self.authority = authority
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(
+        local_server_tools,
+        "build_hub_local_inspection_provider",
+        lambda *a, **k: _Handle(),
+    )
+    monkeypatch.setattr(
+        local_server_tools, "build_hub_local_provider", lambda *a, **k: _Handle()
+    )
+    monkeypatch.setattr(
+        local_server_tools, "resolve_server_workspace_root", lambda: tmp_path
+    )
+    monkeypatch.setattr(
+        service_module,
+        "get_cli_setting",
+        lambda section, key, default=None: (
+            True if (section, key) == ("console", "local_tools_enabled") else default
+        ),
+    )
+    service.set_tool_state(LOCAL_SERVER_KEY, "fs_read", "allow", tool=live)
+
+    preview = service.prepare_hub_test(rendered)
+
+    assert isinstance(preview, ToolTestAdmissionPreview)
+    assert (preview.server_key, preview.tool_name) == (LOCAL_SERVER_KEY, "fs_read")
+    assert preview.definition_hash == definition_hash(
+        live.description, live.input_schema
+    )
+    assert preview.rendered_gate == "allow"
+    assert preview.authority_fingerprint == authority_fingerprint(authority)
+    assert preview.safe_authority_label == "Selected workspace"
+    assert str(tmp_path) not in repr(preview)
+
+
+@pytest.mark.asyncio
+async def test_preview_nonce_revoke_and_reuse_return_typed_stale_outcomes(tmp_path):
+    service, _store = _service(tmp_path)
+    tool = _tool()
+    service.local_service.get_external_servers = lambda: [
+        {
+            "profile_id": "demo",
+            "is_connected": True,
+            "discovery_snapshot": {
+                "tools": [
+                    {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "inputSchema": tool.input_schema,
+                    }
+                ]
+            },
+        }
+    ]
+    preview = service.prepare_hub_test(tool)
+    service.revoke_hub_test_preview(preview.nonce)
+
+    revoked = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+    reused = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+
+    assert isinstance(revoked, ToolTestAdmissionStale)
+    assert revoked.reason == "preview_unavailable"
+    assert isinstance(reused, ToolTestAdmissionStale)
+    assert service.local_service.get_external_servers()  # low-level seams untouched
+
+
+@pytest.mark.asyncio
+async def test_rendered_allow_requires_run_and_fresh_allow(tmp_path):
+    service, _store = _service(tmp_path)
+    tool = _tool()
+    service.local_service.get_external_servers = lambda: [
+        {
+            "profile_id": "demo",
+            "is_connected": True,
+            "discovery_snapshot": {
+                "tools": [
+                    {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "inputSchema": tool.input_schema,
+                    }
+                ]
+            },
+        }
+    ]
+    service.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
+    service.test_hub_tool = AsyncMock(return_value={"ok": True})
+
+    wrong_intent_preview = service.prepare_hub_test(tool)
+    wrong_intent = await service.execute_prepared_hub_test(
+        wrong_intent_preview.nonce, "approve_once", {}
+    )
+    assert isinstance(wrong_intent, ToolTestAdmissionBlocked)
+    assert wrong_intent.reason == "intent_mismatch"
+    service.test_hub_tool.assert_not_awaited()
+
+    changed_preview = service.prepare_hub_test(tool)
+    service.set_tool_state(tool.server_key, tool.name, "ask")
+    changed = await service.execute_prepared_hub_test(changed_preview.nonce, "run", {})
+    assert isinstance(changed, ToolTestAdmissionStale)
+    assert changed.reason == "gate_changed"
+    assert changed.refreshed_preview is not None
+    assert changed.refreshed_preview.rendered_gate == "ask"
+    service.test_hub_tool.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_rendered_ask_approve_once_accepts_fresh_ask_or_allow_without_persisting(
+    tmp_path,
+):
+    service, _store = _service(tmp_path)
+    tool = _tool()
+    service.local_service.get_external_servers = lambda: [
+        {
+            "profile_id": "demo",
+            "is_connected": True,
+            "discovery_snapshot": {
+                "tools": [{"name": tool.name, "description": tool.description}]
+            },
+        }
+    ]
+    service.test_hub_tool = AsyncMock(side_effect=[{"ask": True}, {"allow": True}])
+
+    ask_preview = service.prepare_hub_test(tool)
+    ask_result = await service.execute_prepared_hub_test(
+        ask_preview.nonce, "approve_once", {"b": 2, "a": 1}
+    )
+    assert ask_result == {"ask": True}
+    assert service.permission_store.get_tool_entry(tool.server_key, tool.name) is None
+
+    allow_preview = service.prepare_hub_test(tool)
+    service.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
+    allow_result = await service.execute_prepared_hub_test(
+        allow_preview.nonce, "approve_once", {"x": True}
+    )
+    assert allow_result == {"allow": True}
+    assert service.test_hub_tool.await_args_list[0].kwargs["decision"] == "approved"
+    assert service.test_hub_tool.await_args_list[1].kwargs["decision"] == "allowed"
+
+
+@pytest.mark.asyncio
+async def test_definition_change_downgrades_stored_allow_without_dispatch(tmp_path):
+    service, _store = _service(tmp_path)
+    live = {"description": "original"}
+    tool = _tool(description=live["description"])
+
+    def _catalog():
+        return [
+            {
+                "profile_id": "demo",
+                "is_connected": True,
+                "discovery_snapshot": {
+                    "tools": [{"name": tool.name, "description": live["description"]}]
+                },
+            }
+        ]
+
+    service.local_service.get_external_servers = _catalog
+    service.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
+    service.test_hub_tool = AsyncMock(return_value={"should": "not run"})
+    preview = service.prepare_hub_test(tool)
+    live["description"] = "changed after render"
+
+    result = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+
+    assert isinstance(result, ToolTestAdmissionStale)
+    assert result.reason == "definition_changed"
+    assert result.refreshed_preview is not None
+    assert result.refreshed_preview.rendered_gate == "ask"
+    service.test_hub_tool.assert_not_awaited()

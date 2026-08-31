@@ -10,8 +10,8 @@ import secrets
 import threading
 import time
 from collections import OrderedDict
-from dataclasses import dataclass
-from typing import Any, cast
+from dataclasses import dataclass, field
+from typing import Any, Literal, cast
 
 from tldw_chatbook.Utils.filesystem_identity import DirectoryChain
 
@@ -36,6 +36,24 @@ class RegisteredToolTestPreview:
     public: ToolTestAdmissionPreview
     authority: DirectoryChain | None
     expires_at: float
+
+
+@dataclass(frozen=True, slots=True)
+class ToolTestAdmissionBlocked:
+    """Bounded refusal returned after a prepared click cannot dispatch."""
+
+    reason: str
+    refreshed_preview: ToolTestAdmissionPreview | None = None
+    status: Literal["blocked"] = field(default="blocked", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class ToolTestAdmissionStale:
+    """Bounded stale-preview result that asks the caller to refresh."""
+
+    reason: str
+    refreshed_preview: ToolTestAdmissionPreview | None = None
+    status: Literal["stale"] = field(default="stale", init=False)
 
 
 def canonicalize_arguments(value: object) -> tuple[bytes, dict[str, Any]]:

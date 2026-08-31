@@ -3,12 +3,19 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from types import MappingProxyType
+from unittest.mock import AsyncMock
 
 import pytest
 
 from tldw_chatbook.MCP.execution_log import MCPExecutionLog
+from tldw_chatbook.MCP.hub_test_execution import (
+    ToolTestAdmissionBlocked,
+    ToolTestAdmissionStale,
+)
+from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
 from tldw_chatbook.MCP.local_store import LocalExternalMCPProfile, LocalMCPStore
+from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.MCP.unified_control_plane_service import (
     UnifiedMCPControlPlaneService,
 )
@@ -897,3 +904,336 @@ async def test_other_runtime_request_methods_are_untouched(tmp_path):
     )
 
     assert result["method"] == "tools/list"
+
+
+def _prepared_external_tool() -> HubTool:
+    return HubTool(
+        server_key="local:docs",
+        server_label="docs",
+        source="local",
+        name="search",
+        description="Search docs",
+        input_schema={
+            "type": "object",
+            "properties": {"q": {"type": "string"}},
+        },
+        tags=(),
+        stale=False,
+        executable=True,
+    )
+
+
+def _install_prepared_external_catalog(fake: FakeLocalService, tool: HubTool) -> None:
+    fake.get_external_servers = lambda: [
+        {
+            "profile_id": "docs",
+            "is_connected": True,
+            "discovery_snapshot": {
+                "tools": [
+                    {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "inputSchema": tool.input_schema,
+                    }
+                ]
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_prepared_hub_external_and_builtin_dispatch_through_legacy_test_seam(
+    tmp_path,
+):
+    service, fake, _client, _store = _service(tmp_path)
+    external = _prepared_external_tool()
+    _install_prepared_external_catalog(fake, external)
+    builtin = HubTool(
+        server_key="builtin:tldw_chatbook",
+        server_label="tldw_chatbook",
+        source="builtin",
+        name="calculator",
+        description="Calculate",
+        input_schema=None,
+        tags=(),
+        stale=False,
+        executable=True,
+    )
+    fake.get_inventory = lambda: {
+        "tools": [{"name": builtin.name, "description": builtin.description}]
+    }
+    service.set_tool_state(external.server_key, external.name, "allow", tool=external)
+    service.set_tool_state(builtin.server_key, builtin.name, "allow", tool=builtin)
+    legacy = AsyncMock(side_effect=[{"external": True}, {"builtin": True}])
+    service.test_hub_tool = legacy
+
+    external_preview = service.prepare_hub_test(external)
+    builtin_preview = service.prepare_hub_test(builtin)
+    external_result = await service.execute_prepared_hub_test(
+        external_preview.nonce, "run", {"q": "original"}
+    )
+    builtin_result = await service.execute_prepared_hub_test(
+        builtin_preview.nonce, "run", {}
+    )
+
+    assert external_result == {"external": True}
+    assert builtin_result == {"builtin": True}
+    assert legacy.await_args_list[0].args == (
+        external.server_key,
+        external.name,
+        {"q": "original"},
+    )
+    assert legacy.await_args_list[1].args == (builtin.server_key, builtin.name, {})
+
+
+@pytest.mark.asyncio
+async def test_prepared_hub_concurrent_double_click_admits_at_most_once(tmp_path):
+    service, fake, _client, _store = _service(tmp_path)
+    tool = _prepared_external_tool()
+    _install_prepared_external_catalog(fake, tool)
+    service.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
+    admitted = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _legacy(*_args, **_kwargs):
+        admitted.set()
+        await release.wait()
+        return {"ok": True}
+
+    service.test_hub_tool = AsyncMock(side_effect=_legacy)
+    preview = service.prepare_hub_test(tool)
+    first = asyncio.create_task(
+        service.execute_prepared_hub_test(preview.nonce, "run", {})
+    )
+    await admitted.wait()
+    second = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+    release.set()
+    first_result = await first
+
+    assert first_result == {"ok": True}
+    assert isinstance(second, ToolTestAdmissionStale)
+    assert service.test_hub_tool.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_prepared_hub_invalid_arguments_fail_before_nonce_consumption_or_audit(
+    tmp_path,
+):
+    service, fake, _client, store = _service(tmp_path)
+    tool = _prepared_external_tool()
+    _install_prepared_external_catalog(fake, tool)
+    service.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
+    service.test_hub_tool = AsyncMock(return_value={"ok": True})
+    preview = service.prepare_hub_test(tool)
+
+    with pytest.raises(ValueError, match="JSON object"):
+        await service.execute_prepared_hub_test(
+            preview.nonce,
+            "run",
+            ["not", "an", "object"],  # type: ignore[arg-type]
+        )
+
+    assert _log_records(store) == []
+    result = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+    assert result == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_prepared_hub_uses_canonical_copy_when_caller_mutates_during_admission(
+    tmp_path,
+):
+    service, fake, _client, _store = _service(tmp_path)
+    tool = _prepared_external_tool()
+    _install_prepared_external_catalog(fake, tool)
+    service.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
+    arguments = {"q": "original", "nested": {"values": [1]}}
+    entered_dispatch = asyncio.Event()
+    release_dispatch = asyncio.Event()
+
+    async def _waited_legacy(*args, **kwargs):
+        entered_dispatch.set()
+        await release_dispatch.wait()
+        return {"arguments": args[2]}
+
+    service.test_hub_tool = AsyncMock(side_effect=_waited_legacy)
+    preview = service.prepare_hub_test(tool)
+    pending = asyncio.create_task(
+        service.execute_prepared_hub_test(preview.nonce, "run", arguments)
+    )
+    await entered_dispatch.wait()
+    arguments["q"] = "mutated"
+    arguments["nested"]["values"].append(2)
+    release_dispatch.set()
+    result = await pending
+
+    assert result["arguments"] == {"q": "original", "nested": {"values": [1]}}
+
+
+@pytest.mark.asyncio
+async def test_prepared_local_default_seam_fails_closed_after_admission(
+    tmp_path, monkeypatch
+):
+    import tldw_chatbook.MCP.local_server_tools as local_server_tools
+
+    service, _fake, _client, store = _service(tmp_path)
+    tool = HubTool(
+        server_key="local:__local__",
+        server_label="Local workspace",
+        source="local",
+        name="fs_read",
+        description="Read a file",
+        input_schema=None,
+        tags=("reads",),
+        stale=False,
+        executable=True,
+    )
+
+    class _Provider:
+        def hub_tools(self):
+            return [tool]
+
+    class _Handle:
+        provider = _Provider()
+
+        def __init__(self):
+            from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+
+            self.authority = capture_directory_chain(tmp_path)
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(
+        local_server_tools,
+        "build_hub_local_inspection_provider",
+        lambda *a, **k: _Handle(),
+    )
+    monkeypatch.setattr(
+        local_server_tools, "build_hub_local_provider", lambda *a, **k: _Handle()
+    )
+    monkeypatch.setattr(
+        local_server_tools, "resolve_server_workspace_root", lambda: tmp_path
+    )
+    monkeypatch.setattr(control_plane_module, "get_cli_setting", lambda *a, **k: True)
+    service.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
+    preview = service.prepare_hub_test(tool)
+
+    result = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+
+    assert isinstance(result, ToolTestAdmissionBlocked)
+    assert result.reason == "local_execution_unavailable"
+    records = _log_records(store)
+    assert len(records) == 1
+    assert records[0]["error_category"] == "local_execution_unavailable"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["disabled", "root", "provider"])
+async def test_prepared_local_click_time_configuration_failures_never_reach_handler(
+    tmp_path, monkeypatch, failure
+):
+    import tldw_chatbook.MCP.local_server_tools as local_server_tools
+
+    service, _fake, _client, store = _service(tmp_path)
+    tool = HubTool(
+        server_key="local:__local__",
+        server_label="Local workspace",
+        source="local",
+        name="fs_read",
+        description="Read a file",
+        input_schema=None,
+        tags=("reads",),
+        stale=False,
+        executable=True,
+    )
+    from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+
+    authority = capture_directory_chain(tmp_path)
+    state = {"enabled": True, "fail": None}
+
+    class _Provider:
+        def hub_tools(self):
+            return [tool]
+
+    class _Handle:
+        provider = _Provider()
+
+        def __init__(self):
+            self.authority = authority
+
+        def close(self):
+            return None
+
+    def _root():
+        if state["fail"] == "root":
+            raise OSError("root unavailable")
+        return tmp_path
+
+    def _provider(*_args, **_kwargs):
+        if state["fail"] == "provider":
+            raise RuntimeError("provider unavailable")
+        return _Handle()
+
+    monkeypatch.setattr(
+        local_server_tools,
+        "build_hub_local_inspection_provider",
+        lambda *a, **k: _Handle(),
+    )
+    monkeypatch.setattr(local_server_tools, "build_hub_local_provider", _provider)
+    monkeypatch.setattr(local_server_tools, "resolve_server_workspace_root", _root)
+    monkeypatch.setattr(
+        control_plane_module,
+        "get_cli_setting",
+        lambda section, key, default=None: (
+            state["enabled"]
+            if (section, key) == ("console", "local_tools_enabled")
+            else default
+        ),
+    )
+    service.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
+    local_handler = AsyncMock(return_value={"should": "not run"})
+    service._execute_prepared_local_hub_test = local_handler
+    preview = service.prepare_hub_test(tool)
+    if failure == "disabled":
+        state["enabled"] = False
+    else:
+        state["fail"] = failure
+
+    result = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+
+    assert isinstance(result, ToolTestAdmissionStale)
+    assert result.refreshed_preview is not None
+    assert result.refreshed_preview.rendered_gate == "unavailable"
+    local_handler.assert_not_awaited()
+    records = _log_records(store)
+    assert len(records) == 1
+    assert records[0]["initiator"] == "test"
+
+
+@pytest.mark.asyncio
+async def test_prepared_hub_gate_resolution_error_refreshes_unavailable_without_dispatch(
+    tmp_path,
+):
+    service, fake, _client, _store = _service(tmp_path)
+    tool = _prepared_external_tool()
+    _install_prepared_external_catalog(fake, tool)
+    gate_calls = 0
+
+    def _gate(_tool):
+        nonlocal gate_calls
+        gate_calls += 1
+        if gate_calls == 1:
+            return EffectiveToolState(state="allow", origin="tool_override")
+        raise RuntimeError("permission store unavailable")
+
+    service.gate_tool_test = _gate
+    service.test_hub_tool = AsyncMock(return_value={"should": "not run"})
+    preview = service.prepare_hub_test(tool)
+
+    result = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+
+    assert isinstance(result, ToolTestAdmissionStale)
+    assert result.reason == "gate_changed"
+    assert result.refreshed_preview is not None
+    assert result.refreshed_preview.rendered_gate == "unresolved"
+    service.test_hub_tool.assert_not_awaited()

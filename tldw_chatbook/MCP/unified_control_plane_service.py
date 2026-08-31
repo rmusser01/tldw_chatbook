@@ -4,10 +4,10 @@ import asyncio
 import inspect
 import time
 from collections.abc import Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from loguru import logger
 
@@ -15,10 +15,19 @@ from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 from .execution_log import MCPExecutionLog, build_record
+from .hub_test_execution import (
+    ToolTestAdmissionBlocked,
+    ToolTestAdmissionPreview,
+    ToolTestAdmissionStale,
+    ToolTestPreviewRegistry,
+    authority_fingerprint,
+    canonicalize_arguments,
+)
 from .hub_tool_catalog import (
     HubTool,
     builtin_tools_from_inventory,
     local_tools_from_record,
+    schema_argument_names,
 )
 from .local_control_service import MCPGovernanceDenied
 from .local_runtime_delegate import (
@@ -45,6 +54,7 @@ from .readiness import BUILTIN_SERVER_KEY
 from .server_target_store import ConfiguredServerTargetStore
 from .unified_context_store import UnifiedMCPContextStore
 from .unified_control_models import ServerAccessContext, UnifiedMCPContext
+from tldw_chatbook.Utils.filesystem_identity import DirectoryChain
 
 # Task 6 (PR-T3), Route B: refusal copy for the Advanced runner's
 # `tool.execute` action when the Hub's per-tool permission gate resolves the
@@ -165,6 +175,16 @@ class MCPHubGateDeniedError(PermissionError):
     """
 
 
+@dataclass(frozen=True, slots=True)
+class _ResolvedHubTest:
+    """One fresh, service-owned Hub Test Tool resolution."""
+
+    tool: HubTool
+    authority: DirectoryChain | None = None
+    safe_authority_label: str | None = None
+    unavailable_reason: str | None = None
+
+
 # Task 6 (PR-T3), Route B, second door: `runtime.request`/`runtime.batch` are
 # Advanced descriptors too, and the in-process runtime speaks the real
 # protocol -- `{"method": "tools/call"}` reaches the SAME
@@ -210,6 +230,7 @@ class UnifiedMCPControlPlaneService:
         )
         self._execution_log: MCPExecutionLog | None = None
         self._permission_store: MCPPermissionStore | None = None
+        self._hub_test_previews = ToolTestPreviewRegistry()
         # Chat bridge (Phase 5): in-memory-only, app-run-lifetime session
         # approvals. Never persisted -- a fresh process/instance starts
         # empty, and `clear_session_approvals()` is the only other way
@@ -2571,6 +2592,414 @@ class UnifiedMCPControlPlaneService:
             decision=decision,
             timeout_seconds=self._lifecycle_timeout(),
             registered_argument_names=registered_argument_names,
+        )
+
+    def prepare_hub_test(self, tool: HubTool) -> ToolTestAdmissionPreview:
+        """Resolve and register an immutable preview for one Hub test panel.
+
+        The caller's ``HubTool`` supplies only the exact catalog identity. The
+        definition, gate, eligibility, and workspace authority all come from a
+        fresh service-owned resolution so a stale UI row cannot mint authority.
+        """
+        resolved = self._resolve_hub_test(tool.server_key, tool.name)
+        if resolved is None:
+            raise KeyError(f"Unknown Hub tool: {tool.tool_id}")
+        return self._issue_hub_test_preview(resolved)
+
+    def revoke_hub_test_preview(self, nonce: str) -> None:
+        """Revoke one prepared Hub test nonce if it is still live."""
+        self._hub_test_previews.revoke(str(nonce or ""))
+
+    async def execute_prepared_hub_test(
+        self,
+        nonce: str,
+        intent: Literal["run", "approve_once"],
+        arguments: dict[str, Any],
+    ) -> dict[str, Any] | ToolTestAdmissionBlocked | ToolTestAdmissionStale:
+        """Atomically admit one preview-bound Hub Test Tool invocation.
+
+        Argument validation deliberately precedes nonce consumption. Everything
+        after consumption is re-resolved from live service state and compared to
+        the immutable preview before either the legacy MCP seam or the private
+        local-Hub seam can be reached.
+        """
+        canonical_bytes, dispatch_arguments = canonicalize_arguments(arguments)
+        registered = self._hub_test_previews.consume(str(nonce or ""))
+        if registered is None:
+            return ToolTestAdmissionStale(reason="preview_unavailable")
+
+        public = registered.public
+        if intent not in {"run", "approve_once"}:
+            return self._hub_test_blocked(
+                public,
+                reason="intent_invalid",
+                refreshed=self._refresh_hub_test_preview(public),
+            )
+
+        resolved = self._resolve_hub_test(public.server_key, public.tool_name)
+        if resolved is None:
+            return self._hub_test_stale(public, reason="identity_changed")
+
+        fresh_preview = self._preview_fields(resolved)
+        if (
+            fresh_preview.server_key != public.server_key
+            or fresh_preview.tool_name != public.tool_name
+        ):
+            return self._hub_test_stale(
+                public,
+                reason="identity_changed",
+                refreshed=self._issue_hub_test_preview(resolved),
+            )
+        if fresh_preview.definition_hash != public.definition_hash:
+            return self._hub_test_stale(
+                public,
+                reason="definition_changed",
+                refreshed=self._issue_hub_test_preview(resolved),
+            )
+        if (
+            fresh_preview.authority_fingerprint != public.authority_fingerprint
+            or resolved.authority != registered.authority
+            or fresh_preview.safe_authority_label != public.safe_authority_label
+        ):
+            return self._hub_test_stale(
+                public,
+                reason="authority_changed",
+                refreshed=self._issue_hub_test_preview(resolved),
+            )
+
+        rendered_gate = public.rendered_gate
+        fresh_gate = fresh_preview.rendered_gate
+        if rendered_gate == "allow":
+            if intent != "run":
+                return self._hub_test_blocked(
+                    public,
+                    reason="intent_mismatch",
+                    refreshed=self._issue_hub_test_preview(resolved),
+                )
+            if fresh_gate != "allow":
+                return self._hub_test_stale(
+                    public,
+                    reason="gate_changed",
+                    refreshed=self._issue_hub_test_preview(resolved),
+                )
+        elif rendered_gate == "ask":
+            if intent != "approve_once":
+                return self._hub_test_blocked(
+                    public,
+                    reason="intent_mismatch",
+                    refreshed=self._issue_hub_test_preview(resolved),
+                )
+            if fresh_gate not in {"ask", "allow"}:
+                return self._hub_test_stale(
+                    public,
+                    reason="gate_changed",
+                    refreshed=self._issue_hub_test_preview(resolved),
+                )
+        else:
+            return self._hub_test_blocked(
+                public,
+                reason=(
+                    resolved.unavailable_reason or "permission_unresolved"
+                    if fresh_gate in {"unavailable", "unresolved"}
+                    else "permission_denied"
+                ),
+                refreshed=self._issue_hub_test_preview(resolved),
+            )
+
+        # Re-encode the independent object immediately before dispatch. This
+        # turns any accidental internal mutation into a closed refusal instead
+        # of dispatching arguments different from the admitted canonical bytes.
+        dispatch_bytes, dispatch_copy = canonicalize_arguments(dispatch_arguments)
+        if dispatch_bytes != canonical_bytes:
+            return self._hub_test_blocked(
+                public,
+                reason="arguments_changed",
+                refreshed=self._issue_hub_test_preview(resolved),
+            )
+
+        if public.server_key == "local:__local__":
+            result = await self._maybe_await(
+                self._execute_prepared_local_hub_test(
+                    tool=resolved.tool,
+                    authority=resolved.authority,
+                    intent=intent,
+                    fresh_gate=fresh_gate,
+                    canonical_arguments=canonical_bytes,
+                    arguments=dispatch_copy,
+                )
+            )
+            if isinstance(result, (ToolTestAdmissionBlocked, ToolTestAdmissionStale)):
+                self._record_prepared_hub_block(public, result.reason)
+            return result
+
+        decision = "approved" if fresh_gate == "ask" else "allowed"
+        return await self.test_hub_tool(
+            resolved.tool.server_key,
+            resolved.tool.name,
+            dispatch_copy,
+            decision=decision,
+            registered_argument_names=schema_argument_names(resolved.tool.input_schema),
+        )
+
+    async def _execute_prepared_local_hub_test(
+        self,
+        *,
+        tool: HubTool,
+        authority: DirectoryChain | None,
+        intent: Literal["run", "approve_once"],
+        fresh_gate: str,
+        canonical_arguments: bytes,
+        arguments: dict[str, Any],
+    ) -> ToolTestAdmissionBlocked:
+        """Task 5 injection point; local execution is fail-closed for now."""
+        del tool, authority, intent, fresh_gate, canonical_arguments, arguments
+        return ToolTestAdmissionBlocked(reason="local_execution_unavailable")
+
+    def _resolve_hub_test(
+        self, server_key: str, tool_name: str
+    ) -> _ResolvedHubTest | None:
+        """Recapture one exact live Hub identity and any local authority."""
+        normalized_key = str(server_key or "").strip()
+        normalized_name = str(tool_name or "").strip()
+        if normalized_key == "local:__local__":
+            return self._resolve_local_hub_test(normalized_name)
+
+        if normalized_key.startswith("local:"):
+            try:
+                records = self.local_service.get_external_servers()
+            except Exception as exc:  # noqa: BLE001 -- admission fails closed
+                logger.warning(
+                    "MCP Hub test external catalog unavailable (exception_type={})",
+                    type(exc).__name__,
+                )
+                return None
+            if not isinstance(records, list):
+                return None
+            for record in records or []:
+                if not isinstance(record, Mapping):
+                    continue
+                for candidate in local_tools_from_record(dict(record)):
+                    if (
+                        candidate.server_key == normalized_key
+                        and candidate.name == normalized_name
+                    ):
+                        return _ResolvedHubTest(tool=candidate)
+            return None
+
+        if normalized_key.startswith("builtin:"):
+            try:
+                inventory = self.local_service.get_inventory()
+            except Exception as exc:  # noqa: BLE001 -- admission fails closed
+                logger.warning(
+                    "MCP Hub test built-in catalog unavailable (exception_type={})",
+                    type(exc).__name__,
+                )
+                return None
+            if not isinstance(inventory, Mapping):
+                return None
+            for candidate in builtin_tools_from_inventory(dict(inventory)):
+                if (
+                    candidate.server_key == normalized_key
+                    and candidate.name == normalized_name
+                ):
+                    return _ResolvedHubTest(tool=candidate)
+        return None
+
+    def _resolve_local_hub_test(self, tool_name: str) -> _ResolvedHubTest | None:
+        """Rebuild local inspection and eligible provider state fail-closed."""
+        from . import local_server_tools
+
+        inspection_handle = None
+        executable_handle = None
+        try:
+            try:
+                inspection_handle = (
+                    local_server_tools.build_hub_local_inspection_provider(
+                        Path.cwd(),
+                        resolve_state=self.gate_tool_test,
+                    )
+                )
+                inspection = next(
+                    (
+                        tool
+                        for tool in inspection_handle.provider.hub_tools()
+                        if tool.server_key == "local:__local__"
+                        and tool.name == tool_name
+                    ),
+                    None,
+                )
+            except Exception as exc:  # noqa: BLE001 -- admission fails closed
+                logger.warning(
+                    "MCP Hub test local inspection unavailable (exception_type={})",
+                    type(exc).__name__,
+                )
+                return None
+            if inspection is None:
+                return None
+
+            try:
+                enabled = coerce_bool_setting(
+                    get_cli_setting("console", "local_tools_enabled", True),
+                    True,
+                )
+            except Exception as exc:  # noqa: BLE001 -- admission fails closed
+                logger.warning(
+                    "MCP Hub test local configuration unavailable (exception_type={})",
+                    type(exc).__name__,
+                )
+                return _ResolvedHubTest(
+                    tool=replace(inspection, executable=False),
+                    unavailable_reason="local_configuration_unavailable",
+                )
+            if not enabled:
+                return _ResolvedHubTest(
+                    tool=replace(inspection, executable=False),
+                    unavailable_reason="local_tools_disabled",
+                )
+
+            try:
+                root = local_server_tools.resolve_server_workspace_root()
+                executable_handle = local_server_tools.build_hub_local_provider(
+                    root,
+                    resolve_state=self.gate_tool_test,
+                    approval_callback=None,
+                )
+                executable_tools = executable_handle.provider.hub_tools()
+            except Exception as exc:  # noqa: BLE001 -- admission fails closed
+                logger.warning(
+                    "MCP Hub test local provider unavailable (exception_type={})",
+                    type(exc).__name__,
+                )
+                return _ResolvedHubTest(
+                    tool=replace(inspection, executable=False),
+                    unavailable_reason="local_provider_unavailable",
+                )
+
+            current_hash = definition_hash(
+                inspection.description, inspection.input_schema
+            )
+            eligible = next(
+                (
+                    tool
+                    for tool in executable_tools
+                    if tool.server_key == inspection.server_key
+                    and tool.name == inspection.name
+                    and definition_hash(tool.description, tool.input_schema)
+                    == current_hash
+                ),
+                None,
+            )
+            if eligible is None:
+                return _ResolvedHubTest(
+                    tool=replace(inspection, executable=False),
+                    unavailable_reason="local_tool_ineligible",
+                )
+            return _ResolvedHubTest(
+                tool=replace(inspection, executable=True),
+                authority=executable_handle.authority,
+                safe_authority_label="Selected workspace",
+            )
+        finally:
+            for handle in (executable_handle, inspection_handle):
+                if handle is None:
+                    continue
+                try:
+                    handle.close()
+                except Exception as exc:  # noqa: BLE001 -- admission stays bounded
+                    logger.warning(
+                        "MCP Hub test provider cleanup failed (exception_type={})",
+                        type(exc).__name__,
+                    )
+
+    def _preview_fields(self, resolved: _ResolvedHubTest) -> ToolTestAdmissionPreview:
+        """Build comparison-only preview fields without registering a nonce."""
+        rendered_gate = "unavailable"
+        if resolved.tool.executable and resolved.unavailable_reason is None:
+            try:
+                gate = self.gate_tool_test(resolved.tool)
+                rendered_gate = (
+                    gate.state
+                    if gate.origin != "gate_error"
+                    and gate.state in {"allow", "ask", "deny"}
+                    else "unresolved"
+                )
+            except Exception as exc:  # noqa: BLE001 -- gate errors are unavailable
+                logger.warning(
+                    "MCP Hub test permission unavailable (exception_type={})",
+                    type(exc).__name__,
+                )
+                rendered_gate = "unresolved"
+        return ToolTestAdmissionPreview(
+            nonce="",
+            server_key=resolved.tool.server_key,
+            tool_name=resolved.tool.name,
+            definition_hash=definition_hash(
+                resolved.tool.description, resolved.tool.input_schema
+            ),
+            rendered_gate=rendered_gate,
+            authority_fingerprint=(
+                authority_fingerprint(resolved.authority)
+                if resolved.authority is not None
+                else None
+            ),
+            safe_authority_label=resolved.safe_authority_label,
+        )
+
+    def _issue_hub_test_preview(
+        self, resolved: _ResolvedHubTest
+    ) -> ToolTestAdmissionPreview:
+        fields = self._preview_fields(resolved)
+        return self._hub_test_previews.issue(
+            server_key=fields.server_key,
+            tool_name=fields.tool_name,
+            definition_hash=fields.definition_hash,
+            rendered_gate=fields.rendered_gate,
+            authority=resolved.authority,
+            safe_authority_label=fields.safe_authority_label,
+        )
+
+    def _refresh_hub_test_preview(
+        self, public: ToolTestAdmissionPreview
+    ) -> ToolTestAdmissionPreview | None:
+        resolved = self._resolve_hub_test(public.server_key, public.tool_name)
+        return self._issue_hub_test_preview(resolved) if resolved is not None else None
+
+    def _record_prepared_hub_block(
+        self, public: ToolTestAdmissionPreview, reason: str
+    ) -> None:
+        self.record_tool_decision(
+            public.server_key,
+            public.tool_name,
+            decision="denied",
+            initiator="test",
+            error_category=reason,
+        )
+
+    def _hub_test_blocked(
+        self,
+        public: ToolTestAdmissionPreview,
+        *,
+        reason: str,
+        refreshed: ToolTestAdmissionPreview | None = None,
+    ) -> ToolTestAdmissionBlocked:
+        self._record_prepared_hub_block(public, reason)
+        return ToolTestAdmissionBlocked(reason=reason, refreshed_preview=refreshed)
+
+    def _hub_test_stale(
+        self,
+        public: ToolTestAdmissionPreview,
+        *,
+        reason: str,
+        refreshed: ToolTestAdmissionPreview | None = None,
+    ) -> ToolTestAdmissionStale:
+        self._record_prepared_hub_block(public, reason)
+        return ToolTestAdmissionStale(
+            reason=reason,
+            refreshed_preview=(
+                refreshed
+                if refreshed is not None
+                else self._refresh_hub_test_preview(public)
+            ),
         )
 
     def local_hub_tools(self) -> list[HubTool]:
