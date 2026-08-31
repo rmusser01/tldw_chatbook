@@ -102,13 +102,13 @@ _FAILURE_CATEGORIES = frozenset(
 # one action that addresses it -- "The model listing request had a connection
 # error" named a subsystem and no next step.
 _FAILURE_DETAILS = {
-    "timeout": "The server did not respond in time. Check it is running and not overloaded.",
-    "connection_refused": "Nothing is listening at that address. Start the server, or check the endpoint and port.",
-    "unauthorized": "The server rejected this API key. Go Back to re-enter it.",
-    "forbidden": "This API key is not allowed to list models. Check its permissions.",
-    "http_status": "The server answered with an error. Check the endpoint, then try again.",
-    "invalid_payload": "The server answered in a format we did not recognise. Check the endpoint points at an OpenAI-compatible API.",
-    "connection_error": "Could not reach the server. Check the endpoint, and that the server is running.",
+    "timeout": "The request timed out - the server did not answer in time. Check it is running and not overloaded.",
+    "connection_refused": "The connection was refused - nothing is listening at that address. Start the server, or check the endpoint and port.",
+    "unauthorized": "Unauthorized - the server rejected this API key. Go Back to re-enter it.",
+    "forbidden": "Forbidden - this API key is not allowed to list models. Check its permissions.",
+    "http_status": "The server returned an HTTP status error. Check the endpoint, then try again.",
+    "invalid_payload": "The server returned an invalid response - not an OpenAI-compatible model list. Check the endpoint.",
+    "connection_error": "Connection error - could not reach the server. Check the endpoint, and that the server is running.",
 }
 _CONFIGURATION_ISSUE_DETAILS = {
     "provider_missing": "Select a provider.",
