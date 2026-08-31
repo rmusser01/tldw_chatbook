@@ -741,7 +741,7 @@ lineage were rebuilt.
 - Produces: the single durable manifest and a validator that exits zero only for a
   complete, consistent artifact.
 
-- [ ] **Step 1: Assemble the manifest with canonical JSON serialization**
+- [x] **Step 1: Assemble the manifest with canonical JSON serialization**
 
   Use UTF-8, `sort_keys=True`, `indent=2`, and a final newline. Include:
 
@@ -782,7 +782,7 @@ lineage were rebuilt.
   `tools`, `commands`, and every complete census snapshot record the exact runtime
   and invocation provenance without a pre-records/final schema transition.
 
-- [ ] **Step 2: Classify current failures exhaustively**
+- [x] **Step 2: Classify current failures exhaustively**
 
   Apply lineage projections first, then assign each current failure to exactly one:
 
@@ -818,7 +818,7 @@ lineage were rebuilt.
   common-to-current lineage graph. A duplicate current projection, unexplained copy,
   or ambiguous mapping is a blocker.
 
-- [ ] **Step 3: Define owner-aligned stable batches**
+- [x] **Step 3: Define owner-aligned stable batches**
 
   Capture active ownership evidence first:
 
@@ -842,7 +842,7 @@ lineage were rebuilt.
   entry rather than an ambiguous empty list. Split a broad subsystem only at a
   reviewable ownership/test boundary; do not use arbitrary fixed-size chunks.
 
-- [ ] **Step 4: Implement the manifest checker**
+- [x] **Step 4: Implement the manifest checker**
 
   Materialize Appendix B verbatim. The checker owns the exact 16-key schema shown in
   Step 1; every nested object is closed to extra keys, every array has a declared
@@ -883,7 +883,7 @@ lineage were rebuilt.
   present path, a lineage record for every moved path, one cleanup-record path per
   batch label, and the required child-task acceptance-criteria phrases.
 
-- [ ] **Step 5: Prove the checker fails for corrupt manifests**
+- [x] **Step 5: Prove the checker fails for corrupt manifests**
 
   Generate JSON-normalized temporary mutations and require nonzero exits for:
 
@@ -936,13 +936,55 @@ lineage were rebuilt.
     --repo "$PWD"
   ```
 
-- [ ] **Step 6: Record derived counts and stable labels in both plans**
+- [x] **Step 6: Record derived counts and stable labels in both plans**
 
   After all Task 4 arithmetic checks pass, append an `Execution Record` section to
   this detailed plan containing the exact pins, `M/B/C/H/F_closeout/F_common/current`
   counts, the four comparison counts, blocker count, and sorted stable batch labels.
   Append the same counts and labels—never higher task IDs—to TASK-26000's concise
   Implementation Plan. Regenerate canonical JSON after any resulting label change.
+
+#### Task 4 Execution Record (2026-08-30)
+
+- Pins: task base/current
+  `872a325483679d2880fcfe2a6e2b9fc82e12f42d`, common
+  `f0e8961222fe1a7a3ac7566f7f78142e717358f3`, historical base
+  `31ed49bb368f54211d6482599e00a5c1340f80b2`, pre-closeout
+  `1f4f72ac5ff02f5237a4946745e82e8932cd41cf`, and closeout
+  `642b1c782fe6c066a781314dae669a55b05b62ad`.
+- Historical/current counts: `M=99`, `B=64`, `C=77`, `C-B=16`, `B-C=3`,
+  `H=61`, `F_closeout=1,738`, `F_common=1,746`, and current failures `=1,923`.
+  The exhaustive comparison is `historical_still_current=47`,
+  `historical_no_longer_current=14`, `shared_ancestor_debt=1,617`, and
+  `current_line_drift=259`; blockers remained zero.
+- Live ownership capture inspected all ten open PRs at the snapshot. Exact current
+  failure overlaps were PR `#2244` (30 paths), `#2230` (one), `#2196` (11,
+  including one also owned by `#2244`), `#2059` (one), and `#1655` (two,
+  including one also owned by `#2059`); PRs `#2026`, `#1991`, `#1903`, `#1851`,
+  and `#1651` had no overlap. Matching active worktrees and the explicit
+  `origin/dev` 14-day Python history were projected into each batch's nonempty
+  `conflict_basis`.
+- The 38 sorted stable labels are `ruff-agents-runtime`, `ruff-api`,
+  `ruff-api-client-large`, `ruff-app-shell-large`, `ruff-chachanotes-db-large`,
+  `ruff-character-persona`, `ruff-chat-core`, `ruff-chunking`,
+  `ruff-ci-workflow-active`, `ruff-console-composer-active`,
+  `ruff-console-performance-active`, `ruff-console-trace-ledger-active`,
+  `ruff-console-ui`, `ruff-core-runtime`, `ruff-database`, `ruff-evals`,
+  `ruff-generation-media`, `ruff-ingestion-web-media`, `ruff-integration-live`,
+  `ruff-library`, `ruff-library-screen-large`, `ruff-notes`, `ruff-performance`,
+  `ruff-personas-screen-large`, `ruff-providers-prompts`, `ruff-rag-research`,
+  `ruff-root-ci-architecture-final`, `ruff-scheduling-notifications`,
+  `ruff-settings-screen-large`, `ruff-speech-audio`, `ruff-tests-misc`,
+  `ruff-tools-workspaces`, `ruff-tts-windows-active`, `ruff-ui-screens`,
+  `ruff-utils-config`, `ruff-watchlists-screen-large`,
+  `ruff-watchlists-subscriptions`, and `ruff-widgets`.
+- Verbatim Appendix B SHA-256 remained
+  `b16cfb7bdbd94fe0946cad99a4225f8981de87c27df324e78516f5556459a413`.
+  Its built-in suite printed exactly
+  `manifest self-tests: 2 positive phases and 14 deterministic mutations passed`;
+  an independent run reproduced all 14 named first error codes, and real
+  `--phase pre-records` accepted the canonical 16-key manifest with 2,037 identities,
+  38 batches, zero blockers, and zero cleanup records.
 
 ---
 

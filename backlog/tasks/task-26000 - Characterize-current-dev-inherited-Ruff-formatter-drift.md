@@ -55,6 +55,32 @@ ADR required: no.
 ADR path: N/A.
 
 Reason: the task records and schedules behavior-preserving formatter cleanup without changing runtime, storage, security, dependency, or cross-module architecture.
+
+Task 4 manifest record (2026-08-30): pins are task base/current
+`872a325483679d2880fcfe2a6e2b9fc82e12f42d`, common
+`f0e8961222fe1a7a3ac7566f7f78142e717358f3`, historical base
+`31ed49bb368f54211d6482599e00a5c1340f80b2`, pre-closeout
+`1f4f72ac5ff02f5237a4946745e82e8932cd41cf`, and closeout
+`642b1c782fe6c066a781314dae669a55b05b62ad`. Counts are `M=99`, `B=64`,
+`C=77`, `C-B=16`, `B-C=3`, `H=61`, `F_closeout=1,738`, `F_common=1,746`,
+current `=1,923`, `historical_still_current=47`,
+`historical_no_longer_current=14`, `shared_ancestor_debt=1,617`,
+`current_line_drift=259`, and blockers `=0`.
+
+The 38 stable labels are `ruff-agents-runtime`, `ruff-api`,
+`ruff-api-client-large`, `ruff-app-shell-large`, `ruff-chachanotes-db-large`,
+`ruff-character-persona`, `ruff-chat-core`, `ruff-chunking`,
+`ruff-ci-workflow-active`, `ruff-console-composer-active`,
+`ruff-console-performance-active`, `ruff-console-trace-ledger-active`,
+`ruff-console-ui`, `ruff-core-runtime`, `ruff-database`, `ruff-evals`,
+`ruff-generation-media`, `ruff-ingestion-web-media`, `ruff-integration-live`,
+`ruff-library`, `ruff-library-screen-large`, `ruff-notes`, `ruff-performance`,
+`ruff-personas-screen-large`, `ruff-providers-prompts`, `ruff-rag-research`,
+`ruff-root-ci-architecture-final`, `ruff-scheduling-notifications`,
+`ruff-settings-screen-large`, `ruff-speech-audio`, `ruff-tests-misc`,
+`ruff-tools-workspaces`, `ruff-tts-windows-active`, `ruff-ui-screens`,
+`ruff-utils-config`, `ruff-watchlists-screen-large`,
+`ruff-watchlists-subscriptions`, and `ruff-widgets`.
 <!-- SECTION:PLAN:END -->
 
 ### Task 1 Repin Record (2026-08-30)
