@@ -616,6 +616,11 @@ class AgentConfig:
         if self.response_reserve_tokens < 0:
             raise ValueError("response_reserve_tokens must be non-negative")
 
+    #: ADR-110: ordered provider fallback chain, consulted only after retry
+    #: is exhausted or on a credit/quota-terminal class. Empty means no
+    #: fallback and no projection code runs at all.
+    fallback_providers: tuple[str, ...] = ()
+
 
 @dataclass
 class RunOutcome:

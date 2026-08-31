@@ -2,9 +2,10 @@
 id: TASK-25902
 title: 'Agent loop: cross-provider fallback chain'
 status: To Do
-assignee: []
+assignee:
+  - '@claude'
 created_date: '2026-08-31 15:08'
-updated_date: '2026-08-31 22:52'
+updated_date: '2026-08-31 23:05'
 labels:
   - agents
   - reliability
@@ -21,17 +22,17 @@ When a provider is exhausted or down, chatbook has no way to continue on another
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 An ordered fallback provider list is configurable and consulted when the primary provider exhausts retries or returns a credit/quota-terminal error
-- [ ] #2 Switching providers mid-run is visible in the transcript and the run log, naming the failing provider, the chosen provider, and the reason - never silent
-- [ ] #3 A fallback candidate the existing per-provider readiness check reports as unconfigured is skipped without an attempt, and the skip is visible
-- [ ] #4 Accumulated history is projected into the target provider's protocol at the switch (ADR-110): native tool_calls/role:"tool" pairs and fence-prefixed text round-trip without losing or reordering any turn
-- [ ] #5 An unpaired tool call (result never arrived) projects with an explicit no-result marker rather than being dropped
-- [ ] #6 Assistant text containing a look-alike fence tag is left as text, not parsed into a tool call
-- [ ] #7 A projection that cannot be performed faithfully refuses the fallback and raises the original provider's error, rather than sending a degraded history
-- [ ] #8 Prompt-cache state (protocol text, provider cache breakpoints) is rebuilt for the target provider rather than carried over
-- [ ] #9 Fallback does not rebuild LoopDeps - the wall-budget origin TASK-25913's tool clamp reads from is unchanged by a provider switch
-- [ ] #10 With no fallback chain configured, behaviour is byte-identical to today and no projection code runs
-- [ ] #11 Round-trip property tests (native->fence->native) assert semantic equivalence, driven from provider_supports_native_tools' own provider list rather than a hand-copied one
+- [x] #1 An ordered fallback provider list is configurable and consulted when the primary provider exhausts retries or returns a credit/quota-terminal error
+- [x] #2 Switching providers mid-run is visible in the transcript and the run log, naming the failing provider, the chosen provider, and the reason - never silent
+- [x] #3 A fallback candidate the existing per-provider readiness check reports as unconfigured is skipped without an attempt, and the skip is visible
+- [x] #4 Accumulated history is projected into the target provider's protocol at the switch (ADR-110): native tool_calls/role:"tool" pairs and fence-prefixed text round-trip without losing or reordering any turn
+- [x] #5 An unpaired tool call (result never arrived) projects with an explicit no-result marker rather than being dropped
+- [x] #6 Assistant text containing a look-alike fence tag is left as text, not parsed into a tool call
+- [x] #7 A projection that cannot be performed faithfully refuses the fallback and raises the original provider's error, rather than sending a degraded history
+- [x] #8 Prompt-cache state (protocol text, provider cache breakpoints) is rebuilt for the target provider rather than carried over
+- [x] #9 Fallback does not rebuild LoopDeps - the wall-budget origin TASK-25913's tool clamp reads from is unchanged by a provider switch
+- [x] #10 With no fallback chain configured, behaviour is byte-identical to today and no projection code runs
+- [x] #11 Round-trip property tests (native->fence->native) assert semantic equivalence, driven from provider_supports_native_tools' own provider list rather than a hand-copied one
 - [ ] #12 Verified against a real second provider before the task is closed
 <!-- AC:END -->
 
@@ -51,3 +52,29 @@ Sequence once accepted:
 4. Trace step naming from-provider, to-provider, and reason.
 5. Live verification against a real second provider.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implements ADR-110. Cross-provider fallback with history projection, composed with TASK-25901's retry: retry handles a provider that will be back in seconds, fallback handles one that will not.
+
+**Three pieces, deliberately separated.**
+
+`Agents/history_projection.py` rewrites accumulated history between the native (`role:"tool"` paired by `tool_call_id`) and fence (`FENCE_TOOL_RESULT_PREFIX` user message) protocols. Total by construction: every message in equals a message out, in order. An unpaired call -- one whose result never arrived -- projects with an explicit `(no result recorded)` marker rather than vanishing, because dropping it would make the model believe it never asked. A history that cannot be projected faithfully raises `ProjectionError` and the fallback is refused; a confused model is worse than an honest failure.
+
+`Agents/fallback_chain.py` resolves the configured chain into readiness-tagged candidates. Unready candidates are RETAINED in the result rather than filtered out, so a skip can be reported -- a user who lists a provider they never configured should learn that, not silently get a shorter chain than they believe they have. `is_credit_terminal` is deliberately narrow: 402/403 only. A 429 is retry's job, and 401/400 are the user's to fix -- handing those to another provider hides a problem rather than solving one, and a test pins that an auth failure is never absorbed.
+
+`AgentService._wrap_with_fallback` composes them. It returns the primary callable *unchanged* when no chain is configured, so an unconfigured install runs byte-identical code with no projection, no readiness probe, and not even an extra frame (AC#10).
+
+**A new per-provider closure is built on switch, but LoopDeps is never rebuilt.** Provider shaping and the protocol-text cache resolve at closure-build time and cannot be reused across providers, so the switch calls `_make_call_model` again for the target. TASK-25913's review established that rebuilding `LoopDeps` mid-run resets the wall-budget origin its tool clamp reads from; this rebuilds only the model-call seam, and the comment at the site says why (AC#9).
+
+**Verification.** 36 tests: 15 on projection (totality, both directions, round-trip, unpaired calls, multi-call batches, look-alike fences, immutability, refusal) and 21 on the chain and wrapper (ordering, dedupe, readiness skipping, a probe that raises, which error classes earn a fallback, and the wrapper end-to-end). AC#11's round-trip test is driven from `provider_supports_native_tools`' own list rather than a hand-copied one, so adding a provider to the native set grows the coverage with it.
+
+Verified non-vacuous by mutation: replacing the projection call with a passthrough fails the test asserting native `tool_calls` never reach a fence provider.
+
+`Tests/Agents/` holds at the same 15 baseline failures (2273 passing, up 36); `Tests/App/`, `Tests/MCP/` and `Tests/Metrics/` unchanged at the 2 known MCP baselines.
+
+**AC#12 is NOT met and is not checkable by me.** It requires verification against a real second provider with live credentials. Everything above is exercised against fakes and the real code paths, but no request has been made to an actual fallback provider. That check is the owner's, and the AC is deliberately left unticked.
+
+**Files:** `tldw_chatbook/Agents/history_projection.py` (new), `tldw_chatbook/Agents/fallback_chain.py` (new), `tldw_chatbook/Agents/agent_service.py`, `tldw_chatbook/Agents/agent_models.py`, `Tests/Agents/test_history_projection.py` (new), `Tests/Agents/test_fallback_chain.py` (new).
+<!-- SECTION:NOTES:END -->

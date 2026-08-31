@@ -1,7 +1,8 @@
 # ADR-110: Cross-provider model fallback and history projection
 
-Status: **Proposed** — awaiting owner acceptance
+Status: **Accepted**
 Date: 2026-08-31
+Accepted: 2026-08-31 — owner approved the full-fallback-with-projection option over the narrower first-call-only and same-family-only alternatives recorded below
 Related Task: [TASK-25902](../tasks/task-25902%20-%20Agent-loop-cross-provider-fallback-chain.md)
 Builds on: [TASK-25901](../tasks/task-25901%20-%20Agent-loop-classified-retry-with-bounded-backoff-on-model-errors.md) (in-loop retry — fallback is what happens when retry is exhausted)
 Number swept against all remote refs and worktrees 2026-08-31; 108–110 were free (max in use: 106).
