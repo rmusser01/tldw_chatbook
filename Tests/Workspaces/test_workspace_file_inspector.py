@@ -156,7 +156,7 @@ def test_directory_pages_are_deterministic_bounded_and_revision_pinned(tmp_path:
     assert second.status is DirectoryStatus.COMPLETE
     assert len(second.entries) == 8
     (root / "new.txt").write_text("new")
-    assert inspector.list_directory(scope, continuation=first.continuation).error_code == "directory_changed"
+    assert inspector.list_directory(scope, continuation=first.continuation).error_code == "invalid_page"
 
 
 def test_filter_is_literal_selected_scope_bounded_and_reports_exclusions(tmp_path: Path) -> None:
@@ -183,7 +183,7 @@ def test_filter_is_literal_selected_scope_bounded_and_reports_exclusions(tmp_pat
     assert truncated.status is FilterStatus.TRUNCATED
     assert len(truncated.matches) == 500
     assert "500" in truncated.status_copy
-    assert excluded.status is FilterStatus.EMPTY
+    assert excluded.status is FilterStatus.ONLY_EXCLUDED
     assert excluded.excluded_count >= 1
     assert excluded.excluded_locations_unsearched is True
     assert inspector.filter_debounce_ms == 150
@@ -355,9 +355,9 @@ def test_filter_streams_progress_and_returns_honest_unsearched_exclusion_state(
     )
     excluded_name = inspector.filter_paths(scope, "needle", on_progress=progress.append)
 
-    assert unrelated.status is FilterStatus.EMPTY
+    assert unrelated.status is FilterStatus.ONLY_EXCLUDED
     assert unrelated.excluded_locations_unsearched is True
-    assert excluded_name.status is FilterStatus.EMPTY
+    assert excluded_name.status is FilterStatus.ONLY_EXCLUDED
     assert excluded_name.excluded_locations_unsearched is True
     assert progress[-1].visited_entries >= 1
 
@@ -417,14 +417,42 @@ def test_large_page_cache_serves_hits_and_evicts_nonadjacent_pages(tmp_path: Pat
     assert inspector.cached_page_offsets(scope, ("large.txt",)) == (300_000,)
 
 
-def test_service_operations_do_not_start_threads_or_workers(tmp_path: Path) -> None:
+def test_service_operations_do_not_start_threads_or_workers(tmp_path: Path, monkeypatch) -> None:
     """Catch future service work escaping the modal's owned worker lanes."""
     inspector, _registry_service, root, scope = _scope(tmp_path)
     (root / "file.txt").write_text("x")
-    before = {thread.ident for thread in threading.enumerate()}
+    starts = []
+    monkeypatch.setattr(threading.Thread, "start", lambda thread: starts.append(thread))
 
     inspector.list_directory(scope)
     inspector.filter_paths(scope, "file")
     inspector.read_file(scope, ("file.txt",))
 
-    assert {thread.ident for thread in threading.enumerate()} == before
+    assert starts == []
+
+
+def test_filter_only_excluded_never_claims_the_hidden_name_matched(tmp_path: Path) -> None:
+    """Catch excluded-only state being replaced by an ambiguous empty result."""
+    inspector, _registry_service, root, scope = _scope(tmp_path)
+    (root / ".git").mkdir()
+    (root / ".git" / "hidden-name.txt").write_text("x")
+
+    result = inspector.filter_paths(scope, "hidden-name")
+
+    assert result.status is FilterStatus.ONLY_EXCLUDED
+    assert result.matches == ()
+    assert result.excluded_locations_unsearched is True
+
+
+def test_continuation_store_is_bounded_and_tokens_are_one_shot(tmp_path: Path) -> None:
+    """Catch unbounded continuation retention and replayed pagination tokens."""
+    inspector, _registry_service, root, scope = _scope(tmp_path)
+    for index in range(205):
+        (root / f"entry-{index}").write_text("x")
+    pages = [inspector.list_directory(scope) for _ in range(20)]
+    token = pages[-1].continuation
+    assert token is not None
+
+    assert inspector.continuation_count <= 8
+    assert inspector.list_directory(scope, continuation=token).status is DirectoryStatus.COMPLETE
+    assert inspector.list_directory(scope, continuation=token).error_code == "invalid_page"

@@ -288,6 +288,7 @@ class WorkspaceFileInspector:
                 or self._continuations.get(continuation.token) != continuation
             ):
                 return DirectoryPage(DirectoryStatus.FAILED, error_code="invalid_page")
+            del self._continuations[continuation.token]
         root_fd, error_code = _open_root_descriptor(current)
         if root_fd is None:
             return DirectoryPage(DirectoryStatus.FAILED, error_code=error_code)
@@ -302,6 +303,7 @@ class WorkspaceFileInspector:
             continuation is not None
             and continuation.directory_revision != directory_revision
         ):
+            os.close(directory_fd)
             return DirectoryPage(DirectoryStatus.FAILED, error_code="directory_changed")
 
         entries: list[DirectoryEntry] = []
@@ -352,6 +354,8 @@ class WorkspaceFileInspector:
         )
         if next_page is not None:
             self._continuations[next_page.token] = next_page
+            while len(self._continuations) > 8:
+                self._continuations.pop(next(iter(self._continuations)))
         if capped:
             status = DirectoryStatus.TRUNCATED
         elif next_page is not None:
@@ -384,19 +388,24 @@ class WorkspaceFileInspector:
         if not isinstance(query, str):
             return FilterResult(FilterStatus.FAILED, error_code="invalid_query")
         needle = query.casefold()
-        root_fd, error_code = _open_root_descriptor(current)
-        if root_fd is None:
-            return FilterResult(FilterStatus.FAILED, error_code=error_code)
-        pending: list[tuple[int, tuple[str, ...]]] = [(root_fd, ())]
+        pending: list[tuple[str, ...]] = [()]
         matches: list[FileRef] = []
         visited = 0
         excluded = 0
         while pending:
-            directory_fd, parent_parts = pending.pop()
+            parent_parts = pending.pop()
+            root_fd, error_code = _open_root_descriptor(current)
+            if root_fd is None:
+                return FilterResult(FilterStatus.FAILED, error_code=error_code)
+            directory_fd, _revision, error_code = _open_target_descriptor(
+                root_fd, parent_parts, "dir"
+            )
+            os.close(root_fd)
+            if directory_fd is None:
+                return FilterResult(FilterStatus.FAILED, error_code=error_code)
             try:
                 iterator = os.scandir(directory_fd)
             except OSError:
-                os.close(directory_fd)
                 return FilterResult(
                     FilterStatus.FAILED,
                     tuple(matches),
@@ -436,9 +445,7 @@ class WorkspaceFileInspector:
                                 progress=FilterProgress(visited, len(matches)),
                             )
                     if kind == "dir":
-                        child_fd, child_error = _open_child_directory(directory_fd, entry.name)
-                        if child_fd is not None:
-                            pending.append((child_fd, raw_parts))
+                        pending.append(raw_parts)
             finally:
                 iterator.close()
                 os.close(directory_fd)
@@ -447,8 +454,8 @@ class WorkspaceFileInspector:
             status = FilterStatus.COMPLETE
             copy = f"{len(matches)} matching paths."
         elif excluded:
-            status = FilterStatus.EMPTY
-            copy = "No matching visible paths. Excluded folders were not searched."
+            status = FilterStatus.ONLY_EXCLUDED
+            copy = "No visible matches; excluded folders were not searched."
         else:
             status = FilterStatus.EMPTY
             copy = "No matching paths."
@@ -571,6 +578,11 @@ class WorkspaceFileInspector:
             if fingerprint == scope.binding_fingerprint and candidate_parts == raw_parts:
                 offsets.extend(cache)
         return tuple(sorted(offsets))
+
+    @property
+    def continuation_count(self) -> int:
+        """Bounded number of outstanding service-issued directory tokens."""
+        return len(self._continuations)
 
     def _current_scope(
         self, workspace_id: str, binding_id: str
@@ -779,6 +791,7 @@ def _open_target_descriptor(
     if any(part in _VCS_DIRECTORY_NAMES for part in raw_parts):
         return None, None, "excluded_path"
     current_fd = os.dup(root_fd)
+    success = False
     try:
         for index, part in enumerate(raw_parts):
             is_final = index == len(raw_parts) - 1
@@ -798,10 +811,11 @@ def _open_target_descriptor(
             return None, None, "unsupported_target"
         if expected_kind == "file" and not stat.S_ISREG(observed.st_mode):
             return None, None, "unsafe_target"
+        success = True
         return current_fd, _revision_from_stat(observed), ""
-    except Exception:
-        os.close(current_fd)
-        raise
+    finally:
+        if not success:
+            os.close(current_fd)
 
 
 def _open_regular_file(path: Path) -> tuple[int | None, FileRevision | None, str]:
