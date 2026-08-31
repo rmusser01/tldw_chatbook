@@ -74,7 +74,7 @@ from tldw_chatbook.Workspaces import (
     console_conversation_browser_group_row_limit,
     console_rail_section_height_budget,
 )
-from tldw_chatbook.Workspaces.file_inspector import BindingScope
+from tldw_chatbook.Workspaces.file_inspector import BindingScope, ScopeCaptureError
 from tldw_chatbook.Workspaces.display_state import (
     ConsoleWorkspaceContextState,
     ConsoleWorkspaceConversationRow,
@@ -517,6 +517,50 @@ async def test_workspace_files_no_folder_blocks_but_stale_available_request_open
     assert controller._workspace_files_visit_workspace_id is None
     await controller.request_workspace_files("ws-a", expected_available=True)
     assert len(opened) == 2
+
+
+def test_workspace_files_resolution_preserves_ro_and_rw_binding_access_labels(monkeypatch):
+    """The inspector must show the captured folder mode, even when unavailable."""
+    workspace = SimpleNamespace(workspace_id="ws-a", name="A", archived=False)
+    bindings = (
+        SimpleNamespace(
+            binding_id="folder-ro", label="Read only", metadata={"access": "ro"}
+        ),
+        SimpleNamespace(
+            binding_id="folder-rw", label="Read write", metadata={"access": "rw"}
+        ),
+    )
+
+    class _Registry:
+        def get_workspace(self, _workspace_id):
+            return workspace
+
+        def list_folder_bindings(self, _workspace_id):
+            return bindings
+
+        def get_active_workspace(self):
+            return workspace
+
+    class _Inspector:
+        def __init__(self, _registry):
+            pass
+
+        def capture_binding(self, _workspace_id, binding_id):
+            if binding_id == "folder-ro":
+                raise ScopeCaptureError("changed")
+            return BindingScope("ws-a", binding_id, "fingerprint", "/safe", 1, 1)
+
+    monkeypatch.setattr(workspace_module, "WorkspaceFileInspector", _Inspector)
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(workspace_registry_service=_Registry())
+    )
+    resolution = controller._resolve_workspace_files_visit("ws-a")
+
+    assert resolution is not None
+    assert [(binding.access_label, binding.available) for binding in resolution.bindings] == [
+        ("Read-only", False),
+        ("Read/write", True),
+    ]
 
 
 @pytest.mark.asyncio

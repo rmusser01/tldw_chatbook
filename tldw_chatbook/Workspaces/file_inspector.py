@@ -113,6 +113,7 @@ class FileRevision:
     inode: int
     size: int
     modified_ns: int
+    content_digest: str = ""
 
 
 @dataclass(frozen=True)
@@ -515,7 +516,9 @@ class WorkspaceFileInspector:
                     previous_page_offset=max(0, offset - TEXT_PAGE_SIZE) if offset else None,
                 )
             decoded_page = _decode_text_page(descriptor, page_offset or 0)
-            final_revision = _revision_from_stat(os.fstat(descriptor))
+            final_revision = _revision_from_descriptor(descriptor, os.fstat(descriptor))
+            if final_revision is None:
+                return FileReadResult(FileReadKind.FAILED, error_code="read_failed")
             if final_revision != revision:
                 return FileReadResult(
                     FileReadKind.REVISION_CHANGED,
@@ -812,8 +815,15 @@ def _open_target_descriptor(
             return None, None, "unsupported_target"
         if expected_kind == "file" and not stat.S_ISREG(observed.st_mode):
             return None, None, "unsafe_target"
+        revision = (
+            _revision_from_stat(observed)
+            if expected_kind == "dir"
+            else _revision_from_descriptor(current_fd, observed)
+        )
+        if revision is None:
+            return None, None, "read_failed"
         success = True
-        return current_fd, _revision_from_stat(observed), ""
+        return current_fd, revision, ""
     finally:
         if not success:
             os.close(current_fd)
@@ -834,7 +844,11 @@ def _open_regular_file(path: Path) -> tuple[int | None, FileRevision | None, str
     if not stat.S_ISREG(observed.st_mode):
         os.close(descriptor)
         return None, None, "unsafe_target"
-    return descriptor, _revision_from_stat(observed), ""
+    revision = _revision_from_descriptor(descriptor, observed)
+    if revision is None:
+        os.close(descriptor)
+        return None, None, "read_failed"
+    return descriptor, revision, ""
 
 
 def _revision_from_stat(observed: os.stat_result) -> FileRevision:
@@ -843,6 +857,34 @@ def _revision_from_stat(observed: os.stat_result) -> FileRevision:
         inode=observed.st_ino,
         size=observed.st_size,
         modified_ns=observed.st_mtime_ns,
+    )
+
+
+def _revision_from_descriptor(
+    descriptor: int, observed: os.stat_result
+) -> FileRevision | None:
+    """Capture stat plus a bounded content identity for every viewable file."""
+    revision = _revision_from_stat(observed)
+    if revision.size > METADATA_ONLY_BYTES:
+        return revision
+    digest = hashlib.sha256()
+    try:
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        remaining = revision.size
+        while remaining:
+            chunk = os.read(descriptor, min(64 * 1024, remaining))
+            if not chunk:
+                return None
+            digest.update(chunk)
+            remaining -= len(chunk)
+    except OSError:
+        return None
+    return FileRevision(
+        device=revision.device,
+        inode=revision.inode,
+        size=revision.size,
+        modified_ns=revision.modified_ns,
+        content_digest=digest.hexdigest(),
     )
 
 

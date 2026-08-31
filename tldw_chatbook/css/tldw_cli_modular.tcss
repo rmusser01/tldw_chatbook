@@ -3380,6 +3380,14 @@ ConsoleWorkspaceFilesModal {
     overflow: hidden;
 }
 
+#console-workspace-files-fold {
+    display: none;
+    height: 1;
+    min-height: 1;
+    color: $ds-text-muted;
+    overflow: hidden;
+}
+
 #console-workspace-files-binding-row,
 #console-workspace-files-filter-row,
 #console-workspace-files-actions {
@@ -3455,7 +3463,7 @@ ConsoleWorkspaceFilesModal {
     color: $ds-text-primary;
 }
 
-ConsoleWorkspaceFilesModal.-compact #console-workspace-files-modal {
+ConsoleWorkspaceFilesModal.-fullscreen #console-workspace-files-modal {
     width: 100%;
     max-width: 100%;
     height: 100%;
@@ -3487,13 +3495,44 @@ ConsoleWorkspaceFilesModal.-compact.-viewer-stage #console-workspace-files-viewe
     width: 100%;
 }
 
+#console-workspace-files-back-to-files {
+    display: none;
+}
+
+ConsoleWorkspaceFilesModal.-compact.-viewer-stage #console-workspace-files-back-to-files {
+    display: block;
+}
+
 ConsoleWorkspaceFilesModal.-compact #console-workspace-files-actions Button {
     min-width: 0;
     width: 1fr;
 }
 
-ConsoleWorkspaceFilesModal.-short #console-workspace-files-attention {
-    display: none;
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-modal {
+    height: 100%;
+    max-height: 100%;
+    padding: 0 1;
+}
+
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-fold {
+    display: block;
+}
+
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-body {
+    min-height: 0;
+}
+
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-binding-row,
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-filter-row,
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions {
+    height: 1;
+    min-height: 1;
+}
+
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-filter-row Button,
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
+    height: 1;
+    min-height: 1;
 }
 
 ConsoleCitationSourcesModal {

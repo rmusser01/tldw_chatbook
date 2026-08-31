@@ -9,7 +9,7 @@ from threading import Event
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Resize
 from textual.geometry import Size
 from textual.widgets import Button, Input, Static
@@ -520,6 +520,36 @@ async def test_directory_page_and_viewer_paging_keep_raw_identity_and_revision()
 
 
 @pytest.mark.asyncio
+async def test_compact_viewer_has_a_focusable_back_to_files_route() -> None:
+    """A compact preview must return to the tree without dismissing the visit."""
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=_Inspector([]), inspected_workspace_id="ws-a", inspected_workspace_name="A",
+        active_workspace_id="ws-a", active_workspace_name="A",
+        bindings=(WorkspaceFilesBinding("binding-a", "Project", _scope()),),
+    )
+    app = _Host()
+    async with app.run_test(size=(100, 30)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal._state = replace(
+            modal.state,
+            compact=True,
+            compact_stage="viewer",
+            selected_file=FileRef(("preview.txt",), "preview.txt"),
+            file_result=FileReadResult(FileReadKind.TEXT, text="safe preview"),
+        )
+        modal._sync_layout()
+        await modal._render_viewer()
+        back_to_files = modal.query_one("#console-workspace-files-back-to-files", Button)
+        assert back_to_files.can_focus and back_to_files.region.width > 0
+        await pilot.click(back_to_files)
+        await pilot.pause()
+        assert modal.state.compact_stage == "tree"
+        assert modal.query_one("#console-workspace-files-tree").display is True
+        assert app.screen is modal
+
+
+@pytest.mark.asyncio
 async def test_filter_enter_cancel_and_clear_restore_the_directory_view() -> None:
     inspector = _Inspector([])
     modal = ConsoleWorkspaceFilesModal(
@@ -865,11 +895,20 @@ async def test_directory_scoped_a_then_b_list_results_publish_in_order() -> None
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("size", "compact", "short"),
-    [((80, 24), True, True), ((100, 30), True, False), ((120, 40), False, False), ((160, 50), False, False)],
+    ("size", "compact", "fullscreen", "short"),
+    [
+        ((80, 24), True, True, True),
+        ((99, 30), True, True, False),
+        ((100, 30), True, False, False),
+        ((101, 30), True, False, False),
+        ((111, 30), True, False, False),
+        ((112, 30), False, False, False),
+        ((120, 40), False, False, False),
+        ((160, 50), False, False, False),
+    ],
 )
 async def test_production_bundle_geometry_keeps_pinned_controls_focusable(
-    size: tuple[int, int], compact: bool, short: bool
+    size: tuple[int, int], compact: bool, fullscreen: bool, short: bool
 ) -> None:
     """The four supported terminal sizes retain a live back path and layout mode."""
     modal = ConsoleWorkspaceFilesModal(
@@ -878,6 +917,10 @@ async def test_production_bundle_geometry_keeps_pinned_controls_focusable(
         active_workspace_id="active-workspace-with-a-long-id",
         active_workspace_name="A long active workspace name [literal]",
         bindings=(WorkspaceFilesBinding("binding-a", "A very long binding label [literal]", None, available=False),),
+        attention=WorkspaceFilesAttention(
+            status_copy="Console needs attention · approval waiting",
+            pending_approval_count=1,
+        ),
     )
     app = _Host()
     async with app.run_test(size=size) as pilot:
@@ -887,7 +930,15 @@ async def test_production_bundle_geometry_keeps_pinned_controls_focusable(
         back = modal.query_one("#console-workspace-files-back", Button)
         details = modal.query_one("#console-workspace-files-details", Button)
         assert modal.has_class("-compact") is compact
+        assert modal.has_class("-fullscreen") is fullscreen
         assert modal.has_class("-short") is short
         assert root.region.width > 0 and root.region.height > 0
         assert back.region.width > 0 and back.region.height > 0
         assert details.can_focus and details.focusable and details.tooltip
+        if short:
+            attention = modal.query_one("#console-workspace-files-attention", Static)
+            fold = modal.query_one("#console-workspace-files-fold", Static)
+            actions = modal.query_one("#console-workspace-files-actions", Horizontal)
+            assert attention.region.width > 0 and attention.region.height > 0
+            assert fold.region.width > 0 and fold.region.height > 0
+            assert actions.region.width > 0 and actions.region.height > 0

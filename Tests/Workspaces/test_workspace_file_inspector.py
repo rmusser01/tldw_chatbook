@@ -275,6 +275,33 @@ def test_large_utf8_reads_are_paged_on_character_boundaries_and_revision_pinned(
     assert changed.kind is FileReadKind.REVISION_CHANGED
 
 
+def test_paged_cache_rechecks_a_strong_content_revision_before_serving_hits(
+    tmp_path: Path,
+) -> None:
+    """Same inode/size/mtime replacement content must not revive a cached page."""
+    inspector, _registry_service, root, scope = _scope(tmp_path)
+    path = root / "large.txt"
+    path.write_text("a" * 200_001, encoding="utf-8")
+    first = inspector.read_file(scope, ("large.txt",))
+    assert first.kind is FileReadKind.PAGED
+    original = path.stat()
+    with path.open("r+b") as handle:
+        handle.seek(0)
+        handle.write(b"b" * 200_001)
+    os.utime(path, ns=(original.st_atime_ns, original.st_mtime_ns))
+    restored = path.stat()
+    assert (restored.st_ino, restored.st_size, restored.st_mtime_ns) == (
+        original.st_ino,
+        original.st_size,
+        original.st_mtime_ns,
+    )
+    changed = inspector.read_file(
+        scope, ("large.txt",), page_offset=0, expected_revision=first.revision
+    )
+    assert changed.kind is FileReadKind.REVISION_CHANGED
+    assert changed.text == ""
+
+
 def test_root_replacement_and_disappeared_file_fail_closed(tmp_path: Path) -> None:
     """Catch root/file replacement races that retain an old rendered selection."""
     inspector, _registry_service, root, scope = _scope(tmp_path)

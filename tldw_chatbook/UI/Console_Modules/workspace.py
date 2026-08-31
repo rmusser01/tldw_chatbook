@@ -928,6 +928,8 @@ class ConsoleWorkspaceController:
         inspector = WorkspaceFileInspector(registry)
         bindings: list[WorkspaceFilesBinding] = []
         for binding in raw_bindings:
+            access = str(getattr(binding, "metadata", {}).get("access", "ro")).lower()
+            access_label = "Read/write" if access == "rw" else "Read-only"
             try:
                 scope = inspector.capture_binding(workspace_id, binding.binding_id)
             except ScopeCaptureError:
@@ -936,6 +938,7 @@ class ConsoleWorkspaceController:
                         binding_id=binding.binding_id,
                         label=binding.label,
                         scope=None,
+                        access_label=access_label,
                         available=False,
                         availability_copy="Unavailable: folder access changed.",
                     )
@@ -946,6 +949,7 @@ class ConsoleWorkspaceController:
                         binding_id=binding.binding_id,
                         label=binding.label,
                         scope=scope,
+                        access_label=access_label,
                     )
                 )
         return _WorkspaceFilesResolution(

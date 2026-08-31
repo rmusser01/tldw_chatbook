@@ -302,6 +302,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
                 yield Button("Clear", id="console-workspace-files-filter-clear", compact=True)
                 yield Button("Cancel", id="console-workspace-files-filter-cancel", compact=True)
             yield Static("", id="console-workspace-files-status", markup=False)
+            yield Static("More content below · use Tab to navigate.", id="console-workspace-files-fold", markup=False)
             with Horizontal(id="console-workspace-files-body"):
                 with VerticalScroll(id="console-workspace-files-tree"):
                     yield Static(
@@ -314,6 +315,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
                     yield Static("Select a file to view its safe preview.", markup=False)
             with Horizontal(id="console-workspace-files-actions"):
                 yield Button("Back to Console", id="console-workspace-files-back", compact=True)
+                yield Button("Back to files", id="console-workspace-files-back-to-files", compact=True)
                 yield Button(
                     "Details",
                     id="console-workspace-files-details",
@@ -371,10 +373,12 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
 
     def _sync_layout(self, size: Size | None = None) -> None:
         size = size or self.size
-        compact = size.width <= 100
+        compact = size.width < 112
+        fullscreen = size.width < 100
         short = size.height < 30
         self._state = replace(self._state, compact=compact, short=short)
         self.set_class(compact, "-compact")
+        self.set_class(fullscreen, "-fullscreen")
         self.set_class(short, "-short")
         self.set_class(compact and self._state.compact_stage == "viewer", "-viewer-stage")
 
@@ -949,6 +953,11 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
     async def _back_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         await self.action_back_to_console()
+
+    @on(Button.Pressed, "#console-workspace-files-back-to-files")
+    def _back_to_files_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.action_show_tree()
 
     @on(Button.Pressed, "#console-workspace-files-details")
     def _details_pressed(self, event: Button.Pressed) -> None:
