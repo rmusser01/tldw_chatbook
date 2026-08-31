@@ -406,6 +406,7 @@ class WorkspaceFileInspector:
             try:
                 iterator = os.scandir(directory_fd)
             except OSError:
+                os.close(directory_fd)
                 return FilterResult(
                     FilterStatus.FAILED,
                     tuple(matches),

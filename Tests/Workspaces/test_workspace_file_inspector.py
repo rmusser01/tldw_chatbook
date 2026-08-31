@@ -456,3 +456,25 @@ def test_continuation_store_is_bounded_and_tokens_are_one_shot(tmp_path: Path) -
     assert inspector.continuation_count <= 8
     assert inspector.list_directory(scope, continuation=token).status is DirectoryStatus.COMPLETE
     assert inspector.list_directory(scope, continuation=token).error_code == "invalid_page"
+
+
+def test_filter_closes_directory_descriptor_when_scandir_construction_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Catch a descriptor leak before filter iteration starts."""
+    inspector, _registry_service, root, scope = _scope(tmp_path)
+    (root / "file.txt").write_text("x")
+    real_close = file_inspector.os.close
+    closed = []
+
+    def track_close(descriptor):
+        closed.append(descriptor)
+        return real_close(descriptor)
+
+    monkeypatch.setattr(file_inspector.os, "close", track_close)
+    monkeypatch.setattr(file_inspector.os, "scandir", lambda descriptor: (_ for _ in ()).throw(OSError()))
+
+    result = inspector.filter_paths(scope, "file")
+
+    assert result.error_code == "directory_unavailable"
+    assert len(closed) >= 2
