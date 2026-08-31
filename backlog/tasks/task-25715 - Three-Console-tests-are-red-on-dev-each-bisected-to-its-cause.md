@@ -1,6 +1,6 @@
 ---
 id: TASK-25715
-title: 'Three Console tests are red on dev, each bisected to its cause'
+title: 'Three Console tests are red on dev: two bisected to #2220, one a flake'
 status: To Do
 assignee: []
 created_date: '2026-08-31 14:27'
@@ -20,7 +20,7 @@ Two Console rail tests pass at 4da99a884 and fail on origin/dev at 46c2b0e5f0fb.
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 test_context_section_headers_match_inspector_title_band passes, or the contract it pins is deliberately retired with the Inspector/Context divergence recorded
-- [ ] #2 test_active_reveal_queue_retains_only_identity_across_target_and_rail_removal passes, or the reveal callback is documented as not surviving rail removal
+- [ ] #2 test_active_reveal_queue_retains_only_identity_across_target_and_rail_removal is made deterministic -- it fails intermittently (~1 in 12) at every commit measured, so it is a flake, not a regression
 - [ ] #3 test_console_workbench_standard_width_inspector_snapshot passes, or its "Blocked impact" assertion is updated to the Inspector's current copy
 - [ ] #4 No test in this set is left red on dev without an owner
 <!-- AC:END -->
@@ -92,6 +92,45 @@ both asserting `'Library search:'` -- fail at `4da99a884` as well, so they
 predate this work entirely. TASK-23147 already owns that label drift, and
 TASK-23148 owns the rail-handle arithmetic in the same file. Recorded here only
 so the next person to run this file sees five failures and knows which is which.
+
+## Correction (2026-08-31): finding 2 is a FLAKE, and its bisect was invalid
+
+Posted before this correction, in PR #2260's body and PR #2266's table:
+`test_active_reveal_queue_retains_only_identity_across_target_and_rail_removal`
+was attributed to `0ef6f3fd4` (#2252). **That attribution is withdrawn.**
+
+A post-merge stability check caught it. Running the test alone, same command,
+`-p no:randomly`, three times in a row: fail, pass, pass. Measured properly:
+
+| Commit | Result |
+|---|---|
+| `46c2b0e5f0fb` -- the commit the bisect called FIRST BAD | **11 passed / 1 failed of 12** |
+| `d81bd7a23` (dev after this work) | 12 passed / 0 failed of 12 |
+| `d81bd7a23`, under 8-way CPU saturation | 10 passed / 0 failed of 10 |
+
+It fails intermittently at roughly 1 in 12 to 1 in 24 **at both commits**, so it
+is not a regression from #2252 or from anything else. My bisect ran the test
+once per step; over a flaky test that search does not converge on a cause, it
+converges on wherever the coin happened to land. It produced a specific,
+plausible, wrong commit -- and the two initial failures that made me start the
+search at all were themselves the flake, hit twice while the machine was busy
+with concurrent test runs.
+
+CPU saturation does not reproduce it, so the trigger is not simple load.
+
+**What the test is actually racing.** It calls `await rail.remove()` and then
+fires the queued reveal callback, which resolves `#console-left-rail-body`.
+Textual's `remove()` only schedules the prune, so whether that id still resolves
+depends on when the Prune message is processed -- the same deferred-detach
+behaviour already documented for the conversation action menu, where a same-id
+remount over a not-yet-pruned widget raises `DuplicateIds`. Either the test
+should await the detachment it depends on, or the reveal callback should guard
+the lookup and no-op when its rail is gone. The second is probably the real fix:
+production has the same race, and the test was written to pin that it degrades
+quietly.
+
+**Findings 1 and 3 are unaffected** -- both re-measured 0 passed / 5 failed of
+5, deterministic, and their bisects to `c2f64f690` (#2220) stand.
 
 ## Notes
 
