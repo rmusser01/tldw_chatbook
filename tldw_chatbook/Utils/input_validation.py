@@ -19,13 +19,6 @@ from pydantic import (
 )
 import regex
 
-from ..Terminal.contracts import (
-    MAX_COLUMNS,
-    MAX_PASTE_BYTES,
-    MAX_ROWS,
-    MIN_COLUMNS,
-    MIN_ROWS,
-)
 from ..Metrics.metrics_logger import log_counter, log_histogram
 
 
@@ -158,6 +151,8 @@ class TerminalPasteInput(BaseModel):
             A content-free violation category and payload bytes. The payload is
             empty when a violation is present.
         """
+        from ..Terminal.contracts import MAX_PASTE_BYTES
+
         if len(self.text) > MAX_PASTE_BYTES:
             return "too_large", b""
         for character in self.text:
@@ -201,8 +196,26 @@ class TerminalResizeInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    columns: int = Field(ge=MIN_COLUMNS, le=MAX_COLUMNS)
-    rows: int = Field(ge=MIN_ROWS, le=MAX_ROWS)
+    columns: int
+    rows: int
+
+    @field_validator("columns")
+    @classmethod
+    def _validate_columns(cls, value: int) -> int:
+        from ..Terminal.contracts import MAX_COLUMNS, MIN_COLUMNS
+
+        if not MIN_COLUMNS <= value <= MAX_COLUMNS:
+            raise ValueError("terminal columns are outside contract")
+        return value
+
+    @field_validator("rows")
+    @classmethod
+    def _validate_rows(cls, value: int) -> int:
+        from ..Terminal.contracts import MAX_ROWS, MIN_ROWS
+
+        if not MIN_ROWS <= value <= MAX_ROWS:
+            raise ValueError("terminal rows are outside contract")
+        return value
 
 
 _TerminalBytesInput = TypeVar(

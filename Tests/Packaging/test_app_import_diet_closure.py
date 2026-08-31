@@ -115,6 +115,10 @@ forbidden = (
     "tldw_chatbook.Notes.note_import_plan_models",
     "tldw_chatbook.Notes.note_import_windows_fs",
     "tldw_chatbook.Notes.sync_paths",
+    # Shared validation is resident at boot, but terminal-only contracts are not.
+    "tldw_chatbook.Terminal",
+    "tldw_chatbook.Terminal.backend",
+    "tldw_chatbook.Terminal.contracts",
 )
 resident = sorted(m for m in forbidden if sys.modules.get(m) is not None)
 assert not resident, (
