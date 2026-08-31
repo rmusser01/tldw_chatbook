@@ -1,6 +1,6 @@
 """The Workspaces-tree row action menus, driven through the real Console.
 
-TASK-25710. TASK-23200 gave the grouped browser's conversation rows an
+TASK-25712. TASK-23200 gave the grouped browser's conversation rows an
 asterisk menu and TASK-25709 made it dismissable everywhere; this suite pins
 the same pattern on the Workspaces tree: workspace rows open the workspace
 action menu, chat rows open the shared conversation menu, the pointer

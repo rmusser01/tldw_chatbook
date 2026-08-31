@@ -23,7 +23,7 @@ from ..glyph_fallback import ascii_glyph_mode, resolve_glyph
 
 _TEXTUAL_PRIVATE_MOVE_VERSION = "8.2.8"
 
-#: TASK-25710: the trailing per-row menu opener glyph and its cell width.
+#: TASK-25712: the trailing per-row menu opener glyph and its cell width.
 _MENU_AFFORDANCE = " *"
 _NodeKind = Literal["workspace", "conversation", "status", "load-more", "retry"]
 
@@ -170,7 +170,7 @@ class WorkspaceTreeFocusRecoveryRequested(Message):
 
 
 class WorkspaceTreeMenuRequested(Message):
-    """The user asked for the row action menu on one tree node (TASK-25710).
+    """The user asked for the row action menu on one tree node (TASK-25712).
 
     Posted by a pointer press on a row's trailing asterisk cell or the ``m``
     binding on the cursor row. The tree stays display-only: the owning
@@ -220,7 +220,7 @@ def _menu_conversation_payload(
 ) -> tuple[str | None, str]:
     """Return the menu's persisted conversation id and title for one row.
 
-    TASK-25710 review (PR #2255): unsaved native rows carry a synthetic
+    TASK-25712 review (PR #2255): unsaved native rows carry a synthetic
     ``native:<session-id>`` key as their tree identity. The action menu must
     see ``None`` for those, so the pure model disables persistence-only
     commands ("Send or save this chat first") instead of handing the
@@ -317,7 +317,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         self.can_focus = False
         self._pressed_node_key: str | None = None
         self._last_pointer_click_key: str | None = None
-        # TASK-25710: x-range (widget content cells, half-open) of the
+        # TASK-25712: x-range (widget content cells, half-open) of the
         # trailing asterisk each menu-bearing row painted in its LAST render
         # pass, keyed by node key. Rebuilt by ``render_label``; cleared at
         # the start of every ``sync_projection`` pass so removed rows can
@@ -439,7 +439,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             self._preferred_expanded_workspace_ids = set(expanded)
             return
         self._projection_memo = None
-        # TASK-25710: a full pass rebuilds every label; drop the previous
+        # TASK-25712: a full pass rebuilds every label; drop the previous
         # pass's asterisk hit zones so removed rows keep no stale target.
         self._menu_zones.clear()
         hovered_node = (
@@ -603,7 +603,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
     ) -> Text:
         """Render one literal row with an end ellipsis inside the Tree width.
 
-        TASK-25710: workspace and conversation rows also carry a trailing
+        TASK-25712: workspace and conversation rows also carry a trailing
         ``*`` that opens the row's action menu when pressed. It is appended
         AFTER truncation (with the budget reduced by its width) so a long
         title can never ellipsize over it, and its x-range is recorded in
@@ -643,7 +643,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
     def _label_budget(self, node: TreeNode[WorkspaceTreeNodeData]) -> int:
         """Return the content-cell budget for one row's label.
 
-        TASK-25710: menu-bearing rows reserve the trailing ``*`` affordance,
+        TASK-25712: menu-bearing rows reserve the trailing ``*`` affordance,
         so their CONTENT truncates two cells early. Render and the tooltip
         fit decision must share this -- a tooltip that ignores the reserved
         cells fires for rows that only look truncated.
@@ -938,7 +938,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
     ) -> bool:
         """Whether the pressed cell was the row's trailing asterisk.
 
-        TASK-25710: the zone comes from the row's own last ``render_label``
+        TASK-25712: the zone comes from the row's own last ``render_label``
         pass, so the hit-test matches what is painted without duplicating
         the indent/guide math. A missing zone (auxiliary rows, stale
         geometry) is simply not an affordance press.
@@ -972,7 +972,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             if data.kind in {"workspace", "conversation"} and (
                 self._pressed_menu_affordance(data)
             ):
-                # TASK-25710: the asterisk opens the row's action menu
+                # TASK-25712: the asterisk opens the row's action menu
                 # instead of selecting/activating, exactly like the grouped
                 # browser's asterisk column.
                 self._last_pointer_click_key = None

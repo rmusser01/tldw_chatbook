@@ -4559,7 +4559,7 @@ class ChatScreen(BaseAppScreen):
         so the user's focus stays where it is. Lazy import per ADR-097 --
         this module must stay off the ``_ui_ready`` boot leg.
 
-        TASK-25710: covers BOTH row menus -- the conversation menu and the
+        TASK-25712: covers BOTH row menus -- the conversation menu and the
         Workspaces-tree workspace menu -- so any open row menu claims the
         Escape regardless of kind.
 
@@ -4580,7 +4580,7 @@ class ChatScreen(BaseAppScreen):
     def _restore_console_menu_opener_focus(self, opener_id: str) -> None:
         """Return focus to whatever widget opened a row action menu.
 
-        TASK-25710: the conversation menu's openers are asterisk ``Button``s,
+        TASK-25712: the conversation menu's openers are asterisk ``Button``s,
         but the workspace menu's opener is the Workspaces tree, so the
         restore is by DOM id on any focusable widget -- not Button-typed.
         """
@@ -4701,7 +4701,7 @@ class ChatScreen(BaseAppScreen):
             return
         self._restore_console_menu_opener_focus(event.opener_id)
 
-    # ---- Workspace action menu (TASK-25710) ----------------------------
+    # ---- Workspace action menu (TASK-25712) ----------------------------
 
     def _workspace_menu_target(self, workspace_id: str):
         """Build the pure menu target from registry truth.
@@ -4911,7 +4911,7 @@ class ChatScreen(BaseAppScreen):
     async def _create_console_chat_in_workspace(self, workspace_id: str) -> None:
         """Activate a workspace, then create the new chat inside it.
 
-        TASK-25710: "New chat" on a non-active workspace composes the two
+        TASK-25712: "New chat" on a non-active workspace composes the two
         existing operations -- activation, then session creation, which
         targets the active workspace -- rather than threading a workspace
         parameter through session creation.
@@ -18220,7 +18220,7 @@ class ChatScreen(BaseAppScreen):
                 # border and padding clicks must not fold it mid-press.
                 return
             if getattr(node, "id", None) == "console-workspace-action-menu":
-                # TASK-25710: the workspace row menu owns the same contract.
+                # TASK-25712: the workspace row menu owns the same contract.
                 return
             node = getattr(node, "parent", None)
         menus = selection_menus_on_screen(self)
@@ -18267,7 +18267,7 @@ class ChatScreen(BaseAppScreen):
         dismiss_message_more_menus(more_menus)
         # restore_focus=False: Textual has already moved focus to the clicked
         # widget (it focuses before the press bubbles here), and the opener
-        # restore would pull focus back to the rail. TASK-25710: the
+        # restore would pull focus back to the rail. TASK-25712: the
         # Workspaces-tree menu folds on the same contract.
         for menu in conversation_menus:
             menu.dismiss_menu(restore_focus=False)

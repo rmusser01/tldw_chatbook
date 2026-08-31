@@ -1,4 +1,4 @@
-"""Pure menu model for the Console workspace action menu (TASK-25710).
+"""Pure menu model for the Console workspace action menu (TASK-25712).
 
 TASK-23200 gave the Context rail's conversation rows an asterisk that opens a
 paged action menu; TASK-25709 made that menu dismissable everywhere. This

@@ -296,7 +296,7 @@ async def test_boundary_crossing_reconciles_only_the_workspace_section(
         # The rail allocation pipeline never runs on a cursor boundary flip.
         assert counts["allocation_runs"] == 0, counts
         assert counts["allocation_preps"] == 0, counts
-        # TASK-25710: the star seam the boundary used to drive is retired, so
+        # TASK-25712: the star seam the boundary used to drive is retired, so
         # a crossing now runs NO reconcile at all -- the old invariant ("only
         # the workspace section, never the rail pipeline") is preserved and
         # strengthened: nothing fires.

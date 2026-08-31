@@ -1315,7 +1315,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             scope_button.styles.width = "auto"
             scope_button.tooltip = "RAG Scope: narrow retrieval to this workspace"
             yield self._record_composed_node(scope_button)
-        # TASK-25710: the contextual Star/Unstar button and its
+        # TASK-25712: the contextual Star/Unstar button and its
         # selection-context line are retired. The tree's chat rows now open
         # the shared conversation action menu (Favourite lives there), and
         # workspace rows open the workspace action menu -- the same
@@ -1366,7 +1366,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             )
 
     def sync_workspace_tree_context(self, data: Any | None) -> bool:
-        """Record the Tree cursor row; the star seam is retired (TASK-25710).
+        """Record the Tree cursor row; the star seam is retired (TASK-25712).
 
         The contextual Star/Unstar button this used to drive is gone -- chat
         rows open the shared conversation action menu and workspace rows the

@@ -1,4 +1,4 @@
-"""Menu model for the Console workspace action menu (TASK-25710)."""
+"""Menu model for the Console workspace action menu (TASK-25712)."""
 
 from __future__ import annotations
 

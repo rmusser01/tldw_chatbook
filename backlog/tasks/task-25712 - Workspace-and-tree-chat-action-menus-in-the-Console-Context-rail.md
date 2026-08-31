@@ -1,5 +1,5 @@
 ---
-id: TASK-25710
+id: TASK-25712
 title: Workspace and tree-chat action menus in the Console Context rail
 status: Done
 assignee:
@@ -32,6 +32,15 @@ Extend the TASK-23200/25709 asterisk-menu pattern to the Workspaces tree: worksp
 <!-- SECTION:PLAN:BEGIN -->
 1. Tests first: pure workspace-menu model suite; widget suite for shape/paging/escape; wiring suite for tree click + m binding + routing + star retirement + dismissal parity.\n2. Chat/console_workspace_actions.py pure model (target, build menu, pages, gating).\n3. Widgets/Console/console_workspace_action_menu.py sibling widget + WeakSet registry + messages.\n4. console_workspace_tree.py: trailing asterisk labels, click hit-test on the asterisk cell, m binding, WorkspaceTreeMenuRequested messages.\n5. chat_screen.py: mount/route seams (activate, activate+new chat, rename, archive, rag scope), conversation-menu reuse for tree chats, dismissal paths extended to the workspace registry, Dismissed handler focuses any widget by id.\n6. console_workspace_context.py: retire tree star button + selection-context line.\n7. Targeted suites, lint, boot census; task notes.
 <!-- SECTION:PLAN:END -->
+
+## Renumbering
+
+TASK-19601 owner rule: this task originally took id 25710, which collided
+with the older arrival ``task-25710 - Home-content-recents-stream-resume-
+banner.md`` (created 2026-08-30 23:39 vs this task's 2026-08-31 04:34; the
+older id keeps). Renumbered to TASK-25712 with this provenance section; the
+task-file frontmatter, doc comments, and test references were updated with
+it. Earlier commit messages on this branch still name TASK-25710.
 
 ## Implementation Notes
 

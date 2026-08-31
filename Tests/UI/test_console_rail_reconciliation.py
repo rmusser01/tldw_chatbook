@@ -317,7 +317,7 @@ async def test_native_tree_restores_persisted_disclosure() -> (
         assert writes == [frozenset({"workspace-1"})]
         hidden_demand = bounded.desired_content_lines
 
-        # TASK-25710: the pointer star and its action row are retired; the
+        # TASK-25712: the pointer star and its action row are retired; the
         # row menu's trailing asterisk replaces them (covered by the
         # workspace action menu suite), so a cursor move changes no demand.
         tree.move_cursor(tree.conversation_nodes["conversation-1"])
@@ -354,7 +354,7 @@ async def test_workspace_context_change_survives_transient_relabel_controls() ->
         tray = app.query_one("#console-workspaces-context")
         assert tray._workspace_tree_context_data.conversation_id == "conversation-1"
 
-        # TASK-25710: the star action controls are retired; the surviving
+        # TASK-25712: the star action controls are retired; the surviving
         # invariant is that a context change delivered inside a recompose
         # window still lands and survives the rebuild.
         workspace = tree.workspace_nodes["workspace-1"]
