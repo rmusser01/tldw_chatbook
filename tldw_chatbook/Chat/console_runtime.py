@@ -567,6 +567,7 @@ class ConsoleRuntime:
         self._agent_runs_db: Any | None = None
         self._change_review_coordinator: Any | None = None
         self._chat_controller: Any | None = None
+        self._legacy_trace_maintenance_task: asyncio.Task[None] | None = None
         self._scratch_spaces = ConsoleScratchSpaceManager()
         self._raw_cli_refusal_stash_bank: dict[str, list[Any]] = {}
         self._persona_buddy_sink = PersonaBuddyConsoleAdapter(
@@ -728,11 +729,29 @@ class ConsoleRuntime:
                 ),
                 citation_repository=citation_repository,
             )
+            if callable(getattr(db, "transaction", None)):
+                from tldw_chatbook.Chat.console_trace_legacy import (
+                    LegacyTraceNormalizer,
+                )
+
+                legacy_normalizer = LegacyTraceNormalizer(db)
+            else:
+                legacy_normalizer = None
+        else:
+            legacy_normalizer = None
         self._chat_store = ConsoleChatStore(
             persistence=persistence,
             settle_provider_traces_off_thread=True,
             trace_projection=(
-                ConsoleTraceProjection(legacy_reader=db.get_message_exchanges)
+                ConsoleTraceProjection(
+                    legacy_reader=db.get_message_exchanges,
+                    normalized_reader=(
+                        legacy_normalizer.read_calls
+                        if legacy_normalizer is not None
+                        else None
+                    ),
+                    normalized_reads_enabled=legacy_normalizer is not None,
+                )
                 if db is not None
                 else None
             ),
@@ -752,8 +771,59 @@ class ConsoleRuntime:
                 _current_thinking_history_policy_default(self._app)
             ),
         )
+        if db is not None and legacy_normalizer is not None:
+            self._schedule_legacy_trace_maintenance(db, legacy_normalizer)
         self._bind_view_hooks()
         return self._chat_store
+
+    def _schedule_legacy_trace_maintenance(
+        self,
+        database: Any,
+        normalizer: Any,
+    ) -> None:
+        """Start one yielding post-readiness legacy-normalization worker."""
+
+        if self._legacy_trace_maintenance_task is not None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        from tldw_chatbook.Chat.console_trace_maintenance import (
+            LegacyTraceMaintenance,
+        )
+
+        def provider_active() -> bool:
+            controller = self._chat_controller
+            tasks = getattr(controller, "_stream_tasks", None)
+            return bool(tasks)
+
+        maintenance = LegacyTraceMaintenance(
+            database,
+            normalizer=normalizer,
+            provider_active=provider_active,
+        )
+
+        async def run() -> None:
+            await asyncio.sleep(0)
+            while not self._disposed:
+                try:
+                    result = await asyncio.to_thread(maintenance.run_batch)
+                except Exception as exc:  # noqa: BLE001 - retry remains restart-safe
+                    logger.warning(
+                        "legacy trace maintenance paused after {}",
+                        type(exc).__name__,
+                    )
+                    return
+                if result.logical_complete:
+                    await asyncio.sleep(5.0)
+                    continue
+                if not result.admitted:
+                    await asyncio.sleep(1.0)
+                    continue
+                await asyncio.sleep(0)
+
+        self._legacy_trace_maintenance_task = loop.create_task(run())
 
     def ensure_provider_gateway(
         self,
@@ -1183,6 +1253,13 @@ class ConsoleRuntime:
         is exactly the right answer at exit.
         """
         self._disposed = True
+        maintenance_task = self._legacy_trace_maintenance_task
+        if maintenance_task is not None and not maintenance_task.done():
+            maintenance_task.cancel()
+            try:
+                await maintenance_task
+            except asyncio.CancelledError:
+                pass
         self._raw_cli_refusal_stash_bank.clear()
         self._scratch_spaces.tombstone_all()
         self.detach_view(None)

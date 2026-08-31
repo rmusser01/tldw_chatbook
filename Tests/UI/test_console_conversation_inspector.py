@@ -1278,7 +1278,13 @@ async def test_exchange_action_opens_governed_export_with_immutable_capture() ->
 @pytest.mark.asyncio
 async def test_exchange_call_title_includes_capture_provenance() -> None:
     cap = _capture_with_project_instruction_row()
-    cap = replace(cap, capture_detail=CaptureDetail.FULL)
+    cap = replace(
+        cap,
+        capture_detail=CaptureDetail.FULL,
+        trace_provenance="legacy_snapshot",
+        trace_chronology="recorded_call_only",
+        trace_uncertainty=("legacy_message_source_unknown",),
+    )
 
     async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
         return [(cap, False)]
@@ -1297,6 +1303,9 @@ async def test_exchange_call_title_includes_capture_provenance() -> None:
         await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
         call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
         assert "capture: Full" in _rendered_title(call)
+        assert "legacy snapshot" in _rendered_title(call)
+        assert "chronology: recorded call only" in _rendered_title(call)
+        assert "uncertainty disclosed" in _rendered_title(call)
 
 
 @pytest.mark.asyncio

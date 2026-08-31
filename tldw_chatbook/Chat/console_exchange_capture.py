@@ -13,7 +13,7 @@ import hashlib
 import json
 import re
 import zlib
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 from enum import Enum
 from typing import Any, Mapping, Sequence
 
@@ -313,6 +313,9 @@ class ExchangeCapture:
     usage_json: str | None  # THIS call's normalized ProviderUsage.to_json()
     omitted_keys: tuple[str, ...]
     capture_detail: CaptureDetail = CaptureDetail.SAFE
+    trace_provenance: str = field(default="native", compare=False)
+    trace_chronology: str = field(default="known", compare=False)
+    trace_uncertainty: tuple[str, ...] = field(default=(), compare=False)
 
 
 def _stub_for(data: str, mime: str) -> str:
@@ -911,6 +914,12 @@ def capture_from_blob(blob: bytes) -> ExchangeCapture:
         raise CaptureCorruptError("capture detail is corrupt")
     data["capture_detail"] = detail
     data["omitted_keys"] = tuple(data.get("omitted_keys") or ())
+    for transient_name in (
+        "trace_provenance",
+        "trace_chronology",
+        "trace_uncertainty",
+    ):
+        data.pop(transient_name, None)
     known_fields = {f.name for f in fields(ExchangeCapture)}
     filtered = {key: value for key, value in data.items() if key in known_fields}
     return ExchangeCapture(**filtered)

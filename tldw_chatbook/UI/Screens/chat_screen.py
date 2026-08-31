@@ -1496,7 +1496,15 @@ def _build_console_inspector_exchanges_loader(
 
         def _read() -> list[tuple[ExchangeCapture, bool]]:
             return [
-                (projected.capture, projected.abandoned)
+                (
+                    replace(
+                        projected.capture,
+                        trace_provenance=projected.provenance,
+                        trace_chronology=projected.chronology,
+                        trace_uncertainty=projected.uncertainty_codes,
+                    ),
+                    projected.abandoned,
+                )
                 for projected in projected_calls_reader(persisted_id)
             ]
 
