@@ -33,6 +33,27 @@ class ConsoleLibraryPolicySaveOutcome:
     copy: str
 
 
+class ConsoleAccessRadioButton(RadioButton):
+    """RadioButton whose selected state is structural, not colour-only.
+
+    TASK-25831, mirroring the wizard's SetupRadioButton (TASK-1497): stock
+    ToggleButton renders ONE constant BUTTON_INNER glyph and conveys on/off
+    purely through that glyph's colour. Measured live in this modal, the off
+    state painted 1.42:1 against its track -- indistinguishable in a
+    monochrome terminal, in any text capture, and to anyone reading the
+    plain-text layer, which is WCAG 1.4.1 (use of colour). The glyph itself
+    switches here: ● selected, ○ unselected.
+    """
+
+    @property
+    def _button(self):
+        # BUTTON_INNER is ToggleButton's documented per-instance glyph seam;
+        # set immediately before the parent property renders so it shadows
+        # the class attribute per state. Same technique as SetupRadioButton.
+        self.BUTTON_INNER = "●" if self.value else "○"
+        return super()._button
+
+
 class ConsoleLibraryAccessModal(SafeModalDismissMixin, ModalScreen[None]):
     """Edit automatic retrieval and assistant access as independent axes."""
 
@@ -163,7 +184,7 @@ class ConsoleLibraryAccessModal(SafeModalDismissMixin, ModalScreen[None]):
                     id="library-auto-policy",
                     classes="console-library-access-axis",
                 ):
-                    yield RadioButton(
+                    yield ConsoleAccessRadioButton(
                         "Never",
                         value=(
                             self._snapshot.auto_retrieve is ConsoleAutoRetrieve.NEVER
@@ -171,7 +192,7 @@ class ConsoleLibraryAccessModal(SafeModalDismissMixin, ModalScreen[None]):
                         id="library-auto-never",
                         disabled=not self._state.editing_enabled,
                     )
-                    yield RadioButton(
+                    yield ConsoleAccessRadioButton(
                         "Automatic",
                         value=(
                             self._snapshot.auto_retrieve
@@ -181,7 +202,7 @@ class ConsoleLibraryAccessModal(SafeModalDismissMixin, ModalScreen[None]):
                         disabled=not self._state.editing_enabled,
                     )
                 yield Static(
-                    "Assistant Library access",
+                    "Agent Library access",
                 )
                 yield Static(
                     "Choose whether the assistant may use the built-in Library "
@@ -192,7 +213,7 @@ class ConsoleLibraryAccessModal(SafeModalDismissMixin, ModalScreen[None]):
                     id="library-agent-policy",
                     classes="console-library-access-axis",
                 ):
-                    yield RadioButton(
+                    yield ConsoleAccessRadioButton(
                         "Blocked",
                         value=(
                             self._snapshot.assistant_access
@@ -201,7 +222,7 @@ class ConsoleLibraryAccessModal(SafeModalDismissMixin, ModalScreen[None]):
                         id="library-agent-blocked",
                         disabled=not self._state.editing_enabled,
                     )
-                    yield RadioButton(
+                    yield ConsoleAccessRadioButton(
                         "Allowed",
                         value=(
                             self._snapshot.assistant_access
@@ -285,6 +306,15 @@ class ConsoleLibraryAccessModal(SafeModalDismissMixin, ModalScreen[None]):
             or self._operation_pending
             or not self._state.editing_enabled
         )
+        # TASK-25824 / Qodo review (PR #2256): the cancel control is relabelled
+        # "Keep editing" when a dirty close is refused. Returning to a clean
+        # state -- a successful save, or the user reverting by hand -- makes a
+        # cancel dismiss immediately, so the label and the discard option have
+        # to come back with it. Leaving "Keep editing" on a button that
+        # dismisses recreates exactly the ambiguity this relabel removed.
+        if not self._dirty:
+            self.query_one("#library-access-cancel", Button).label = "Cancel"
+            self.query_one("#library-access-discard", Button).display = False
 
     @on(RadioSet.Changed)
     def _policy_changed(self, event: RadioSet.Changed) -> None:
@@ -403,6 +433,11 @@ class ConsoleLibraryAccessModal(SafeModalDismissMixin, ModalScreen[None]):
                 focus=True,
             )
             self.query_one("#library-access-discard", Button).display = True
+            # TASK-25824: with Discard on screen, "Cancel" stops meaning
+            # "abandon my edits" and starts meaning "stay here" -- the same
+            # word for two different outcomes. Name the outcome instead, so
+            # the pair reads Keep editing / Discard changes.
+            self.query_one("#library-access-cancel", Button).label = "Keep editing"
             return
         self.dismiss_safe_once(None)
 

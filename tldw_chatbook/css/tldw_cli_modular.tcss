@@ -70,6 +70,14 @@ $ds-status-error-readable: #ff8fa3;
    than a real value ($text, rgb 224), so a placeholder still reads as an
    absent value rather than as content. */
 $ds-text-placeholder: #8a8a8a;
+/* TASK-25822 (a11y): `Button:disabled` stacked `opacity: 50%` ON TOP of an
+   already-dim $text-disabled, compositing to a measured 1.34:1 -- a disabled
+   primary read as ABSENT, not unavailable, while the dismissive action beside
+   it stayed near 14:1 and inverted the dialog's hierarchy. This grey clears
+   AA-large against the darkened disabled button surface (measured 5.09:1 on
+   rgb 25) while staying far dimmer than live label text ($text, rgb 224), so
+   "disabled" still reads as a state rather than as content. */
+$ds-text-disabled-readable: #8a8a8a;
 $ds-status-paused: $warning;
 $ds-status-unsaved: $warning;
 $ds-status-recovered: $success;
@@ -962,27 +970,23 @@ Button:hover:focus {
     outline: none;
 }
 
-/* Disabled state */
-Button:disabled {
-    opacity: 50%;
+/* Disabled state.
+   TASK-25822: the darkened surface plus muted-but-readable text IS the cue --
+   an additional `opacity: 50%` composited the label down to 1.34:1 and made
+   the control look absent. Two non-colour cues remain (surface + weight). */
+Button:disabled,
+Button.-style-default:disabled,
+Button.-style-flat:disabled {
+    opacity: 100%;
+    text-opacity: 100%;
+    text-style: none;
     background: $surface-darken-1;
-    color: $text-disabled;
+    color: $ds-text-disabled-readable;
 }
 
 Button:disabled:hover {
     background: $surface-darken-1;
     text-style: none;
-}
-
-/* Local GGUF import must remain readable while a prior import owns the lane.
-   This app-tier selector deliberately beats the generic disabled dimmer without
-   affecting other disabled actions. */
-Button.model-import:disabled {
-    opacity: 100%;
-    text-opacity: 100%;
-    text-style: none;
-    background: $surface-darken-1;
-    color: $text-muted;
 }
 
 .sidebar-toggle {
@@ -11648,6 +11652,21 @@ ImageGenSettingsPanel Checkbox.-on > .toggle--button {
    The Console states every temporary-chat restriction on a disabled row, so
    an illegible disabled label voids that whole convention. Disabled stays
    plainly dimmer than enabled (12.63:1) so the state is still obvious. */
+/* TASK-25825: six actions previously cost ~30 rows -- `height: 3` plus a
+   trailing `margin-bottom: 1` on every row -- and every label was centred,
+   so the list scanned badly and occluded the transcript to present very
+   little. The trailing gap also pushed each disabled row's explanatory
+   reason a blank line away from the row it explains, weakening exactly the
+   association that reason exists to make.
+
+   Declared HERE and not in the modal's DEFAULT_CSS for the reason the
+   sibling `:disabled` rule below is: Button's own rules outrank a modal's
+   DEFAULT_CSS, where an identical rule measured no change. */
+.console-composer-menu-item {
+    text-align: left;
+    margin: 0;
+}
+
 .console-composer-menu-item:disabled {
     text-style: none;
     text-opacity: 1;

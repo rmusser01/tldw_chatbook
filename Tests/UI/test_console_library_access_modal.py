@@ -126,6 +126,23 @@ async def test_dirty_escape_requires_explicit_discard_and_preserves_the_edit() -
         assert modal.query_one("#library-access-discard", Button).display is True
         feedback = modal.query_one("#library-access-feedback", Static)
         assert "Unsaved changes" in str(feedback.renderable)
+        # TASK-25824: once Discard appears, "Cancel" is ambiguous -- it no
+        # longer means "abandon my edits" (that is Discard) but "stay here".
+        # The pair must name the two outcomes it actually offers.
+        assert (
+            str(modal.query_one("#library-access-cancel", Button).label)
+            == "Keep editing"
+        )
+
+        # Qodo review (PR #2256): reverting to the saved values makes the modal
+        # clean again, and a clean Cancel dismisses immediately -- so the
+        # "Keep editing" label must not survive the state that justified it.
+        await pilot.click("#library-auto-never")
+        await pilot.pause()
+        assert modal.query_one("#library-access-discard", Button).display is False
+        assert (
+            str(modal.query_one("#library-access-cancel", Button).label) == "Cancel"
+        )
 
 
 @pytest.mark.asyncio

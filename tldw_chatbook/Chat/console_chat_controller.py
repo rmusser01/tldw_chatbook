@@ -7073,6 +7073,24 @@ class ConsoleChatController:
                         ConsoleSubmissionOrigin.QUEUED,
                     }
                     and admission_policy.effective_capture_enabled
+                    # TASK-25814: policy alone is not enough -- the RUNTIME has
+                    # to be able to honour it. The gateway's durable-capture
+                    # seam is optional and unsupplied in production, so
+                    # preparing Capture-On against a gateway without one
+                    # guaranteed a pre-dispatch refusal on EVERY send
+                    # (`_reserve_trace_call` raises on its first statement).
+                    # Capture Off is the app's own modelled outcome for "no
+                    # capture" (`one_shot_capture_off`), so fall back to it
+                    # rather than promise something that cannot be recorded.
+                    # The dispatch guard itself is a deliberate invariant and
+                    # is untouched.
+                    and bool(
+                        getattr(
+                            self.provider_gateway,
+                            "supports_durable_capture",
+                            False,
+                        )
+                    )
                     else ConsoleTraceCaptureMode.CAPTURE_OFF
                 )
             except Exception as exc:
@@ -16388,10 +16406,17 @@ class ConsoleChatController:
         persistence = self.store.persistence
         if persistence is None or getattr(persistence, "db", None) is None:
             visible_copy = (
+                # TASK-25816: the old copy said "Restart Chatbook, and check
+                # the app log". Restarting cannot repair an on-disk fault, and
+                # the persistent log admitted only metadata-only records, so
+                # the error was never in the file it named -- the whole
+                # instruction was a dead end. The failure is now recorded as a
+                # `database_open_failed` event (ChaChaNotes_DB), so pointing at
+                # Logs is finally true.
                 "Not sent: your conversation database could not be opened, so "
-                "this message could not be saved. Restart Chatbook, and check "
-                "the app log for the database error if it keeps happening. "
-                "Your draft was kept; a temporary chat still sends."
+                "this message could not be saved. Your draft was kept; a "
+                "temporary chat still sends. Open Logs (F8) for the recorded "
+                "database error."
             )
         else:
             visible_copy = (

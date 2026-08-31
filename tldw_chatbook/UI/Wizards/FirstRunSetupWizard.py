@@ -218,6 +218,17 @@ class SetupRadioSet(RadioSet):
         self.post_message(self.AdvanceRequested())
 
 
+#: TASK-25821: steps 1-5 teach "Esc skip setup" / "Esc exit setup" and Esc
+#: works. On the summary the cancel button is hidden and Esc goes inert, but
+#: the hint line simply dropped the exit vocabulary -- so the key the wizard
+#: spent five screens teaching stopped working with no explanation, and
+#: nothing said how setup actually ends. Name the finish route instead of
+#: leaving a gap. Deliberately does NOT mention Esc: it does not exit here,
+#: and the footer must only advertise keys that work (same rule as the
+#: Console footer's setup-blocked variant).
+SUMMARY_KEY_HINTS = "Ctrl+B back · choose an action below to finish"
+
+
 class SetupWizardProgress(WizardProgress):
 
     #: TASK-21148 (UAT F-2/F-3): the stacked number+title layout. Declared
@@ -8229,7 +8240,7 @@ class SetupWizardContainer(WizardContainer):
         cancel.display = not on_summary
         cancel.variant = "default"
         if on_summary:
-            hints.update("Ctrl+B back")
+            hints.update(SUMMARY_KEY_HINTS)
         elif step_id == wizard_state.STEP_WELCOME:
             cancel.label = "Skip setup"
             cancel.tooltip = (
@@ -8747,11 +8758,13 @@ class SetupWizardContainer(WizardContainer):
         try:
             # TASK-21143 (UAT N-7): a visited Provider/Model pair whose
             # probe failed shows "!" instead of the ✓ users read as "OK".
-            attention: frozenset[str] = frozenset()
-            if self.provider_probe_failure():
-                attention = frozenset(
-                    {wizard_state.STEP_PROVIDER, wizard_state.STEP_MODEL}
-                )
+            # TASK-25818 widens that to the step the user simply walked
+            # through without configuring: the summary already reports it as
+            # unconfigured, and the tracker must not disagree.
+            attention = wizard_state.setup_attention_ids(
+                self.wizard_data,
+                probe_failed=bool(self.provider_probe_failure()),
+            )
             items = wizard_state.build_setup_progress(
                 self.active_ids,
                 self._active_position(self.current_step or 0),
