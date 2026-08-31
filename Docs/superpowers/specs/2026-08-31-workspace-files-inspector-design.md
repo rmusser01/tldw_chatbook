@@ -10,6 +10,17 @@ The Console will let a user open a near-full-screen **Workspace Files** modal fo
 
 The feature is an inspector and manual editor. It is not an agent tool, a second workspace activator, a File Notes synchronization surface, or an extension of Agent Change Review.
 
+## TASK-26042 released-slice clarification
+
+TASK-26042 ships the bounded **read-only** inspector portion only: explicit
+local-folder selection, tree/listing, literal filtering, safe file preview and
+paging, privacy-minimized Console attention, and safe return/teardown. It
+does not ship any edit, Save, draft, undo/redo, lease, clipboard, Git, or
+persistent inspector-state behavior described in the broader forward design
+below. Those sections remain design material for a later explicitly approved
+slice; this clarification does not change the acceptance criteria for the
+read-only release.
+
 ## Problem
 
 The Console exposes workspaces and their agent activity but does not provide a direct way to inspect the files behind a workspace. A user planning or reviewing work must leave the Console or activate a different context merely to examine files. That makes it harder to inspect files an agent touched, files it may touch next, and neighboring implementation details needed for better instructions.

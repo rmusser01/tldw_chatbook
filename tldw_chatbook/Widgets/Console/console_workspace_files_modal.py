@@ -17,6 +17,7 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.css.query import NoMatches
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Resize
 from textual.geometry import Size
@@ -251,6 +252,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         )
         self._generation = 0
         self._workspace_files_closing = False
+        self._status_sync_deferred = False
         self._filter_timer: Timer | None = None
         self._pre_filter_tree_state: WorkspaceFilesViewState | None = None
         self._tree_entries: dict[str, Any] = {}
@@ -347,6 +349,12 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
     async def on_mount(self) -> None:  # type: ignore[override]
         super().on_mount()
         self._sync_layout()
+        self.call_after_refresh(self._finish_mount)
+
+    def _finish_mount(self) -> None:
+        """Initialize queried controls only after the composed modal settles."""
+        if self._workspace_files_closing or not self.is_mounted:
+            return
         self._sync_binding_buttons()
         self._sync_status()
         if self._state.selected_binding_id is not None:
@@ -691,7 +699,26 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
     def _sync_status(self) -> None:
         if not self.is_attached:
             return
-        self.query_one("#console-workspace-files-status", Static).update(self._state.status_copy)
+        try:
+            self.query_one("#console-workspace-files-status", Static).update(
+                self._state.status_copy
+            )
+        except NoMatches:
+            if not self._status_sync_deferred:
+                self._status_sync_deferred = True
+                self.call_after_refresh(self._sync_status_once_ready)
+
+    def _sync_status_once_ready(self) -> None:
+        """Retry one status paint after Textual mounts nested compact children."""
+        self._status_sync_deferred = False
+        if not self.is_attached:
+            return
+        try:
+            self.query_one("#console-workspace-files-status", Static).update(
+                self._state.status_copy
+            )
+        except NoMatches:
+            return
 
     def _sync_binding_buttons(self) -> None:
         if not self.is_mounted:

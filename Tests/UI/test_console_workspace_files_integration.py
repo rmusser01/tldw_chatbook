@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
 from pathlib import Path
 
 import pytest
+from textual.css.query import NoMatches
 from textual.widgets import Button
 
 from Tests.UI.app_factory import _build_test_app
@@ -12,7 +15,7 @@ from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from tldw_chatbook.Chat.console_chat_models import ConsoleRunState
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunState
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
@@ -34,6 +37,33 @@ class _StyledConsoleHarness(ConsoleHarness):
     CSS_PATH = str(ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss")
 
 
+def _scratch_tree_fingerprint(root: Path) -> tuple[tuple[str, str], ...]:
+    """Return a content fingerprint without exposing scratch file bodies."""
+    if not root.exists():
+        return ()
+    return tuple(
+        (
+            str(item.relative_to(root)),
+            hashlib.sha256(item.read_bytes()).hexdigest(),
+        )
+        for item in sorted(root.rglob("*"))
+        if item.is_file()
+    )
+
+
+def _redirected_scratch_fingerprint(app) -> tuple[tuple[str, tuple[tuple[str, str], ...]], ...]:
+    """Fingerprint only the per-test profile/config/data and registry database roots."""
+    roots = {
+        "home": Path(os.environ["HOME"]),
+        "config": Path(os.environ["XDG_CONFIG_HOME"]),
+        "data": Path(os.environ["XDG_DATA_HOME"]),
+        "registry": app.local_workspace_db.db_path.parent,
+    }
+    return tuple(
+        (name, _scratch_tree_fingerprint(root)) for name, root in sorted(roots.items())
+    )
+
+
 def _install_named_workspace_with_folder(service, workspace_id: str, name: str, root: Path) -> None:
     service.create_workspace(workspace_id=workspace_id, name=name)
     root.mkdir()
@@ -52,7 +82,12 @@ async def _wait_for_files_modal(host, pilot) -> ConsoleWorkspaceFilesModal:
     for _ in range(100):
         screen = host.screen_stack[-1]
         if isinstance(screen, ConsoleWorkspaceFilesModal):
-            return screen
+            try:
+                screen.query_one("#console-workspace-files-back", Button)
+            except NoMatches:
+                pass
+            else:
+                return screen
         await pilot.pause(0.02)
     raise AssertionError("Workspace Files modal did not open")
 
@@ -81,6 +116,19 @@ def _console_fingerprint(console, app) -> tuple[object, ...]:
     )
 
 
+async def _seed_ready_console_transcript(console) -> None:
+    """Avoid the unrelated first-run setup overlay in real click evidence."""
+    store = console._ensure_console_chat_store()
+    session = store.ensure_session()
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Task 26042 scratch setup message",
+    )
+    await console._sync_native_console_chat_ui()
+    console._sync_console_transcript_guidance()
+
+
 async def _open_navigate_and_dismiss(host, pilot, button: Button) -> ConsoleWorkspaceFilesModal:
     button.focus()
     button.press()
@@ -90,6 +138,200 @@ async def _open_navigate_and_dismiss(host, pilot, button: Button) -> ConsoleWork
     await pilot.click("#console-workspace-files-back")
     await pilot.pause()
     return modal
+
+
+async def _wait_for_available_files_button(
+    console, pilot, *, workspace_id: str, grouped: bool
+) -> Button:
+    """Wait for the real off-loop binding snapshot to enable one typed route."""
+    for _ in range(100):
+        buttons = (
+            console.query(".console-workspace-group-files")
+            if grouped
+            else console.query("#console-workspace-files-open")
+        )
+        button = next(
+            (
+                candidate
+                for candidate in buttons
+                if getattr(candidate, "workspace_id", None) == workspace_id
+                and getattr(candidate, "workspace_files_expected_available", False)
+            ),
+            None,
+        )
+        if button is not None:
+            return button
+        await pilot.pause(0.02)
+    raise AssertionError(f"Files route for {workspace_id!r} did not become available")
+
+
+async def _reveal_and_click_files_button(console, pilot, button: Button) -> None:
+    """Scroll the real rail until a Files control is genuinely mouse-hittable."""
+    button = console.query_one(f"#{button.id}", Button)
+    rail_body = console.query_one("#console-left-rail-body")
+    rail_body.scroll_to_widget(button, animate=False)
+    await pilot.pause()
+    button = console.query_one(f"#{button.id}", Button)
+    widget_at_center, _ = console.screen.get_widget_at(
+        button.region.x + button.region.width // 2,
+        button.region.y + button.region.height // 2,
+    )
+    assert widget_at_center is button
+    assert await pilot.click(button)
+
+
+async def _ensure_workspace_rail_open(console, pilot) -> None:
+    """Use the real collapsed-rail control when the host starts it closed."""
+    left_rail = console.query_one("#console-left-rail")
+    if left_rail.region.width:
+        return
+    opener = console.query_one("#console-context-rail-open", Button)
+    assert opener.region.width > 0
+    assert await pilot.click(opener)
+    for _ in range(100):
+        left_rail = console.query_one("#console-left-rail")
+        if left_rail.region.width:
+            return
+        await pilot.pause(0.02)
+    raise AssertionError("Context rail did not open through its visible control")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", ((80, 24), (100, 30), (120, 40), (160, 50)))
+async def test_shipped_css_four_size_routes_keep_read_only_console_fingerprint(
+    tmp_path: Path, size: tuple[int, int]
+) -> None:
+    """Actual clicks cover both routes, escaped filtering, paging, and safe return."""
+    app = _build_test_app(
+        config_overrides={
+            "chat_defaults": {"provider": "openai", "model": "gpt-test"},
+            "api_settings": {"openai": {"api_key": "task-26042-scratch-key"}},
+        }
+    )
+    service = app.workspace_registry_service
+    active_root = tmp_path / "active-root"
+    other_root = tmp_path / "other-root"
+    _install_named_workspace_with_folder(service, "ws-active", "Active [workspace]", active_root)
+    _install_named_workspace_with_folder(service, "ws-other", "Other [workspace]", other_root)
+    hostile_name = "literal[needle]\n\u202e.txt"
+    (active_root / hostile_name).write_text("hostile label only", encoding="utf-8")
+    large_payload = "é" * 100_000 + "🙂" * 100_001
+    (active_root / "large.txt").write_text(large_payload, encoding="utf-8")
+    service.set_active_workspace("ws-active")
+    initial_bindings = service.list_runtime_bindings("ws-active")
+    initial_files = {
+        item.relative_to(active_root): item.read_bytes()
+        for item in active_root.iterdir()
+        if item.is_file()
+    }
+    host = _StyledConsoleHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-files-open")
+        await _seed_ready_console_transcript(console)
+        await pilot.pause()
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("unchanged scratch draft")
+        composer.set_pending_attachment_label("scratch-attachment.txt · 1 KB")
+        console._set_console_pending_approval({"approval_id": "scratch-approval", "body": "private"})
+        if size[0] >= 84:
+            await _ensure_workspace_rail_open(console, pilot)
+            active_button = await _wait_for_available_files_button(
+                console, pilot, workspace_id="ws-active", grouped=False
+            )
+        else:
+            active_button = None
+        before = _console_fingerprint(console, app)
+        scratch_before = _redirected_scratch_fingerprint(app)
+
+        if size[0] < 84:
+            # The established Console single-pane contract suppresses rails
+            # and their handles below 84 columns to keep the transcript usable.
+            # Exercise the same typed admission seam directly, then prove the
+            # full-screen compact modal rather than pretending a hidden rail is
+            # a live input route.
+            assert console.query_one("#console-left-rail").display is False
+            assert console.query_one("#console-context-rail-handle").display is False
+            await console._workspace.request_workspace_files(
+                "ws-active", expected_available=True
+            )
+        else:
+            assert active_button is not None
+            await _reveal_and_click_files_button(console, pilot, active_button)
+        modal = await _wait_for_files_modal(host, pilot)
+        assert modal.inspected_workspace_id == "ws-active"
+        assert modal.query_one("#console-workspace-files-back", Button).can_focus
+        assert modal.query_one("#console-workspace-files-details", Button).can_focus
+        assert modal.region.width <= size[0]
+        assert modal.region.height <= size[1]
+
+        large_button = None
+        for _ in range(100):
+            large_button = next(
+                (
+                    entry
+                    for entry in modal.query(".console-workspace-files-entry")
+                    if "large.txt" in str(entry.label)
+                ),
+                None,
+            )
+            if large_button is not None:
+                break
+            await pilot.pause(0.02)
+        assert large_button is not None
+        await pilot.click(large_button)
+        for _ in range(100):
+            if modal.state.file_result is not None:
+                break
+            await pilot.pause(0.02)
+        assert modal.state.file_result is not None
+        assert modal.state.file_result.character_range == (0, 100_000)
+        await pilot.click("#console-workspace-files-next")
+        for _ in range(100):
+            if modal.state.file_result and modal.state.file_result.character_range == (100_000, 200_000):
+                break
+            await pilot.pause(0.02)
+        assert modal.state.file_result is not None
+        assert modal.state.file_result.character_range == (100_000, 200_000)
+        assert modal.state.file_result.text.startswith("🙂")
+        assert modal.state.file_result.next_page_offset == 200_000
+
+        await pilot.click("#console-workspace-files-filter")
+        await pilot.press("l", "i", "t", "e", "r", "a", "l", "[")
+        await pilot.press("enter")
+        for _ in range(100):
+            if modal.state.filter_result is not None:
+                break
+            await pilot.pause(0.02)
+        assert modal.state.filter_result is not None
+        assert modal.state.filter_result.matches
+        assert "\\x1b" not in str(modal.state.filter_result.matches[0].display_path)
+        assert "\\n" in str(modal.state.filter_result.matches[0].display_path)
+        assert str(active_root) not in str(modal.state.filter_result.matches[0].display_path)
+        await pilot.click("#console-workspace-files-back")
+        await pilot.pause()
+        assert modal.owned_lane_count == 0
+        assert _console_fingerprint(console, app) == before
+
+        if size[0] >= 84:
+            grouped_button = await _wait_for_available_files_button(
+                console, pilot, workspace_id="ws-other", grouped=True
+            )
+            await _reveal_and_click_files_button(console, pilot, grouped_button)
+            grouped_modal = await _wait_for_files_modal(host, pilot)
+            assert grouped_modal.inspected_workspace_id == "ws-other"
+            await pilot.click("#console-workspace-files-back")
+            await pilot.pause()
+
+        assert _console_fingerprint(console, app) == before
+        assert _redirected_scratch_fingerprint(app) == scratch_before
+        assert service.list_runtime_bindings("ws-active") == initial_bindings
+        assert {
+            item.relative_to(active_root): item.read_bytes()
+            for item in active_root.iterdir()
+            if item.is_file()
+        } == initial_files
 
 
 @pytest.mark.asyncio
