@@ -51,7 +51,7 @@ class _Ids:
         return f"{label}-{self.value}"
 
 
-def _dependencies(tmp_path):
+def _dependencies(tmp_path, *, link_complete: bool = True):
     profile_repository = PersonalContextRepository(
         tmp_path / "profile.db", key_protector=InMemoryProfileKeyProtector()
     )
@@ -61,11 +61,43 @@ def _dependencies(tmp_path):
     service.create_profile()
     profile_outbox = ProfileSyncOutbox(profile_repository)
     sync_repository = SyncStateRepository(tmp_path / "sync.db")
+    if link_complete:
+        sync_repository.set_personal_context_link_state(
+            server_profile_id=SCOPE["server_profile_id"],
+            authenticated_principal_id=SCOPE["authenticated_principal_id"],
+            state="complete",
+            device_id="device-1",
+            dataset_id=SCOPE["dataset_id"],
+            authority_id="authority-1",
+            profile_id=service.get_manifest().profile_id,
+            integrity_key_id="pc-key-1",
+            key_record_id="key-record-1",
+            purge_generation=0,
+            bootstrap_cursor="sha256:" + "a" * 64,
+            plan_id="plan-1",
+            rebaseline_version=1,
+            attention_code=None,
+        )
     adapter = PersonalContextSyncAdapter(
         integrity_key=b"i" * 32,
         integrity_key_id="pc-key-1",
     )
     return profile_outbox, sync_repository, adapter, service
+
+
+def test_dispatcher_is_fail_closed_until_first_link_completion(tmp_path) -> None:
+    profile_outbox, sync_repository, adapter, _service = _dependencies(
+        tmp_path, link_complete=False
+    )
+    pending = profile_outbox.list_pending()
+
+    with pytest.raises(ValueError, match="personal_context_link_incomplete"):
+        _dispatcher(profile_outbox, sync_repository, adapter).dispatch_pending(
+            device_id="device-1", storage_key=STORAGE_KEY, **SCOPE
+        )
+
+    assert profile_outbox.list_pending() == pending
+    assert sync_repository.list_pending_sync_v2_outbox_envelopes(**SCOPE) == []
 
 
 def _dispatcher(profile_outbox, sync_repository, adapter):

@@ -57,6 +57,8 @@ class ProfileKeyProtector(Protocol):
 
     def load(self, profile_ref: str) -> ProfileKeyMaterial: ...
 
+    def replace(self, profile_ref: str, material: ProfileKeyMaterial) -> None: ...
+
     def delete(self, profile_ref: str) -> None: ...
 
 
@@ -103,6 +105,9 @@ class InMemoryProfileKeyProtector:
             return self._materials[profile_ref]
         except KeyError:
             raise ProfileLockedError("Profile key material is unavailable.") from None
+
+    def replace(self, profile_ref: str, material: ProfileKeyMaterial) -> None:
+        self._materials[_normalized_ref(profile_ref)] = material
 
     def delete(self, profile_ref: str) -> None:
         self._materials.pop(_normalized_ref(profile_ref), None)
@@ -153,6 +158,18 @@ class KeyringProfileKeyProtector:
             raise ProfileLockedError("Profile key material is unavailable.")
         return material
 
+    def replace(self, profile_ref: str, material: ProfileKeyMaterial) -> None:
+        profile_ref = _normalized_ref(profile_ref)
+        payload = _KEYRING_PREFIX + base64.b64encode(
+            _serialize_material(material)
+        ).decode("ascii")
+        try:
+            self._keyring.set_password(_KEYRING_SERVICE, profile_ref, payload)
+        except Exception as exc:
+            raise ProfileLockedError(
+                "The secure profile keyring is unavailable."
+            ) from exc
+
     def delete(self, profile_ref: str) -> None:
         profile_ref = _normalized_ref(profile_ref)
         try:
@@ -198,8 +215,18 @@ class PassphraseProfileKeyProtector:
         profile_ref = _normalized_ref(profile_ref)
         if self._path.exists():
             return self.load(profile_ref)
-        passphrase = self._get_passphrase()
         material = _new_material()
+        self._store(profile_ref, material)
+        return material
+
+    def replace(self, profile_ref: str, material: ProfileKeyMaterial) -> None:
+        profile_ref = _normalized_ref(profile_ref)
+        if not self._path.is_file():
+            raise ProfileLockedError("Profile key material is unavailable.")
+        self._store(profile_ref, material)
+
+    def _store(self, profile_ref: str, material: ProfileKeyMaterial) -> None:
+        passphrase = self._get_passphrase()
         salt = secrets.token_bytes(32)
         nonce = secrets.token_bytes(12)
         aad = _PASSPHRASE_DOMAIN + profile_ref.encode("utf-8")
@@ -213,7 +240,6 @@ class PassphraseProfileKeyProtector:
             "ciphertext": base64.b64encode(ciphertext).decode("ascii"),
         }
         self._write_private(json.dumps(payload, separators=(",", ":")).encode())
-        return material
 
     def load(self, profile_ref: str) -> ProfileKeyMaterial:
         profile_ref = _normalized_ref(profile_ref)

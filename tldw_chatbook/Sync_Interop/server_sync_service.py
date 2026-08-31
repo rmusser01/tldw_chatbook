@@ -207,6 +207,20 @@ class ServerSyncService:
                 the server does not support any requested domains.
             PolicyDeniedError: If runtime policy blocks server Sync v2 dry-run access.
         """
+        requested_domains = domains or [
+            "notes",
+            "chat",
+            "workspaces",
+            "source_cache",
+            "media",
+        ]
+        if any(
+            str(domain).strip() == "personal_context"
+            or str(domain).strip().startswith("personal_context.")
+            for domain in requested_domains
+        ):
+            raise ValueError("personal_context_requires_reviewed_first_link")
+
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import (
             SyncV2CapabilitiesResponse,
@@ -233,13 +247,6 @@ class ServerSyncService:
         existing_device_id = profile["device_id"] if profile else None
         existing_dataset_id = profile["dataset_id"] if profile else None
 
-        requested_domains = domains or [
-            "notes",
-            "chat",
-            "workspaces",
-            "source_cache",
-            "media",
-        ]
         capabilities = await client.get_sync_v2_capabilities()
         capabilities_model = (
             capabilities
@@ -257,34 +264,6 @@ class ServerSyncService:
         sync_domains = self._select_advertised_domains(
             requested_domains, supported_domains
         )
-        personal_context_requested = any(
-            str(domain).strip() == "personal_context"
-            or str(domain).strip().startswith("personal_context.")
-            for domain in requested_domains
-        )
-        personal_context_readiness = None
-        if personal_context_requested:
-            from .sync_readiness import (
-                PERSONAL_CONTEXT_SYNC_DOMAINS,
-                personal_context_sync_readiness,
-            )
-
-            if set(sync_domains).intersection(PERSONAL_CONTEXT_SYNC_DOMAINS) != set(
-                PERSONAL_CONTEXT_SYNC_DOMAINS
-            ):
-                raise ValueError("personal_context_sync_domains_incomplete")
-
-            personal_context_readiness = personal_context_sync_readiness(
-                capabilities_model,
-                require_writable=False,
-            )
-            if encryption_policy != "server_trusted_v1":
-                raise ValueError("personal_context_authorization_policy_incompatible")
-            if not personal_context_readiness.write_enabled:
-                raise ValueError(
-                    ",".join(personal_context_readiness.blockers)
-                    or "personal_context_sync_unavailable"
-                )
         if not sync_domains:
             raise ValueError("Server does not advertise any requested Sync v2 domains.")
 
@@ -298,15 +277,6 @@ class ServerSyncService:
                 capabilities={
                     "dry_run": True,
                     "protocol_version": "sync-v2-m1",
-                    **(
-                        {
-                            "personal_context": {
-                                "schema_version": personal_context_readiness.negotiated_schema_version,
-                            }
-                        }
-                        if personal_context_readiness is not None
-                        else {}
-                    ),
                 },
             )
         )
@@ -326,26 +296,6 @@ class ServerSyncService:
         )
         dataset_record = self._dump(dataset)
         dataset_id = str(dataset_record["dataset_id"])
-
-        if personal_context_requested:
-            scoped_capabilities = await client.get_sync_v2_capabilities(
-                dataset_id=dataset_id
-            )
-            scoped_capabilities_model = (
-                scoped_capabilities
-                if isinstance(scoped_capabilities, SyncV2CapabilitiesResponse)
-                else SyncV2CapabilitiesResponse.model_validate(scoped_capabilities)
-            )
-            personal_context_readiness = personal_context_sync_readiness(
-                scoped_capabilities_model
-            )
-            if not personal_context_readiness.write_enabled:
-                raise ValueError(
-                    ",".join(personal_context_readiness.blockers)
-                    or "personal_context_sync_unavailable"
-                )
-            capabilities_model = scoped_capabilities_model
-            capabilities_record = self._dump(scoped_capabilities_model)
 
         pushed = await client.push_sync_v2_envelopes(
             SyncV2PushRequest(dataset_id=dataset_id, device_id=device_id, envelopes=[])
@@ -422,18 +372,6 @@ class ServerSyncService:
             "pulled_envelopes": len(pull_record.get("envelopes", [])),
             "next_cursor": next_cursor,
             "key_setup_required": bool(dataset_record.get("key_setup_required", False)),
-            **(
-                {
-                    "personal_context_readiness": {
-                        "read_enabled": personal_context_readiness.read_enabled,
-                        "write_enabled": personal_context_readiness.write_enabled,
-                        "blockers": list(personal_context_readiness.blockers),
-                        "negotiated_schema_version": personal_context_readiness.negotiated_schema_version,
-                    }
-                }
-                if personal_context_readiness is not None
-                else {}
-            ),
         }
         self.state_repository.set_sync_v2_profile_state(
             server_profile_id=server_profile_id,
@@ -448,6 +386,110 @@ class ServerSyncService:
             last_error=None,
         )
         return result
+
+    async def bootstrap_personal_context_link(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        display_name: str,
+        wrapping_key_provider: Any,
+        client_version: str | None = None,
+        required_schema_version: int | None = None,
+        required_quotas: Mapping[str, int] | None = None,
+        expected_purge_generation: int | None = None,
+    ) -> dict[str, Any]:
+        """Register secure device custody and fetch a read-only canonical snapshot."""
+
+        from ..tldw_api import (
+            SyncPersonalContextBootstrapRequest,
+            SyncV2CapabilitiesResponse,
+            SyncV2DeviceRegisterRequest,
+        )
+        from .sync_readiness import (
+            PERSONAL_CONTEXT_SYNC_DOMAINS,
+            personal_context_sync_readiness,
+        )
+
+        if not server_profile_id or not display_name:
+            raise ValueError("personal_context_link_binding_invalid")
+        public_key = getattr(wrapping_key_provider, "public_key_pem", None)
+        if not isinstance(public_key, str) or not public_key.strip():
+            raise ValueError("personal_context_device_key_unavailable")
+
+        self._enforce("sync.v2.personal_context.bootstrap.server")
+        client = self._require_client()
+        capabilities_response = await client.get_sync_v2_capabilities()
+        capabilities = (
+            capabilities_response
+            if isinstance(capabilities_response, SyncV2CapabilitiesResponse)
+            else SyncV2CapabilitiesResponse.model_validate(capabilities_response)
+        )
+        readiness = personal_context_sync_readiness(
+            capabilities, require_writable=False
+        )
+        if not readiness.write_enabled:
+            raise ValueError(
+                ",".join(readiness.blockers) or "personal_context_sync_unavailable"
+            )
+        profile = (
+            self.state_repository.get_sync_v2_profile_state(
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+                workspace_scope=None,
+            )
+            if self.state_repository is not None
+            else None
+        )
+        device = await client.register_sync_v2_device(
+            SyncV2DeviceRegisterRequest(
+                device_id=profile["device_id"] if profile else None,
+                display_name=display_name,
+                client_type="chatbook",
+                client_version=client_version,
+                supported_domains=list(PERSONAL_CONTEXT_SYNC_DOMAINS),
+                capabilities={
+                    "protocol_version": "sync-v2-m1",
+                    "personal_context": {
+                        "schema_version": readiness.negotiated_schema_version,
+                    },
+                    "personal_context_wrapping_public_key": public_key,
+                },
+            )
+        )
+        device_id = str(self._dump(device)["device_id"])
+        response = await client.bootstrap_sync_v2_personal_context(
+            SyncPersonalContextBootstrapRequest(
+                device_id=device_id,
+                required_schema_version=required_schema_version,
+                required_quotas=dict(required_quotas or {}),
+                expected_purge_generation=expected_purge_generation,
+            )
+        )
+        record = self._dump(response)
+        if not isinstance(record, dict):
+            raise ValueError("personal_context_bootstrap_response_invalid")
+        return {"device_id": device_id, **record}
+
+    async def complete_personal_context_link(
+        self,
+        *,
+        device_id: str,
+        dataset_id: str,
+        bootstrap_cursor: str,
+    ) -> None:
+        """Acknowledge the exact reviewed bootstrap after local convergence."""
+
+        from ..tldw_api import SyncPersonalContextLinkCompleteRequest
+
+        self._enforce("sync.v2.personal_context.complete.server")
+        await self._require_client().complete_sync_v2_personal_context_link(
+            SyncPersonalContextLinkCompleteRequest(
+                device_id=device_id,
+                dataset_id=dataset_id,
+                bootstrap_cursor=bootstrap_cursor,
+            )
+        )
 
     async def store_v2_recovery_bundle(
         self,

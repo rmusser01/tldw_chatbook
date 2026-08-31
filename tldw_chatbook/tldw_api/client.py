@@ -413,6 +413,9 @@ from .text2sql_schemas import Text2SQLRequest, Text2SQLResponse
 from .sync_schemas import (
     ClientChangesPayload,
     ServerChangesResponse,
+    SyncPersonalContextBootstrapRequest,
+    SyncPersonalContextBootstrapResponse,
+    SyncPersonalContextLinkCompleteRequest,
     SyncV2AttachmentUploadRequest,
     SyncV2AttachmentUploadResponse,
     SyncV2CapabilitiesResponse,
@@ -15961,6 +15964,31 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(mode="json"),
         )
         return SyncV2ProfileBootstrapResponse.model_validate(response)
+
+    async def bootstrap_sync_v2_personal_context(
+        self,
+        request_data: SyncPersonalContextBootstrapRequest,
+    ) -> SyncPersonalContextBootstrapResponse:
+        """Fetch one authenticated, cursor-bounded canonical profile snapshot."""
+
+        response = await self._request(
+            "POST",
+            "/api/v1/sync/personal-context/bootstrap",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return SyncPersonalContextBootstrapResponse.model_validate(response)
+
+    async def complete_sync_v2_personal_context_link(
+        self,
+        request_data: SyncPersonalContextLinkCompleteRequest,
+    ) -> None:
+        """Confirm that this device completed the exact reviewed bootstrap."""
+
+        await self._request(
+            "POST",
+            "/api/v1/sync/personal-context/complete",
+            json_data=request_data.model_dump(mode="json"),
+        )
 
     async def register_sync_v2_device(
         self,

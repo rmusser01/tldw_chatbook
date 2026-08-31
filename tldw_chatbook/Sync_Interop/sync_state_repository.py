@@ -49,8 +49,16 @@ _SYNC_V2_CONFLICT_RESOLUTION_STATUSES = {
     "defer-later",
 }
 SYNC_V2_CONFLICT_REVIEW_DEFAULT_LIMIT = 100
-SYNC_STATE_SCHEMA_VERSION = 5
+SYNC_STATE_SCHEMA_VERSION = 6
 _FILTER_UNSET = object()
+_PERSONAL_CONTEXT_LINK_STATES = {
+    "review_required",
+    "applying",
+    "local_rebaseline_complete",
+    "completing",
+    "complete",
+    "attention_required",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -372,6 +380,25 @@ class SyncStateRepository(BaseDB):
 
                 CREATE INDEX IF NOT EXISTS idx_sync_v2_conflict_reviews_scope
                     ON sync_v2_conflict_reviews(source_scope_key, dataset_id, resolution_status, conflict_review_id);
+
+                CREATE TABLE IF NOT EXISTS personal_context_link_state (
+                    server_profile_id TEXT NOT NULL,
+                    authenticated_principal_id TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    device_id TEXT NOT NULL,
+                    dataset_id TEXT NOT NULL,
+                    authority_id TEXT NOT NULL,
+                    profile_id TEXT NOT NULL,
+                    integrity_key_id TEXT NOT NULL,
+                    key_record_id TEXT NOT NULL,
+                    purge_generation INTEGER NOT NULL,
+                    bootstrap_cursor TEXT NOT NULL,
+                    plan_id TEXT NOT NULL,
+                    rebaseline_version INTEGER NOT NULL,
+                    attention_code TEXT,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (server_profile_id, authenticated_principal_id)
+                );
                 """
                 )
                 self._ensure_sync_v2_profile_columns(conn)
@@ -1840,6 +1867,200 @@ class SyncStateRepository(BaseDB):
             "last_mirror_report_id": row["last_mirror_report_id"],
             "updated_at": row["updated_at"],
         }
+
+    def set_personal_context_link_state(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        state: str,
+        device_id: str,
+        dataset_id: str,
+        authority_id: str,
+        profile_id: str,
+        integrity_key_id: str,
+        key_record_id: str,
+        purge_generation: int,
+        bootstrap_cursor: str,
+        plan_id: str,
+        rebaseline_version: int,
+        attention_code: str | None,
+        expected_states: tuple[str, ...] | None = None,
+    ) -> dict[str, Any]:
+        """Persist one content-free first-link state with optional state CAS."""
+
+        if state not in _PERSONAL_CONTEXT_LINK_STATES:
+            raise ValueError("personal_context_link_state_invalid")
+        values = {
+            "server_profile_id": server_profile_id,
+            "device_id": device_id,
+            "dataset_id": dataset_id,
+            "authority_id": authority_id,
+            "profile_id": profile_id,
+            "integrity_key_id": integrity_key_id,
+            "key_record_id": key_record_id,
+            "bootstrap_cursor": bootstrap_cursor,
+            "plan_id": plan_id,
+        }
+        if any(not isinstance(value, str) or not value or len(value) > 512 for value in values.values()):
+            raise ValueError("personal_context_link_binding_invalid")
+        if type(purge_generation) is not int or purge_generation < 0:
+            raise ValueError("personal_context_purge_generation_invalid")
+        if type(rebaseline_version) is not int or rebaseline_version < 1:
+            raise ValueError("personal_context_rebaseline_version_invalid")
+        if attention_code is not None and (
+            not attention_code or len(attention_code) > 128
+        ):
+            raise ValueError("personal_context_attention_code_invalid")
+        principal = _scope_value(authenticated_principal_id)
+        now = _utc_now()
+        with self._get_connection() as conn:
+            current = conn.execute(
+                "SELECT state, plan_id FROM personal_context_link_state "
+                "WHERE server_profile_id = ? AND authenticated_principal_id = ?",
+                (server_profile_id, principal),
+            ).fetchone()
+            if expected_states is not None:
+                current_state = None if current is None else str(current["state"])
+                if current_state not in expected_states:
+                    raise ValueError("personal_context_link_state_stale")
+            if current is not None and current["plan_id"] != plan_id:
+                if state not in {"review_required", "attention_required"}:
+                    raise ValueError("personal_context_link_plan_stale")
+                if current["state"] not in {
+                    "review_required",
+                    "attention_required",
+                    "complete",
+                }:
+                    raise ValueError("personal_context_link_state_stale")
+            conn.execute(
+                """
+                INSERT INTO personal_context_link_state (
+                    server_profile_id, authenticated_principal_id, state,
+                    device_id, dataset_id, authority_id, profile_id,
+                    integrity_key_id, key_record_id, purge_generation,
+                    bootstrap_cursor, plan_id, rebaseline_version,
+                    attention_code, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(server_profile_id, authenticated_principal_id)
+                DO UPDATE SET
+                    state = excluded.state,
+                    device_id = excluded.device_id,
+                    dataset_id = excluded.dataset_id,
+                    authority_id = excluded.authority_id,
+                    profile_id = excluded.profile_id,
+                    integrity_key_id = excluded.integrity_key_id,
+                    key_record_id = excluded.key_record_id,
+                    purge_generation = excluded.purge_generation,
+                    bootstrap_cursor = excluded.bootstrap_cursor,
+                    plan_id = excluded.plan_id,
+                    rebaseline_version = excluded.rebaseline_version,
+                    attention_code = excluded.attention_code,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    server_profile_id,
+                    principal,
+                    state,
+                    device_id,
+                    dataset_id,
+                    authority_id,
+                    profile_id,
+                    integrity_key_id,
+                    key_record_id,
+                    purge_generation,
+                    bootstrap_cursor,
+                    plan_id,
+                    rebaseline_version,
+                    attention_code,
+                    now,
+                ),
+            )
+            conn.commit()
+        result = self.get_personal_context_link_state(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+        )
+        if result is None:
+            raise RuntimeError("personal_context_link_state_not_persisted")
+        return result
+
+    def get_personal_context_link_state(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+    ) -> dict[str, Any] | None:
+        """Return one durable content-free Personal Context link receipt."""
+
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM personal_context_link_state "
+                "WHERE server_profile_id = ? AND authenticated_principal_id = ?",
+                (server_profile_id, _scope_value(authenticated_principal_id)),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "server_profile_id": row["server_profile_id"],
+            "authenticated_principal_id": _restore_scope_value(
+                row["authenticated_principal_id"]
+            ),
+            "state": row["state"],
+            "device_id": row["device_id"],
+            "dataset_id": row["dataset_id"],
+            "authority_id": row["authority_id"],
+            "profile_id": row["profile_id"],
+            "integrity_key_id": row["integrity_key_id"],
+            "key_record_id": row["key_record_id"],
+            "purge_generation": int(row["purge_generation"]),
+            "bootstrap_cursor": row["bootstrap_cursor"],
+            "plan_id": row["plan_id"],
+            "rebaseline_version": int(row["rebaseline_version"]),
+            "attention_code": row["attention_code"],
+            "updated_at": row["updated_at"],
+        }
+
+    def cancel_personal_context_link_plan(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        plan_id: str,
+    ) -> bool:
+        """Cancel only a not-yet-approved review plan."""
+
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT state, plan_id FROM personal_context_link_state "
+                "WHERE server_profile_id = ? AND authenticated_principal_id = ?",
+                (server_profile_id, _scope_value(authenticated_principal_id)),
+            ).fetchone()
+            if row is None or row["plan_id"] != plan_id:
+                return False
+            if row["state"] not in {"review_required", "attention_required"}:
+                raise ValueError("personal_context_link_cannot_cancel")
+            conn.execute(
+                "DELETE FROM personal_context_link_state "
+                "WHERE server_profile_id = ? AND authenticated_principal_id = ?",
+                (server_profile_id, _scope_value(authenticated_principal_id)),
+            )
+            conn.commit()
+        return True
+
+    def personal_context_sync_enabled(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+    ) -> bool:
+        """Gate ordinary Personal Context dispatch on an exact complete receipt."""
+
+        state = self.get_personal_context_link_state(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+        )
+        return state is not None and state["state"] == "complete"
 
     def get_sync_v2_profile_summary(
         self,

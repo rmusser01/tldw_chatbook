@@ -563,6 +563,36 @@ class PersonalContextService:
             raise ValueError("Personal Context profile is absent.")
         return manifest
 
+    def first_link_snapshot(
+        self,
+    ) -> tuple[
+        ProfileManifest,
+        tuple[ProfileScope, ...],
+        tuple[ProfileRecord, ...],
+        tuple[ProfileProposal, ...],
+        dict[str, dict[str, Any]],
+    ]:
+        """Return canonical local heads and peer-local mappings for read-only planning."""
+
+        repository = self._repo()
+        return (
+            self.get_manifest(),
+            tuple(repository.list_scopes()),
+            tuple(repository.list_records()),
+            tuple(repository.list_proposals()),
+            repository.list_validated_scope_bindings(),
+        )
+
+    def apply_reviewed_link(self, **kwargs: Any) -> dict[str, int]:
+        """Apply one explicit first-link decision set through the canonical owner."""
+
+        return self._repo().apply_reviewed_link(**kwargs)
+
+    def first_link_rebaseline_version(self) -> int:
+        """Return the authenticated key generation after interrupted-link recovery."""
+
+        return self._repo().current_key_version()
+
     def list_scopes(self) -> tuple[ProfileScope, ...]:
         return tuple(self._repo().list_scopes())
 

@@ -12,7 +12,7 @@ because the link service and review surface do not exist.
 `Tests/Sync_Interop/test_personal_context_first_link.py`, and
 `Tests/UI/test_personal_context_link_modal.py`.
 
-**Status:** Not Started
+**Status:** Complete (Chatbook slice)
 
 ## Stage 2: Durable reconciliation and canonical rebind
 
@@ -26,7 +26,7 @@ is idempotent and interrupted rebind resumes safely.
 
 **Tests:** Reconciliation repository/service and concurrent mutation cases.
 
-**Status:** Not Started
+**Status:** Complete (Chatbook slice)
 
 ## Stage 3: Authenticated bootstrap, rebaseline, and Settings review
 
@@ -41,7 +41,7 @@ clear and content-free.
 
 **Tests:** First-link transport and production-shaped Textual modal tests.
 
-**Status:** Not Started
+**Status:** Complete (Chatbook slice)
 
 ## Stage 4: Verification and review
 
@@ -52,7 +52,9 @@ and independent review.
 Ruff, compilation, Bandit, diff hygiene, and review pass; TASK-24727 is
 complete.
 
-**Status:** Not Started
+**Status:** In Progress — Chatbook targeted tests, Ruff, compilation, CSS bundle
+reproduction, and diff hygiene pass. Controller-owned Bandit and independent
+cross-repository review remain before task closure.
 
 ## ADR check
 

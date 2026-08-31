@@ -16,6 +16,12 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from tldw_profile_core import (
+    ProfileManifest,
+    ProfileProposal,
+    ProfileRecord,
+    ProfileScope,
+)
 
 
 class SyncEntity(str, Enum):
@@ -529,6 +535,60 @@ class SyncV2ProfileBootstrapResponse(SyncV2ProfileResponse):
     """Response from explicit profile bootstrap."""
 
     created: bool = False
+
+
+class SyncPersonalContextBootstrapRequest(BaseModel):
+    """Request one cursor-bounded canonical Personal Context snapshot."""
+
+    device_id: str = Field(..., min_length=1, max_length=256)
+    required_schema_version: int | None = Field(None, ge=1)
+    required_quotas: dict[str, int] = Field(default_factory=dict)
+    expected_purge_generation: int | None = Field(None, ge=0)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SyncPersonalContextBootstrapResponse(BaseModel):
+    """Canonical first-link snapshot and device-wrapped integrity key."""
+
+    dataset_id: str = Field(..., min_length=1, max_length=256)
+    authority_id: str = Field(..., min_length=1, max_length=256)
+    manifest: ProfileManifest
+    scopes: list[ProfileScope] = Field(default_factory=list)
+    records: list[ProfileRecord] = Field(default_factory=list)
+    proposals: list[ProfileProposal] = Field(default_factory=list)
+    purge_generation: int = Field(..., ge=0)
+    schema_version: int = Field(..., ge=1)
+    quotas: dict[str, int] = Field(default_factory=dict)
+    cursor: str = Field(..., min_length=1, max_length=256)
+    integrity_key_id: str = Field(..., min_length=1, max_length=256)
+    key_record_id: str = Field(..., min_length=1, max_length=512)
+    wrapped_key_blob: str = Field(..., min_length=1, max_length=16_384)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _validate_canonical_binding(self) -> "SyncPersonalContextBootstrapResponse":
+        if self.manifest.purge_generation != self.purge_generation:
+            raise ValueError("bootstrap purge generation must match the manifest")
+        profile_id = self.manifest.profile_id
+        if any(scope.profile_id != profile_id for scope in self.scopes):
+            raise ValueError("bootstrap scope profile identity mismatch")
+        if any(record.profile_id != profile_id for record in self.records):
+            raise ValueError("bootstrap record profile identity mismatch")
+        if any(proposal.profile_id != profile_id for proposal in self.proposals):
+            raise ValueError("bootstrap proposal profile identity mismatch")
+        return self
+
+
+class SyncPersonalContextLinkCompleteRequest(BaseModel):
+    """Acknowledge one exact completed first-link cursor."""
+
+    device_id: str = Field(..., min_length=1, max_length=256)
+    dataset_id: str = Field(..., min_length=1, max_length=256)
+    bootstrap_cursor: str = Field(..., min_length=1, max_length=256)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class SyncV2DeviceRegisterRequest(BaseModel):
