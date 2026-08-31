@@ -12,11 +12,69 @@ import termios
 from typing import Any
 
 import psutil
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictStr,
+    ValidationError,
+    field_validator,
+)
 
 
 _MAX_CONTROL_BYTES = 64 * 1024
 _REFUSED_EXIT = 125
 _FAILED_EXIT = 126
+
+
+class _LauncherConfig(BaseModel):
+    """Strict launch values accepted from the parent control pipe."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    executable: StrictStr = Field(min_length=1)
+    argv: list[StrictStr] = Field(min_length=1, max_length=64, strict=True)
+    cwd: StrictStr = Field(min_length=1)
+    environment: dict[StrictStr, StrictStr] = Field(max_length=128, strict=True)
+    token: StrictStr = Field(min_length=1, max_length=1024)
+
+    @field_validator("executable")
+    @classmethod
+    def _validate_executable(cls, value: str) -> str:
+        if not os.path.isabs(value) or "\0" in value:
+            raise ValueError("invalid executable")
+        return value
+
+    @field_validator("argv")
+    @classmethod
+    def _validate_argv(cls, value: list[str]) -> list[str]:
+        if any(not item or "\0" in item for item in value):
+            raise ValueError("invalid argv")
+        return value
+
+    @field_validator("cwd")
+    @classmethod
+    def _validate_cwd(cls, value: str) -> str:
+        if "\0" in value or not os.path.isabs(value) or not Path(value).is_dir():
+            raise ValueError("invalid cwd")
+        return value
+
+    @field_validator("environment")
+    @classmethod
+    def _validate_environment(cls, value: dict[str, str]) -> dict[str, str]:
+        if any(
+            not key or "=" in key or "\0" in key or "\0" in item
+            for key, item in value.items()
+        ):
+            raise ValueError("invalid environment")
+        return value
+
+    @field_validator("token")
+    @classmethod
+    def _validate_token(cls, value: str) -> str:
+        if "\0" in value:
+            raise ValueError("invalid token")
+        return value
 
 
 def _read_control(fd: int) -> dict[str, Any]:
@@ -42,41 +100,12 @@ def _read_control(fd: int) -> dict[str, Any]:
 
 def _validated_config(
     value: dict[str, Any],
-) -> tuple[str, list[str], str, dict[str, str], str]:
-    executable = value.get("executable")
-    argv = value.get("argv")
-    cwd = value.get("cwd")
-    environment = value.get("environment")
-    token = value.get("token")
-    if not isinstance(argv, list) or not argv or len(argv) > 64:
-        raise ValueError("launcher config is invalid")
-    if not all(isinstance(item, str) and item and "\0" not in item for item in argv):
-        raise ValueError("launcher config is invalid")
-    if executable is None:
-        executable = argv[0]
-    if (
-        not isinstance(executable, str)
-        or not os.path.isabs(executable)
-        or "\0" in executable
-    ):
-        raise ValueError("launcher config is invalid")
-    if not isinstance(cwd, str) or not os.path.isabs(cwd) or not Path(cwd).is_dir():
-        raise ValueError("launcher config is invalid")
-    if type(environment) is not dict or len(environment) > 128:
-        raise ValueError("launcher config is invalid")
-    if not all(
-        isinstance(key, str)
-        and key
-        and "=" not in key
-        and "\0" not in key
-        and isinstance(item, str)
-        and "\0" not in item
-        for key, item in environment.items()
-    ):
-        raise ValueError("launcher config is invalid")
-    if not isinstance(token, str) or not token or len(token) > 1024:
-        raise ValueError("launcher config is invalid")
-    return executable, argv, cwd, environment, token
+) -> _LauncherConfig:
+    """Validate one untrusted launcher control object with strict field types."""
+    try:
+        return _LauncherConfig.model_validate(value, strict=True)
+    except (TypeError, ValueError, ValidationError):
+        raise ValueError("launcher config is invalid") from None
 
 
 def _write_json(fd: int, value: dict[str, object]) -> None:
@@ -111,9 +140,7 @@ def _run(
     exec_status_fd: int,
 ) -> int:
     """Enter a new session, await admission, and exec the configured shell."""
-    executable, argv, cwd, environment, expected_token = _validated_config(
-        _read_control(config_fd)
-    )
+    config = _validated_config(_read_control(config_fd))
     os.close(config_fd)
 
     os.setsid()
@@ -131,7 +158,7 @@ def _run(
 
     decision = _read_control(admission_fd)
     os.close(admission_fd)
-    if decision != {"admitted": True, "token": expected_token}:
+    if decision != {"admitted": True, "token": config.token}:
         os.close(slave_fd)
         os.close(exec_status_fd)
         return _REFUSED_EXIT
@@ -143,10 +170,10 @@ def _run(
             os.dup2(slave_fd, target)
     if slave_fd > 2:
         os.close(slave_fd)
-    os.chdir(cwd)
+    os.chdir(config.cwd)
     _set_close_on_exec(exec_status_fd)
     _close_unrelated_fds(exec_status_fd)
-    os.execve(executable, argv, environment)
+    os.execve(config.executable, config.argv, config.environment)
     return _FAILED_EXIT
 
 
@@ -161,7 +188,11 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
-    """Run the content-free launcher protocol and return a bounded exit code."""
+    """Run the content-free launcher protocol.
+
+    Returns:
+        The bounded launcher process exit code.
+    """
     arguments = _parse_args()
     try:
         return _run(

@@ -19,14 +19,16 @@ from threading import Event, Thread
 import time
 
 import psutil
+from pydantic import BaseModel
 import pytest
 
+fcntl = pytest.importorskip(
+    "fcntl",
+    reason="POSIX PTY backend requires POSIX",
+    exc_type=ImportError,
+)
 
-if os.name != "posix":
-    pytest.skip("POSIX PTY backend requires POSIX", allow_module_level=True)
-
-import fcntl  # noqa: E402
-
+from tldw_chatbook.Terminal import posix_backend as posix_backend_module  # noqa: E402
 from tldw_chatbook.Terminal.contracts import (  # noqa: E402
     AdmissionGate,
     CleanupAttempt,
@@ -46,7 +48,9 @@ from tldw_chatbook.Terminal.posix_backend import (  # noqa: E402
     PosixTerminalBackend,
     _plan_signals,
     _read_pipe,
+    _stderr_context,
 )
+from tldw_chatbook.Terminal.posix_launcher import _validated_config  # noqa: E402
 from tldw_chatbook.Terminal.session_manager import (  # noqa: E402
     TerminalSessionManager,
 )
@@ -117,6 +121,7 @@ def _direct_launcher(
             "PATH": os.environ["PATH"],
             "TERM": "linux",
         },
+        "executable": sys.executable,
         "token": "launcher-token",
     }
     process: subprocess.Popen[bytes] | None = None
@@ -450,24 +455,157 @@ def test_wait_for_positive_pid_ignores_incomplete_file_contents(
 
 def test_posix_only_imports_follow_module_platform_gate() -> None:
     tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
-    fcntl_imports = [
-        node.lineno
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Import)
-        and any(alias.name == "fcntl" for alias in node.names)
-    ]
-    module_skips = [
+    fcntl_guards = [
         node.lineno
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and isinstance(node.func.value, ast.Name)
-        and (node.func.value.id, node.func.attr) == ("pytest", "skip")
+        and (node.func.value.id, node.func.attr) == ("pytest", "importorskip")
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "fcntl"
+    ]
+    local_imports = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and isinstance(node.module, str)
+        and node.module.startswith("tldw_chatbook.")
     ]
 
-    assert len(fcntl_imports) == 1
-    assert len(module_skips) == 1
-    assert module_skips[0] < fcntl_imports[0]
+    assert len(fcntl_guards) == 1
+    assert local_imports
+    assert fcntl_guards[0] < min(local_imports)
+
+
+def test_launcher_config_is_a_strict_pydantic_boundary(tmp_path: Path) -> None:
+    executable = sys.executable
+    value = {
+        "argv": [executable, "-V"],
+        "cwd": str(tmp_path),
+        "environment": {"PATH": os.environ["PATH"]},
+        "executable": executable,
+        "token": "launcher-token",
+    }
+
+    config = _validated_config(value)
+
+    assert isinstance(config, BaseModel)
+    assert config.executable == executable
+    assert config.argv == [executable, "-V"]
+    assert config.cwd == str(tmp_path)
+    assert config.environment == {"PATH": os.environ["PATH"]}
+    assert config.token == "launcher-token"
+    with pytest.raises(ValueError, match="launcher config is invalid"):
+        _validated_config({**value, "unexpected": True})
+    without_executable = dict(value)
+    without_executable.pop("executable")
+    with pytest.raises(ValueError, match="launcher config is invalid"):
+        _validated_config(without_executable)
+
+
+def test_spawn_stderr_fallback_is_closed_after_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class InvalidStderr:
+        @staticmethod
+        def fileno() -> int:
+            return -1
+
+    invalid = InvalidStderr()
+    monkeypatch.setattr(sys, "stderr", invalid)
+    monkeypatch.setattr(sys, "__stderr__", invalid)
+
+    with _stderr_context():
+        fallback = sys.stderr
+        descriptor = fallback.fileno()
+        os.fstat(descriptor)
+
+    with pytest.raises(OSError) as error:
+        os.fstat(descriptor)
+    assert error.value.errno == errno.EBADF
+
+
+def test_backend_uses_central_normalized_start_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    requested = tmp_path / "requested"
+    normalized = tmp_path / "normalized"
+    home = tmp_path / "home"
+    requested.mkdir()
+    normalized.mkdir()
+    home.mkdir()
+    validated: list[object] = []
+
+    def validate_start_directory(value: object) -> Path:
+        validated.append(value)
+        return normalized
+
+    monkeypatch.setattr(
+        posix_backend_module,
+        "validate_existing_absolute_directory",
+        validate_start_directory,
+        raising=False,
+    )
+    backend = PosixTerminalBackend(environment_factory=lambda: _environment(home))
+    try:
+        backend.start(
+            TerminalLaunchRequest(
+                name="normalized-directory",
+                shell="bash",
+                start_directory=str(requested),
+                columns=80,
+                rows=24,
+            ),
+            AdmissionGate(admitted=True, token="normalized-directory"),
+        )
+        _read_until(backend, b"$", timeout=3.0)
+        command = shlex.join([sys.executable, str(TERMINAL_CHILD), "probe"])
+        backend.write((command + "\n").encode())
+        probe = _json_line(_read_until(backend, b'"stdin_tty": true'), "stdin_tty")
+
+        assert validated == [str(requested)]
+        assert probe["cwd"] == str(normalized)
+    finally:
+        _cleanup_backend_exact(backend)
+
+
+def test_pre_admission_failure_proves_disposed_backend(tmp_path: Path) -> None:
+    now = 1_000.0
+
+    def clock() -> float:
+        return now
+
+    def advance(duration: float) -> None:
+        nonlocal now
+        now += duration
+
+    def fail_environment() -> dict[str, str]:
+        raise RuntimeError("environment unavailable")
+
+    backend = PosixTerminalBackend(
+        environment_factory=fail_environment,
+        monotonic_clock=clock,
+        sleep=advance,
+    )
+    with pytest.raises(RuntimeError, match="environment unavailable"):
+        backend.start(
+            TerminalLaunchRequest(
+                name="pre-admission-failure",
+                shell="bash",
+                start_directory=str(tmp_path),
+                columns=80,
+                rows=24,
+            ),
+            AdmissionGate(admitted=True, token="pre-admission-failure"),
+        )
+
+    proof = backend.cleanup(CleanupAttempt(now))
+
+    assert proof == CleanupProof(True, True, True)
+    assert now == 1_000.0
 
 
 def test_parent_source_forbids_unsafe_fork_paths_and_uses_fresh_launcher() -> None:
@@ -663,6 +801,11 @@ def test_parent_setup_failure_while_gated_cannot_exec_profile_or_leak_processes(
         assert profile_sentinel.exists() is False
         assert child_pid_file.exists() is False
         assert all(not _pid_matches(pid, birth_time) for pid, birth_time in launched)
+        assert backend.cleanup(CleanupAttempt(time.monotonic())) == CleanupProof(
+            True,
+            True,
+            True,
+        )
     finally:
         monkeypatch.undo()
         if child_identity is None and child_pid_file.exists():
@@ -717,9 +860,14 @@ def test_exec_status_read_failure_after_admission_cleans_owned_session(
         raise RuntimeError("POSIX terminal startup failed")
 
     class ObservedBackend(PosixTerminalBackend):
-        def _reap_unadmitted(self, process: subprocess.Popen[bytes]) -> None:
+        def _reap_unadmitted(
+            self,
+            process: subprocess.Popen[bytes],
+            *,
+            deadline: float | None = None,
+        ) -> bool:
             unadmitted_reaps.append(process.pid)
-            super()._reap_unadmitted(process)
+            return super()._reap_unadmitted(process, deadline=deadline)
 
         def cleanup(self, attempt: CleanupAttempt) -> CleanupProof:
             proof = super().cleanup(attempt)
@@ -821,6 +969,11 @@ def test_reaper_thread_start_failure_rolls_back_before_admission(
         assert all(
             not _pid_matches(process.pid, birth_time)
             for process, birth_time in launched
+        )
+        assert backend.cleanup(CleanupAttempt(time.monotonic())) == CleanupProof(
+            True,
+            True,
+            True,
         )
     finally:
         monkeypatch.undo()

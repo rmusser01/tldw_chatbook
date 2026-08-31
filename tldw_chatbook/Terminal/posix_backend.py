@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 import contextlib
 from dataclasses import dataclass
 import errno
 import fcntl
 import json
 import os
-from pathlib import Path
 import secrets
 import select
 import signal
@@ -22,6 +21,10 @@ import time
 from typing import Any
 
 import psutil
+
+from tldw_chatbook.Utils.path_validation import (
+    validate_existing_absolute_directory,
+)
 
 from .contracts import (
     AdmissionGate,
@@ -50,7 +53,6 @@ _LAUNCH_TIMEOUT_SECONDS = 5.0
 _PROCESS_POLL_SECONDS = 0.01
 _ZERO_SCAN_INTERVAL_SECONDS = 0.05
 _SPAWN_LOCK = threading.Lock()
-_STDERR_FALLBACK: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,20 +160,20 @@ def _stream_fileno(stream: Any) -> int:
     return descriptor if isinstance(descriptor, int) and descriptor >= 0 else -1
 
 
-def _fd_backed_stderr() -> Any:
+@contextlib.contextmanager
+def _stderr_context() -> Iterator[None]:
+    """Provide a spawn-safe stderr and close any owned fallback on exit."""
+    if _stream_fileno(sys.stderr) >= 0:
+        yield
+        return
     real = sys.__stderr__
     if real is not None and _stream_fileno(real) >= 0:
-        return real
-    global _STDERR_FALLBACK
-    if _STDERR_FALLBACK is None:
-        _STDERR_FALLBACK = open(os.devnull, "w")
-    return _STDERR_FALLBACK
-
-
-def _stderr_context() -> Any:
-    if _stream_fileno(sys.stderr) >= 0:
-        return contextlib.nullcontext()
-    return contextlib.redirect_stderr(_fd_backed_stderr())
+        with contextlib.redirect_stderr(real):
+            yield
+        return
+    with open(os.devnull, "w") as fallback:
+        with contextlib.redirect_stderr(fallback):
+            yield
 
 
 def _write_all(fd: int, data: bytes) -> None:
@@ -277,8 +279,10 @@ class PosixTerminalBackend:
         self._shell_reaped = threading.Event()
         self._monitor_stop = threading.Event()
         self._process: subprocess.Popen[bytes] | None = None
+        self._provisional_process: subprocess.Popen[bytes] | None = None
         self._master_fd: int | None = None
         self._identity: PosixProcessIdentity | None = None
+        self._pre_admission_disposed = False
         self._tracked: dict[int, float] = {}
         self._exit_code: int | None = None
         self._reap_count = 0
@@ -311,39 +315,48 @@ class PosixTerminalBackend:
             ValueError: If launch dimensions or directory are invalid.
         """
         with self._state_lock:
-            if self._process is not None or self._master_fd is not None:
+            if (
+                self._process is not None
+                or self._provisional_process is not None
+                or self._master_fd is not None
+                or self._pre_admission_disposed
+            ):
                 raise RuntimeError("POSIX terminal startup failed")
-        _validate_dimensions(request.columns, request.rows)
-        start_directory = Path(request.start_directory)
-        if not start_directory.is_absolute() or not start_directory.is_dir():
-            raise ValueError("terminal start directory is invalid")
-        choices = self._shell_choices_factory()
-        shell = resolve_shell_choice(request.shell or "default", choices)
-        environment = _validate_environment(self._environment_factory())
-        admitted = (
-            type(admission) is AdmissionGate
-            and admission.admitted is True
-            and isinstance(admission.token, str)
-            and bool(admission.token)
-            and len(admission.token) <= 1024
-        )
-        gate_token = admission.token if admitted else secrets.token_hex(16)
-        config = (
-            json.dumps(
-                {
-                    "argv": list(shell.argv),
-                    "cwd": str(start_directory),
-                    "environment": environment,
-                    "executable": str(shell.executable),
-                    "token": gate_token,
-                },
-                separators=(",", ":"),
-                sort_keys=True,
-            ).encode("utf-8")
-            + b"\n"
-        )
-        if len(config) > 64 * 1024:
-            raise ValueError("terminal launch values are invalid")
+        try:
+            _validate_dimensions(request.columns, request.rows)
+            start_directory = validate_existing_absolute_directory(
+                request.start_directory
+            )
+            choices = self._shell_choices_factory()
+            shell = resolve_shell_choice(request.shell or "default", choices)
+            environment = _validate_environment(self._environment_factory())
+            admitted = (
+                type(admission) is AdmissionGate
+                and admission.admitted is True
+                and isinstance(admission.token, str)
+                and bool(admission.token)
+                and len(admission.token) <= 1024
+            )
+            gate_token = admission.token if admitted else secrets.token_hex(16)
+            config = (
+                json.dumps(
+                    {
+                        "argv": list(shell.argv),
+                        "cwd": str(start_directory),
+                        "environment": environment,
+                        "executable": str(shell.executable),
+                        "token": gate_token,
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode("utf-8")
+                + b"\n"
+            )
+            if len(config) > 64 * 1024:
+                raise ValueError("terminal launch values are invalid")
+        except Exception:
+            self._mark_pre_admission_disposed()
+            raise
 
         process: subprocess.Popen[bytes] | None = None
         descriptors: dict[str, int | None] = {
@@ -359,6 +372,8 @@ class PosixTerminalBackend:
             "status_write": None,
         }
         reaper_started = False
+        unadmitted_reaped = False
+        dispose_after_failure = False
         try:
             with _SPAWN_LOCK:
                 with _stderr_context():
@@ -468,7 +483,7 @@ class PosixTerminalBackend:
                 maximum=1,
             )
             if not admitted:
-                self._reap_unadmitted(process)
+                unadmitted_reaped = self._reap_unadmitted(process)
                 raise RuntimeError("POSIX terminal admission failed")
             if status:
                 raise RuntimeError("POSIX terminal startup failed")
@@ -477,19 +492,35 @@ class PosixTerminalBackend:
             self._start_owner_workers(process)
             return BackendIdentity(session_id=admission.token)
         except Exception:
-            if process is not None:
-                if reaper_started:
+            if process is None:
+                dispose_after_failure = True
+            elif reaper_started:
+                try:
+                    self.request_priority_close()
+                    self.cleanup(CleanupAttempt(time.monotonic()))
+                except Exception:
+                    pass
+            elif self._process is None:
+                if not unadmitted_reaped:
                     try:
-                        self.request_priority_close()
-                        self.cleanup(CleanupAttempt(time.monotonic()))
+                        unadmitted_reaped = self._reap_unadmitted(process)
                     except Exception:
-                        pass
-                elif self._process is None:
-                    self._reap_unadmitted(process)
+                        unadmitted_reaped = False
+                dispose_after_failure = unadmitted_reaped
+                if not unadmitted_reaped:
+                    with self._state_lock:
+                        self._provisional_process = process
             raise
         finally:
             for descriptor in descriptors.values():
                 _safe_close(descriptor)
+            if not reaper_started and (
+                dispose_after_failure or self._provisional_process is process
+            ):
+                with self._state_lock:
+                    self._pty_eof = True
+            if dispose_after_failure:
+                self._mark_pre_admission_disposed()
 
     def read(self, maximum: int = 64 * 1024) -> bytes | None:
         """Read one nonblocking bounded PTY chunk.
@@ -797,30 +828,91 @@ class PosixTerminalBackend:
         if birth_time != identity.birth_time or sid != identity.sid:
             raise RuntimeError("POSIX terminal startup failed")
 
-    @staticmethod
-    def _reap_unadmitted(process: subprocess.Popen[bytes]) -> None:
-        try:
-            process.wait(timeout=0.25)
-            return
-        except subprocess.TimeoutExpired:
-            pass
+    def _mark_pre_admission_disposed(self) -> None:
+        """Record proof that startup ended before any terminal was admitted."""
+        with self._state_lock:
+            if (
+                self._process is not None
+                or self._provisional_process is not None
+                or self._identity is not None
+                or self._master_fd is not None
+            ):
+                return
+            self._pre_admission_disposed = True
+            self._pty_eof = True
+            self._input_closed = True
+            self._process_only_dead = True
+            self._output_buffer.clear()
+            self._output_complete = True
+
+    def _reap_unadmitted(
+        self,
+        process: subprocess.Popen[bytes],
+        *,
+        deadline: float | None = None,
+    ) -> bool:
+        """Reap one exact pre-admission child within a bounded deadline."""
+        if deadline is None:
+            deadline = self._clock() + 1.25
+
+        def wait_for_exit(maximum: float) -> bool:
+            remaining = deadline - self._clock()
+            if remaining <= 0:
+                return process.poll() is not None
+            try:
+                process.wait(timeout=min(maximum, remaining))
+                return True
+            except subprocess.TimeoutExpired:
+                return False
+
+        if wait_for_exit(0.25):
+            return True
         try:
             process.terminate()
         except ProcessLookupError:
             pass
-        try:
-            process.wait(timeout=0.5)
-            return
-        except subprocess.TimeoutExpired:
-            pass
+        if wait_for_exit(0.5):
+            return True
         try:
             process.kill()
         except ProcessLookupError:
             pass
+        if wait_for_exit(0.5):
+            return True
+        return process.poll() is not None
+
+    def _cleanup_pre_admission(
+        self,
+        attempt: CleanupAttempt,
+        *,
+        parser_failed: bool,
+    ) -> CleanupProof | None:
+        """Settle only explicitly tracked pre-admission startup state."""
+        with self._state_lock:
+            if self._identity is not None or self._process is not None:
+                return None
+            disposed = self._pre_admission_disposed
+            provisional = self._provisional_process
+            stream_closed = self._pty_eof
+        if disposed:
+            return CleanupProof(True, True, not parser_failed)
+        if provisional is None:
+            return None
+
+        deadline = attempt.t0 + CleanupSchedule().deadline_seconds
+        if self._deadline_expired(deadline):
+            return CleanupProof(False, stream_closed, False)
         try:
-            process.wait(timeout=0.5)
-        except subprocess.TimeoutExpired:
-            pass
+            reaped = self._reap_unadmitted(provisional, deadline=deadline)
+        except Exception:
+            reaped = False
+        if not reaped:
+            return CleanupProof(False, stream_closed, False)
+        with self._state_lock:
+            if self._provisional_process is provisional:
+                self._provisional_process = None
+        self._mark_pre_admission_disposed()
+        return CleanupProof(True, True, not parser_failed)
 
     def _start_shell_reaper(self, process: subprocess.Popen[bytes]) -> None:
         threading.Thread(
@@ -997,8 +1089,14 @@ class PosixTerminalBackend:
         with self._state_lock:
             identity = self._identity
             tracked = dict(self._tracked)
+            pre_admission_disposed = self._pre_admission_disposed
         if identity is None:
-            return OwnershipScan((), (), False)
+            return OwnershipScan(
+                (),
+                (),
+                pre_admission_disposed,
+                pre_admission_disposed,
+            )
 
         complete = True
         group_membership_complete = True
@@ -1197,6 +1295,12 @@ class PosixTerminalBackend:
         *,
         parser_failed: bool = False,
     ) -> CleanupProof:
+        pre_admission = self._cleanup_pre_admission(
+            attempt,
+            parser_failed=parser_failed,
+        )
+        if pre_admission is not None:
+            return pre_admission
         self.request_priority_close()
         schedule = CleanupSchedule()
         hangup_at = attempt.t0 + schedule.hangup_no_later_than
