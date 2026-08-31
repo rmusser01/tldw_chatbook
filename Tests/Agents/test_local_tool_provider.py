@@ -612,6 +612,107 @@ def test_local_executor_boundary_failures_map_to_pinned_refusals(
     assert executor.calls == [("fs_list", {"path": "."}, "read")]
 
 
+@pytest.mark.parametrize(
+    ("code", "expected_reason", "expected_error", "expected_outcome"),
+    (
+        (
+            "root_pin_failed",
+            local_tool_provider.LocalToolInvocationReason.ROOT_CHANGED,
+            LOCAL_ROOT_CHANGED_REFUSAL,
+            "blocked",
+        ),
+        (
+            "containment_unavailable",
+            local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
+            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+            "blocked",
+        ),
+        (
+            "spawn_failed",
+            local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
+            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+            "blocked",
+        ),
+        (
+            "cleanup_unproven",
+            local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
+            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+            "blocked",
+        ),
+        (
+            "worker_timed_out",
+            local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
+            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+            "blocked",
+        ),
+        (
+            "worker_crashed",
+            local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
+            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+            "blocked",
+        ),
+        (
+            "worker_failure",
+            local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
+            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+            "blocked",
+        ),
+        (
+            "protocol_failure",
+            local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
+            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+            "blocked",
+        ),
+        (
+            "invalid_request",
+            local_tool_provider.LocalToolInvocationReason.HANDLER_RAISED,
+            "workspace operation failed (invalid_request)",
+            None,
+        ),
+        (
+            "tool_failure",
+            local_tool_provider.LocalToolInvocationReason.HANDLER_RAISED,
+            "workspace operation failed (tool_failure)",
+            None,
+        ),
+    ),
+)
+def test_workspace_executor_detailed_reason_matches_ordinary_result(
+    tmp_path,
+    code,
+    expected_reason,
+    expected_error,
+    expected_outcome,
+):
+    detailed_executor = RecordingWorkspaceExecutor(error=code)
+    ordinary_executor = RecordingWorkspaceExecutor(error=code)
+    detailed_provider = make_provider(
+        root=tmp_path,
+        workspace_executor=detailed_executor,
+    )
+    ordinary_provider = make_provider(
+        root=tmp_path,
+        workspace_executor=ordinary_executor,
+    )
+    arguments = {"path": "."}
+
+    detailed = detailed_provider.invoke_detailed(
+        "local:fs_list", copy.deepcopy(arguments)
+    )
+    ordinary = ordinary_provider.invoke("local:fs_list", copy.deepcopy(arguments))
+
+    assert ordinary == detailed.result
+    assert detailed.result.error == expected_error
+    assert detailed.result.outcome == expected_outcome
+    assert detailed.reason_code is expected_reason
+    assert detailed.dispatch_started
+    assert (
+        detailed.provider_terminal is local_tool_provider.LocalProviderTerminal.RAISED
+    )
+    assert detailed_executor.calls == [("fs_list", {"path": "."}, "read")]
+    assert ordinary_executor.calls == [("fs_list", {"path": "."}, "read")]
+
+
 def test_local_executor_domain_failure_text_is_redacted_and_bounded(tmp_path):
     private_root = tmp_path / "private-root"
     private_root.mkdir()

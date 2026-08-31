@@ -368,15 +368,27 @@ def _fit_result(text: str) -> str:
     return raw[:_MAX_RESULT_BYTES].decode("utf-8", errors="ignore") + "\n… [truncated]"
 
 
+def _workspace_execution_error_reason(
+    error: WorkspaceToolExecutionError,
+) -> LocalToolInvocationReason:
+    """Classify one closed executor code without interpreting result text."""
+    if error.code == "root_pin_failed":
+        return LocalToolInvocationReason.ROOT_CHANGED
+    if error.code in {"invalid_request", "tool_failure"}:
+        return LocalToolInvocationReason.HANDLER_RAISED
+    return LocalToolInvocationReason.AUTHORITY_UNAVAILABLE
+
+
 def _workspace_execution_error_result(
     error: WorkspaceToolExecutionError,
     *,
     redaction_root: Path | None,
 ) -> ToolResult:
     """Translate one validated executor failure without a direct-core fallback."""
-    if error.code == "root_pin_failed":
+    reason = _workspace_execution_error_reason(error)
+    if reason is LocalToolInvocationReason.ROOT_CHANGED:
         return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
-    if error.code not in {"invalid_request", "tool_failure"}:
+    if reason is LocalToolInvocationReason.AUTHORITY_UNAVAILABLE:
         return ToolResult.blocked(LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL)
     text = redact_root_locator(str(error), redaction_root)
     return ToolResult(ok=False, error=text[:_MAX_ERROR_CHARS])
@@ -1442,7 +1454,7 @@ class LocalToolProvider:
                         result=result,
                         final_gate=gate.verdict,
                         approval_consumed=gate.approval_consumed,
-                        reason_code=LocalToolInvocationReason.HANDLER_RAISED,
+                        reason_code=_workspace_execution_error_reason(exc),
                         dispatch_started=True,
                         provider_terminal=provider_terminal,
                     )
