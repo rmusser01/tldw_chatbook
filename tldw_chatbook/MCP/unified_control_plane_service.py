@@ -24,6 +24,7 @@ from .hub_test_execution import (
     LocalHubExecutionCoordinator,
     LocalHubExecutionOutcome,
     OneShotLocalHubApproval,
+    RegisteredToolTestPreview,
     ToolTestAdmissionBlocked,
     ToolTestAdmissionPreview,
     ToolTestAdmissionStale,
@@ -2672,21 +2673,19 @@ class UnifiedMCPControlPlaneService:
                 refreshed=self._refresh_hub_test_preview(public),
             )
 
-        resolved = (
-            await asyncio.to_thread(
-                self._resolve_hub_test, public.server_key, public.tool_name
+        if public.server_key == "local:__local__":
+            return await self._execute_owned_prepared_local_hub_test(
+                registered=registered,
+                intent=intent,
+                canonical_arguments=canonical_bytes,
+                arguments=dispatch_arguments,
             )
-            if public.server_key == "local:__local__"
-            else self._resolve_hub_test(public.server_key, public.tool_name)
-        )
+
+        resolved = self._resolve_hub_test(public.server_key, public.tool_name)
         if resolved is None:
             return self._hub_test_stale(public, reason="identity_changed")
 
-        fresh_preview = (
-            await asyncio.to_thread(self._preview_fields, resolved)
-            if public.server_key == "local:__local__"
-            else self._preview_fields(resolved)
-        )
+        fresh_preview = self._preview_fields(resolved)
         if (
             fresh_preview.server_key != public.server_key
             or fresh_preview.tool_name != public.tool_name
@@ -2770,21 +2769,6 @@ class UnifiedMCPControlPlaneService:
                 refreshed=self._issue_hub_test_preview(resolved),
             )
 
-        if public.server_key == "local:__local__":
-            result = await self._maybe_await(
-                self._execute_prepared_local_hub_test(
-                    tool=resolved.tool,
-                    authority=resolved.authority,
-                    intent=intent,
-                    fresh_gate=fresh_gate,
-                    canonical_arguments=canonical_bytes,
-                    arguments=dispatch_copy,
-                )
-            )
-            if isinstance(result, (ToolTestAdmissionBlocked, ToolTestAdmissionStale)):
-                self._record_prepared_hub_block(public, result.reason)
-            return result
-
         decision = "approved" if fresh_gate == "ask" else "allowed"
         return await self.test_hub_tool(
             resolved.tool.server_key,
@@ -2794,7 +2778,95 @@ class UnifiedMCPControlPlaneService:
             registered_argument_names=schema_argument_names(resolved.tool.input_schema),
         )
 
-    async def _execute_prepared_local_hub_test(
+    def _review_prepared_local_hub_test(
+        self,
+        *,
+        registered: RegisteredToolTestPreview,
+        intent: Literal["run", "approve_once"],
+        canonical_arguments: bytes,
+        arguments: dict[str, Any],
+    ) -> (
+        tuple[_ResolvedHubTest, str, dict[str, Any]]
+        | ToolTestAdmissionBlocked
+        | ToolTestAdmissionStale
+    ):
+        """Rebuild and compare one consumed local preview on a worker thread."""
+        public = registered.public
+        resolved = self._resolve_hub_test(public.server_key, public.tool_name)
+        if resolved is None:
+            return ToolTestAdmissionStale(reason="identity_changed")
+
+        fresh_preview = self._preview_fields(resolved)
+        if (
+            fresh_preview.server_key != public.server_key
+            or fresh_preview.tool_name != public.tool_name
+        ):
+            return ToolTestAdmissionStale(
+                reason="identity_changed",
+                refreshed_preview=self._issue_hub_test_preview(resolved),
+            )
+        rendered_gate = public.rendered_gate
+        fresh_gate = fresh_preview.rendered_gate
+        if rendered_gate not in {"allow", "ask"}:
+            return ToolTestAdmissionBlocked(
+                reason=(
+                    "permission_unresolved"
+                    if rendered_gate in {"unavailable", "unresolved"}
+                    else "permission_denied"
+                ),
+                refreshed_preview=self._issue_hub_test_preview(resolved),
+            )
+        if resolved.unavailable_reason is not None:
+            return ToolTestAdmissionStale(
+                reason=resolved.unavailable_reason,
+                refreshed_preview=self._issue_hub_test_preview(resolved),
+            )
+        if fresh_preview.definition_hash != public.definition_hash:
+            return ToolTestAdmissionStale(
+                reason="definition_changed",
+                refreshed_preview=self._issue_hub_test_preview(resolved),
+            )
+        if (
+            fresh_preview.authority_fingerprint != public.authority_fingerprint
+            or resolved.authority != registered.authority
+            or fresh_preview.safe_authority_label != public.safe_authority_label
+        ):
+            return ToolTestAdmissionStale(
+                reason="authority_changed",
+                refreshed_preview=self._issue_hub_test_preview(resolved),
+            )
+        if rendered_gate == "allow":
+            if intent != "run":
+                return ToolTestAdmissionBlocked(
+                    reason="intent_mismatch",
+                    refreshed_preview=self._issue_hub_test_preview(resolved),
+                )
+            if fresh_gate != "allow":
+                return ToolTestAdmissionStale(
+                    reason="gate_changed",
+                    refreshed_preview=self._issue_hub_test_preview(resolved),
+                )
+        else:
+            if intent != "approve_once":
+                return ToolTestAdmissionBlocked(
+                    reason="intent_mismatch",
+                    refreshed_preview=self._issue_hub_test_preview(resolved),
+                )
+            if fresh_gate not in {"ask", "allow"}:
+                return ToolTestAdmissionStale(
+                    reason="gate_changed",
+                    refreshed_preview=self._issue_hub_test_preview(resolved),
+                )
+
+        dispatch_bytes, dispatch_copy = canonicalize_arguments(arguments)
+        if dispatch_bytes != canonical_arguments:
+            return ToolTestAdmissionBlocked(
+                reason="arguments_changed",
+                refreshed_preview=self._issue_hub_test_preview(resolved),
+            )
+        return resolved, fresh_gate, dispatch_copy
+
+    def _execute_prepared_local_hub_test(
         self,
         *,
         tool: HubTool,
@@ -2803,308 +2875,415 @@ class UnifiedMCPControlPlaneService:
         fresh_gate: str,
         canonical_arguments: bytes,
         arguments: dict[str, Any],
+        decision: str,
+        started_at: float,
+        cancellation_requested: threading.Event,
+        caller_task: asyncio.Task[Any] | None,
+        handler_started: threading.Event,
+        definitive_after_start: threading.Event,
+        timeout_ready: threading.Event,
+        effective_timeout: dict[str, float],
+        approval_state: dict[str, OneShotLocalHubApproval | None],
     ) -> LocalHubExecutionOutcome:
-        """Run one admitted local diagnostic under service-owned completion."""
+        """Construct, invoke, sanitize, and close one local provider in-worker."""
         from tldw_chatbook.Agents.agent_models import ToolResult
+        from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
+        from . import local_server_tools
 
-        key = (tool.server_key, tool.name)
-        decision = "approved" if fresh_gate == "ask" else "allowed"
-        started_at = time.monotonic()
-        loop = asyncio.get_running_loop()
-        presentation: asyncio.Future[LocalHubExecutionOutcome] = loop.create_future()
-        cancellation_requested = threading.Event()
-        handler_started = threading.Event()
-        definitive_after_start = threading.Event()
-        invocation_id = secrets.token_urlsafe()
+        handle = None
+        approval_callback: OneShotLocalHubApproval | None = None
 
-        async def _owner() -> None:
-            from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
-            from . import local_server_tools
+        def _duration_ms() -> int:
+            return max(0, int((time.monotonic() - started_at) * 1000))
 
-            handle = None
-            approval_callback: OneShotLocalHubApproval | None = None
-            worker: asyncio.Task[Any] | None = None
-            sealed = False
+        def _synthetic(
+            status: str, category: str, message: str
+        ) -> LocalHubExecutionOutcome:
+            return LocalHubExecutionOutcome(
+                decision=decision,
+                status=status,
+                error_category=category,
+                final_gate=(
+                    "allow"
+                    if approval_callback is not None and approval_callback.consumed
+                    else fresh_gate
+                ),
+                approval_consumed=(
+                    approval_callback.consumed
+                    if approval_callback is not None
+                    else False
+                ),
+                dispatch_started=handler_started.is_set(),
+                provider_terminal="not_started",
+                duration_ms=_duration_ms(),
+                result=ToolResult(
+                    ok=False,
+                    error=message,
+                    outcome=("cancelled" if status == "cancelled" else "blocked"),
+                ),
+            )
 
-            def _duration_ms() -> int:
-                return max(0, int((time.monotonic() - started_at) * 1000))
+        def _dispatch_guard() -> bool:
+            if cancellation_requested.is_set() or (
+                caller_task is not None and caller_task.cancelling()
+            ):
+                return False
+            handler_started.set()
+            return True
 
-            def _seal(outcome: LocalHubExecutionOutcome) -> None:
-                nonlocal sealed
-                if sealed:
-                    return
-                sealed = True
-                try:
-                    self._record_local_hub_outcome(tool, arguments, outcome)
-                except BaseException:
-                    logger.warning("Local Hub terminal audit failed")
-                if not presentation.done():
-                    presentation.set_result(outcome)
+        def _cancelled() -> bool:
+            return cancellation_requested.is_set() or (
+                caller_task is not None and bool(caller_task.cancelling())
+            )
 
-            def _synthetic(
-                status: str,
-                category: str,
-                message: str,
-                *,
-                dispatch_started: bool = False,
-            ) -> LocalHubExecutionOutcome:
-                return LocalHubExecutionOutcome(
-                    decision=decision,
-                    status=status,
-                    error_category=category,
-                    final_gate=(
-                        "allow"
-                        if approval_callback is not None and approval_callback.consumed
-                        else fresh_gate
-                    ),
-                    approval_consumed=(
-                        approval_callback.consumed
-                        if approval_callback is not None
-                        else False
-                    ),
-                    dispatch_started=dispatch_started,
-                    provider_terminal="not_started",
-                    duration_ms=_duration_ms(),
-                    result=ToolResult(
-                        ok=False,
-                        error=message,
-                        outcome=(
-                            "timeout"
-                            if status == "timeout"
-                            else "cancelled"
-                            if status == "cancelled"
-                            else "blocked"
-                        ),
-                    ),
+        try:
+            if _cancelled():
+                return _synthetic(
+                    "cancelled",
+                    "cancelled",
+                    "Local tool test was cancelled before dispatch.",
                 )
-
+            if authority is None:
+                return _synthetic(
+                    "blocked",
+                    "authority_changed",
+                    "Selected workspace authority changed.",
+                )
             try:
-                # Give an already-cancelled caller one scheduling boundary before
-                # acquiring filesystem authority or constructing dependencies.
-                await asyncio.sleep(0)
-                if cancellation_requested.is_set():
-                    _seal(
-                        _synthetic(
-                            "cancelled",
-                            "cancelled",
-                            "Local tool test was cancelled before dispatch.",
-                        )
-                    )
-                    return
-
-                def _dispatch_guard() -> bool:
-                    if cancellation_requested.is_set():
-                        return False
-                    handler_started.set()
-                    return True
-
-                def _construct():
-                    enabled = coerce_bool_setting(
-                        get_cli_setting("console", "local_tools_enabled", True),
-                        True,
-                    )
-                    if not enabled:
-                        raise PermissionError("local_tools_disabled")
-                    root = local_server_tools.resolve_server_workspace_root()
-                    callback = (
-                        OneShotLocalHubApproval(
-                            invocation_id=invocation_id,
-                            server_key=tool.server_key,
-                            tool_name=tool.name,
-                            definition_hash=definition_hash(
-                                tool.description, tool.input_schema
-                            ),
-                            authority_fingerprint=authority_fingerprint(authority),
-                            canonical_arguments=canonical_arguments,
-                        )
-                        if intent == "approve_once" and fresh_gate == "ask"
-                        else None
-                    )
-                    built = local_server_tools.build_hub_local_provider(
-                        root,
-                        resolve_state=self.gate_tool_test,
-                        approval_callback=callback,
-                        dispatch_guard=_dispatch_guard,
-                    )
-                    return built, callback
-
-                try:
-                    handle, approval_callback = await asyncio.to_thread(_construct)
-                except PermissionError:
-                    _seal(
-                        _synthetic(
-                            "blocked",
-                            "local_tools_disabled",
-                            "Local tools are disabled.",
-                        )
-                    )
-                    return
-                except BaseException:
-                    _seal(
-                        _synthetic(
-                            "blocked",
-                            "local_provider_unavailable",
-                            "Local tool provider is unavailable.",
-                        )
-                    )
-                    return
-
-                if authority is None or handle.authority != authority:
-                    _seal(
-                        _synthetic(
-                            "blocked",
-                            "authority_changed",
-                            "Selected workspace authority changed.",
-                        )
-                    )
-                    return
-                provider = handle.provider
-                live_tool = next(
-                    (
-                        candidate
-                        for candidate in provider.hub_tools()
-                        if candidate.server_key == tool.server_key
-                        and candidate.name == tool.name
-                        and definition_hash(
-                            candidate.description, candidate.input_schema
-                        )
-                        == definition_hash(tool.description, tool.input_schema)
-                    ),
-                    None,
-                )
-                if live_tool is None:
-                    _seal(
-                        _synthetic(
-                            "blocked",
-                            "local_tool_ineligible",
-                            "Local tool is not eligible for Hub execution.",
-                        )
-                    )
-                    return
-                if cancellation_requested.is_set():
-                    _seal(
-                        _synthetic(
-                            "cancelled",
-                            "cancelled",
-                            "Local tool test was cancelled before dispatch.",
-                        )
-                    )
-                    return
-
-                policy = provider.execution_policy_for(tool.name)
-                if policy is ToolExecutionPolicy.DEFINITIVE_AFTER_START:
-                    definitive_after_start.set()
-                timeout_floor = provider.timeout_for(tool.name)
-                lifecycle_timeout = self._lifecycle_timeout()
-                if not math.isfinite(lifecycle_timeout) or lifecycle_timeout <= 0:
-                    lifecycle_timeout = 45.0
-                if (
-                    timeout_floor is not None
-                    and isinstance(timeout_floor, (int, float))
-                    and not isinstance(timeout_floor, bool)
-                    and math.isfinite(float(timeout_floor))
-                    and float(timeout_floor) > 0
-                ):
-                    lifecycle_timeout = max(lifecycle_timeout, float(timeout_floor))
-
-                def _invoke_provider():
-                    if approval_callback is None:
-                        return provider.invoke_detailed(tool.name, arguments)
-                    with approval_callback.invocation_scope():
-                        return provider.invoke_detailed(tool.name, arguments)
-
-                worker = asyncio.create_task(asyncio.to_thread(_invoke_provider))
-                deadline = time.monotonic() + lifecycle_timeout
-
-                if policy is ToolExecutionPolicy.DEFINITIVE_AFTER_START:
-                    while not worker.done():
-                        if handler_started.is_set():
-                            break
-                        if cancellation_requested.is_set():
-                            detail = await worker
-                            _seal(
-                                _synthetic(
-                                    "cancelled",
-                                    "cancelled",
-                                    "Local tool test was cancelled before dispatch.",
-                                )
-                            )
-                            return
-                        if time.monotonic() >= deadline:
-                            cancellation_requested.set()
-                            detail = await worker
-                            del detail
-                            _seal(
-                                _synthetic(
-                                    "timeout",
-                                    "timeout",
-                                    "Local tool test timed out before dispatch.",
-                                )
-                            )
-                            return
-                        await asyncio.sleep(0.005)
-                    detail = await worker
-                    _seal(
-                        self._local_hub_outcome_from_detail(
-                            decision,
-                            detail,
-                            handle.authority.canonical_root,
-                            _duration_ms(),
-                        )
-                    )
-                    return
-
-                while not worker.done():
-                    if cancellation_requested.is_set():
-                        _seal(
-                            _synthetic(
-                                "cancelled",
-                                "cancelled",
-                                "Local tool test was cancelled.",
-                                dispatch_started=handler_started.is_set(),
-                            )
-                        )
-                        return
-                    if time.monotonic() >= deadline:
-                        _seal(
-                            _synthetic(
-                                "timeout",
-                                "timeout",
-                                "Local tool test timed out.",
-                                dispatch_started=handler_started.is_set(),
-                            )
-                        )
-                        return
-                    await asyncio.sleep(
-                        min(0.005, max(0.0, deadline - time.monotonic()))
-                    )
-                detail = await worker
-                _seal(
-                    self._local_hub_outcome_from_detail(
-                        decision,
-                        detail,
-                        handle.authority.canonical_root,
-                        _duration_ms(),
-                    )
+                enabled = coerce_bool_setting(
+                    get_cli_setting("console", "local_tools_enabled", True),
+                    True,
                 )
             except BaseException:
-                _seal(
+                return _synthetic(
+                    "blocked",
+                    "local_configuration_unavailable",
+                    "Local tool configuration is unavailable.",
+                )
+            if not enabled:
+                return _synthetic(
+                    "blocked", "local_tools_disabled", "Local tools are disabled."
+                )
+            try:
+                root = local_server_tools.resolve_server_workspace_root()
+                approval_callback = (
+                    OneShotLocalHubApproval(
+                        invocation_id=secrets.token_urlsafe(),
+                        server_key=tool.server_key,
+                        tool_name=tool.name,
+                        definition_hash=definition_hash(
+                            tool.description, tool.input_schema
+                        ),
+                        authority_fingerprint=authority_fingerprint(authority),
+                        canonical_arguments=canonical_arguments,
+                    )
+                    if intent == "approve_once" and fresh_gate == "ask"
+                    else None
+                )
+                approval_state["callback"] = approval_callback
+                handle = local_server_tools.build_hub_local_provider(
+                    root,
+                    resolve_state=self.gate_tool_test,
+                    approval_callback=approval_callback,
+                    dispatch_guard=_dispatch_guard,
+                )
+            except BaseException:
+                return _synthetic(
+                    "blocked",
+                    "local_provider_unavailable",
+                    "Local tool provider is unavailable.",
+                )
+            if handle.authority != authority:
+                return _synthetic(
+                    "blocked",
+                    "authority_changed",
+                    "Selected workspace authority changed.",
+                )
+            provider = handle.provider
+            live_tool = next(
+                (
+                    candidate
+                    for candidate in provider.hub_tools()
+                    if candidate.server_key == tool.server_key
+                    and candidate.name == tool.name
+                    and definition_hash(candidate.description, candidate.input_schema)
+                    == definition_hash(tool.description, tool.input_schema)
+                ),
+                None,
+            )
+            if live_tool is None:
+                return _synthetic(
+                    "blocked",
+                    "local_tool_ineligible",
+                    "Local tool is not eligible for Hub execution.",
+                )
+            if _cancelled():
+                return _synthetic(
+                    "cancelled",
+                    "cancelled",
+                    "Local tool test was cancelled before dispatch.",
+                )
+
+            policy = provider.execution_policy_for(tool.name)
+            if policy is ToolExecutionPolicy.DEFINITIVE_AFTER_START:
+                definitive_after_start.set()
+            timeout_floor = provider.timeout_for(tool.name)
+            if (
+                timeout_floor is not None
+                and isinstance(timeout_floor, (int, float))
+                and not isinstance(timeout_floor, bool)
+                and math.isfinite(float(timeout_floor))
+                and float(timeout_floor) > 0
+            ):
+                effective_timeout["seconds"] = max(
+                    effective_timeout["seconds"], float(timeout_floor)
+                )
+            effective_timeout["started_at"] = time.monotonic()
+            timeout_ready.set()
+            if _cancelled():
+                return _synthetic(
+                    "cancelled",
+                    "cancelled",
+                    "Local tool test was cancelled before dispatch.",
+                )
+
+            if approval_callback is None:
+                detail = provider.invoke_detailed(tool.name, arguments)
+            else:
+                with approval_callback.invocation_scope():
+                    detail = provider.invoke_detailed(tool.name, arguments)
+            return self._local_hub_outcome_from_detail(
+                decision,
+                detail,
+                handle.authority.canonical_root,
+                _duration_ms(),
+            )
+        except BaseException:
+            return _synthetic(
+                "error", "execution_failed", "Local tool execution failed."
+            )
+        finally:
+            if handle is not None:
+                try:
+                    handle.close()
+                except BaseException:
+                    pass
+
+    async def _execute_owned_prepared_local_hub_test(
+        self,
+        *,
+        registered: RegisteredToolTestPreview,
+        intent: Literal["run", "approve_once"],
+        canonical_arguments: bytes,
+        arguments: dict[str, Any],
+    ) -> LocalHubExecutionOutcome | ToolTestAdmissionBlocked | ToolTestAdmissionStale:
+        """Own local review through terminal audit independently of its caller."""
+        from tldw_chatbook.Agents.agent_models import ToolResult
+
+        public = registered.public
+        key = (public.server_key, public.tool_name)
+        decision = "approved" if public.rendered_gate == "ask" else "allowed"
+        started_at = time.monotonic()
+        loop = asyncio.get_running_loop()
+        presentation: asyncio.Future[Any] = loop.create_future()
+        cancellation_requested = threading.Event()
+        caller_task = asyncio.current_task()
+        handler_started = threading.Event()
+        definitive_after_start = threading.Event()
+        timeout_ready = threading.Event()
+        effective_timeout = {"seconds": 45.0, "started_at": started_at}
+        approval_state: dict[str, OneShotLocalHubApproval | None] = {"callback": None}
+        gate_state = {"value": public.rendered_gate}
+        audit_tool = {
+            "value": HubTool(
+                server_key=public.server_key,
+                server_label="Local workspace",
+                source="local",
+                name=public.tool_name,
+                description="",
+                input_schema={"type": "object", "properties": {}},
+                tags=(),
+                stale=False,
+                executable=False,
+            )
+        }
+        sealed = False
+
+        def _duration_ms() -> int:
+            return max(0, int((time.monotonic() - started_at) * 1000))
+
+        def _synthetic(
+            status: str,
+            category: str,
+            message: str,
+        ) -> LocalHubExecutionOutcome:
+            callback = approval_state["callback"]
+            return LocalHubExecutionOutcome(
+                decision=decision,
+                status=status,
+                error_category=category,
+                final_gate=(
+                    "allow"
+                    if callback is not None and callback.consumed
+                    else gate_state["value"]
+                ),
+                approval_consumed=(
+                    callback.consumed if callback is not None else False
+                ),
+                dispatch_started=handler_started.is_set(),
+                provider_terminal="not_started",
+                duration_ms=_duration_ms(),
+                result=ToolResult(
+                    ok=False,
+                    error=message,
+                    outcome=(
+                        "timeout"
+                        if status == "timeout"
+                        else "cancelled"
+                        if status == "cancelled"
+                        else "blocked"
+                    ),
+                ),
+            )
+
+        def _seal_local(outcome: LocalHubExecutionOutcome) -> None:
+            nonlocal sealed
+            if sealed:
+                return
+            sealed = True
+            try:
+                self._record_local_hub_outcome(audit_tool["value"], arguments, outcome)
+            except BaseException:
+                logger.warning("Local Hub terminal audit failed")
+            if not presentation.done():
+                presentation.set_result(outcome)
+
+        def _seal_review(
+            result: ToolTestAdmissionBlocked | ToolTestAdmissionStale,
+        ) -> None:
+            nonlocal sealed
+            if sealed:
+                return
+            sealed = True
+            try:
+                self._record_prepared_hub_block(public, result.reason)
+            except BaseException:
+                logger.warning("Local Hub review audit failed")
+            if not presentation.done():
+                presentation.set_result(result)
+
+        def _transaction():
+            try:
+                try:
+                    lifecycle_timeout = self._lifecycle_timeout()
+                except BaseException:
+                    lifecycle_timeout = 45.0
+                if not math.isfinite(lifecycle_timeout) or lifecycle_timeout <= 0:
+                    lifecycle_timeout = 45.0
+                effective_timeout["seconds"] = float(lifecycle_timeout)
+                if cancellation_requested.is_set():
+                    return _synthetic(
+                        "cancelled",
+                        "cancelled",
+                        "Local tool test was cancelled before dispatch.",
+                    )
+                reviewed = self._review_prepared_local_hub_test(
+                    registered=registered,
+                    intent=intent,
+                    canonical_arguments=canonical_arguments,
+                    arguments=arguments,
+                )
+                if isinstance(
+                    reviewed, (ToolTestAdmissionBlocked, ToolTestAdmissionStale)
+                ):
+                    return reviewed
+                resolved, fresh_gate, dispatch_copy = reviewed
+                audit_tool["value"] = resolved.tool
+                gate_state["value"] = fresh_gate
+                if cancellation_requested.is_set():
+                    return _synthetic(
+                        "cancelled",
+                        "cancelled",
+                        "Local tool test was cancelled before dispatch.",
+                    )
+                return self._execute_prepared_local_hub_test(
+                    tool=resolved.tool,
+                    authority=resolved.authority,
+                    intent=intent,
+                    fresh_gate=fresh_gate,
+                    canonical_arguments=canonical_arguments,
+                    arguments=dispatch_copy,
+                    decision=decision,
+                    started_at=started_at,
+                    cancellation_requested=cancellation_requested,
+                    caller_task=caller_task,
+                    handler_started=handler_started,
+                    definitive_after_start=definitive_after_start,
+                    timeout_ready=timeout_ready,
+                    effective_timeout=effective_timeout,
+                    approval_state=approval_state,
+                )
+            except BaseException:
+                return _synthetic(
+                    "error", "execution_failed", "Local tool execution failed."
+                )
+
+        async def _owner() -> None:
+            worker: asyncio.Task[Any] | None = None
+            try:
+                worker = asyncio.create_task(asyncio.to_thread(_transaction))
+                while not worker.done():
+                    definitive_running = (
+                        definitive_after_start.is_set() and handler_started.is_set()
+                    )
+                    if cancellation_requested.is_set() and not definitive_running:
+                        _seal_local(
+                            _synthetic(
+                                "cancelled",
+                                "cancelled",
+                                "Local tool test was cancelled before dispatch.",
+                            )
+                        )
+                        return
+                    if (
+                        timeout_ready.is_set()
+                        and time.monotonic() - effective_timeout["started_at"]
+                        >= effective_timeout["seconds"]
+                        and not definitive_running
+                    ):
+                        cancellation_requested.set()
+                        _seal_local(
+                            _synthetic(
+                                "timeout", "timeout", "Local tool test timed out."
+                            )
+                        )
+                        return
+                    await asyncio.sleep(0.005)
+                result = await worker
+                if cancellation_requested.is_set() and not (
+                    definitive_after_start.is_set() and handler_started.is_set()
+                ):
+                    _seal_local(
+                        _synthetic(
+                            "cancelled",
+                            "cancelled",
+                            "Local tool test was cancelled before dispatch.",
+                        )
+                    )
+                elif isinstance(result, LocalHubExecutionOutcome):
+                    _seal_local(result)
+                else:
+                    _seal_review(result)
+            except BaseException:
+                _seal_local(
                     _synthetic(
-                        "error",
-                        "execution_failed",
-                        "Local tool execution failed.",
-                        dispatch_started=handler_started.is_set(),
+                        "error", "execution_failed", "Local tool execution failed."
                     )
                 )
             finally:
                 if worker is not None and not worker.done():
                     try:
                         await worker
-                    except BaseException:
-                        pass
-                if handle is not None:
-                    try:
-                        await asyncio.to_thread(handle.close)
                     except BaseException:
                         pass
 
@@ -3114,17 +3293,17 @@ class UnifiedMCPControlPlaneService:
                 decision="denied",
                 status="blocked",
                 error_category="already_active",
-                final_gate=fresh_gate,
+                final_gate=public.rendered_gate,
                 approval_consumed=False,
                 dispatch_started=False,
                 provider_terminal="not_started",
-                duration_ms=max(0, int((time.monotonic() - started_at) * 1000)),
+                duration_ms=_duration_ms(),
                 result=ToolResult.blocked(
                     "A test for this local tool is already active."
                 ),
             )
             try:
-                self._record_local_hub_outcome(tool, arguments, outcome)
+                self._record_local_hub_outcome(audit_tool["value"], arguments, outcome)
             except BaseException:
                 logger.warning("Local Hub duplicate audit failed")
             return outcome
@@ -3133,9 +3312,6 @@ class UnifiedMCPControlPlaneService:
         except asyncio.CancelledError:
             cancellation_requested.set()
             if not (definitive_after_start.is_set() and handler_started.is_set()):
-                # Bounded and pre-dispatch cancellation belongs to the
-                # coordinator: wait only until its terminal row is sealed,
-                # never for an abandoned worker's eventual cleanup.
                 await asyncio.shield(presentation)
             raise
 
@@ -3149,14 +3325,23 @@ class UnifiedMCPControlPlaneService:
         from tldw_chatbook.Agents.agent_models import ToolResult
         from tldw_chatbook.Agents.tool_catalog import redact_root_locator
 
+        def _sanitize_json(value: Any) -> Any:
+            if isinstance(value, Mapping):
+                return redact_mapping(value)
+            if isinstance(value, list):
+                return [_sanitize_json(item) for item in value]
+            if isinstance(value, tuple):
+                return tuple(_sanitize_json(item) for item in value)
+            return value
+
         def _safe_text(value: str, limit: int) -> str:
             rooted = str(redact_root_locator(str(value), root))
             try:
                 decoded = json.loads(rooted)
             except (TypeError, ValueError, json.JSONDecodeError):
                 decoded = None
-            if isinstance(decoded, Mapping):
-                rooted = json.dumps(redact_mapping(decoded), sort_keys=True)
+            if isinstance(decoded, (Mapping, list, tuple)):
+                rooted = json.dumps(_sanitize_json(decoded), sort_keys=True)
             rooted = re.sub(
                 r"(?i)((?:token|secret|passw(?:or)?d|api[-_]?key|authorization|credential)\s*[:=]\s*)[^\s,;]+",
                 r"\1***",
