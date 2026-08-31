@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence
 
 from loguru import logger
 
@@ -294,6 +294,9 @@ def build_console_workspace_state(
     conversations: Iterable[ConsoleWorkspaceConversationRow] | None = None,
     server_adapter_state: ConsoleWorkspaceServerAdapterState | None = None,
     acp_handoff_state: ConsoleWorkspaceACPHandoffState | None = None,
+    runtime_bindings_by_workspace: Mapping[
+        str, Sequence[WorkspaceRuntimeBinding]
+    ] | None = None,
 ) -> ConsoleWorkspaceContextState:
     """Build Console workspace display state from the local registry seam.
 
@@ -310,6 +313,10 @@ def build_console_workspace_state(
             hydration states without starting sync.
         acp_handoff_state: Optional ACP task/run package handoff snapshot used
             to render unavailable, ready, failed, blocked, and audit states.
+        runtime_bindings_by_workspace: Optional precomputed immutable runtime
+            binding snapshot. When supplied, missing entries deliberately
+            render as no bindings rather than reading the registry or
+            filesystem on the caller's thread.
 
     Returns:
         Renderable Console workspace context state.
@@ -424,7 +431,11 @@ def build_console_workspace_state(
             acp_handoff_audit=acp_state[2],
         )
 
-    runtime_bindings = _safe_runtime_bindings(registry_service, active_workspace)
+    runtime_bindings = (
+        tuple(runtime_bindings_by_workspace.get(active_workspace.workspace_id, ()))
+        if runtime_bindings_by_workspace is not None
+        else _safe_runtime_bindings(registry_service, active_workspace)
+    )
     missing_folder_count = _missing_folder_count(runtime_bindings)
     workspaces = _safe_workspaces(registry_service)
     can_switch = len(workspaces) > 1

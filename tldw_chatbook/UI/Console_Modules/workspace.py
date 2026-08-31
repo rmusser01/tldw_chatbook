@@ -65,7 +65,11 @@ from ...Widgets.Console.console_workspace_files_modal import (
     WorkspaceFilesService,
 )
 from ...Workspaces.file_inspector import ScopeCaptureError, WorkspaceFileInspector
-from ...Workspaces.models import RuntimeBindingKind, RuntimeBindingStatus
+from ...Workspaces.models import (
+    RuntimeBindingKind,
+    RuntimeBindingStatus,
+    WorkspaceRuntimeBinding,
+)
 from ...Widgets.project_skills_import_modal import maybe_offer_project_skills_import
 from ...Workspaces import (
     CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
@@ -600,6 +604,9 @@ class ConsoleWorkspaceController:
         self._workspace_files_availability_by_id: Mapping[str, bool] = (
             MappingProxyType({})
         )
+        self._workspace_files_runtime_bindings_by_id: Mapping[
+            str, tuple[WorkspaceRuntimeBinding, ...]
+        ] = MappingProxyType({})
         self._workspace_files_availability_requested_ids: tuple[str, ...] = ()
         self._workspace_files_availability_generation = 0
         self._workspace_files_availability_refresh_in_flight = False
@@ -4522,24 +4529,43 @@ class ConsoleWorkspaceController:
 
     def _capture_workspace_files_availability(
         self, workspace_ids: Sequence[str]
-    ) -> dict[str, bool]:
-        """Read folder readiness off-loop into a presentation-only snapshot."""
+    ) -> tuple[dict[str, bool], dict[str, tuple[WorkspaceRuntimeBinding, ...]]]:
+        """Read runtime bindings and folder readiness off-loop into a snapshot."""
         registry = getattr(self.app_instance, "workspace_registry_service", None)
         availability: dict[str, bool] = {}
+        bindings_by_id: dict[str, tuple[WorkspaceRuntimeBinding, ...]] = {}
         for workspace_id in workspace_ids:
             if registry is None:
                 availability[workspace_id] = False
+                bindings_by_id[workspace_id] = ()
                 continue
             try:
-                bindings = registry.list_folder_bindings(workspace_id)
+                folder_bindings = tuple(registry.list_folder_bindings(workspace_id))
+                list_runtime_bindings = getattr(registry, "list_runtime_bindings", None)
+                runtime_bindings = (
+                    tuple(list_runtime_bindings(workspace_id))
+                    if callable(list_runtime_bindings)
+                    else folder_bindings
+                )
+                refreshed_by_binding_id = {
+                    str(getattr(binding, "binding_id", "")): binding
+                    for binding in folder_bindings
+                }
+                bindings_by_id[workspace_id] = tuple(
+                    refreshed_by_binding_id.get(
+                        str(getattr(binding, "binding_id", "")), binding
+                    )
+                    for binding in runtime_bindings
+                )
                 availability[workspace_id] = any(
                     binding.binding_kind is RuntimeBindingKind.LOCAL_FILESYSTEM
                     and binding.status is RuntimeBindingStatus.READY
-                    for binding in bindings
+                    for binding in folder_bindings
                 )
             except Exception:
                 availability[workspace_id] = False
-        return availability
+                bindings_by_id[workspace_id] = ()
+        return availability, bindings_by_id
 
     async def _refresh_workspace_files_availability_snapshot(self) -> None:
         """Publish only the latest completed folder-availability generation."""
@@ -4547,13 +4573,21 @@ class ConsoleWorkspaceController:
             while self._screen_running_accessor():
                 generation = self._workspace_files_availability_generation
                 workspace_ids = self._workspace_files_availability_requested_ids
-                snapshot = await asyncio.to_thread(
+                availability_snapshot, bindings_snapshot = await asyncio.to_thread(
                     self._capture_workspace_files_availability, workspace_ids
                 )
                 if generation == self._workspace_files_availability_generation:
                     self._workspace_files_availability_by_id = MappingProxyType(
                         {
-                            workspace_id: bool(snapshot.get(workspace_id, False))
+                            workspace_id: bool(
+                                availability_snapshot.get(workspace_id, False)
+                            )
+                            for workspace_id in workspace_ids
+                        }
+                    )
+                    self._workspace_files_runtime_bindings_by_id = MappingProxyType(
+                        {
+                            workspace_id: tuple(bindings_snapshot.get(workspace_id, ()))
                             for workspace_id in workspace_ids
                         }
                     )
@@ -4593,6 +4627,7 @@ class ConsoleWorkspaceController:
                 "workspace_acp_handoff_state",
                 None,
             ),
+            runtime_bindings_by_workspace=self._workspace_files_runtime_bindings_by_id,
         )
         state = self._with_native_console_session_rows(state)
         state = self._with_console_conversation_browser_state(
@@ -4600,9 +4635,17 @@ class ConsoleWorkspaceController:
             current_conversation_id=current_conversation,
         )
         workspace_ids = tuple(
-            str(workspace.workspace_id or "").strip()
-            for workspace in self._console_browser_workspace_records()
-            if str(workspace.workspace_id or "").strip()
+            dict.fromkeys(
+                workspace_id
+                for workspace_id in (
+                    str(state.workspace_id or "").strip(),
+                    *(
+                        str(workspace.workspace_id or "").strip()
+                        for workspace in self._console_browser_workspace_records()
+                    ),
+                )
+                if workspace_id
+            )
         )
         self._request_workspace_files_availability_refresh(workspace_ids)
         availability = {
@@ -4611,7 +4654,15 @@ class ConsoleWorkspaceController:
             )
             for workspace_id in workspace_ids
         }
-        return replace(state, workspace_files_available_by_id=availability)
+        return replace(
+            state,
+            workspace_files_available=bool(
+                self._workspace_files_availability_by_id.get(
+                    state.workspace_id, False
+                )
+            ),
+            workspace_files_available_by_id=availability,
+        )
 
     def _console_workspace_build_fingerprint(self) -> tuple | None:
         """Cheap change token over the context build's volatile inputs.

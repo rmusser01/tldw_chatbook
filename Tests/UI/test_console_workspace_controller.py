@@ -70,6 +70,7 @@ from tldw_chatbook.Workspaces import (
     RuntimeBindingKind,
     RuntimeBindingStatus,
     WorkspaceRecord,
+    WorkspaceRuntimeBinding,
     console_conversation_browser_group_row_limit,
     console_rail_section_height_budget,
 )
@@ -313,6 +314,81 @@ async def test_workspace_files_availability_snapshot_discards_stale_generation(
     assert controller._build_console_workspace_context_state().workspace_files_available_by_id == {
         "ws-b": True
     }
+    assert sync_calls == ["sync"]
+
+
+@pytest.mark.asyncio
+async def test_active_files_availability_uses_the_off_loop_binding_snapshot(
+    monkeypatch,
+):
+    """The real active-state builder cannot reach synchronous filesystem status."""
+    entered = Event()
+    release = Event()
+    active = WorkspaceRecord(workspace_id="ws-active", name="Active")
+    binding = WorkspaceRuntimeBinding(
+        workspace_id="ws-active",
+        binding_id="folder-active",
+        binding_kind=RuntimeBindingKind.LOCAL_FILESYSTEM,
+        label="Folder",
+        locator="/blocked-by-test",
+        status=RuntimeBindingStatus.READY,
+        metadata={"access": "ro"},
+    )
+
+    class _Registry:
+        def get_active_workspace(self):
+            return active
+
+        def list_workspaces(self, **_kwargs):
+            return (active,)
+
+        def list_memberships(self, *_args, **_kwargs):
+            return ()
+
+        def list_folder_bindings(self, _workspace_id):
+            entered.set()
+            release.wait(timeout=2)
+            return (binding,)
+
+        def list_runtime_bindings(self, _workspace_id):
+            return (binding,)
+
+    screen = _AsyncWorkerScreen()
+    sync_calls: list[str] = []
+    controller = _workspace_controller(
+        screen=screen,
+        app_instance=SimpleNamespace(workspace_registry_service=_Registry()),
+        sync_workspace_context=lambda: sync_calls.append("sync"),
+    )
+    monkeypatch.setattr(
+        ConsoleWorkspaceController,
+        "_with_native_console_session_rows",
+        lambda _self, state: state,
+    )
+    monkeypatch.setattr(
+        ConsoleWorkspaceController,
+        "_with_console_conversation_browser_state",
+        lambda _self, state, **_kwargs: state,
+    )
+    monkeypatch.setattr(
+        ConsoleWorkspaceController,
+        "_console_browser_workspace_records",
+        lambda _self: (active,),
+    )
+
+    started = time.monotonic()
+    state = controller._build_console_workspace_context_state()
+    assert time.monotonic() - started < 0.1
+    assert state.workspace_files_available is False
+    assert state.workspace_files_available_by_id == {"ws-active": False}
+    await asyncio.sleep(0)
+    assert entered.is_set()
+
+    release.set()
+    await screen.workers[0][0]
+    refreshed = controller._build_console_workspace_context_state()
+    assert refreshed.workspace_files_available is True
+    assert refreshed.workspace_files_available_by_id == {"ws-active": True}
     assert sync_calls == ["sync"]
 
 
