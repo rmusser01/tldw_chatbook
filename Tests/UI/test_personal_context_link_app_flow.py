@@ -11,6 +11,8 @@ from tldw_chatbook.Widgets.Settings_Widgets.personal_context_link_modal import (
     PersonalContextLinkReviewResult,
 )
 from tldw_chatbook.Personal_Context import link_key_custody
+from tldw_chatbook.Personal_Context import link_service as link_service_module
+from tldw_chatbook.Personal_Context.key_protector import ProfileLockedError
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.tldw_api.exceptions import (
     APIResponseError,
@@ -174,3 +176,70 @@ async def test_app_keeps_malformed_bootstrap_attention_out_of_the_review_surface
         )
     ]
     assert "private server response" not in repr(app.notifications)
+
+
+@pytest.mark.asyncio
+async def test_app_abandons_restarted_apply_when_staged_key_is_unavailable(
+    monkeypatch,
+) -> None:
+    existing = {
+        "state": "applying",
+        "server_profile_id": "server-config-1",
+        "dataset_id": "dataset-1",
+        "device_id": "device-1",
+        "profile_id": "profile-server",
+        "integrity_key_id": "integrity-1",
+        "key_record_id": "record-1",
+    }
+
+    class ApplyingStateRepository:
+        def get_personal_context_link_state(self, **_kwargs):
+            return existing
+
+    class MissingStagedKeyCustodian:
+        def load(self, **_kwargs):
+            raise ProfileLockedError("staged key unavailable")
+
+    abandon_calls: list[bool] = []
+
+    class RecoveryCoordinator:
+        _key_binding = staticmethod(link_service_module.PersonalContextLinkService._key_binding)
+
+        def __init__(self, **_kwargs):
+            pass
+
+        def abandon_uncommitted_apply(self):
+            abandon_calls.append(True)
+            return True
+
+        async def plan(self, **_kwargs):
+            raise RuntimeError("stop after recovery boundary")
+
+    monkeypatch.setattr(
+        link_key_custody,
+        "KeyringPersonalContextWrappingKeyProvider",
+        lambda: SimpleNamespace(public_key_pem="test-public-key"),
+    )
+    monkeypatch.setattr(
+        link_key_custody,
+        "KeyringPersonalContextLinkKeyCustodian",
+        MissingStagedKeyCustodian,
+    )
+    monkeypatch.setattr(
+        link_service_module,
+        "PersonalContextLinkService",
+        RecoveryCoordinator,
+    )
+    app = _LinkAppHarness(ATTENTIONS[0], [])
+    app.sync_state_repository = ApplyingStateRepository()
+
+    await TldwCli._run_personal_context_link(app)
+
+    assert abandon_calls == [True]
+    assert app.notifications == [
+        (
+            "Profile linking needs attention. No profile content was shown; "
+            "retry from Settings.",
+            "error",
+        )
+    ]

@@ -16,6 +16,7 @@ from tldw_chatbook.Personal_Context.reconciliation import (
 from tldw_chatbook.Personal_Context.repository import (
     PersonalContextRepository,
     ProfileKeyActivationPendingError,
+    release_first_link_freeze_for_recovery,
 )
 from tldw_chatbook.Personal_Context.service import PersonalContextService
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
@@ -333,6 +334,16 @@ class FakeWrappingProvider:
         return b"s" * 32
 
 
+class _FailingWrappingProvider(FakeWrappingProvider):
+    def unwrap_integrity_key(self, blob, *, integrity_key_id):
+        raise ValueError("wrapped_integrity_key_invalid")
+
+
+class _StageFailsCustodian(InMemoryPersonalContextLinkKeyCustodian):
+    def stage(self, *, integrity_key: bytes, **binding: str) -> None:
+        raise RuntimeError("secure stage unavailable")
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "attention",
@@ -541,6 +552,47 @@ async def test_restart_releases_orphaned_persisted_freeze_without_link_state(
     assert restarted.cancel(fresh.plan_id) is True
 
 
+@pytest.mark.asyncio
+async def test_locked_restart_releases_only_the_exact_content_free_freeze(
+    tmp_path,
+) -> None:
+    profile_path = tmp_path / "profile.db"
+    repository = PersonalContextRepository(
+        profile_path,
+        key_protector=InMemoryProfileKeyProtector(),
+    )
+    profile = PersonalContextService(repository)
+    profile.create_profile()
+    response = await FakeServerSync().bootstrap_personal_context_link()
+    remote = CanonicalBootstrapSnapshot.from_response(response)
+    manifest, scopes, records, proposals, bindings = profile.first_link_snapshot()
+    plan = build_reconciliation_plan(
+        local_manifest=manifest,
+        local_scopes=scopes,
+        local_records=records,
+        local_proposals=proposals,
+        remote=remote,
+        local_workspace_bindings=bindings,
+    )
+    profile.acquire_first_link_freeze(
+        plan_id=plan.plan_id,
+        snapshot_token=plan.local_snapshot_token,
+    )
+
+    assert (
+        release_first_link_freeze_for_recovery(
+            profile_path, plan_id="different-plan"
+        )
+        is False
+    )
+    assert profile.first_link_freeze_plan_id() == plan.plan_id
+    assert (
+        release_first_link_freeze_for_recovery(profile_path, plan_id=plan.plan_id)
+        is True
+    )
+    assert profile.first_link_freeze_plan_id() is None
+
+
 class _DeleteFailsOnceCustodian(InMemoryPersonalContextLinkKeyCustodian):
     def __init__(self) -> None:
         super().__init__()
@@ -730,6 +782,38 @@ async def test_changed_server_heads_return_to_attention_and_release_review_freez
     assert attention["confirmed_cursor"] is None
     assert profile.frozen_plan_id is None
     assert state.personal_context_sync_enabled(**SCOPE) is False
+
+
+@pytest.mark.asyncio
+async def test_terminal_attention_cleanup_failure_does_not_mask_convergence_error(
+    tmp_path,
+) -> None:
+    profile = FakeProfileService()
+    convergence = FakeFirstLinkSync()
+    convergence.fail_unconfirmed = True
+    state = SyncStateRepository(tmp_path / "sync.db")
+    service = PersonalContextLinkService(
+        personal_context_service=profile,
+        server_sync_service=FakeServerSync(),
+        state_repository=state,
+        wrapping_key_provider=FakeWrappingProvider(),
+        key_custodian=_DeleteFailsOnceCustodian(),
+        first_link_sync=convergence,
+        server_profile_id="server-config-1",
+        authenticated_principal_id="user-1",
+        display_name="Laptop",
+    )
+    plan = await service.plan()
+
+    with pytest.raises(
+        RuntimeError, match="personal_context_convergence_unconfirmed"
+    ):
+        await service.apply(plan.plan_id, {})
+
+    attention = state.get_personal_context_link_state(**SCOPE)
+    assert attention["state"] == "attention_required"
+    assert attention["attention_code"] == "server_snapshot_changed"
+    assert profile.frozen_plan_id is None
 
 
 @pytest.mark.parametrize(
@@ -1002,12 +1086,12 @@ async def test_plan_seeds_normal_sync_profile_without_generic_enrollment(
         display_name="Laptop",
     )
 
-    plan = await service.plan()
+    await service.plan()
 
     seeded = state.get_sync_v2_profile_state(**SCOPE, workspace_scope=None)
     assert seeded["device_id"] == "device-1"
     assert seeded["dataset_id"] == "dataset-1"
-    assert seeded["dataset_cursors"] == {"sync_v2": plan.bootstrap_cursor}
+    assert seeded["dataset_cursors"] == {}
     assert seeded["capabilities"]["personal_context"]["schema_version"] == 1
     assert seeded["capabilities"]["max_batch_size"] == 17
 
@@ -1037,11 +1121,11 @@ async def test_plan_merges_matching_existing_sync_profile_state(tmp_path) -> Non
         display_name="Laptop",
     )
 
-    plan = await service.plan()
+    await service.plan()
 
     seeded = state.get_sync_v2_profile_state(**SCOPE, workspace_scope=None)
     assert seeded["dataset_cursors"] == {
-        "sync_v2": plan.bootstrap_cursor,
+        "sync_v2": "generic-cursor",
         "notes": "notes-cursor",
     }
     assert seeded["capabilities"]["max_batch_size"] == 50
@@ -1141,6 +1225,89 @@ async def test_activation_pending_keeps_staged_key_and_applying_gate(tmp_path) -
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("wrapping", "custodian", "message", "attention_code"),
+    (
+        (
+            _FailingWrappingProvider(),
+            InMemoryPersonalContextLinkKeyCustodian(),
+            "wrapped_integrity_key_invalid",
+            "local_key_unwrap_failed",
+        ),
+        (
+            FakeWrappingProvider(),
+            _StageFailsCustodian(),
+            "secure stage unavailable",
+            "local_key_stage_failed",
+        ),
+    ),
+)
+async def test_key_preparation_failure_releases_freeze_and_enters_attention(
+    tmp_path,
+    wrapping,
+    custodian,
+    message,
+    attention_code,
+) -> None:
+    profile = FakeProfileService()
+    state = SyncStateRepository(tmp_path / "sync.db")
+    service = PersonalContextLinkService(
+        personal_context_service=profile,
+        server_sync_service=FakeServerSync(),
+        state_repository=state,
+        wrapping_key_provider=wrapping,
+        key_custodian=custodian,
+        first_link_sync=FakeFirstLinkSync(),
+        server_profile_id="server-config-1",
+        authenticated_principal_id="user-1",
+        display_name="Laptop",
+    )
+    plan = await service.plan()
+
+    with pytest.raises((RuntimeError, ValueError), match=message):
+        await service.apply(plan.plan_id, {})
+
+    attention = state.get_personal_context_link_state(**SCOPE)
+    assert attention["state"] == "attention_required"
+    assert attention["attention_code"] == attention_code
+    assert profile.frozen_plan_id is None
+
+
+@pytest.mark.asyncio
+async def test_apply_failure_is_not_masked_when_staged_key_cleanup_also_fails(
+    tmp_path,
+) -> None:
+    profile = FakeProfileService()
+
+    def fail_apply(**_kwargs):
+        raise RuntimeError("canonical apply failed")
+
+    profile.apply_reviewed_link = fail_apply
+    state = SyncStateRepository(tmp_path / "sync.db")
+    custodian = _DeleteFailsOnceCustodian()
+    service = PersonalContextLinkService(
+        personal_context_service=profile,
+        server_sync_service=FakeServerSync(),
+        state_repository=state,
+        wrapping_key_provider=FakeWrappingProvider(),
+        key_custodian=custodian,
+        first_link_sync=FakeFirstLinkSync(),
+        server_profile_id="server-config-1",
+        authenticated_principal_id="user-1",
+        display_name="Laptop",
+    )
+    plan = await service.plan()
+
+    with pytest.raises(RuntimeError, match="canonical apply failed"):
+        await service.apply(plan.plan_id, {})
+
+    attention = state.get_personal_context_link_state(**SCOPE)
+    assert attention["state"] == "attention_required"
+    assert attention["attention_code"] == "local_apply_failed"
+    assert profile.frozen_plan_id is None
+
+
+@pytest.mark.asyncio
 async def test_precommit_interruption_discards_only_the_uncommitted_staged_key(
     tmp_path,
 ) -> None:
@@ -1192,3 +1359,58 @@ async def test_precommit_interruption_discards_only_the_uncommitted_staged_key(
 
     retry = await service.plan()
     assert retry.plan_id != plan.plan_id
+
+
+@pytest.mark.asyncio
+async def test_restart_abandons_provisional_apply_when_profile_cannot_compose(
+    tmp_path,
+) -> None:
+    profile = FakeProfileService()
+    state = SyncStateRepository(tmp_path / "sync.db")
+    custodian = InMemoryPersonalContextLinkKeyCustodian()
+    fallback_releases: list[str] = []
+    service = PersonalContextLinkService(
+        personal_context_service=profile,
+        server_sync_service=FakeServerSync(),
+        state_repository=state,
+        wrapping_key_provider=FakeWrappingProvider(),
+        key_custodian=custodian,
+        freeze_release_fallback=lambda plan_id: fallback_releases.append(plan_id),
+        server_profile_id="server-config-1",
+        authenticated_principal_id="user-1",
+        display_name="Laptop",
+    )
+    plan = await service.plan()
+    review = state.get_personal_context_link_state(**SCOPE)
+    applying = state.set_personal_context_link_state(
+        **SCOPE,
+        **{
+            key: review[key]
+            for key in (
+                "device_id",
+                "dataset_id",
+                "authority_id",
+                "profile_id",
+                "integrity_key_id",
+                "key_record_id",
+                "purge_generation",
+                "bootstrap_cursor",
+                "plan_id",
+                "rebaseline_version",
+                "attention_code",
+            )
+        },
+        state="applying",
+        expected_states=("review_required",),
+    )
+    binding = service._key_binding(applying)
+    custodian.stage(**binding, integrity_key=b"s" * 32)
+    service._profile = PersonalContextService.locked("profile_key_unavailable")
+
+    assert service.abandon_uncommitted_apply() is True
+    attention = state.get_personal_context_link_state(**SCOPE)
+    assert attention["state"] == "attention_required"
+    assert attention["attention_code"] == "local_apply_interrupted"
+    assert fallback_releases == [plan.plan_id]
+    with pytest.raises(ValueError, match="binding_mismatch"):
+        custodian.load(**binding)

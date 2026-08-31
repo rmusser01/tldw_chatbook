@@ -103,22 +103,31 @@ class PersonalContextFirstLinkSync:
             None if sync_profile is None else sync_profile.get("capabilities"),
             fallback_size=100,
         )
-        push_cursor: str | None = bootstrap_cursor
+        transport_cursor = self._transport_cursor(
+            sync_profile,
+            device_id=device_id,
+            dataset_id=dataset_id,
+            bootstrap_cursor=bootstrap_cursor,
+        )
+        push_cursor = transport_cursor
         while True:
-            self._dispatcher.dispatch_first_link_reconciliation(
-                server_profile_id=server_profile_id,
-                authenticated_principal_id=authenticated_principal_id,
-                workspace_scope=None,
-                dataset_id=dataset_id,
-                device_id=device_id,
-                storage_key=storage_key,
-                limit=batch_size,
-                profile_id=profile_id,
-                integrity_key_id=integrity_key_id,
-                key_record_id=key_record_id,
-                purge_generation=purge_generation,
-                bootstrap_cursor=bootstrap_cursor,
-            )
+            writes = getattr(self._profile, "first_link_reconciliation_writes", None)
+            if not callable(writes):
+                raise RuntimeError("personal_context_reconciliation_gate_unavailable")
+            with writes(plan_id=str(state["plan_id"])):
+                self._dispatch(
+                    server_profile_id=server_profile_id,
+                    authenticated_principal_id=authenticated_principal_id,
+                    dataset_id=dataset_id,
+                    device_id=device_id,
+                    storage_key=storage_key,
+                    batch_size=batch_size,
+                    profile_id=profile_id,
+                    integrity_key_id=integrity_key_id,
+                    key_record_id=key_record_id,
+                    purge_generation=purge_generation,
+                    bootstrap_cursor=bootstrap_cursor,
+                )
             outbox = self._state.list_pending_sync_v2_outbox_envelopes(
                 server_profile_id=server_profile_id,
                 authenticated_principal_id=authenticated_principal_id,
@@ -188,7 +197,7 @@ class PersonalContextFirstLinkSync:
             bootstrap_heads=bootstrap_heads,
             expected_heads=expected_heads,
         )
-        cursor: str | None = bootstrap_cursor
+        cursor = transport_cursor
         applier = SyncEnvelopeApplier(
             dataset_key=storage_key,
             local_store=self._local_store,
@@ -228,10 +237,11 @@ class PersonalContextFirstLinkSync:
                 writes = getattr(
                     self._profile, "first_link_reconciliation_writes", None
                 )
-                if callable(writes):
-                    with writes(plan_id=str(state["plan_id"])):
-                        result = applier.apply(envelope)
-                else:
+                if not callable(writes):
+                    raise RuntimeError(
+                        "personal_context_reconciliation_gate_unavailable"
+                    )
+                with writes(plan_id=str(state["plan_id"])):
                     result = applier.apply(envelope)
                 if result.get("status") not in {"applied", "ignored"}:
                     raise RuntimeError("personal_context_reconciliation_apply_failed")
@@ -247,6 +257,36 @@ class PersonalContextFirstLinkSync:
         if observed != dict(expected_heads):
             raise RuntimeError("personal_context_convergence_unconfirmed")
         return {"confirmed_cursor": cursor, "confirmed_heads": observed}
+
+    def _dispatch(self, **kwargs: Any) -> None:
+        self._dispatcher.dispatch_first_link_reconciliation(
+            workspace_scope=None,
+            limit=kwargs.pop("batch_size"),
+            **kwargs,
+        )
+
+    @staticmethod
+    def _transport_cursor(
+        sync_profile: Mapping[str, Any] | None,
+        *,
+        device_id: str,
+        dataset_id: str,
+        bootstrap_cursor: str,
+    ) -> str | None:
+        """Return only a cursor already bound to this exact transport dataset."""
+
+        if (
+            sync_profile is None
+            or sync_profile.get("device_id") != device_id
+            or sync_profile.get("dataset_id") != dataset_id
+        ):
+            return None
+        cursor = (sync_profile.get("dataset_cursors") or {}).get("sync_v2")
+        if not isinstance(cursor, str) or not cursor or cursor == bootstrap_cursor:
+            return None
+        if cursor.startswith("personal-context-bootstrap-v1:"):
+            return None
+        return cursor
 
     @staticmethod
     def _reviewed_bootstrap_heads(

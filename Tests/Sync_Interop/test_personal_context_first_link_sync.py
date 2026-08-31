@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 import pytest
 
 from tldw_chatbook.Sync_Interop.personal_context_first_link_sync import (
@@ -12,12 +14,40 @@ from tldw_chatbook.tldw_api import SyncV2Envelope
 class _Dispatcher:
     adapter = object()
 
-    def __init__(self) -> None:
+    def __init__(self, gate=None) -> None:
         self.calls = []
+        self.gate = gate
 
     def dispatch_first_link_reconciliation(self, **kwargs):
+        if self.gate is not None:
+            assert self.gate.active_plan == "plan-1"
         self.calls.append(kwargs)
         return {"dispatched": 0, "quarantined": 0}
+
+
+class _FreezeGate:
+    def __init__(self) -> None:
+        self.active_plan = None
+        self.entered_plans = []
+
+    @contextmanager
+    def first_link_reconciliation_writes(self, *, plan_id):
+        assert self.active_plan is None
+        self.active_plan = plan_id
+        self.entered_plans.append(plan_id)
+        try:
+            yield
+        finally:
+            self.active_plan = None
+
+
+class _ReconciliationProfile(_FreezeGate):
+    def __init__(self) -> None:
+        super().__init__()
+        self.applied = []
+
+    def append(self, value):
+        self.applied.append(value)
 
 
 class _Server:
@@ -38,7 +68,9 @@ class _Server:
 
 
 @pytest.mark.asyncio
-async def test_special_first_link_pull_uses_bootstrap_cursor_and_includes_own(tmp_path):
+async def test_special_first_link_pull_uses_existing_transport_cursor_and_includes_own(
+    tmp_path,
+):
     state = SyncStateRepository(tmp_path / "sync.db")
     scope = {
         "server_profile_id": "server-1",
@@ -51,7 +83,7 @@ async def test_special_first_link_pull_uses_bootstrap_cursor_and_includes_own(tm
         profile_mode="local_first_sync",
         device_id="device-1",
         dataset_id="dataset-1",
-        dataset_cursors={"sync_v2": "cursor-bootstrap"},
+        dataset_cursors={"sync_v2": "17"},
     )
     state.set_personal_context_link_state(
         **scope,
@@ -63,20 +95,21 @@ async def test_special_first_link_pull_uses_bootstrap_cursor_and_includes_own(tm
         integrity_key_id="key-1",
         key_record_id="key-record-1",
         purge_generation=0,
-        bootstrap_cursor="cursor-bootstrap",
+        bootstrap_cursor="personal-context-bootstrap-v1:" + "a" * 64,
         bootstrap_heads=heads,
         expected_heads=heads,
         plan_id="plan-1",
         rebaseline_version=2,
         attention_code=None,
     )
-    dispatcher = _Dispatcher()
+    gate = _FreezeGate()
+    dispatcher = _Dispatcher(gate)
     server = _Server()
     sync = PersonalContextFirstLinkSync(
         server_service=server,
         state_repository=state,
         dispatcher=dispatcher,
-        personal_context_service=object(),
+        personal_context_service=gate,
         local_store=object(),
         dataset_keys={"dataset-1": b"s" * 32},
     )
@@ -89,20 +122,20 @@ async def test_special_first_link_pull_uses_bootstrap_cursor_and_includes_own(tm
         integrity_key_id="key-1",
         key_record_id="key-record-1",
         purge_generation=0,
-        bootstrap_cursor="cursor-bootstrap",
+        bootstrap_cursor="personal-context-bootstrap-v1:" + "a" * 64,
         bootstrap_heads=heads,
         expected_heads=heads,
     )
 
     assert result == {
-        "confirmed_cursor": "cursor-bootstrap",
+        "confirmed_cursor": "17",
         "confirmed_heads": heads,
     }
     assert server.calls == [
         {
             "dataset_id": "dataset-1",
             "device_id": "device-1",
-            "cursor": "cursor-bootstrap",
+            "cursor": "17",
             "domains": [
                 "personal_context.manifest",
                 "personal_context.scope",
@@ -114,6 +147,25 @@ async def test_special_first_link_pull_uses_bootstrap_cursor_and_includes_own(tm
             "include_own_changes": True,
         }
     ]
+    assert len(dispatcher.calls) == 1
+    assert gate.entered_plans == ["plan-1"]
+
+    sync._profile = object()
+    with pytest.raises(
+        RuntimeError, match="personal_context_reconciliation_gate_unavailable"
+    ):
+        await sync.converge(
+            **scope,
+            device_id="device-1",
+            dataset_id="dataset-1",
+            profile_id="profile-1",
+            integrity_key_id="key-1",
+            key_record_id="key-record-1",
+            purge_generation=0,
+            bootstrap_cursor="personal-context-bootstrap-v1:" + "a" * 64,
+            bootstrap_heads=heads,
+            expected_heads=heads,
+        )
     assert len(dispatcher.calls) == 1
 
 
@@ -166,11 +218,12 @@ async def test_server_only_unbound_workspace_is_outside_reviewed_convergence_hea
         rebaseline_version=2,
         attention_code=None,
     )
+    profile = _FreezeGate()
     sync = PersonalContextFirstLinkSync(
         server_service=_Server(),
         state_repository=state,
         dispatcher=_Dispatcher(),
-        personal_context_service=object(),
+        personal_context_service=profile,
         local_store=object(),
         dataset_keys={"dataset-1": b"s" * 32},
     )
@@ -189,7 +242,7 @@ async def test_server_only_unbound_workspace_is_outside_reviewed_convergence_hea
     )
 
     assert result == {
-        "confirmed_cursor": "cursor-bootstrap",
+        "confirmed_cursor": None,
         "confirmed_heads": expected,
     }
 
@@ -257,7 +310,7 @@ async def test_special_cycle_requires_echoed_materialized_delta_before_confirmin
         profile_mode="local_first_sync",
         device_id="device-1",
         dataset_id="dataset-1",
-        dataset_cursors={"sync_v2": "cursor-bootstrap"},
+        dataset_cursors={"sync_v2": "19"},
     )
     state.set_personal_context_link_state(
         **scope,
@@ -297,12 +350,12 @@ async def test_special_cycle_requires_echoed_materialized_delta_before_confirmin
         envelope=envelope,
     )
     server = _DeltaServer(envelope)
-    applied = []
+    profile = _ReconciliationProfile()
     sync = PersonalContextFirstLinkSync(
         server_service=server,
         state_repository=state,
         dispatcher=_DeltaDispatcher(),
-        personal_context_service=applied,
+        personal_context_service=profile,
         local_store=object(),
         dataset_keys={"dataset-1": b"s" * 32},
     )
@@ -323,8 +376,11 @@ async def test_special_cycle_requires_echoed_materialized_delta_before_confirmin
     assert result["confirmed_heads"] == expected
     assert result["confirmed_cursor"] == "cursor-confirmed"
     assert len(server.pushes) == 1
+    assert server.pushes[0]["last_known_cursor"] == "19"
+    assert server.pushes[0]["last_known_cursor"] != "cursor-bootstrap"
     assert server.calls[0]["include_own_changes"] is True
-    assert applied == ["applied"]
+    assert server.calls[0]["cursor"] == "19"
+    assert profile.applied == ["applied"]
 
 
 class _PagedDeltaDispatcher:
@@ -441,12 +497,12 @@ async def test_special_cycle_drains_101_entries_in_negotiated_push_batches(tmp_p
     )
     dispatcher = _PagedDeltaDispatcher(state, scope, envelopes)
     server = _PagedDeltaServer(envelopes)
-    applied = []
+    profile = _ReconciliationProfile()
     sync = PersonalContextFirstLinkSync(
         server_service=server,
         state_repository=state,
         dispatcher=dispatcher,
-        personal_context_service=applied,
+        personal_context_service=profile,
         local_store=object(),
         dataset_keys={"dataset-1": b"s" * 32},
     )
@@ -468,4 +524,4 @@ async def test_special_cycle_drains_101_entries_in_negotiated_push_batches(tmp_p
     assert [len(call["envelopes"]) for call in server.pushes] == [40, 40, 21]
     assert dispatcher.limits[:3] == [40, 40, 40]
     assert dispatcher.remaining == []
-    assert len(applied) == 101
+    assert len(profile.applied) == 101

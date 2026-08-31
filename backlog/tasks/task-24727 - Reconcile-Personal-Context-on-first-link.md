@@ -114,3 +114,17 @@ Structured-attention verification: 86 typed API/coordinator/transport tests,
 compile, CSS reproduction, high-severity Bandit, Impeccable detector, and diff
 hygiene checks also pass. Implementation is committed as `f42c173c55`; the task
 remains In Progress for controller verification and independent review.
+
+Final contract-quality remediation keeps the task In Progress and addresses the
+confirmed cursor, reconciliation-authority, provisional failure/restart,
+workspace replan, readiness-attention, and retained Undo gaps. Bootstrap review
+cursors no longer seed or replace ordinary Sync cursors; source dispatch and
+destination apply require the exact plan-scoped freeze authority; provisional
+key/apply failures and locked restart recovery move to content-free attention
+and release only the exact freeze. Replans preserve already bound canonical
+workspace identities, valid Undo artifacts are identity-rebound, and only pure
+schema/quota readiness mismatches may reach authenticated typed bootstrap
+attention. Fresh broad verification is 122 Personal Context + 104 Sync + 95
+API/UI tests passing, with Ruff, compileall, CSS reproduction, Bandit `-lll`,
+and both diff-hygiene checks passing. Controller review and cross-repository
+closure remain; TASK-24727 is not marked Done.

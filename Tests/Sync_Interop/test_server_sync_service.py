@@ -19,6 +19,13 @@ from tldw_chatbook.tldw_api import (
     SyncSendLogEntry,
     SyncV2Envelope,
 )
+from tldw_chatbook.tldw_api.exceptions import (
+    PersonalContextBootstrapAttentionError,
+)
+from tldw_chatbook.tldw_api.sync_schemas import (
+    SyncPersonalContextQuotaAttention,
+    SyncPersonalContextSchemaAttention,
+)
 
 
 class FakeWrappingProvider:
@@ -526,6 +533,97 @@ async def test_server_sync_service_blocks_unavailable_personal_context_before_li
         )
 
     assert not any(call[0] == "register_sync_v2_device" for call in client.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("attention_kind", ["schema", "quota"])
+async def test_personal_context_bootstrap_reaches_typed_attention_for_safe_readiness_blockers(
+    tmp_path,
+    attention_kind: str,
+) -> None:
+    capabilities = _personal_context_capabilities()
+    if attention_kind == "schema":
+        capabilities["personal_context"].update(
+            min_schema_version=2,
+            max_schema_version=3,
+        )
+        attention = SyncPersonalContextSchemaAttention(
+            kind="schema_incompatible",
+            required_schema_version=1,
+            server_min_schema_version=2,
+            server_max_schema_version=3,
+        )
+    else:
+        capabilities["personal_context"]["max_record_bytes"] = 8_192
+        attention = SyncPersonalContextQuotaAttention(
+            kind="quota_incompatible",
+            required_quotas={"max_record_bytes": 16_384},
+            available_quotas={"max_record_bytes": 8_192},
+            insufficient_quotas=["max_record_bytes"],
+        )
+
+    class AttentionClient(FakeSyncClient):
+        async def bootstrap_sync_v2_personal_context(self, request_data):
+            self.calls.append(
+                (
+                    "bootstrap_sync_v2_personal_context",
+                    request_data.model_dump(mode="json"),
+                )
+            )
+            raise PersonalContextBootstrapAttentionError(attention)
+
+    client = AttentionClient(capabilities_response=capabilities)
+    service = ServerSyncService(
+        client=client,
+        state_repository=SyncStateRepository(tmp_path / "sync.db"),
+    )
+
+    with pytest.raises(PersonalContextBootstrapAttentionError) as exc_info:
+        await service.bootstrap_personal_context_link(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            display_name="Laptop",
+            wrapping_key_provider=FakeWrappingProvider(),
+            required_schema_version=1,
+            required_quotas={"max_record_bytes": 16_384},
+        )
+
+    assert exc_info.value.attention is attention
+    assert [call[0] for call in client.calls].count("register_sync_v2_device") == 1
+    assert [call[0] for call in client.calls].count(
+        "bootstrap_sync_v2_personal_context"
+    ) == 1
+
+
+@pytest.mark.asyncio
+async def test_personal_context_bootstrap_keeps_mixed_readiness_failure_fail_closed(
+    tmp_path,
+) -> None:
+    capabilities = _personal_context_capabilities()
+    capabilities["personal_context"].update(
+        min_schema_version=2,
+        max_schema_version=3,
+        integrity_algorithm="unsupported",
+    )
+    client = FakeSyncClient(capabilities_response=capabilities)
+    service = ServerSyncService(
+        client=client,
+        state_repository=SyncStateRepository(tmp_path / "sync.db"),
+    )
+
+    with pytest.raises(ValueError, match="personal_context_integrity_incompatible"):
+        await service.bootstrap_personal_context_link(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            display_name="Laptop",
+            wrapping_key_provider=FakeWrappingProvider(),
+            required_schema_version=1,
+        )
+
+    assert not any(call[0] == "register_sync_v2_device" for call in client.calls)
+    assert not any(
+        call[0] == "bootstrap_sync_v2_personal_context" for call in client.calls
+    )
 
 
 @pytest.mark.asyncio

@@ -30,6 +30,10 @@ from tldw_chatbook.Personal_Context.repository import (
     ProfileKeyActivationPendingError,
 )
 from tldw_chatbook.Personal_Context.sync_outbox import ProfileSyncOutbox
+from tldw_chatbook.Personal_Context.service import (
+    PersonalContextService,
+    RecordMutation,
+)
 
 
 NOW = "2026-08-30T12:00:00.000Z"
@@ -742,6 +746,116 @@ def test_workspace_link_decision_cannot_target_remote_global_scope(tmp_path) -> 
 
     assert repository.get_manifest() == manifest
     assert repository.get_scope(workspace.scope_id) == workspace
+
+
+def test_replan_preserves_an_already_adopted_bound_workspace_identity(tmp_path) -> None:
+    repository = PersonalContextRepository(
+        tmp_path / "workspace-replan.db",
+        key_protector=InMemoryProfileKeyProtector(),
+    )
+    manifest = _manifest("profile-local", "manifest-local")
+    global_scope = _scope("profile-local", "scope-local-global", ScopeKind.GLOBAL)
+    workspace = _scope("profile-local", "scope-provisional", ScopeKind.WORKSPACE)
+    repository.create_profile_with_global_scope(manifest, global_scope)
+    repository.commit_scope_with_binding(
+        workspace,
+        {"version": 1, "local_workspace_id": "workspace-local", "label": "Project"},
+    )
+    remote_global = _scope("profile-server", "scope-server-global", ScopeKind.GLOBAL)
+    first_remote = _snapshot(scopes=(remote_global,), records=())
+    first_plan = build_reconciliation_plan(
+        local_manifest=manifest,
+        local_scopes=(global_scope, workspace),
+        local_records=(),
+        local_proposals=(),
+        remote=first_remote,
+        local_workspace_bindings=repository.list_validated_scope_bindings(),
+    )
+    adopted_scope_id = dict(first_plan.workspace_new_scope_ids)[workspace.scope_id]
+    _freeze(repository, first_plan)
+    repository.apply_reviewed_link(
+        plan=first_plan,
+        remote=first_remote,
+        decisions={f"workspace:{workspace.scope_id}": "new"},
+        integrity_key=b"s" * 32,
+    )
+    adopted_scope = repository.get_scope(adopted_scope_id)
+    assert adopted_scope is not None
+    retry_remote = _snapshot(
+        scopes=(remote_global, adopted_scope),
+        records=(),
+    )
+
+    retry_plan = build_reconciliation_plan(
+        local_manifest=repository.get_manifest(),
+        local_scopes=tuple(repository.list_scopes()),
+        local_records=tuple(repository.list_records()),
+        local_proposals=tuple(repository.list_proposals()),
+        remote=retry_remote,
+        local_workspace_bindings=repository.list_validated_scope_bindings(),
+    )
+
+    assert retry_plan.local_workspace_scope_ids == ()
+    assert retry_plan.workspace_new_scope_ids == ()
+    assert retry_plan.required_decision_ids == ()
+
+
+def test_reviewed_link_rebinds_retained_undo_identity_and_keeps_it_usable(
+    tmp_path,
+) -> None:
+    repository = PersonalContextRepository(
+        tmp_path / "undo-rebind.db",
+        key_protector=InMemoryProfileKeyProtector(),
+    )
+    manifest = _manifest("profile-local", "manifest-local")
+    local_scope = _scope("profile-local", "scope-local-global", ScopeKind.GLOBAL)
+    repository.create_profile_with_global_scope(manifest, local_scope)
+    first = _record(
+        manifest.profile_id,
+        local_scope.scope_id,
+        "record-local",
+        subject="response.detail",
+        value="before-link",
+        version="record-v1",
+    )
+    repository.commit_record_version(first, expected_version_id=None)
+    service = PersonalContextService(repository)
+    changed = service.update_record(
+        first.record_id,
+        RecordMutation(
+            payload=PreferencePayload(
+                subject="response.detail",
+                polarity="like",
+                value="after-local-edit",
+            )
+        ),
+        expected_version_id=first.version_id,
+    )
+    undo_id = service.list_undo_ids()[0]
+    remote_scope = _scope("profile-server", "scope-server-global", ScopeKind.GLOBAL)
+    remote = _snapshot(scopes=(remote_scope,), records=())
+    plan = build_reconciliation_plan(
+        local_manifest=repository.get_manifest(),
+        local_scopes=tuple(repository.list_scopes()),
+        local_records=(changed,),
+        local_proposals=(),
+        remote=remote,
+        local_workspace_bindings={},
+    )
+    _freeze(repository, plan)
+    repository.apply_reviewed_link(
+        plan=plan,
+        remote=remote,
+        decisions={},
+        integrity_key=b"s" * 32,
+    )
+    assert repository.release_first_link_freeze(plan_id=plan.plan_id) is True
+
+    restored = service.undo(undo_id)
+
+    assert restored.profile_id == "profile-server"
+    assert restored.scope_id == "scope-server-global"
+    assert restored.payload.value == "before-link"
 
 
 def test_local_only_multiversion_record_journals_oldest_to_head(tmp_path) -> None:

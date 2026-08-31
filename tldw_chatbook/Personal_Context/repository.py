@@ -135,6 +135,34 @@ def profile_presence_hint(db_path: str | os.PathLike[str]) -> bool:
         return False
 
 
+def release_first_link_freeze_for_recovery(
+    db_path: str | os.PathLike[str], *, plan_id: str
+) -> bool:
+    """Release one content-free freeze while encrypted profile access is locked."""
+
+    candidate = Path(db_path)
+    if not candidate.is_file():
+        return False
+    with connect_private_sqlite(
+        "personal_context.repository",
+        candidate,
+        read_only=False,
+        must_exist=True,
+    ) as connection:
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'first_link_freeze'"
+        ).fetchone()
+        if table is None:
+            return False
+        deleted = connection.execute(
+            "DELETE FROM first_link_freeze WHERE singleton = 1 AND plan_id = ?",
+            (plan_id,),
+        )
+        connection.commit()
+    return deleted.rowcount == 1
+
+
 _LOCAL_UNDO_SCHEMA = """
     CREATE TABLE local_undo (
         undo_id TEXT PRIMARY KEY,
@@ -1180,6 +1208,17 @@ class PersonalContextRepository:
                 new_profile_id=new_profile_id,
                 scope_mapping=scope_mapping,
             )
+            return body
+        if object_type == "undo":
+            before_record = body.get("before_record")
+            if isinstance(before_record, Mapping):
+                body["before_record"] = PersonalContextRepository._transform_link_body(
+                    "record",
+                    before_record,
+                    old_profile_id=old_profile_id,
+                    new_profile_id=new_profile_id,
+                    scope_mapping=scope_mapping,
+                )
             return body
         if object_type not in {"manifest", "scope", "record", "proposal"}:
             return body

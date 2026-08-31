@@ -19,6 +19,9 @@ Structured bootstrap attention integration commit: `f42c173c55`
 (`fix(personal-context): surface bootstrap attention`), consuming tldw_server
 contract commit `a92e12110d`.
 
+Final contract-quality remediation commit: this report's implementation commit
+(`fix(personal-context): harden first-link recovery`).
+
 ## RED evidence
 
 All feature work began with focused failing tests. Principal RED observations:
@@ -55,8 +58,20 @@ All feature work began with focused failing tests. Principal RED observations:
 - Negotiated batch/public push-gate focus:
   `PYTHONPATH=.:packages/tldw_profile_core/src ../../.venv/bin/python -m pytest -q Tests/Sync_Interop/test_server_sync_service.py::test_personal_context_bootstrap_registers_wrapping_key_without_generic_enroll Tests/Sync_Interop/test_server_sync_service.py::test_public_push_rejects_personal_context_before_transport_dispatch Tests/Sync_Interop/test_server_sync_service.py::test_private_first_link_push_uses_reviewed_transport_path Tests/Sync_Interop/test_personal_context_first_link.py::test_plan_seeds_normal_sync_profile_without_generic_enrollment Tests/Sync_Interop/test_personal_context_first_link_sync.py::test_special_cycle_drains_101_entries_in_negotiated_push_batches`
   - 4 intended failures: bootstrap discarded `max_batch_size`, public PC push
-    dispatched, the private push path was missing, and planning did not persist
-    the negotiated limit. The existing 101-entry batch behavior remained green.
+  dispatched, the private push path was missing, and planning did not persist
+  the negotiated limit. The existing 101-entry batch behavior remained green.
+- Final independent-review RED runs:
+  - 4 cursor-contract failures showed bootstrap receipt cursors seeding both
+    push/pull and overwriting ordinary Sync cursor state.
+  - 3 key-boundary failures left unwrap/stage/apply errors in `applying` or let
+    cleanup errors mask the original failure.
+  - 2 reconciliation failures showed an adopted bound workspace returning as a
+    decision and a retained Undo artifact keeping provisional identity fields.
+  - 2 readiness failures showed schema/quota capability mismatches preventing
+    the authenticated typed bootstrap-attention endpoint from being called.
+  - 1 restart-recovery failure showed the absence of a locked-profile freeze
+    release fallback; the production dispatcher crash regression then pinned
+    exact-plan replay between the profile and Sync databases.
 
 ## GREEN evidence
 
@@ -99,10 +114,19 @@ to isolate pytest cleanup from unrelated pre-existing temporary directories.
 - Bandit over the touched production files:
   - high-severity gate (`-lll`) exits 0 with no finding;
   - full report: 0 high, 13 medium, 38 low. The medium findings are Bandit's
-    existing string-SQL heuristic over repository-allowlisted table/column names
-    and parameter-placeholder construction; low findings are existing asserts,
-    exception cleanup, and app subprocess/random patterns. No new unreviewed
-    high-severity issue is present.
+  existing string-SQL heuristic over repository-allowlisted table/column names
+  and parameter-placeholder construction; low findings are existing asserts,
+  exception cleanup, and app subprocess/random patterns. No new unreviewed
+  high-severity issue is present.
+- Final remediation verification:
+  - Personal Context repository/service/reconciliation/custody group: 122 passed.
+  - Sync first-link/dispatcher/service/adapter/capability group: 105 passed,
+    57 deselected.
+  - Typed API and canonical Settings/modal/app-flow group: 95 passed.
+  - Focused all-changed contract group: 116 passed.
+  - Ruff: `All checks passed!`; compileall exited 0; CSS source reproduction
+    matched all generated artifacts; Bandit `-lll` exited 0; both diff-hygiene
+    checks exited 0.
 
 Warnings were the repository environment's existing `requests` dependency
 version warning and pytest cleanup warnings for unrelated stale temporary
@@ -165,6 +189,18 @@ directories. No product-test failure remained.
 - Added the protected canonical F9 Settings modal with content-free counts,
   explicit collision/version/workspace choices, unlinked-workspace disclosure,
   cancel, retry, attention, disabled approval, and bounded return data.
+- Separated immutable bootstrap review receipts from ordinary transport cursors;
+  exact-dataset existing cursors are retained, while absent/mismatched cursors
+  trigger full first-link pull without overwriting unrelated Sync state.
+- Closed the reconciliation write boundary around source dispatch as well as
+  destination apply, with exact-plan production crash replay and no ungated
+  fallback path.
+- Made every provisional key/apply failure and locked restart recovery converge
+  on content-free attention plus exact freeze release, while preserving the
+  original operational error when secure cleanup also fails.
+- Preserved bound canonical workspace identities across replanning, rebound
+  valid retained Undo payload identities, and allowed only schema/quota
+  readiness facts through to authenticated typed bootstrap attention.
 
 ## Self-review
 

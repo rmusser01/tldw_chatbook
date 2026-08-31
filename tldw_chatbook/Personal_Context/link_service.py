@@ -11,6 +11,7 @@ from .reconciliation import (
     build_reconciliation_plan,
     canonical_snapshot_heads,
 )
+from .key_protector import ProfileLockedError
 from .repository import ProfileKeyActivationPendingError
 
 
@@ -45,6 +46,7 @@ class PersonalContextLinkService:
         state_repository: Any,
         wrapping_key_provider: Any,
         key_custodian: Any,
+        freeze_release_fallback: Any | None = None,
         first_link_sync: Any | None = None,
         local_first_sync_service: Any | None = None,
         server_profile_id: str,
@@ -57,6 +59,7 @@ class PersonalContextLinkService:
         self._state = state_repository
         self._wrapping = wrapping_key_provider
         self._custodian = key_custodian
+        self._freeze_release_fallback = freeze_release_fallback
         self._first_link_sync = first_link_sync
         self._local_first_sync = local_first_sync_service
         self._server_profile_id = server_profile_id
@@ -142,7 +145,6 @@ class PersonalContextLinkService:
         self._seed_sync_profile(
             device_id=device_id,
             dataset_id=remote.dataset_id,
-            cursor=remote.cursor,
             capabilities=capabilities,
         )
         freeze_acquired = False
@@ -219,7 +221,14 @@ class PersonalContextLinkService:
     def _release_freeze(self, plan_id: str) -> None:
         release = getattr(self._profile, "release_first_link_freeze", None)
         if callable(release):
-            release(plan_id=plan_id)
+            try:
+                release(plan_id=plan_id)
+                return
+            except ProfileLockedError:
+                if self._freeze_release_fallback is None:
+                    raise
+        if self._freeze_release_fallback is not None:
+            self._freeze_release_fallback(plan_id)
 
     @staticmethod
     def _key_binding(state: Mapping[str, Any]) -> dict[str, str]:
@@ -267,12 +276,28 @@ class PersonalContextLinkService:
             state="applying",
             expected_states=("review_required",),
         )
-        integrity_key = self._wrapping.unwrap_integrity_key(
-            remote.wrapped_key_blob,
-            integrity_key_id=remote.integrity_key_id,
-        )
         binding = self._key_binding(applying)
-        self._custodian.stage(**binding, integrity_key=integrity_key)
+        try:
+            integrity_key = self._wrapping.unwrap_integrity_key(
+                remote.wrapped_key_blob,
+                integrity_key_id=remote.integrity_key_id,
+            )
+        except Exception as exc:
+            self._fail_provisional_apply(
+                applying,
+                attention_code="local_key_unwrap_failed",
+                original_error=exc,
+            )
+            raise
+        try:
+            self._custodian.stage(**binding, integrity_key=integrity_key)
+        except Exception as exc:
+            self._fail_provisional_apply(
+                applying,
+                attention_code="local_key_stage_failed",
+                original_error=exc,
+            )
+            raise
         try:
             result = self._profile.apply_reviewed_link(
                 plan=plan,
@@ -286,21 +311,12 @@ class PersonalContextLinkService:
             # independent secure key-store activation did not. Retain both the
             # exact staged binding and the applying gate for restart recovery.
             raise
-        except Exception:
-            self._custodian.delete(**binding)
-            self._state.set_personal_context_link_state(
-                **self._scope,
-                **{key: applying[key] for key in (
-                    "device_id", "dataset_id", "authority_id", "profile_id",
-                    "integrity_key_id", "key_record_id", "purge_generation",
-                    "bootstrap_cursor", "plan_id", "rebaseline_version",
-                    "bootstrap_heads", "expected_heads",
-                )},
-                state="attention_required",
+        except Exception as exc:
+            self._fail_provisional_apply(
+                applying,
                 attention_code="local_apply_failed",
-                expected_states=("applying",),
+                original_error=exc,
             )
-            self._release_freeze(plan_id)
             raise
         locally_complete = self._state.set_personal_context_link_state(
             **self._scope,
@@ -386,8 +402,11 @@ class PersonalContextLinkService:
         state = self._state.get_personal_context_link_state(**self._scope)
         if state is None or state["state"] != "applying":
             return False
-        manifest = self._profile.get_manifest()
-        if manifest.profile_id == state["profile_id"]:
+        try:
+            manifest = self._profile.get_manifest()
+        except ProfileLockedError:
+            manifest = None
+        if manifest is not None and manifest.profile_id == state["profile_id"]:
             return False
         attention = self._state.set_personal_context_link_state(
             **self._scope,
@@ -412,9 +431,80 @@ class PersonalContextLinkService:
             attention_code="local_apply_interrupted",
             expected_states=("applying",),
         )
-        self._custodian.delete(**self._key_binding(attention))
-        self._release_freeze(str(attention["plan_id"]))
+        self._recover_attention_artifacts(attention, original_error=None)
         return True
+
+    def _fail_provisional_apply(
+        self,
+        state: Mapping[str, Any],
+        *,
+        attention_code: str,
+        original_error: Exception,
+    ) -> None:
+        """Release the provisional apply gate before best-effort key cleanup."""
+
+        attention = self._state.set_personal_context_link_state(
+            **self._scope,
+            **{
+                key: state[key]
+                for key in (
+                    "device_id",
+                    "dataset_id",
+                    "authority_id",
+                    "profile_id",
+                    "integrity_key_id",
+                    "key_record_id",
+                    "purge_generation",
+                    "bootstrap_cursor",
+                    "plan_id",
+                    "rebaseline_version",
+                    "bootstrap_heads",
+                    "expected_heads",
+                )
+            },
+            state="attention_required",
+            attention_code=attention_code,
+            expected_states=("applying",),
+        )
+        self._recover_attention_artifacts(
+            attention,
+            original_error=original_error,
+        )
+
+    def _recover_attention_artifacts(
+        self,
+        state: Mapping[str, Any],
+        *,
+        original_error: Exception | None,
+    ) -> None:
+        """Best-effort cleanup after the durable link state is already safe."""
+
+        try:
+            self._release_freeze(str(state["plan_id"]))
+        except Exception:
+            if original_error is not None:
+                original_error.add_note(
+                    "Personal Context review freeze release remains pending."
+                )
+        self._plans.pop(str(state["plan_id"]), None)
+        self._delete_staged_key(state, original_error=original_error)
+
+    def _delete_staged_key(
+        self,
+        state: Mapping[str, Any],
+        *,
+        original_error: Exception | None,
+    ) -> None:
+        """Attempt cleanup without undoing an already durable safe state."""
+
+        try:
+            self._custodian.delete(**self._key_binding(state))
+        except Exception:
+            if original_error is None:
+                return
+            original_error.add_note(
+                "Staged Personal Context key cleanup remains pending after safe state recovery."
+            )
 
     async def _complete(
         self, state: Mapping[str, Any]
@@ -523,7 +613,11 @@ class PersonalContextLinkService:
             attention_code = self._completion_attention_code(exc)
             if attention_code is None:
                 raise
-            self._move_completion_to_attention(state, attention_code)
+            self._move_completion_to_attention(
+                state,
+                attention_code,
+                original_error=exc,
+            )
             raise
         self._release_freeze(str(complete["plan_id"]))
         self._custodian.delete(**self._key_binding(complete))
@@ -563,7 +657,11 @@ class PersonalContextLinkService:
         return None
 
     def _move_completion_to_attention(
-        self, state: Mapping[str, Any], attention_code: str
+        self,
+        state: Mapping[str, Any],
+        attention_code: str,
+        *,
+        original_error: Exception,
     ) -> None:
         current = self._state.get_personal_context_link_state(**self._scope)
         if (
@@ -586,9 +684,10 @@ class PersonalContextLinkService:
             attention_code=attention_code,
             expected_states=(str(current["state"]),),
         )
-        self._release_freeze(str(attention["plan_id"]))
-        self._custodian.delete(**self._key_binding(attention))
-        self._plans.pop(str(attention["plan_id"]), None)
+        self._recover_attention_artifacts(
+            attention,
+            original_error=original_error,
+        )
 
     def _cleanup_complete(
         self, state: Mapping[str, Any]
@@ -651,7 +750,6 @@ class PersonalContextLinkService:
         *,
         device_id: str,
         dataset_id: str,
-        cursor: str,
         capabilities: Mapping[str, Any],
     ) -> None:
         existing = self._state.get_sync_v2_profile_state(
@@ -663,7 +761,6 @@ class PersonalContextLinkService:
         ):
             raise ValueError("personal_context_sync_profile_binding_conflict")
         cursors = dict((existing or {}).get("dataset_cursors") or {})
-        cursors["sync_v2"] = cursor
         merged_capabilities = dict((existing or {}).get("capabilities") or {})
         merged_domains = list(merged_capabilities.get("supported_domains") or [])
         for domain in capabilities["supported_domains"]:

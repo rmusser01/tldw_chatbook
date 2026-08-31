@@ -19,6 +19,7 @@ from tldw_profile_core import (
 from tldw_profile_core.models import ActorType
 
 from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
+from tldw_chatbook.Personal_Context.reconciliation import _snapshot_token
 from tldw_chatbook.Personal_Context.key_protector import InMemoryProfileKeyProtector
 from tldw_chatbook.Personal_Context.service import PersonalContextService
 from tldw_chatbook.Personal_Context.sync_outbox import ProfileSyncOutbox
@@ -168,6 +169,72 @@ def test_dispatcher_crash_between_databases_replays_without_duplicate(
     result = _dispatcher(
         profile_outbox, sync_repository, adapter
     ).dispatch_pending(device_id="device-1", storage_key=STORAGE_KEY, **SCOPE)
+
+    pending = sync_repository.list_pending_sync_v2_outbox_envelopes(**SCOPE)
+    assert result == {"dispatched": expected, "quarantined": 0}
+    assert len(pending) == expected
+    assert len({entry["client_envelope_id"] for entry in pending}) == expected
+    assert profile_outbox.list_pending() == ()
+
+
+def test_first_link_dispatch_crash_replays_under_exact_freeze_authority(
+    tmp_path, monkeypatch
+) -> None:
+    profile_outbox, sync_repository, adapter, service = _dependencies(
+        tmp_path, link_complete=False
+    )
+    manifest, scopes, records, proposals, bindings = service.first_link_snapshot()
+    plan_id = "plan-first-link"
+    service.acquire_first_link_freeze(
+        plan_id=plan_id,
+        snapshot_token=_snapshot_token(
+            manifest, scopes, records, proposals, bindings
+        ),
+    )
+    sync_repository.set_personal_context_link_state(
+        server_profile_id=SCOPE["server_profile_id"],
+        authenticated_principal_id=SCOPE["authenticated_principal_id"],
+        state="reconciling",
+        device_id="device-1",
+        dataset_id=SCOPE["dataset_id"],
+        authority_id="authority-1",
+        profile_id=manifest.profile_id,
+        integrity_key_id="pc-key-1",
+        key_record_id="key-record-1",
+        purge_generation=0,
+        bootstrap_cursor="sha256:" + "a" * 64,
+        plan_id=plan_id,
+        rebaseline_version=1,
+        attention_code=None,
+    )
+    expected = len(profile_outbox.list_pending())
+    dispatcher = _dispatcher(profile_outbox, sync_repository, adapter)
+
+    def crash_once(*_args, **_kwargs):
+        raise RuntimeError("injected first-link cross-database crash")
+
+    monkeypatch.setattr(dispatcher, "_after_destination_enqueue", crash_once)
+    dispatch_kwargs = {
+        **SCOPE,
+        "device_id": "device-1",
+        "storage_key": STORAGE_KEY,
+        "profile_id": manifest.profile_id,
+        "integrity_key_id": "pc-key-1",
+        "key_record_id": "key-record-1",
+        "purge_generation": 0,
+        "bootstrap_cursor": "sha256:" + "a" * 64,
+    }
+    with pytest.raises(RuntimeError, match="first-link cross-database crash"):
+        with service.first_link_reconciliation_writes(plan_id=plan_id):
+            dispatcher.dispatch_first_link_reconciliation(**dispatch_kwargs)
+
+    assert len(sync_repository.list_pending_sync_v2_outbox_envelopes(**SCOPE)) == 1
+    assert profile_outbox.list_pending()
+
+    with service.first_link_reconciliation_writes(plan_id=plan_id):
+        result = _dispatcher(
+            profile_outbox, sync_repository, adapter
+        ).dispatch_first_link_reconciliation(**dispatch_kwargs)
 
     pending = sync_repository.list_pending_sync_v2_outbox_envelopes(**SCOPE)
     assert result == {"dispatched": expected, "quarantined": 0}
