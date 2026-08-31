@@ -756,6 +756,21 @@ class ConsoleWorkspaceController:
         neither reads the registry nor updates Console workspace/session/
         context state; Task 3 owns admission and resolution from its controls.
         """
+        safe_bindings = tuple(
+            binding
+            if (
+                not binding.available
+                or binding.scope is None
+                or binding.scope.workspace_id == inspected_workspace_id
+            )
+            else replace(
+                binding,
+                scope=None,
+                available=False,
+                availability_copy="Unavailable: binding belongs to a different workspace.",
+            )
+            for binding in bindings
+        )
         return self.push_screen(
             ConsoleWorkspaceFilesModal(
                 inspector=inspector,
@@ -763,7 +778,7 @@ class ConsoleWorkspaceController:
                 inspected_workspace_name=inspected_workspace_name,
                 active_workspace_id=active_workspace_id,
                 active_workspace_name=active_workspace_name,
-                bindings=bindings,
+                bindings=safe_bindings,
                 attention=attention,
             )
         )

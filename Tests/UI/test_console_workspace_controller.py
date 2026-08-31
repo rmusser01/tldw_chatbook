@@ -68,6 +68,7 @@ from tldw_chatbook.Workspaces import (
     console_conversation_browser_group_row_limit,
     console_rail_section_height_budget,
 )
+from tldw_chatbook.Workspaces.file_inspector import BindingScope
 from tldw_chatbook.Workspaces.display_state import (
     ConsoleWorkspaceContextState,
     ConsoleWorkspaceConversationRow,
@@ -2285,6 +2286,33 @@ def test_workspace_files_owner_seam_only_constructs_and_pushes_the_pinned_modal(
         controller._console_conversation_browser_rows,
         controller._console_workspace_conversation_workspace_id,
     )
+
+
+def test_workspace_files_owner_seam_fails_closed_for_a_foreign_binding_scope():
+    """A modal labeled for A must never receive readable scope authority for B."""
+    pushed: list[ConsoleWorkspaceFilesModal] = []
+    screen = _NoMountScreen()
+    screen.app = SimpleNamespace(push_screen=lambda modal: pushed.append(modal))
+    controller = _workspace_controller(screen=screen)
+    foreign_scope = BindingScope("workspace-b", "binding-b", "fp", "/b", 1, 2)
+    valid_scope = BindingScope("workspace-a", "binding-a", "fp", "/a", 3, 4)
+
+    controller.open_workspace_files_modal(
+        inspector=object(),
+        inspected_workspace_id="workspace-a",
+        inspected_workspace_name="A",
+        active_workspace_id="workspace-a",
+        active_workspace_name="A",
+        bindings=(
+            WorkspaceFilesBinding("binding-a", "Valid", valid_scope),
+            WorkspaceFilesBinding("binding-b", "Foreign", foreign_scope),
+        ),
+    )
+
+    valid, foreign = pushed[0]._workspace_bindings
+    assert valid.available and valid.scope is valid_scope
+    assert not foreign.available and foreign.scope is None
+    assert "different workspace" in foreign.availability_copy
 
 
 def test_workspace_controller_constructor_documents_every_dependency():

@@ -86,12 +86,23 @@ class WorkspaceFilesAttention:
 
 
 @dataclass(frozen=True)
+class _DirectoryTreePage:
+    """One bounded page addressed by its raw root-relative directory parts."""
+
+    directory_parts: tuple[str, ...]
+    page: DirectoryPage | None
+
+
+@dataclass(frozen=True)
 class WorkspaceFilesViewState:
     """Immutable presentation state; raw identities stay separate from labels."""
 
     selected_binding_id: str | None = None
     directory_parts: tuple[str, ...] = ()
     directory_page: DirectoryPage | None = None
+    directory_pages: tuple[_DirectoryTreePage, ...] = ()
+    expanded_directory_parts: tuple[tuple[str, ...], ...] = ()
+    selected_tree_parts: tuple[str, ...] | None = None
     filter_query: str = ""
     filter_result: FilterResult | None = None
     selected_file: FileRef | None = None
@@ -181,8 +192,8 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         Binding("escape", "request_safe_cancel", "Back"),
         Binding("backspace", "back_to_console", "Back"),
         Binding("f", "focus_filter", "Filter"),
-        Binding("left", "show_tree", "Tree"),
-        Binding("right", "show_viewer", "Viewer"),
+        Binding("left", "collapse_or_parent", "Collapse"),
+        Binding("right", "expand_selected", "Expand"),
     ]
     AUTO_FOCUS = None
 
@@ -215,6 +226,9 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         self._generation = 0
         self._workspace_files_closing = False
         self._filter_timer: Timer | None = None
+        self._pre_filter_tree_state: WorkspaceFilesViewState | None = None
+        self._tree_entries: dict[str, Any] = {}
+        self._tree_more: dict[str, tuple[tuple[str, ...], DirectoryContinuation]] = {}
         self._list_lane = _OperationLane(self, "list")
         self._read_lane = _OperationLane(self, "read")
         self._filter_lane = _OperationLane(self, "filter")
@@ -322,30 +336,88 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         self._generation += 1
         return self._generation
 
-    def _request_directory(self, continuation: DirectoryContinuation | None = None) -> None:
+    def _page_for(self, directory_parts: tuple[str, ...]) -> DirectoryPage | None:
+        if directory_parts == ():
+            return self._state.directory_page
+        return next(
+            (
+                item.page
+                for item in self._state.directory_pages
+                if item.directory_parts == directory_parts
+            ),
+            None,
+        )
+
+    def _replace_directory_page(
+        self, directory_parts: tuple[str, ...], page: DirectoryPage | None
+    ) -> tuple[_DirectoryTreePage, ...]:
+        pages = [
+            item
+            for item in self._state.directory_pages
+            if item.directory_parts != directory_parts
+        ]
+        if directory_parts:
+            pages.append(_DirectoryTreePage(directory_parts, page))
+        return tuple(pages)
+
+    def _request_directory(
+        self,
+        continuation: DirectoryContinuation | None = None,
+        *,
+        directory_parts: tuple[str, ...] | None = None,
+    ) -> None:
         binding = self._selected_binding()
         if binding is None or binding.scope is None or not binding.available:
             self._state = replace(self._state, status_copy="Selected binding is unavailable.")
             self._sync_status()
             return
         generation = self._next_generation()
-        directory_parts = self._state.directory_parts
-        self._state = replace(self._state, status_copy="Loading folder…", directory_page=None, filter_result=None)
+        directory_parts = (
+            self._state.directory_parts
+            if directory_parts is None
+            else directory_parts
+        )
+        self._state = replace(
+            self._state,
+            directory_parts=directory_parts,
+            status_copy="Loading folder…",
+            directory_page=None if directory_parts == () else self._state.directory_page,
+            directory_pages=self._replace_directory_page(directory_parts, None),
+            filter_result=None,
+        )
         self._sync_status()
         self._list_lane.submit(
             _LaneRequest(
                 generation,
-                lambda: self._inspector.list_directory(binding.scope, directory_parts, continuation=continuation),
-                self._publish_directory,
+                lambda: self._inspector.list_directory(
+                    binding.scope, directory_parts, continuation=continuation
+                ),
+                lambda page: self._publish_directory(page, directory_parts=directory_parts),
             )
         )
 
-    async def _publish_directory(self, page: DirectoryPage) -> None:
+    async def _publish_directory(
+        self,
+        page: DirectoryPage,
+        *,
+        directory_parts: tuple[str, ...] | None = None,
+    ) -> None:
+        directory_parts = (
+            self._state.directory_parts
+            if directory_parts is None
+            else directory_parts
+        )
         copy = {
             "empty": "Folder is empty.", "partial": "More folder entries available.",
             "truncated": "Folder listing reached its safety limit.", "failed": "Folder is unavailable.",
         }.get(page.status.value, "Folder loaded.")
-        self._state = replace(self._state, directory_page=page, filter_result=None, status_copy=copy)
+        self._state = replace(
+            self._state,
+            directory_page=page if directory_parts == () else self._state.directory_page,
+            directory_pages=self._replace_directory_page(directory_parts, page),
+            filter_result=None,
+            status_copy=copy,
+        )
         await self._render_tree()
         self._sync_status()
 
@@ -353,6 +425,10 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         binding = self._selected_binding()
         if binding is None or binding.scope is None or not binding.available:
             return
+        if not self._state.filter_query:
+            self._pre_filter_tree_state = replace(
+                self._state, filter_query="", filter_result=None
+            )
         generation = self._next_generation()
         self._state = replace(self._state, filter_query=query, filter_result=None, status_copy="Searching paths…")
         self._sync_status()
@@ -415,7 +491,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
                 for index, item in enumerate(result.matches)
             )
             return
-        page = self._state.directory_page
+        page = self._page_for(())
         if page is None:
             await tree.mount(Static("Loading folder…", markup=False))
             return
@@ -423,11 +499,45 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
             await tree.mount(Static(self._state.status_copy, markup=False))
             return
         rows: list[Button] = []
-        for index, entry in enumerate(page.entries):
-            prefix = "▸ " if entry.is_directory else "  "
-            rows.append(Button(Text(prefix + entry.display_name), id=f"console-workspace-files-entry-{index}", classes="console-workspace-files-entry", compact=True))
-        if page.continuation is not None:
-            rows.append(Button("Load more", id="console-workspace-files-more", compact=True))
+        self._tree_entries = {}
+        self._tree_more = {}
+
+        def append_page(
+            directory_parts: tuple[str, ...], current: DirectoryPage, depth: int
+        ) -> None:
+            for entry in current.entries:
+                row_id = f"console-workspace-files-entry-{len(self._tree_entries)}"
+                self._tree_entries[row_id] = entry
+                expanded = entry.raw_parts in self._state.expanded_directory_parts
+                prefix = "▾ " if entry.is_directory and expanded else "▸ " if entry.is_directory else "  "
+                row = Button(
+                    Text("  " * depth + prefix + entry.display_name),
+                    id=row_id,
+                    classes="console-workspace-files-entry",
+                    compact=True,
+                )
+                row.set_class(entry.raw_parts == self._state.selected_tree_parts, "-selected")
+                rows.append(row)
+                child_page = self._page_for(entry.raw_parts)
+                if entry.is_directory and expanded and child_page is not None:
+                    append_page(entry.raw_parts, child_page, depth + 1)
+            if current.continuation is not None:
+                row_id = (
+                    "console-workspace-files-more"
+                    if directory_parts == ()
+                    else f"console-workspace-files-more-{len(self._tree_more)}"
+                )
+                self._tree_more[row_id] = (directory_parts, current.continuation)
+                rows.append(
+                    Button(
+                        "Load more",
+                        id=row_id,
+                        classes="console-workspace-files-more",
+                        compact=True,
+                    )
+                )
+
+        append_page((), page, 0)
         await tree.mount_all(rows)
 
     async def _render_viewer(self) -> None:
@@ -458,6 +568,76 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
             button = self.query_one(f"#console-workspace-files-binding-{index}", Button)
             button.set_class(binding.binding_id == self._state.selected_binding_id, "-selected")
 
+    def _expand_directory(self, entry: Any) -> None:
+        """Expand one displayed directory using its retained raw identity."""
+        expanded = (*self._state.expanded_directory_parts, entry.raw_parts)
+        self._state = replace(
+            self._state,
+            directory_parts=entry.raw_parts,
+            expanded_directory_parts=expanded,
+            selected_tree_parts=entry.raw_parts,
+            status_copy="Expanding folder…",
+        )
+        self._sync_status()
+        self._request_directory(directory_parts=entry.raw_parts)
+
+    def _collapse_directory(self, directory_parts: tuple[str, ...]) -> None:
+        """Remove one expanded directory and all raw-identity descendants."""
+        expanded = tuple(
+            item
+            for item in self._state.expanded_directory_parts
+            if item[: len(directory_parts)] != directory_parts
+        )
+        pages = tuple(
+            item
+            for item in self._state.directory_pages
+            if item.directory_parts[: len(directory_parts)] != directory_parts
+        )
+        parent = directory_parts[:-1] or None
+        self._state = replace(
+            self._state,
+            directory_parts=parent or (),
+            directory_pages=pages,
+            expanded_directory_parts=expanded,
+            selected_tree_parts=parent,
+            status_copy="Folder collapsed.",
+        )
+        self._sync_status()
+
+    async def action_collapse_or_parent(self) -> None:
+        """Collapse the selected directory, or move to its raw parent."""
+        selected = self._state.selected_tree_parts
+        if selected is None:
+            return
+        if selected in self._state.expanded_directory_parts:
+            self._collapse_directory(selected)
+        else:
+            parent = selected[:-1] or None
+            self._state = replace(
+                self._state,
+                directory_parts=parent or (),
+                selected_tree_parts=parent,
+                status_copy="Moved to parent folder.",
+            )
+            self._sync_status()
+        await self._render_tree()
+
+    def action_expand_selected(self) -> None:
+        """Expand the selected directory; files retain their current preview."""
+        selected = self._state.selected_tree_parts
+        if selected is None:
+            return
+        entry = next(
+            (
+                item
+                for item in self._tree_entries.values()
+                if item.raw_parts == selected and item.is_directory
+            ),
+            None,
+        )
+        if entry is not None and selected not in self._state.expanded_directory_parts:
+            self._expand_directory(entry)
+
     def _cancel_filter_timer(self) -> None:
         if self._filter_timer is not None:
             self._filter_timer.stop()
@@ -482,11 +662,12 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
             await self._render_tree()
 
     @on(Input.Changed, "#console-workspace-files-filter")
-    def _filter_changed(self, event: Input.Changed) -> None:
+    async def _filter_changed(self, event: Input.Changed) -> None:
         self._cancel_filter_timer()
         query = event.value
         if not query:
-            self._clear_filter()
+            if self._state.filter_query or self._state.filter_result is not None:
+                await self._clear_filter()
             return
         self._filter_timer = self.set_timer(FILTER_DEBOUNCE_MS / 1000, lambda: self._request_filter(query))
 
@@ -496,17 +677,34 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         self._cancel_filter_timer()
         self._request_filter(event.value)
 
-    def _clear_filter(self) -> None:
+    async def _clear_filter(self) -> None:
         self._cancel_filter_timer()
         self._next_generation()
-        self._state = replace(self._state, filter_query="", filter_result=None, status_copy="Folder restored.")
-        self._request_directory()
+        previous = self._pre_filter_tree_state
+        self._pre_filter_tree_state = None
+        if previous is None:
+            self._state = replace(
+                self._state,
+                filter_query="",
+                filter_result=None,
+                status_copy="Folder restored.",
+            )
+            self._request_directory()
+            return
+        self._state = replace(
+            previous,
+            filter_query="",
+            filter_result=None,
+            status_copy="Folder restored.",
+        )
+        await self._render_tree()
+        self._sync_status()
 
     @on(Button.Pressed, "#console-workspace-files-filter-clear")
-    def _clear_filter_button(self, event: Button.Pressed) -> None:
+    async def _clear_filter_button(self, event: Button.Pressed) -> None:
         event.stop()
         self.query_one("#console-workspace-files-filter", Input).value = ""
-        self._clear_filter()
+        await self._clear_filter()
 
     @on(Button.Pressed, "#console-workspace-files-filter-cancel")
     def _cancel_filter(self, event: Button.Pressed) -> None:
@@ -519,18 +717,16 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
     @on(Button.Pressed, ".console-workspace-files-entry")
     def _entry_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        page = self._state.directory_page
-        if page is None:
-            return
-        try:
-            index = int((event.button.id or "").rsplit("-", 1)[-1])
-            entry = page.entries[index]
-        except (IndexError, ValueError):
+        entry = self._tree_entries.get(event.button.id or "")
+        if entry is None:
             return
         if entry.is_directory:
-            self._state = replace(self._state, directory_parts=entry.raw_parts)
-            self._request_directory()
+            if entry.raw_parts in self._state.expanded_directory_parts:
+                self._collapse_directory(entry.raw_parts)
+            else:
+                self._expand_directory(entry)
             return
+        self._state = replace(self._state, selected_tree_parts=entry.raw_parts)
         self._request_file(FileRef(entry.raw_parts, entry.display_name))
 
     @on(Button.Pressed, ".console-workspace-files-file")
@@ -545,11 +741,13 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         except (IndexError, ValueError):
             return
 
-    @on(Button.Pressed, "#console-workspace-files-more")
+    @on(Button.Pressed, ".console-workspace-files-more")
     def _more_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        if self._state.directory_page is not None and self._state.directory_page.continuation is not None:
-            self._request_directory(self._state.directory_page.continuation)
+        request = self._tree_more.get(event.button.id or "")
+        if request is not None:
+            directory_parts, continuation = request
+            self._request_directory(continuation, directory_parts=directory_parts)
 
     @on(Button.Pressed, "#console-workspace-files-previous")
     def _previous_pressed(self, event: Button.Pressed) -> None:

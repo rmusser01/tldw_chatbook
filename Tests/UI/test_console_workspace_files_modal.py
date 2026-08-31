@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Event
 
@@ -395,10 +395,113 @@ async def test_filter_enter_cancel_and_clear_restore_the_directory_view() -> Non
 
         await pilot.click("#console-workspace-files-filter-cancel")
         assert modal.state.status_copy == "Filter cancelled."
+        list_calls_before_clear = sum(name == "list" for name, _call in inspector.calls)
         await pilot.click("#console-workspace-files-filter-clear")
         await pilot.pause()
         assert modal.state.filter_query == ""
-        assert inspector.calls[-1][0] == "list"
+        assert sum(name == "list" for name, _call in inspector.calls) == list_calls_before_clear
+
+
+@pytest.mark.asyncio
+async def test_cancel_keeps_partial_filter_results_but_clear_restores_tree_state() -> None:
+    """Canonical design §384: Cancel retains; Clear restores expansion/selection."""
+    inspector = _Inspector([])
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=inspector, inspected_workspace_id="ws-a", inspected_workspace_name="A",
+        active_workspace_id="ws-a", active_workspace_name="A",
+        bindings=(WorkspaceFilesBinding("binding-a", "Project", _scope()),),
+    )
+    root_entry = DirectoryEntry(("folder",), "folder", True)
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal._next_generation()
+        await modal._publish_directory(
+            DirectoryPage(DirectoryStatus.COMPLETE, (root_entry,))
+        )
+        modal._expand_directory(root_entry)
+        await pilot.pause()
+        await modal._publish_directory(
+            DirectoryPage(
+                DirectoryStatus.COMPLETE,
+                (DirectoryEntry(("folder", "child.txt"), "child.txt", False),),
+            ),
+            directory_parts=("folder",),
+        )
+        modal._pre_filter_tree_state = replace(
+            modal.state, filter_query="", filter_result=None
+        )
+        modal._state = replace(
+            modal.state,
+            filter_query="child",
+            expanded_directory_parts=(),
+            selected_tree_parts=None,
+            filter_result=FilterResult(
+                FilterStatus.PARTIAL,
+                (FileRef(("folder", "child.txt"), "folder/child.txt"),),
+                status_copy="Partial: 1 result.",
+            ),
+        )
+        await modal._render_tree()
+        await pilot.click("#console-workspace-files-filter-cancel")
+        assert modal.state.filter_result is not None
+        assert modal.state.filter_result.status is FilterStatus.PARTIAL
+        assert "cancelled" in modal.state.status_copy.lower()
+
+        await pilot.click("#console-workspace-files-filter-clear")
+        await pilot.pause()
+        assert modal.state.filter_query == ""
+        assert modal.state.filter_result is None
+        assert modal.state.expanded_directory_parts == (("folder",),)
+        assert modal.state.selected_tree_parts == ("folder",)
+
+
+@pytest.mark.asyncio
+async def test_tree_expands_nested_directories_and_left_collapses_raw_subtree() -> None:
+    inspector = _Inspector([])
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=inspector, inspected_workspace_id="ws-a", inspected_workspace_name="A",
+        active_workspace_id="ws-a", active_workspace_name="A",
+        bindings=(WorkspaceFilesBinding("binding-a", "Project", _scope()),),
+    )
+    root = DirectoryEntry(("folder",), "folder", True)
+    nested = DirectoryEntry(("folder", "nested"), "nested", True)
+    continuation = DirectoryContinuation(
+        "fingerprint", ("folder",), DirectoryRevision(1, 2, 3), 200, "nested-page"
+    )
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal._next_generation()
+        await modal._publish_directory(DirectoryPage(DirectoryStatus.COMPLETE, (root,)))
+        modal._expand_directory(root)
+        await pilot.pause()
+        await modal._publish_directory(
+            DirectoryPage(DirectoryStatus.PARTIAL, (nested,), continuation), directory_parts=("folder",)
+        )
+        await pilot.pause()
+        await pilot.click("#console-workspace-files-more-0")
+        await pilot.pause()
+        assert inspector.calls[-1] == ("list", (_scope(), ("folder",), continuation))
+        modal._next_generation()
+        await modal._publish_directory(
+            DirectoryPage(DirectoryStatus.COMPLETE, (nested,)), directory_parts=("folder",)
+        )
+        modal._expand_directory(nested)
+        await pilot.pause()
+        assert modal.state.expanded_directory_parts == (("folder",), ("folder", "nested"))
+        assert inspector.calls[-1] == ("list", (_scope(), ("folder", "nested"), None))
+
+        await modal.action_collapse_or_parent()
+        assert modal.state.expanded_directory_parts == (("folder",),)
+        assert modal.state.selected_tree_parts == ("folder",)
+        assert "collapsed" in modal.state.status_copy.lower()
+
+        await modal.action_collapse_or_parent()
+        assert modal.state.expanded_directory_parts == ()
+        assert modal.state.selected_tree_parts is None
 
 
 @pytest.mark.asyncio
