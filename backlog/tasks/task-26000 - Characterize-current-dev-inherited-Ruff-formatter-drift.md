@@ -46,8 +46,8 @@ TASK-22514 proved that its closeout introduced no Ruff formatter regressions whi
 
 Task 1 authority state (2026-08-30):
 
-- `task_base`: `05c858e87cc1f11c96d6b384b34fdaf914efc51e`
-- `current_pin`: `05c858e87cc1f11c96d6b384b34fdaf914efc51e`
+- `task_base`: `51d3fbdbf20ff9fc2cf3a3ea3c7f71fef308339a`
+- `current_pin`: `51d3fbdbf20ff9fc2cf3a3ea3c7f71fef308339a`
 - `common_ancestor`: `f0e8961222fe1a7a3ac7566f7f78142e717358f3`
 
 ADR required: no.
@@ -123,7 +123,9 @@ The 36 stable labels are `ruff-agents-runtime`, `ruff-api`,
   and the bounded pin refresh advanced it to
   `4ae04314c49c54d9241aae8275b5d4b8e14b254e`, followed by the current-only
   refresh to `872a325483679d2880fcfe2a6e2b9fc82e12f42d`, followed by the current
-  refresh to `05c858e87cc1f11c96d6b384b34fdaf914efc51e`;
+  refresh to `05c858e87cc1f11c96d6b384b34fdaf914efc51e`, followed by the current
+  refresh to `41176579f185cd4080d0b77441f86db4320a2254`, followed by the current
+  refresh to `51d3fbdbf20ff9fc2cf3a3ea3c7f71fef308339a`;
   the clean task/spec/plan slice rebased only onto each fresh SHA, current evidence
   and lineage were regenerated each time, and common remained
   `f0e8961222fe1a7a3ac7566f7f78142e717358f3`. Historical pins were base
@@ -133,15 +135,15 @@ The 36 stable labels are `ruff-agents-runtime`, `ruff-api`,
 - Isolated evidence lives outside Git under `/tmp/task26000.b0z8M0/`:
   `evidence-repo/`, five clean detached `checkouts/`, five full `raw/*.json`
   snapshots, and canonical `m-identities.json` (SHA-256
-  `c0ab0afef8c9726ef3751c28f41d91a0e9c90d66b4040cf0468392463f018f78`).
+  `4118abc9a37988580b43cde8e4733d8e7bc33270e962b8b64c3878d446fca6d0`).
   Snapshot entries/failures were base `4,648/1,741`, pre-closeout
   `4,653/1,754`, closeout `4,653/1,738`, common `4,643/1,746`, and current
-  `4,988/1,903`; all blockers were zero and every aggregate control reconciled.
+  `5,028/1,946`; all blockers were zero and every aggregate control reconciled.
   Corrected raw SHA-256 values are base `7d2c0b02695fc6a05ebe294f629389348b68403f8433466f2ca6bd4d88f8ae17`,
   pre-closeout `073db424a2bc1ba7d0af7a047120c9d3e996eb1f71934fd8f83e823e68fd77ae`,
   closeout `5d29afd7294cbf7149676287edbf7b1f1c3a13824634d98eea7668579fd74e56`,
   common `c34c5fe9d8e3154c3450f1cf28d4c9a6f1f631feb4735296fc6b891af5de1b15`,
-  and current `a4484533728c2caae2a90454bd7f4e09720ad956c1afd4f54036a939fc4c864f`.
+  and current `b2c5bb2b56c1357625d79f9ef0189af2751baec5f51782170c16a39787afeab7`.
   All five were rerun with the final portability-corrected Appendix A. The four
   historical snapshots remained byte-identical because their schema does not embed
   the producer-source digest; current changed with the required authority repin.

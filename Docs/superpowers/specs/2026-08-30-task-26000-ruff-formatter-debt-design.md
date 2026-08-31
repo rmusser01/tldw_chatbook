@@ -21,7 +21,7 @@ Backlog boundaries that later formatter-only tasks execute.
 
 The current-development pin after the TASK-26000 refresh is:
 
-- Git revision: `05c858e87cc1f11c96d6b384b34fdaf914efc51e`
+- Git revision: `51d3fbdbf20ff9fc2cf3a3ea3c7f71fef308339a`
 - Ruff: `0.15.22`
 - Python: `3.12.11`
 - Interpreter contract: an explicitly supplied absolute Python 3.12.11 invocation
