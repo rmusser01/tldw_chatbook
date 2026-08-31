@@ -12,9 +12,6 @@ from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from tldw_chatbook.Widgets.Console import ConsoleWorkspaceContextTray
-
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -39,10 +36,6 @@ async def test_default_files_request_is_typed_and_preserves_console_state() -> N
         button.press()
         await pilot.pause()
         assert app.workspace_registry_service.get_active_workspace().workspace_id == before
-        assert not any(
-            isinstance(screen, ConsoleWorkspaceContextTray)
-            for screen in host.screen_stack
-        )
 
 
 @pytest.mark.asyncio

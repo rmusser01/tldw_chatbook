@@ -249,6 +249,59 @@ async def test_workspace_files_push_failure_leaves_no_ledger_or_claim():
     assert controller._workspace_files_visit_workspace_id is None
 
 
+@pytest.mark.asyncio
+async def test_workspace_files_no_folder_blocks_but_stale_available_request_opens_recovery():
+    notices: list[str] = []
+    opened: list[dict[str, object]] = []
+    app = SimpleNamespace(workspace_registry_service=object(), notify=lambda text, **_kw: notices.append(text))
+    controller = _workspace_controller(app_instance=app)
+    controller._resolve_workspace_files_visit = lambda workspace_id: SimpleNamespace(  # type: ignore[method-assign]
+        workspace_id=workspace_id, workspace_name="A", active_workspace_id="A",
+        active_workspace_name="A", bindings=(), had_bindings=False,
+    )
+    controller.open_workspace_files_modal = lambda **kwargs: (  # type: ignore[method-assign]
+        opened.append(kwargs) or SimpleNamespace(is_mounted=True)
+    )
+    await controller.request_workspace_files("")
+    assert notices == ["No local folders are attached. Add one in Settings."]
+    assert opened == []
+    await controller.request_workspace_files("ws-a", expected_available=True)
+    assert len(opened) == 1
+    closed = opened[0]["on_visit_closed"]
+    assert callable(closed)
+    closed()
+    closed()
+    assert controller._workspace_files_modal is None
+    assert controller._workspace_files_visit_workspace_id is None
+    await controller.request_workspace_files("ws-a", expected_available=True)
+    assert len(opened) == 2
+
+
+@pytest.mark.asyncio
+async def test_workspace_files_minimum_refusal_does_not_resolve_or_claim() -> None:
+    """The exact small-terminal warning must not create a worker or visit."""
+    notices: list[tuple[str, str | None]] = []
+    screen = _NoMountScreen()
+    screen.size = SimpleNamespace(width=79, height=23)
+    controller = _workspace_controller(
+        screen=screen,
+        app_instance=SimpleNamespace(
+            workspace_registry_service=object(),
+            notify=lambda text, **kwargs: notices.append((text, kwargs.get("severity"))),
+        ),
+    )
+    calls: list[str] = []
+    controller._resolve_workspace_files_visit = lambda workspace_id: calls.append(workspace_id)  # type: ignore[method-assign]
+
+    await controller.request_workspace_files("ws-a")
+
+    assert notices == [("Workspace Files needs at least 80 × 24 terminal cells.", "warning")]
+    assert calls == []
+    assert screen.workers == []
+    assert controller._workspace_files_admission_claim is None
+    assert controller._workspace_files_modal is None
+
+
 def _rich_row() -> ConsoleConversationBrowserInputRow:
     return ConsoleConversationBrowserInputRow(
         row_key="conversation-7",

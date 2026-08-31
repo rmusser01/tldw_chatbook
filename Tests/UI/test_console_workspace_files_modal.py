@@ -70,6 +70,11 @@ class _Host(App[None]):
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Button("Open files", id="files-opener")
+            yield Input(id="console-chat-input")
+
+    def _focus_console_composer_if_needed(self, *, force: bool = False) -> None:
+        if force:
+            self.query_one("#console-chat-input", Input).focus()
 
 
 def _scope() -> BindingScope:
@@ -165,6 +170,26 @@ async def test_safe_dismissal_sources_are_one_shot_and_restore_the_opener(
         await modal.action_request_safe_cancel()
         assert callbacks == ["back"]
         assert results == [None]
+
+
+@pytest.mark.asyncio
+async def test_safe_dismissal_falls_back_to_composer_when_opener_recomposes_away() -> None:
+    """Back remains safe when the row that launched the inspector no longer exists."""
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=_Inspector([]), inspected_workspace_id="ws-a", inspected_workspace_name="A",
+        active_workspace_id="ws-a", active_workspace_name="A",
+        bindings=(WorkspaceFilesBinding("binding-a", "Unavailable", None, available=False),),
+    )
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        opener = app.query_one("#files-opener", Button)
+        opener.focus()
+        await app.push_screen(modal)
+        await pilot.pause()
+        await opener.remove()
+        await pilot.click("#console-workspace-files-back")
+        await pilot.pause()
+        assert app.focused is app.query_one("#console-chat-input", Input)
 
 
 @pytest.mark.asyncio
@@ -321,6 +346,46 @@ async def test_external_pop_tears_down_once_and_reports_a_closed_visit() -> None
         await app.pop_screen()
         await pilot.pause()
         assert app.screen is not modal
+        assert closed == ["closed"]
+        assert modal.owned_lane_count == 0
+
+
+@pytest.mark.asyncio
+async def test_external_pop_waits_for_an_active_owned_lane_before_closing() -> None:
+    """A real app pop must join the lane rather than orphan its thread work."""
+    entered = Event()
+    release = Event()
+    closed: list[str] = []
+
+    async def _published(_value: object) -> None:
+        return None
+
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=_Inspector([]), inspected_workspace_id="ws-a", inspected_workspace_name="A",
+        active_workspace_id="ws-a", active_workspace_name="A",
+        bindings=(WorkspaceFilesBinding("binding-a", "Unavailable", None, available=False),),
+        on_visit_closed=lambda: closed.append("closed"),
+    )
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal._read_lane.submit(
+            _LaneRequest(
+                0,
+                lambda: (entered.set(), release.wait(timeout=1), "done")[2],
+                _published,
+            )
+        )
+        while not entered.is_set():
+            await asyncio.sleep(0)
+        # Textual returns an AwaitComplete rather than a bare coroutine here.
+        popping = asyncio.ensure_future(app.pop_screen())
+        await asyncio.sleep(0)
+        assert not popping.done()
+        release.set()
+        await asyncio.wait_for(popping, timeout=2)
+        await pilot.pause()
         assert closed == ["closed"]
         assert modal.owned_lane_count == 0
 
