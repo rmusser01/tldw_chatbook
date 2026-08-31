@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-08-31 05:07'
-updated_date: '2026-08-31 05:22'
+updated_date: '2026-08-31 05:34'
 labels:
   - console
   - ux-review
@@ -31,58 +31,67 @@ A Console send that cannot record a trace is refused entirely: the interrupt car
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-ROOT CAUSE FOUND (live instrumentation, not inference).
-
-Patched TraceCallPersistenceError.__init__ to dump a stack, ran the real app,
-sent a message. Single captured frame:
+ROOT CAUSE (verified by live instrumentation + isolated repro):
 
   console_agent_bridge.py:2895   _consume -> gateway.stream_chat(...)
   console_provider_gateway.py:3902  stream_chat -> self._reserve_trace_call(...)
   console_provider_gateway.py:2224  raise TraceCallPersistenceError(reservation_status="not_established")
 
-Captured "active exc: None" -- nothing threw. Nothing failed to write. This is a
-guard firing on a permanent condition:
+Captured "active exc: None" -- nothing threw, nothing failed to write. The guard
+fires on a permanent condition:
 
-  # console_provider_gateway.py:2223
   if self._trace_call_boundary_factory is None:
       raise TraceCallPersistenceError(reservation_status="not_established")
 
-The chain:
-1. ConsoleTurnPreparation.capture_mode defaults to CAPTURE_ON
-   (console_turn_preparation.py:118).
-2. stream_chat routes every CAPTURE_ON send through _reserve_trace_call
-   (console_provider_gateway.py:3900-3906).
-3. _reserve_trace_call hard-fails when _trace_call_boundary_factory is None.
-4. NO PRODUCTION CODE EVER SUPPLIES THAT FACTORY. Both callers of
-   ensure_provider_gateway omit it -- chat_screen.py:6392 and
-   console_launch_wake.py:212. Only six Tests/ files inject one, and
-   ConsoleTraceCallBoundary is constructed exclusively in tests.
-=> every production Console send raises, and the controller converts it into
-   the "Trace capture blocked" pause. The provider is never contacted.
+Chain: ConsoleTurnPreparation.capture_mode defaults to CAPTURE_ON
+(console_turn_preparation.py:118) -> stream_chat routes every CAPTURE_ON send
+through _reserve_trace_call -> that raises when the factory is None -> NO
+PRODUCTION CODE EVER SUPPLIES THAT FACTORY. Both callers of
+ensure_provider_gateway omit it (chat_screen.py:6392,
+console_launch_wake.py:212); ConsoleTraceCallBoundary is constructed only in
+Tests/. Introduced by c78f641ad (2026-08-30) -- consumer landed without producer.
 
-The gateway's own docstring calls this seam "Optional ... when supplied"
-(console_provider_gateway.py:2088), so the call site violates the documented
-contract of the parameter it depends on.
+WHY CI IS GREEN: every test injects a factory, and the shared helper
+_capture_on_prepared_request SILENTLY INSTALLS ONE when absent
+(Tests/Chat/test_console_provider_gateway.py:141-160). The suite therefore
+cannot observe the shipped configuration.
 
-WHY TESTS ARE GREEN: every test injects a factory, so the suite exercises only
-the wired path and never the production one.
+*** THE DEGRADE FIX (b) IS OFF THE TABLE -- DO NOT ATTEMPT IT. ***
+I implemented it TDD-first and it broke a deliberate pinning test:
+Tests/Chat/test_console_provider_gateway.py::
+test_capture_on_without_durable_boundary_cannot_enter_adapter
+That test is the exact inverse of the degrade: same setup (factory set to None,
+CAPTURE_ON), asserting `pytest.raises(TraceCallPersistenceError)` AND
+`adapter_called is False`. It passes on clean code. So refusing to dispatch a
+Capture-On turn with no durable boundary is an INTENTIONAL SAFETY INVARIANT --
+a provider call that leaves no auditable trace record must not happen. The
+guard is correct; the wiring is missing.
 
-REGRESSION WINDOW: introduced by c78f641ad "feat(console): implement
-reference-backed semantic trace ledger" (2026-08-30, 30 commits before the
-reviewed tip 0ef6f3fd4) -- the commit added the consumer without wiring the
-producer. Same-day regression on dev, not long-standing.
+Two degrade variants were tried and both are wrong:
+  1. Downgrade capture_mode to CAPTURE_OFF at the admission seam ->
+     TraceProvenanceAlignmentError "Capture Off cannot dispatch a capture-on
+     prepared request" (the PREPARED REQUEST carries capture-on provenance,
+     so dispatch-time downgrade is incoherent by construction).
+  2. Return None from _reserve_trace_call + supply the paired
+     capture_off_admission at both call sites (fresh route and
+     _authorize_llamacpp_fallback). This DOES work mechanically -- both new
+     tests passed -- but it defeats the invariant above.
 
-TWO FIX SHAPES, product decision required:
-(a) Wire a real ConsoleTraceCallBoundary factory at both production call sites
-    -- makes the shipped feature actually work.
-(b) Treat a missing factory as "capture unavailable" and take the existing
-    _capture_off_admission path instead of raising -- honours the documented
-    "optional" contract and guarantees a missing seam can never kill the core
-    loop.
-Recommend BOTH: (a) restores intent, (b) is the defense-in-depth that stops
-this class of half-wiring from ever being fatal again.
+=> THE ONLY CORRECT FIX IS (a): wire a real ConsoleTraceCallBoundary factory
+   at both production call sites. The feature was shipped half-wired.
 
-REGRESSION TEST GAP: needs a test that builds the gateway WITHOUT a factory
-(i.e. exactly as production does) and asserts a CAPTURE_ON send still reaches
-the adapter.
+NOTE for whoever does it: _trace_dispatch_admission (:5050) documents the
+pairing rule -- a null boundary is only accepted alongside a capture_off
+admission -- and BOTH _reserve_trace_call call sites need the real factory
+(:3902 fresh route, :4237 llama.cpp fallback; llama_cpp is the default local
+provider and an empty streaming response is what drives that retry).
+
+REGRESSION TEST TO ADD WITH THE FIX: assert that a gateway built the way
+production builds it -- runtime.ensure_provider_gateway() as called from
+chat_screen.py -- comes back with a non-None _trace_call_boundary_factory.
+No current test covers the production wiring path.
+
+UNRELATED PRE-EXISTING FAILURE observed at dev 0ef6f3fd4 (NOT caused by this):
+Tests/Chat/test_console_trace_settlement.py::
+test_cold_restart_recovers_open_calls_monotonically_and_idempotently
 <!-- SECTION:NOTES:END -->
