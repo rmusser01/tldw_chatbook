@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+from typing import get_type_hints
 
 import pytest
 from textual import events, on
@@ -176,6 +177,17 @@ def _require_return_protocol():
         geometry_type,
         geometry_message_type,
     )
+
+
+def test_settlement_request_uses_concrete_current_tree_types() -> None:
+    _, settlement_type, *_ = _require_return_protocol()
+
+    annotations = get_type_hints(settlement_type)
+
+    assert annotations["route_identity"] == tuple[object, ...]
+    assert annotations["shell_identity"] is int
+    assert annotations["items_host_identity"] is int
+    assert annotations["owner_identity"] is int
 
 
 @pytest.mark.asyncio
@@ -443,6 +455,9 @@ async def test_viewer_return_waits_for_geometry_then_scrolls_before_row_focus(
         assert focus_observations == [(0, 42)]
         assert (int(owner.scroll_x), int(owner.scroll_y)) == (0, 42)
 
+        screen._disarm_library_list_entry_focus()
+        assert screen._library_media_last_exact_settlement is None
+
 
 @pytest.mark.asyncio
 async def test_authoritative_recompose_rearms_before_replacement_geometry(
@@ -560,6 +575,80 @@ def _hold_next_owner_geometry(
     assert len(held) == 1
     assert owner.latest_geometry is held[0].geometry
     return held[0]
+
+
+@pytest.mark.asyncio
+async def test_failed_geometry_commit_rolls_back_and_same_revision_is_one_shot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, row_scroll_type, _, geometry_message_type = _require_return_protocol()
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, owner, media_id, scroll_offset, real_on_resize = (
+            await _open_pending_viewer_return(
+                host,
+                pilot,
+                monkeypatch,
+                row_scroll_type,
+            )
+        )
+        geometry = _hold_next_owner_geometry(
+            monkeypatch,
+            owner,
+            row_scroll_type,
+            geometry_message_type,
+            real_on_resize,
+        )
+        target = next(
+            row
+            for row in screen.query(".library-media-row")
+            if str(getattr(row, "media_id", "") or "") == media_id
+        )
+        pre_scroll = (int(owner.scroll_x), int(owner.scroll_y))
+        pre_focus = screen.focused
+        desired_scroll_commits = 0
+        target_focus_attempts = 0
+        real_scroll_to = owner.scroll_to
+        real_set_focus = screen.set_focus
+
+        def observe_scroll_to(*args, **kwargs):
+            nonlocal desired_scroll_commits
+            if (kwargs.get("x"), kwargs.get("y")) == scroll_offset:
+                desired_scroll_commits += 1
+            return real_scroll_to(*args, **kwargs)
+
+        def perturb_first_target_focus(widget, *args, **kwargs):
+            nonlocal target_focus_attempts
+            result = real_set_focus(widget, *args, **kwargs)
+            if widget is target:
+                target_focus_attempts += 1
+                if target_focus_attempts == 1:
+                    real_scroll_to(
+                        x=scroll_offset[0],
+                        y=scroll_offset[1] - 1,
+                        animate=False,
+                        force=True,
+                        immediate=True,
+                    )
+            return result
+
+        monkeypatch.setattr(owner, "scroll_to", observe_scroll_to)
+        monkeypatch.setattr(screen, "set_focus", perturb_first_target_focus)
+
+        screen._handle_library_media_row_geometry_changed(geometry)
+        duplicate = geometry_message_type(owner, owner.latest_geometry)
+        screen._handle_library_media_row_geometry_changed(duplicate)
+
+        assert desired_scroll_commits == 1
+        assert target_focus_attempts == 1
+        assert screen._library_media_last_exact_settlement is None
+        assert getattr(screen.focused, "media_id", None) != media_id
+        assert screen.focused is pre_focus
+        assert screen._library_notes_programmatic_focus_target is None
+        assert (int(owner.scroll_x), int(owner.scroll_y)) == pre_scroll
 
 
 @pytest.mark.asyncio
@@ -808,6 +897,32 @@ async def test_screen_unmount_revokes_complete_pending_return_authority(
         assert screen._library_list_entry_focus_timer is None
         screen._handle_library_media_row_geometry_changed(queued)
         assert screen._library_media_last_exact_settlement is None
+
+
+@pytest.mark.asyncio
+async def test_screen_unmount_clears_retained_exact_settlement_proof() -> None:
+    _require_return_protocol()
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, _, _ = await _open_scrolled_compact_media_viewer(host, pilot)
+        screen.query_one("#library-media-back", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_last_exact_settlement is not None,
+            message="Viewer return did not retain exact proof before unmount.",
+        )
+        assert screen._library_pending_list_entry_focus is True
+        assert screen._library_list_entry_focus_timer is not None
+
+        await host.pop_screen()
+
+        assert screen._library_media_last_exact_settlement is None
+        assert screen._library_pending_list_entry_focus is False
+        assert screen._library_pending_list_entry_media_return is None
+        assert screen._library_list_entry_focus_timer is None
 
 
 @pytest.mark.asyncio

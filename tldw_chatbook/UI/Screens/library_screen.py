@@ -1065,11 +1065,11 @@ class _LibraryMediaReturnSettlement:
     presentation_epoch: int
     content_signature: tuple[object, ...]
     layout_signature: tuple[object, ...]
-    route_identity: object
+    route_identity: tuple[object, ...]
     media_view_identity: str
-    shell_identity: int | None
-    items_host_identity: int | None
-    owner_identity: int | None
+    shell_identity: int
+    items_host_identity: int
+    owner_identity: int
     exclusive_geometry_floor: int
     focus_anchor: Widget | None
 
@@ -3758,6 +3758,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_last_exact_settlement: (
             tuple[_LibraryMediaReturnSettlement, int] | None
         ) = None
+        self._library_media_last_settlement_attempt: tuple[int, int] | None = None
         # task-4022 AC2: the ids from the most recently completed media
         # delete (bulk OR, since task-14901, the single-item viewer
         # delete), rendered as a "✓ deleted · N items" receipt (with
@@ -6852,8 +6853,10 @@ class LibraryScreen(BaseAppScreen):
     def _arm_library_media_return_settlement(
         self,
         receipt: _LibraryMediaReturnReceipt,
+        *,
+        consume_latest_geometry: bool = True,
     ) -> _LibraryMediaReturnSettlement | None:
-        """Create current-owner exact authority and consume ready geometry."""
+        """Create current-owner authority and optionally consume ready geometry."""
         if (
             not self._library_pending_list_entry_focus
             or self._library_pending_list_entry_media_return is not receipt
@@ -6881,7 +6884,7 @@ class LibraryScreen(BaseAppScreen):
             tree,
         ):
             latest = owner.latest_geometry
-            if latest is not None:
+            if consume_latest_geometry and latest is not None:
                 self._settle_library_media_return_from_geometry(
                     current,
                     owner,
@@ -6925,7 +6928,11 @@ class LibraryScreen(BaseAppScreen):
         )
         self._library_media_return_settlement = request
         latest = owner.latest_geometry
-        if latest is not None and latest.revision > floor:
+        if (
+            consume_latest_geometry
+            and latest is not None
+            and latest.revision > floor
+        ):
             self._settle_library_media_return_from_geometry(request, owner, latest)
         return self._library_media_return_settlement
 
@@ -6968,6 +6975,13 @@ class LibraryScreen(BaseAppScreen):
             and last_exact[1] >= geometry.revision
         ):
             return True
+        last_attempt = self._library_media_last_settlement_attempt
+        if (
+            last_attempt is not None
+            and last_attempt[0] == request.request_id
+            and last_attempt[1] >= geometry.revision
+        ):
+            return False
 
         desired = request.receipt.scroll_offset
         if desired is None or desired[0] < 0 or desired[1] < 0:
@@ -6996,32 +7010,65 @@ class LibraryScreen(BaseAppScreen):
             target,
         ):
             return False
-
-        owner.scroll_to(
-            x=desired[0],
-            y=desired[1],
-            animate=False,
-            force=True,
-            immediate=True,
+        pre_scroll = (int(owner.scroll_x), int(owner.scroll_y))
+        pre_focus = self.focused
+        committed = False
+        self._library_media_last_settlement_attempt = (
+            request.request_id,
+            geometry.revision,
         )
-        if (int(owner.scroll_x), int(owner.scroll_y)) != desired:
-            return False
-        if not self._library_media_live_focus_is_allowed(
-            request.focus_anchor,
-            request.receipt.stable_id,
-            target,
-        ):
-            return False
-        self._library_notes_programmatic_focus_target = target
-        self.set_focus(target, scroll_visible=False)
-        if self.focused is not target:
-            return False
-        if (int(owner.scroll_x), int(owner.scroll_y)) != desired:
-            return False
-
-        self._library_media_last_exact_settlement = (request, geometry.revision)
-        self._library_media_return_settlement = None
-        return True
+        try:
+            owner.scroll_to(
+                x=desired[0],
+                y=desired[1],
+                animate=False,
+                force=True,
+                immediate=True,
+            )
+            if (int(owner.scroll_x), int(owner.scroll_y)) == desired and (
+                self._library_media_live_focus_is_allowed(
+                    request.focus_anchor,
+                    request.receipt.stable_id,
+                    target,
+                )
+            ):
+                self._library_notes_programmatic_focus_target = target
+                self.set_focus(target, scroll_visible=False)
+                committed = bool(
+                    self.focused is target
+                    and (int(owner.scroll_x), int(owner.scroll_y)) == desired
+                )
+                if committed:
+                    self._library_media_last_exact_settlement = (
+                        request,
+                        geometry.revision,
+                    )
+                    self._library_media_return_settlement = None
+        finally:
+            self._library_notes_programmatic_focus_target = None
+            if not committed:
+                owner.scroll_to(
+                    x=pre_scroll[0],
+                    y=pre_scroll[1],
+                    animate=False,
+                    force=True,
+                    immediate=True,
+                )
+                valid_pre_focus = bool(
+                    pre_focus is not None
+                    and pre_focus.is_attached
+                    and self in pre_focus.ancestors
+                )
+                if self.focused is not pre_focus:
+                    self.set_focus(
+                        pre_focus if valid_pre_focus else None,
+                        scroll_visible=False,
+                    )
+        if committed:
+            # Keep the existing one-event guard for the queued Focus bubble;
+            # every failed path leaves it cleared by the finally block above.
+            self._library_notes_programmatic_focus_target = target
+        return committed
 
     @on(LibraryMediaRowGeometryChanged)
     def _handle_library_media_row_geometry_changed(
@@ -7037,7 +7084,10 @@ class LibraryScreen(BaseAppScreen):
         receipt = self._library_pending_list_entry_media_return
         if receipt is None or receipt.final_focus_policy != "row":
             return
-        request = self._arm_library_media_return_settlement(receipt)
+        request = self._arm_library_media_return_settlement(
+            receipt,
+            consume_latest_geometry=False,
+        )
         if request is not None:
             self._settle_library_media_return_from_geometry(
                 request,
@@ -11189,6 +11239,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_pending_list_entry_media_return = None
         self._library_pending_list_entry_focus_anchor = None
         self._library_media_return_settlement = None
+        self._library_media_last_exact_settlement = None
+        self._library_media_last_settlement_attempt = None
         if self._library_list_entry_focus_timer is not None:
             self._library_list_entry_focus_timer.stop()
             self._library_list_entry_focus_timer = None
