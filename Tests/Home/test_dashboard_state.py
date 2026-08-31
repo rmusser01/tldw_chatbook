@@ -1,5 +1,8 @@
 from tldw_chatbook.Home.dashboard_state import (
     HOME_FLASHCARDS_DUE_ROW_ID,
+    HOME_OPEN_ITEM_CONTROL_ID,
+    HOME_RECENT_WORK_LIMIT,
+    HOME_RESUME_KIND_MEDIA,
     HOME_RESUME_LATEST_CONTROL_ID,
     HOME_START_CONVERSATION_CONTROL_ID,
     RUNNING_RUN_STATUS,
@@ -14,6 +17,8 @@ from tldw_chatbook.Home.dashboard_state import (
     categorize_run_status,
     choose_home_selected_item,
     choose_next_best_action,
+    combined_recent_work_items,
+    content_item_kind,
     summarize_home_dashboard,
 )
 
@@ -1359,7 +1364,8 @@ def test_resume_control_note_routes_to_library_and_escapes_title():
     assert control is not None
     assert control.control_id == HOME_RESUME_LATEST_CONTROL_ID
     assert control.target_route == "library"
-    assert control.target_id == "note-7"
+    # Prefixed so the screen dispatch routes by content kind.
+    assert control.target_id == "local:note:note-7"
     # User title is markup-escaped exactly once before any Button label.
     assert control.label == 'Resume note: weird \\[b="c] note'
 
@@ -1375,7 +1381,7 @@ def test_resume_control_conversation_routes_to_chat():
 
     assert control is not None
     assert control.target_route == "chat"
-    assert control.target_id == "conv-9"
+    assert control.target_id == "local:conversation:conv-9"
     assert control.label == "Resume conversation: Daily standup chat"
 
 
@@ -1456,3 +1462,96 @@ def test_triage_idle_canvas_not_ready_empty_keeps_import_card_only():
     assert canvas.primary_control_id == ""
     assert canvas.lines == ("Library content makes Console and RAG more useful.",)
     assert canvas.next_action_is_canvas is True
+
+
+def _content_item(item_id, updated_at, *, source="Notes", route="library"):
+    return HomeActiveWorkItem(
+        item_id=item_id,
+        title=f"title {item_id}",
+        source=source,
+        status="ready",
+        detail_route=route,
+        updated_at=updated_at,
+    )
+
+
+def test_content_item_kind_maps_prefixes():
+    assert content_item_kind("local:conversation:42") == "conversation"
+    assert content_item_kind("local:note:7") == "note"
+    assert content_item_kind("local:media:9") == "media"
+    assert content_item_kind("local:ingest:3") is None
+    assert content_item_kind("") is None
+
+
+def test_combined_recent_merges_and_caps_by_recency():
+    adapter_recents = (_content_item("local:ingest:1", "2026-08-29T10:00:00+00:00"),)
+    content_items = (
+        _content_item(
+            "local:conversation:5",
+            "2026-08-29T12:00:00+00:00",
+            source="Conversations",
+            route="chat",
+        ),
+        _content_item("local:note:2", "2026-08-29T11:00:00+00:00"),
+        _content_item("local:media:3", "2026-08-28T09:00:00+00:00", source="Media"),
+    )
+    state = HomeDashboardInput(
+        recent_work_items=adapter_recents, content_recent_items=content_items
+    )
+    merged = combined_recent_work_items(state)
+    assert [item.item_id for item in merged] == [
+        "local:conversation:5",
+        "local:note:2",
+        "local:ingest:1",
+        "local:media:3",
+    ]
+
+
+def test_combined_recent_caps_at_limit():
+    items = tuple(
+        _content_item(f"local:note:{i}", f"2026-08-29T1{i:02d}:00:00+00:00")
+        for i in range(12)
+    )
+    state = HomeDashboardInput(content_recent_items=items)
+    assert len(combined_recent_work_items(state)) == HOME_RECENT_WORK_LIMIT
+
+
+def test_triage_recent_section_includes_content_items_and_open_control():
+    content = (
+        _content_item(
+            "local:conversation:5",
+            "2026-08-29T12:00:00+00:00",
+            source="Conversations",
+            route="chat",
+        ),
+    )
+    state = HomeDashboardInput(
+        model_ready=True, content_recent_items=content, console_ready=True
+    )
+    triage = build_home_triage_state(state, selected_row_id="local:conversation:5")
+    recent_section = next(s for s in triage.sections if s.section_id == "recent")
+    assert [row.row_id for row in recent_section.rows] == ["local:conversation:5"]
+    control_ids = {c.control_id for c in triage.canvas.actions}
+    assert HOME_OPEN_ITEM_CONTROL_ID in control_ids
+    open_control = next(
+        c for c in triage.canvas.actions if c.control_id == HOME_OPEN_ITEM_CONTROL_ID
+    )
+    assert open_control.target_id == "local:conversation:5"
+    assert open_control.target_route == "chat"
+
+
+def test_resume_control_supports_media_kind_with_age():
+    state = HomeDashboardInput(
+        resume_kind=HOME_RESUME_KIND_MEDIA,
+        resume_id="9",
+        resume_title="Long read",
+        resume_updated_at="2026-08-29T11:00:00+00:00",
+    )
+    control = build_home_resume_control(
+        state, now=datetime(2026, 8, 29, 11, 30, tzinfo=timezone.utc)
+    )
+    assert control is not None
+    assert control.control_id == HOME_RESUME_LATEST_CONTROL_ID
+    assert control.target_route == "library"
+    assert control.target_id == "local:media:9"
+    assert control.label == "Resume reading: Long read (30m)"
