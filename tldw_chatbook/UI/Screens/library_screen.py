@@ -11270,6 +11270,8 @@ class LibraryScreen(BaseAppScreen):
             # Focus bubbles are queued. A transactional Media rollback may
             # restore its prior live focus before the abandoned target's
             # earlier bubble arrives; that stale event owns no authority.
+            if self._library_notes_programmatic_focus_target is focused:
+                self._library_notes_programmatic_focus_target = None
             return
         self._remember_library_notes_authority_focus(focused)
         target_restore = self._library_notes_programmatic_focus_target is focused

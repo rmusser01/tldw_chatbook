@@ -757,6 +757,40 @@ async def test_real_compact_transition_floors_prechange_owner_geometry(
 
 
 @pytest.mark.asyncio
+async def test_stale_programmatic_focus_releases_guard_before_user_refocus() -> None:
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen._library_notes_restoring_focus = False
+        screen._mark_library_notes_user_interaction()
+        target = screen.query_one("#library-media-type-filter", Button)
+        live_focus = screen.query_one("#library-media-trash-open", Button)
+
+        screen._library_notes_programmatic_focus_target = target
+        screen.set_focus(target, scroll_visible=False)
+        assert screen.focused is target
+        screen.set_focus(live_focus, scroll_visible=False)
+        assert screen.focused is live_focus
+
+        await pilot.pause()
+
+        assert screen.focused is live_focus
+        assert screen._library_notes_programmatic_focus_target is None
+        assert screen._library_media_view == "list"
+
+        before_user_focus = screen._library_notes_focus_intent_generation
+        screen.set_focus(target, scroll_visible=False)
+        await pilot.pause()
+
+        assert screen.focused is target
+        assert target.has_focus
+        assert screen._library_notes_focus_intent_generation == before_user_focus + 1
+
+
+@pytest.mark.asyncio
 async def test_live_user_row_focus_fences_earlier_queued_geometry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
