@@ -173,7 +173,16 @@ class PersonalContextLinkService:
         """Release a restarted review whose canonical snapshot is no longer in memory."""
 
         existing = self._state.get_personal_context_link_state(**self._scope)
-        if existing is None or existing.get("state") != "review_required":
+        if existing is None:
+            freeze_owner = getattr(
+                self._profile,
+                "first_link_freeze_plan_id",
+                None,
+            )
+            if callable(freeze_owner) and (plan_id := freeze_owner()) is not None:
+                self._release_freeze(str(plan_id))
+            return
+        if existing.get("state") != "review_required":
             return
         plan_id = str(existing["plan_id"])
         if plan_id in self._plans:

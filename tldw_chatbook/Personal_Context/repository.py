@@ -46,7 +46,7 @@ from .repository_models import QuarantineEntry
 from .runtime_policy import GLOBAL_POLICY_ID
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 _ENVELOPE_SCHEMA_VERSION = 1
 _WRAP_NONCE_BYTES = 12
 _PEER_ENVELOPE = "chatbook-local-v1"
@@ -150,6 +150,12 @@ _LOCAL_RECORD_LINK_SCHEMA = """
         encrypted_link_version TEXT NOT NULL
     )
     """
+_LOCAL_UNLINKED_SCOPE_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS local_unlinked_scopes (
+        scope_id TEXT PRIMARY KEY,
+        reviewed_plan_id TEXT NOT NULL
+    )
+    """
 
 
 _SCHEMA_STATEMENTS = (
@@ -206,6 +212,7 @@ _SCHEMA_STATEMENTS = (
         encrypted_binding_version TEXT NOT NULL
     )
     """,
+    _LOCAL_UNLINKED_SCOPE_SCHEMA,
     _LOCAL_UNDO_SCHEMA,
     _LOCAL_RECORD_LINK_SCHEMA,
     """
@@ -425,7 +432,7 @@ class PersonalContextRepository:
         if len(rows) != 1 or rows[0]["singleton"] != 1:
             raise RepositorySchemaError("Personal Context schema marker is invalid.")
         version = rows[0]["version"]
-        if version not in {1, 2, 3, 4, SCHEMA_VERSION}:
+        if version not in {1, 2, 3, 4, 5, SCHEMA_VERSION}:
             raise RepositorySchemaError(
                 f"Unsupported Personal Context schema version: {version!r}."
             )
@@ -504,12 +511,21 @@ class PersonalContextRepository:
                 )
                 """
             )
+            version = 5
+            tables.add("first_link_freeze")
+        if version == 5:
+            connection.execute(_LOCAL_UNLINKED_SCOPE_SCHEMA)
             version = SCHEMA_VERSION
+            tables.add("local_unlinked_scopes")
         connection.execute(
             "UPDATE personal_context_schema SET version = ? WHERE singleton = 1",
             (version,),
         )
-        if not {"local_undo", "local_record_links"}.issubset(tables):
+        if not {
+            "local_undo",
+            "local_record_links",
+            "local_unlinked_scopes",
+        }.issubset(tables):
             raise RepositorySchemaError("Personal Context schema is incomplete.")
         profile_meta_columns = {
             row["name"] for row in connection.execute("PRAGMA table_info(profile_meta)")
@@ -681,6 +697,15 @@ class PersonalContextRepository:
                 (plan_id,),
             )
         return deleted.rowcount == 1
+
+    def first_link_freeze_plan_id(self) -> str | None:
+        """Return the content-free durable freeze owner for restart recovery."""
+
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT plan_id FROM first_link_freeze WHERE singleton = 1"
+            ).fetchone()
+        return None if row is None else str(row["plan_id"])
 
     @contextmanager
     def first_link_reconciliation_writes(self, *, plan_id: str) -> Iterator[None]:
@@ -1233,6 +1258,11 @@ class PersonalContextRepository:
             raise ValueError("proposal_same_id_diverged")
 
         remote_scope_ids = {scope.scope_id for scope in remote.scopes}
+        remote_workspace_scope_ids = {
+            scope.scope_id
+            for scope in remote.scopes
+            if scope.kind is ScopeKind.WORKSPACE
+        }
         scope_mapping = {plan.global_scope_mapping[0]: plan.global_scope_mapping[1]}
         unlinked_scope_ids: set[str] = set()
         mapped_remote_scope_ids: set[str] = set()
@@ -1253,6 +1283,8 @@ class PersonalContextRepository:
             elif choice == "unlinked":
                 unlinked_scope_ids.add(local_scope_id)
             elif choice in remote_scope_ids:
+                if choice not in remote_workspace_scope_ids:
+                    raise ValueError("workspace_mapping_invalid")
                 if (local_scope_id, choice) in blocked_workspace_mappings:
                     raise ValueError("workspace_mapping_collision_requires_review")
                 if choice in mapped_remote_scope_ids:
@@ -1689,6 +1721,15 @@ class PersonalContextRepository:
                             f"VALUES ({','.join('?' for _ in columns)})",
                             values,
                         )
+                connection.execute("DELETE FROM local_unlinked_scopes")
+                connection.executemany(
+                    "INSERT INTO local_unlinked_scopes(scope_id, reviewed_plan_id) "
+                    "VALUES (?, ?)",
+                    (
+                        (scope_id, plan.plan_id)
+                        for scope_id in sorted(unlinked_scope_ids)
+                    ),
+                )
                 for outbox in connection.execute(
                     "SELECT outbox_id, object_type, object_id FROM encrypted_outbox"
                 ).fetchall():
@@ -3233,7 +3274,18 @@ class PersonalContextRepository:
             body=body,
             expected_version_id=expected_version_id,
             require_unique_local_workspace_id=require_unique_local_workspace_id,
+            clear_explicit_unlinked=True,
         )
+
+    def is_scope_explicitly_unlinked(self, scope_id: str) -> bool:
+        """Return whether first-link review retained this workspace as local-only."""
+
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT 1 FROM local_unlinked_scopes WHERE scope_id = ?",
+                (scope_id,),
+            ).fetchone()
+        return row is not None
 
     def get_scope_binding(self, scope_id: str) -> dict[str, Any] | None:
         return self._get_local_body(
@@ -3320,9 +3372,17 @@ class PersonalContextRepository:
         body: Mapping[str, Any],
         expected_version_id: str | None,
         require_unique_local_workspace_id: bool = False,
+        clear_explicit_unlinked: bool = False,
     ) -> str:
         version_id = _uuid(f"{object_type}-version")
         with self._mutation() as connection:
+            was_explicitly_unlinked = bool(
+                clear_explicit_unlinked
+                and connection.execute(
+                    "SELECT 1 FROM local_unlinked_scopes WHERE scope_id = ?",
+                    (scope_id,),
+                ).fetchone()
+            )
             if require_unique_local_workspace_id:
                 self._require_unique_workspace_binding(
                     connection,
@@ -3358,7 +3418,130 @@ class PersonalContextRepository:
                 f"ON CONFLICT(scope_id) DO UPDATE SET {version_column} = excluded.{version_column}",
                 (scope_id, version_id),
             )
+            if clear_explicit_unlinked:
+                if was_explicitly_unlinked:
+                    self._rebuild_newly_linked_scope_outbox(connection, scope_id)
+                connection.execute(
+                    "DELETE FROM local_unlinked_scopes WHERE scope_id = ?",
+                    (scope_id,),
+                )
         return version_id
+
+    def _rebuild_newly_linked_scope_outbox(
+        self,
+        connection: sqlite3.Connection,
+        scope_id: str,
+    ) -> None:
+        """Stage an unlinked workspace's retained canonical lineage in server order."""
+
+        scope_row = connection.execute(
+            "SELECT encrypted_objects.* FROM object_heads "
+            "JOIN encrypted_objects USING (object_type, object_id, version_id) "
+            "WHERE object_type = 'scope' AND object_id = ?",
+            (scope_id,),
+        ).fetchone()
+        if scope_row is None:
+            raise ProfileIntegrityError("Linked workspace scope is unavailable.")
+        scope = ProfileScope.model_validate_json(self._decrypt_row(scope_row))
+        if scope.kind is not ScopeKind.WORKSPACE:
+            raise ValueError("Only workspace scopes may have local mappings.")
+        self._retire_pending_outbox_content(
+            connection,
+            object_type="scope",
+            object_id=scope_id,
+        )
+        self._insert_outbox(
+            connection,
+            object_type="scope",
+            object_id=scope.scope_id,
+            version_id=scope.version_id,
+            body={"version": 1, "scope": scope.model_dump(mode="json")},
+        )
+
+        record_heads = connection.execute(
+            "SELECT encrypted_objects.* FROM object_heads "
+            "JOIN encrypted_objects USING (object_type, object_id, version_id) "
+            "WHERE object_type = 'record' AND encrypted_objects.scope_id = ? "
+            "ORDER BY object_id",
+            (scope_id,),
+        ).fetchall()
+        for head_row in record_heads:
+            record_id = str(head_row["object_id"])
+            current = ProfileRecord.model_validate_json(self._decrypt_row(head_row))
+            self._retire_pending_outbox_content(
+                connection,
+                object_type="record",
+                object_id=record_id,
+            )
+            if (
+                current.controls.sync_mode is not SyncMode.SYNCABLE
+                or current.state is RecordState.DELETED
+            ):
+                continue
+            history_rows = connection.execute(
+                "SELECT * FROM encrypted_objects WHERE object_type = 'record' "
+                "AND object_id = ?",
+                (record_id,),
+            ).fetchall()
+            history = {
+                str(row["version_id"]): ProfileRecord.model_validate_json(
+                    self._decrypt_row(row)
+                )
+                for row in history_rows
+            }
+            lineage: list[ProfileRecord] = []
+            version_id_cursor: str | None = current.version_id
+            seen: set[str] = set()
+            while version_id_cursor is not None:
+                if version_id_cursor in seen or version_id_cursor not in history:
+                    raise ValueError("local_record_lineage_invalid")
+                seen.add(version_id_cursor)
+                item = history[version_id_cursor]
+                if (
+                    item.scope_id != scope_id
+                    or item.controls.sync_mode is not SyncMode.SYNCABLE
+                ):
+                    raise ValueError("workspace_private_lineage_requires_review")
+                lineage.append(item)
+                version_id_cursor = item.parent_version_id
+            for item in reversed(lineage):
+                self._insert_outbox(
+                    connection,
+                    object_type="record",
+                    object_id=item.record_id,
+                    version_id=item.version_id,
+                    body={"version": 1, "record": item.model_dump(mode="json")},
+                )
+
+        proposal_heads = connection.execute(
+            "SELECT encrypted_objects.* FROM object_heads "
+            "JOIN encrypted_objects USING (object_type, object_id, version_id) "
+            "WHERE object_type = 'proposal' AND encrypted_objects.scope_id = ? "
+            "ORDER BY object_id",
+            (scope_id,),
+        ).fetchall()
+        for proposal_row in proposal_heads:
+            proposal = ProfileProposal.model_validate_json(
+                self._decrypt_row(proposal_row)
+            )
+            self._retire_pending_outbox_content(
+                connection,
+                object_type="proposal",
+                object_id=proposal.proposal_id,
+            )
+            if (
+                proposal.proposed_record is not None
+                and proposal.proposed_record.controls.sync_mode
+                is not SyncMode.SYNCABLE
+            ):
+                continue
+            self._insert_outbox(
+                connection,
+                object_type="proposal",
+                object_id=proposal.proposal_id,
+                version_id=str(proposal_row["version_id"]),
+                body={"version": 1, "proposal": proposal.model_dump(mode="json")},
+            )
 
     @staticmethod
     def _validated_workspace_binding(body: Any) -> tuple[str, str]:
@@ -3582,6 +3765,51 @@ class PersonalContextRepository:
             ).fetchall()
         return tuple(dict(row) for row in rows)
 
+    def list_dispatchable_outbox(
+        self,
+        *,
+        limit: int = 100,
+    ) -> tuple[dict[str, Any], ...]:
+        """Return pending entries whose canonical scope is currently sync-eligible.
+
+        Unlinked workspace bodies remain encrypted and pending. A later authenticated
+        workspace binding makes those same entries eligible for the next dispatch.
+        Invalid entries with no canonical routing row still reach validation so they
+        can be quarantined rather than silently hidden.
+        """
+
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("Outbox limit must be between 1 and 500.")
+        eligible_scope_ids = {
+            scope.scope_id
+            for scope in self.list_scopes()
+            if scope.kind is ScopeKind.GLOBAL
+        }
+        eligible_scope_ids.update(self.list_validated_scope_bindings())
+        ordered_scope_ids = tuple(sorted(eligible_scope_ids))
+        scope_filter = "0"
+        if ordered_scope_ids:
+            placeholders = ",".join("?" for _ in ordered_scope_ids)
+            scope_filter = f"canonical.scope_id IN ({placeholders})"
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT outbox.outbox_id, outbox.object_type, outbox.object_id, "
+                "outbox.version_id, outbox.status, outbox.created_at "
+                "FROM encrypted_outbox AS outbox "
+                "LEFT JOIN encrypted_objects AS canonical ON "
+                "canonical.object_type = outbox.object_type AND "
+                "canonical.object_id = outbox.object_id AND "
+                "canonical.version_id = outbox.version_id "
+                "WHERE outbox.status = 'pending' AND ("
+                "outbox.object_type IN ('manifest', 'purge') OR "
+                "outbox.object_type NOT IN ('scope', 'record', 'proposal') OR "
+                "canonical.object_id IS NULL OR "
+                f"{scope_filter}) "
+                "ORDER BY outbox.sequence LIMIT ?",
+                (*ordered_scope_ids, limit),
+            ).fetchall()
+        return tuple(dict(row) for row in rows)
+
     def acknowledge_outbox(self, outbox_id: str, destination_envelope_id: str) -> None:
         """Record an idempotent destination receipt and shred the source body."""
 
@@ -3736,6 +3964,7 @@ class PersonalContextRepository:
                     "encrypted_outbox",
                     "local_runtime_policy",
                     "local_scope_bindings",
+                    "local_unlinked_scopes",
                     "local_undo",
                     "local_record_links",
                     "object_heads",

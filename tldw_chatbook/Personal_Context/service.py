@@ -603,6 +603,11 @@ class PersonalContextService:
 
         return self._repo().release_first_link_freeze(plan_id=plan_id)
 
+    def first_link_freeze_plan_id(self) -> str | None:
+        """Return the content-free durable review owner during restart repair."""
+
+        return self._repo().first_link_freeze_plan_id()
+
     def first_link_reconciliation_writes(self, *, plan_id: str):
         """Authorize the private confirming pull to update canonical heads."""
 
@@ -734,6 +739,7 @@ class PersonalContextService:
         if (
             scope.kind is ScopeKind.WORKSPACE
             and scope.scope_id not in self.list_workspace_bindings()
+            and not self._repo().is_scope_explicitly_unlinked(scope.scope_id)
         ):
             raise ValueError("Workspace scope must be mapped before mutation.")
 
