@@ -4238,6 +4238,28 @@ async def test_test_tool_run_error_with_dict_shaped_args_is_redacted():
 
 
 @pytest.mark.asyncio
+async def test_test_tool_pre_admission_error_revokes_unconsumed_preview_nonce():
+    """A validation error before service admission must not strand its bearer."""
+    app = ToolTestApp()
+
+    async def fail_before_consume(_nonce, _intent, _arguments):
+        raise ValueError("Arguments are not canonical JSON.")
+
+    app.unified_mcp_service.execute_prepared_hub_test = fail_before_consume
+    async with app.run_test(size=(120, 40)) as pilot:
+        nonce = await _open_fetch_test_preview(app, pilot)
+        button = app.query_one("#mcp-inspector-test-run", Button)
+        button.focus()
+        await pilot.press("enter")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert nonce in app.unified_mcp_service.revoked_nonces
+        assert nonce not in app.unified_mcp_service._previews
+        assert app.query_one(MCPInspector)._test_preview.nonce != nonce
+
+
+@pytest.mark.asyncio
 async def test_test_tool_one_click_double_run_service_admits_once():
     """Two delivered clicks race at the service; only one is admitted."""
     app = ToolTestApp()

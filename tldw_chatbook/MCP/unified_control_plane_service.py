@@ -132,7 +132,9 @@ _ADVANCED_EXECUTE_BLOCKED_MESSAGE = "{tool} is set to Off in Permissions."
 # everything AFTER the first character, silently mangling any acronym a
 # future clause might contain -- see that function's own docstring in
 # `local_runtime_delegate.py` for the proof.
-_ADVANCED_EXECUTE_GATE_ERROR_MESSAGE = f"{capitalize_first(PERMISSION_STATE_UNRESOLVED_CLAUSE)}."
+_ADVANCED_EXECUTE_GATE_ERROR_MESSAGE = (
+    f"{capitalize_first(PERMISSION_STATE_UNRESOLVED_CLAUSE)}."
+)
 
 # task-2539 (PR-T3 fix round B, item 3): the exact message
 # `execute_hub_tool()` raises below for a server-source `server_key`. Its
@@ -4011,8 +4013,7 @@ class UnifiedMCPControlPlaneService:
             records = await self.local_external_catalog()
         except Exception as exc:
             logger.warning(
-                "MCP prompt-reduction local catalog read failed "
-                "(exception_type={})",
+                "MCP prompt-reduction local catalog read failed (exception_type={})",
                 type(exc).__name__,
             )
             records = []
@@ -4043,8 +4044,7 @@ class UnifiedMCPControlPlaneService:
             log = self.execution_log
         except Exception as exc:
             logger.warning(
-                "MCP prompt-reduction execution log access failed "
-                "(exception_type={})",
+                "MCP prompt-reduction execution log access failed (exception_type={})",
                 type(exc).__name__,
             )
             return []
@@ -4054,8 +4054,7 @@ class UnifiedMCPControlPlaneService:
             return log.read_recent(limit)
         except Exception as exc:
             logger.warning(
-                "MCP prompt-reduction execution log read failed "
-                "(exception_type={})",
+                "MCP prompt-reduction execution log read failed (exception_type={})",
                 type(exc).__name__,
             )
             return []
@@ -4315,9 +4314,7 @@ class UnifiedMCPControlPlaneService:
         normalized_tool_name = str(tool_name or "").strip()
         normalized_arguments = dict(arguments or {})
         try:
-            state = self.gate_tool_test_by_key(
-                BUILTIN_SERVER_KEY, normalized_tool_name
-            )
+            state = self.gate_tool_test_by_key(BUILTIN_SERVER_KEY, normalized_tool_name)
         except Exception as exc:
             logger.warning(
                 "MCP advanced tool.execute gate check failed for {}; failing closed: {}",

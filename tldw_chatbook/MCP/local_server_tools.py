@@ -49,6 +49,7 @@ from typing import Any, Callable, NamedTuple
 from loguru import logger
 
 from tldw_chatbook.Agents.agent_models import ToolResult
+
 # task-24458: deferred to the one runtime construction site below. This
 # module is reached by the screen pre-importer through
 # `UI/MCP_Modules/mcp_workbench.py`, and a module-scope import here puts
@@ -400,9 +401,7 @@ def _local_agent_tool_registrations(
     from tldw_chatbook.Agents.local_tool_provider import LocalToolExposure
 
     registrations: list[LocalToolRegistration] = []
-    for spec in provider.specs_for_exposure(
-        LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP
-    ):
+    for spec in provider.specs_for_exposure(LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP):
         schema = provider.load_schema(spec.name)
         registrations.append(
             LocalToolRegistration(

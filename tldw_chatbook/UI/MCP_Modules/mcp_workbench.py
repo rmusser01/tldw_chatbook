@@ -54,6 +54,7 @@ from tldw_chatbook.MCP.hub_test_execution import (
     ToolTestAdmissionStale,
 )
 from tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied
+from tldw_chatbook.MCP.local_runtime_delegate import PERMISSION_STATE_UNRESOLVED_CLAUSE
 from tldw_chatbook.MCP.local_server_tools import resolve_server_workspace_root
 from tldw_chatbook.MCP.mcp_import import ImportCandidate
 from tldw_chatbook.MCP.permission_store import (
@@ -101,6 +102,7 @@ from tldw_chatbook.Utils.path_validation import is_safe_path, validate_path
 # with value None" -- see `_apply_view_state()`'s scope_ref handling.
 _UNSET: Any = object()
 _TOOL_TEST_ACTIVE_POLL_SECONDS = 0.3
+_TOOL_TEST_BLOCKED_UNKNOWN_TEXT = f"Blocked — {PERMISSION_STATE_UNRESOLVED_CLAUSE}."
 
 
 def _target_id_from_server_key(key: str | None) -> str | None:
@@ -4047,6 +4049,11 @@ class MCPWorkbench(Container):
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            # Canonical-argument validation happens before the service consumes
+            # the preview. Revocation is idempotent when a later failure did
+            # consume it, and prevents an early validation error from leaving
+            # a live bearer behind while this panel mints its replacement.
+            await self._revoke_test_nonce(nonce, service=service)
             if self._test_panel_is_current(tool, generation):
                 self._show_tool_test_result(
                     server_key=tool.server_key,
@@ -4173,7 +4180,7 @@ class MCPWorkbench(Container):
     def _prepared_test_reason(reason: str) -> str:
         return {
             "permission_denied": "Blocked by Permissions. Change this tool from Off to retry.",
-            "permission_unresolved": "Permission state is unavailable. Review Permissions and retry.",
+            "permission_unresolved": _TOOL_TEST_BLOCKED_UNKNOWN_TEXT,
             "intent_mismatch": "Permission changed before the run. Review the refreshed preview.",
             "gate_changed": "Permission changed before the run. Review the refreshed preview.",
             "preview_unavailable": "The preview expired or was already used. A fresh preview is required.",
