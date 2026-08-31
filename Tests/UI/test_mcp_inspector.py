@@ -3039,16 +3039,33 @@ async def test_test_tool_preview_close_revokes_nonce_and_late_preview_is_ignored
 @pytest.mark.asyncio
 @pytest.mark.parametrize("surface", ["preview", "result"])
 @pytest.mark.parametrize(
-    "absolute_path",
+    ("absolute_path", "private_marker"),
     [
-        "/Users/alice/private/project/credentials.json",
-        r"\\server\share\private\credentials.json",
-        r"\\?\C:\private\credentials.json",
-        r"\\.\pipe\private-token",
+        ("/Users/alice/private/project/credentials.json", "credentials.json"),
+        (
+            '"/Users/alice/Private Project/credentials.json"',
+            "Private Project",
+        ),
+        (
+            "/Users/alice/Private Project/credentials.json: permission denied",
+            "Private Project",
+        ),
+        (
+            r"C:\Private Folder\credentials.json: permission denied",
+            "Private Folder",
+        ),
+        (r"\\server\share\private\credentials.json", "credentials.json"),
+        (
+            r"'\\server\Shared Folder\private credentials.json'",
+            "Shared Folder",
+        ),
+        (r"\\?\C:\private\credentials.json", "credentials.json"),
+        (r"'\\?\C:\Private Folder\credentials.json'", "Private Folder"),
+        (r"\\.\pipe\private-token", "private-token"),
     ],
 )
 async def test_test_tool_failure_surfaces_redact_secrets_paths_and_bound_text(
-    surface, absolute_path
+    surface, absolute_path, private_marker
 ):
     """The inspector is the final fail-closed boundary for service text."""
     secret = "sk-live-super-secret-value"
@@ -3081,9 +3098,39 @@ async def test_test_tool_failure_surfaces_redact_secrets_paths_and_bound_text(
 
         assert secret not in rendered
         assert absolute_path not in rendered
+        assert private_marker not in rendered
         assert "[redacted]" in rendered
         assert "[path]" in rendered
         assert len(rendered) <= 560
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        r"Expected regex \\d+ here.",
+        r"Expected regex \\d+\\w+ here.",
+        "See https://example.test/docs/private/file.txt for recovery.",
+        r"Expected escaped token \\w+ and relative path docs/private.txt.",
+    ],
+)
+def test_test_tool_text_scrubber_preserves_urls_regex_and_relative_paths(value: str):
+    assert mcp_inspector_module._safe_tool_test_text(value) == value
+
+
+def test_test_tool_mapping_exception_preserves_innocuous_paths_and_escapes():
+    rendered = mcp_inspector_module._safe_exception_text(
+        RuntimeError(
+            {
+                "pattern": r"\\d+\\w+",
+                "docs": "https://example.test/docs/private/file.txt",
+                "relative": "docs/private.txt",
+            }
+        )
+    )
+
+    assert "[path]" not in rendered
+    assert "example.test/docs/private/file.txt" in rendered
+    assert "docs/private.txt" in rendered
 
 
 @pytest.mark.asyncio

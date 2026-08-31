@@ -100,7 +100,7 @@ from tldw_chatbook.Utils.path_validation import is_safe_path, validate_path
 # Sentinel distinguishing "key absent from a restore blob" from "key present
 # with value None" -- see `_apply_view_state()`'s scope_ref handling.
 _UNSET: Any = object()
-_TOOL_TEST_ACTIVE_POLL_SECONDS = 0.05
+_TOOL_TEST_ACTIVE_POLL_SECONDS = 0.3
 
 
 def _target_id_from_server_key(key: str | None) -> str | None:
@@ -684,6 +684,9 @@ class MCPWorkbench(Container):
         # authority; this copy exists because Textual unmounts descendants
         # before the parent's ``on_unmount`` can query the inspector.
         self._tool_test_preview_nonce: str | None = None
+        # Reclamation must outlive the cancelled Textual worker which minted
+        # the nonce. Retain each cleanup until its result has been observed.
+        self._tool_test_reclaim_tasks: set[asyncio.Task[None]] = set()
         # T7: the batch `EffectiveToolState` resolution `_sync_permissions_
         # mode()` most recently computed (via `service.effective_tool_
         # states()`), keyed the same as that method's own return value --
@@ -3857,9 +3860,7 @@ class MCPWorkbench(Container):
             return
         try:
             was_active = False
-            while await asyncio.to_thread(
-                service.hub_test_active, tool.server_key, tool.name
-            ):
+            while service.hub_test_active(tool.server_key, tool.name):
                 if not self._test_panel_is_current(tool, generation):
                     return
                 self.query_one(MCPInspector).show_test_active(True)
@@ -3895,20 +3896,47 @@ class MCPWorkbench(Container):
         )
         try:
             return await asyncio.shield(mint_task)
-        except asyncio.CancelledError as cancelled:
+        except asyncio.CancelledError:
+            mint_task.add_done_callback(
+                lambda task: self._reclaim_abandoned_test_preview(task, service=service)
+            )
+            raise
+
+    def _reclaim_abandoned_test_preview(
+        self, mint_task: asyncio.Task[Any], *, service: Any
+    ) -> None:
+        """Transfer a cancelled worker's mint to cancellation-proof cleanup."""
+        try:
+            preview = mint_task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            logger.debug(
+                "Cancelled MCP tool-test preview mint ended with {}",
+                type(exc).__name__,
+            )
+            return
+        if not isinstance(preview, ToolTestAdmissionPreview):
+            return
+        cleanup = asyncio.create_task(
+            self._revoke_test_nonce(preview.nonce, service=service),
+            name=f"mcp-tool-test-preview-reclaim:{preview.nonce}",
+        )
+        self._tool_test_reclaim_tasks.add(cleanup)
+
+        def _observe_cleanup(task: asyncio.Task[None]) -> None:
+            self._tool_test_reclaim_tasks.discard(task)
             try:
-                preview = await asyncio.shield(mint_task)
+                task.result()
+            except asyncio.CancelledError:
+                return
             except Exception as exc:
                 logger.debug(
-                    "Cancelled MCP tool-test preview mint ended with {}",
+                    "Cancelled MCP tool-test preview cleanup ended with {}",
                     type(exc).__name__,
                 )
-            else:
-                if isinstance(preview, ToolTestAdmissionPreview):
-                    await asyncio.shield(
-                        self._revoke_test_nonce(preview.nonce, service=service)
-                    )
-            raise cancelled
+
+        cleanup.add_done_callback(_observe_cleanup)
 
     def _test_panel_is_current(self, tool: HubTool, generation: int) -> bool:
         if generation != self._tool_test_generation or not self.is_attached:

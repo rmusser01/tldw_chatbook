@@ -64,9 +64,44 @@ _TOOL_TEST_SECRET_ASSIGNMENT = re.compile(
 )
 _TOOL_TEST_BEARER = re.compile(r"(?i)\bbearer\s+(?:\[redacted\]|[^\s,;}\]]+)")
 _TOOL_TEST_KEY_VALUE = re.compile(r"\bsk-[A-Za-z0-9_-]{6,}\b")
-_TOOL_TEST_ABSOLUTE_PATH = re.compile(
-    r"(?<![A-Za-z0-9])(?:\\\\[^\s'\"<>]+|[A-Za-z]:[\\/][^\s'\"<>]+|/[^\s'\"<>]+)"
+_TOOL_TEST_PATH_START = re.compile(
+    r"(?<![A-Za-z0-9:/])(?:"
+    r"[A-Za-z]:[\\/]"
+    r"|\\\\(?:[?.][\\/]|[^\\/\s'\"<>]+[\\/][^\\/\s'\"<>]+)"
+    r"|/)"
 )
+
+
+def _redact_tool_test_paths(text: str) -> str:
+    """Redact absolute filesystem paths without treating URLs or regexes as paths."""
+    parts: list[str] = []
+    cursor = 0
+    while match := _TOOL_TEST_PATH_START.search(text, cursor):
+        start = match.start()
+        parts.append(text[cursor:start])
+        quote = text[start - 1] if start and text[start - 1] in {'"', "'"} else None
+        if quote is not None:
+            closing_quote = text.find(quote, match.end())
+            end = closing_quote if closing_quote >= 0 else len(text)
+        else:
+            hard_end = len(text)
+            for marker in "\r\n\t<>\"'":
+                marker_at = text.find(marker, match.end())
+                if marker_at >= 0:
+                    hard_end = min(hard_end, marker_at)
+            candidate = text[start:hard_end]
+            diagnostic = re.search(r":(?=\s)", candidate[2:])
+            if diagnostic is not None:
+                end = start + 2 + diagnostic.start()
+            else:
+                whitespace = re.search(r"\s", candidate)
+                end = start + whitespace.start() if whitespace is not None else hard_end
+            while end > start and text[end - 1] in ",;)]}":
+                end -= 1
+        parts.append("[path]")
+        cursor = max(end, match.end())
+    parts.append(text[cursor:])
+    return "".join(parts)
 
 
 def _safe_tool_test_text(value: object, *, limit: int = _TOOL_TEST_TEXT_LIMIT) -> str:
@@ -80,7 +115,7 @@ def _safe_tool_test_text(value: object, *, limit: int = _TOOL_TEST_TEXT_LIMIT) -
     )
     text = _TOOL_TEST_BEARER.sub("Bearer [redacted]", text)
     text = _TOOL_TEST_KEY_VALUE.sub("[redacted]", text)
-    text = _TOOL_TEST_ABSOLUTE_PATH.sub("[path]", text)
+    text = _redact_tool_test_paths(text)
     text = text.strip()
     if len(text) > limit:
         text = f"{text[: limit - 1].rstrip()}…"

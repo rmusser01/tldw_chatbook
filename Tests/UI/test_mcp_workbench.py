@@ -4521,16 +4521,26 @@ async def test_test_tool_execution_failure_redacts_secrets_paths_and_bounds_text
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure_branch", ["access", "read"])
 @pytest.mark.parametrize(
-    "private_path",
+    ("private_path", "private_marker"),
     [
-        r"\\server\share\private\audit.json",
-        r"\\?\C:\private\audit.json",
-        r"\\.\pipe\private-audit",
+        (r"\\server\share\private\audit.json", "audit.json"),
+        (
+            r"'\\server\Shared Folder\private audit.json'",
+            "Shared Folder",
+        ),
+        (r"\\?\C:\private\audit.json", "audit.json"),
+        (r"'\\?\C:\Private Folder\audit.json'", "Private Folder"),
+        (
+            r"C:\Private Folder\audit.json: permission denied",
+            "Private Folder",
+        ),
+        (r"\\.\pipe\private-audit", "private-audit"),
     ],
 )
 async def test_test_tool_audit_sync_log_redacts_real_service_failure_branches(
     failure_branch: str,
     private_path: str,
+    private_marker: str,
     caplog: pytest.LogCaptureFixture,
 ):
     app = ToolTestApp()
@@ -4570,6 +4580,7 @@ async def test_test_tool_audit_sync_log_redacts_real_service_failure_branches(
         assert rendered, f"expected {prefix!r} in {caplog.messages!r}"
         assert secret not in rendered
         assert private_path not in rendered
+        assert private_marker not in rendered
         assert "[redacted]" in rendered
         assert "[redacted]]" not in rendered
         assert "[path]" in rendered
@@ -4794,6 +4805,96 @@ async def test_test_tool_cancelled_unmount_retrieves_and_revokes_late_minted_non
         assert app.unified_mcp_service._previews == {}
         assert app.unified_mcp_service.revoked_nonces == ["preview-1"]
         assert not list(app.query("#mcp-inspector-test-panel"))
+
+
+@pytest.mark.asyncio
+async def test_test_tool_repeated_cancellation_reclaims_abandoned_mint_and_tasks():
+    app = ToolTestApp()
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    original_prepare = app.unified_mcp_service.prepare_hub_test
+    calls = 0
+
+    def first_prepare_blocks(tool: HubTool) -> ToolTestAdmissionPreview:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            started.set()
+            assert release.wait(timeout=3)
+        preview = original_prepare(tool)
+        if calls >= 2:
+            finished.set()
+        return preview
+
+    app.unified_mcp_service.prepare_hub_test = first_prepare_blocks
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)
+        await pilot.click("#mcp-inspector-test-tool")
+        assert await asyncio.to_thread(started.wait, 1)
+        abandoned_worker = next(
+            worker for worker in app.workers if worker.name == "mcp-tool-test-preview"
+        )
+
+        await _select_tools_mode_row(app, pilot, 1)
+        await pilot.click("#mcp-inspector-test-tool")
+        await _wait_for_test_button_label(app, pilot, "Run")
+        removal = workbench.remove()
+        for _ in range(5):
+            abandoned_worker.cancel()
+        release.set()
+        await removal
+        assert await asyncio.to_thread(finished.wait, 1)
+
+        for _ in range(60):
+            live_mints = [
+                task
+                for task in asyncio.all_tasks()
+                if task.get_name().startswith("mcp-tool-test-preview-mint:")
+                and not task.done()
+            ]
+            if not app.unified_mcp_service._previews and not live_mints:
+                break
+            await pilot.pause()
+
+        assert app.unified_mcp_service._previews == {}
+        assert set(app.unified_mcp_service.revoked_nonces) == {
+            "preview-1",
+            "preview-2",
+        }
+        assert not live_mints
+        assert not workbench._tool_test_reclaim_tasks
+        assert not workbench.is_attached
+
+
+@pytest.mark.asyncio
+async def test_test_tool_active_watcher_polling_is_bounded_and_stops_on_unmount():
+    app = ToolTestApp()
+    key = ("local:docs", "fetch")
+    app.unified_mcp_service._active_tests.add(key)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)
+        await pilot.click("#mcp-inspector-test-tool")
+        await _wait_for_test_button_label(app, pilot, "Running…")
+        calls_at_running = len(app.unified_mcp_service.active_calls)
+
+        await pilot.pause(0.75)
+        additional_polls = len(app.unified_mcp_service.active_calls) - calls_at_running
+        assert 1 <= additional_polls <= 4
+
+        await workbench.remove()
+        calls_at_unmount = len(app.unified_mcp_service.active_calls)
+        await pilot.pause(0.4)
+        assert len(app.unified_mcp_service.active_calls) == calls_at_unmount
+        app.unified_mcp_service._active_tests.discard(key)
 
 
 @pytest.mark.asyncio
