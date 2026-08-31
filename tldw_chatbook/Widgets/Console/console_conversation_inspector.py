@@ -1144,6 +1144,12 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         )
         if abandoned:
             text += " [abandoned regeneration]"
+        if capture.trace_provenance == "legacy_snapshot":
+            text += " · legacy snapshot · chronology: recorded call only"
+        elif capture.trace_provenance == "legacy_blob":
+            text += " · legacy blob (normalization pending) · chronology: recorded call only"
+        if capture.trace_uncertainty:
+            text += " · uncertainty disclosed"
         return text
 
     @staticmethod

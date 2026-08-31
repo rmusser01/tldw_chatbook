@@ -35,6 +35,9 @@ class NormalizedTraceCall:
     capture: ExchangeCapture
     abandoned: bool
     verification_status: Literal["verified", "unverified"]
+    provenance: Literal["native", "legacy_snapshot"] = "native"
+    chronology: Literal["known", "recorded_call_only"] = "known"
+    uncertainty_codes: tuple[str, ...] = ()
     source: Literal["normalized"] = field(default="normalized", init=False)
 
     @property
@@ -50,6 +53,13 @@ class LegacyExchangeCall:
 
     capture: ExchangeCapture
     abandoned: bool
+    provenance: Literal["legacy_blob"] = field(default="legacy_blob", init=False)
+    chronology: Literal["recorded_call_only"] = field(
+        default="recorded_call_only", init=False
+    )
+    uncertainty_codes: tuple[str, ...] = field(
+        default=("legacy_blob_unmigrated",), init=False
+    )
     source: Literal["legacy"] = field(default="legacy", init=False)
 
 
@@ -281,6 +291,14 @@ def _normalized_validation_error(call: object) -> str | None:
         "unverified",
     }:
         return "verification_status"
+    if call.provenance not in {"native", "legacy_snapshot"}:
+        return "provenance"
+    if call.chronology not in {"known", "recorded_call_only"}:
+        return "chronology"
+    if type(call.uncertainty_codes) is not tuple or any(
+        type(item) is not str or not item for item in call.uncertainty_codes
+    ):
+        return "uncertainty_codes"
     return _capture_validation_error(call.capture)
 
 

@@ -563,7 +563,7 @@ class ConsoleTraceRepository:
                 boundary_sequence = candidate
         if boundary_segment_id is None or boundary_sequence is None:
             return None
-        surface_head_id = self._surface_head_at_event_boundary(
+        surface_head_id = self.surface_head_at_event_boundary(
             cursor,
             segment_id=boundary_segment_id,
             through_sequence=boundary_sequence,
@@ -622,7 +622,7 @@ class ConsoleTraceRepository:
             )
         ):
             raise TraceIdentityConflict("fork_boundary_owner")
-        current_head = self._surface_head_at_event_boundary(
+        current_head = self.surface_head_at_event_boundary(
             cursor,
             segment_id=boundary.parent_segment_id,
             through_sequence=boundary.inherited_through_sequence,
@@ -765,13 +765,32 @@ class ConsoleTraceRepository:
         lineage.reverse()
         return lineage
 
-    def _surface_head_at_event_boundary(
+    def surface_head_at_event_boundary(
         self,
         cursor: sqlite3.Cursor,
         *,
         segment_id: str,
         through_sequence: int,
     ) -> str | None:
+        """Return the effective surface head at one recorded event boundary.
+
+        Args:
+            cursor: Active trace transaction cursor.
+            segment_id: Segment whose effective surface is requested.
+            through_sequence: Inclusive non-negative event-sequence boundary.
+
+        Returns:
+            The latest effective surface-node ID at the boundary, the segment's
+            inherited surface head when no local event qualifies, or ``None``.
+
+        Raises:
+            ValueError: If ``segment_id`` is empty or ``through_sequence`` is
+                not a non-negative integer.
+        """
+
+        _nonempty(segment_id, "segment_id")
+        if type(through_sequence) is not int or through_sequence < 0:
+            raise ValueError("through_sequence")
         row = cursor.execute(
             """SELECT CASE event.event_type
                        WHEN 'surface_append' THEN event.surface_node_id
