@@ -5,8 +5,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from tldw_chatbook.Workspaces.conversation_browser_state import (
+    CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
+    CONSOLE_CONVERSATION_BROWSER_ROW_HEIGHT,
     ConsoleConversationBrowserInputRow,
     build_console_conversation_browser_state,
+    console_conversation_browser_group_row_limit,
     console_persisted_row_updated_sort,
     format_console_relative_age,
     overlay_console_conversation_markers,
@@ -52,6 +55,53 @@ def _row(
 def _chats(state):
     assert [section.section_id for section in state.sections] == ["chats"]
     return state.sections[0]
+
+
+def test_group_row_limit_defaults_to_the_historical_cap_without_a_measurement():
+    assert (
+        console_conversation_browser_group_row_limit(None)
+        == CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT
+    )
+    assert (
+        console_conversation_browser_group_row_limit(0)
+        == CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT
+    )
+    assert (
+        console_conversation_browser_group_row_limit(-5)
+        == CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT
+    )
+
+
+def test_group_row_limit_keeps_the_default_on_short_rails():
+    # A 40-line rail halves to 20 lines = 6 rows at the nominal 3-line row
+    # height, below the 12-row floor: short terminals are unchanged from
+    # the pre-adaptive behaviour.
+    assert (
+        console_conversation_browser_group_row_limit(40)
+        == CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT
+    )
+
+
+def test_group_row_limit_scales_a_tall_rail_to_the_chats_share():
+    # 200 available lines: the Chats list gets its even half of the rail
+    # (the Workspaces tree takes the other), and half of 200 lines at the
+    # nominal row height is 33 rows.
+    assert (
+        console_conversation_browser_group_row_limit(200)
+        == (200 // 2) // CONSOLE_CONVERSATION_BROWSER_ROW_HEIGHT
+        == 33
+    )
+
+
+def test_group_row_limit_grows_monotonically_with_available_height():
+    limits = [
+        console_conversation_browser_group_row_limit(height)
+        for height in (None, 24, 48, 120, 200, 400)
+    ]
+    assert limits == sorted(limits)
+    assert console_conversation_browser_group_row_limit(400) > (
+        console_conversation_browser_group_row_limit(120)
+    )
 
 
 def test_flat_projection_excludes_named_workspaces_and_starred_aggregate() -> None:

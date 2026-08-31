@@ -53,6 +53,7 @@ from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceControlle
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 from tldw_chatbook.Workspaces import (
+    CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
     CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
     DEFAULT_WORKSPACE_ID,
     ConsoleConversationBrowserInputRow,
@@ -502,6 +503,55 @@ async def test_workspace_search_failure_settles_loading_and_exposes_retry_state(
     assert state.workspace_loading is False
     assert state.workspace_error == "Workspace search is unavailable."
     assert state.workspace_retry_available is True
+
+
+def test_browser_row_cap_expands_to_fill_measured_rail_height():
+    """The browser's visible-row cap follows the measured rail body height.
+
+    The Chats list shares the rail with the Workspaces tree, so with 200
+    terminal lines available its cap is half the space converted to rows --
+    (200 // 2) // 3 = 33 -- instead of the historical 12-row default.
+    """
+    controller = _workspace_controller(
+        rail_body_height_accessor=lambda: 200,
+    )
+    # Pin the workspace so the section builder's workspace-change reset does
+    # not clear the seeded rows before the browser state is built.
+    controller._console_workspace_conversation_workspace_id = str(
+        controller._current_console_workspace_context().active_workspace_id or ""
+    )
+    controller._console_conversation_browser_rows = tuple(
+        _browser_row(f"chat-{i}", f"Chat {i}", workspace_id=None)
+        for i in range(40)
+    )
+
+    state = controller._with_console_conversation_browser_state(_workspace_state())
+
+    browser = state.conversation_browser
+    assert browser is not None
+    (chats,) = browser.sections
+    assert chats.section_id == "chats"
+    assert len(chats.rows) == 33
+    assert chats.hidden_count == 7
+
+
+def test_browser_row_cap_falls_back_to_default_without_a_measurement():
+    """Unmeasured rails keep the 12-row default cap."""
+    controller = _workspace_controller()
+    controller._console_workspace_conversation_workspace_id = str(
+        controller._current_console_workspace_context().active_workspace_id or ""
+    )
+    controller._console_conversation_browser_rows = tuple(
+        _browser_row(f"chat-{i}", f"Chat {i}", workspace_id=None)
+        for i in range(CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3)
+    )
+
+    state = controller._with_console_conversation_browser_state(_workspace_state())
+
+    browser = state.conversation_browser
+    assert browser is not None
+    (chats,) = browser.sections
+    assert len(chats.rows) == CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT
 
 
 @pytest.mark.asyncio

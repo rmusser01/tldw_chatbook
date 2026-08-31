@@ -12,6 +12,42 @@ from .models import DEFAULT_WORKSPACE_ID
 
 CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT = 75
 CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT = 12
+#: Nominal (minimum) height of one browser row in terminal lines: title line
+#: + metadata line + the row's bottom margin. Rows whose titles wrap render
+#: taller. This constant intentionally stays at the minimum: it only feeds
+#: the visible-row-count heuristic below, where a slight overestimate merely
+#: loads a row or two more than fits (the rail scrolls); it must NOT be used
+#: for layout math (the tray derives real heights from the wrap result --
+#: see console_workspace_context.py, same contract as
+#: ``CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT`` in display_state.py).
+CONSOLE_CONVERSATION_BROWSER_ROW_HEIGHT = 3
+
+
+def console_conversation_browser_group_row_limit(body_height: int | None) -> int:
+    """Return the adaptive per-section visible-row cap for the browser.
+
+    The Chats section shares the rail with the (uncapped, paginated)
+    Workspaces tree, so its cap is about half the measured rail body height:
+    on a tall terminal the list expands to fill its even share of the
+    available space instead of stopping at the historical 12-row default,
+    while the tree takes the other half. Small or unmeasured heights keep
+    that default, so short terminals see no change.
+
+    Args:
+        body_height: Available rail body height in terminal lines, or
+            ``None`` when the rail body has not been measured yet.
+
+    Returns:
+        A visible-row cap: never below
+        ``CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT``, and on tall rails
+        about half the available lines converted to rows at the nominal row
+        height.
+    """
+    if body_height is None or int(body_height) <= 0:
+        return CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT
+    share = int(body_height) // 2
+    adaptive_rows = share // CONSOLE_CONVERSATION_BROWSER_ROW_HEIGHT
+    return max(CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT, adaptive_rows)
 
 
 def _parse_browser_timestamp(value: str) -> datetime | None:

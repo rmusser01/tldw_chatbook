@@ -704,6 +704,10 @@ def build_console_controllers(
         conversation_browser_collapse_preferences=(
             lambda: screen._console_conversation_browser_collapse_preferences()
         ),
+        # Measured rail body height drives the browser's adaptive
+        # visible-row cap (fill-the-space Workspaces/Chats sections);
+        # late-binding like every sibling above.
+        rail_body_height_accessor=lambda: screen._console_rail_body_height(),
         # task-15864 AC#2: session-open (the resume flow) is a wake retry
         # trigger -- late-binding like every sibling above.
         wake_retry_poke=lambda: screen._fleet._poke_console_wake_retry(),
