@@ -33,6 +33,7 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
 from tldw_chatbook.Workspaces.display_state import (
     ConsoleWorkspaceContextState,
 )
+from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 
@@ -1846,9 +1847,10 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         ):
             return
         event.stop()
-        workspace_id = str(getattr(event.button, "workspace_id", "") or "").strip()
-        if workspace_id:
-            self.post_message(self.WorkspaceFilesRequested(workspace_id))
+        workspace_id = str(
+            getattr(event.button, "workspace_id", "") or DEFAULT_WORKSPACE_ID
+        ).strip()
+        self.post_message(self.WorkspaceFilesRequested(workspace_id))
 
     def _compose_conversation_browser_row(
         self,

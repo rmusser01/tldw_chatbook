@@ -10799,6 +10799,9 @@ class ChatScreen(BaseAppScreen):
                         exclusive=True,
                     )
                 )
+            # The Workspace Files modal is intentionally not part of the
+            # recompose path, so push only its small typed attention snapshot.
+            self._workspace.update_workspace_files_attention()
         except (NoMatches, QueryError):
             logger.debug("No Console workspace context tray available for sync")
 

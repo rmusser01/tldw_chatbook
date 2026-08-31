@@ -16,6 +16,7 @@ from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Widgets.Console.console_workspace_files_modal import (
     ConsoleWorkspaceFilesModal,
+    WorkspaceFilesAttention,
     WorkspaceFilesBinding,
     _LaneRequest,
     _OperationLane,
@@ -301,6 +302,48 @@ async def test_lane_coalesces_to_one_latest_request_and_discards_it_on_close() -
     await closing
     assert published == ["first", "latest", "active"]
     assert not lane.active and not lane.has_latest
+
+
+@pytest.mark.asyncio
+async def test_external_pop_tears_down_once_and_reports_a_closed_visit() -> None:
+    """An app-driven pop must not strand a read lane or the visit ledger."""
+    closed: list[str] = []
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=_Inspector([]), inspected_workspace_id="ws-a", inspected_workspace_name="A",
+        active_workspace_id="ws-a", active_workspace_name="A",
+        bindings=(WorkspaceFilesBinding("binding-a", "Unavailable", None, available=False),),
+        on_visit_closed=lambda: closed.append("closed"),
+    )
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        await app.pop_screen()
+        await pilot.pause()
+        assert app.screen is not modal
+        assert closed == ["closed"]
+        assert modal.owned_lane_count == 0
+
+
+@pytest.mark.asyncio
+async def test_attention_updates_are_generation_checked_and_private() -> None:
+    """A stale attention snapshot cannot replace newer generic copy."""
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=_Inspector([]), inspected_workspace_id="ws-a", inspected_workspace_name="A",
+        active_workspace_id="ws-a", active_workspace_name="A",
+        bindings=(WorkspaceFilesBinding("binding-a", "Unavailable", None, available=False),),
+    )
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        assert modal.update_attention(
+            WorkspaceFilesAttention("Console needs attention · 2 approvals waiting"), 2
+        ) is True
+        assert modal.update_attention(WorkspaceFilesAttention("secret /path args"), 1) is False
+        copy = str(modal.query_one("#console-workspace-files-attention", Static).renderable)
+        assert copy == "Console needs attention · 2 approvals waiting"
+        assert "secret" not in copy and "/path" not in copy and "args" not in copy
 
 
 @pytest.mark.asyncio

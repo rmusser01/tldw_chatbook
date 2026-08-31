@@ -589,6 +589,8 @@ class ConsoleWorkspaceController:
         self._workspace_files_visit_workspace_id: str | None = None
         self._workspace_files_modal: ConsoleWorkspaceFilesModal | None = None
         self._workspace_files_attention_generation = 0
+        self._workspace_files_admission_lock = asyncio.Lock()
+        self._workspace_files_admission_claim: str | None = None
 
         self._workspace_tree_search = SearchAttemptState()
         self._flat_conversation_search = SearchAttemptState()
@@ -772,6 +774,7 @@ class ConsoleWorkspaceController:
         bindings: Sequence[WorkspaceFilesBinding],
         attention: WorkspaceFilesAttention | None = None,
         on_back_to_console: Callable[[], None] | None = None,
+        on_visit_closed: Callable[[], None] | None = None,
     ) -> Any:
         """Push one already-resolved, read-only Workspace Files visit.
 
@@ -804,6 +807,7 @@ class ConsoleWorkspaceController:
             bindings=safe_bindings,
             attention=attention,
             on_back_to_console=on_back_to_console,
+            on_visit_closed=on_visit_closed,
         )
         self.push_screen(modal)
         return modal
@@ -815,33 +819,45 @@ class ConsoleWorkspaceController:
         main-loop effects are the modal push/focus and a generic notification;
         neither changes the Console workspace, session, or staged context.
         """
-        requested_id = str(workspace_id or "").strip()
-        if not requested_id:
-            return
+        requested_id = str(workspace_id or DEFAULT_WORKSPACE_ID).strip()
         size = self._screen.size
         if size.width < 80 or size.height < 24:
             self.app_instance.notify(WORKSPACE_FILES_MINIMUM_COPY, severity="warning")
             return
 
-        modal = self._workspace_files_modal
-        # A push is asynchronous.  The object is the visit ledger from the
-        # moment it is created, not only after Textual marks it mounted, so a
-        # second request in that interval cannot stack a second modal.
-        if modal is not None:
-            if self._workspace_files_visit_workspace_id == requested_id:
-                if modal.is_mounted:
-                    modal.query_one("#console-workspace-files-back").focus()
-            else:
-                self.app_instance.notify(WORKSPACE_FILES_OTHER_VISIT_COPY, severity="warning")
-            return
-
-        resolution = await asyncio.to_thread(
-            self._resolve_workspace_files_visit, requested_id
-        )
+        async with self._workspace_files_admission_lock:
+            modal = self._workspace_files_modal
+            if modal is not None:
+                if self._workspace_files_visit_workspace_id == requested_id:
+                    if modal.is_mounted:
+                        modal.query_one("#console-workspace-files-back").focus()
+                else:
+                    self.app_instance.notify(WORKSPACE_FILES_OTHER_VISIT_COPY, severity="warning")
+                return
+            if self._workspace_files_admission_claim is not None:
+                if self._workspace_files_admission_claim != requested_id:
+                    self.app_instance.notify(WORKSPACE_FILES_OTHER_VISIT_COPY, severity="warning")
+                return
+            self._workspace_files_admission_claim = requested_id
+        try:
+            resolution = await asyncio.to_thread(
+                self._resolve_workspace_files_visit, requested_id
+            )
+        except Exception:
+            async with self._workspace_files_admission_lock:
+                if self._workspace_files_admission_claim == requested_id:
+                    self._workspace_files_admission_claim = None
+            raise
         if resolution is None:
+            async with self._workspace_files_admission_lock:
+                if self._workspace_files_admission_claim == requested_id:
+                    self._workspace_files_admission_claim = None
             self.app_instance.notify(WORKSPACE_FILES_NO_FOLDERS_COPY, severity="warning")
             return
         if not resolution.had_bindings:
+            async with self._workspace_files_admission_lock:
+                if self._workspace_files_admission_claim == requested_id:
+                    self._workspace_files_admission_claim = None
             self.app_instance.notify(WORKSPACE_FILES_NO_FOLDERS_COPY, severity="warning")
             return
 
@@ -852,19 +868,28 @@ class ConsoleWorkspaceController:
                 self._workspace_files_visit_workspace_id = None
                 self._workspace_files_modal = None
 
-        self._workspace_files_visit_workspace_id = resolution.workspace_id
-        self._workspace_files_modal = self.open_workspace_files_modal(
-            inspector=WorkspaceFileInspector(
-                getattr(self.app_instance, "workspace_registry_service", None)
-            ),
-            inspected_workspace_id=resolution.workspace_id,
-            inspected_workspace_name=resolution.workspace_name,
-            active_workspace_id=resolution.active_workspace_id,
-            active_workspace_name=resolution.active_workspace_name,
-            bindings=resolution.bindings,
-            attention=attention,
-            on_back_to_console=_closed,
-        )
+        async with self._workspace_files_admission_lock:
+            if self._workspace_files_modal is not None:
+                # A currently closing visit still wins until its one close
+                # callback clears the ledger; never retarget it.
+                if self._workspace_files_admission_claim == requested_id:
+                    self._workspace_files_admission_claim = None
+                return
+            self._workspace_files_visit_workspace_id = resolution.workspace_id
+            self._workspace_files_modal = self.open_workspace_files_modal(
+                inspector=WorkspaceFileInspector(
+                    getattr(self.app_instance, "workspace_registry_service", None)
+                ),
+                inspected_workspace_id=resolution.workspace_id,
+                inspected_workspace_name=resolution.workspace_name,
+                active_workspace_id=resolution.active_workspace_id,
+                active_workspace_name=resolution.active_workspace_name,
+                bindings=resolution.bindings,
+                attention=attention,
+                on_visit_closed=_closed,
+            )
+            if self._workspace_files_admission_claim == requested_id:
+                self._workspace_files_admission_claim = None
 
     def _resolve_workspace_files_visit(
         self, workspace_id: str
@@ -917,12 +942,37 @@ class ConsoleWorkspaceController:
         """Return only generic Console-attention copy; never payload details."""
         count_getter = getattr(self._screen, "_console_pending_approval_count", None)
         count = int(count_getter()) if callable(count_getter) else 0
+        blocked = bool(getattr(self.app_instance, "console_has_blocked_activity", False))
+        failed = bool(getattr(self.app_instance, "console_has_failed_activity", False))
+        new_activity = bool(getattr(self.app_instance, "console_has_new_activity", False))
         if count:
             noun = "approval" if count == 1 else "approvals"
             return WorkspaceFilesAttention(
-                f"Console needs attention · {count} {noun} waiting"
+                f"Console needs attention · {count} {noun} waiting",
+                pending_approval_count=count,
+                has_blocked_activity=blocked,
+                has_failed_activity=failed,
+                has_new_activity=new_activity,
+            )
+        if blocked or failed or new_activity:
+            return WorkspaceFilesAttention(
+                "Console has new activity",
+                has_blocked_activity=blocked,
+                has_failed_activity=failed,
+                has_new_activity=new_activity,
             )
         return WorkspaceFilesAttention()
+
+    def update_workspace_files_attention(self) -> None:
+        """Publish one monotonically ordered generic attention snapshot."""
+        modal = self._workspace_files_modal
+        if modal is None:
+            return
+        self._workspace_files_attention_generation += 1
+        modal.update_attention(
+            self._workspace_files_attention_snapshot(),
+            self._workspace_files_attention_generation,
+        )
 
     @property
     def call_after_refresh(self) -> Any:

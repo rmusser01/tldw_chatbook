@@ -84,6 +84,10 @@ class WorkspaceFilesAttention:
     """Privacy-minimized attention state injected by the Console owner."""
 
     status_copy: str = "No pending Console attention."
+    pending_approval_count: int = 0
+    has_blocked_activity: bool = False
+    has_failed_activity: bool = False
+    has_new_activity: bool = False
 
 
 @dataclass(frozen=True)
@@ -213,6 +217,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         bindings: Sequence[WorkspaceFilesBinding],
         attention: WorkspaceFilesAttention | None = None,
         on_back_to_console: Callable[[], None] | None = None,
+        on_visit_closed: Callable[[], None] | None = None,
     ) -> None:
         super().__init__()
         self._inspector = inspector
@@ -223,6 +228,9 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         self._workspace_bindings = tuple(bindings)
         self._attention = attention or WorkspaceFilesAttention()
         self._on_back_to_console = on_back_to_console
+        self._on_visit_closed = on_visit_closed
+        self._visit_closed_notified = False
+        self._attention_generation = 0
         first_available = next((item for item in self._workspace_bindings if item.available), None)
         self._state = WorkspaceFilesViewState(
             selected_binding_id=first_available.binding_id if first_available else None,
@@ -298,6 +306,20 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
                 yield Button("Previous", id="console-workspace-files-previous", compact=True, disabled=True)
                 yield Button("Next", id="console-workspace-files-next", compact=True, disabled=True)
                 yield Button("Refresh", id="console-workspace-files-refresh", compact=True)
+
+    def update_attention(
+        self, attention: WorkspaceFilesAttention, generation: int
+    ) -> bool:
+        """Publish a newer generic attention snapshot while this visit lives."""
+        if generation <= self._attention_generation or self._workspace_files_closing:
+            return False
+        self._attention_generation = generation
+        self._attention = attention
+        if self.is_mounted:
+            self.query_one("#console-workspace-files-attention", Static).update(
+                attention.status_copy
+            )
+        return True
 
     async def on_mount(self) -> None:  # type: ignore[override]
         super().on_mount()
@@ -914,10 +936,14 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         if self.dismiss_safe_once(None) and self._on_back_to_console is not None:
             self._on_back_to_console()
 
-    def on_unmount(self) -> None:
+    async def on_unmount(self) -> None:
+        """Join owned work and close the controller visit on every pop path."""
+        await self.run_cancel_effect_once(self._teardown)
+        if not self._visit_closed_notified:
+            self._visit_closed_notified = True
+            if self._on_visit_closed is not None:
+                self._on_visit_closed()
         super().on_unmount()
-        self._workspace_files_closing = True
-        self._cancel_filter_timer()
 
 
 __all__ = [
