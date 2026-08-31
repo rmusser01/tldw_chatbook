@@ -864,21 +864,26 @@ class ConsoleWorkspaceController:
             async with self._workspace_files_admission_lock:
                 if self._workspace_files_modal is not None:
                     # A closing visit owns the ledger until its awaited
-                    # unmount callback clears it; never retarget it.
+                # unmount callback clears it; never retarget it.
                     return
                 self._workspace_files_visit_workspace_id = resolution.workspace_id
-                self._workspace_files_modal = self.open_workspace_files_modal(
-                    inspector=WorkspaceFileInspector(
-                        getattr(self.app_instance, "workspace_registry_service", None)
-                    ),
-                    inspected_workspace_id=resolution.workspace_id,
-                    inspected_workspace_name=resolution.workspace_name,
-                    active_workspace_id=resolution.active_workspace_id,
-                    active_workspace_name=resolution.active_workspace_name,
-                    bindings=resolution.bindings,
-                    attention=attention,
-                    on_visit_closed=_closed,
-                )
+                try:
+                    self._workspace_files_modal = self.open_workspace_files_modal(
+                        inspector=WorkspaceFileInspector(
+                            getattr(self.app_instance, "workspace_registry_service", None)
+                        ),
+                        inspected_workspace_id=resolution.workspace_id,
+                        inspected_workspace_name=resolution.workspace_name,
+                        active_workspace_id=resolution.active_workspace_id,
+                        active_workspace_name=resolution.active_workspace_name,
+                        bindings=resolution.bindings,
+                        attention=attention,
+                        on_visit_closed=_closed,
+                    )
+                except Exception:
+                    self._workspace_files_visit_workspace_id = None
+                    self._workspace_files_modal = None
+                    raise
         finally:
             # Cancellation is a normal outcome for a Textual exclusive
             # worker. The claim must never survive it and block later visits.

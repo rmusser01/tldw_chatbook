@@ -181,6 +181,74 @@ async def test_workspace_files_cancelled_resolution_releases_its_admission_claim
     release.set()
 
 
+@pytest.mark.asyncio
+async def test_workspace_files_claim_blocks_different_request_and_promotes_once():
+    """The real admission gate, rather than worker cancellation, owns races."""
+    entered = Event()
+    release = Event()
+    notices: list[str] = []
+    promotions: list[str] = []
+
+    class _Modal:
+        is_mounted = True
+
+        @staticmethod
+        def query_one(_selector):
+            return SimpleNamespace(focus=lambda: None)
+
+    app = SimpleNamespace(
+        workspace_registry_service=object(),
+        notify=lambda message, **_kwargs: notices.append(message),
+    )
+    controller = _workspace_controller(app_instance=app)
+
+    def resolve(workspace_id: str):
+        entered.set()
+        release.wait()
+        return SimpleNamespace(
+            workspace_id=workspace_id,
+            workspace_name="Workspace A",
+            active_workspace_id="active",
+            active_workspace_name="Active",
+            bindings=(),
+            had_bindings=True,
+        )
+
+    controller._resolve_workspace_files_visit = resolve  # type: ignore[method-assign]
+    controller.open_workspace_files_modal = lambda **_kwargs: (  # type: ignore[method-assign]
+        promotions.append("open") or _Modal()
+    )
+    first = asyncio.create_task(controller.request_workspace_files("ws-a"))
+    while not entered.is_set():
+        await asyncio.sleep(0)
+    await controller.request_workspace_files("ws-b")
+    assert notices == ["Close Workspace Files before inspecting another workspace."]
+    release.set()
+    await first
+    await controller.request_workspace_files("ws-a")
+    assert promotions == ["open"]
+    await controller.request_workspace_files("ws-b")
+    assert notices[-1] == "Close Workspace Files before inspecting another workspace."
+
+
+@pytest.mark.asyncio
+async def test_workspace_files_push_failure_leaves_no_ledger_or_claim():
+    app = SimpleNamespace(workspace_registry_service=object(), notify=_noop)
+    controller = _workspace_controller(app_instance=app)
+    controller._resolve_workspace_files_visit = lambda workspace_id: SimpleNamespace(  # type: ignore[method-assign]
+        workspace_id=workspace_id, workspace_name="A", active_workspace_id="A",
+        active_workspace_name="A", bindings=(), had_bindings=True,
+    )
+    controller.open_workspace_files_modal = lambda **_kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        RuntimeError("push failed")
+    )
+    with pytest.raises(RuntimeError, match="push failed"):
+        await controller.request_workspace_files("ws-a")
+    assert controller._workspace_files_admission_claim is None
+    assert controller._workspace_files_modal is None
+    assert controller._workspace_files_visit_workspace_id is None
+
+
 def _rich_row() -> ConsoleConversationBrowserInputRow:
     return ConsoleConversationBrowserInputRow(
         row_key="conversation-7",
