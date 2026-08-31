@@ -89,6 +89,11 @@ from tldw_chatbook.Widgets.Console.console_workspace_switcher_modal import (
     ConsoleWorkspaceRenameModal,
     ConsoleWorkspaceSwitcherModal,
 )
+from tldw_chatbook.Widgets.Console.console_workspace_files_modal import (
+    ConsoleWorkspaceFilesModal,
+    WorkspaceFilesBinding,
+)
+from tldw_chatbook.Workspaces.file_inspector import DirectoryPage, DirectoryStatus
 from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
     ConsoleCharacterOption,
     ConsoleCharacterPickerModal,
@@ -270,6 +275,32 @@ async def _empty_tags(_query: str) -> tuple[TagCount, ...]:
     return ()
 
 
+class _WorkspaceFilesContractInspector:
+    def list_directory(self, *_args: object, **_kwargs: object) -> DirectoryPage:
+        return DirectoryPage(DirectoryStatus.EMPTY)
+
+    def filter_paths(self, *_args: object, **_kwargs: object) -> object:
+        raise AssertionError("filter is not part of the modal contract factory")
+
+    def read_file(self, *_args: object, **_kwargs: object) -> object:
+        raise AssertionError("read is not part of the modal contract factory")
+
+
+def _workspace_files_factory() -> ConsoleWorkspaceFilesModal:
+    return ConsoleWorkspaceFilesModal(
+        inspector=_WorkspaceFilesContractInspector(),
+        inspected_workspace_id="ws",
+        inspected_workspace_name="Workspace",
+        active_workspace_id="ws",
+        active_workspace_name="Workspace",
+        bindings=(
+            WorkspaceFilesBinding(
+                "binding", "Folder", None, available=False, availability_copy="Unavailable"
+            ),
+        ),
+    )
+
+
 def _citation_factory() -> ConsoleCitationSourcesModal:
     modal = ConsoleCitationSourcesModal(
         native_message_id="native-1",
@@ -376,6 +407,16 @@ def _prompt_variables_factory() -> PromptVariablesDialog:
 
 
 TASK2_MODAL_CONTRACTS = (
+    _Task2ModalContract(
+        ConsoleWorkspaceFilesModal,
+        _workspace_files_factory,
+        "#console-workspace-files-modal",
+        None,
+        "Console Workspace Files control",
+        "close modal operation lanes",
+        "none",
+        _RESTORE_OPENER,
+    ),
     _Task2ModalContract(
         AutoSpeakConsentModal,
         lambda: AutoSpeakConsentModal("TTS provider", "https://tts.example", False),
@@ -936,8 +977,14 @@ _CONSOLE_ROOT_SOURCE_PATHS = (
 _CONSOLE_DIRECT_MODAL_TYPES = tuple(
     contract.modal_type
     for contract in (*TASK2_MODAL_CONTRACTS, *TASK3_MODAL_CONTRACTS)
-    if contract.modal_type is not ConsoleWorkspaceRenameModal
+    if contract.modal_type
+    not in {ConsoleWorkspaceFilesModal, ConsoleWorkspaceRenameModal}
 ) + tuple(contract.modal_type for contract in TASK567_MODAL_CONTRACTS)
+# Task 2 ships the read-only modal and its full safe-dismissal contract before
+# Task 3 wires a Console owner action.  It remains in the exact inventory above
+# (rather than in an inventory exemption); it is intentionally absent from the
+# launch graph until there is an honest source-level constructor to declare.
+_CONSOLE_UNWIRED_CONTRACT_TYPES = frozenset({ConsoleWorkspaceFilesModal})
 _DIRECT_SHARED_MODAL_TYPES = tuple(
     contract.modal_type
     for contract in TASK4_MODAL_CONTRACTS
@@ -1329,7 +1376,8 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     all_contract_types = console_contract_types | {
         contract.modal_type for contract in TASK4_MODAL_CONTRACTS
     } | inventory_only_types | {TrajectoryScreen}
-    assert reachable_modal_types == all_contract_types
+    assert reachable_modal_types == all_contract_types - _CONSOLE_UNWIRED_CONTRACT_TYPES
+    assert ConsoleWorkspaceFilesModal not in reachable_modal_types
     assert {EnhancedFileOpen, EnhancedFileSave} <= reachable_modal_types
     assert CancelConfirmationDialog in reachable_modal_types
     assert ChangeRevertConfirmModal in reachable_modal_types
@@ -1462,8 +1510,9 @@ class _SyntheticDeclaredOwner:
 
 
 def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
-    assert len(TASK2_MODAL_CONTRACTS) == 14
+    assert len(TASK2_MODAL_CONTRACTS) == 15
     assert {contract.modal_type.__name__ for contract in TASK2_MODAL_CONTRACTS} == {
+        "ConsoleWorkspaceFilesModal",
         "AutoSpeakConsentModal",
         "ConsoleCharacterPickerModal",
         "ConsoleReactionPickerModal",
@@ -1480,6 +1529,7 @@ def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
         "ConsoleStylePickerModal",
     }
     expected_hooks = {
+        "ConsoleWorkspaceFilesModal": "close modal operation lanes",
         "ConsoleCharacterPickerModal": "_cancel_query_debounce",
         "ConsoleReactionPickerModal": "_cancel_pending_updates",
         "ConsoleCitationSourcesModal": "increment _request_generation",

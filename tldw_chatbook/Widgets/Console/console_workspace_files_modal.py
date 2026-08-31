@@ -9,7 +9,7 @@ authority, and all blocking service calls run off the Textual event loop.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
@@ -105,7 +105,7 @@ class WorkspaceFilesViewState:
 class _LaneRequest:
     generation: int
     operation: Callable[[], Any]
-    publish: Callable[[Any], None]
+    publish: Callable[[Any], Awaitable[None]]
 
 
 class _OperationLane:
@@ -146,7 +146,7 @@ class _OperationLane:
             except Exception:
                 outcome = None
             if self._owner._can_publish(request.generation) and outcome is not None:
-                request.publish(outcome)
+                await request.publish(outcome)
         finally:
             next_request = self._latest
             self._latest = None
@@ -155,10 +155,16 @@ class _OperationLane:
                 self._start(next_request)
 
     async def close(self) -> None:
+        """Discard queued work and join the one already-started operation.
+
+        ``asyncio.to_thread`` cancellation only cancels its awaiting wrapper,
+        not the filesystem call in the worker thread.  Joining the active lane
+        keeps that call modal-owned until its bounded service contract returns;
+        the filter service also sees the owner's cooperative cancellation flag.
+        """
         self._closed = True
         self._latest = None
         if self._active is not None and not self._active.done():
-            self._active.cancel()
             try:
                 await self._active
             except asyncio.CancelledError:
@@ -197,16 +203,16 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         self.inspected_workspace_name = inspected_workspace_name
         self.active_workspace_id = active_workspace_id
         self.active_workspace_name = active_workspace_name
-        self._bindings = tuple(bindings)
+        self._workspace_bindings = tuple(bindings)
         self._attention = attention or WorkspaceFilesAttention()
         self._on_back_to_console = on_back_to_console
-        first_available = next((item for item in self._bindings if item.available), None)
+        first_available = next((item for item in self._workspace_bindings if item.available), None)
         self._state = WorkspaceFilesViewState(
             selected_binding_id=first_available.binding_id if first_available else None,
             status_copy="Loading folder…" if first_available else "No available local folder binding.",
         )
         self._generation = 0
-        self._closed = False
+        self._workspace_files_closing = False
         self._filter_timer: Timer | None = None
         self._list_lane = _OperationLane(self, "list")
         self._read_lane = _OperationLane(self, "read")
@@ -240,7 +246,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
             )
             yield Static(self._attention.status_copy, id="console-workspace-files-attention", markup=False)
             with Horizontal(id="console-workspace-files-binding-row"):
-                for index, binding in enumerate(self._bindings):
+                for index, binding in enumerate(self._workspace_bindings):
                     yield Button(
                         Text(f"{binding.label} · {binding.access_label} · {binding.availability_copy}"),
                         id=f"console-workspace-files-binding-{index}",
@@ -259,6 +265,15 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
                     yield Static("Select a file to view its safe preview.", markup=False)
             with Horizontal(id="console-workspace-files-actions"):
                 yield Button("Back to Console", id="console-workspace-files-back", compact=True)
+                yield Button(
+                    "Details",
+                    id="console-workspace-files-details",
+                    compact=True,
+                    tooltip=(
+                        f"Inspector only. Active Console workspace: {self.active_workspace_name}. "
+                        f"Viewing: {self.inspected_workspace_name}."
+                    ),
+                )
                 yield Button("Previous", id="console-workspace-files-previous", compact=True, disabled=True)
                 yield Button("Next", id="console-workspace-files-next", compact=True, disabled=True)
                 yield Button("Refresh", id="console-workspace-files-refresh", compact=True)
@@ -269,6 +284,10 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         self._sync_binding_buttons()
         self._sync_status()
         if self._state.selected_binding_id is not None:
+            if len([binding for binding in self._workspace_bindings if binding.available]) > 1:
+                self.query_one("#console-workspace-files-binding-0", Button).focus()
+            else:
+                self.query_one("#console-workspace-files-tree", VerticalScroll).focus()
             self._request_directory()
         else:
             self.query_one("#console-workspace-files-back", Button).focus()
@@ -277,20 +296,25 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         self._sync_layout()
 
     def _sync_layout(self) -> None:
-        compact = self.size.width < 100
+        compact = self.size.width <= 100
         short = self.size.height < 30
         self._state = replace(self._state, compact=compact, short=short)
         self.set_class(compact, "-compact")
         self.set_class(short, "-short")
+        self.set_class(compact and self._state.compact_stage == "viewer", "-viewer-stage")
 
     def _binding_for_id(self, binding_id: str | None) -> WorkspaceFilesBinding | None:
-        return next((item for item in self._bindings if item.binding_id == binding_id), None)
+        return next((item for item in self._workspace_bindings if item.binding_id == binding_id), None)
 
     def _selected_binding(self) -> WorkspaceFilesBinding | None:
         return self._binding_for_id(self._state.selected_binding_id)
 
     def _can_publish(self, generation: int) -> bool:
-        return not self._closed and self.is_mounted and generation == self._generation
+        return (
+            not self._workspace_files_closing
+            and self.is_mounted
+            and generation == self._generation
+        )
 
     def _next_generation(self) -> int:
         self._generation += 1
@@ -314,13 +338,13 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
             )
         )
 
-    def _publish_directory(self, page: DirectoryPage) -> None:
+    async def _publish_directory(self, page: DirectoryPage) -> None:
         copy = {
             "empty": "Folder is empty.", "partial": "More folder entries available.",
             "truncated": "Folder listing reached its safety limit.", "failed": "Folder is unavailable.",
         }.get(page.status.value, "Folder loaded.")
         self._state = replace(self._state, directory_page=page, filter_result=None, status_copy=copy)
-        self.call_after_refresh(self._render_tree)
+        await self._render_tree()
         self._sync_status()
 
     def _request_filter(self, query: str) -> None:
@@ -333,14 +357,19 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         self._filter_lane.submit(
             _LaneRequest(
                 generation,
-                lambda: self._inspector.filter_paths(binding.scope, query, is_cancelled=lambda: self._closed or generation != self._generation),
+                lambda: self._inspector.filter_paths(
+                    binding.scope,
+                    query,
+                    is_cancelled=lambda: self._workspace_files_closing
+                    or generation != self._generation,
+                ),
                 self._publish_filter,
             )
         )
 
-    def _publish_filter(self, result: FilterResult) -> None:
+    async def _publish_filter(self, result: FilterResult) -> None:
         self._state = replace(self._state, filter_result=result, status_copy=result.status_copy or f"Filter {result.status.value}.")
-        self.call_after_refresh(self._render_tree)
+        await self._render_tree()
         self._sync_status()
 
     def _request_file(self, file_ref: FileRef, *, offset: int | None = None) -> None:
@@ -359,7 +388,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
             )
         )
 
-    def _publish_file(self, result: FileReadResult) -> None:
+    async def _publish_file(self, result: FileReadResult) -> None:
         copy = "Preview loaded."
         if result.kind is FileReadKind.METADATA_ONLY:
             copy = "File is metadata-only above the safe preview limit."
@@ -368,7 +397,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         elif result.kind is FileReadKind.FAILED:
             copy = "File is unavailable."
         self._state = replace(self._state, file_result=result, status_copy=copy, compact_stage="viewer")
-        self.call_after_refresh(self._render_viewer)
+        await self._render_viewer()
         self._sync_status()
 
     async def _render_tree(self) -> None:
@@ -396,7 +425,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
             prefix = "▸ " if entry.is_directory else "  "
             rows.append(Button(Text(prefix + entry.display_name), id=f"console-workspace-files-entry-{index}", classes="console-workspace-files-entry", compact=True))
         if page.continuation is not None:
-            rows.append(Button("More…", id="console-workspace-files-more", compact=True))
+            rows.append(Button("Load more", id="console-workspace-files-more", compact=True))
         await tree.mount_all(rows)
 
     async def _render_viewer(self) -> None:
@@ -423,7 +452,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
     def _sync_binding_buttons(self) -> None:
         if not self.is_mounted:
             return
-        for index, binding in enumerate(self._bindings):
+        for index, binding in enumerate(self._workspace_bindings):
             button = self.query_one(f"#console-workspace-files-binding-{index}", Button)
             button.set_class(binding.binding_id == self._state.selected_binding_id, "-selected")
 
@@ -433,11 +462,11 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
             self._filter_timer = None
 
     @on(Button.Pressed, ".console-workspace-files-binding")
-    def _select_binding(self, event: Button.Pressed) -> None:
+    async def _select_binding(self, event: Button.Pressed) -> None:
         event.stop()
         try:
             index = int((event.button.id or "").rsplit("-", 1)[-1])
-            binding = self._bindings[index]
+            binding = self._workspace_bindings[index]
         except (IndexError, ValueError):
             return
         self._cancel_filter_timer()
@@ -448,7 +477,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
             self._request_directory()
         else:
             self._sync_status()
-            self.call_after_refresh(self._render_tree)
+            await self._render_tree()
 
     @on(Input.Changed, "#console-workspace-files-filter")
     def _filter_changed(self, event: Input.Changed) -> None:
@@ -549,29 +578,43 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         event.stop()
         await self.action_back_to_console()
 
+    @on(Button.Pressed, "#console-workspace-files-details")
+    def _details_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._state = replace(
+            self._state,
+            status_copy=(
+                f"Inspector only. Console remains {self.active_workspace_name}. "
+                f"Viewing {self.inspected_workspace_name} read-only."
+            ),
+        )
+        self._sync_status()
+
     def action_focus_filter(self) -> None:
         self.query_one("#console-workspace-files-filter", Input).focus()
 
     def action_show_tree(self) -> None:
         self._state = replace(self._state, compact_stage="tree")
+        self._sync_layout()
         self.query_one("#console-workspace-files-tree", VerticalScroll).focus()
 
     def action_show_viewer(self) -> None:
         self._state = replace(self._state, compact_stage="viewer")
+        self._sync_layout()
         self.query_one("#console-workspace-files-viewer", VerticalScroll).focus()
 
     async def action_back_to_console(self) -> None:
         await self.request_safe_cancel(source="back")
 
     async def _teardown(self) -> None:
-        if self._closed:
+        if self._workspace_files_closing:
             return
-        self._closed = True
+        self._workspace_files_closing = True
         self._next_generation()
         self._cancel_filter_timer()
-        await asyncio.gather(
-            self._list_lane.close(), self._read_lane.close(), self._filter_lane.close(),
-        )
+        await self._list_lane.close()
+        await self._read_lane.close()
+        await self._filter_lane.close()
 
     async def _perform_safe_cancel(self, *, source: str) -> None:
         del source
@@ -582,7 +625,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
 
     def on_unmount(self) -> None:
         super().on_unmount()
-        self._closed = True
+        self._workspace_files_closing = True
         self._cancel_filter_timer()
 
 
