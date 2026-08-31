@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import re
 from collections.abc import Mapping
 from functools import partial
 from typing import Any
@@ -55,6 +56,36 @@ from tldw_chatbook.MCP.redaction import redact_mapping
 from tldw_chatbook.MCP.unified_control_plane_service import MCPHubGateDeniedError
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import tool_state_kind
 from tldw_chatbook.UI.MCP_Modules.mcp_schema_form import MCPSchemaForm, parse_schema
+
+_TOOL_TEST_TEXT_LIMIT = 480
+_TOOL_TEST_SECRET_ASSIGNMENT = re.compile(
+    r"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|secret)"
+    r"(\s*[:=]\s*)('[^']*'|\"[^\"]*\"|[^\s,;}\]]+)"
+)
+_TOOL_TEST_BEARER = re.compile(r"(?i)\bbearer\s+[^\s,;}\]]+")
+_TOOL_TEST_KEY_VALUE = re.compile(r"\bsk-[A-Za-z0-9_-]{6,}\b")
+_TOOL_TEST_ABSOLUTE_PATH = re.compile(
+    r"(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|/)[^\s'\"<>]+"
+)
+
+
+def _safe_tool_test_text(value: object, *, limit: int = _TOOL_TEST_TEXT_LIMIT) -> str:
+    """Return bounded, secret- and path-free text for Test Tool surfaces."""
+    try:
+        text = str(value)
+    except Exception:
+        text = "The service returned an unreadable error."
+    text = _TOOL_TEST_SECRET_ASSIGNMENT.sub(
+        lambda match: f"{match.group(1)}{match.group(2)}[redacted]", text
+    )
+    text = _TOOL_TEST_BEARER.sub("Bearer [redacted]", text)
+    text = _TOOL_TEST_KEY_VALUE.sub("[redacted]", text)
+    text = _TOOL_TEST_ABSOLUTE_PATH.sub("[path]", text)
+    text = text.strip()
+    if len(text) > limit:
+        text = f"{text[: limit - 1].rstrip()}…"
+    return text
+
 
 # Actions that have first-class UI in every source. Everything else renders
 # disabled and points at the Advanced runner below (capability preserved).
@@ -157,27 +188,7 @@ _ORIGIN_SENTENCES: dict[str, str] = {
     "global_default": "Inherited from the global default.",
     "builtin_default": "Built-in tools default to allow.",
 }
-# Minor 6: fallback for an origin this dict doesn't recognize (e.g.
-# "gate_error", `_resolve_test_gate()`'s synthetic fail-closed origin) --
-# `.get(effective.origin, "")` used to render a blank line here instead of
-# ANY explanation, which reads as a broken UI rather than "we don't know
-# why, but don't trust it".
-#
-# Fix Round I, Item 4: this was a THIRD independently-maintained literal
-# stating the same "permission state could not be resolved" claim
-# `unified_control_plane_service._ADVANCED_EXECUTE_GATE_ERROR_MESSAGE` and
-# `mcp_workbench._TOOL_TEST_BLOCKED_UNKNOWN_TEXT` already derive from
-# `local_runtime_delegate.PERMISSION_STATE_UNRESOLVED_CLAUSE` -- and, unlike
-# `_decision_note()`'s own former `gate_error` branch (proven dead and
-# removed the round before this one), this one is genuinely live: reachable
-# via `show_tool()`'s `effective` keyword whenever `MCPWorkbench.
-# _effective_for_display()`'s single-tool `gate_tool_test()` fallback
-# raises (`on_mcp_tools_mode_tool_selected()`, no `cascade` at that call
-# site, so `_render_permission_container()` falls through to THIS sentence
-# rather than `_cascade_rungs()`). Derived the same way as the other two --
-# `capitalize_first()`, not `.capitalize()`, for the reason given on that
-# function's own docstring -- so mutating the shared clause reddens a test
-# for this surface too, not just the other two.
+# Honest fallback when the service cannot explain a permission origin.
 _UNKNOWN_ORIGIN_SENTENCE = f"{capitalize_first(PERMISSION_STATE_UNRESOLVED_CLAUSE)}."
 _CONFIG_CHANGED_NOTICE = "Definition changed since you allowed it."
 _RISK_FLOORED_NOTICE = (
@@ -199,9 +210,7 @@ _GOTO_PERMISSION_TOOLTIP = "Switch to Permissions mode and select this tool's ro
 # a single press with no permission gate and no execution-log record.
 # `UnifiedMCPControlPlaneService.execute_advanced_tool()` now enforces the
 # gate's hard "Off" verdict and records the run; this pane supplies the
-# per-run consent that gate's "ask" verdict requires (the same Ask mechanic
-# the Test Tool runner's `require_confirm()` arm implements, minus its
-# dedicated button -- here the Run Action button itself is the arm), keyed to
+# per-run consent that gate's "ask" verdict requires, keyed to
 # the exact payload it was shown for so an edited payload re-confirms.
 _ADVANCED_EXECUTE_ACTION = "tool.execute"
 # Fix Round C, Item 4: "Editing anything cancels" undersold what actually
@@ -230,42 +239,6 @@ _ADVANCED_EXECUTE_ACTION = "tool.execute"
 # closing the two remaining gaps between what this sentence claims and
 # what the code does.
 #
-# Fix Round I, Item 1 (review of Fix Round G): the paragraph this replaces
-# claimed the two arms' sentence was "genuinely true of each arm on its
-# own terms" because `_test_run_armed` "deliberately does NOT disarm on an
-# argument-form edit" -- and defended that as safe because
-# `_handle_test_run()` "always re-collects CURRENT form values rather than
-# confirming a snapshot." That defence was backwards: re-collecting
-# CURRENT values is exactly why the old behavior was UNSAFE, not why it
-# was fine -- the whole point of a same-payload confirm is that the run
-# executes against what the user was SHOWN, and an edit after arming meant
-# the confirming press ran arguments no confirm was ever rendered for.
-# Verified live: an "ask" tool armed against `{"id": 1}`, the argument
-# form then edited to `{"id": 999, "danger": true}`, ran on the very next
-# press with no second confirm for the edited payload. `MCPSchemaForm`'s
-# controls (`Input`, `Select`, `Checkbox`, and the raw-JSON `TextArea`
-# fallback -- the only source of any of those four widget types anywhere
-# in this pane) are now wired to `disarm_test_run()` the same way
-# `#mcp-adv-payload` disarms the Advanced arm (`on_select_changed()`'s
-# schema-field branch, `on_input_changed()`, `on_checkbox_changed()`, and
-# the `#mcp-schema-raw` `TextArea.Changed` handler, all near
-# `_handle_test_run()` below). Both arms now disarm on every meaningful
-# interaction with THEIR OWN widget, for real -- not merely by assertion.
-#
-# The two arms still differ in one respect, left as-is on purpose: the
-# Advanced arm keys on `(action, payload)` (`_run_advanced_action()`
-# below) so a payload that happens to round-trip back to what was armed
-# (e.g. switching sections and back) does not force a redundant re-arm;
-# `_test_run_armed` stays a bare boolean, so ANY edit disarms it, even one
-# that reproduces the original text byte-for-byte. Widening the boolean
-# into a keyed arm would need `_handle_test_run()` to snapshot the
-# argument dict at ARM time and compare it at CONFIRM time (today it
-# always collects fresh, by design, so a confirming run reflects whatever
-# the form currently shows) -- a real behavior change, not a truthfulness
-# fix, and out of this item's scope. Disarm-on-edit alone already closes
-# the actual defect (an edited payload can never run under a stale
-# confirm); the byte-identical round-trip case it leaves un-optimized
-# costs the user one extra press, never an unconfirmed execution.
 _ADVANCED_EXECUTE_CONFIRM = (
     "Runs {tool} now — press Run Action again to confirm; anything else cancels."
 )
@@ -310,7 +283,9 @@ def _stale_result_toast_text(tool_name: str) -> str:
     not WHY the render was dropped), so it never asserts a specific cause
     it can't verify.
     """
-    return f"{tool_name} finished running, but its result isn't shown here."
+    return _safe_tool_test_text(
+        f"{tool_name} finished running, but its result isn't shown here."
+    )
 
 
 def _cascade_rungs(
@@ -1041,8 +1016,8 @@ class MCPInspector(Vertical):
         `show_goto_button` path -- rendered only for `show_tool()`'s
         combined call, never the standalone Permissions-mode
         `show_permission()`) and the Test Tool panel's blocked/ask button
-        (`#mcp-inspector-goto-permission-test`, shown by `require_confirm()`
-        for "ask" and `show_tool_result(blocked=True, ...)` for "deny").
+        (`#mcp-inspector-goto-permission-test`, shown by previews and blocked
+        outcomes).
 
         Both route through `MCPWorkbench._goto_permission_row()` -- the SAME
         shared helper the audit drill's `AuditAdjustPermissionRequested`
@@ -2178,15 +2153,12 @@ class MCPInspector(Vertical):
             # program's PR-2 lesson), hidden (`display = False`) until
             # `show_tool_result()` has a raw body to show.
             self._build_test_result_raw_collapsible(),
-            # Task 3 (MCP Hub Phase 6): the Test Tool panel's own "Change in
-            # Permissions" jump button -- mounted once, hidden (`display =
-            # False`) until `require_confirm()` (ask) or `show_tool_result
-            # (blocked=True, ...)` (deny) reveals it; `disarm_test_run()` and
-            # a non-blocked `show_tool_result()` hide it again. A distinct id
+            # The Test Tool panel's own "Change in Permissions" jump button
+            # is mounted once and toggled from previews/results. A distinct id
             # from the Tools-mode permission block's own button
             # (`#mcp-inspector-goto-permission`) -- both can be mounted at
             # once (this same tool selected, its permission block shown
-            # below the detail, AND this panel open+armed), and `query_one`
+            # below the detail, AND this panel open), and `query_one`
             # requires a unique id across the whole subtree.
             self._build_test_goto_permission_button(),
             id="mcp-inspector-test-panel",
@@ -2404,7 +2376,8 @@ class MCPInspector(Vertical):
         self.clear_test_preview()
         message = _TEST_UNAVAILABLE_TEXT
         if reason:
-            message = f"Unavailable. {str(reason).strip()[:240]} Try again."
+            safe_reason = _safe_tool_test_text(reason, limit=240)
+            message = f"Unavailable. {safe_reason} Try again."
         self._set_test_unavailable("Unavailable", message)
 
     def show_test_active(self, active: bool) -> None:
@@ -2511,7 +2484,7 @@ class MCPInspector(Vertical):
             # write here leads with "OK"/"Failed"/"Blocked · not run"; a
             # bare exception message read as if the whole panel were
             # broken rather than "fix your input and press Run again".
-            result_widget.update(f"Failed\n{exc}")
+            result_widget.update(f"Failed\n{_safe_tool_test_text(exc)}")
             return
         run_button.disabled = True
         intent = "approve_once" if preview.rendered_gate == "ask" else "run"
@@ -2524,19 +2497,6 @@ class MCPInspector(Vertical):
                 intent=intent,
             )
         )
-
-    # -- Fix Round I, Item 1: disarm the Test Tool confirm on any argument
-    # edit, mirroring `#mcp-adv-payload`'s own disarm-on-edit for the
-    # Advanced arm (`_on_advanced_payload_changed()` below). `MCPSchemaForm`
-    # (mounted once, as `#mcp-inspector-test-form`, by `_mount_test_tool_
-    # panel()`) is the ONLY source of `Input`/`Checkbox`/(non-`#mcp-adv-
-    # payload`) `TextArea` widgets anywhere in this pane -- verified by
-    # grep, not assumed -- so these three handlers need no extra ID/
-    # ancestor check to know an event came from the argument form.
-    # `disarm_test_run()` is already a no-op when nothing is armed, so a
-    # form's own initial mount (default values passed via each control's
-    # constructor, never a later `.value =`/`.text =` assignment) is safe
-    # even on the off chance a widget posts a spurious Changed at mount.
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Keep form edits local; the service canonicalizes current arguments."""
@@ -2625,9 +2585,7 @@ class MCPInspector(Vertical):
         with no structured summary, interpretation, or raw Collapsible
         content -- "Failure/blocked paths keep their existing rendering".
 
-        RAG-51 (PR-5 task 5): `decision_note` (built by `MCPWorkbench`'s
-        `_decision_note()`, e.g. "Ran because you approved this run (the
-        tool is set to Ask).") names the permission decision the run
+        `decision_note` names the service-owned permission decision the run
         dispatched under. It shares the `#mcp-inspector-test-result-note`
         Static with the structured shape's own quiet `interpretation` line
         above -- when both are present (a structured OK run with something
@@ -2668,10 +2626,12 @@ class MCPInspector(Vertical):
 
         interpretation: str | None = None
         if blocked:
-            result_widget.update(f"{_ADVANCED_BLOCKED_HEADING}\n{text or ''}")
+            result_widget.update(
+                f"{_ADVANCED_BLOCKED_HEADING}\n{_safe_tool_test_text(text or '')}"
+            )
         elif not ok:
             status_line = f"Failed{_duration_segment(duration_ms)}"
-            result_widget.update(f"{status_line}\n{text or ''}")
+            result_widget.update(f"{status_line}\n{_safe_tool_test_text(text or '')}")
         elif text is not None:
             # Legacy call shape: a pre-formatted body string, rendered
             # inline exactly as `show_tool_result()` always has -- no
@@ -2728,9 +2688,7 @@ class MCPInspector(Vertical):
         # Task 3 (MCP Hub Phase 6): `blocked=True` is the deny-gate's
         # synthetic result (this method's own docstring) -- reveal the jump
         # button there; any other outcome (a real, non-blocked run) hides it,
-        # covering the ask-then-confirmed-run case too (the Run press that
-        # consumed the arm already disarmed it via `disarm_test_run()`, but
-        # this keeps the button's state correct even if that ever changes).
+        # covering prepared Ask executions too.
         # Task 3 (PR-T3): `show_permission_jump=False` further suppresses it
         # for a `blocked=True` result that has nothing to do with the Hub
         # Permissions matrix (see this method's own docstring).

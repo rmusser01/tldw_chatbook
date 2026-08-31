@@ -3080,355 +3080,13 @@ async def test_test_tool_preview_close_revokes_nonce_and_late_preview_is_ignored
         assert not list(app.query("#mcp-inspector-test-panel"))
 
 
-# -- Task 5: gate-aware Test Tool -- arm-then-confirm mechanics --------------
-#
-# `require_confirm()`/`disarm_test_run()`/`test_run_armed` are the inspector-
-# owned half of the arm-then-confirm contract (mirrors mcp_servers_mode.py's
-# `_delete_armed`/`disarm_delete()`) -- the WORKBENCH decides deny/ask/allow
-# via `gate_tool_test()` (Tests/UI/test_mcp_workbench.py covers that
-# end-to-end), but the button relabel/tooltip/notice mechanics and every
-# disarm trigger belong to the inspector alone and are unit-tested directly
-# here, with no service/workbench involved.
-
-
 @pytest.mark.asyncio
-async def _obsolete_test_require_confirm_arms_button_with_confirm_label_and_tooltip():
-    app = InspectorApp()
-    async with app.run_test(size=(100, 60)) as pilot:
-        inspector = app.query_one(MCPInspector)
-        await inspector.show_tool(_tool())
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-
-        inspector.show_test_preview(_test_preview(_tool(), gate="ask"))
-        await pilot.pause()
-
-        run_button = app.query_one("#mcp-inspector-test-run", Button)
-        assert str(run_button.label) == "Confirm run"
-        assert run_button.variant == "primary"
-        assert (
-            run_button.tooltip == "Ask is set for this tool — press again to run once."
-        )
-        assert run_button.disabled is False
-        assert inspector.test_run_armed is True
-        # UX batch item 6: the generic armed explainer is ALWAYS shown once
-        # armed, independent of any specific `notice`.
-        hint = app.query_one("#mcp-inspector-test-armed-hint", Static)
-        assert (
-            str(hint.renderable)
-            == "This tool is set to Ask — press again to run; anything else cancels."
-        )
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_require_confirm_with_notice_shows_arm_notice_text():
-    app = InspectorApp()
-    async with app.run_test(size=(100, 60)) as pilot:
-        inspector = app.query_one(MCPInspector)
-        await inspector.show_tool(_tool())
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-
-        inspector.require_confirm(
-            "Definition changed since you allowed it — review in Permissions."
-        )
-        await pilot.pause()
-
-        notice = app.query_one("#mcp-inspector-test-arm-notice", Static)
-        assert (
-            str(notice.renderable)
-            == "Definition changed since you allowed it — review in Permissions."
-        )
-        # UX batch item 6: both the specific notice AND the generic
-        # explainer render together.
-        hint = app.query_one("#mcp-inspector-test-armed-hint", Static)
-        assert (
-            str(hint.renderable)
-            == "This tool is set to Ask — press again to run; anything else cancels."
-        )
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_require_confirm_without_notice_leaves_arm_notice_blank():
-    app = InspectorApp()
-    async with app.run_test(size=(100, 60)) as pilot:
-        inspector = app.query_one(MCPInspector)
-        await inspector.show_tool(_tool())
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-
-        inspector.require_confirm(None)
-        await pilot.pause()
-
-        notice = app.query_one("#mcp-inspector-test-arm-notice", Static)
-        assert str(notice.renderable) == ""
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_disarm_test_run_reverts_button_and_clears_notice():
-    app = InspectorApp()
-    async with app.run_test(size=(100, 60)) as pilot:
-        inspector = app.query_one(MCPInspector)
-        await inspector.show_tool(_tool())
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        inspector.require_confirm(
-            "Definition changed since you allowed it — review in Permissions."
-        )
-        await pilot.pause()
-
-        inspector.disarm_test_run()
-        await pilot.pause()
-
-        run_button = app.query_one("#mcp-inspector-test-run", Button)
-        assert str(run_button.label) == "Run"
-        assert run_button.variant == "default"
-        assert (
-            run_button.tooltip
-            == "Send these arguments to the tool and show the result."
-        )
-        assert inspector.test_run_armed is False
-        notice = app.query_one("#mcp-inspector-test-arm-notice", Static)
-        assert str(notice.renderable) == ""
-        hint = app.query_one("#mcp-inspector-test-armed-hint", Static)
-        assert str(hint.renderable) == ""
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_disarm_test_run_is_a_no_op_when_unarmed():
-    """A stray disarm call (e.g. the workbench's allow-branch fallthrough)
-    must not raise or otherwise disturb an already-unarmed panel."""
-    app = InspectorApp()
-    async with app.run_test(size=(100, 60)) as pilot:
-        inspector = app.query_one(MCPInspector)
-        await inspector.show_tool(_tool())
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-
-        inspector.disarm_test_run()  # never armed
-        await pilot.pause()
-
-        run_button = app.query_one("#mcp-inspector-test-run", Button)
-        assert str(run_button.label) == "Run"
-        assert inspector.test_run_armed is False
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_switching_tool_disarms_pending_confirm():
-    """Tool switch is an "other interaction" per the arm-then-confirm
-    contract -- mirrors `_delete_armed`'s reset in `show_detail()`."""
-    app = InspectorApp()
-    async with app.run_test(size=(100, 60)) as pilot:
-        inspector = app.query_one(MCPInspector)
-        await inspector.show_tool(_tool(name="search"))
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        inspector.require_confirm(None)
-        await pilot.pause()
-        assert inspector.test_run_armed is True
-
-        await inspector.show_tool(_tool(name="fetch", input_schema=None))
-        await pilot.pause()
-
-        assert inspector.test_run_armed is False
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_clearing_tool_selection_disarms_pending_confirm():
-    """Mode switch routes through `show_tool(None)` (see
-    `MCPWorkbench._clear_tool_view()`) -- covered here at the inspector
-    level without needing the workbench."""
-    app = InspectorApp()
-    async with app.run_test(size=(100, 60)) as pilot:
-        inspector = app.query_one(MCPInspector)
-        await inspector.show_tool(_tool())
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        inspector.require_confirm(None)
-        await pilot.pause()
-        assert inspector.test_run_armed is True
-
-        await inspector.show_tool(None)
-        await pilot.pause()
-
-        assert inspector.test_run_armed is False
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_close_button_disarms_pending_confirm():
-    app = InspectorApp()
-    async with app.run_test(size=(100, 60)) as pilot:
-        inspector = app.query_one(MCPInspector)
-        await inspector.show_tool(_tool())
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        inspector.require_confirm(None)
-        await pilot.pause()
-        assert inspector.test_run_armed is True
-
-        await pilot.click("#mcp-inspector-test-close")
-        await pilot.pause()
-
-        assert inspector.test_run_armed is False
-
-
-# -- Fix Round I, Item 1: an argument-form edit disarms the pending confirm --
-#
-# The armed hint promises "press again to run; anything else cancels" -- and
-# the confirm was granted against the arguments on screen WHEN it was
-# granted. Before this fix `_test_run_armed` survived argument edits, and
-# `_handle_test_run()` re-collects CURRENT form values, so the confirming
-# press ran arguments no confirm was ever rendered for (verified live: arm
-# against `{"id": 1}`, edit to `{"id": 999, "danger": true}`, one press ran
-# it). Every control kind `MCPSchemaForm` can mount gets its own test --
-# `Input` (string/number), `Checkbox` (boolean), `Select` (enum), and the
-# raw-JSON `TextArea` fallback -- because each disarm lives in a DIFFERENT
-# handler (`on_input_changed()` / `on_checkbox_changed()` /
-# `on_select_changed()`'s schema-field branch /
-# `_on_test_form_raw_payload_changed()`), and dropping any one of them must
-# redden its own test, not hide behind a sibling's.
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_editing_an_argument_input_disarms_pending_confirm():
-    """A genuine keystroke in a schema-form `Input` cancels the armed
-    confirm -- the Test Tool arm's twin of the Advanced pane's own
-    disarm-on-payload-edit."""
-    app = InspectorApp()
-    async with app.run_test(size=(100, 60)) as pilot:
-        inspector = app.query_one(MCPInspector)
-        await inspector.show_tool(_tool())  # string "query" -> Input
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        inspector.require_confirm(None)
-        await pilot.pause()
-        assert inspector.test_run_armed is True
-
-        await pilot.click("#mcp-schema-field-0")
-        await pilot.press("x")
-        await pilot.pause()
-
-        assert inspector.test_run_armed is False
-        hint = app.query_one("#mcp-inspector-test-armed-hint", Static)
-        assert str(hint.renderable) == ""
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_toggling_an_argument_checkbox_disarms_pending_confirm():
-    """The boolean field rides alongside a string one because an
-    ALL-boolean schema crashes `_mount_test_tool_panel()`'s focus code
-    outright (`panel.query("Input, Select, TextArea").first()` -- no
-    `Checkbox` in the query, and `DOMQuery.first()` raises `NoMatches` on
-    an empty result rather than returning None, so the `is None` fallback
-    to the Close button is dead code): a pre-existing defect found by this
-    test's first draft, filed separately rather than fixed under this
-    item. The mixed schema keeps THIS test pointed at its own claim --
-    `on_checkbox_changed()`'s disarm."""
-    app = InspectorApp()
-    async with app.run_test(size=(100, 60)) as pilot:
-        inspector = app.query_one(MCPInspector)
-        await inspector.show_tool(
-            _tool(
-                input_schema={
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "verbose": {"type": "boolean", "default": False},
-                    },
-                }
-            )
-        )
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        inspector.require_confirm(None)
-        await pilot.pause()
-        assert inspector.test_run_armed is True
-
-        await pilot.click("#mcp-schema-field-1")  # the Checkbox
-        await pilot.pause()
-
-        assert inspector.test_run_armed is False
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_changing_an_argument_enum_select_disarms_pending_confirm():
-    """Value assignment posts the same `Select.Changed` a user pick does
-    (the section-select tests in this file rely on the identical
-    delivery), and `on_select_changed()`'s schema-field branch must catch
-    it -- enum fields are the one control kind that routes through that
-    shared handler rather than a dedicated one."""
-    app = InspectorApp()
-    async with app.run_test(size=(100, 60)) as pilot:
-        inspector = app.query_one(MCPInspector)
-        await inspector.show_tool(
-            _tool(
-                input_schema={
-                    "type": "object",
-                    "properties": {
-                        "mode": {"type": "string", "enum": ["fast", "thorough"]}
-                    },
-                }
-            )
-        )
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        inspector.require_confirm(None)
-        await pilot.pause()
-        assert inspector.test_run_armed is True
-
-        app.query_one("#mcp-schema-field-0", Select).value = "thorough"
-        await pilot.pause()
-
-        assert inspector.test_run_armed is False
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_editing_the_raw_json_fallback_disarms_pending_confirm():
-    """A nested-object property makes `parse_schema()` return None, so the
-    form mounts the raw `#mcp-schema-raw` `TextArea` -- the fallback where
-    an unnoticed edit-after-arm would be WORST (the whole payload is
-    free-text), so it must disarm like every rendered control."""
-    app = InspectorApp()
-    async with app.run_test(size=(100, 60)) as pilot:
-        inspector = app.query_one(MCPInspector)
-        await inspector.show_tool(
-            _tool(
-                input_schema={
-                    "type": "object",
-                    "properties": {"config": {"type": "object"}},
-                }
-            )
-        )
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        inspector.require_confirm(None)
-        await pilot.pause()
-        assert inspector.test_run_armed is True
-
-        app.query_one("#mcp-schema-raw", TextArea).text = '{"config": {"x": 1}}'
-        await pilot.pause()
-
-        assert inspector.test_run_armed is False
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_confirming_press_reposts_tool_test_requested():
-    """The confirming press is a plain second Run/Confirm-run click -- the
-    inspector doesn't special-case posting based on armed state, it always
-    re-collects arguments and posts `ToolTestRequested` (the workbench is
-    what decides whether a given press is the confirm)."""
+@pytest.mark.parametrize("surface", ["preview", "result"])
+async def test_test_tool_failure_surfaces_redact_secrets_paths_and_bound_text(surface):
+    """The inspector is the final fail-closed boundary for service text."""
+    secret = "sk-live-super-secret-value"
+    absolute_path = "/Users/alice/private/project/credentials.json"
+    hostile = f"api_key={secret} failed at {absolute_path} " + ("x" * 4_000)
     app = InspectorApp()
     async with app.run_test(size=(100, 60)) as pilot:
         inspector = app.query_one(MCPInspector)
@@ -3437,23 +3095,32 @@ async def _obsolete_test_confirming_press_reposts_tool_test_requested():
         await pilot.pause()
         await pilot.click("#mcp-inspector-test-tool")
         await pilot.pause()
-        app.query_one("#mcp-schema-field-0", Input).value = "hello"
-        inspector.require_confirm(None)
-        await pilot.pause()
 
-        await pilot.click("#mcp-inspector-test-run")
-        await pilot.pause()
+        if surface == "preview":
+            inspector.show_test_unavailable(hostile)
+            rendered = str(
+                app.query_one("#mcp-inspector-test-preview", Static).renderable
+            )
+        else:
+            inspector.show_tool_result(
+                server_key=tool.server_key,
+                tool_name=tool.name,
+                ok=False,
+                text=hostile,
+                duration_ms=0,
+            )
+            rendered = str(
+                app.query_one("#mcp-inspector-test-result", Static).renderable
+            )
 
-        events = [
-            e for e in app.events if isinstance(e, MCPInspector.ToolTestRequested)
-        ]
-        assert len(events) == 1
-        assert events[0].server_key == tool.server_key
-        assert events[0].tool_name == tool.name
-        assert events[0].arguments == {"query": "hello"}
+        assert secret not in rendered
+        assert absolute_path not in rendered
+        assert "[redacted]" in rendered
+        assert "[path]" in rendered
+        assert len(rendered) <= 560
 
 
-# -- Task 7: permission explanation + re-allow -------------------------------
+# -- Task 7: permission explanation# -- Task 7: permission explanation + re-allow -------------------------------
 
 
 @pytest.mark.asyncio
@@ -3556,11 +3223,7 @@ async def test_show_permission_origin_sentence_global_default():
 
 @pytest.mark.asyncio
 async def test_show_permission_origin_sentence_falls_back_for_unrecognized_origin():
-    """Minor 6: an origin `_ORIGIN_SENTENCES` doesn't recognize (e.g.
-    "gate_error" -- `_resolve_test_gate()`'s synthetic fail-closed origin
-    when a gate check raises) used to render a blank line via
-    `.get(effective.origin, "")` -- a broken-looking UI, not an honest
-    "we don't know why" -- instead of a real fallback sentence."""
+    """An unknown service origin renders an honest fallback sentence."""
     app = InspectorApp()
     async with app.run_test(size=(100, 60)) as pilot:
         inspector = app.query_one(MCPInspector)
@@ -3877,56 +3540,6 @@ async def test_standalone_show_permission_never_renders_change_in_permissions_bu
 
 
 @pytest.mark.asyncio
-async def _obsolete_test_require_confirm_shows_test_panel_change_in_permissions_button():
-    app = InspectorApp()
-    async with app.run_test(size=(100, 60)) as pilot:
-        inspector = app.query_one(MCPInspector)
-        tool = _tool(server_key="local:docs", name="search")
-        await inspector.show_tool(tool)
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-
-        goto_button = app.query_one("#mcp-inspector-goto-permission-test", Button)
-        assert goto_button.display is False
-        assert goto_button.tooltip
-
-        inspector.require_confirm(None)
-        await pilot.pause()
-        assert goto_button.display is True
-
-        await pilot.click("#mcp-inspector-goto-permission-test")
-        await pilot.pause()
-        events = [
-            e
-            for e in app.events
-            if isinstance(e, MCPInspector.ChangeInPermissionsRequested)
-        ]
-        assert len(events) == 1
-        assert events[0].server_key == "local:docs"
-        assert events[0].tool_name == "search"
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_disarm_test_run_hides_test_panel_change_in_permissions_button():
-    app = InspectorApp()
-    async with app.run_test(size=(100, 60)) as pilot:
-        inspector = app.query_one(MCPInspector)
-        await inspector.show_tool(_tool())
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        inspector.require_confirm(None)
-        await pilot.pause()
-        goto_button = app.query_one("#mcp-inspector-goto-permission-test", Button)
-        assert goto_button.display is True
-
-        inspector.disarm_test_run()
-        await pilot.pause()
-        assert goto_button.display is False
-
-
-@pytest.mark.asyncio
 async def test_show_tool_result_blocked_shows_test_panel_change_in_permissions_button():
     app = InspectorApp()
     async with app.run_test(size=(100, 60)) as pilot:
@@ -3978,29 +3591,6 @@ async def test_show_tool_result_non_blocked_hides_test_panel_change_in_permissio
             app.query_one("#mcp-inspector-goto-permission-test", Button).display
             is False
         )
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_test_panel_and_permission_block_goto_buttons_coexist_without_duplicate_ids():
-    """Both the Test Tool panel's own button and the Tools-mode permission
-    block's button can be mounted at once (a tool selected with an open Test
-    Tool panel armed to Ask) -- they must carry distinct ids or Textual
-    raises `DuplicateIds`/`TooManyMatches`."""
-    app = InspectorApp()
-    async with app.run_test(size=(100, 60)) as pilot:
-        inspector = app.query_one(MCPInspector)
-        await inspector.show_tool(
-            _tool(), effective=EffectiveToolState(state="ask", origin="global_default")
-        )
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        inspector.require_confirm(None)
-        await pilot.pause()
-
-        block_button = app.query_one("#mcp-inspector-goto-permission", Button)
-        test_button = app.query_one("#mcp-inspector-goto-permission-test", Button)
-        assert block_button is not test_button
 
 
 @pytest.mark.asyncio

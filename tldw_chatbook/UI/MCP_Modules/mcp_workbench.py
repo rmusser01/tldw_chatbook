@@ -54,7 +54,6 @@ from tldw_chatbook.MCP.hub_test_execution import (
     ToolTestAdmissionStale,
 )
 from tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied
-from tldw_chatbook.MCP.local_runtime_delegate import PERMISSION_STATE_UNRESOLVED_CLAUSE
 from tldw_chatbook.MCP.local_server_tools import resolve_server_workspace_root
 from tldw_chatbook.MCP.mcp_import import ImportCandidate
 from tldw_chatbook.MCP.permission_store import (
@@ -81,7 +80,7 @@ from tldw_chatbook.MCP.unified_control_plane_service import (
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
-    _ORIGIN_SENTENCES,
+    _safe_tool_test_text,
     MCPInspector,
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
@@ -232,12 +231,13 @@ def _safe_exception_text(exc: BaseException) -> str:
     """
     args = getattr(exc, "args", ())
     if not any(isinstance(arg, Mapping) for arg in args):
-        return str(exc)
+        return _safe_tool_test_text(exc)
     try:
         safe_args = tuple(
             redact_mapping(arg) if isinstance(arg, Mapping) else arg for arg in args
         )
-        return str(safe_args[0]) if len(safe_args) == 1 else str(safe_args)
+        rendered = str(safe_args[0]) if len(safe_args) == 1 else str(safe_args)
+        return _safe_tool_test_text(rendered)
     except Exception:
         # Redaction itself failed on some pathological arg -- fall back to
         # a generic marker rather than risk falling through to the raw
@@ -257,9 +257,7 @@ def _is_permission_refusal(exc: BaseException) -> bool:
         `local_control_service.LocalMCPControlService._require_runtime_
         governance_allowed()` when the in-process runtime-governance
         profile denies the action -- a DIFFERENT permission system from
-        the Hub's own Allow/Ask/Off gate (`_resolve_test_gate()`), checked
-        earlier in `on_mcp_inspector_tool_test_requested()` and already
-        handled there.
+        the Hub's own prepared Allow/Ask/Off admission.
       - `MCPServerSourceDisplayOnlyError`, raised by
         `unified_control_plane_service.UnifiedMCPControlPlaneService.
         execute_hub_tool()` for a server-source key -- structurally can't
@@ -308,10 +306,8 @@ def _is_permission_refusal(exc: BaseException) -> bool:
     `_refuse_raw_tool_call()`", missing the delegate's own raise site).
     Both types are reachable only from the Advanced runner's `tool.
     execute`/`runtime.request`/`runtime.batch` actions and the runtime
-    delegate's own protocol surface -- never from this Test Tool path
-    (`test_hub_tool()`/`execute_hub_tool()`), which handles its OWN deny
-    short-circuit earlier via `_resolve_test_gate()` instead of catching
-    an exception type, and never calls into `LocalMCPRuntimeDelegate.
+    delegate's own protocol surface -- never from this prepared Test Tool
+    path, which never calls into `LocalMCPRuntimeDelegate.
     request()` at all (Test Tool execution goes through `execute_hub_
     tool()` -> `LocalMCPControlService.execute_tool()` ->
     `LocalMCPRuntimeDelegate.execute_tool()`, not the raw protocol
@@ -400,161 +396,6 @@ _SERVER_MUTATION_MESSAGES: dict[str, str] = {
     "external_server.slot.secret.clear": "Secret cleared.",
     "external_server.slot.delete": "Credential slot deleted.",
 }
-
-# Task 5: Test Tool result copy for a tool the permissions gate resolved to
-# a GENUINE "deny" -- shown via `MCPInspector.show_tool_result()` exactly
-# like any other failed run, but with no service call ever made. Only for
-# `gate.origin != "gate_error"`: see `_TOOL_TEST_BLOCKED_UNKNOWN_TEXT` just
-# below for the synthesized fail-closed case, where this claim would be
-# false (the tool's actual state was never determined).
-_TOOL_TEST_BLOCKED_TEXT = "Blocked — this tool is set to Off in Permissions."
-# task-2536 (PR-T3 fix round B, item 2): honest counterpart to
-# `_TOOL_TEST_BLOCKED_TEXT` for `_resolve_test_gate()`'s synthetic
-# fail-closed `gate_error` origin (the permission RESOLVER raised -- not a
-# genuine "Off" verdict). Before this, `on_mcp_inspector_tool_test_
-# requested()`'s deny short-circuit rendered `_TOOL_TEST_BLOCKED_TEXT` for
-# this case too: a confident, false claim about the tool's configured
-# state, directly above `_decision_note()`'s own honest admission
-# (`_UNKNOWN_ORIGIN_SENTENCE`) that no state could be resolved at all --
-# two contradictory lines stacked on top of each other. task-2270's rider
-# fixed the quiet note; this fixes the loud body it sits under.
-#
-# Item 6 (PR-T3 fix round D): this used to end "; the tool did not run" --
-# doubling BOTH "Blocked" and "not run" against the heading it renders
-# under (`MCPInspector._ADVANCED_BLOCKED_HEADING`, "Blocked · not run"),
-# stacking as "Blocked · not run\nBlocked — permission state could not be
-# determined; the tool did not run." Dropped: the heading already says the
-# tool did not run, so this clause was pure repetition, not information.
-# Kept the SAME "Blocked — <clause>." shape `_TOOL_TEST_BLOCKED_TEXT` above
-# uses (a doubled "Blocked" against the heading is fine -- it is what the
-# genuine-deny text above does too, deliberately unchanged here) -- only
-# the redundant back half is gone.
-#
-# Fix Round G, Item 7 (PR-T3): the clause used to be an independently
-# maintained literal, "permission state could not be determined" -- close
-# to, but not the same as, the Advanced hatch's own blocked body for this
-# identical `gate_error` condition (`unified_control_plane_service.
-# _ADVANCED_EXECUTE_GATE_ERROR_MESSAGE`, "Permission state could not be
-# RESOLVED"). Two independent sentences for one fact is exactly the
-# drifted-duplicate shape this whole PR exists to close. Converged on
-# "resolved" (the majority phrasing at the time -- also the wording
-# `_decision_note()`'s own then-live quiet note and the Permissions detail
-# block's `_UNKNOWN_ORIGIN_SENTENCE` happened to use), derived from the
-# SAME shared clause the Advanced hatch now also derives from
-# (`local_runtime_delegate.PERMISSION_STATE_UNRESOLVED_CLAUSE` -- see that
-# module for the sharing rationale), so a reword changes both surfaces or
-# neither compiles/matches. The "Blocked — <clause>." SHAPE is unchanged
-# (still this surface's own, distinct from the Advanced hatch's
-# bare-sentence-under-a-heading shape); only the clause's SOURCE and
-# wording moved.
-#
-# Fix Round I, Item 4 (review of Fix Round G): "majority phrasing" above
-# was true of the TEXT but not of the COUPLING -- `_UNKNOWN_ORIGIN_
-# SENTENCE` matched this wording by coincidence, not by deriving from the
-# same clause, so a future reword here could still have silently left it
-# behind. It is now ALSO derived from `PERMISSION_STATE_UNRESOLVED_CLAUSE`
-# (see that constant's own definition, `mcp_inspector.py`); `_decision_
-# note()`'s quiet note is no longer part of this set at all -- its
-# `gate_error` branch was proven dead (no caller can reach it) and removed
-# the round before this one.
-_TOOL_TEST_BLOCKED_UNKNOWN_TEXT = f"Blocked — {PERMISSION_STATE_UNRESOLVED_CLAUSE}."
-# Arm notice shown under the Run button (Task 5) when an "ask" resolution
-# carries `config_changed` -- an explicit tool-level allow that the rug-pull
-# guard downgraded because the tool's live definition no longer matches what
-# was allowed.
-_TOOL_TEST_CONFIG_CHANGED_NOTICE = (
-    "Definition changed since you allowed it — review in Permissions."
-)
-# UX batch item 15: origin-neutral counterpart for the BY-KEY/unverifiable
-# case only -- `_resolve_test_gate()` routes a catalog-vanished tool through
-# `gate_tool_test_by_key()` (T4's hashless, store-only resolution), which
-# reuses `config_changed=True` to mean "can't verify this without a live
-# definition to hash against", NOT "you explicitly allowed this and it
-# changed" (`resolve_effective_state_by_key()`'s own docstring). The genuine
-# `_TOOL_TEST_CONFIG_CHANGED_NOTICE` above stays reserved for resolutions
-# with a live `HubTool`; this fires whenever `tool is None` at the call site
-# instead (see `on_mcp_inspector_tool_test_requested()`).
-_TOOL_TEST_UNVERIFIABLE_NOTICE = "This tool's definition can't be verified against the catalog — review in Permissions."
-
-# Task 5 (RAG-51): the permission decision under which one Test Tool run
-# dispatched -- named in BOTH the inspector's result note (`_decision_note()`
-# below) and the execution-log entry (`_decision_for_gate()` below), so a
-# user (and the Audit mode table) can see WHY a run happened, not just that
-# it did. `gate`/`ask_approved` are captured synchronously at dispatch time
-# in `on_mcp_inspector_tool_test_requested()` -- both are `None`/`False`-safe
-# so a service with no gate seam at all (`_resolve_test_gate()` returned
-# `None`, the Phase-3 "run immediately" case) produces no note and the
-# unchanged "allowed" decision.
-
-
-def _decision_for_gate(gate: EffectiveToolState | None, ask_approved: bool) -> str:
-    """The execution-log `decision` string for one Test Tool run's gate.
-
-    Reuses the vocabulary the agent-runtime bridge's own Ask-then-approved
-    calls already record (`MCPToolProvider._execute(..., decision="approved")`,
-    `Agents/mcp_tool_provider.py`) -- `mcp_audit_mode.py`'s `_DECISION_
-    OPTIONS`/`_DECISION_KIND` tables already carry a first-class "approved"
-    entry (colored the same "reached the tool" green as "allowed"), so this
-    reuses it rather than inventing a near-synonym the Audit mode filter/
-    color tables would need a matching new entry for. Every other gate
-    (Allow, or no gate at all) keeps recording the original "allowed".
-    """
-    if gate is not None and gate.state == "ask" and ask_approved:
-        return "approved"
-    return "allowed"
-
-
-def _decision_note(gate: EffectiveToolState | None, ask_approved: bool) -> str | None:
-    """The Test Tool result's quiet decision-note sentence for one gate.
-
-    Pure and unit-testable without the UI -- reused by `_run_tool_test()`
-    (Allow/Ask-approved runs) and `on_mcp_inspector_tool_test_requested()`
-    (the genuine-deny short-circuit) alike. `_ORIGIN_SENTENCES` (`mcp_
-    inspector.py`) is the SAME origin-clause copy `_render_permission_
-    container()` already renders in the Permissions block -- reused here
-    rather than duplicated.
-
-    `None` (no gate resolved at all -- the Phase-3 "run immediately" case)
-    means no note to show, distinct from an empty string.
-
-    Fix Round H (PR-T3 review), Item 6: this function used to special-case
-    `gate.origin == "gate_error"` (task-2270's rider, PR-T3 task 3) to
-    degrade to the honest `_UNKNOWN_ORIGIN_SENTENCE` instead of falling
-    through to the `ui_label == "Off"` branch's dishonest "This tool is
-    set to Off." -- necessary at the time, because `on_mcp_inspector_
-    tool_test_requested()`'s deny short-circuit called this function for
-    EVERY deny, `gate_error` included. A later round (task-2536, fix round
-    B) changed that caller to pass `decision_note=None` for the
-    `gate_error` case directly, building its own honest body text instead
-    (`_TOOL_TEST_BLOCKED_UNKNOWN_TEXT`) and bypassing this function
-    entirely for that origin -- see that call site below, still the ONLY
-    other place `EffectiveToolState.origin="gate_error"` is ever produced
-    (`_resolve_test_gate()`'s two `except` branches, both paired
-    UNCONDITIONALLY with `state="deny"`). PROVEN dead by tracing both of
-    this function's remaining production callers: the call below (only
-    reached for a NON-gate_error deny, guarded by the `is_gate_error`
-    branch) and `_run_tool_test()`'s call (only ever reached with `gate.
-    state` "ask" or "allow" -- the caller already routes every "deny",
-    `gate_error` included, through the short-circuit above before
-    `_run_tool_test()` is ever scheduled). Neither can pass a `gate_error`
-    origin to this function anymore, so the special case was removed
-    rather than left as an untested, unreachable trap for a future author
-    to "fix" a bug by editing a branch nothing runs. If a future caller
-    ever needs to pass this function a `gate_error`-origin gate directly,
-    it must handle that origin itself (or reintroduce this special case
-    with a comment naming the new caller) -- this function no longer
-    guards against it.
-    """
-    if gate is None:
-        return None
-    origin = _ORIGIN_SENTENCES.get(gate.origin, "")
-    if gate.ui_label == "Ask" and ask_approved:
-        return "Ran because you approved this run (the tool is set to Ask)."
-    if gate.ui_label == "Allow":
-        return f"Ran because this tool is set to Allow. {origin}".strip()
-    if gate.ui_label == "Off":
-        return f"This tool is set to Off. {origin}".strip()
-    return None
 
 
 def _import_summary(succeeded: list[str], failed: list[tuple[str, str]]) -> str:
@@ -860,6 +701,10 @@ class MCPWorkbench(Container):
         # Presentation generation only. Service preview consumption and its
         # active registry remain the execution authority.
         self._tool_test_generation: int = 0
+        # Presentation bookkeeping only. The service registry remains the
+        # authority; this copy exists because Textual unmounts descendants
+        # before the parent's ``on_unmount`` can query the inspector.
+        self._tool_test_preview_nonce: str | None = None
         # T7: the batch `EffectiveToolState` resolution `_sync_permissions_
         # mode()` most recently computed (via `service.effective_tool_
         # states()`), keyed the same as that method's own return value --
@@ -1024,10 +869,13 @@ class MCPWorkbench(Container):
     async def on_unmount(self) -> None:
         """Invalidate preview work and revoke the visible nonce best effort."""
         self._tool_test_generation += 1
+        nonce = self._tool_test_preview_nonce
+        self._tool_test_preview_nonce = None
         try:
-            nonce = self.query_one(MCPInspector).clear_test_preview()
+            inspector_nonce = self.query_one(MCPInspector).clear_test_preview()
         except Exception:
-            nonce = None
+            inspector_nonce = None
+        nonce = nonce or inspector_nonce
         await self._revoke_test_nonce(nonce)
 
     def on_resize(self) -> None:
@@ -1968,9 +1816,8 @@ class MCPWorkbench(Container):
         """One batched `effective_tool_states()` call for `tools`.
 
         Read via the same `getattr(..., None)` + `callable()` +
-        try/except fail-soft pattern as every other T4 seam here
-        (`_resolve_test_gate()`, this method's own former inline body) --
-        a service without the Phase 4 permission methods yet (older
+        try/except fail-soft pattern as every other T4 seam here. A service
+        without the Phase 4 permission methods yet (older
         fakes, a still-initializing service) resolves to an empty dict
         rather than raising.
 
@@ -2212,8 +2059,7 @@ class MCPWorkbench(Container):
         changed.
 
         Every T4 seam is read via `getattr(..., None)` + `callable()` --
-        the same "seams absent -> permissive/fail-soft by design" precedent
-        as `_resolve_test_gate()` -- so a service that hasn't been upgraded
+        so a service that hasn't been upgraded
         with the Phase 4 permission methods (older fakes, a
         still-initializing service) renders an all-"Ask", switch-off matrix
         instead of raising out of every `_sync_children()` call.
@@ -3482,7 +3328,7 @@ class MCPWorkbench(Container):
         `service.gate_tool_test()` call (T4) when the tool isn't in that
         cache (e.g. a service that exposes `gate_tool_test()` but not the
         batch `effective_tool_states()`); a raising gate fails CLOSED
-        (deny), mirroring `_resolve_test_gate()`. No seam at all -> the
+        (deny). No seam at all -> the
         same `EffectiveToolState(state="ask", origin="global_default")`
         fallback `_build_permission_rows()` already uses for a tool missing
         from the batch dict.
@@ -3975,6 +3821,7 @@ class MCPWorkbench(Container):
         if not self._test_panel_is_current(tool, generation):
             await self._revoke_test_nonce(preview.nonce)
             return
+        self._tool_test_preview_nonce = preview.nonce
         self.query_one(MCPInspector).show_test_preview(preview)
 
     def _test_panel_is_current(self, tool: HubTool, generation: int) -> bool:
@@ -4004,6 +3851,8 @@ class MCPWorkbench(Container):
         """Revoke a nonce leaving the visible panel, best effort."""
         event.stop()
         self._tool_test_generation += 1
+        if event.preview_nonce == self._tool_test_preview_nonce:
+            self._tool_test_preview_nonce = None
         self.run_worker(
             self._revoke_test_nonce(event.preview_nonce),
             name="mcp-tool-test-preview-revoke",
@@ -4075,6 +3924,8 @@ class MCPWorkbench(Container):
             inspector = self.query_one(MCPInspector)
             inspector.clear_test_preview()
             inspector.show_test_active(True)
+        if nonce == self._tool_test_preview_nonce:
+            self._tool_test_preview_nonce = None
         try:
             outcome = await execute(nonce, intent, arguments)
         except asyncio.CancelledError:
@@ -4114,6 +3965,7 @@ class MCPWorkbench(Container):
                 blocked=isinstance(outcome, ToolTestAdmissionBlocked),
             )
             if outcome.refreshed_preview is not None:
+                self._tool_test_preview_nonce = outcome.refreshed_preview.nonce
                 inspector.show_test_preview(outcome.refreshed_preview)
             else:
                 inspector.show_test_preparing()
@@ -4233,8 +4085,10 @@ class MCPWorkbench(Container):
             logger.warning(f"MCP tool test result render failed: {exc}")
             self.app.notify(
                 _toast(
-                    f"{tool_name} finished running, but its result couldn't be "
-                    f"shown: {_safe_exception_text(exc)}"
+                    _safe_tool_test_text(
+                        f"{tool_name} finished running, but its result couldn't be "
+                        f"shown: {_safe_exception_text(exc)}"
+                    )
                 ),
                 severity="error",
             )

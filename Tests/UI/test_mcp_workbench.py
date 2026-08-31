@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -31,12 +32,14 @@ import tldw_chatbook.MCP.local_server_tools as local_server_tools_module
 import tldw_chatbook.MCP.unified_control_plane_service as unified_service_module
 import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
 import tldw_chatbook.UI.MCP_Modules.mcp_workbench as mcp_workbench_module
+from tldw_chatbook.Agents.agent_models import ToolResult
 from tldw_chatbook.Agents.raw_shell_tool_provider import (
     RAW_SHELL_SERVER_KEY,
     RAW_SHELL_TOOL_NAME,
 )
 from tldw_chatbook.MCP.local_control_service import MCPGovernanceDenied
 from tldw_chatbook.MCP.hub_test_execution import (
+    LocalHubExecutionOutcome,
     ToolTestAdmissionBlocked,
     ToolTestAdmissionPreview,
     ToolTestAdmissionStale,
@@ -3505,10 +3508,8 @@ class ToolTestHubService(FakeHubService):
         self.gate_config_changed: bool = False
         self.gate_risk_floored: bool = False
         self.gate_calls: list[tuple[str, str]] = []
-        # I1: `gate_tool_test_by_key()` calls this fake gets when
-        # `_resolve_test_gate()` can't produce a `HubTool` (the tool
-        # vanished from `_last_hub_tools`) -- driven by the SAME
-        # `gate_state`, mirroring the real
+        # Store-only resolution calls for catalog-vanished tools, driven by
+        # the same `gate_state`, mirroring the real
         # `UnifiedMCPControlPlaneService.gate_tool_test_by_key()`'s "reads
         # the same store `gate_tool_test()` does" contract.
         self.gate_by_key_calls: list[tuple[str, str]] = []
@@ -3718,6 +3719,35 @@ class ToolTestApp(ConsolidatedCSSApp):
 
     def compose(self) -> ComposeResult:
         yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+class BuiltinToolTestHubService(ToolTestHubService):
+    class LocalService:
+        @staticmethod
+        def get_inventory():
+            return {
+                "tools": [
+                    {
+                        "name": "calculator",
+                        "description": "Calculate.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {"x": {"type": "integer"}},
+                            "required": ["x"],
+                        },
+                    }
+                ]
+            }
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.local_service = self.LocalService()
+
+
+class BuiltinToolTestApp(ToolTestApp):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = BuiltinToolTestHubService()
 
 
 async def _select_tools_mode_row(app: App, pilot, row: int) -> None:
@@ -4094,7 +4124,8 @@ async def test_test_tool_run_bare_permission_error_from_tool_body_renders_failed
         first_line = result.split("\n", 1)[0]
         assert first_line.startswith("Failed · ")
         assert not result.startswith("Blocked")
-        assert "EACCES: permission denied reading /etc/shadow" in result
+        assert "EACCES: permission denied reading [path]" in result
+        assert "/etc/shadow" not in result
 
 
 @pytest.mark.asyncio
@@ -4397,79 +4428,251 @@ async def test_test_tool_preview_long_error_is_bounded_and_recoverable():
 
 
 @pytest.mark.asyncio
-async def test_test_tool_one_click_builtin_uses_prepared_entry_point():
+@pytest.mark.parametrize(
+    "failure",
+    [
+        RuntimeError(
+            "token=sk-live-string-secret failed at /Users/alice/private/key.txt "
+            + ("x" * 4_000)
+        ),
+        RuntimeError(
+            {
+                "api_key": "sk-live-mapping-secret",
+                "path": "/private/tmp/private-token.json",
+                "detail": "x" * 4_000,
+            }
+        ),
+    ],
+)
+async def test_test_tool_preview_failure_redacts_secrets_paths_and_bounds_text(failure):
     app = ToolTestApp()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        tool = HubTool(
-            server_key="builtin:tldw_chatbook",
-            server_label="Built-in",
-            name="calculator",
-            description="Calculate.",
-            input_schema=None,
-            source="builtin",
-            executable=True,
-            tags=(),
-            stale=False,
-        )
-        workbench._last_hub_tools.append(tool)
-        event = _prepared_test_event(app.unified_mcp_service, tool, {"x": 1})
-        workbench.on_mcp_inspector_tool_test_requested(event)
-        await app.workers.wait_for_complete()
-        await pilot.pause()
 
-        assert app.unified_mcp_service.prepared_calls == [
-            (event.preview_nonce, "run", {"x": 1})
-        ]
+    def fail_prepare(_tool: HubTool) -> ToolTestAdmissionPreview:
+        raise failure
 
-
-@pytest.mark.asyncio
-async def _obsolete_test_tool_double_run_reenables_run_button_for_the_swallowed_press():
-    """Task 3 (PR-T3): the in-flight-duplicate branch above swallows a
-    SECOND `ToolTestRequested` for the SAME tool with only a toast -- but
-    the REAL first press's `_handle_test_run()` already disabled the Run
-    button, via the real click path this time (not the direct
-    `on_mcp_inspector_tool_test_requested()` double-call the sibling test
-    above uses). Since the second press produces no run of its own, that
-    disable must be undone -- the first, still-in-flight run's own
-    eventual `show_tool_result()` re-enables it again itself, harmlessly,
-    on completion; the in-flight SET (not the button) remains the
-    authoritative dedupe, so this does not let a second `test_hub_tool()`
-    call through."""
-    app = ToolTestApp()
-    app.unified_mcp_service.test_gate = asyncio.Event()
+    app.unified_mcp_service.prepare_hub_test = fail_prepare
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
         workbench.set_mode("tools")
         await pilot.pause()
-        await _select_tools_mode_row(app, pilot, 1)  # docs::search (form schema)
+        await _select_tools_mode_row(app, pilot, 0)
         await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        app.query_one("#mcp-schema-field-0", Input).value = "hello"
-        run_button = app.query_one("#mcp-inspector-test-run", Button)
-        await pilot.click(run_button)
-        await pilot.pause()
-        assert run_button.disabled is True
-
-        # A second Pressed for the SAME tool, queued before the first
-        # handler's disable took visible effect in the real race --
-        # reproduced directly (mirrors
-        # test_test_tool_double_run_dispatches_exactly_one_service_call's
-        # own technique).
-        tools = workbench._last_hub_tools
-        tool = next(t for t in tools if t.name == "search")
-        event = _prepared_test_event(app.unified_mcp_service, tool, {"query": "hello"})
-        workbench.on_mcp_inspector_tool_test_requested(event)
-        await pilot.pause()
-
-        assert run_button.disabled is False
-        assert len(app.unified_mcp_service.test_calls) == 1
-
-        app.unified_mcp_service.test_gate.set()
         await app.workers.wait_for_complete()
         await pilot.pause()
+
+        rendered = str(app.query_one("#mcp-inspector-test-preview", Static).renderable)
+        assert "sk-live" not in rendered
+        assert "/Users/" not in rendered
+        assert "/private/" not in rendered
+        assert len(rendered) <= 560
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [
+        RuntimeError(
+            "password=string-secret failed at /Users/alice/private/key.txt "
+            + ("x" * 4_000)
+        ),
+        RuntimeError(
+            {
+                "access_token": "mapping-secret",
+                "path": "/private/tmp/private-token.json",
+                "detail": "x" * 4_000,
+            }
+        ),
+    ],
+)
+async def test_test_tool_execution_failure_redacts_secrets_paths_and_bounds_text(
+    failure,
+):
+    app = ToolTestApp()
+    app.unified_mcp_service.raise_error = failure
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)
+        await pilot.click("#mcp-inspector-test-tool")
+        await app.workers.wait_for_complete()
+        await pilot.click("#mcp-inspector-test-run")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        rendered = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert "string-secret" not in rendered
+        assert "mapping-secret" not in rendered
+        assert "/Users/" not in rendered
+        assert "/private/" not in rendered
+        assert len(rendered) <= 560
+
+
+@pytest.mark.asyncio
+async def test_test_tool_typed_failure_outcome_is_redacted_and_bounded():
+    app = ToolTestApp()
+    app.unified_mcp_service.next_prepared_outcome = LocalHubExecutionOutcome(
+        decision="allowed",
+        status="failed",
+        error_category="provider_error",
+        final_gate="allow",
+        approval_consumed=False,
+        dispatch_started=True,
+        provider_terminal="error",
+        duration_ms=4,
+        result=ToolResult(
+            ok=False,
+            error=(
+                "api_key=sk-live-outcome-secret at /Users/alice/private/key.txt "
+                + ("x" * 4_000)
+            ),
+        ),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)
+        await pilot.click("#mcp-inspector-test-tool")
+        await app.workers.wait_for_complete()
+        await pilot.click("#mcp-inspector-test-run")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        rendered = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert "sk-live-outcome-secret" not in rendered
+        assert "/Users/alice" not in rendered
+        assert "[redacted]" in rendered
+        assert "[path]" in rendered
+        assert len(rendered) <= 560
+
+
+async def _open_fetch_test_preview(app: ToolTestApp, pilot) -> str:
+    workbench = app.query_one(MCPWorkbench)
+    workbench.set_mode("tools")
+    await pilot.pause()
+    await _select_tools_mode_row(app, pilot, 0)
+    await pilot.click("#mcp-inspector-test-tool")
+    await app.workers.wait_for_complete()
+    await pilot.pause()
+    preview = app.query_one(MCPInspector)._test_preview
+    assert preview is not None
+    return preview.nonce
+
+
+@pytest.mark.asyncio
+async def test_test_tool_preview_escape_revokes_nonce_through_mounted_binding():
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        nonce = await _open_fetch_test_preview(app, pilot)
+        await pilot.press("escape")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert nonce in app.unified_mcp_service.revoked_nonces
+        assert not list(app.query("#mcp-inspector-test-panel"))
+
+
+@pytest.mark.asyncio
+async def test_test_tool_preview_mode_switch_revokes_nonce_while_mounted():
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        nonce = await _open_fetch_test_preview(app, pilot)
+        app.query_one(MCPWorkbench).set_mode("permissions")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert nonce in app.unified_mcp_service.revoked_nonces
+
+
+@pytest.mark.asyncio
+async def test_test_tool_preview_source_switch_revokes_nonce_while_mounted():
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        nonce = await _open_fetch_test_preview(app, pilot)
+        source = app.query_one("#mcp-rail-source", Select)
+        source.value = "server"
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert nonce in app.unified_mcp_service.revoked_nonces
+
+
+@pytest.mark.asyncio
+async def test_test_tool_preview_unmount_and_remount_revokes_old_nonce():
+    app = ToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        nonce = await _open_fetch_test_preview(app, pilot)
+        old = app.query_one(MCPWorkbench)
+        await old.remove()
+        await pilot.pause()
+        await app.mount(MCPWorkbench(app_instance=app, id="mcp-workbench-remounted"))
+        await pilot.pause()
+
+        assert nonce in app.unified_mcp_service.revoked_nonces
+        assert app.query_one("#mcp-workbench-remounted", MCPWorkbench).is_mounted
+
+
+@pytest.mark.asyncio
+async def test_test_tool_delayed_preview_cannot_update_closed_stale_generation():
+    app = ToolTestApp()
+    started = threading.Event()
+    release = threading.Event()
+    original_prepare = app.unified_mcp_service.prepare_hub_test
+
+    def delayed_prepare(tool: HubTool) -> ToolTestAdmissionPreview:
+        started.set()
+        assert release.wait(timeout=2)
+        return original_prepare(tool)
+
+    app.unified_mcp_service.prepare_hub_test = delayed_prepare
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)
+        await pilot.click("#mcp-inspector-test-tool")
+        assert await asyncio.to_thread(started.wait, 1)
+        await pilot.press("escape")
+        release.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert not list(app.query("#mcp-inspector-test-panel"))
+        assert "preview-1" in app.unified_mcp_service.revoked_nonces
+
+
+@pytest.mark.asyncio
+async def test_test_tool_one_click_builtin_uses_prepared_entry_point():
+    app = BuiltinToolTestApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        tool = next(
+            tool
+            for tool in workbench._last_hub_tools
+            if tool.server_key == "builtin:tldw_chatbook" and tool.name == "calculator"
+        )
+        table = app.query_one("#mcp-tools-table", DataTable)
+        table.focus()
+        table.move_cursor(row=table.get_row_index(tool.tool_id))
+        await pilot.press("enter")
+        await pilot.click("#mcp-inspector-test-tool")
+        await app.workers.wait_for_complete()
+        app.query_one("#mcp-schema-field-0", Input).value = "1"
+        await pilot.click("#mcp-inspector-test-run")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert len(app.unified_mcp_service.prepared_calls) == 1
+        assert app.unified_mcp_service.prepared_calls[0][1:] == ("run", {"x": 1})
 
 
 # -- Task 4 (PR-T3): the dispatch path threads the tool's schema-approved
@@ -4846,870 +5049,7 @@ async def test_open_test_for_selected_tool_with_non_executable_selection_notifie
         assert severity == "information"
 
 
-# -- Task 5: gate-aware Test Tool (deny blocks, ask arms confirm) ------------
-#
-# `ToolTestHubService.gate_state`/`gate_config_changed`/`gate_risk_floored`
-# (defined above, alongside the rest of that fake) drive `gate_tool_test()`
-# for every test below. All use `ToolTestApp`/`_select_tools_mode_row()`,
-# same as the Task 6 tool-runner tests this section follows.
-
-
-class NoGateToolTestHubService(FakeHubService):
-    """A test double with no `gate_tool_test()` at all -- exercises the
-    getattr-tolerant fallback in `MCPWorkbench._resolve_test_gate()`
-    (mirrors `MCPInspector._action_allowed()`'s "seams absent -> permissive
-    by design" precedent): a service that hasn't been upgraded to gate Test
-    Tool must keep running tools exactly like Phase 3 did, not silently
-    start blocking everything.
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.test_calls: list[tuple[str, str, dict]] = []
-        self.decision_calls: list[str] = []
-
-    async def test_hub_tool(
-        self,
-        server_key,
-        tool_name,
-        arguments=None,
-        *,
-        decision="allowed",
-        registered_argument_names=None,
-    ):
-        self.test_calls.append((server_key, tool_name, dict(arguments or {})))
-        self.decision_calls.append(decision)
-        return {"ok": True}
-
-
-class NoGateToolTestApp(ConsolidatedCSSApp):
-    def __init__(self) -> None:
-        super().__init__()
-        self.unified_mcp_service = NoGateToolTestHubService()
-
-    def compose(self) -> ComposeResult:
-        yield MCPWorkbench(app_instance=self, id="mcp-workbench")
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_service_without_gate_tool_test_runs_immediately():
-    app = NoGateToolTestApp()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("tools")
-        await pilot.pause()
-        await _select_tools_mode_row(app, pilot, 0)  # local:docs::a
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-        assert app.unified_mcp_service.test_calls == [("local:docs", "a", {})]
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_deny_gate_blocks_without_calling_service():
-    app = ToolTestApp()
-    app.unified_mcp_service.gate_state = "deny"
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("tools")
-        await pilot.pause()
-        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch (raw, "{}")
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-
-        assert app.unified_mcp_service.test_calls == []
-        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
-        # Item 5: the deny gate's synthetic result reads "Blocked · not run"
-        # -- not "Failed · 0ms", which would misleadingly imply an
-        # attempted, timed run.
-        assert result.startswith("Blocked · not run")
-        assert "Blocked — this tool is set to Off in Permissions." in result
-        run_button = app.query_one("#mcp-inspector-test-run", Button)
-        assert run_button.disabled is False
-        assert str(run_button.label) == "Run"
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_ask_gate_arms_run_button_without_calling_service():
-    app = ToolTestApp()
-    app.unified_mcp_service.gate_state = "ask"
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("tools")
-        await pilot.pause()
-        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-
-        assert app.unified_mcp_service.test_calls == []
-        run_button = app.query_one("#mcp-inspector-test-run", Button)
-        assert str(run_button.label) == "Confirm run"
-        assert run_button.variant == "primary"
-        assert (
-            run_button.tooltip == "Ask is set for this tool — press again to run once."
-        )
-        assert run_button.disabled is False
-        assert app.query_one(MCPInspector).test_run_armed is True
-        # UX batch item 6: the generic armed explainer always shows once
-        # armed, even with no specific config-changed/unverifiable reason.
-        hint = app.query_one("#mcp-inspector-test-armed-hint", Static)
-        assert (
-            str(hint.renderable)
-            == "This tool is set to Ask — press again to run; anything else cancels."
-        )
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_ask_gate_second_press_confirms_and_calls_service():
-    app = ToolTestApp()
-    app.unified_mcp_service.gate_state = "ask"
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("tools")
-        await pilot.pause()
-        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")  # arms
-        # Button._start_active_affect() adds a "-active" class for
-        # `active_effect_duration` (0.2s default) after any press, during
-        # which `Button._on_click()` ignores further clicks -- a bare
-        # `pilot.pause()` doesn't advance real time far enough to clear it,
-        # so the SAME button id's second press needs a real pause here to
-        # register as a genuine second click rather than being swallowed.
-        await pilot.pause(0.3)
-        await pilot.click("#mcp-inspector-test-run")  # confirms
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-
-        assert app.unified_mcp_service.test_calls == [("local:docs", "fetch", {})]
-        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
-        assert result.startswith("OK · ")
-        run_button = app.query_one("#mcp-inspector-test-run", Button)
-        assert str(run_button.label) == "Run"
-        assert run_button.disabled is False
-        assert app.query_one(MCPInspector).test_run_armed is False
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_config_changed_arm_shows_review_permissions_notice():
-    app = ToolTestApp()
-    app.unified_mcp_service.gate_state = "ask"
-    app.unified_mcp_service.gate_config_changed = True
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("tools")
-        await pilot.pause()
-        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")
-        await pilot.pause()
-
-        notice = app.query_one("#mcp-inspector-test-arm-notice", Static)
-        assert (
-            str(notice.renderable)
-            == "Definition changed since you allowed it — review in Permissions."
-        )
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_ask_without_config_changed_leaves_arm_notice_blank():
-    app = ToolTestApp()
-    app.unified_mcp_service.gate_state = "ask"
-    app.unified_mcp_service.gate_config_changed = False
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("tools")
-        await pilot.pause()
-        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")
-        await pilot.pause()
-
-        notice = app.query_one("#mcp-inspector-test-arm-notice", Static)
-        assert str(notice.renderable) == ""
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_allow_gate_runs_immediately_without_arming():
-    app = ToolTestApp()
-    app.unified_mcp_service.gate_state = "allow"
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("tools")
-        await pilot.pause()
-        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-
-        assert app.unified_mcp_service.test_calls == [("local:docs", "fetch", {})]
-        assert app.query_one(MCPInspector).test_run_armed is False
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_revoked_to_deny_between_arm_and_confirm_still_blocks():
-    """The gate is re-resolved on every press, not cached from the arm --
-    a permission revoked to Off while a confirm is pending must still block
-    on the confirming press, not silently run because the button already
-    said "Confirm run"."""
-    app = ToolTestApp()
-    app.unified_mcp_service.gate_state = "ask"
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("tools")
-        await pilot.pause()
-        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")  # arms
-        # See test_ask_gate_second_press_confirms_and_calls_service: the
-        # same button id's second press needs a real pause past
-        # `active_effect_duration` (0.2s default) to register at all.
-        await pilot.pause(0.3)
-
-        app.unified_mcp_service.gate_state = "deny"
-        await pilot.click("#mcp-inspector-test-run")  # would-be confirm
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-
-        assert app.unified_mcp_service.test_calls == []
-        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
-        assert "Blocked — this tool is set to Off in Permissions." in result
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_closing_armed_panel_then_reopening_requires_a_fresh_confirm():
-    app = ToolTestApp()
-    app.unified_mcp_service.gate_state = "ask"
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("tools")
-        await pilot.pause()
-        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")  # arms
-        await pilot.pause()
-        assert app.query_one(MCPInspector).test_run_armed is True
-
-        await pilot.click("#mcp-inspector-test-close")
-        await pilot.pause()
-        assert app.query_one(MCPInspector).test_run_armed is False
-
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        run_button = app.query_one("#mcp-inspector-test-run", Button)
-        assert str(run_button.label) == "Run"
-
-        await pilot.click("#mcp-inspector-test-run")  # arms again, does not run
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-        assert app.unified_mcp_service.test_calls == []
-        assert (
-            str(app.query_one("#mcp-inspector-test-run", Button).label) == "Confirm run"
-        )
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_switching_selected_tool_while_armed_does_not_leak_arm_to_new_tool():
-    app = ToolTestApp()
-    app.unified_mcp_service.gate_state = "ask"
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("tools")
-        await pilot.pause()
-        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")  # arms
-        await pilot.pause()
-        assert app.query_one(MCPInspector).test_run_armed is True
-
-        await _select_tools_mode_row(app, pilot, 2)  # notes::list_notes
-        await pilot.pause()
-        assert app.query_one(MCPInspector).test_run_armed is False
-
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")  # arms this NEW tool, does not run
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-        assert app.unified_mcp_service.test_calls == []
-        assert (
-            str(app.query_one("#mcp-inspector-test-run", Button).label) == "Confirm run"
-        )
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_gate_check_exception_fails_closed():
-    """`_resolve_test_gate()`'s fail-closed half of the seams-absent-vs-
-    raises precedent: a `gate_tool_test()` that IS callable but raises must
-    never fall through to running the tool.
-
-    task-2536 (PR-T3 fix round B, item 2, PRE-AUTHORIZED CONTRACT CHANGE):
-    this used to assert the GENUINE-deny body text
-    (`_TOOL_TEST_BLOCKED_TEXT`, "this tool is set to Off in Permissions")
-    for the synthesized `gate_error` gate too -- a confident, false claim
-    about the tool's configured state, directly above `_decision_note()`'s
-    own honest admission (checked by the sibling test below) that no state
-    could be resolved at all. The blocked body is now origin-aware: a
-    `gate_error` renders `_TOOL_TEST_BLOCKED_UNKNOWN_TEXT` instead.
-
-    Item 6 (PR-T3 fix round D): `_TOOL_TEST_BLOCKED_UNKNOWN_TEXT` dropped
-    its redundant "; the tool did not run" clause (doubled against the
-    "Blocked · not run" heading rendered directly above it) -- updated
-    here to match.
-
-    Fix Round G, Item 7 (PR-T3, PRE-AUTHORIZED CONTRACT CHANGE): this
-    surface's clause converged with the Advanced hatch's own identical-
-    condition blocked body (`unified_control_plane_service.
-    _ADVANCED_EXECUTE_GATE_ERROR_MESSAGE`) on "could not be resolved" --
-    was "could not be determined", an independently maintained near-
-    duplicate. Both now derive from `local_runtime_delegate.
-    PERMISSION_STATE_UNRESOLVED_CLAUSE`."""
-    app = ToolTestApp()
-
-    def _raise(tool: Any) -> Any:
-        raise RuntimeError("permission store corrupt")
-
-    app.unified_mcp_service.gate_tool_test = _raise
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("tools")
-        await pilot.pause()
-        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-
-        assert app.unified_mcp_service.test_calls == []
-        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
-        assert "Blocked — this tool is set to Off in Permissions." not in result
-        assert "Blocked — permission state could not be resolved." in result
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_gate_check_exception_decision_note_suppressed_after_real_run():
-    """task-2270's rider (PR-T3 task 3) plus task-2536's follow-up (fix
-    round B, item 2), end to end: the deny short-circuit's decision note
-    used to say "This tool is set to Off." for `_resolve_test_gate()`'s
-    synthetic fail-closed gate_error origin -- dishonest, since the tool is
-    not necessarily off, the RESOLVER failed. Task 3 fixed the note alone
-    (to the honest `_UNKNOWN_ORIGIN_SENTENCE`); item 2 then made the BODY
-    honest too (see `test_gate_check_exception_fails_closed`), which made
-    the note's sentence a near-verbatim repeat sitting right underneath it.
-    Following this module's own no-double-say precedent (`_run_tool_test()`
-    passes `decision_note=None` when a refusal's body already explains
-    itself), the note is now suppressed for this specific `gate_error`
-    short-circuit -- `_decision_note()` itself is UNCHANGED and still
-    returns the honest sentence for a direct/unit-level call
-    (`test_decision_note_unknown_origin_degrades_to_bare_sentence`
-    pins that); only this one call site no longer surfaces it, because the
-    body above already said it. Mirrors `test_gate_check_exception_fails_
-    closed`'s setup, checking the NOTE widget instead of the status widget
-    it already covers.
-
-    Item 3 (PR-T3 fix round D): this test used to assert ONLY the note
-    widget's absence (`renderable == ""`, `display is False`) -- which is
-    ALSO that widget's MOUNT-TIME INITIAL STATE
-    (`_build_test_result_note_static()`, mcp_inspector.py). Proven
-    vacuous by deleting the `#mcp-inspector-test-run` click below: the
-    test still passed, because it was never distinguishing "the deny
-    short-circuit ran and suppressed the note" from "nothing ran at all".
-    The two absence assertions stay (they are still part of what's true),
-    but now sit alongside a POSITIVE anchor -- the result widget's body,
-    which starts empty at mount and can only contain the honest blocked
-    text if `show_tool_result()` actually executed -- so the test can no
-    longer pass without the click actually dispatching."""
-    app = ToolTestApp()
-
-    def _raise(tool: Any) -> Any:
-        raise RuntimeError("permission store corrupt")
-
-    app.unified_mcp_service.gate_tool_test = _raise
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("tools")
-        await pilot.pause()
-        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-
-        # Item 4 (PR-T3 fix round F): this is an ABSENCE assertion, not the
-        # positive anchor -- `test_calls == []` is equally true at mount,
-        # before the click ever fires, so it cannot by itself distinguish
-        # "the deny short-circuit ran and correctly skipped the service"
-        # from "nothing happened yet". Kept because it is still a true and
-        # useful fact (the service was never called), but see the RESULT
-        # WIDGET assertion just below for the actual positive anchor: that
-        # widget starts empty at mount and can only contain the honest
-        # blocked text if `show_tool_result()` actually executed, so IT is
-        # what proves the short-circuit ran, not this line.
-        assert app.unified_mcp_service.test_calls == []
-        result_widget = app.query_one("#mcp-inspector-test-result", Static)
-        # Positive anchor: proves the deny short-circuit actually ran
-        # (`show_tool_result()` was called) -- not just that the note is
-        # absent, which is equally true before anything has happened.
-        #
-        # Fix Round G, Item 7 (PR-T3, PRE-AUTHORIZED CONTRACT CHANGE): "could
-        # not be determined" -> "could not be resolved" -- see
-        # `test_gate_check_exception_fails_closed`'s docstring above for the
-        # full rationale (converged with the Advanced hatch's identical-
-        # condition body via `local_runtime_delegate.PERMISSION_STATE_
-        # UNRESOLVED_CLAUSE`).
-        assert "Blocked — permission state could not be resolved." in str(
-            result_widget.renderable
-        )
-
-        note_widget = app.query_one("#mcp-inspector-test-result-note", Static)
-        assert str(note_widget.renderable) == ""
-        assert note_widget.display is False
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_gate_resolved_against_tool_from_tool_for_lookup():
-    """The gate call resolves its `HubTool` via `self._tool_for()` (task-233
-    precedent), not by parsing the event's server_key/tool_name some other
-    way -- asserted indirectly by checking the exact tool identity the fake
-    gate saw.
-
-    Task 7: the row SELECTION itself now also resolves the gate once (via
-    `_effective_for_display()`, to explain the permission rule in the
-    inspector's new permission block) -- `ToolTestHubService` has no batch
-    `effective_tool_states()` cache to short-circuit that, so both calls
-    hit `gate_tool_test()` directly. Both must still resolve the SAME tool
-    identity.
-    """
-    app = ToolTestApp()
-    app.unified_mcp_service.gate_state = "allow"
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("tools")
-        await pilot.pause()
-        await _select_tools_mode_row(app, pilot, 1)  # docs::search
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        app.query_one("#mcp-schema-field-0", Input).value = "hello"
-        await pilot.click("#mcp-inspector-test-run")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-
-        assert app.unified_mcp_service.gate_calls == [
-            ("local:docs", "search"),
-            ("local:docs", "search"),
-        ]
-
-
-# -- Task 5 (RAG-51): name the permission decision, in the result and in the
-# audit log -- `_decision_note()`/`_decision_for_gate()` are pure functions
-# of `(gate, ask_approved)`, unit-tested directly below with no UI harness;
-# the dispatch-integration tests that follow confirm the workbench actually
-# captures `gate`/the ask-armed fact and threads them through
-# `_run_tool_test()` to both the inspector's result note and the service's
-# `decision` kwarg.
-
-
-def test_decision_note_allow_gate_appends_origin_sentence():
-    gate = EffectiveToolState(state="allow", origin="tool_override")
-    assert (
-        mcp_workbench_module._decision_note(gate, ask_approved=False)
-        == "Ran because this tool is set to Allow. From this tool's override."
-    )
-
-
-def test_decision_note_ask_gate_approved_omits_origin_sentence():
-    gate = EffectiveToolState(state="ask", origin="server_default")
-    assert (
-        mcp_workbench_module._decision_note(gate, ask_approved=True)
-        == "Ran because you approved this run (the tool is set to Ask)."
-    )
-
-
-def test_decision_note_off_gate_appends_origin_sentence():
-    gate = EffectiveToolState(state="deny", origin="global_default")
-    assert (
-        mcp_workbench_module._decision_note(gate, ask_approved=False)
-        == "This tool is set to Off. Inherited from the global default."
-    )
-
-
-# Fix Round H (PR-T3 review), Item 6: `test_decision_note_unknown_origin_
-# degrades_to_bare_sentence` (task-2270's rider, PR-T3 task 3) used to pin
-# `_decision_note()`'s own `gate.origin == "gate_error"` special case,
-# which returned the honest `_UNKNOWN_ORIGIN_SENTENCE` instead of falling
-# through to the dishonest "This tool is set to Off." -- necessary at the
-# time, because the deny short-circuit below called `_decision_note()` for
-# EVERY deny, `gate_error` included. task-2536 (fix round B) changed that
-# caller to pass `decision_note=None` for `gate_error` directly instead
-# (building its own honest body text), bypassing `_decision_note()`
-# entirely for that origin -- proven, not assumed: `EffectiveToolState.
-# origin="gate_error"` is produced ONLY by `_resolve_test_gate()`'s two
-# `except` branches, both paired unconditionally with `state="deny"`, and
-# neither of `_decision_note()`'s two remaining production callers can
-# reach it with that combination (the deny short-circuit below guards it
-# explicitly; `_run_tool_test()`'s caller routes every deny, gate_error
-# included, through that same short-circuit before `_run_tool_test()` is
-# ever scheduled). The special case is REMOVED from `_decision_note()`
-# itself (see its own docstring) -- dead honesty-vocabulary is a trap: a
-# future author could "fix" a bug by editing a branch nothing runs. This
-# test retired along with it, rather than kept pinning a hand-built input
-# combination no production caller can produce. The REAL end-to-end path
-# stays covered by `test_gate_check_exception_fails_closed` (the body
-# text) and `test_gate_check_exception_decision_note_suppressed_after_
-# real_run` (the note staying suppressed) below, both of which drive a
-# genuinely raising `gate_tool_test()` through the real dispatch, not a
-# hand-built `EffectiveToolState`.
-
-
-def test_decision_note_no_gate_returns_none():
-    """No gate resolved at all (a service with no gate seam -- the Phase-3
-    "run immediately" case) means no note to show, not an empty string."""
-    assert mcp_workbench_module._decision_note(None, ask_approved=False) is None
-
-
-def test_decision_for_gate_ask_approved_is_approved():
-    gate = EffectiveToolState(state="ask", origin="tool_override")
-    assert (
-        mcp_workbench_module._decision_for_gate(gate, ask_approved=True) == "approved"
-    )
-
-
-def test_decision_for_gate_allow_is_allowed():
-    gate = EffectiveToolState(state="allow", origin="tool_override")
-    assert (
-        mcp_workbench_module._decision_for_gate(gate, ask_approved=False) == "allowed"
-    )
-
-
-def test_decision_for_gate_no_gate_is_allowed():
-    assert (
-        mcp_workbench_module._decision_for_gate(None, ask_approved=False) == "allowed"
-    )
-
-
-def test_decision_for_gate_ask_not_approved_is_allowed():
-    """Defensive: the real dispatch path never calls `_run_tool_test()` with
-    an "ask" gate and `ask_approved=False` (the arm-check branch in
-    `on_mcp_inspector_tool_test_requested()` returns before reaching that
-    call), but the helper itself must not misreport an unapproved Ask as
-    "approved" if ever invoked directly this way."""
-    gate = EffectiveToolState(state="ask", origin="tool_override")
-    assert (
-        mcp_workbench_module._decision_for_gate(gate, ask_approved=False) == "allowed"
-    )
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_run_tool_test_raising_gate_is_a_failed_result_not_a_panic():
-    """Final-review fix: `decision_note`/`decision` used to be computed
-    BEFORE `_run_tool_test()`'s panic-contained try, even though the
-    method's own docstring claims the WHOLE body is guarded. A gate object
-    whose attribute access raises (simulating a malformed/corrupted gate --
-    the real `EffectiveToolState.ui_label` is deliberately raise-proof, see
-    permission_store.py, but this pins the containment property directly
-    rather than relying on that) must degrade to a Failed test result, not
-    escape `run_worker()` uncaught (Textual 8.2.7 defaults to
-    `exit_on_error=True`, which would panic the whole app)."""
-
-    class _RaisingGate:
-        @property
-        def origin(self) -> str:
-            raise RuntimeError("simulated malformed gate")
-
-    app = ToolTestApp()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("tools")
-        await pilot.pause()
-        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
-        await workbench.open_test_for_selected_tool()
-        await pilot.pause()
-
-        await workbench._run_tool_test(
-            "local:docs",
-            "fetch",
-            {},
-            gate=_RaisingGate(),
-            ask_approved=False,
-        )
-        await pilot.pause()
-
-        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
-        first_line = result.split("\n", 1)[0]
-        assert first_line.startswith("Failed · ")
-        assert app.unified_mcp_service.test_calls == []  # never reached the service
-        assert workbench._tool_test_in_flight == set()  # cleanup still ran
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_ask_gate_approved_run_records_approved_decision_and_shows_note():
-    """The confirming press of an Ask-gated tool test both dispatches to the
-    service AND records/renders the fact that it ran because of an
-    approval -- `decision_calls` (the `decision=` kwarg `test_hub_tool()`
-    now receives) and the result note both name it, not the pre-Task-5
-    hardcoded "allowed"."""
-    app = ToolTestApp()
-    app.unified_mcp_service.gate_state = "ask"
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("tools")
-        await pilot.pause()
-        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")  # arms
-        await pilot.pause(0.3)
-        await pilot.click("#mcp-inspector-test-run")  # confirms
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-
-        assert app.unified_mcp_service.test_calls == [("local:docs", "fetch", {})]
-        assert app.unified_mcp_service.decision_calls == ["approved"]
-        note = str(app.query_one("#mcp-inspector-test-result-note", Static).renderable)
-        assert note == "Ran because you approved this run (the tool is set to Ask)."
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_allow_gate_run_shows_decision_note_with_origin_sentence():
-    app = ToolTestApp()
-    app.unified_mcp_service.gate_state = "allow"
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("tools")
-        await pilot.pause()
-        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-
-        assert app.unified_mcp_service.test_calls == [("local:docs", "fetch", {})]
-        assert app.unified_mcp_service.decision_calls == ["allowed"]
-        note = str(app.query_one("#mcp-inspector-test-result-note", Static).renderable)
-        assert (
-            note == "Ran because this tool is set to Allow. From this tool's override."
-        )
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_deny_gate_blocked_run_shows_off_decision_note():
-    app = ToolTestApp()
-    app.unified_mcp_service.gate_state = "deny"
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("tools")
-        await pilot.pause()
-        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-
-        assert app.unified_mcp_service.test_calls == []
-        note = str(app.query_one("#mcp-inspector-test-result-note", Static).renderable)
-        assert note == "This tool is set to Off. From this tool's override."
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_no_gate_service_records_allowed_decision_with_no_note():
-    """A service with no gate seam at all (`_resolve_test_gate()` returns
-    `None`) keeps the pre-Task-5 "allowed" decision and shows no decision
-    note -- `None` (no gate resolved) is distinct from an empty string, and
-    the note widget stays hidden exactly like it did before this task."""
-    app = NoGateToolTestApp()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("tools")
-        await pilot.pause()
-        await _select_tools_mode_row(app, pilot, 0)  # local:docs::a
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-
-        assert app.unified_mcp_service.test_calls == [("local:docs", "a", {})]
-        assert app.unified_mcp_service.decision_calls == ["allowed"]
-        note_widget = app.query_one("#mcp-inspector-test-result-note", Static)
-        assert note_widget.display is False
-        assert str(note_widget.renderable) == ""
-
-
-# -- I1 (final whole-branch review): Test Tool gate must not be bypassable
-# for a catalog-vanished tool -----------------------------------------------
-#
-# `_resolve_test_gate(None, ...)` used to mean "run immediately" -- but
-# `test_hub_tool()` dispatches by `server_key`/`tool_name` alone (it needs
-# no `HubTool`), so a tool that dropped out of `_last_hub_tools` between
-# opening the Test panel and pressing Run (a resync racing a rug-pull
-# refresh, or simply a stale selection) ran completely ungated. Reproduces
-# the reviewer's probe (`test_gate_bypass_probe.py`).
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_denied_tool_vanished_from_catalog_run_is_blocked_not_executed():
-    app = ToolTestApp()
-    app.unified_mcp_service.gate_state = "deny"
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("tools")
-        await pilot.pause()
-        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-
-        # Simulate the resync-with-vanished-tool state: the same
-        # assignment `_sync_children()` performs when `_collect_hub_tools()`
-        # comes back without this tool (e.g. a transient inventory failure
-        # racing a rug-pull refresh).
-        workbench._last_hub_tools = [
-            t for t in workbench._last_hub_tools if t.name != "fetch"
-        ]
-
-        await pilot.click("#mcp-inspector-test-run")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-
-        assert app.unified_mcp_service.test_calls == [], (
-            "GATE BYPASSED: denied tool executed after vanishing from the "
-            f"catalog snapshot: {app.unified_mcp_service.test_calls!r}"
-        )
-        assert app.unified_mcp_service.gate_by_key_calls == [("local:docs", "fetch")]
-        result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
-        assert mcp_workbench_module._TOOL_TEST_BLOCKED_TEXT in result
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_ask_gate_vanished_tool_shows_unverifiable_notice_not_config_changed():
-    """UX batch item 15: `gate_tool_test_by_key()`'s "any allow downgrades
-    to ask" rule reuses `config_changed=True` for a tool with NO live
-    definition to hash-compare at all -- distinct from a genuine rug-pull
-    downgrade (a live tool whose definition actually changed). The arm
-    notice must use the origin-neutral "can't be verified" copy for this
-    BY-KEY case, not the "you allowed it and it changed" copy, which would
-    misrepresent a tool the user may never have explicitly allowed.
-    """
-    app = ToolTestApp()
-    app.unified_mcp_service.gate_state = "ask"
-    app.unified_mcp_service.gate_config_changed = True
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("tools")
-        await pilot.pause()
-        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-
-        # Same vanish simulation as the deny-gate regression above.
-        workbench._last_hub_tools = [
-            t for t in workbench._last_hub_tools if t.name != "fetch"
-        ]
-
-        await pilot.click("#mcp-inspector-test-run")
-        await pilot.pause()
-
-        assert app.unified_mcp_service.gate_by_key_calls == [("local:docs", "fetch")]
-        notice = app.query_one("#mcp-inspector-test-arm-notice", Static)
-        assert str(notice.renderable) == (
-            "This tool's definition can't be verified against the catalog — "
-            "review in Permissions."
-        )
-        # The generic armed hint (item 6) still renders regardless.
-        hint = app.query_one("#mcp-inspector-test-armed-hint", Static)
-        assert (
-            str(hint.renderable)
-            == "This tool is set to Ask — press again to run; anything else cancels."
-        )
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_service_without_gate_by_key_seam_falls_through_for_vanished_tool():
-    """Compat precedent: a service that predates `gate_tool_test_by_key()`
-    entirely (an older test double, or a not-yet-upgraded real service)
-    must keep today's Phase-3-style "run immediately" behavior for a
-    vanished tool -- `_resolve_test_gate()` only returns `None` when NO
-    gate seam at all is available, never silently starts blocking a
-    service that simply hasn't been upgraded yet.
-    """
-    app = NoGateToolTestApp()
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("tools")
-        await pilot.pause()
-        await _select_tools_mode_row(app, pilot, 0)  # local:docs::a
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-
-        workbench._last_hub_tools = [
-            t for t in workbench._last_hub_tools if t.name != "a"
-        ]
-
-        await pilot.click("#mcp-inspector-test-run")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-
-        assert app.unified_mcp_service.test_calls == [("local:docs", "a", {})]
-
-
-# -- Task 6: Permissions mode canvas (matrix, kill switch, policy preview) --
+# -- Task 6: Permissions mode canvas# -- Task 6: Permissions mode canvas (matrix, kill switch, policy preview) --
 #
 # `PermissionsHubService` is wired against a REAL `MCPPermissionStore` (T1)
 # and the REAL `resolve_effective_state()` (T2) rather than a hand-rolled
@@ -6641,8 +5981,7 @@ async def test_permissions_mode_renders_fail_soft_without_t4_seams():
     (the base `FakeHubService` -- no `effective_tool_states`/
     `permission_store`/`get_kill_switch` at all) must not crash
     `_sync_permissions_mode()`: it renders a global-only-effectively "Ask"
-    matrix with the kill switch off, same "seams absent -> fail-soft"
-    precedent as `_resolve_test_gate()`.
+    matrix with the kill switch off using the same fail-soft seam pattern.
     """
     app = WorkbenchApp()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -7338,51 +6677,6 @@ async def test_tools_mode_permission_block_change_button_clears_stale_tool_detai
         assert app.query_one("#mcp-inspector-permission").display is True
         assert not list(app.query("#mcp-inspector-tool-name"))
         assert app.query_one("#mcp-inspector-tool", Vertical).display is False
-
-
-@pytest.mark.asyncio
-async def _obsolete_test_test_tool_armed_change_button_clears_stale_tool_detail_and_arm():
-    """Same Critical fix as above, exercised via the Test Tool panel's own
-    blocked/ask "Change in Permissions" button (`#mcp-inspector-goto-
-    permission-test`) with the panel actually OPEN and ARMED (an "ask" gate
-    that has already consumed one Run press) -- the worse of the two new
-    Tools-mode-origin jump triggers, since a live "Confirm run" button would
-    otherwise stay mounted and pressable underneath the Permissions-mode
-    block. `show_tool(None)` clearing `#mcp-inspector-tool` also resets
-    `test_run_armed` (its own `remove_children()` discards the panel, and
-    it explicitly sets the flag false), so this doubles as the "no armed
-    buttons survive the jump" assertion."""
-    app = ToolTestApp()
-    app.unified_mcp_service.gate_state = "ask"
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        workbench = app.query_one(MCPWorkbench)
-        workbench.set_mode("tools")
-        await pilot.pause()
-        await _select_tools_mode_row(app, pilot, 0)  # docs::fetch
-        await pilot.click("#mcp-inspector-test-tool")
-        await pilot.pause()
-        await pilot.click("#mcp-inspector-test-run")  # arms
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-        inspector = app.query_one(MCPInspector)
-        assert inspector.test_run_armed is True
-        assert (
-            app.query_one("#mcp-inspector-goto-permission-test", Button).display is True
-        )
-
-        await pilot.click("#mcp-inspector-goto-permission-test")
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-
-        assert workbench.active_mode == "permissions"
-        assert app.query_one("#mcp-inspector-permission").display is True
-        assert not list(app.query("#mcp-inspector-tool-name"))
-        assert not list(app.query("#mcp-inspector-test-panel"))
-        assert app.query_one("#mcp-inspector-tool", Vertical).display is False
-        assert inspector.test_run_armed is False
 
 
 # -- Task 3 (MCP Hub Phase 6): mutation echo ---------------------------------
