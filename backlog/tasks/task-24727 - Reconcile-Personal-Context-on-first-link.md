@@ -89,8 +89,7 @@ second authoritative profile was introduced.
 - Added canonical F9 Settings review, attention, retry, cancel, interrupted resume,
   and linked-state behavior with exact content-free identity/version/quota rows.
 - Integrated the final bootstrap contract pinned to tldw_server
-  `e3a2e9ea8836ca750336447ced318d7c722cfcc3` (temporary pin; a controller
-  follow-up may supersede it). Chatbook strictly validates
+  `0ad1c078c8`. Chatbook strictly validates
   schema-range, quota-deficit, and purge-generation 409 variants plus the
   separate successful-bootstrap `sync_transport_cursor`; malformed bodies remain
   generic and no raw response content is logged or displayed.
@@ -185,6 +184,5 @@ rejecting an empty restart cache and rereads only the exact dataset key; non-PC
 datasets and wrong/unavailable keys remain fail-closed. Bootstrap quota request
 and success schemas mirror the reviewed server contract (at most 32 ASCII-safe
 names, strict built-in integers in `0..2**63-1`), and planning rejects any success
-map missing a requested quota. The current cross-repository pin is
-`e3a2e9ea8836ca750336447ced318d7c722cfcc3`, which a controller follow-up may
-supersede. TASK-24727 remains In Progress; acceptance criteria remain unchecked.
+map missing a requested quota. The final cross-repository pin is
+`0ad1c078c8`. TASK-24727 remains In Progress; acceptance criteria remain unchecked.
