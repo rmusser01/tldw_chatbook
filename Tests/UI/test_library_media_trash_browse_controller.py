@@ -438,7 +438,6 @@ async def test_precommit_failure_retains_exact_fresh_page_and_action_authority()
     controller.select("local:media:22")
     claim = controller.claim_mutation()
     assert claim is not None
-    target = claim.target
     applied = controller.state.applied_result
     retained = controller.state.retained_items
 
@@ -465,7 +464,6 @@ async def test_committed_mutation_withdraws_exact_claims_before_refresh():
     controller.select("local:media:22")
     claim = controller.claim_mutation()
     assert claim is not None
-    target = claim.target
 
     controller.finish_mutation_commit(claim, "Restored 'Trash 22'.")
 

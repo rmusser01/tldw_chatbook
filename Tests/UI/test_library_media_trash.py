@@ -2009,7 +2009,7 @@ async def test_media_trash_precommit_failure_releases_mounted_controls_without_r
     feed.install(app.media_reading_scope_service)
     service_calls = []
 
-    async def fail_mutation(_service, *, mode, media_id):
+    async def fail_mutation(_service, *, mode, media_id, **_kwargs):
         service_calls.append({"mode": mode, "media_id": media_id})
         raise PermissionError("private policy detail")
 
