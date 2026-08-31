@@ -551,7 +551,7 @@ def test_permanently_dead_review_tool_call_action_is_gone():
     )
 
 
-# --- Next-send token estimate (task-21513) ---------------------------------
+# --- Next-send token estimate (task-25836) ---------------------------------
 #
 # The Next Send tab's "~N tokens" header and the cost chip's first-send
 # readout both need "what will the next request actually carry": system

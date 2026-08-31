@@ -4453,7 +4453,7 @@ class ChatScreen(BaseAppScreen):
             estimate_factory=estimate_factory,
             token_estimate=token_estimate,
             in_progress=in_progress,
-            # task-21513: once the snapshot loads, the Next Send header
+            # task-25836: once the snapshot loads, the Next Send header
             # count switches from the draft-only pre-load value to the whole
             # next-send request (system + messages + tools + staged
             # evidence) this estimate computes from the payload.
@@ -4541,7 +4541,7 @@ class ChatScreen(BaseAppScreen):
     ) -> Optional[int]:
         """Estimate the tokens the snapshot's next-send payload will ship.
 
-        task-21513: the Next Send header's count must answer "what is this
+        task-25836: the Next Send header's count must answer "what is this
         message about to send", which on a first message is dominated by the
         system prompt, project-instruction bodies, tool schemas, and staged
         evidence -- none of which the draft-only estimate sees. Counted via
@@ -8280,7 +8280,7 @@ class ChatScreen(BaseAppScreen):
     def _console_first_send_pseudo_rows(self) -> list[Any]:
         """Return estimated rows for the context a FIRST send will ship.
 
-        task-21513: while a conversation has no answered/billed turns, the
+        task-25836: while a conversation has no answered/billed turns, the
         next request carries the session system prompt, the native tool
         schemas, and the composer draft -- none of which are transcript
         rows, so the cost chip under-reported a first send as "0 tok".
@@ -8387,7 +8387,7 @@ class ChatScreen(BaseAppScreen):
                 snapshot_messages = snapshot_messages + [
                     SimpleNamespace(role="user", content=staged_text, usage=None)
                 ]
-            # task-21513: a FIRST send ships the session system prompt, tool
+            # task-25836: a FIRST send ships the session system prompt, tool
             # schemas, and the draft itself on top of the staged evidence
             # above -- none of which existed as transcript rows, so a
             # brand-new conversation with a typed draft still read "0 tok".

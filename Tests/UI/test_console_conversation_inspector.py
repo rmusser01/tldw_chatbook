@@ -1866,7 +1866,7 @@ def test_messages_section_title_states_original_and_elided_counts() -> None:
     assert plain_title == "Messages (3)"
 
 
-# --- task-21513: payload-based Next Send header token estimate --------------
+# --- task-25836: payload-based Next Send header token estimate --------------
 
 
 async def _payload_snapshot() -> ConsoleContextSnapshot:
@@ -1881,7 +1881,7 @@ async def _payload_snapshot() -> ConsoleContextSnapshot:
 
 @pytest.mark.asyncio
 async def test_next_send_payload_estimate_replaces_header_count_once_loaded():
-    """task-21513: after the snapshot loads, the Next Send header's "~N
+    """task-25836: after the snapshot loads, the Next Send header's "~N
     tokens" count must reflect the assembled next-send payload (system +
     tools + staged evidence included), not the draft-only factory value."""
     app = InspectorHarness(

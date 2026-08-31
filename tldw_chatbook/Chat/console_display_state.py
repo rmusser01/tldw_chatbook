@@ -1001,7 +1001,7 @@ def estimate_console_next_send_tokens(
 ) -> Optional[int]:
     """Estimate the tokens the next Console send will actually carry.
 
-    task-21513: the Next Send tab's "~N tokens" header estimated the
+    task-25836: the Next Send tab's "~N tokens" header estimated the
     composer draft alone, so a first message in a fresh conversation read
     "~3 tokens" while the real request ships the system prompt,
     project-instruction bodies, tool schemas, and staged evidence on top of

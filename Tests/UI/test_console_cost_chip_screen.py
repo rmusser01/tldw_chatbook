@@ -866,7 +866,7 @@ async def test_build_console_cost_state_includes_a_survivors_post_turn_spend():
         assert "Sub-agents: 1.3k tok (not priced)" in state.tooltip
 
 
-# --- task-21513: first-send context/tool/draft rows -------------------------
+# --- task-25836: first-send context/tool/draft rows -------------------------
 #
 # The chip's running total ignored everything a FIRST send actually ships
 # (session system prompt, tool schemas, the draft itself), so a brand-new
@@ -1004,7 +1004,7 @@ async def test_first_send_pseudo_rows_stop_once_a_reply_exists():
 
 @pytest.mark.asyncio
 async def test_console_next_send_token_estimate_counts_context_not_just_draft():
-    """task-21513: the estimate wired into the inspector's Next Send header
+    """task-25836: the estimate wired into the inspector's Next Send header
     must count the assembled payload (system prompt + draft turn), not the
     draft text alone -- the first-message case where the gap is largest."""
     from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot

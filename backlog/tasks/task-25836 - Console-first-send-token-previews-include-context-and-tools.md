@@ -1,5 +1,5 @@
 ---
-id: TASK-21513
+id: TASK-25836
 title: Console first-send token previews include context and tools
 status: Done
 assignee:

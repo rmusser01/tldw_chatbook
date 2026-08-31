@@ -395,7 +395,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 tab's header, or ``None``.
             estimate_factory: Re-estimate callback for a Next Send refresh,
                 or ``None``.
-            payload_estimate: task-21513 -- optional callback computing the
+            payload_estimate: task-25836 -- optional callback computing the
                 header count from a LOADED snapshot (the whole next-send
                 request: system row, messages incl. the draft turn, tool
                 schemas, staged evidence), preferred over
@@ -1967,7 +1967,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             # header text -- assigning the snapshot first would render
             # with the PRIOR estimate, one refresh stale (a real bug in
             # the retired standalone context modal this was ported from).
-            # task-21513: prefer the payload-based estimate (the whole
+            # task-25836: prefer the payload-based estimate (the whole
             # next-send request -- system row, messages incl. the draft
             # turn, tool schemas, staged evidence) over the draft-only
             # factory; fall back to the factory when the payload yields
