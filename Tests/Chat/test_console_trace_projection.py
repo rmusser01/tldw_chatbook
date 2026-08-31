@@ -962,10 +962,14 @@ async def test_runtime_starts_legacy_maintenance_only_after_ui_ready(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     started: list[object] = []
+    provider_states: list[bool] = []
 
     class _Maintenance:
-        def __init__(self, database: object, **_kwargs: object) -> None:
+        def __init__(self, database: object, **kwargs: object) -> None:
             started.append(database)
+            provider_active = kwargs["provider_active"]
+            assert callable(provider_active)
+            provider_states.append(provider_active())
 
         def run_batch(self) -> SimpleNamespace:
             return SimpleNamespace(logical_complete=True, admitted=True)
@@ -980,6 +984,7 @@ async def test_runtime_starts_legacy_maintenance_only_after_ui_ready(
     )
     app = SimpleNamespace(_ui_ready=False, persona_buddy_controller=None)
     runtime = ConsoleRuntime(app)
+    runtime._chat_controller = SimpleNamespace(_active_stream_tasks={"run": object()})
     normalizer = object()
 
     runtime._schedule_legacy_trace_maintenance(object(), lambda: normalizer)
@@ -991,5 +996,47 @@ async def test_runtime_starts_legacy_maintenance_only_after_ui_ready(
     assert started == []
     await asyncio.sleep(0.07)
     assert len(started) == 1
+    assert provider_states == [True]
 
+    await runtime.dispose()
+
+
+@pytest.mark.asyncio
+async def test_runtime_retries_legacy_maintenance_after_unexpected_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+
+    class _Maintenance:
+        def __init__(self, _database: object, **_kwargs: object) -> None:
+            pass
+
+        def run_batch(self) -> SimpleNamespace:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("injected")
+            return SimpleNamespace(logical_complete=True, admitted=True)
+
+    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
+    module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_runtime."
+        "LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS",
+        0.0,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_runtime."
+        "LEGACY_TRACE_MAINTENANCE_RETRY_DELAY_SECONDS",
+        0.01,
+    )
+    runtime = ConsoleRuntime(
+        SimpleNamespace(_ui_ready=True, persona_buddy_controller=None)
+    )
+
+    runtime._schedule_legacy_trace_maintenance(object(), object)
+    await asyncio.sleep(0.08)
+
+    assert attempts >= 2
     await runtime.dispose()

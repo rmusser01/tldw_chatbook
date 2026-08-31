@@ -10,6 +10,8 @@ import sqlite3
 from typing import Literal, cast
 
 from tldw_chatbook.Chat.console_exchange_capture import (
+    CAPTURE_JSON_MAX_BYTES,
+    CaptureDecodeLimitError,
     CaptureUnavailableError,
     CaptureDetail,
     ExchangeCapture,
@@ -44,6 +46,9 @@ _LEGACY_JSON_VERSION = "canonical-json-v1"
 _LEGACY_MEDIA_TYPE = "application/json"
 _LEGACY_NORMALIZATION_VERSION = 1
 _CREDENTIAL_FILTER_OMISSION = "legacy_credential_filter_unavailable"
+_OVERSIZED_CAPTURE_OMISSION = "legacy_capture_oversized"
+_STATUS_OMISSION = "legacy_status_unavailable"
+_USAGE_OMISSION = "legacy_usage_unavailable"
 _HISTORY_OMISSION = "legacy_history_omitted"
 _IMPORT_BOUNDARY = "legacy_import_boundary"
 _SANITIZER_OMISSION = {"omitted": True}
@@ -58,6 +63,10 @@ class LegacyNormalizationResult:
     verification_status: Literal["verified", "unverified"]
     uncertainty_codes: tuple[str, ...]
     decoded_bytes: int
+
+
+class LegacyDecodedByteLimitError(RuntimeError):
+    """One valid legacy row cannot fit the current batch's remaining budget."""
 
 
 def _canonical_bytes(value: object) -> bytes:
@@ -135,8 +144,26 @@ class LegacyTraceNormalizer:
         self,
         cursor: sqlite3.Cursor,
         row: Mapping[str, object],
+        *,
+        max_decoded_bytes: int | None = None,
+        oversized_policy: Literal["defer", "omit"] = "omit",
     ) -> LegacyNormalizationResult:
-        """Normalize one caller-validated exchange inside its transaction."""
+        """Normalize one caller-validated exchange inside its transaction.
+
+        Args:
+            cursor: Active migration transaction cursor.
+            row: One authoritative ``message_exchanges`` row.
+            max_decoded_bytes: Optional per-row decoded-byte admission ceiling.
+            oversized_policy: Defer without writes, or store a bounded omission.
+
+        Returns:
+            Durable normalized call identity and verification metadata.
+
+        Raises:
+            LegacyDecodedByteLimitError: If a valid row exceeds a ``defer``
+                budget.
+            ValueError: If row identity or admission arguments are invalid.
+        """
 
         exchange_id = row.get("id")
         message_id = row.get("message_id")
@@ -144,13 +171,51 @@ class LegacyTraceNormalizer:
             raise ValueError("exchange_id")
         if type(message_id) is not str or not message_id:
             raise ValueError("message_id")
+        if (
+            max_decoded_bytes is not None
+            and (
+                type(max_decoded_bytes) is not int
+                or not 1 <= max_decoded_bytes <= CAPTURE_JSON_MAX_BYTES
+            )
+        ):
+            raise ValueError("max_decoded_bytes")
+        if oversized_policy not in {"defer", "omit"}:
+            raise ValueError("oversized_policy")
         decode_uncertainty: tuple[str, ...] = ()
         try:
-            capture = self._decode_row(row)
+            capture = self._decode_row(
+                row,
+                max_decoded_bytes=max_decoded_bytes,
+            )
             decoded_bytes = len(_canonical_bytes(self._capture_payload(capture)))
-        except CaptureUnavailableError:
+            if (
+                max_decoded_bytes is not None
+                and decoded_bytes > max_decoded_bytes
+            ):
+                raise CaptureDecodeLimitError("legacy decoded-byte limit")
+        except CaptureDecodeLimitError as exc:
+            if max_decoded_bytes is not None and oversized_policy == "defer":
+                raise LegacyDecodedByteLimitError(
+                    "legacy_batch_decoded_byte_limit"
+                ) from exc
+            capture = self._unavailable_capture(
+                row,
+                reason_code=_OVERSIZED_CAPTURE_OMISSION,
+            )
+            decoded_bytes = (
+                max_decoded_bytes
+                if max_decoded_bytes is not None
+                else len(bytes(cast(object, row["capture_blob"])))
+            )
+            decode_uncertainty = (_OVERSIZED_CAPTURE_OMISSION,)
+        except (CaptureUnavailableError, TypeError, ValueError):
             capture = self._unavailable_capture(row)
-            decoded_bytes = len(bytes(cast(object, row["capture_blob"])))
+            blob_bytes = len(bytes(cast(object, row["capture_blob"])))
+            decoded_bytes = (
+                blob_bytes
+                if max_decoded_bytes is None
+                else min(blob_bytes, max_decoded_bytes)
+            )
             decode_uncertainty = ("legacy_capture_unavailable",)
         abandoned = row.get("abandoned")
         if type(abandoned) is not bool:
@@ -182,7 +247,17 @@ class LegacyTraceNormalizer:
                 decoded_bytes=decoded_bytes,
             )
 
+        if not self._capture_shape_supported(capture):
+            capture = self._unavailable_capture(row)
+            decode_uncertainty = (*decode_uncertainty, "legacy_capture_unavailable")
+        elif capture.status not in {"complete", "stopped", "error"}:
+            capture = self._unavailable_capture(
+                row,
+                reason_code=_STATUS_OMISSION,
+            )
+            decode_uncertainty = (*decode_uncertainty, _STATUS_OMISSION)
         capture, sanitizer_uncertainty = self._sanitize_capture(capture)
+        capture, usage, usage_uncertainty = self._normalize_usage(capture)
         owner = self._ensure_owner(cursor, conversation_id)
         policy = self.repository.ensure_policy(
             cursor,
@@ -244,6 +319,7 @@ class LegacyTraceNormalizer:
             "legacy_chronology_unknown",
             *decode_uncertainty,
             *sanitizer_uncertainty,
+            *usage_uncertainty,
         ]
         normalized_messages: list[object] = []
         for legacy_row in messages:
@@ -352,11 +428,7 @@ class LegacyTraceNormalizer:
                 call_id=call.call_id,
                 target=terminal_state,
                 occurred_at=capture.created_at,
-                usage=(
-                    None
-                    if capture.usage_json is None
-                    else cast(dict[str, object], json.loads(capture.usage_json))
-                ),
+                usage=usage,
                 integrity_state="complete",
             )
 
@@ -449,8 +521,14 @@ class LegacyTraceNormalizer:
             return None
         uncertainty = ["legacy_chronology_unknown"]
         omitted_keys = tuple(str(item) for item in metadata.get("omitted_keys", []))
-        if "legacy_capture_unavailable" in omitted_keys:
-            uncertainty.append("legacy_capture_unavailable")
+        for reason_code in (
+            "legacy_capture_unavailable",
+            _OVERSIZED_CAPTURE_OMISSION,
+            _STATUS_OMISSION,
+            _USAGE_OMISSION,
+        ):
+            if reason_code in omitted_keys:
+                uncertainty.append(reason_code)
         if (
             request_value.get("legacy_omission") == _CREDENTIAL_FILTER_OMISSION
             or response_value.get("legacy_omission") == _CREDENTIAL_FILTER_OMISSION
@@ -828,12 +906,24 @@ class LegacyTraceNormalizer:
         return "omission", None, reference.reason_code
 
     @staticmethod
-    def _decode_row(row: Mapping[str, object]) -> ExchangeCapture:
+    def _decode_row(
+        row: Mapping[str, object],
+        *,
+        max_decoded_bytes: int | None = None,
+    ) -> ExchangeCapture:
         blob = row.get("capture_blob")
         detail = row.get("capture_detail")
         if not isinstance(blob, (bytes, bytearray, memoryview)):
             raise TypeError("capture_blob")
-        capture = capture_from_storage(bytes(blob), detail)
+        capture = capture_from_storage(
+            bytes(blob),
+            detail,
+            **(
+                {}
+                if max_decoded_bytes is None
+                else {"max_decoded_bytes": max_decoded_bytes}
+            ),
+        )
         if (
             capture.run_tag != row.get("run_tag")
             or capture.seq != row.get("seq")
@@ -844,7 +934,11 @@ class LegacyTraceNormalizer:
         return capture
 
     @staticmethod
-    def _unavailable_capture(row: Mapping[str, object]) -> ExchangeCapture:
+    def _unavailable_capture(
+        row: Mapping[str, object],
+        *,
+        reason_code: str = "legacy_capture_unavailable",
+    ) -> ExchangeCapture:
         detail = row.get("capture_detail")
         if type(detail) is not str or detail not in {"safe", "full"}:
             detail = "safe"
@@ -855,15 +949,15 @@ class LegacyTraceNormalizer:
             provider="",
             model="",
             endpoint=None,
-            request={"legacy_omission": "legacy_capture_unavailable"},
-            response={"legacy_omission": "legacy_capture_unavailable"},
+            request={"legacy_omission": reason_code},
+            response={"legacy_omission": reason_code},
             status=(
                 str(row["status"])
                 if row.get("status") in {"complete", "stopped", "error"}
                 else "error"
             ),
             usage_json=None,
-            omitted_keys=("legacy_capture_unavailable",),
+            omitted_keys=(reason_code,),
             capture_detail=CaptureDetail(detail),
         )
 
@@ -885,16 +979,41 @@ class LegacyTraceNormalizer:
         }
 
     @staticmethod
+    def _capture_shape_supported(capture: ExchangeCapture) -> bool:
+        """Return whether non-payload fields can safely enter trace storage."""
+
+        return (
+            type(capture.run_tag) is str
+            and bool(capture.run_tag)
+            and type(capture.seq) is int
+            and capture.seq >= 0
+            and type(capture.created_at) is str
+            and bool(capture.created_at)
+            and type(capture.provider) is str
+            and type(capture.model) is str
+            and (capture.endpoint is None or type(capture.endpoint) is str)
+            and isinstance(capture.omitted_keys, tuple)
+            and all(type(item) is str for item in capture.omitted_keys)
+        )
+
+    @staticmethod
     def _sanitize_capture(
         capture: ExchangeCapture,
     ) -> tuple[ExchangeCapture, tuple[str, ...]]:
-        request_source = dict(capture.request)
+        request_shape_failed = not isinstance(capture.request, Mapping)
+        request_source = (
+            dict(capture.request) if isinstance(capture.request, Mapping) else {}
+        )
         messages_present = "messages_payload" in request_source
         raw_messages = request_source.pop("messages_payload", None)
         request, _request_redacted = sanitize_capture_value_with_omission(
             request_source
         )
-        request_failed = not isinstance(request, dict) or request == _SANITIZER_OMISSION
+        request_failed = (
+            request_shape_failed
+            or not isinstance(request, dict)
+            or request == _SANITIZER_OMISSION
+        )
         messages_failed = False
         if messages_present and isinstance(raw_messages, list):
             sanitized_messages: list[object] = []
@@ -930,5 +1049,38 @@ class LegacyTraceNormalizer:
         )
         return replace(capture, request=request, response=response), uncertainty
 
+    @staticmethod
+    def _normalize_usage(
+        capture: ExchangeCapture,
+    ) -> tuple[ExchangeCapture, dict[str, object] | None, tuple[str, ...]]:
+        """Parse object-shaped usage or replace it with an explicit omission."""
 
-__all__ = ["LegacyNormalizationResult", "LegacyTraceNormalizer"]
+        if capture.usage_json is None:
+            return capture, None, ()
+        try:
+            value = json.loads(capture.usage_json)
+        except (TypeError, ValueError):
+            value = None
+        if not isinstance(value, Mapping) or any(
+            type(key) is not str for key in value
+        ):
+            omitted_keys = tuple(
+                dict.fromkeys((*capture.omitted_keys, _USAGE_OMISSION))
+            )
+            return (
+                replace(
+                    capture,
+                    usage_json=None,
+                    omitted_keys=omitted_keys,
+                ),
+                None,
+                (_USAGE_OMISSION,),
+            )
+        return capture, dict(value), ()
+
+
+__all__ = [
+    "LegacyDecodedByteLimitError",
+    "LegacyNormalizationResult",
+    "LegacyTraceNormalizer",
+]

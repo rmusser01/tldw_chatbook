@@ -153,6 +153,7 @@ _VIEW_RUNTIME_FALLBACK_ATTR = "_console_runtime_fallback"
 # Keep migration imports outside the first-interactive-frame measurement even
 # on slower runners where a readiness poll and this task can wake together.
 LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS = 1.0
+LEGACY_TRACE_MAINTENANCE_RETRY_DELAY_SECONDS = 1.0
 
 
 def recover_console_trace_calls(
@@ -804,9 +805,10 @@ class ConsoleRuntime:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
+
         def provider_active() -> bool:
             controller = self._chat_controller
-            tasks = getattr(controller, "_stream_tasks", None)
+            tasks = getattr(controller, "_active_stream_tasks", None)
             return bool(tasks)
 
         async def run() -> None:
@@ -834,7 +836,10 @@ class ConsoleRuntime:
                         "legacy trace maintenance paused after {}",
                         type(exc).__name__,
                     )
-                    return
+                    await asyncio.sleep(
+                        LEGACY_TRACE_MAINTENANCE_RETRY_DELAY_SECONDS
+                    )
+                    continue
                 if result.logical_complete:
                     await asyncio.sleep(5.0)
                     continue

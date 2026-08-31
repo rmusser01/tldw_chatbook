@@ -772,7 +772,21 @@ class ConsoleTraceRepository:
         segment_id: str,
         through_sequence: int,
     ) -> str | None:
-        """Return the effective surface head at one recorded event boundary."""
+        """Return the effective surface head at one recorded event boundary.
+
+        Args:
+            cursor: Active trace transaction cursor.
+            segment_id: Segment whose effective surface is requested.
+            through_sequence: Inclusive non-negative event-sequence boundary.
+
+        Returns:
+            The latest effective surface-node ID at the boundary, the segment's
+            inherited surface head when no local event qualifies, or ``None``.
+
+        Raises:
+            ValueError: If ``segment_id`` is empty or ``through_sequence`` is
+                not a non-negative integer.
+        """
 
         _nonempty(segment_id, "segment_id")
         if type(through_sequence) is not int or through_sequence < 0:

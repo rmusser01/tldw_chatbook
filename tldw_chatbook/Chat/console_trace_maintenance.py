@@ -6,7 +6,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import time
 
-from tldw_chatbook.Chat.console_trace_legacy import LegacyTraceNormalizer
+from tldw_chatbook.Chat.console_trace_legacy import (
+    LegacyDecodedByteLimitError,
+    LegacyTraceNormalizer,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
@@ -110,10 +113,10 @@ class LegacyTraceMaintenance:
                 begin_batch(cursor)
             try:
                 for raw in rows:
-                    if processed_rows and self.clock() - started >= self.max_seconds:
+                    if self.clock() - started >= self.max_seconds:
                         break
-                    blob_bytes = len(bytes(raw[7]))
-                    if processed_rows and processed_bytes + blob_bytes > self.max_bytes:
+                    remaining_bytes = self.max_bytes - processed_bytes
+                    if remaining_bytes <= 0:
                         break
                     row = {
                         "id": int(raw[0]),
@@ -126,13 +129,18 @@ class LegacyTraceMaintenance:
                         "capture_blob": bytes(raw[7]),
                         "created_at": raw[8],
                     }
-                    normalized = self.normalizer.normalize_exchange(cursor, row)
+                    try:
+                        normalized = self.normalizer.normalize_exchange(
+                            cursor,
+                            row,
+                            max_decoded_bytes=remaining_bytes,
+                            oversized_policy=("omit" if not processed_rows else "defer"),
+                        )
+                    except LegacyDecodedByteLimitError:
+                        break
                     if normalized.verification_status != "verified":
                         raise RuntimeError("legacy_equivalence_unverified")
-                    if (
-                        processed_rows
-                        and processed_bytes + normalized.decoded_bytes > self.max_bytes
-                    ):
+                    if normalized.decoded_bytes > remaining_bytes:
                         raise RuntimeError("legacy_batch_decoded_byte_limit")
                     cursor.execute(
                         "DELETE FROM message_exchanges WHERE id = ?", (raw[0],)

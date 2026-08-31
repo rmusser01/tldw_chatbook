@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict, replace
+import json
+import zlib
+
 import pytest
 
 from tldw_chatbook.Chat.console_exchange_capture import (
@@ -175,8 +179,8 @@ def test_unexpected_failure_rolls_back_normalized_rows_and_checkpoint(
     real = LegacyTraceNormalizer(db)
 
     class _FailAfterNormalize:
-        def normalize_exchange(self, cursor, row):
-            real.normalize_exchange(cursor, row)
+        def normalize_exchange(self, cursor, row, **kwargs):
+            real.normalize_exchange(cursor, row, **kwargs)
             raise RuntimeError("injected_failure")
 
     maintenance = LegacyTraceMaintenance(db, normalizer=_FailAfterNormalize())  # type: ignore[arg-type]
@@ -200,7 +204,7 @@ def test_unexpected_failure_rolls_back_normalized_rows_and_checkpoint(
         assert tuple(state) == ("pending", None, 0)
 
 
-def test_elapsed_time_limit_yields_after_current_verified_row(
+def test_elapsed_time_limit_can_yield_before_first_row(
     db: CharactersRAGDB,
 ) -> None:
     conversation_id = db.add_conversation({"title": "legacy time bound"})
@@ -213,8 +217,129 @@ def test_elapsed_time_limit_yields_after_current_verified_row(
 
     result = maintenance.run_batch()
 
-    assert result.processed_rows == 1
+    assert result.processed_rows == 0
     assert result.logical_complete is False
+
+
+def test_decoded_byte_limit_defers_then_omits_oversized_row_without_rollback(
+    db: CharactersRAGDB,
+) -> None:
+    conversation_id = db.add_conversation({"title": "legacy byte bound"})
+    assert conversation_id is not None
+    first_message_id = _message(db, conversation_id, "small")
+    oversized_message_id = _message(db, conversation_id, "oversized")
+    _insert_exchange(db, message_id=first_message_id, capture=_capture(0))
+    oversized = replace(
+        _capture(1),
+        request={"messages_payload": [{"role": "user", "content": "x" * 5000}]},
+    )
+    _insert_exchange(db, message_id=oversized_message_id, capture=oversized)
+    maintenance = LegacyTraceMaintenance(db, max_bytes=1024)
+
+    first = maintenance.run_batch()
+    second = maintenance.run_batch()
+
+    assert first.processed_rows == 1
+    assert first.logical_complete is False
+    assert second.processed_rows == 1
+    assert second.processed_bytes == 1024
+    assert second.logical_complete is True
+    oversized_call = LegacyTraceNormalizer(db).read_calls(oversized_message_id)[0]
+    assert oversized_call.capture.request == {
+        "legacy_omission": "legacy_capture_oversized"
+    }
+    assert "legacy_capture_oversized" in oversized_call.uncertainty_codes
+
+
+def test_malformed_request_becomes_omission_and_later_row_still_migrates(
+    db: CharactersRAGDB,
+) -> None:
+    conversation_id = db.add_conversation({"title": "legacy malformed request"})
+    assert conversation_id is not None
+    malformed_message_id = _message(db, conversation_id, "malformed")
+    later_message_id = _message(db, conversation_id, "later")
+    malformed = replace(_capture(0), request=7)  # type: ignore[arg-type]
+    _insert_exchange(db, message_id=malformed_message_id, capture=malformed)
+    _insert_exchange(db, message_id=later_message_id, capture=_capture(1))
+
+    result = LegacyTraceMaintenance(db).run_batch()
+
+    assert result.processed_rows == 2
+    malformed_call = LegacyTraceNormalizer(db).read_calls(malformed_message_id)[0]
+    assert malformed_call.capture.request == {
+        "legacy_omission": "legacy_credential_filter_unavailable"
+    }
+    assert "legacy_credential_filter_unavailable" in (
+        malformed_call.uncertainty_codes
+    )
+    assert LegacyTraceNormalizer(db).read_calls(later_message_id)
+
+
+def test_non_object_usage_is_omitted_without_blocking_migration(
+    db: CharactersRAGDB,
+) -> None:
+    conversation_id = db.add_conversation({"title": "legacy malformed usage"})
+    assert conversation_id is not None
+    message_id = _message(db, conversation_id, "usage")
+    capture = replace(_capture(0), usage_json="[]")
+    _insert_exchange(db, message_id=message_id, capture=capture)
+
+    result = LegacyTraceMaintenance(db).run_batch()
+
+    assert result.processed_rows == 1
+    call = LegacyTraceNormalizer(db).read_calls(message_id)[0]
+    assert call.capture.usage_json is None
+    assert "legacy_usage_unavailable" in call.capture.omitted_keys
+    assert "legacy_usage_unavailable" in call.uncertainty_codes
+
+
+def test_unsupported_status_becomes_explicit_omission(
+    db: CharactersRAGDB,
+) -> None:
+    conversation_id = db.add_conversation({"title": "legacy malformed status"})
+    assert conversation_id is not None
+    message_id = _message(db, conversation_id, "status")
+    capture = replace(_capture(0), status="unexpected")
+    _insert_exchange(db, message_id=message_id, capture=capture)
+
+    result = LegacyTraceMaintenance(db).run_batch()
+
+    assert result.processed_rows == 1
+    call = LegacyTraceNormalizer(db).read_calls(message_id)[0]
+    assert call.capture.status == "error"
+    assert call.capture.request == {"legacy_omission": "legacy_status_unavailable"}
+    assert "legacy_status_unavailable" in call.uncertainty_codes
+
+
+@pytest.mark.parametrize("malformation", ["missing_field", "authority_mismatch"])
+def test_decode_contract_failures_become_explicit_omissions(
+    db: CharactersRAGDB,
+    malformation: str,
+) -> None:
+    conversation_id = db.add_conversation({"title": "legacy decode contract"})
+    assert conversation_id is not None
+    message_id = _message(db, conversation_id, "decode")
+    capture = _capture(0)
+    if malformation == "missing_field":
+        payload = asdict(capture)
+        payload.pop("provider")
+        blob = zlib.compress(
+            json.dumps(payload, separators=(",", ":"), default=str).encode("utf-8")
+        )
+    else:
+        blob = capture_to_blob(
+            replace(capture, created_at="2026-08-28T12:59:59+00:00")
+        )
+    _insert_exchange(db, message_id=message_id, capture=capture, blob=blob)
+
+    result = LegacyTraceMaintenance(db).run_batch()
+
+    assert result.processed_rows == 1
+    call = LegacyTraceNormalizer(db).read_calls(message_id)[0]
+    assert call.capture.request == {
+        "legacy_omission": "legacy_capture_unavailable"
+    }
+    assert "legacy_capture_unavailable" in call.uncertainty_codes
 
 
 def test_partial_migration_dual_read_keeps_normalized_and_legacy_calls_visible(

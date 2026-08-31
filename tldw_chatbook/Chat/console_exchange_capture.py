@@ -193,6 +193,10 @@ class CaptureUnavailableError(ValueError):
     """Capture bytes cannot be safely decoded or retained."""
 
 
+class CaptureDecodeLimitError(CaptureUnavailableError):
+    """Capture decoding exceeded the caller's explicit byte ceiling."""
+
+
 class CaptureCorruptError(CaptureUnavailableError):
     """Persisted capture provenance is malformed or inconsistent."""
 
@@ -884,24 +888,45 @@ def _encode_capture_json(value: Any) -> bytes:
     return b"".join(chunks)
 
 
-def capture_from_blob(blob: bytes) -> ExchangeCapture:
-    """Inverse of :func:`capture_to_blob`.
+def capture_from_blob(
+    blob: bytes,
+    *,
+    max_decoded_bytes: int = CAPTURE_JSON_MAX_BYTES,
+) -> ExchangeCapture:
+    """Inverse of :func:`capture_to_blob` within a decoded-byte ceiling.
 
     Review finding M11: filters to ``ExchangeCapture``'s own known field
     names before construction -- a future blob written by a newer version
     with an extra field would otherwise raise ``TypeError`` here today,
     on every OLDER build reading it back.
+
+    Args:
+        blob: Compressed capture bytes.
+        max_decoded_bytes: Maximum uncompressed JSON bytes to inspect.
+
+    Returns:
+        The decoded capture.
+
+    Raises:
+        CaptureDecodeLimitError: If decoding crosses ``max_decoded_bytes``.
+        CaptureCorruptError: If the payload is malformed or incomplete.
+        ValueError: If ``max_decoded_bytes`` is outside the supported range.
     """
+    if (
+        type(max_decoded_bytes) is not int
+        or not 1 <= max_decoded_bytes <= CAPTURE_JSON_MAX_BYTES
+    ):
+        raise ValueError("max_decoded_bytes")
     if len(blob) > EXCHANGE_BLOB_MAX_BYTES:
-        raise CaptureUnavailableError("capture exceeds safe decode limit")
+        raise CaptureDecodeLimitError("capture exceeds safe decode limit")
     try:
         decompressor = zlib.decompressobj()
-        raw = decompressor.decompress(blob, CAPTURE_JSON_MAX_BYTES + 1)
-        if len(raw) > CAPTURE_JSON_MAX_BYTES or decompressor.unconsumed_tail:
-            raise CaptureUnavailableError("capture exceeds safe decode limit")
+        raw = decompressor.decompress(blob, max_decoded_bytes + 1)
+        if len(raw) > max_decoded_bytes or decompressor.unconsumed_tail:
+            raise CaptureDecodeLimitError("capture exceeds safe decode limit")
         raw += decompressor.flush()
-        if len(raw) > CAPTURE_JSON_MAX_BYTES:
-            raise CaptureUnavailableError("capture exceeds safe decode limit")
+        if len(raw) > max_decoded_bytes:
+            raise CaptureDecodeLimitError("capture exceeds safe decode limit")
         data = json.loads(raw)
     except CaptureUnavailableError:
         raise
@@ -912,22 +937,30 @@ def capture_from_blob(blob: bytes) -> ExchangeCapture:
     detail = _capture_detail(data.get("capture_detail", CaptureDetail.SAFE))
     if detail is None:
         raise CaptureCorruptError("capture detail is corrupt")
-    data["capture_detail"] = detail
-    data["omitted_keys"] = tuple(data.get("omitted_keys") or ())
-    for transient_name in (
-        "trace_provenance",
-        "trace_chronology",
-        "trace_uncertainty",
-    ):
-        data.pop(transient_name, None)
-    known_fields = {f.name for f in fields(ExchangeCapture)}
-    filtered = {key: value for key, value in data.items() if key in known_fields}
-    return ExchangeCapture(**filtered)
+    try:
+        data["capture_detail"] = detail
+        data["omitted_keys"] = tuple(data.get("omitted_keys") or ())
+        for transient_name in (
+            "trace_provenance",
+            "trace_chronology",
+            "trace_uncertainty",
+        ):
+            data.pop(transient_name, None)
+        known_fields = {f.name for f in fields(ExchangeCapture)}
+        filtered = {key: value for key, value in data.items() if key in known_fields}
+        return ExchangeCapture(**filtered)
+    except (TypeError, ValueError) as exc:
+        raise CaptureCorruptError("capture is corrupt") from exc
 
 
-def capture_from_storage(blob: bytes, declared_detail: object) -> ExchangeCapture:
+def capture_from_storage(
+    blob: bytes,
+    declared_detail: object,
+    *,
+    max_decoded_bytes: int = CAPTURE_JSON_MAX_BYTES,
+) -> ExchangeCapture:
     """Decode local capture bytes only when the row and blob agree."""
-    capture = capture_from_blob(blob)
+    capture = capture_from_blob(blob, max_decoded_bytes=max_decoded_bytes)
     detail = _capture_detail(declared_detail)
     if detail is None or capture.capture_detail is not detail:
         raise CaptureCorruptError("capture provenance mismatch")
