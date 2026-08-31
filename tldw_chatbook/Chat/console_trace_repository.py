@@ -1023,6 +1023,7 @@ class ConsoleTraceRepository:
                     outcome,
                 ),
             )
+        self._advance_graph_epoch(cursor)
         rows = cursor.execute(
             f"""SELECT span_id, policy_id, source_kind, semantic_revision_id,
                        artifact_id, field_path, start_codepoint, end_codepoint,

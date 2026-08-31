@@ -125,6 +125,7 @@ def test_repository_reuses_content_free_masks_per_frozen_policy() -> None:
                 creation_reason="message_create",
                 live_locator_retired_at="2026-08-31T00:00:00Z",
             )
+            before_spans = repository.get_graph_epoch(cursor)
             first = repository.ensure_redaction_spans(
                 cursor,
                 policy_id=policy.policy_id,
@@ -133,6 +134,7 @@ def test_repository_reuses_content_free_masks_per_frozen_policy() -> None:
                 field_path="$.content",
                 spans=detection.spans,
             )
+            assert repository.get_graph_epoch(cursor) == before_spans + 1
             second = repository.ensure_redaction_spans(
                 cursor,
                 policy_id=policy.policy_id,
@@ -141,6 +143,7 @@ def test_repository_reuses_content_free_masks_per_frozen_policy() -> None:
                 field_path="$.content",
                 spans=detection.spans,
             )
+            assert repository.get_graph_epoch(cursor) == before_spans + 1
 
         assert second == first
         assert len(first) == 1
