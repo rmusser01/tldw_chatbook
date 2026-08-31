@@ -4653,7 +4653,7 @@ async def test_test_tool_audit_sync_log_preserves_diagnostics_after_initial_path
     app = ToolTestApp()
     failure = RuntimeError(
         r"failed at /Users/alice/Private Project/credentials.json and see "
-        r"docs/recovery.md with pattern \\d+; visit https://example.test/help."
+        r"docs/recovery.md; with pattern \\d+; visit https://example.test/help."
     )
 
     class AccessFailureService:
@@ -4686,7 +4686,7 @@ async def test_test_tool_audit_sync_log_preserves_diagnostics_after_initial_path
         rendered = "".join(message for message in caplog.messages if prefix in message)
         assert "Users/alice" not in rendered
         assert "Project/credentials.json" not in rendered
-        assert "docs/recovery.md" in rendered
+        assert "docs/recovery.md" not in rendered
         assert r"\\d+" in rendered
         assert "https://example.test/help" in rendered
 
@@ -4696,6 +4696,22 @@ async def test_test_tool_audit_sync_log_preserves_diagnostics_after_initial_path
 @pytest.mark.parametrize(
     ("private_path", "private_fragments"),
     [
+        (
+            "/Users/alice/Node.js Projects/Secret Plan.txt",
+            ("Users/alice", "Node.js Projects", "Secret Plan.txt"),
+        ),
+        (
+            r"C:\Node.js Projects\Secret Plan.txt",
+            ("Node.js Projects", "Secret Plan.txt"),
+        ),
+        (
+            r"\\server\share\Report.txt Folder\secret.key",
+            ("Report.txt Folder", "secret.key"),
+        ),
+        (
+            r"\\?\C:\Cache.db Archives\Secret Plan.txt",
+            ("Cache.db Archives", "Secret Plan.txt"),
+        ),
         (
             r"C:\Very Long Private Project Folder",
             ("Long Private Project Folder",),
@@ -4719,6 +4735,10 @@ async def test_test_tool_audit_sync_log_preserves_diagnostics_after_initial_path
         (
             r"\\.\pipe\Please Review\Secret Plan.txt",
             ("Please Review", "Secret Plan.txt"),
+        ),
+        (
+            "file:///Users/alice/Node.js Projects/Secret Plan.txt",
+            ("file:", "Users/alice", "Node.js Projects", "Secret Plan.txt"),
         ),
     ],
 )

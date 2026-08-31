@@ -3183,47 +3183,38 @@ def test_test_tool_path_scrubber_keeps_http_recovery_after_spaced_path():
 
 
 @pytest.mark.parametrize(
-    ("message", "preserved"),
+    ("message", "expected"),
     [
         (
             r"failed at /Users/alice/Private Project/credentials.json and see "
             r"docs/recovery.md with pattern \\d+ for help",
-            ("and see", "docs/recovery.md", r"\\d+", "for help"),
+            r"failed at [path] with pattern \\d+ for help",
         ),
         (
             r"failed at /Users/alice/Private Failed Project/credentials.json and "
             r"see docs/recovery.md with pattern \\d+ for help",
-            ("and see", "docs/recovery.md", r"\\d+", "for help"),
+            r"failed at [path] with pattern \\d+ for help",
         ),
         (
             r"failed at /Users/alice/Private Project/credentials.json, consult "
             r"docs/recovery.md, pattern \\w+, or visit https://example.test/help.",
-            (
-                "consult",
-                "docs/recovery.md",
-                r"\\w+",
-                "or visit",
-                "https://example.test/help",
-            ),
+            r"failed at [path], consult docs/recovery.md, pattern \\w+, or visit "
+            r"https://example.test/help.",
         ),
         (
             r"failed at root:/Users/alice/Private Project/credentials.json — then "
             r"read docs/recovery.md (pattern \\s+) before retrying.",
-            ("then read", "docs/recovery.md", r"\\s+", "before retrying"),
+            r"failed at root:[path] (pattern \\s+) before retrying.",
         ),
     ],
 )
 def test_test_tool_path_scrubber_stops_after_initial_local_path(
-    message: str, preserved: tuple[str, ...]
+    message: str, expected: str
 ):
-    """Later diagnostics are not part of an earlier spaced absolute path."""
+    """Ambiguous path-like suffixes redact until a structural boundary."""
     rendered = mcp_inspector_module._safe_tool_test_text(message)
 
-    assert "Users/alice" not in rendered
-    assert "Project/credentials.json" not in rendered
-    assert "[path]" in rendered
-    for fragment in preserved:
-        assert fragment in rendered
+    assert rendered == expected
 
 
 @pytest.mark.parametrize(
@@ -3317,6 +3308,13 @@ def test_test_tool_path_scrubber_fails_closed_on_ambiguous_clause_after_director
 @pytest.mark.parametrize(
     "private_path",
     [
+        "/Users/alice/Node.js Projects/Secret Plan.txt",
+        "/Users/alice/Node.js Long Term Projects/Secret Plan.txt",
+        r"C:\Node.js Projects\Secret Plan.txt",
+        r"\\server\share\Report.txt Folder\secret.key",
+        r"\\?\C:\Cache.db Archives\Secret Plan.txt",
+        r"\\.\pipe\Report.txt Folder\secret.key",
+        "file:///Users/alice/Node.js Projects/Secret Plan.txt",
         "/Users/alice/Research and Development/Secret Plan.txt",
         r"C:\Research and Development\Secret Plan.txt",
         r"\\server\share\Research and Development\Secret Plan.txt",
@@ -3374,13 +3372,34 @@ def test_test_tool_path_scrubber_preserves_only_structurally_delimited_diagnosti
     assert preserved in rendered
 
 
-def test_test_tool_path_scrubber_uses_spaced_filename_extension_as_boundary():
+@pytest.mark.parametrize(
+    "private_path",
+    [
+        "/Users/alice/Very Long Secret Credentials.json",
+        r"C:\Very Long Secret Credentials.json",
+        r"\\server\share\Very Long Secret Credentials.json",
+        r"\\?\C:\Very Long Secret Credentials.json",
+        r"\\.\pipe\Very Long Secret Credentials.json",
+        "file:///Users/alice/Very Long Secret Credentials.json",
+    ],
+)
+def test_test_tool_path_scrubber_uses_spaced_filename_extension_as_boundary(
+    private_path: str,
+):
     rendered = mcp_inspector_module._safe_tool_test_text(
-        "failed at /Users/alice/Very Long Secret Credentials.json "
-        "see docs/recovery.md for help"
+        f"failed at {private_path} retry at https://example.test/help"
     )
 
-    assert rendered == "failed at [path] see docs/recovery.md for help"
+    assert rendered == "failed at [path] retry at https://example.test/help"
+
+
+def test_test_tool_path_scrubber_preserves_regex_after_filename_extension():
+    rendered = mcp_inspector_module._safe_tool_test_text(
+        r"failed at /Users/alice/Very Long Secret Credentials.json "
+        r"pattern \\d+\\w+ remains"
+    )
+
+    assert rendered == r"failed at [path] pattern \\d+\\w+ remains"
 
 
 def test_test_tool_mapping_exception_preserves_diagnostics_after_initial_path():
@@ -3389,7 +3408,7 @@ def test_test_tool_mapping_exception_preserves_diagnostics_after_initial_path():
             {
                 "detail": (
                     r"failed at /Users/alice/Private Project/credentials.json and "
-                    r"see docs/recovery.md with pattern \\d+ for help"
+                    r"see docs/recovery.md; with pattern \\d+ for help"
                 ),
                 "recovery": "https://example.test/help",
             }
@@ -3398,7 +3417,7 @@ def test_test_tool_mapping_exception_preserves_diagnostics_after_initial_path():
 
     assert "Users/alice" not in rendered
     assert "Project/credentials.json" not in rendered
-    assert "docs/recovery.md" in rendered
+    assert "docs/recovery.md" not in rendered
     assert r"\\d+" in rendered
     assert "for help" in rendered
     assert "https://example.test/help" in rendered
@@ -3430,19 +3449,25 @@ def test_test_tool_mapping_exception_fails_closed_on_ambiguous_path_words():
     rendered = mcp_inspector_module._safe_exception_text(
         RuntimeError(
             {
-                "ownership": (
-                    "failed at /Users/alice/Research and Development/Secret Plan.txt"
+                "posix": "failed at /Users/alice/Node.js Projects/Secret Plan.txt",
+                "drive": r"failed at C:\Report.txt Folder\secret.key",
+                "unc": r"failed at \\server\share\Report.txt Folder\secret.key",
+                "extended": r"failed at \\?\C:\Cache.db Archives\Secret Plan.txt",
+                "device": r"failed at \\.\pipe\Report.txt Folder\secret.key",
+                "uri": (
+                    "failed at file:///Users/alice/Node.js Projects/Secret Plan.txt"
                 ),
-                "matcher": (r"failed at C:\Research because access\Secret Plan.txt"),
             }
         )
     )
 
     assert "Users/alice" not in rendered
-    assert "Research and Development" not in rendered
-    assert "Research because access" not in rendered
+    assert "Node.js Projects" not in rendered
+    assert "Report.txt Folder" not in rendered
+    assert "Cache.db Archives" not in rendered
     assert "Secret Plan.txt" not in rendered
-    assert rendered.count("[path]") == 2
+    assert "file:" not in rendered
+    assert rendered.count("[path]") == 6
 
 
 @pytest.mark.asyncio
@@ -3473,7 +3498,7 @@ async def test_test_tool_unavailable_surface_preserves_nonfilesystem_diagnostics
 async def test_test_tool_unavailable_surface_preserves_diagnostics_after_initial_path():
     message = (
         r"failed at /Users/alice/Private Project/credentials.json and see "
-        r"docs/recovery.md with pattern \\d+; visit https://example.test/help."
+        r"docs/recovery.md; with pattern \\d+; visit https://example.test/help."
     )
     app = InspectorApp()
     async with app.run_test(size=(100, 60)) as pilot:
@@ -3488,7 +3513,7 @@ async def test_test_tool_unavailable_surface_preserves_diagnostics_after_initial
 
         assert "Users/alice" not in rendered
         assert "Project/credentials.json" not in rendered
-        assert "docs/recovery.md" in rendered
+        assert "docs/recovery.md" not in rendered
         assert r"\\d+" in rendered
         assert "https://example.test/help" in rendered
 
@@ -3545,13 +3570,13 @@ async def test_test_tool_unavailable_surface_fails_closed_on_ambiguous_file_uri(
         await pilot.pause()
 
         inspector.show_test_unavailable(
-            "failed at file:///Users/alice/Research and Development/Secret Plan.txt"
+            "failed at file:///Users/alice/Node.js Projects/Secret Plan.txt"
         )
         rendered = str(app.query_one("#mcp-inspector-test-preview", Static).renderable)
 
         assert "file:" not in rendered
         assert "Users/alice" not in rendered
-        assert "Research and Development" not in rendered
+        assert "Node.js Projects" not in rendered
         assert "Secret Plan.txt" not in rendered
         assert "[path]" in rendered
 

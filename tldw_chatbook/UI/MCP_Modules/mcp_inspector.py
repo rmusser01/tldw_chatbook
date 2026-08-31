@@ -71,6 +71,7 @@ _TOOL_TEST_PATH_START = re.compile(
     r"|/)"
 )
 _TOOL_TEST_PATH_TRAILING_PUNCTUATION = ".,;:!?)]}"
+_TOOL_TEST_REGEX_TOKEN = re.compile(r"(?:\\{1,2}[A-Za-z](?:[+*?]|\{\d+(?:,\d*)?\})?)+")
 
 
 def _http_url_end(text: str, path_start: int) -> int | None:
@@ -89,13 +90,34 @@ def _tool_test_path_token_is_terminal(token: str) -> bool:
     return re.search(r"\.[A-Za-z0-9_-]{1,16}$", basename) is not None
 
 
+def _later_tool_test_tokens_continue_path(
+    tokens: list[re.Match[str]], start: int
+) -> bool:
+    """Return whether later tokens structurally extend an apparent filename."""
+    for token in tokens[start:]:
+        unwrapped = token.group(0).lstrip("([{")
+        content = unwrapped.rstrip(_TOOL_TEST_PATH_TRAILING_PUNCTUATION)
+        normalized = content.lower()
+        if normalized.startswith(("http://", "https://")):
+            return False
+        is_regex = _TOOL_TEST_REGEX_TOKEN.fullmatch(content) is not None
+        if "/" in content or ("\\" in content and not is_regex):
+            return True
+        if _tool_test_path_token_is_terminal(content):
+            return True
+        if len(content) < len(unwrapped):
+            return False
+    return False
+
+
 def _unquoted_tool_test_path_end(candidate: str) -> int:
     """Consume an ambiguous unquoted path until a structural boundary.
 
     Words after a spaced path cannot reliably be classified as prose or path
     components. Privacy wins that ambiguity: keep redacting until punctuation,
-    a structured ``: `` separator, an HTTP URL, or a completed file extension.
-    Callers already bound candidates at quotes, newlines, and field delimiters.
+    a structured ``: `` separator, an HTTP URL, or a completed file extension
+    whose later tokens do not structurally continue the path. Callers already
+    bound candidates at quotes, newlines, and field delimiters.
     """
     diagnostic = re.search(r":(?=\s)", candidate[2:])
     if diagnostic is not None:
@@ -106,7 +128,7 @@ def _unquoted_tool_test_path_end(candidate: str) -> int:
     end = tokens[0].end()
     pending_end = end
     terminal = _tool_test_path_token_is_terminal(tokens[0].group(0))
-    for token in tokens[1:]:
+    for token_index, token in enumerate(tokens[1:], start=1):
         token_text = token.group(0)
         unwrapped = token_text.lstrip("([{")
         content = unwrapped.rstrip(_TOOL_TEST_PATH_TRAILING_PUNCTUATION)
@@ -115,7 +137,9 @@ def _unquoted_tool_test_path_end(candidate: str) -> int:
         if normalized.startswith(("http://", "https://")):
             break
         if terminal:
-            break
+            if not _later_tool_test_tokens_continue_path(tokens, token_index):
+                break
+            terminal = False
         if not content:
             end = pending_end
             break
@@ -188,6 +212,22 @@ def _safe_tool_test_text(value: object, *, limit: int = _TOOL_TEST_TEXT_LIMIT) -
     return text
 
 
+def _safe_exception_argument(value: object) -> object:
+    """Sanitize nested exception data before its repr escapes path separators."""
+    if isinstance(value, Mapping):
+        return {
+            _safe_tool_test_text(key): _safe_exception_argument(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, tuple):
+        return tuple(_safe_exception_argument(item) for item in value)
+    if isinstance(value, list):
+        return [_safe_exception_argument(item) for item in value]
+    if isinstance(value, str):
+        return _safe_tool_test_text(value)
+    return value
+
+
 def _safe_exception_text(exc: BaseException) -> str:
     """Return bounded exception text without exposing mapping-shaped arguments."""
     args = getattr(exc, "args", ())
@@ -195,7 +235,10 @@ def _safe_exception_text(exc: BaseException) -> str:
         return _safe_tool_test_text(exc)
     try:
         safe_args = tuple(
-            redact_mapping(arg) if isinstance(arg, Mapping) else arg for arg in args
+            _safe_exception_argument(redact_mapping(arg))
+            if isinstance(arg, Mapping)
+            else arg
+            for arg in args
         )
         rendered = str(safe_args[0]) if len(safe_args) == 1 else str(safe_args)
         return _safe_tool_test_text(rendered)
