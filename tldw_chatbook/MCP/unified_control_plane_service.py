@@ -2674,16 +2674,36 @@ class UnifiedMCPControlPlaneService:
         public = registered.public
         if intent not in {"run", "approve_once"}:
             if public.server_key == "local:__local__":
-                refreshed = await asyncio.to_thread(
-                    self._refresh_hub_test_preview, public
+                refresh_task = asyncio.create_task(
+                    asyncio.to_thread(self._refresh_hub_test_preview, public)
                 )
+                cancelled: asyncio.CancelledError | None = None
+                while not refresh_task.done():
+                    try:
+                        await asyncio.shield(refresh_task)
+                    except asyncio.CancelledError as exc:
+                        if refresh_task.cancelled():
+                            raise
+                        if cancelled is None:
+                            cancelled = exc
+                refreshed = refresh_task.result()
+                if cancelled is not None and refreshed is not None:
+                    self.revoke_hub_test_preview(refreshed.nonce)
                 result = ToolTestAdmissionBlocked(
                     reason="intent_invalid", refreshed_preview=refreshed
                 )
-                await self._attempt_local_hub_audit(
-                    lambda: self._record_prepared_hub_block(public, result.reason),
-                    "Local Hub intent review",
-                )
+                try:
+                    await self._attempt_local_hub_audit(
+                        lambda: self._record_prepared_hub_block(public, result.reason),
+                        "Local Hub intent review",
+                    )
+                except asyncio.CancelledError as exc:
+                    if cancelled is None:
+                        cancelled = exc
+                    if refreshed is not None:
+                        self.revoke_hub_test_preview(refreshed.nonce)
+                if cancelled is not None:
+                    raise cancelled
                 return result
             return self._hub_test_blocked(
                 public,

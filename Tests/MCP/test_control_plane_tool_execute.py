@@ -2249,6 +2249,10 @@ async def test_local_hub_invalid_intent_audit_append_is_awaited_off_loop(
 
     assert isinstance(outcome, ToolTestAdmissionBlocked)
     assert outcome.reason == "intent_invalid"
+    assert outcome.refreshed_preview is not None
+    assert (
+        service._hub_test_previews.consume(outcome.refreshed_preview.nonce) is not None
+    )
     assert len(attempts) == 1
     assert attempts[0] != ui_thread
 
@@ -2296,6 +2300,74 @@ async def test_local_hub_invalid_intent_cancellation_waits_audit_then_propagates
 
     assert append_finished.is_set()
     assert attempts == [True]
+    retry = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+    assert isinstance(retry, ToolTestAdmissionStale)
+    assert attempts == [True]
+    assert service.hub_test_active("local:__local__", "fs_read") is False
+
+
+@pytest.mark.asyncio
+async def test_local_hub_invalid_intent_cancellation_revokes_late_refresh(
+    tmp_path, monkeypatch
+):
+    service, _fake, _client, _store = _service(tmp_path)
+    refresh_started = threading.Event()
+    refresh_finished = threading.Event()
+    release_refresh = threading.Event()
+    audit_finished = threading.Event()
+    replacements = []
+    attempts = []
+    handler_calls = []
+
+    class _RecordingLog:
+        def append(self, _record):
+            attempts.append(True)
+            audit_finished.set()
+
+    tool, _callbacks, _guards, _closed = _install_local_hub_execution_provider(
+        monkeypatch,
+        tmp_path,
+        service,
+        invoke_detailed=lambda *_args: handler_calls.append(True),
+    )
+    original_refresh = service._refresh_hub_test_preview
+
+    def _blocking_refresh(public):
+        refresh_started.set()
+        release_refresh.wait(timeout=2)
+        replacement = original_refresh(public)
+        replacements.append(replacement)
+        refresh_finished.set()
+        return replacement
+
+    monkeypatch.setattr(service, "_refresh_hub_test_preview", _blocking_refresh)
+    preview = service.prepare_hub_test(tool)
+    service._execution_log = _RecordingLog()
+    task = asyncio.create_task(
+        service.execute_prepared_hub_test(
+            preview.nonce,
+            "invalid",
+            {},  # type: ignore[arg-type]
+        )
+    )
+    assert await asyncio.to_thread(refresh_started.wait, 1)
+    task.cancel()
+    await asyncio.sleep(0.01)
+    assert task.done() is False
+    assert attempts == []
+    release_refresh.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert refresh_finished.is_set()
+    assert audit_finished.is_set()
+    assert attempts == [True]
+    assert handler_calls == []
+    assert len(replacements) == 1
+    replacement = replacements[0]
+    assert replacement is not None
+    assert service._hub_test_previews.consume(replacement.nonce) is None
     retry = await service.execute_prepared_hub_test(preview.nonce, "run", {})
     assert isinstance(retry, ToolTestAdmissionStale)
     assert attempts == [True]
