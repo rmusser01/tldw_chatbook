@@ -135,8 +135,9 @@ from ..Console_Modules.message import ConsoleMessageController
 from ..Console_Modules.right_rail import ConsoleInspectorRail
 from ..Console_Modules.provider_continuation_recovery import (
     ProviderContinuationTranscriptRegion as ConsoleTranscriptRegion,
+    dispatch_trace_call_recovery_action,
+    trace_call_recovery_state,
 )
-from ..Console_Modules import trace_call_recovery as trace_recovery
 from ..Console_Modules.retrieval import (
     sanitize_console_library_rag_query as _sanitize_console_library_rag_query,
     source_mentions_rag as _source_mentions_rag,
@@ -12091,12 +12092,12 @@ class ChatScreen(BaseAppScreen):
                         )
                     ),
                     trace_recovery_state_builder=(
-                        lambda: trace_recovery.trace_call_recovery_state(
+                        lambda: trace_call_recovery_state(
                             self._ensure_console_chat_controller().trace_call_recovery_preparation()
                         )
                     ),
                     on_trace_recovery_action=partial(
-                        trace_recovery.dispatch_trace_call_recovery_action,
+                        dispatch_trace_call_recovery_action,
                         self._ensure_console_chat_controller(),
                         on_started=self._start_console_transcript_sync_timer,
                         on_finished=self._sync_native_console_chat_ui,

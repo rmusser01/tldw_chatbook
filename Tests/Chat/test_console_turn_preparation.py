@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from itertools import product
 from types import SimpleNamespace
 
@@ -45,6 +45,8 @@ from tldw_chatbook.Chat.console_turn_preparation import (
     preparation_actions,
     pause_for_trace_call_failure,
     pause_for_trace_provenance_failure,
+    pause_temporary_capture_on,
+    admit_promoted_temporary_capture,
 )
 from tldw_chatbook.Chat.console_trace_service import TraceCallPersistenceError
 from tldw_chatbook.Chat.console_trace_provenance import (
@@ -165,6 +167,101 @@ def _transition(
         pause_kind=pause_kind,
         new_attempt_id=new_attempt_id,
     )
+
+
+def test_temporary_capture_on_requires_explicit_pre_dispatch_choice() -> None:
+    values = _preparation_values(ConsoleTurnPreparationState.READY)
+    values.update(
+        ephemeral=True,
+        capture_mode=turn_preparation.ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+    preparation = ConsoleTurnPreparation(**values)  # type: ignore[arg-type]
+
+    paused = pause_temporary_capture_on(preparation)
+
+    assert paused.state is ConsoleTurnPreparationState.PAUSED
+    assert paused.pause_kind is ConsolePreparationPauseKind.TEMPORARY_CAPTURE
+    assert preparation_actions(paused) == (
+        "save_and_send",
+        "send_without_capture",
+        "cancel",
+    )
+
+
+def test_queued_temporary_capture_on_is_not_an_interactive_pause() -> None:
+    values = _preparation_values(ConsoleTurnPreparationState.READY)
+    values.update(
+        origin="queued",
+        queue_entry_id="queue-entry-1",
+        queue_generation=1,
+        ephemeral=True,
+        capture_mode=turn_preparation.ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+    preparation = ConsoleTurnPreparation(**values)  # type: ignore[arg-type]
+
+    with pytest.raises(turn_preparation.TraceCallPersistenceError):
+        pause_temporary_capture_on(preparation)
+
+
+def test_temporary_capture_choices_are_fresh_capture_off_or_promoted_capture_on() -> None:
+    values = _preparation_values(ConsoleTurnPreparationState.READY)
+    values.update(
+        ephemeral=True,
+        capture_mode=turn_preparation.ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+    paused = pause_temporary_capture_on(
+        ConsoleTurnPreparation(**values)  # type: ignore[arg-type]
+    )
+
+    capture_off = admit_one_shot_capture_off(
+        paused,
+        new_preparation_id="preparation-2",
+        new_attempt_id="attempt-2",
+    )
+    promoted = admit_promoted_temporary_capture(
+        paused,
+        _execution_context(attempt_id="attempt-promoted"),
+    )
+
+    assert capture_off.state is ConsoleTurnPreparationState.READY
+    assert capture_off.capture_mode is turn_preparation.ConsoleTraceCaptureMode.CAPTURE_OFF
+    assert capture_off.one_shot_capture_off is True
+    assert capture_off.ephemeral is True
+    assert promoted.state is ConsoleTurnPreparationState.READY
+    assert promoted.capture_mode is turn_preparation.ConsoleTraceCaptureMode.CAPTURE_ON
+    assert promoted.one_shot_capture_off is False
+    assert promoted.ephemeral is False
+    assert promoted.attempt_id == "attempt-promoted"
+    assert (
+        promoted.execution_context.library_authority.attempt_id
+        == "attempt-promoted"
+    )
+
+
+def test_temporary_capture_promotion_rejects_changed_frozen_send_context() -> None:
+    values = _preparation_values(ConsoleTurnPreparationState.READY)
+    values.update(
+        ephemeral=True,
+        capture_mode=turn_preparation.ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+    paused = pause_temporary_capture_on(
+        ConsoleTurnPreparation(**values)  # type: ignore[arg-type]
+    )
+    fresh = _execution_context(attempt_id="attempt-promoted")
+    changed_configuration = replace(
+        fresh.configuration,
+        provider_selection=replace(
+            fresh.configuration.provider_selection,
+            explicit_model="different-model",
+        ),
+    )
+
+    rejected = admit_promoted_temporary_capture(
+        paused,
+        replace(fresh, configuration=changed_configuration),
+    )
+
+    assert rejected is paused
 
 
 class _AdmissionDatabase:
@@ -627,6 +724,11 @@ def test_pause_actions_are_the_exact_frozen_data_matrix() -> None:
             "send_without_capture",
             "cancel",
         ),
+        ConsolePreparationPauseKind.TEMPORARY_CAPTURE: (
+            "save_and_send",
+            "send_without_capture",
+            "cancel",
+        ),
     }
 
 
@@ -654,6 +756,11 @@ def test_pause_actions_are_the_exact_frozen_data_matrix() -> None:
             ConsoleTurnPreparationState.PAUSED,
             ConsolePreparationPauseKind.TRACE_PROVENANCE,
             ("retry", "send_without_capture", "cancel"),
+        ),
+        (
+            ConsoleTurnPreparationState.PAUSED,
+            ConsolePreparationPauseKind.TEMPORARY_CAPTURE,
+            ("save_and_send", "send_without_capture", "cancel"),
         ),
         (ConsoleTurnPreparationState.COMMITTING, None, ()),
         (ConsoleTurnPreparationState.ACCEPTED, None, ()),
@@ -1136,7 +1243,6 @@ def test_nonpaused_state_with_a_pause_reason_fails_closed() -> None:
         ("prefill_id", "bad prefill"),
         ("pre_send_conversation_id", "bad conversation"),
         ("executed_draft", 7),
-        ("executed_draft", ""),
         ("executed_draft", "   "),
         ("executed_draft", "x" * (CONSOLE_PREPARATION_DRAFT_MAX_BYTES + 1)),
         ("executed_draft", "\ud800"),
@@ -1160,7 +1266,6 @@ def test_nonpaused_state_with_a_pause_reason_fails_closed() -> None:
         "prefill-id-grammar",
         "conversation-id-grammar",
         "draft-non-string",
-        "draft-empty",
         "draft-whitespace",
         "draft-too-large",
         "draft-surrogate",
@@ -1182,6 +1287,22 @@ def test_constructor_rejects_malformed_or_unbounded_fields(
         match="Invalid Console turn preparation",
     ):
         ConsoleTurnPreparation(**values)  # type: ignore[arg-type]
+
+
+def test_constructor_allows_empty_draft_only_for_attachment_preparation() -> None:
+    attachment_values = _preparation_values()
+    attachment_values["executed_draft"] = ""
+    attachment = ConsoleTurnPreparation(**attachment_values)  # type: ignore[arg-type]
+
+    text_values = dict(attachment_values)
+    text_values["attachment_ids"] = ()
+
+    assert attachment.executed_draft == ""
+    with pytest.raises(
+        ConsoleTurnPreparationValidationError,
+        match="Invalid Console turn preparation executed draft",
+    ):
+        ConsoleTurnPreparation(**text_values)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -1619,6 +1740,13 @@ _LEGAL_TRANSITION_SHAPES = frozenset(
         (
             ConsoleTurnPreparationState.PAUSED,
             ConsolePreparationPauseKind.TRACE_CALL,
+            ConsoleTurnPreparationState.CANCELLED,
+            None,
+            False,
+        ),
+        (
+            ConsoleTurnPreparationState.PAUSED,
+            ConsolePreparationPauseKind.TEMPORARY_CAPTURE,
             ConsoleTurnPreparationState.CANCELLED,
             None,
             False,

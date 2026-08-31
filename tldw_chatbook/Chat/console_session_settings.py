@@ -246,6 +246,7 @@ def parse_persisted_console_session_settings(
         "thinking_effort",
         "system_prompt",
         "pinned_prefill",
+        "persona_memory_mode",
     }
     required_float = {"temperature", "top_p"}
     optional_float = {"min_p", "presence_penalty", "frequency_penalty"}

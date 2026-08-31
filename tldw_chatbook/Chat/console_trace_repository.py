@@ -72,6 +72,17 @@ class TraceOwnerRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class TraceForkBoundary:
+    """Immutable source prefix inherited by one conversation fork."""
+
+    source_conversation_id: str
+    source_owner_id: str
+    parent_segment_id: str
+    inherited_through_sequence: int
+    inherited_surface_head_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class SemanticRevisionRecord:
     revision_id: str
     source_conversation_id: str
@@ -393,6 +404,311 @@ class ConsoleTraceRepository:
         record = self.get_owner(cursor, owner_id)
         assert record is not None
         return record
+
+    def capture_fork_boundary(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        conversation_id: str,
+        included_turn_ids: Sequence[str],
+    ) -> TraceForkBoundary | None:
+        """Capture the newest trace event belonging to a forked message prefix.
+
+        Call events carry their turn identity on the immutable call row. Turn
+        boundary events carry it directly. Restricting the boundary to the
+        supplied active-lineage turns excludes later calls and excluded
+        regeneration branches even when they already exist in the source
+        segment.
+
+        Args:
+            cursor: Caller-owned transaction cursor.
+            conversation_id: Durable source conversation identity.
+            included_turn_ids: Ordered unique trace-turn identities retained by
+                the forked message prefix.
+
+        Returns:
+            The newest matching immutable boundary, or None when no attached
+            trace owner or matching event exists.
+
+        Raises:
+            ValueError: If a conversation or turn identity is empty, duplicated,
+                or otherwise invalid.
+            TraceIdentityConflict: If the selected event has no reconstructable
+                surface head.
+        """
+
+        _nonempty(conversation_id, "conversation_id")
+        turn_ids = tuple(included_turn_ids)
+        if not turn_ids:
+            return None
+        if any(type(turn_id) is not str or not turn_id for turn_id in turn_ids):
+            raise ValueError("included_turn_ids")
+        if len(turn_ids) != len(set(turn_ids)):
+            raise ValueError("included_turn_ids")
+        owner_row = cursor.execute(
+            """SELECT owner_id, conversation_id, root_segment_id, attached,
+                      detached_at FROM console_trace_owners
+                 WHERE conversation_id = ? AND attached = 1""",
+            (conversation_id,),
+        ).fetchone()
+        if owner_row is None:
+            return None
+        owner = self._owner(owner_row)
+        placeholders = ",".join("?" for _ in turn_ids)
+        boundary_segment_id: str | None = None
+        boundary_sequence: int | None = None
+        for segment_id, through_sequence in self._segment_lineage(
+            cursor,
+            owner.root_segment_id,
+        ):
+            params: list[object] = [segment_id, *turn_ids, *turn_ids]
+            upper_clause = ""
+            if through_sequence is not None:
+                upper_clause = " AND event.sequence <= ?"
+                params.append(through_sequence)
+            boundary_row = cursor.execute(
+                f"""SELECT MAX(event.sequence)
+                       FROM console_trace_events AS event
+                  LEFT JOIN console_trace_calls AS call
+                         ON call.call_id = event.call_id
+                      WHERE event.segment_id = ?
+                        AND (event.turn_id IN ({placeholders})
+                             OR call.turn_id IN ({placeholders}))
+                        {upper_clause}""",
+                tuple(params),
+            ).fetchone()
+            candidate = boundary_row[0] if boundary_row is not None else None
+            if type(candidate) is int and candidate >= 0:
+                boundary_segment_id = segment_id
+                boundary_sequence = candidate
+        if boundary_segment_id is None or boundary_sequence is None:
+            return None
+        surface_head_id = self._surface_head_at_event_boundary(
+            cursor,
+            segment_id=boundary_segment_id,
+            through_sequence=boundary_sequence,
+        )
+        if surface_head_id is None:
+            raise TraceIdentityConflict("fork_boundary_surface")
+        return TraceForkBoundary(
+            source_conversation_id=conversation_id,
+            source_owner_id=owner.owner_id,
+            parent_segment_id=boundary_segment_id,
+            inherited_through_sequence=boundary_sequence,
+            inherited_surface_head_id=surface_head_id,
+        )
+
+    def attach_fork_owner(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        conversation_id: str,
+        boundary: TraceForkBoundary,
+    ) -> TraceOwnerRecord:
+        """Attach a child owner to an exact immutable source boundary.
+
+        Args:
+            cursor: Caller-owned transaction cursor.
+            conversation_id: Durable child conversation identity.
+            boundary: Validated source prefix boundary captured by a fork fence.
+
+        Returns:
+            The newly attached child trace owner.
+
+        Raises:
+            TypeError: If boundary is not a TraceForkBoundary.
+            TraceIdentityConflict: If source ownership, reachability, event
+                identity, or surface state no longer matches the boundary.
+        """
+
+        if not isinstance(boundary, TraceForkBoundary):
+            raise TypeError("boundary")
+        source_owner = self.get_owner(cursor, boundary.source_owner_id)
+        if (
+            source_owner is None
+            or not source_owner.attached
+            or source_owner.conversation_id != boundary.source_conversation_id
+        ):
+            raise TraceIdentityConflict("fork_boundary_owner")
+        reachable_boundaries = dict(
+            self._segment_lineage(cursor, source_owner.root_segment_id)
+        )
+        allowed_sequence = reachable_boundaries.get(boundary.parent_segment_id)
+        if (
+            boundary.parent_segment_id not in reachable_boundaries
+            or (
+                allowed_sequence is not None
+                and boundary.inherited_through_sequence > allowed_sequence
+            )
+        ):
+            raise TraceIdentityConflict("fork_boundary_owner")
+        current_head = self._surface_head_at_event_boundary(
+            cursor,
+            segment_id=boundary.parent_segment_id,
+            through_sequence=boundary.inherited_through_sequence,
+        )
+        event_exists = cursor.execute(
+            """SELECT 1 FROM console_trace_events
+                 WHERE segment_id = ? AND sequence = ?""",
+            (
+                boundary.parent_segment_id,
+                boundary.inherited_through_sequence,
+            ),
+        ).fetchone()
+        if (
+            event_exists is None
+            or current_head != boundary.inherited_surface_head_id
+        ):
+            raise TraceIdentityConflict("fork_boundary_state")
+        child = self.create_segment(
+            cursor,
+            parent_segment_id=boundary.parent_segment_id,
+            inherited_through_sequence=boundary.inherited_through_sequence,
+            inherited_surface_head_id=boundary.inherited_surface_head_id,
+        )
+        return self.attach_owner(
+            cursor,
+            conversation_id=conversation_id,
+            root_segment_id=child.segment_id,
+        )
+
+    def fork_owner_matches_boundary(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        conversation_id: str,
+        boundary: TraceForkBoundary,
+    ) -> bool:
+        """Return whether an attached child owner exactly matches a fork boundary.
+
+        Args:
+            cursor: Caller-owned transaction cursor.
+            conversation_id: Durable child conversation identity.
+            boundary: Expected immutable parent prefix boundary.
+
+        Returns:
+            True only when the attached child root records the exact boundary.
+
+        Raises:
+            TypeError: If boundary is not a TraceForkBoundary.
+        """
+
+        if not isinstance(boundary, TraceForkBoundary):
+            raise TypeError("boundary")
+        row = cursor.execute(
+            """SELECT segment.parent_segment_id,
+                      segment.inherited_through_sequence,
+                      segment.inherited_surface_head_id
+                 FROM console_trace_owners AS owner
+                 JOIN console_trace_segments AS segment
+                   ON segment.segment_id = owner.root_segment_id
+                WHERE owner.conversation_id = ? AND owner.attached = 1""",
+            (conversation_id,),
+        ).fetchone()
+        return row is not None and tuple(row) == (
+            boundary.parent_segment_id,
+            boundary.inherited_through_sequence,
+            boundary.inherited_surface_head_id,
+        )
+
+    def read_conversation_call_lineage(
+        self,
+        cursor: sqlite3.Cursor,
+        conversation_id: str,
+    ) -> tuple[TraceCallRecord, ...]:
+        """Read a conversation's shared prefix and private suffix in order.
+
+        Args:
+            cursor: Caller-owned transaction cursor.
+            conversation_id: Durable conversation whose attached lineage is read.
+
+        Returns:
+            Trace calls ordered root-to-leaf and by event sequence within each
+            segment, or an empty tuple when no trace owner is attached.
+
+        Raises:
+            RuntimeError: If a referenced lineage call cannot be reconstructed.
+        """
+
+        owner_row = cursor.execute(
+            """SELECT owner_id, conversation_id, root_segment_id, attached,
+                      detached_at FROM console_trace_owners
+                 WHERE conversation_id = ? AND attached = 1""",
+            (conversation_id,),
+        ).fetchone()
+        if owner_row is None:
+            return ()
+        owner = self._owner(owner_row)
+        lineage = self._segment_lineage(cursor, owner.root_segment_id)
+
+        calls: list[TraceCallRecord] = []
+        for segment_id, through_sequence in lineage:
+            params: list[object] = [segment_id]
+            boundary_clause = ""
+            if through_sequence is not None:
+                boundary_clause = " HAVING MIN(event.sequence) <= ?"
+                params.append(through_sequence)
+            rows = cursor.execute(
+                """SELECT call.call_id, MIN(event.sequence)
+                     FROM console_trace_calls AS call
+                     JOIN console_trace_events AS event
+                       ON event.call_id = call.call_id
+                    WHERE call.segment_id = ?
+                 GROUP BY call.call_id"""
+                + boundary_clause
+                + " ORDER BY MIN(event.sequence), call.call_id",
+                tuple(params),
+            ).fetchall()
+            for row in rows:
+                call = self.get_call(cursor, row[0])
+                if call is None:
+                    raise RuntimeError("trace_lineage_call_unavailable")
+                calls.append(call)
+        return tuple(calls)
+
+    def _segment_lineage(
+        self,
+        cursor: sqlite3.Cursor,
+        root_segment_id: str,
+    ) -> list[tuple[str, int | None]]:
+        """Return root-to-leaf segment IDs with each inherited upper bound."""
+
+        lineage: list[tuple[str, int | None]] = []
+        segment = self.get_segment(cursor, root_segment_id)
+        upper_bound: int | None = None
+        while segment is not None:
+            lineage.append((segment.segment_id, upper_bound))
+            upper_bound = segment.inherited_through_sequence
+            if segment.parent_segment_id is None:
+                break
+            segment = self.get_segment(cursor, segment.parent_segment_id)
+        lineage.reverse()
+        return lineage
+
+    def _surface_head_at_event_boundary(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        segment_id: str,
+        through_sequence: int,
+    ) -> str | None:
+        row = cursor.execute(
+            """SELECT CASE event.event_type
+                       WHEN 'surface_append' THEN event.surface_node_id
+                       ELSE replacement.replacement_node_id
+                     END
+                   FROM console_trace_events AS event
+              LEFT JOIN console_trace_surface_replacements AS replacement
+                     ON replacement.replacement_id = event.surface_replacement_id
+                  WHERE event.segment_id = ? AND event.sequence <= ?
+                    AND event.event_type IN ('surface_append', 'surface_replace')
+               ORDER BY event.sequence DESC LIMIT 1""",
+            (segment_id, through_sequence),
+        ).fetchone()
+        if row is not None:
+            return cast(str | None, row[0])
+        segment = self.get_segment(cursor, segment_id)
+        return None if segment is None else segment.inherited_surface_head_id
 
     def get_owner(
         self, cursor: sqlite3.Cursor, owner_id: str

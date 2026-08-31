@@ -106,15 +106,7 @@
     }
 
 
-/* ===== WIDGET: ConsoleInspectorRail (UI/Console_Modules/right_rail.py) ===== */
-
-    ConsoleInspectorRail .console-inspector-scroll-owner,
-    ConsoleInspectorRail .console-inspector-scroll-owner .console-rail-section-title {
-        text-style: bold underline;
-    }
-
-
-/* ===== WIDGET: TraceCallRecoveryCallout (UI/Console_Modules/trace_call_recovery.py) ===== */
+/* ===== WIDGET: TraceCallRecoveryCallout (UI/Console_Modules/provider_continuation_recovery.py) ===== */
 
     TraceCallRecoveryCallout {
         width: 100%;
@@ -145,6 +137,14 @@
         width: 100%;
         min-width: 20;
         margin-bottom: 1;
+    }
+
+
+/* ===== WIDGET: ConsoleInspectorRail (UI/Console_Modules/right_rail.py) ===== */
+
+    ConsoleInspectorRail .console-inspector-scroll-owner,
+    ConsoleInspectorRail .console-inspector-scroll-owner .console-rail-section-title {
+        text-style: bold underline;
     }
 
 

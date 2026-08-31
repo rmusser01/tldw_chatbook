@@ -65,6 +65,7 @@ class ConsolePreparationPauseKind(str, Enum):
     DESTINATION_CHANGED = "destination_changed"
     TRACE_PROVENANCE = "trace_provenance"
     TRACE_CALL = "trace_call"
+    TEMPORARY_CAPTURE = "temporary_capture"
 
 
 PAUSE_ACTIONS: Mapping[ConsolePreparationPauseKind, tuple[str, ...]] = MappingProxyType(
@@ -79,6 +80,11 @@ PAUSE_ACTIONS: Mapping[ConsolePreparationPauseKind, tuple[str, ...]] = MappingPr
         ),
         ConsolePreparationPauseKind.TRACE_CALL: (
             "retry",
+            "send_without_capture",
+            "cancel",
+        ),
+        ConsolePreparationPauseKind.TEMPORARY_CAPTURE: (
+            "save_and_send",
             "send_without_capture",
             "cancel",
         ),
@@ -364,6 +370,7 @@ def admit_one_shot_capture_off(
         not in {
             ConsolePreparationPauseKind.TRACE_PROVENANCE,
             ConsolePreparationPauseKind.TRACE_CALL,
+            ConsolePreparationPauseKind.TEMPORARY_CAPTURE,
         }
     ):
         return preparation
@@ -389,6 +396,87 @@ def admit_one_shot_capture_off(
         pause_kind=None,
         one_shot_capture_off=True,
         capture_mode=ConsoleTraceCaptureMode.CAPTURE_OFF,
+    )
+
+
+def pause_temporary_capture_on(
+    preparation: ConsoleTurnPreparation,
+) -> ConsoleTurnPreparation:
+    """Pause a temporary Capture-On send before durable trace admission.
+
+    Args:
+        preparation: Valid pre-dispatch preparation to evaluate.
+
+    Returns:
+        A paused manual preparation when durable capture needs an explicit user
+        choice, otherwise the original preparation.
+
+    Raises:
+        TraceCallPersistenceError: If a non-interactive origin reaches this
+            interactive pause boundary.
+    """
+
+    if not _preparation_is_valid(preparation):
+        return preparation
+    if (
+        not preparation.ephemeral
+        or preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_OFF
+    ):
+        return preparation
+    if preparation.origin != "manual":
+        raise TraceCallPersistenceError()
+    if (
+        preparation.state is not ConsoleTurnPreparationState.READY
+        or preparation.pause_kind is not None
+    ):
+        return preparation
+    return replace(
+        preparation,
+        state=ConsoleTurnPreparationState.PAUSED,
+        pause_kind=ConsolePreparationPauseKind.TEMPORARY_CAPTURE,
+    )
+
+
+def admit_promoted_temporary_capture(
+    preparation: ConsoleTurnPreparation,
+    execution_context: ConsoleTurnExecutionContext,
+) -> ConsoleTurnPreparation:
+    """Resume the exact Capture-On preparation after durable promotion.
+
+    Args:
+        preparation: Paused temporary Capture-On preparation.
+        execution_context: Fresh durable authority with unchanged configuration
+            and resolved destination.
+
+    Returns:
+        The ready durable preparation when every frozen identity matches,
+        otherwise the original preparation.
+    """
+
+    if not _preparation_is_valid(preparation):
+        return preparation
+    if (
+        preparation.origin != "manual"
+        or not preparation.ephemeral
+        or preparation.capture_mode is not ConsoleTraceCaptureMode.CAPTURE_ON
+        or preparation.state is not ConsoleTurnPreparationState.PAUSED
+        or preparation.pause_kind
+        is not ConsolePreparationPauseKind.TEMPORARY_CAPTURE
+        or not isinstance(execution_context, ConsoleTurnExecutionContext)
+        or execution_context.session_id != preparation.session_id
+        or execution_context.configuration
+        != preparation.execution_context.configuration
+        or execution_context.resolved_destination
+        != preparation.execution_context.resolved_destination
+    ):
+        return preparation
+    return replace(
+        preparation,
+        attempt_id=execution_context.library_authority.attempt_id,
+        execution_context=execution_context,
+        state=ConsoleTurnPreparationState.READY,
+        pause_kind=None,
+        ephemeral=False,
     )
 
 
@@ -596,11 +684,14 @@ def _validate_preparation(preparation: ConsoleTurnPreparation) -> None:
         preparation.pre_send_conversation_id,
         "pre-send conversation ID",
     )
-    _validate_text(
-        preparation.executed_draft,
-        "executed draft",
-        CONSOLE_PREPARATION_DRAFT_MAX_BYTES,
-    )
+    if preparation.executed_draft:
+        _validate_text(
+            preparation.executed_draft,
+            "executed draft",
+            CONSOLE_PREPARATION_DRAFT_MAX_BYTES,
+        )
+    elif not preparation.attachment_ids:
+        _invalid("executed draft")
     _validate_text(
         preparation.pre_send_title,
         "pre-send title",

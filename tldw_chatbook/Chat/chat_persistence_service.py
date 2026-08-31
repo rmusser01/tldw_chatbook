@@ -48,13 +48,17 @@ from tldw_chatbook.Chat.console_generation_settings_metadata import (
     ConsoleGenerationSettingsWriteStatus,
     merge_console_generation_settings,
     parse_console_generation_settings,
+    snapshot_from_session_settings,
     strict_json_metadata_object,
 )
 from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsoleTransactionContribution,
     _scoped_console_transaction_writer,
 )
-from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
+from tldw_chatbook.Chat.console_trace_repository import (
+    ConsoleTraceRepository,
+    TraceForkBoundary,
+)
 from tldw_chatbook.Chat.console_semantic_revision import SemanticRevisionCoordinator
 from tldw_chatbook.Chat.library_activity import LibraryActivityContribution
 from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
@@ -132,6 +136,31 @@ class ChatPersistenceService:
         """Return the shared caller-transaction semantic mutation coordinator."""
 
         return self._semantic_revision_coordinator
+
+    def get_console_trace_fork_boundary(
+        self,
+        *,
+        conversation_id: str,
+        included_turn_ids: Sequence[str],
+    ) -> TraceForkBoundary | None:
+        """Read one immutable trace prefix boundary for a Console fork fence.
+
+        Args:
+            conversation_id: Durable source conversation identity.
+            included_turn_ids: Ordered unique trace-turn identities in the forked
+                message prefix.
+
+        Returns:
+            The newest reachable trace boundary for the prefix, or None when the
+            source has no attached trace owner or matching events.
+        """
+
+        with self.db.transaction() as cursor:
+            return self._console_trace_repository.capture_fork_boundary(
+                cursor,
+                conversation_id=conversation_id,
+                included_turn_ids=included_turn_ids,
+            )
 
     def settle_provider_response_trace(
         self,
@@ -822,6 +851,7 @@ class ChatPersistenceService:
         project_context_json: str | None = None,
         context_policy_overrides: ConsoleContextPolicyOverrides | None = None,
         contributions: Sequence[ConsoleTransactionContribution] = (),
+        trace_boundary: TraceForkBoundary | None = None,
     ) -> ConsoleLibraryPolicySnapshot:
         """Commit one temporary Console transcript and all Task-7 sidecars."""
         self.validate_workspace_target(**conversation_kwargs)
@@ -833,6 +863,12 @@ class ChatPersistenceService:
             if created_id != conversation_id:
                 raise RuntimeError(
                     "Persistence returned an unexpected conversation id."
+                )
+            if trace_boundary is not None:
+                self._console_trace_repository.attach_fork_owner(
+                    cursor,
+                    conversation_id=conversation_id,
+                    boundary=trace_boundary,
                 )
             policy_result = self.console_library_policy_repository.insert(
                 conversation_id,
@@ -933,6 +969,12 @@ class ChatPersistenceService:
                 raise RuntimeError(
                     "Persistence returned an unexpected conversation id."
                 )
+            if snapshot.trace_boundary is not None:
+                self._console_trace_repository.attach_fork_owner(
+                    cursor,
+                    conversation_id=target_id,
+                    boundary=snapshot.trace_boundary,
+                )
             for message in snapshot.messages:
                 attachments = [
                     {
@@ -979,6 +1021,7 @@ class ChatPersistenceService:
                     metadata_json = encode_console_fork_message_metadata(
                         message.status,
                         attachments[0]["display_name"] if attachments else "",
+                        message.trace_turn_id,
                     )
                 persisted_id = self.create_message(
                     conversation_id=target_id,
@@ -1097,6 +1140,14 @@ class ChatPersistenceService:
                 0,
             ):
                 raise RuntimeError("Console fork target identity collision.")
+        if snapshot.trace_boundary is not None and not (
+            self._console_trace_repository.fork_owner_matches_boundary(
+                cursor,
+                conversation_id=target_id,
+                boundary=snapshot.trace_boundary,
+            )
+        ):
+            raise RuntimeError("Console fork target identity collision.")
         policy = self.console_library_policy_repository.read(target_id).durable_policy
         if policy is None:
             raise RuntimeError("Console fork target identity collision.")
@@ -1248,6 +1299,10 @@ class ChatPersistenceService:
             **asdict(configuration.settings),
             "pinned_prefill": None,
         }
+        metadata = merge_console_generation_settings(
+            metadata,
+            snapshot_from_session_settings(configuration.settings),
+        )
         if configuration.rag_scope is not None:
             metadata["rag_scope"] = serialize_scope(configuration.rag_scope)
         if (

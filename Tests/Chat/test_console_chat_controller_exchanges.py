@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -43,6 +44,8 @@ from loguru import logger as loguru_logger
 
 from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat import console_capture_policy_repository as repository_module
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_capture_policy_repository import (
     CapturePolicyWriteResult,
@@ -54,8 +57,17 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
-from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderStreamSignals
+from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderGateway,
+    ConsoleProviderStreamSignals,
+)
+from tldw_chatbook.Chat.console_trace_provenance import ConsoleTraceCaptureMode
+from tldw_chatbook.Chat.console_turn_preparation import (
+    ConsolePreparationPauseKind,
+    ConsoleTurnPreparationState,
+)
 from tldw_chatbook.config import ConfigMutationResult
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.console_provider_doubles import provider_resolution
 
 
@@ -151,6 +163,273 @@ def test_capture_policy_precedence_and_wake_one_shot_exclusion(monkeypatch):
     assert wake.capture_detail is CaptureDetail.SAFE
     assert manual.capture_detail is CaptureDetail.FULL
     assert controller.capture_policy_snapshot(session.id).next_detail is None
+
+
+@pytest.mark.asyncio
+async def test_temporary_capture_on_pauses_real_submit_before_gateway(
+    monkeypatch,
+) -> None:
+    class CountingGateway(StreamingGateway):
+        def __init__(self) -> None:
+            self.entries = 0
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.entries += 1
+            yield "unexpected"
+
+    gateway = CountingGateway()
+    store = ConsoleChatStore()
+    session = store.create_session(
+        ephemeral=True,
+        settings=controller_module.ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="test-model",
+        ),
+    )
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    monkeypatch.setattr(
+        controller_module,
+        "runtime_capture_policy",
+        lambda: SimpleNamespace(enabled=True, detail=CaptureDetail.SAFE, generation=7),
+    )
+
+    result = await controller.submit_draft("capture this", session_id=session.id)
+    preparation = store.preparation_for_session(session.id)
+
+    assert result.accepted is False
+    assert result.provider_started is False
+    assert gateway.entries == 0
+    assert preparation is not None
+    assert preparation.state is ConsoleTurnPreparationState.PAUSED
+    assert preparation.pause_kind is ConsolePreparationPauseKind.TEMPORARY_CAPTURE
+    assert preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
+
+
+@pytest.mark.asyncio
+async def test_temporary_capture_on_attachment_only_pauses_before_gateway(
+    monkeypatch,
+) -> None:
+    class CountingGateway(StreamingGateway):
+        def __init__(self) -> None:
+            self.entries = 0
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.entries += 1
+            yield "unexpected"
+
+    gateway = CountingGateway()
+    store = ConsoleChatStore()
+    session = store.create_session(
+        ephemeral=True,
+        settings=controller_module.ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="test-model",
+        ),
+    )
+    store.add_pending_attachment(
+        session.id,
+        PendingAttachment(
+            file_path="/tmp/trace-attachment.png",
+            display_name="trace-attachment.png",
+            file_type="image",
+            insert_mode="attachment",
+            data=b"\x89PNG-trace",
+            mime_type="image/png",
+            original_size=10,
+            processed_size=10,
+        ),
+    )
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    original_snapshot = controller.resolve_turn_configuration_snapshot
+    monkeypatch.setattr(
+        controller,
+        "resolve_turn_configuration_snapshot",
+        lambda session_id: replace(
+            original_snapshot(session_id),
+            capabilities={"vision": True},
+        ),
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "runtime_capture_policy",
+        lambda: SimpleNamespace(enabled=True, detail=CaptureDetail.SAFE, generation=7),
+    )
+
+    result = await controller.submit_draft("", session_id=session.id)
+    preparation = store.preparation_for_session(session.id)
+
+    assert result.accepted is False
+    assert result.provider_started is False
+    assert gateway.entries == 0
+    assert preparation is not None
+    assert preparation.state is ConsoleTurnPreparationState.PAUSED
+    assert preparation.pause_kind is ConsolePreparationPauseKind.TEMPORARY_CAPTURE
+    assert preparation.attachment_ids
+
+
+@pytest.mark.asyncio
+async def test_queued_temporary_capture_on_refuses_without_throwing_or_dispatch(
+    monkeypatch,
+) -> None:
+    class CountingGateway(StreamingGateway):
+        def __init__(self) -> None:
+            self.entries = 0
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.entries += 1
+            yield "unexpected"
+
+    gateway = CountingGateway()
+    store = ConsoleChatStore()
+    session = store.create_session(
+        ephemeral=True,
+        settings=controller_module.ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="test-model",
+        ),
+    )
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    monkeypatch.setattr(
+        controller.prompt_queue_coordinator,
+        "authorizes",
+        lambda _authorization, _session_id: True,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "runtime_capture_policy",
+        lambda: SimpleNamespace(enabled=True, detail=CaptureDetail.SAFE, generation=7),
+    )
+
+    result = await controller.submit_draft(
+        "queued capture",
+        session_id=session.id,
+        origin=ConsoleSubmissionOrigin.QUEUED,
+        queue_entry_id="queue-entry-1",
+        queue_authorization=object(),  # type: ignore[arg-type]
+    )
+
+    assert result.accepted is False
+    assert result.provider_started is False
+    assert result.queue_entry_id == "queue-entry-1"
+    assert "Save the chat or turn Capture Off" in result.visible_copy
+    assert gateway.entries == 0
+    assert store.preparation_for_session(session.id) is None
+    assert store.messages_for_session(session.id) == []
+
+
+@pytest.mark.asyncio
+async def test_temporary_capture_cancel_removes_unsent_echo_and_preparation(
+    monkeypatch,
+) -> None:
+    store = ConsoleChatStore()
+    session = store.create_session(
+        ephemeral=True,
+        settings=controller_module.ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="test-model",
+        ),
+    )
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    monkeypatch.setattr(
+        controller_module,
+        "runtime_capture_policy",
+        lambda: SimpleNamespace(enabled=True, detail=CaptureDetail.SAFE, generation=7),
+    )
+    paused = await controller.submit_draft("cancel me", session_id=session.id)
+    assert paused.preparation_id is not None
+
+    cancelled = controller.cancel_library_preparation(paused.preparation_id)
+
+    assert cancelled.visible_copy == "Temporary trace-captured send canceled."
+    assert store.preparation_for_session(session.id) is None
+    assert store.messages_for_session(session.id) == []
+
+
+@pytest.mark.asyncio
+async def test_save_and_send_refreshes_durable_authority_before_trace_admission(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    adapter_entries = 0
+
+    def adapter(**_kwargs):
+        nonlocal adapter_entries
+        adapter_entries += 1
+        return {"choices": [{"message": {"content": "unexpected"}}]}
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=adapter)
+
+    async def resolve_for_send(_selection):
+        return provider_resolution(
+            ready=True,
+            provider="openai",
+            model="test-model",
+            base_url="https://api.openai.com/v1",
+            visible_copy="",
+        )
+
+    monkeypatch.setattr(gateway, "resolve_for_send", resolve_for_send)
+    chat_db = CharactersRAGDB(
+        tmp_path / "temporary-capture-promotion.sqlite",
+        "temporary-capture-promotion",
+    )
+    try:
+        store = ConsoleChatStore(persistence=ChatPersistenceService(chat_db))
+        session = store.create_session(
+            ephemeral=True,
+            settings=controller_module.ConsoleSessionSettings(
+                provider="openai",
+                model="test-model",
+            ),
+        )
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            provider="openai",
+            model="test-model",
+        )
+        monkeypatch.setattr(
+            controller_module,
+            "runtime_capture_policy",
+            lambda: SimpleNamespace(
+                enabled=True,
+                detail=CaptureDetail.SAFE,
+                generation=7,
+            ),
+        )
+
+        paused_result = await controller.submit_draft(
+            "capture this",
+            session_id=session.id,
+        )
+        paused = store.preparation_for_session(session.id)
+        assert paused_result.accepted is False
+        assert paused is not None
+        original_attempt_id = paused.attempt_id
+
+        result = await controller.save_and_send(paused.preparation_id)
+        promoted = store.preparation_for_session(session.id)
+
+        assert store.session_is_ephemeral(session.id) is False
+        assert session.persisted_conversation_id is not None
+        assert promoted is not None
+        assert promoted.attempt_id != original_attempt_id
+        assert promoted.execution_context.library_authority.policy.source == "durable"
+        assert promoted.state is ConsoleTurnPreparationState.ACCEPTED
+        assert result.accepted is True
+        assert result.provider_started is False
+        assert result.visible_copy == "Accepted turn is retained for recovery."
+        assert adapter_entries == 0
+        rows = chat_db.get_messages_for_conversation(
+            session.persisted_conversation_id,
+            limit=100,
+        )
+        assert [row["content"] for row in rows if row["sender"] == "user"] == [
+            "capture this"
+        ]
+    finally:
+        await gateway.aclose()
+        chat_db.close_connection()
 
 
 def test_global_full_hydration_unavailable_fails_safe_and_retries_once_per_read(

@@ -252,6 +252,7 @@ def console_messages_from_conversation_tree(
             or node.get("provider_continuation_json") is not None
         )
         if kept:
+            role = _console_message_role_from_persisted(node)
             # The tree only carries the legacy position-0 columns; positions
             # >= 1 (multi-attachment table rows) are batch-fetched below,
             # once for the whole resumed list.
@@ -269,9 +270,16 @@ def console_messages_from_conversation_tree(
             )
             messages.append(
                 ConsoleChatMessage(
-                    role=_console_message_role_from_persisted(node),
+                    role=role,
                     content=content,
                     status=fork_metadata[0] if fork_metadata else "complete",
+                    trace_turn_id=(
+                        fork_metadata[2]
+                        if fork_metadata is not None
+                        else node_persisted_id
+                        if role is ConsoleMessageRole.USER
+                        else None
+                    ),
                     persisted_message_id=node_persisted_id,
                     parent_message_id=parent_persisted_id,
                     image_data=image_data,
