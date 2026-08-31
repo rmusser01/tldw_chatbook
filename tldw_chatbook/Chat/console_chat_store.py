@@ -4263,7 +4263,17 @@ class ConsoleChatStore:
         preparation_id: str,
         execution_context: ConsoleTurnExecutionContext,
     ) -> ConsoleTurnPreparation | None:
-        """Publish a temporary Capture-On preparation after promotion commits."""
+        """Publish a temporary Capture-On preparation after promotion commits.
+
+        Args:
+            preparation_id: Exact paused preparation to update.
+            execution_context: Fresh durable authority paired with the frozen send
+                configuration and destination.
+
+        Returns:
+            The ready durable preparation, or None when identity, durability, or
+            frozen-context validation loses the race.
+        """
 
         with self._preparation_lock:
             current = self._preparations_by_id.get(preparation_id)
@@ -4288,7 +4298,20 @@ class ConsoleChatStore:
         preparation_id: str,
         admitted: ConsoleTurnPreparation,
     ) -> ConsoleTurnPreparation | None:
-        """Publish one explicit Capture-Off choice before temporary dispatch."""
+        """Publish one explicit Capture-Off choice before temporary dispatch.
+
+        Args:
+            preparation_id: Existing paused preparation identity retained by the
+                controller sidecars.
+            admitted: Fresh ready preparation carrying one-shot Capture Off.
+
+        Returns:
+            The published preparation, or None when the paused owner changed or
+            the admitted state is not an exact Capture-Off transition.
+
+        Raises:
+            TypeError: If admitted is not a ConsoleTurnPreparation.
+        """
 
         if not isinstance(admitted, ConsoleTurnPreparation):
             raise TypeError("admitted must be ConsoleTurnPreparation")

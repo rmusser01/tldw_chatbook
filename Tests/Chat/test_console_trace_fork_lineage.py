@@ -327,11 +327,12 @@ def test_attach_fork_owner_rejects_stale_or_foreign_source_ownership(
                 boundary=boundary,
             )
 
-    assert repository.capture_fork_boundary(
-        db.get_connection().cursor(),
-        conversation_id=child_id,
-        included_turn_ids=("turn-1",),
-    ) is None
+    with db.transaction() as cursor:
+        assert repository.capture_fork_boundary(
+            cursor,
+            conversation_id=child_id,
+            included_turn_ids=("turn-1",),
+        ) is None
 
 
 def test_temporary_fork_propagates_durable_prefix_and_attaches_it_once_on_save(

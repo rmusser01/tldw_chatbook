@@ -188,6 +188,21 @@ def test_temporary_capture_on_requires_explicit_pre_dispatch_choice() -> None:
     )
 
 
+def test_queued_temporary_capture_on_is_not_an_interactive_pause() -> None:
+    values = _preparation_values(ConsoleTurnPreparationState.READY)
+    values.update(
+        origin="queued",
+        queue_entry_id="queue-entry-1",
+        queue_generation=1,
+        ephemeral=True,
+        capture_mode=turn_preparation.ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+    preparation = ConsoleTurnPreparation(**values)  # type: ignore[arg-type]
+
+    with pytest.raises(turn_preparation.TraceCallPersistenceError):
+        pause_temporary_capture_on(preparation)
+
+
 def test_temporary_capture_choices_are_fresh_capture_off_or_promoted_capture_on() -> None:
     values = _preparation_values(ConsoleTurnPreparationState.READY)
     values.update(
@@ -1228,7 +1243,6 @@ def test_nonpaused_state_with_a_pause_reason_fails_closed() -> None:
         ("prefill_id", "bad prefill"),
         ("pre_send_conversation_id", "bad conversation"),
         ("executed_draft", 7),
-        ("executed_draft", ""),
         ("executed_draft", "   "),
         ("executed_draft", "x" * (CONSOLE_PREPARATION_DRAFT_MAX_BYTES + 1)),
         ("executed_draft", "\ud800"),
@@ -1252,7 +1266,6 @@ def test_nonpaused_state_with_a_pause_reason_fails_closed() -> None:
         "prefill-id-grammar",
         "conversation-id-grammar",
         "draft-non-string",
-        "draft-empty",
         "draft-whitespace",
         "draft-too-large",
         "draft-surrogate",
@@ -1274,6 +1287,22 @@ def test_constructor_rejects_malformed_or_unbounded_fields(
         match="Invalid Console turn preparation",
     ):
         ConsoleTurnPreparation(**values)  # type: ignore[arg-type]
+
+
+def test_constructor_allows_empty_draft_only_for_attachment_preparation() -> None:
+    attachment_values = _preparation_values()
+    attachment_values["executed_draft"] = ""
+    attachment = ConsoleTurnPreparation(**attachment_values)  # type: ignore[arg-type]
+
+    text_values = dict(attachment_values)
+    text_values["attachment_ids"] = ()
+
+    assert attachment.executed_draft == ""
+    with pytest.raises(
+        ConsoleTurnPreparationValidationError,
+        match="Invalid Console turn preparation executed draft",
+    ):
+        ConsoleTurnPreparation(**text_values)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

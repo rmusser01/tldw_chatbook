@@ -5272,7 +5272,15 @@ class ConsoleChatController:
         )
 
     async def save_and_send(self, preparation_id: str) -> ConsoleSubmitResult:
-        """Promote one temporary Capture-On chat before resuming its exact send."""
+        """Promote one temporary Capture-On chat before resuming its exact send.
+
+        Args:
+            preparation_id: Exact paused preparation selected by the user.
+
+        Returns:
+            The resumed submission result, or a refusal when promotion or exact
+            preparation publication cannot complete.
+        """
 
         preparation = self._preparation_by_id(preparation_id)
         if (
@@ -5595,10 +5603,15 @@ class ConsoleChatController:
         if (
             preparation.state is ConsoleTurnPreparationState.PAUSED
             and preparation.pause_kind
+            is ConsolePreparationPauseKind.TEMPORARY_CAPTURE
+        ):
+            return self._cancel_temporary_capture_preparation(preparation)
+        if (
+            preparation.state is ConsoleTurnPreparationState.PAUSED
+            and preparation.pause_kind
             in {
                 ConsolePreparationPauseKind.TRACE_PROVENANCE,
                 ConsolePreparationPauseKind.TRACE_CALL,
-                ConsolePreparationPauseKind.TEMPORARY_CAPTURE,
             }
         ):
             return self._cancel_trace_recovery_preparation(preparation)
@@ -5616,6 +5629,32 @@ class ConsoleChatController:
             expected_states=frozenset({ConsoleTurnPreparationState.CANCELLED}),
         )
         return self._prepared_action_refusal(None, "Library preparation canceled.")
+
+    def _cancel_temporary_capture_preparation(
+        self,
+        preparation: ConsoleTurnPreparation,
+    ) -> ConsoleSubmitResult:
+        """Discard one unsent temporary Capture-On preparation and its echo."""
+
+        cancelled = self.store.cancel_preparation(
+            preparation.session_id,
+            preparation.preparation_id,
+            expected_state=ConsoleTurnPreparationState.PAUSED,
+        )
+        if cancelled is None:
+            return self._prepared_action_refusal(
+                self._preparation_by_id(preparation.preparation_id)
+            )
+        self._drop_preparation(
+            preparation.preparation_id,
+            expected_states=frozenset({ConsoleTurnPreparationState.CANCELLED}),
+        )
+        visible_copy = "Temporary trace-captured send canceled."
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy),
+            session_id=preparation.session_id,
+        )
+        return self._prepared_action_refusal(preparation, visible_copy)
 
     def _cancel_trace_recovery_preparation(
         self,
@@ -6642,6 +6681,42 @@ class ConsoleChatController:
                     self.store.delete_message(echoed_user.id)
                 return self._block(session.id, "Provider destination is incomplete.")
 
+        capture_mode = (
+            resumed_preparation.capture_mode
+            if resumed_preparation is not None
+            else self._capture_mode_for_preparation(session.id, origin)
+        )
+        if (
+            resumed_preparation is None
+            and session.ephemeral
+            and origin is ConsoleSubmissionOrigin.QUEUED
+            and capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
+        ):
+            visible_copy = (
+                "Queued Capture On needs a durable conversation. Save the chat or "
+                "turn Capture Off before resuming the queue."
+            )
+            if echoed_user is not None:
+                self.store.rollback_transient_send(
+                    session.id,
+                    echoed_user.id,
+                    title=pre_send_title,
+                    persisted_conversation_id=pre_send_conversation_id,
+                )
+            self._set_run_state(
+                ConsoleRunState.blocked(visible_copy),
+                session_id=session.id,
+            )
+            return ConsoleSubmitResult(
+                False,
+                False,
+                visible_copy,
+                session_id=session.id,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+                provider_started=False,
+            )
+
         preparation: ConsoleTurnPreparation | None = resumed_preparation
         preparation_outcome: ConsolePreparationOutcome | None = (
             self._preparation_outcomes.get(resumed_preparation.preparation_id)
@@ -6653,17 +6728,28 @@ class ConsoleChatController:
             origin,
             has_pending_attachment=has_pending_attachment,
         )
-        if ordinary_library_text and resumed_preparation is None:
+        if (
+            ordinary_library_text
+            or capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
+        ) and resumed_preparation is None:
             automatic_eligible = (
-                library_authority.policy.auto_retrieve is ConsoleAutoRetrieve.AUTOMATIC
+                ordinary_library_text
+                and library_authority.policy.auto_retrieve
+                is ConsoleAutoRetrieve.AUTOMATIC
                 and explicit_evidence_staged is False
             )
-            initial_state = (
-                initial_preparation_state(library_authority.policy.auto_retrieve)
-                if automatic_eligible
-                or library_authority.policy.auto_retrieve is ConsoleAutoRetrieve.NEVER
-                else ConsoleTurnPreparationState.READY
-            )
+            if not ordinary_library_text:
+                initial_state = ConsoleTurnPreparationState.READY
+            else:
+                initial_state = (
+                    initial_preparation_state(
+                        library_authority.policy.auto_retrieve
+                    )
+                    if automatic_eligible
+                    or library_authority.policy.auto_retrieve
+                    is ConsoleAutoRetrieve.NEVER
+                    else ConsoleTurnPreparationState.READY
+                )
             queue_generation = None
             if origin is ConsoleSubmissionOrigin.QUEUED:
                 queue_generation = self.prompt_queue_registry.snapshot(
@@ -6708,10 +6794,7 @@ class ConsoleChatController:
                 pause_kind=None,
                 one_shot_bypass=False,
                 ephemeral=session.ephemeral,
-                capture_mode=self._capture_mode_for_preparation(
-                    session.id,
-                    origin,
-                ),
+                capture_mode=capture_mode,
             )
             preparation = pause_temporary_capture_on(preparation)
             if self._begin_submit_preparation(active_task, preparation) is None:

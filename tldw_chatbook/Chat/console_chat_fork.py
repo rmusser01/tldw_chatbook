@@ -71,7 +71,20 @@ def encode_console_fork_message_metadata(
     attachment_display_name: str,
     trace_turn_id: str | None = None,
 ) -> str | None:
-    """Encode the fork-only durable facts that have no schema column."""
+    """Encode the fork-only durable facts that have no schema column.
+
+    Args:
+        status: Durable projected message status.
+        attachment_display_name: Sanitized attachment label retained by the fork.
+        trace_turn_id: Optional source trace-turn alias for lineage reconstruction.
+
+    Returns:
+        Canonical JSON metadata, or None when no fork-only facts need storage.
+
+    Raises:
+        TypeError: If the attachment label is not text.
+        ValueError: If the status or trace-turn identity is not durable and valid.
+    """
 
     if status not in {"complete", "stopped", "failed"}:
         raise ValueError("Fork message status is not durable.")

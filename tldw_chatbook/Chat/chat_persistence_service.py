@@ -143,7 +143,17 @@ class ChatPersistenceService:
         conversation_id: str,
         included_turn_ids: Sequence[str],
     ) -> TraceForkBoundary | None:
-        """Read one immutable trace prefix boundary for a Console fork fence."""
+        """Read one immutable trace prefix boundary for a Console fork fence.
+
+        Args:
+            conversation_id: Durable source conversation identity.
+            included_turn_ids: Ordered unique trace-turn identities in the forked
+                message prefix.
+
+        Returns:
+            The newest reachable trace boundary for the prefix, or None when the
+            source has no attached trace owner or matching events.
+        """
 
         with self.db.transaction() as cursor:
             return self._console_trace_repository.capture_fork_boundary(

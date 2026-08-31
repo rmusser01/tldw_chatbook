@@ -402,7 +402,19 @@ def admit_one_shot_capture_off(
 def pause_temporary_capture_on(
     preparation: ConsoleTurnPreparation,
 ) -> ConsoleTurnPreparation:
-    """Pause a temporary Capture-On send before durable trace admission."""
+    """Pause a temporary Capture-On send before durable trace admission.
+
+    Args:
+        preparation: Valid pre-dispatch preparation to evaluate.
+
+    Returns:
+        A paused manual preparation when durable capture needs an explicit user
+        choice, otherwise the original preparation.
+
+    Raises:
+        TraceCallPersistenceError: If a non-interactive origin reaches this
+            interactive pause boundary.
+    """
 
     if not _preparation_is_valid(preparation):
         return preparation
@@ -429,7 +441,17 @@ def admit_promoted_temporary_capture(
     preparation: ConsoleTurnPreparation,
     execution_context: ConsoleTurnExecutionContext,
 ) -> ConsoleTurnPreparation:
-    """Resume the exact Capture-On preparation after durable promotion."""
+    """Resume the exact Capture-On preparation after durable promotion.
+
+    Args:
+        preparation: Paused temporary Capture-On preparation.
+        execution_context: Fresh durable authority with unchanged configuration
+            and resolved destination.
+
+    Returns:
+        The ready durable preparation when every frozen identity matches,
+        otherwise the original preparation.
+    """
 
     if not _preparation_is_valid(preparation):
         return preparation
@@ -662,11 +684,14 @@ def _validate_preparation(preparation: ConsoleTurnPreparation) -> None:
         preparation.pre_send_conversation_id,
         "pre-send conversation ID",
     )
-    _validate_text(
-        preparation.executed_draft,
-        "executed draft",
-        CONSOLE_PREPARATION_DRAFT_MAX_BYTES,
-    )
+    if preparation.executed_draft:
+        _validate_text(
+            preparation.executed_draft,
+            "executed draft",
+            CONSOLE_PREPARATION_DRAFT_MAX_BYTES,
+        )
+    elif not preparation.attachment_ids:
+        _invalid("executed draft")
     _validate_text(
         preparation.pre_send_title,
         "pre-send title",

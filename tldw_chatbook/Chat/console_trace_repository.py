@@ -419,6 +419,22 @@ class ConsoleTraceRepository:
         supplied active-lineage turns excludes later calls and excluded
         regeneration branches even when they already exist in the source
         segment.
+
+        Args:
+            cursor: Caller-owned transaction cursor.
+            conversation_id: Durable source conversation identity.
+            included_turn_ids: Ordered unique trace-turn identities retained by
+                the forked message prefix.
+
+        Returns:
+            The newest matching immutable boundary, or None when no attached
+            trace owner or matching event exists.
+
+        Raises:
+            ValueError: If a conversation or turn identity is empty, duplicated,
+                or otherwise invalid.
+            TraceIdentityConflict: If the selected event has no reconstructable
+                surface head.
         """
 
         _nonempty(conversation_id, "conversation_id")
@@ -489,7 +505,21 @@ class ConsoleTraceRepository:
         conversation_id: str,
         boundary: TraceForkBoundary,
     ) -> TraceOwnerRecord:
-        """Attach a child owner to an exact immutable source boundary."""
+        """Attach a child owner to an exact immutable source boundary.
+
+        Args:
+            cursor: Caller-owned transaction cursor.
+            conversation_id: Durable child conversation identity.
+            boundary: Validated source prefix boundary captured by a fork fence.
+
+        Returns:
+            The newly attached child trace owner.
+
+        Raises:
+            TypeError: If boundary is not a TraceForkBoundary.
+            TraceIdentityConflict: If source ownership, reachability, event
+                identity, or surface state no longer matches the boundary.
+        """
 
         if not isinstance(boundary, TraceForkBoundary):
             raise TypeError("boundary")
@@ -549,7 +579,19 @@ class ConsoleTraceRepository:
         conversation_id: str,
         boundary: TraceForkBoundary,
     ) -> bool:
-        """Return whether an attached child owner exactly matches a fork boundary."""
+        """Return whether an attached child owner exactly matches a fork boundary.
+
+        Args:
+            cursor: Caller-owned transaction cursor.
+            conversation_id: Durable child conversation identity.
+            boundary: Expected immutable parent prefix boundary.
+
+        Returns:
+            True only when the attached child root records the exact boundary.
+
+        Raises:
+            TypeError: If boundary is not a TraceForkBoundary.
+        """
 
         if not isinstance(boundary, TraceForkBoundary):
             raise TypeError("boundary")
@@ -574,7 +616,19 @@ class ConsoleTraceRepository:
         cursor: sqlite3.Cursor,
         conversation_id: str,
     ) -> tuple[TraceCallRecord, ...]:
-        """Read a conversation's shared prefix and private suffix in order."""
+        """Read a conversation's shared prefix and private suffix in order.
+
+        Args:
+            cursor: Caller-owned transaction cursor.
+            conversation_id: Durable conversation whose attached lineage is read.
+
+        Returns:
+            Trace calls ordered root-to-leaf and by event sequence within each
+            segment, or an empty tuple when no trace owner is attached.
+
+        Raises:
+            RuntimeError: If a referenced lineage call cannot be reconstructed.
+        """
 
         owner_row = cursor.execute(
             """SELECT owner_id, conversation_id, root_segment_id, attached,

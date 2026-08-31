@@ -35,7 +35,14 @@ class TraceCallRecoveryState:
 def trace_call_recovery_state(
     preparation: ConsoleTurnPreparation | None,
 ) -> TraceCallRecoveryState | None:
-    """Project only an actionable trace pause into the transcript UI."""
+    """Project only an actionable trace pause into the transcript UI.
+
+    Args:
+        preparation: Current session preparation, if one exists.
+
+    Returns:
+        Content-free recovery identity for a supported pause, otherwise None.
+    """
 
     if (
         preparation is None
@@ -67,7 +74,19 @@ async def dispatch_trace_call_recovery_action(
     on_started: Callable[[], object] | None = None,
     on_finished: Callable[[], object | Awaitable[object]] | None = None,
 ) -> object:
-    """Route a visible trace-recovery action to the controller."""
+    """Route a visible trace-recovery action to the controller.
+
+    Args:
+        controller: Controller exposing the selected recovery entrypoint.
+        action: Stable visible action identifier.
+        preparation_id: Exact paused preparation identity.
+        on_started: Optional callback invoked before controller entry.
+        on_finished: Optional callback invoked after controller completion.
+
+    Returns:
+        The awaited controller result, or False for an unknown action or missing
+        handler.
+    """
 
     handler_name = {
         "retry": "retry_library_preparation",

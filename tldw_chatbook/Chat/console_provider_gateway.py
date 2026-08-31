@@ -224,7 +224,17 @@ def require_durable_capture_admission(
     capture_mode: ConsoleTraceCaptureMode,
     ephemeral: bool,
 ) -> None:
-    """Reject temporary Capture On before request serialization or adapter entry."""
+    """Reject temporary Capture On before request serialization or adapter entry.
+
+    Args:
+        capture_mode: Frozen trace capture mode for the provider call.
+        ephemeral: Whether the owning conversation lacks durable storage.
+
+    Raises:
+        TypeError: If either argument is not its exact boundary type.
+        TemporaryCaptureRequiresSave: If Capture On is requested for a temporary
+            conversation.
+    """
 
     if type(capture_mode) is not ConsoleTraceCaptureMode:
         raise TypeError("capture_mode must be ConsoleTraceCaptureMode")
