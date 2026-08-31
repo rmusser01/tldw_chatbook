@@ -192,7 +192,6 @@ from ...Library.library_media_state import (
     LibraryMediaTrashState,
     MediaBrowseScope,
     MediaTrashBrowseState,
-    MediaTrashMutationTarget,
     MediaTrashScope,
     build_library_media_browse_state,
     build_library_media_state,
@@ -17657,6 +17656,58 @@ class LibraryScreen(BaseAppScreen):
         return f"{readable[: limit - 3].rstrip()}..."
 
     @staticmethod
+    def _valid_library_media_trash_delete_ack(
+        result: Any,
+        *,
+        media_id: int,
+    ) -> bool:
+        """Accept only the local delete contract for the captured identity."""
+        if not isinstance(result, Mapping):
+            return False
+        acknowledged_id = result.get("media_id")
+        return (
+            result.get("ok") is True
+            and type(acknowledged_id) is int
+            and acknowledged_id == media_id
+        )
+
+    @staticmethod
+    def _validated_library_media_trash_restore_summary(
+        result: Any,
+        *,
+        media_id: int,
+    ) -> Mapping[str, Any] | None:
+        """Validate a restore response and retain only its bounded summary."""
+        if not isinstance(result, Mapping):
+            return None
+        if "ok" in result and result.get("ok") is not True:
+            return None
+        restored_id = result.get("id")
+        deleted = result.get("deleted")
+        is_trash = result.get("is_trash")
+        title = result.get("title")
+        media_type = result.get("type")
+        if (
+            type(restored_id) is not int
+            or restored_id != media_id
+            or type(deleted) is not int
+            or deleted != 0
+            or type(is_trash) is not int
+            or is_trash != 0
+            or type(title) is not str
+            or type(media_type) is not str
+            or not media_type.strip()
+        ):
+            return None
+        return {
+            "id": restored_id,
+            "title": title.strip() or "Untitled",
+            "type": media_type.strip(),
+            "deleted": deleted,
+            "is_trash": is_trash,
+        }
+
+    @staticmethod
     def _restore_library_media_scope(state: Mapping[str, Any]) -> MediaBrowseScope:
         """Return one strict dispatch-safe applied Media scope from saved state."""
         saved = state.get("library_media_scope")
@@ -27527,7 +27578,10 @@ class LibraryScreen(BaseAppScreen):
                         "Trash (error_type={}).",
                         type(exc).__name__,
                     )
-            if not isinstance(result, Mapping) or result.get("ok") is not True:
+            if not LibraryScreen._valid_library_media_trash_delete_ack(
+                result,
+                media_id=target.backing_media_id,
+            ):
                 failure_copy = "Could not delete this media item permanently."
                 return
 
@@ -27605,16 +27659,17 @@ class LibraryScreen(BaseAppScreen):
         row; this path never rewrites the row's ``url``, so task-4026's
         one-directional url-canonicalization edge -- which lives only in
         ``add_media_with_keywords``'s restore-by-re-import -- cannot occur
-        here). The returned freshly restored row is inserted straight back
-        into ``_local_source_records["media"]`` and the rail count is
-        incremented in place, mirroring ``_undo_library_media_bulk_delete``.
+        here). The response is validated against the captured identity and
+        restored state, then only a bounded title/type/state summary is
+        retained in ``_local_source_records["media"]``. Content, documents,
+        and versions never enter the retained rail snapshot.
 
         No receipt is left (ADR-055: receipts accompany destruction;
         restore is recovery) -- feedback is the row leaving the Trash
         list, both counts moving, and the transient notice line.
 
         Args:
-            target: Immutable row identity captured by the Trash controller
+            claim: Immutable row identity and lifecycle captured by the controller
                 before it fences outstanding reads.
         """
         target = claim.target
@@ -27630,10 +27685,16 @@ class LibraryScreen(BaseAppScreen):
                         restore_media_item,
                         mode="local",
                         media_id=target.backing_media_id,
+                        include_content=False,
+                        include_versions=False,
                         isolate_in_worker=True,
                     )
-                    if isinstance(result, Mapping):
-                        restored_record = result
+                    restored_record = (
+                        LibraryScreen._validated_library_media_trash_restore_summary(
+                            result,
+                            media_id=target.backing_media_id,
+                        )
+                    )
                 except Exception as exc:
                     logger.warning(
                         "Failed to restore a Library media item from the "

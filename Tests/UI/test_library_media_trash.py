@@ -1799,6 +1799,8 @@ async def test_media_trash_restore_preserves_normal_page_and_marks_only_it_stale
             "id": media_id,
             "title": restored["title"],
             "type": restored["media_type"],
+            "deleted": 0,
+            "is_trash": 0,
             "last_modified": "2026-08-30T00:00:00+00:00",
         }
 
@@ -2103,6 +2105,255 @@ async def test_media_trash_precommit_failure_releases_mounted_controls_without_r
         assert (
             screen.query_one("#library-media-trash-previous", Button).disabled is True
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("operation", "outcome"),
+    (
+        ("permanent-delete", {"ok": True, "media_id": 999}),
+        ("permanent-delete", {"ok": False, "media_id": 1}),
+        ("permanent-delete", {"ok": True}),
+        ("permanent-delete", {"ok": True, "media_id": True}),
+        ("permanent-delete", ["malformed"]),
+        (
+            "restore",
+            {
+                "id": 999,
+                "title": "Wrong identity",
+                "type": "audio",
+                "deleted": 0,
+                "is_trash": 0,
+            },
+        ),
+        ("restore", {"ok": False, "media_id": 999}),
+        (
+            "restore",
+            {"id": 1, "title": "Missing state", "type": "audio"},
+        ),
+        (
+            "restore",
+            {
+                "id": True,
+                "title": "Wrong type",
+                "type": "audio",
+                "deleted": 0,
+                "is_trash": 0,
+            },
+        ),
+        ("restore", ["malformed"]),
+    ),
+)
+async def test_media_trash_malformed_mutation_results_fail_closed(
+    operation, outcome
+):
+    """Malformed acknowledgements retain truthful fresh action authority."""
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_library_shell import (
+        LibraryHarness,
+        _active_library_screen,
+        _seed_conversations,
+        _two_media_items,
+        _wait_for_condition,
+        _wait_for_library_shell,
+        _wait_for_selector,
+    )
+
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    _seed_conversations(app, [], media=_two_media_items())
+    feed = _MountedTrashFeed(_canonical_trash_items(1))
+    feed.install(app.media_reading_scope_service)
+    mutation_calls: list[dict[str, object]] = []
+
+    async def mutate(_service, **kwargs):
+        mutation_calls.append(dict(kwargs))
+        return outcome
+
+    service = app.media_reading_scope_service
+    method_name = (
+        "restore_media_item"
+        if operation == "restore"
+        else "permanently_delete_media_item"
+    )
+    setattr(service, method_name, types.MethodType(mutate, service))
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-trash-open")
+        screen.query_one("#library-media-trash-open", Button).press()
+        controller = screen._library_media_trash_browse_controller
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.state.applied_result is not None,
+            message="Initial Trash page never applied.",
+        )
+        await _wait_for_selector(
+            screen, pilot, "#library-media-trash-restore"
+        )
+        retained_applied = controller.state.applied_result
+        retained_items = controller.state.retained_items
+        retained_selected_id = controller.state.selected_id
+        records_before = screen._local_source_records.get("media", ())
+
+        if operation == "restore":
+            action = screen.query_one("#library-media-trash-restore", Button)
+            expected_error = "Could not restore this media item."
+        else:
+            action = screen.query_one("#library-media-trash-delete", Button)
+            expected_error = "Could not delete this media item permanently."
+        action.focus()
+        await pilot.press("enter")
+        if operation == "permanent-delete":
+            await _wait_for_selector(
+                screen, pilot, "#library-media-trash-delete-confirm"
+            )
+            await pilot.press("tab", "enter")
+
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                not controller.state.mutation_pending
+                and not screen._library_media_bulk_delete_in_flight
+            ),
+            message="Malformed mutation response did not settle.",
+        )
+
+        assert mutation_calls
+        if operation == "restore":
+            assert mutation_calls == [
+                {
+                    "mode": "local",
+                    "media_id": 1,
+                    "include_content": False,
+                    "include_versions": False,
+                }
+            ]
+        else:
+            assert mutation_calls == [{"mode": "local", "media_id": 1}]
+        assert controller.state.applied_result is retained_applied
+        assert controller.state.retained_items is retained_items
+        assert controller.state.selected_id == retained_selected_id
+        assert controller.state.freshness == "fresh"
+        assert controller.state.error_copy == expected_error
+        assert controller.state.committed_notice == ""
+        assert screen._local_source_records.get("media", ()) is records_before
+        assert len(feed.calls) == 1
+        assert not action.disabled
+
+
+@pytest.mark.asyncio
+async def test_media_trash_restore_bounds_request_and_retained_summary():
+    """A successful restore never requests or retains unbounded detail."""
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_library_shell import (
+        LibraryHarness,
+        _active_library_screen,
+        _seed_conversations,
+        _two_media_items,
+        _wait_for_condition,
+        _wait_for_library_shell,
+        _wait_for_selector,
+    )
+
+    restored_id = 41
+    trash_item = {
+        "id": f"local:media:{restored_id}",
+        "backing_media_id": restored_id,
+        "title": "Large restored item",
+        "media_type": "document",
+        "trash_date": "2026-08-30T00:00:00+00:00",
+    }
+    app = _build_test_app()
+    app.library_new_profile_admission = False
+    _seed_conversations(app, [], media=_two_media_items())
+    feed = _MountedTrashFeed([trash_item])
+    feed.install(app.media_reading_scope_service)
+    restore_calls: list[dict[str, object]] = []
+
+    async def restore(_service, **kwargs):
+        restore_calls.append(dict(kwargs))
+        feed.items.clear()
+        return {
+            "id": restored_id,
+            "title": "Large restored item",
+            "type": "document",
+            "deleted": 0,
+            "is_trash": 0,
+            "content": "private-large-content" * 10_000,
+            "versions": [{"content": "private-version-content" * 10_000}],
+            "documents": [{"body": "private-document-body" * 10_000}],
+        }
+
+    app.media_reading_scope_service.restore_media_item = types.MethodType(
+        restore,
+        app.media_reading_scope_service,
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-media", Button).press()
+        normal = screen._library_media_browse_controller
+        await _wait_for_condition(
+            pilot,
+            lambda: normal.applied_result is not None,
+            message="Normal Media page never applied.",
+        )
+        retained_normal_result = normal.applied_result
+        retained_normal_items = normal.retained_items
+        await _wait_for_selector(screen, pilot, "#library-media-trash-open")
+        screen.query_one("#library-media-trash-open", Button).press()
+        trash = screen._library_media_trash_browse_controller
+        await _wait_for_condition(
+            pilot,
+            lambda: trash.state.applied_result is not None,
+            message="Initial Trash page never applied.",
+        )
+        await _wait_for_selector(
+            screen, pilot, "#library-media-trash-restore"
+        )
+        screen.query_one("#library-media-trash-restore", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                trash.state.applied_result is not None
+                and trash.state.applied_result.total == 0
+                and trash.state.freshness == "fresh"
+            ),
+            message="Post-restore Trash page never settled empty.",
+        )
+
+        assert restore_calls == [
+            {
+                "mode": "local",
+                "media_id": restored_id,
+                "include_content": False,
+                "include_versions": False,
+            }
+        ]
+        restored_summaries = tuple(
+            record
+            for record in screen._local_source_records.get("media", ())
+            if screen._source_record_id(record) == str(restored_id)
+        )
+        assert restored_summaries == (
+            {
+                "id": restored_id,
+                "title": "Large restored item",
+                "type": "document",
+                "deleted": 0,
+                "is_trash": 0,
+            },
+        )
+        assert "private-" not in repr(restored_summaries)
+        assert normal.applied_result is retained_normal_result
+        assert normal.retained_items is retained_normal_items
+        assert normal.freshness == "stale"
 
 
 @pytest.mark.asyncio
