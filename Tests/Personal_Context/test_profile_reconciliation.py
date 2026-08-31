@@ -26,8 +26,10 @@ from tldw_chatbook.Personal_Context.key_protector import (
 )
 from tldw_chatbook.Personal_Context.repository import (
     PersonalContextRepository,
+    PersonalContextLinkInProgressError,
     ProfileKeyActivationPendingError,
 )
+from tldw_chatbook.Personal_Context.sync_outbox import ProfileSyncOutbox
 
 
 NOW = "2026-08-30T12:00:00.000Z"
@@ -92,6 +94,9 @@ def _snapshot(
     scopes: tuple[ProfileScope, ...],
     records: tuple[ProfileRecord, ...],
     proposals: tuple[ProfileProposal, ...] = (),
+    schema_version: int = 1,
+    quotas: dict[str, int] | None = None,
+    purge_generation: int = 0,
 ) -> CanonicalBootstrapSnapshot:
     return CanonicalBootstrapSnapshot(
         dataset_id="dataset-1",
@@ -100,13 +105,20 @@ def _snapshot(
         scopes=scopes,
         records=records,
         proposals=proposals,
-        purge_generation=0,
-        schema_version=1,
-        quotas={"max_record_bytes": 16_384},
+        purge_generation=purge_generation,
+        schema_version=schema_version,
+        quotas=quotas or {"max_record_bytes": 16_384},
         cursor="sha256:" + "a" * 64,
         integrity_key_id="key-1",
         key_record_id="key-record-1",
         wrapped_key_blob="wrapped-private-material",
+    )
+
+
+def _freeze(repository: PersonalContextRepository, plan) -> None:
+    repository.acquire_first_link_freeze(
+        plan_id=plan.plan_id,
+        snapshot_token=plan.local_snapshot_token,
     )
 
 
@@ -154,6 +166,99 @@ def test_plan_is_content_free_read_only_and_requires_exact_collision_review() ->
     assert "wrapped-private-material" not in rendered
 
 
+def test_plan_records_exact_content_free_contract_outcomes() -> None:
+    local_global = _scope("profile-local", "scope-local-global", ScopeKind.GLOBAL)
+    remote_global = _scope(
+        "profile-server", "scope-server-global", ScopeKind.GLOBAL
+    )
+
+    plan = build_reconciliation_plan(
+        local_manifest=_manifest("profile-local", "manifest-local"),
+        local_scopes=(local_global,),
+        local_records=(),
+        local_proposals=(),
+        remote=_snapshot(
+            scopes=(remote_global,),
+            records=(),
+            schema_version=3,
+            quotas={"max_record_bytes": 32_768, "max_search_results": 40},
+        ),
+        local_workspace_bindings={},
+        required_schema_version=3,
+        required_quotas={"max_record_bytes": 16_384, "max_search_results": 20},
+    )
+
+    assert plan.profile_adoption == ("profile-local", "profile-server")
+    assert plan.global_scope_mapping == (
+        "scope-local-global",
+        "scope-server-global",
+    )
+    assert plan.schema_outcome == "compatible:3"
+    assert plan.quota_outcome == "minimums_satisfied"
+    assert plan.required_quotas == {
+        "max_record_bytes": 16_384,
+        "max_search_results": 20,
+    }
+    assert plan.server_quotas == {
+        "max_record_bytes": 32_768,
+        "max_search_results": 40,
+    }
+    assert plan.purge_outcome == "generation_matches:0"
+
+
+def test_review_freeze_blocks_mutations_survives_restart_and_cancel_releases(
+    tmp_path,
+) -> None:
+    protector = InMemoryProfileKeyProtector()
+    db_path = tmp_path / "profile.db"
+    repository = PersonalContextRepository(db_path, key_protector=protector)
+    local_manifest = _manifest("profile-local", "manifest-local")
+    local_scope = _scope("profile-local", "scope-local-global", ScopeKind.GLOBAL)
+    repository.create_profile_with_global_scope(local_manifest, local_scope)
+    plan = build_reconciliation_plan(
+        local_manifest=local_manifest,
+        local_scopes=(local_scope,),
+        local_records=(),
+        local_proposals=(),
+        remote=_snapshot(
+            scopes=(
+                _scope("profile-server", "scope-server-global", ScopeKind.GLOBAL),
+            ),
+            records=(),
+        ),
+        local_workspace_bindings={},
+    )
+    repository.acquire_first_link_freeze(
+        plan_id=plan.plan_id,
+        snapshot_token=plan.local_snapshot_token,
+    )
+    blocked = _record(
+        "profile-local",
+        "scope-local-global",
+        "record-blocked",
+        subject="response.detail",
+        value="concise",
+        version="record-blocked-v1",
+    )
+
+    assert repository.get_manifest() == local_manifest
+    with pytest.raises(
+        PersonalContextLinkInProgressError,
+        match="personal_context_link_in_progress",
+    ):
+        repository.commit_record_version(blocked, expected_version_id=None)
+
+    reopened = PersonalContextRepository(db_path, key_protector=protector)
+    with pytest.raises(
+        PersonalContextLinkInProgressError,
+        match="personal_context_link_in_progress",
+    ):
+        reopened.commit_record_version(blocked, expected_version_id=None)
+    assert reopened.release_first_link_freeze(plan_id="wrong-plan") is False
+    assert reopened.release_first_link_freeze(plan_id=plan.plan_id) is True
+    reopened.commit_record_version(blocked, expected_version_id=None)
+
+
 def test_plan_excludes_device_only_and_keeps_remote_workspaces_unlinked() -> None:
     local_global = _scope("profile-local", "scope-local-global", ScopeKind.GLOBAL)
     remote_global = _scope("profile-server", "scope-server-global", ScopeKind.GLOBAL)
@@ -193,6 +298,104 @@ def test_plan_excludes_device_only_and_keeps_remote_workspaces_unlinked() -> Non
     assert plan.local_only_record_ids == ()
     assert plan.unlinked_remote_scope_ids == ("scope-server-workspace",)
     assert plan.remote_only_record_ids == ("record-remote-workspace",)
+
+
+def test_plan_blocks_remote_record_that_reuses_device_only_identity() -> None:
+    local_global = _scope("profile-local", "scope-local-global", ScopeKind.GLOBAL)
+    remote_global = _scope(
+        "profile-server", "scope-server-global", ScopeKind.GLOBAL
+    )
+    private = _record(
+        "profile-local",
+        local_global.scope_id,
+        "record-shared-private",
+        subject="secret.preference",
+        value="never replace",
+        version="private-v1",
+        sync_mode=SyncMode.DEVICE_ONLY,
+    )
+    remote = _record(
+        "profile-server",
+        remote_global.scope_id,
+        private.record_id,
+        subject="public.preference",
+        value="server",
+        version="server-v1",
+    )
+
+    plan = build_reconciliation_plan(
+        local_manifest=_manifest("profile-local", "manifest-local"),
+        local_scopes=(local_global,),
+        local_records=(private,),
+        local_proposals=(),
+        remote=_snapshot(scopes=(remote_global,), records=(remote,)),
+        local_workspace_bindings={},
+    )
+
+    assert "device_only_identity_collision" in plan.attention_codes
+    assert plan.remote_only_record_ids == ()
+    assert (
+        private.record_id,
+        "device_only_identity_attention",
+        private.version_id,
+        remote.version_id,
+    ) in plan.record_outcomes
+    assert plan.can_approve is False
+
+
+def test_plan_preallocates_new_workspace_identity_and_mapping_collisions() -> None:
+    local_global = _scope("profile-local", "scope-local-global", ScopeKind.GLOBAL)
+    local_workspace = _scope(
+        "profile-local", "scope-local-workspace", ScopeKind.WORKSPACE
+    )
+    remote_global = _scope(
+        "profile-server", "scope-server-global", ScopeKind.GLOBAL
+    )
+    remote_workspace = _scope(
+        "profile-server", "scope-server-workspace", ScopeKind.WORKSPACE
+    )
+    local = _record(
+        "profile-local",
+        local_workspace.scope_id,
+        "record-local-workspace",
+        subject="project.goal",
+        value="local",
+        version="local-v1",
+    )
+    remote = _record(
+        "profile-server",
+        remote_workspace.scope_id,
+        "record-remote-workspace",
+        subject="project.goal",
+        value="remote",
+        version="remote-v1",
+    )
+    kwargs = {
+        "local_manifest": _manifest("profile-local", "manifest-local"),
+        "local_scopes": (local_global, local_workspace),
+        "local_records": (local,),
+        "local_proposals": (),
+        "remote": _snapshot(
+            scopes=(remote_global, remote_workspace), records=(remote,)
+        ),
+        "local_workspace_bindings": {},
+        "plan_id": "pc-link-plan-reviewed",
+    }
+
+    plan = build_reconciliation_plan(**kwargs)
+    replay = build_reconciliation_plan(**kwargs)
+
+    new_scope_id = dict(plan.workspace_new_scope_ids)[local_workspace.scope_id]
+    assert new_scope_id.startswith("scope-workspace-")
+    assert new_scope_id != local_workspace.scope_id
+    assert replay.workspace_new_scope_ids == plan.workspace_new_scope_ids
+    conflict = plan.workspace_mapping_conflicts[0]
+    assert conflict.local_scope_id == local_workspace.scope_id
+    assert conflict.remote_scope_id == remote_workspace.scope_id
+    assert conflict.record_ids == (
+        "record-local-workspace",
+        "record-remote-workspace",
+    )
 
 
 def test_reviewed_apply_adopts_server_identity_and_rebaselines_every_artifact(
@@ -264,6 +467,7 @@ def test_reviewed_apply_adopts_server_identity_and_rebaselines_every_artifact(
     old_material = repository._keys
     assert old_material is not None
 
+    _freeze(repository, plan)
     result = repository.apply_reviewed_link(
         plan=plan,
         remote=remote,
@@ -305,6 +509,25 @@ def test_reviewed_apply_adopts_server_identity_and_rebaselines_every_artifact(
     assert {"manifest", "scope", "record", "proposal", "outbox"}.issubset(
         retained_head_types
     )
+    outbox = ProfileSyncOutbox(repository)
+    pending = outbox.list_pending()
+    assert {(entry.object_type, entry.object_id, entry.version_id) for entry in pending} == {
+        ("record", "record-local", "record-local-v1"),
+        (
+            "proposal",
+            "proposal-local",
+            next(
+                version
+                for object_type, object_id, version in repository.first_link_head_rows()
+                if object_type == "proposal" and object_id == "proposal-local"
+            ),
+        ),
+    }
+    for entry in pending:
+        body = outbox.read_body(entry.outbox_id)
+        assert body is not None
+        assert body[entry.object_type]["profile_id"] == "profile-server"
+        assert body[entry.object_type]["scope_id"] == "scope-server-global"
     assert PersonalContextRepository(
         tmp_path / "profile.db", key_protector=protector
     ).get_manifest() == remote.manifest
@@ -338,22 +561,327 @@ def test_reviewed_apply_rejects_a_local_edit_racing_with_review(tmp_path) -> Non
         value="new",
         version="record-racing-v1",
     )
-    repository.commit_record_version(
-        racing_record,
-        expected_version_id=None,
-        outbox_body={"version": 1, "record": racing_record.model_dump(mode="json")},
-    )
-
-    with pytest.raises(ValueError, match="link_plan_stale"):
-        repository.apply_reviewed_link(
-            plan=plan,
-            remote=remote,
-            decisions={},
-            integrity_key=b"s" * 32,
+    _freeze(repository, plan)
+    with pytest.raises(
+        PersonalContextLinkInProgressError,
+        match="personal_context_link_in_progress",
+    ):
+        repository.commit_record_version(
+            racing_record,
+            expected_version_id=None,
+            outbox_body={
+                "version": 1,
+                "record": racing_record.model_dump(mode="json"),
+            },
         )
 
     assert repository.get_manifest() == local_manifest
-    assert repository.get_record("record-racing") == racing_record
+    assert repository.get_record("record-racing") is None
+
+
+def test_reviewed_apply_never_rewrites_user_strings_equal_to_old_id(tmp_path) -> None:
+    transformed = PersonalContextRepository._transform_link_body(
+        "record",
+        {
+            "profile_id": "profile-local",
+            "scope_id": "scope-local-global",
+            "payload": {"value": "profile-local"},
+            "provenance": {"reason_code": "scope-local-global"},
+        },
+        old_profile_id="profile-local",
+        new_profile_id="profile-server",
+        scope_mapping={"scope-local-global": "scope-server-global"},
+    )
+    assert transformed["payload"]["value"] == "profile-local"
+    assert transformed["provenance"]["reason_code"] == "scope-local-global"
+
+    repository = PersonalContextRepository(
+        tmp_path / "profile.db", key_protector=InMemoryProfileKeyProtector()
+    )
+    local_manifest = _manifest("profile-local", "manifest-local")
+    local_scope = _scope("profile-local", "scope-local-global", ScopeKind.GLOBAL)
+    record = _record(
+        local_manifest.profile_id,
+        local_scope.scope_id,
+        "record-canary",
+        subject="identity.canary",
+        value=local_manifest.profile_id,
+        version="record-canary-v1",
+    )
+    record = record.model_copy(
+        update={
+            "provenance": record.provenance.model_copy(
+                update={"reason_code": local_scope.scope_id}
+            )
+        }
+    )
+    repository.create_profile_with_global_scope(local_manifest, local_scope)
+    repository.commit_record_version(
+        record,
+        expected_version_id=None,
+        outbox_body={"version": 1, "record": record.model_dump(mode="json")},
+    )
+    remote_scope = _scope("profile-server", "scope-server-global", ScopeKind.GLOBAL)
+    remote = _snapshot(scopes=(remote_scope,), records=())
+    plan = build_reconciliation_plan(
+        local_manifest=local_manifest,
+        local_scopes=(local_scope,),
+        local_records=(record,),
+        local_proposals=(),
+        remote=remote,
+        local_workspace_bindings={},
+    )
+
+    _freeze(repository, plan)
+    repository.apply_reviewed_link(
+        plan=plan, remote=remote, decisions={}, integrity_key=b"s" * 32
+    )
+
+    retained = repository.get_record(record.record_id)
+    assert retained is not None
+    assert retained.profile_id == "profile-server"
+    assert retained.scope_id == "scope-server-global"
+    assert retained.payload.value == "profile-local"
+    assert retained.provenance.reason_code == "scope-local-global"
+
+
+@pytest.mark.parametrize("decision", ["unlinked", "new"])
+def test_workspace_link_decision_is_explicit_and_never_reuses_provisional_id(
+    tmp_path, decision
+) -> None:
+    repository = PersonalContextRepository(
+        tmp_path / f"{decision}.db", key_protector=InMemoryProfileKeyProtector()
+    )
+    manifest = _manifest("profile-local", "manifest-local")
+    global_scope = _scope("profile-local", "scope-local-global", ScopeKind.GLOBAL)
+    workspace = _scope("profile-local", "scope-provisional", ScopeKind.WORKSPACE)
+    repository.create_profile_with_global_scope(manifest, global_scope)
+    repository.commit_scope_with_binding(
+        workspace,
+        {"version": 1, "local_workspace_id": "workspace-local", "label": "Project"},
+    )
+    record = _record(
+        manifest.profile_id,
+        workspace.scope_id,
+        "workspace-record",
+        subject="project.goal",
+        value="ship",
+        version="workspace-record-v1",
+    )
+    repository.commit_record_version(
+        record,
+        expected_version_id=None,
+        outbox_body={"version": 1, "record": record.model_dump(mode="json")},
+    )
+    remote_global = _scope("profile-server", "scope-server-global", ScopeKind.GLOBAL)
+    remote = _snapshot(scopes=(remote_global,), records=())
+    plan = build_reconciliation_plan(
+        local_manifest=manifest,
+        local_scopes=(global_scope, workspace),
+        local_records=(record,),
+        local_proposals=(),
+        remote=remote,
+        local_workspace_bindings=repository.list_validated_scope_bindings(),
+    )
+
+    _freeze(repository, plan)
+    repository.apply_reviewed_link(
+        plan=plan,
+        remote=remote,
+        decisions={f"workspace:{workspace.scope_id}": decision},
+        integrity_key=b"s" * 32,
+    )
+
+    retained = repository.get_record(record.record_id)
+    assert retained is not None
+    if decision == "unlinked":
+        assert retained.scope_id == workspace.scope_id
+        assert workspace.scope_id not in repository.list_validated_scope_bindings()
+        assert record.record_id not in repository.first_link_sync_heads()[
+            "personal_context.record"
+        ]
+    else:
+        assert retained.scope_id == dict(plan.workspace_new_scope_ids)[
+            workspace.scope_id
+        ]
+        assert retained.scope_id in repository.list_validated_scope_bindings()
+
+
+def test_local_only_multiversion_record_journals_oldest_to_head(tmp_path) -> None:
+    repository = PersonalContextRepository(
+        tmp_path / "lineage.db", key_protector=InMemoryProfileKeyProtector()
+    )
+    manifest = _manifest("profile-local", "manifest-local")
+    local_scope = _scope("profile-local", "scope-local", ScopeKind.GLOBAL)
+    repository.create_profile_with_global_scope(manifest, local_scope)
+    first = _record(
+        manifest.profile_id,
+        local_scope.scope_id,
+        "record-local",
+        subject="response.detail",
+        value="concise",
+        version="record-v1",
+    )
+    second = first.model_copy(
+        update={
+            "version_id": "record-v2",
+            "parent_version_id": "record-v1",
+            "payload": PreferencePayload(
+                subject="response.detail", polarity="like", value="very concise"
+            ),
+        }
+    )
+    repository.commit_record_version(
+        first,
+        expected_version_id=None,
+        outbox_body={"version": 1, "record": first.model_dump(mode="json")},
+    )
+    repository.commit_record_version(
+        second,
+        expected_version_id="record-v1",
+        outbox_body={"version": 1, "record": second.model_dump(mode="json")},
+    )
+    remote_scope = _scope("profile-server", "scope-server", ScopeKind.GLOBAL)
+    remote = _snapshot(scopes=(remote_scope,), records=())
+    plan = build_reconciliation_plan(
+        local_manifest=manifest,
+        local_scopes=(local_scope,),
+        local_records=(second,),
+        local_proposals=(),
+        remote=remote,
+        local_workspace_bindings={},
+    )
+
+    _freeze(repository, plan)
+    repository.apply_reviewed_link(
+        plan=plan, remote=remote, decisions={}, integrity_key=b"s" * 32
+    )
+
+    outbox = ProfileSyncOutbox(repository)
+    versions = [
+        entry.version_id
+        for entry in outbox.list_pending()
+        if entry.object_type == "record" and entry.object_id == "record-local"
+    ]
+    assert versions == ["record-v1", "record-v2"]
+
+
+def test_local_same_id_winner_is_rebased_on_server_head(tmp_path) -> None:
+    repository = PersonalContextRepository(
+        tmp_path / "merge.db", key_protector=InMemoryProfileKeyProtector()
+    )
+    manifest = _manifest("profile-local", "manifest-local")
+    local_scope = _scope("profile-local", "scope-local", ScopeKind.GLOBAL)
+    repository.create_profile_with_global_scope(manifest, local_scope)
+    local = _record(
+        manifest.profile_id,
+        local_scope.scope_id,
+        "record-shared",
+        subject="response.detail",
+        value="local",
+        version="local-v1",
+    )
+    repository.commit_record_version(
+        local,
+        expected_version_id=None,
+        outbox_body={"version": 1, "record": local.model_dump(mode="json")},
+    )
+    remote_scope = _scope("profile-server", "scope-server", ScopeKind.GLOBAL)
+    remote_record = _record(
+        "profile-server",
+        remote_scope.scope_id,
+        "record-shared",
+        subject="response.detail",
+        value="server",
+        version="server-v3",
+    )
+    remote = _snapshot(scopes=(remote_scope,), records=(remote_record,))
+    plan = build_reconciliation_plan(
+        local_manifest=manifest,
+        local_scopes=(local_scope,),
+        local_records=(local,),
+        local_proposals=(),
+        remote=remote,
+        local_workspace_bindings={},
+    )
+
+    _freeze(repository, plan)
+    repository.apply_reviewed_link(
+        plan=plan,
+        remote=remote,
+        decisions={plan.version_conflicts[0].decision_id: "local"},
+        integrity_key=b"s" * 32,
+    )
+
+    merged = repository.get_record("record-shared")
+    assert merged is not None
+    assert merged.payload.value == "local"
+    assert merged.parent_version_id == "server-v3"
+    assert merged.version_id not in {"local-v1", "server-v3"}
+    pending = [
+        entry
+        for entry in ProfileSyncOutbox(repository).list_pending()
+        if entry.object_id == "record-shared"
+    ]
+    assert [entry.version_id for entry in pending] == [merged.version_id]
+
+
+def test_local_collision_winner_journals_tombstone_for_remote_occupant(tmp_path) -> None:
+    repository = PersonalContextRepository(
+        tmp_path / "tombstone.db", key_protector=InMemoryProfileKeyProtector()
+    )
+    manifest = _manifest("profile-local", "manifest-local")
+    local_scope = _scope("profile-local", "scope-local", ScopeKind.GLOBAL)
+    repository.create_profile_with_global_scope(manifest, local_scope)
+    local = _record(
+        manifest.profile_id,
+        local_scope.scope_id,
+        "record-local",
+        subject="response.detail",
+        value="local",
+        version="local-v1",
+    )
+    repository.commit_record_version(
+        local,
+        expected_version_id=None,
+        outbox_body={"version": 1, "record": local.model_dump(mode="json")},
+    )
+    remote_scope = _scope("profile-server", "scope-server", ScopeKind.GLOBAL)
+    remote_record = _record(
+        "profile-server",
+        remote_scope.scope_id,
+        "record-remote",
+        subject="response.detail",
+        value="server",
+        version="remote-v4",
+    )
+    remote = _snapshot(scopes=(remote_scope,), records=(remote_record,))
+    plan = build_reconciliation_plan(
+        local_manifest=manifest,
+        local_scopes=(local_scope,),
+        local_records=(local,),
+        local_proposals=(),
+        remote=remote,
+        local_workspace_bindings={},
+    )
+
+    _freeze(repository, plan)
+    repository.apply_reviewed_link(
+        plan=plan,
+        remote=remote,
+        decisions={plan.key_collisions[0].decision_id: "local"},
+        integrity_key=b"s" * 32,
+    )
+
+    tombstone = repository.get_record("record-remote")
+    assert tombstone is not None
+    assert tombstone.state is RecordState.DELETED
+    assert tombstone.parent_version_id == "remote-v4"
+    assert tombstone.payload is None
+    pending_ids = {
+        entry.object_id for entry in ProfileSyncOutbox(repository).list_pending()
+    }
+    assert {"record-local", "record-remote"}.issubset(pending_ids)
 
 
 class _FailOnceActivationProtector(InMemoryProfileKeyProtector):
@@ -390,6 +918,7 @@ def test_staged_integrity_key_recovers_interruption_after_database_rebaseline(
         local_workspace_bindings={},
     )
 
+    _freeze(repository, plan)
     with pytest.raises(ProfileKeyActivationPendingError):
         repository.apply_reviewed_link(
             plan=plan,

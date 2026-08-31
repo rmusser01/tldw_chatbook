@@ -686,7 +686,13 @@ class ServerSyncService:
         record = self._dump(response)
         if not isinstance(record, dict):
             raise ValueError("personal_context_bootstrap_response_invalid")
-        return {"device_id": device_id, **record}
+        return {
+            "device_id": device_id,
+            **record,
+            "_sync_capabilities": {
+                "max_batch_size": capabilities.max_batch_size,
+            },
+        }
 
     async def complete_personal_context_link(
         self,
@@ -781,7 +787,7 @@ class ServerSyncService:
         idempotency_key: str | None = None,
         last_known_cursor: str | None = None,
     ) -> dict[str, Any]:
-        """Push local-first Sync v2 envelopes through the policy-gated transport.
+        """Push non-Personal-Context envelopes through the public transport.
 
         Args:
             dataset_id: Dataset receiving the envelopes.
@@ -798,6 +804,42 @@ class ServerSyncService:
             ValueError: If outgoing envelopes or the server response violate Sync v2 scope.
             PolicyDeniedError: If runtime policy blocks server Sync v2 push access.
         """
+        candidate_domains = set(domains or ())
+        for envelope in envelopes:
+            domain = (
+                envelope.get("domain")
+                if isinstance(envelope, Mapping)
+                else getattr(envelope, "domain", None)
+            )
+            if isinstance(domain, str):
+                candidate_domains.add(domain)
+        if any(
+            domain == "personal_context"
+            or domain.startswith("personal_context.")
+            for domain in candidate_domains
+        ):
+            raise ValueError("personal_context_requires_reviewed_first_link")
+        return await self._push_v2_envelopes(
+            dataset_id=dataset_id,
+            device_id=device_id,
+            envelopes=envelopes,
+            domains=domains,
+            idempotency_key=idempotency_key,
+            last_known_cursor=last_known_cursor,
+        )
+
+    async def _push_v2_envelopes(
+        self,
+        *,
+        dataset_id: str,
+        device_id: str,
+        envelopes: list[SyncV2Envelope | Mapping[str, Any]],
+        domains: list[str] | None = None,
+        idempotency_key: str | None = None,
+        last_known_cursor: str | None = None,
+    ) -> dict[str, Any]:
+        """Validate and dispatch one push after its caller proves domain authority."""
+
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import SyncV2Envelope, SyncV2PushRequest
 
@@ -840,6 +882,20 @@ class ServerSyncService:
         )
         return response
 
+    async def _push_v2_personal_context_first_link(
+        self, **kwargs: Any
+    ) -> dict[str, Any]:
+        """Private push reached only from exact reviewed first-link convergence."""
+
+        return await self._push_v2_envelopes(**kwargs)
+
+    async def _push_v2_personal_context_complete(
+        self, **kwargs: Any
+    ) -> dict[str, Any]:
+        """Private push reached only after LocalFirst validates the exact receipt."""
+
+        return await self._push_v2_envelopes(**kwargs)
+
     async def pull_v2_envelopes(
         self,
         *,
@@ -849,6 +905,7 @@ class ServerSyncService:
         domains: list[str] | None = None,
         page_size: int | None = None,
         include_own_changes: bool = False,
+        _personal_context_first_link: bool = False,
     ) -> dict[str, Any]:
         """Pull selected Sync v2 envelopes for restore or incremental sync.
 
@@ -867,6 +924,16 @@ class ServerSyncService:
             ValueError: If pulled envelopes or pagination state violate Sync v2 scope.
             PolicyDeniedError: If runtime policy blocks server Sync v2 pull access.
         """
+        if (
+            domains
+            and any(
+                domain == "personal_context"
+                or domain.startswith("personal_context.")
+                for domain in domains
+            )
+            and not _personal_context_first_link
+        ):
+            raise ValueError("personal_context_requires_reviewed_first_link")
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import SyncV2Envelope
 
@@ -898,6 +965,36 @@ class ServerSyncService:
             envelope_count=len(envelopes),
         )
         return response
+
+    async def _pull_v2_personal_context_first_link(
+        self,
+        *,
+        dataset_id: str,
+        device_id: str,
+        cursor: str | None,
+        domains: list[str],
+        page_size: int | None,
+        include_own_changes: bool,
+    ) -> dict[str, Any]:
+        """Private transport used only by the exact reviewed reconciliation path."""
+
+        return await self.pull_v2_envelopes(
+            dataset_id=dataset_id,
+            device_id=device_id,
+            cursor=cursor,
+            domains=domains,
+            page_size=page_size,
+            include_own_changes=include_own_changes,
+            _personal_context_first_link=True,
+        )
+
+    async def _pull_v2_personal_context_complete(self, **kwargs: Any) -> dict[str, Any]:
+        """Private transport reached only after LocalFirst validates the exact receipt."""
+
+        return await self.pull_v2_envelopes(
+            **kwargs,
+            _personal_context_first_link=True,
+        )
 
     async def list_v2_conflicts(
         self,

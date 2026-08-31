@@ -50,13 +50,14 @@ _SYNC_V2_CONFLICT_RESOLUTION_STATUSES = {
     "defer-later",
 }
 SYNC_V2_CONFLICT_REVIEW_DEFAULT_LIMIT = 100
-SYNC_STATE_SCHEMA_VERSION = 6
+SYNC_STATE_SCHEMA_VERSION = 7
 _FILTER_UNSET = object()
 _PERSONAL_CONTEXT_LINK_STATES = {
     "review_required",
     "applying",
     "local_rebaseline_complete",
     "completing",
+    "reconciling",
     "complete",
     "attention_required",
 }
@@ -412,6 +413,9 @@ class SyncStateRepository(BaseDB):
                     key_record_id TEXT NOT NULL,
                     purge_generation INTEGER NOT NULL,
                     bootstrap_cursor TEXT NOT NULL,
+                    confirmed_cursor TEXT,
+                    bootstrap_heads TEXT NOT NULL DEFAULT '{}',
+                    expected_heads TEXT NOT NULL DEFAULT '{}',
                     plan_id TEXT NOT NULL,
                     rebaseline_version INTEGER NOT NULL,
                     attention_code TEXT,
@@ -422,6 +426,7 @@ class SyncStateRepository(BaseDB):
                 )
                 self._ensure_sync_v2_profile_columns(conn)
                 self._ensure_sync_v2_outbox_columns(conn)
+                self._ensure_personal_context_link_columns(conn)
                 self._record_schema_version(conn)
         finally:
             if not getattr(self, "is_memory_db", False):
@@ -1191,6 +1196,42 @@ class SyncStateRepository(BaseDB):
             status="pending",
             domains=domains,
         )
+
+    def clear_pending_personal_context_outbox(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        dataset_id: str,
+        device_id: str,
+    ) -> int:
+        """Remove only stale, unaccepted PC copies for one reviewed device binding."""
+
+        source_scope_key = _sync_v2_outbox_scope_key(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+        removed = 0
+        with self.transaction() as conn:
+            rows = conn.execute(
+                "SELECT outbox_id, envelope FROM sync_v2_local_outbox "
+                "WHERE source_scope_key = ? AND dataset_id = ? "
+                "AND status = 'pending' AND domain LIKE 'personal_context.%' "
+                "ORDER BY outbox_id",
+                (source_scope_key, dataset_id),
+            ).fetchall()
+            for row in rows:
+                envelope = self._parse_outbox_envelope(json.loads(row["envelope"]))
+                if envelope.device_id != device_id:
+                    continue
+                removed += conn.execute(
+                    "DELETE FROM sync_v2_local_outbox WHERE outbox_id = ? "
+                    "AND status = 'pending'",
+                    (int(row["outbox_id"]),),
+                ).rowcount
+        return removed
 
     def get_sync_v2_outbox_entry(
         self,
@@ -2044,6 +2085,9 @@ class SyncStateRepository(BaseDB):
         rebaseline_version: int,
         attention_code: str | None,
         expected_states: tuple[str, ...] | None = None,
+        confirmed_cursor: str | None = None,
+        bootstrap_heads: Mapping[str, Mapping[str, str]] | None = None,
+        expected_heads: Mapping[str, Mapping[str, str]] | None = None,
     ) -> dict[str, Any]:
         """Persist one content-free first-link state with optional state CAS."""
 
@@ -2070,6 +2114,16 @@ class SyncStateRepository(BaseDB):
             not attention_code or len(attention_code) > 128
         ):
             raise ValueError("personal_context_attention_code_invalid")
+        if confirmed_cursor is not None and (
+            not isinstance(confirmed_cursor, str)
+            or not confirmed_cursor
+            or len(confirmed_cursor) > 512
+        ):
+            raise ValueError("personal_context_confirmed_cursor_invalid")
+        normalized_heads = _validate_personal_context_heads(expected_heads or {})
+        normalized_bootstrap_heads = _validate_personal_context_heads(
+            bootstrap_heads or {}
+        )
         principal = _scope_value(authenticated_principal_id)
         now = _utc_now()
         with self._get_connection() as conn:
@@ -2097,9 +2151,10 @@ class SyncStateRepository(BaseDB):
                     server_profile_id, authenticated_principal_id, state,
                     device_id, dataset_id, authority_id, profile_id,
                     integrity_key_id, key_record_id, purge_generation,
-                    bootstrap_cursor, plan_id, rebaseline_version,
-                    attention_code, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    bootstrap_cursor, confirmed_cursor, bootstrap_heads,
+                    expected_heads, plan_id,
+                    rebaseline_version, attention_code, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(server_profile_id, authenticated_principal_id)
                 DO UPDATE SET
                     state = excluded.state,
@@ -2111,6 +2166,9 @@ class SyncStateRepository(BaseDB):
                     key_record_id = excluded.key_record_id,
                     purge_generation = excluded.purge_generation,
                     bootstrap_cursor = excluded.bootstrap_cursor,
+                    confirmed_cursor = excluded.confirmed_cursor,
+                    bootstrap_heads = excluded.bootstrap_heads,
+                    expected_heads = excluded.expected_heads,
                     plan_id = excluded.plan_id,
                     rebaseline_version = excluded.rebaseline_version,
                     attention_code = excluded.attention_code,
@@ -2128,6 +2186,9 @@ class SyncStateRepository(BaseDB):
                     key_record_id,
                     purge_generation,
                     bootstrap_cursor,
+                    confirmed_cursor,
+                    _json_dumps(normalized_bootstrap_heads),
+                    _json_dumps(normalized_heads),
                     plan_id,
                     rebaseline_version,
                     attention_code,
@@ -2173,6 +2234,9 @@ class SyncStateRepository(BaseDB):
             "key_record_id": row["key_record_id"],
             "purge_generation": int(row["purge_generation"]),
             "bootstrap_cursor": row["bootstrap_cursor"],
+            "confirmed_cursor": row["confirmed_cursor"],
+            "bootstrap_heads": json.loads(row["bootstrap_heads"]),
+            "expected_heads": json.loads(row["expected_heads"]),
             "plan_id": row["plan_id"],
             "rebaseline_version": int(row["rebaseline_version"]),
             "attention_code": row["attention_code"],
@@ -2211,6 +2275,13 @@ class SyncStateRepository(BaseDB):
         *,
         server_profile_id: str,
         authenticated_principal_id: str | None,
+        dataset_id: str | None = None,
+        device_id: str | None = None,
+        profile_id: str | None = None,
+        integrity_key_id: str | None = None,
+        key_record_id: str | None = None,
+        purge_generation: int | None = None,
+        confirmed_cursor: str | None = None,
     ) -> bool:
         """Gate ordinary Personal Context dispatch on an exact complete receipt."""
 
@@ -2218,7 +2289,35 @@ class SyncStateRepository(BaseDB):
             server_profile_id=server_profile_id,
             authenticated_principal_id=authenticated_principal_id,
         )
-        return state is not None and state["state"] == "complete"
+        if state is None or state["state"] != "complete":
+            return False
+        exact = {
+            "dataset_id": dataset_id,
+            "device_id": device_id,
+            "profile_id": profile_id,
+            "integrity_key_id": integrity_key_id,
+            "key_record_id": key_record_id,
+            "purge_generation": purge_generation,
+            "confirmed_cursor": confirmed_cursor,
+        }
+        if any(value is None for value in exact.values()):
+            return False
+        if any(state[key] != value for key, value in exact.items()):
+            return False
+        profile_state = self.get_sync_v2_profile_state(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=None,
+        )
+        if profile_state is None:
+            return False
+        if profile_state["dataset_id"] != dataset_id:
+            return False
+        if profile_state["device_id"] != device_id:
+            return False
+        if profile_state["dataset_cursors"].get("sync_v2") != confirmed_cursor:
+            return False
+        return True
 
     def get_sync_v2_profile_summary(
         self,
@@ -2798,6 +2897,33 @@ class SyncStateRepository(BaseDB):
             )
 
     @staticmethod
+    def _ensure_personal_context_link_columns(conn: sqlite3.Connection) -> None:
+        existing_columns = {
+            row["name"]
+            for row in conn.execute(
+                "PRAGMA table_info(personal_context_link_state)"
+            ).fetchall()
+        }
+        column_defs = {
+            "confirmed_cursor": "TEXT",
+            "bootstrap_heads": "TEXT NOT NULL DEFAULT '{}'",
+            "expected_heads": "TEXT NOT NULL DEFAULT '{}'",
+        }
+        for column_name, definition in column_defs.items():
+            if column_name not in existing_columns:
+                if not validate_column_name(
+                    column_name, "personal_context_link_state"
+                ):
+                    raise ValueError(
+                        "Invalid personal_context_link_state column name: "
+                        f"{column_name}"
+                    )
+                conn.execute(
+                    "ALTER TABLE personal_context_link_state ADD COLUMN "
+                    f"{column_name} {definition}"
+                )
+
+    @staticmethod
     def _record_schema_version(conn: sqlite3.Connection) -> None:
         current_version = conn.execute(
             "SELECT MAX(version) FROM schema_version"
@@ -3152,6 +3278,35 @@ def _sync_v2_conflict_summary_sort_key(item: Mapping[str, Any]) -> tuple[str, in
 
 def _json_dumps(value: Mapping[str, Any] | list[Any]) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def _validate_personal_context_heads(
+    value: Mapping[str, Mapping[str, str]],
+) -> dict[str, dict[str, str]]:
+    """Validate bounded, content-free canonical head identifiers."""
+
+    if not isinstance(value, Mapping) or len(value) > 8:
+        raise ValueError("personal_context_expected_heads_invalid")
+    normalized: dict[str, dict[str, str]] = {}
+    for domain, heads in value.items():
+        if (
+            not isinstance(domain, str)
+            or not domain.startswith("personal_context.")
+            or len(domain) > 128
+            or not isinstance(heads, Mapping)
+            or len(heads) > 10_000
+        ):
+            raise ValueError("personal_context_expected_heads_invalid")
+        normalized_domain: dict[str, str] = {}
+        for object_id, version_id in heads.items():
+            if any(
+                not isinstance(item, str) or not item or len(item) > 512
+                for item in (object_id, version_id)
+            ):
+                raise ValueError("personal_context_expected_heads_invalid")
+            normalized_domain[object_id] = version_id
+        normalized[domain] = normalized_domain
+    return normalized
 
 
 def _utc_now() -> str:

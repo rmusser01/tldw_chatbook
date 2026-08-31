@@ -10,6 +10,7 @@ import sqlite3
 import uuid
 from collections.abc import Iterator, Mapping
 from contextlib import closing, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -45,12 +46,15 @@ from .repository_models import QuarantineEntry
 from .runtime_policy import GLOBAL_POLICY_ID
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 _ENVELOPE_SCHEMA_VERSION = 1
 _WRAP_NONCE_BYTES = 12
 _PEER_ENVELOPE = "chatbook-local-v1"
 MAX_UNRESOLVED_PROPOSALS = 200
 _COLLECTION_PAGE_SIZE = 128
+_FIRST_LINK_WRITE_PLAN: ContextVar[str | None] = ContextVar(
+    "personal_context_first_link_write_plan", default=None
+)
 
 
 class RepositorySchemaError(RuntimeError):
@@ -75,6 +79,10 @@ class ProfileDestroyedError(ProfileLockedError):
 
 class ProfileKeyActivationPendingError(ProfileLockedError):
     """Report a committed rebaseline awaiting secure key-store activation."""
+
+
+class PersonalContextLinkInProgressError(RuntimeError):
+    """Reject ordinary writes while an exact first-link review is frozen."""
 
 
 class ProposalLimitExceededError(RuntimeError):
@@ -222,6 +230,14 @@ _SCHEMA_STATEMENTS = (
         object_id TEXT NOT NULL,
         version_id TEXT,
         reason_code TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE first_link_freeze (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        plan_id TEXT NOT NULL,
+        snapshot_token TEXT NOT NULL,
         created_at TEXT NOT NULL
     )
     """,
@@ -409,7 +425,7 @@ class PersonalContextRepository:
         if len(rows) != 1 or rows[0]["singleton"] != 1:
             raise RepositorySchemaError("Personal Context schema marker is invalid.")
         version = rows[0]["version"]
-        if version not in {1, 2, 3, SCHEMA_VERSION}:
+        if version not in {1, 2, 3, 4, SCHEMA_VERSION}:
             raise RepositorySchemaError(
                 f"Unsupported Personal Context schema version: {version!r}."
             )
@@ -476,6 +492,18 @@ class PersonalContextRepository:
                 "SELECT 1 FROM encrypted_outbox WHERE sequence IS NULL LIMIT 1"
             ).fetchone() is not None:
                 raise RepositorySchemaError("Personal Context outbox order is invalid.")
+            version = 4
+        if version == 4:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS first_link_freeze (
+                    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                    plan_id TEXT NOT NULL,
+                    snapshot_token TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
             version = SCHEMA_VERSION
         connection.execute(
             "UPDATE personal_context_schema SET version = ? WHERE singleton = 1",
@@ -555,6 +583,13 @@ class PersonalContextRepository:
         """Open a write transaction and reject absent or destroyed profile state."""
 
         with self._transaction() as connection:
+            freeze = connection.execute(
+                "SELECT plan_id FROM first_link_freeze WHERE singleton = 1"
+            ).fetchone()
+            if freeze is not None and freeze["plan_id"] != _FIRST_LINK_WRITE_PLAN.get():
+                raise PersonalContextLinkInProgressError(
+                    "personal_context_link_in_progress"
+                )
             meta = connection.execute(
                 "SELECT profile_id, destroyed FROM profile_meta WHERE singleton = 1"
             ).fetchone()
@@ -570,6 +605,98 @@ class PersonalContextRepository:
             elif profile_id is not None and meta["profile_id"] != profile_id:
                 raise ValueError("Object does not belong to the local profile.")
             yield connection
+
+    def acquire_first_link_freeze(
+        self,
+        *,
+        plan_id: str,
+        snapshot_token: str,
+    ) -> None:
+        """Persist a conservative write freeze for one exact reviewed snapshot."""
+
+        if not plan_id or not snapshot_token:
+            raise ValueError("personal_context_link_freeze_binding_invalid")
+        from .reconciliation import _snapshot_token
+
+        with self._transaction() as connection:
+            current = connection.execute(
+                "SELECT plan_id, snapshot_token FROM first_link_freeze "
+                "WHERE singleton = 1"
+            ).fetchone()
+            if current is not None:
+                if (
+                    current["plan_id"] == plan_id
+                    and current["snapshot_token"] == snapshot_token
+                ):
+                    return
+                raise PersonalContextLinkInProgressError(
+                    "personal_context_link_in_progress"
+                )
+
+            def current_values(
+                object_type: str, model: type[BaseModel]
+            ) -> list[Any]:
+                rows = connection.execute(
+                    "SELECT encrypted_objects.* FROM object_heads "
+                    "JOIN encrypted_objects USING (object_type, object_id, version_id) "
+                    "WHERE object_type = ? ORDER BY object_id",
+                    (object_type,),
+                ).fetchall()
+                return [
+                    model.model_validate_json(self._decrypt_row(row)) for row in rows
+                ]
+
+            manifests = current_values("manifest", ProfileManifest)
+            if len(manifests) != 1:
+                raise ValueError("personal_context_link_snapshot_stale")
+            bindings: dict[str, Mapping[str, object]] = {}
+            for row in connection.execute(
+                "SELECT encrypted_objects.* FROM local_scope_bindings "
+                "JOIN encrypted_objects ON encrypted_objects.object_type = "
+                "'scope_binding' AND encrypted_objects.object_id = "
+                "local_scope_bindings.scope_id AND encrypted_objects.version_id = "
+                "local_scope_bindings.encrypted_binding_version"
+            ).fetchall():
+                bindings[str(row["object_id"])] = json.loads(self._decrypt_row(row))
+            current_token = _snapshot_token(
+                manifests[0],
+                current_values("scope", ProfileScope),
+                current_values("record", ProfileRecord),
+                current_values("proposal", ProfileProposal),
+                bindings,
+            )
+            if not hmac.compare_digest(current_token, snapshot_token):
+                raise ValueError("personal_context_link_snapshot_stale")
+            connection.execute(
+                "INSERT INTO first_link_freeze VALUES (1, ?, ?, ?)",
+                (plan_id, snapshot_token, _now_text()),
+            )
+
+    def release_first_link_freeze(self, *, plan_id: str) -> bool:
+        """Release only the exact plan's durable review freeze."""
+
+        with self._transaction() as connection:
+            deleted = connection.execute(
+                "DELETE FROM first_link_freeze WHERE singleton = 1 AND plan_id = ?",
+                (plan_id,),
+            )
+        return deleted.rowcount == 1
+
+    @contextmanager
+    def first_link_reconciliation_writes(self, *, plan_id: str) -> Iterator[None]:
+        """Authorize only dedicated reconciliation writes under the exact freeze."""
+
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT plan_id FROM first_link_freeze WHERE singleton = 1"
+            ).fetchone()
+        if row is None or row["plan_id"] != plan_id:
+            raise ValueError("personal_context_link_freeze_mismatch")
+        token = _FIRST_LINK_WRITE_PLAN.set(plan_id)
+        try:
+            yield
+        finally:
+            _FIRST_LINK_WRITE_PLAN.reset(token)
 
     @staticmethod
     def _require_authority_fence(
@@ -1001,40 +1128,54 @@ class PersonalContextRepository:
             ) from exc
 
     @staticmethod
-    def _replace_link_identities(
-        value: Any,
+    def _transform_link_body(
+        object_type: str,
+        value: Mapping[str, Any],
         *,
         old_profile_id: str,
         new_profile_id: str,
         scope_mapping: Mapping[str, str],
     ) -> Any:
-        """Replace only exact canonical identity strings in one transient value."""
+        """Rebind schema identity fields without touching user-controlled strings."""
 
-        if isinstance(value, dict):
-            return {
-                key: PersonalContextRepository._replace_link_identities(
-                    item,
+        body = dict(value)
+        if object_type == "outbox":
+            canonical_types = tuple(
+                name
+                for name in ("manifest", "scope", "record", "proposal")
+                if isinstance(body.get(name), Mapping)
+            )
+            if len(canonical_types) != 1:
+                return body
+            nested_type = canonical_types[0]
+            body[nested_type] = PersonalContextRepository._transform_link_body(
+                nested_type,
+                body[nested_type],
+                old_profile_id=old_profile_id,
+                new_profile_id=new_profile_id,
+                scope_mapping=scope_mapping,
+            )
+            return body
+        if object_type not in {"manifest", "scope", "record", "proposal"}:
+            return body
+        if body.get("profile_id") == old_profile_id:
+            body["profile_id"] = new_profile_id
+        scope_id = body.get("scope_id")
+        if isinstance(scope_id, str) and scope_id in scope_mapping:
+            body["scope_id"] = scope_mapping[scope_id]
+        if object_type == "proposal" and isinstance(
+            body.get("proposed_record"), Mapping
+        ):
+            body["proposed_record"] = (
+                PersonalContextRepository._transform_link_body(
+                    "record",
+                    body["proposed_record"],
                     old_profile_id=old_profile_id,
                     new_profile_id=new_profile_id,
                     scope_mapping=scope_mapping,
                 )
-                for key, item in value.items()
-            }
-        if isinstance(value, list):
-            return [
-                PersonalContextRepository._replace_link_identities(
-                    item,
-                    old_profile_id=old_profile_id,
-                    new_profile_id=new_profile_id,
-                    scope_mapping=scope_mapping,
-                )
-                for item in value
-            ]
-        if value == old_profile_id:
-            return new_profile_id
-        if isinstance(value, str):
-            return scope_mapping.get(value, value)
-        return value
+            )
+        return body
 
     def apply_reviewed_link(
         self,
@@ -1078,16 +1219,45 @@ class PersonalContextRepository:
         )
         if current_plan.local_snapshot_token != plan.local_snapshot_token:
             raise ValueError("link_plan_stale")
+        if (
+            current_plan.workspace_new_scope_ids != plan.workspace_new_scope_ids
+            or current_plan.workspace_mapping_conflicts
+            != plan.workspace_mapping_conflicts
+        ):
+            raise ValueError("link_plan_stale")
         if set(decisions) != set(plan.required_decision_ids):
             raise ValueError("link_decisions_incomplete")
+        if "device_only_identity_collision" in getattr(plan, "attention_codes", ()):
+            raise ValueError("device_only_identity_collision")
+        if getattr(plan, "proposal_conflict_ids", ()):
+            raise ValueError("proposal_same_id_diverged")
 
         remote_scope_ids = {scope.scope_id for scope in remote.scopes}
         scope_mapping = {plan.global_scope_mapping[0]: plan.global_scope_mapping[1]}
+        unlinked_scope_ids: set[str] = set()
+        mapped_remote_scope_ids: set[str] = set()
+        reviewed_new_scope_ids = dict(plan.workspace_new_scope_ids)
+        blocked_workspace_mappings = {
+            (item.local_scope_id, item.remote_scope_id)
+            for item in plan.workspace_mapping_conflicts
+        }
         for local_scope_id in plan.local_workspace_scope_ids:
             choice = decisions[f"workspace:{local_scope_id}"]
             if choice == "new":
-                scope_mapping[local_scope_id] = local_scope_id
+                try:
+                    scope_mapping[local_scope_id] = reviewed_new_scope_ids[
+                        local_scope_id
+                    ]
+                except KeyError:
+                    raise ValueError("workspace_mapping_invalid") from None
+            elif choice == "unlinked":
+                unlinked_scope_ids.add(local_scope_id)
             elif choice in remote_scope_ids:
+                if (local_scope_id, choice) in blocked_workspace_mappings:
+                    raise ValueError("workspace_mapping_collision_requires_review")
+                if choice in mapped_remote_scope_ids:
+                    raise ValueError("workspace_mapping_not_one_to_one")
+                mapped_remote_scope_ids.add(choice)
                 scope_mapping[local_scope_id] = choice
             else:
                 raise ValueError("workspace_mapping_invalid")
@@ -1104,7 +1274,8 @@ class PersonalContextRepository:
         selected_remote_records = {record.record_id: record for record in remote.records}
         selected_local_proposals = {
             proposal.proposal_id: ProfileProposal.model_validate(
-                self._replace_link_identities(
+                self._transform_link_body(
+                    "proposal",
                     proposal.model_dump(mode="python"),
                     old_profile_id=current_manifest.profile_id,
                     new_profile_id=remote.manifest.profile_id,
@@ -1121,6 +1292,25 @@ class PersonalContextRepository:
         for conflict in plan.version_conflicts:
             choice = decisions[conflict.decision_id]
             if choice == "local":
+                local = selected_local_records[conflict.record_id]
+                server = selected_remote_records[conflict.record_id]
+                if local.kind is not server.kind or local.scope_id != server.scope_id:
+                    raise ValueError("record_merge_identity_incompatible")
+                selected_local_records[conflict.record_id] = ProfileRecord.model_validate(
+                    {
+                        **server.model_dump(mode="python"),
+                        "payload": local.payload,
+                        "semantic_key": local.semantic_key,
+                        "state": local.state,
+                        "controls": local.controls,
+                        "provenance": local.provenance,
+                        "updated_at": max(local.updated_at, server.updated_at),
+                        "expires_at": local.expires_at,
+                        "no_expiry": local.no_expiry,
+                        "version_id": _uuid("record-merge-version"),
+                        "parent_version_id": server.version_id,
+                    }
+                )
                 losing_remote_ids.add(conflict.record_id)
             elif choice == "server":
                 losing_local_ids.add(conflict.record_id)
@@ -1151,6 +1341,46 @@ class PersonalContextRepository:
                 if record_id in selected_remote_records:
                     losing_remote_ids.add(record_id)
 
+        remote_tombstones: dict[str, ProfileRecord] = {}
+        for record_id in losing_remote_ids:
+            if record_id in selected_local_records:
+                continue
+            server = selected_remote_records[record_id]
+            remote_tombstones[record_id] = ProfileRecord.model_validate(
+                {
+                    **server.model_dump(mode="python"),
+                    "payload": None,
+                    "semantic_key": None,
+                    "state": RecordState.DELETED,
+                    "version_id": _uuid("record-tombstone-version"),
+                    "parent_version_id": server.version_id,
+                    "expires_at": None,
+                    "no_expiry": False,
+                }
+            )
+
+        active_occupants: dict[tuple[str, str, str], str] = {}
+        collision_candidates = [
+            item
+            for record_id, item in selected_local_records.items()
+            if record_id not in losing_local_ids
+        ] + [
+            item
+            for record_id, item in selected_remote_records.items()
+            if record_id not in losing_remote_ids
+        ]
+        for item in collision_candidates:
+            if item.state is not RecordState.ACTIVE or item.semantic_key is None:
+                continue
+            semantic = (
+                item.scope_id,
+                item.semantic_key.namespace,
+                item.semantic_key.subject,
+            )
+            occupant = active_occupants.setdefault(semantic, item.record_id)
+            if occupant != item.record_id:
+                raise ValueError("workspace_mapping_collision_requires_review")
+
         new_keys = ProfileKeyMaterial(
             encryption_key=old_keys.encryption_key,
             integrity_key=integrity_key,
@@ -1159,6 +1389,56 @@ class PersonalContextRepository:
         old_profile_id = current_manifest.profile_id
         try:
             with self._transaction() as connection:
+                freeze = connection.execute(
+                    "SELECT plan_id, snapshot_token FROM first_link_freeze "
+                    "WHERE singleton = 1"
+                ).fetchone()
+                if (
+                    freeze is None
+                    or freeze["plan_id"] != plan.plan_id
+                    or not hmac.compare_digest(
+                        str(freeze["snapshot_token"]), plan.local_snapshot_token
+                    )
+                ):
+                    raise ValueError("personal_context_link_freeze_mismatch")
+
+                def current_values(object_type: str, model: type[BaseModel]) -> list[Any]:
+                    current_rows = connection.execute(
+                        "SELECT encrypted_objects.* FROM object_heads "
+                        "JOIN encrypted_objects USING (object_type, object_id, version_id) "
+                        "WHERE object_type = ? ORDER BY object_id",
+                        (object_type,),
+                    ).fetchall()
+                    return [
+                        model.model_validate_json(self._decrypt_row(row))
+                        for row in current_rows
+                    ]
+
+                transactional_manifests = current_values("manifest", ProfileManifest)
+                transactional_bindings: dict[str, Mapping[str, object]] = {}
+                for binding_row in connection.execute(
+                    "SELECT encrypted_objects.* FROM local_scope_bindings "
+                    "JOIN encrypted_objects ON encrypted_objects.object_type = 'scope_binding' "
+                    "AND encrypted_objects.object_id = local_scope_bindings.scope_id "
+                    "AND encrypted_objects.version_id = "
+                    "local_scope_bindings.encrypted_binding_version"
+                ).fetchall():
+                    transactional_bindings[str(binding_row["object_id"])] = json.loads(
+                        self._decrypt_row(binding_row)
+                    )
+                if len(transactional_manifests) != 1:
+                    raise ValueError("link_plan_stale")
+                transactional_plan = build_reconciliation_plan(
+                    local_manifest=transactional_manifests[0],
+                    local_scopes=current_values("scope", ProfileScope),
+                    local_records=current_values("record", ProfileRecord),
+                    local_proposals=current_values("proposal", ProfileProposal),
+                    remote=remote,
+                    local_workspace_bindings=transactional_bindings,
+                    plan_id=plan.plan_id,
+                )
+                if transactional_plan.local_snapshot_token != plan.local_snapshot_token:
+                    raise ValueError("link_plan_stale")
                 heads = connection.execute(
                     "SELECT object_type, object_id, version_id FROM object_heads"
                 ).fetchall()
@@ -1166,6 +1446,11 @@ class PersonalContextRepository:
                 for head in heads:
                     object_type = str(head["object_type"])
                     object_id = str(head["object_id"])
+                    if (
+                        object_type == "scope_binding"
+                        and object_id in unlinked_scope_ids
+                    ):
+                        continue
                     if object_type == "record" and object_id in losing_local_ids:
                         continue
                     if object_type == "outbox":
@@ -1191,6 +1476,11 @@ class PersonalContextRepository:
                 ).fetchall()
                 transformed: list[tuple[dict[str, Any], dict[str, Any]]] = []
                 for row in rows:
+                    if (
+                        row["object_type"] == "scope_binding"
+                        and row["object_id"] in unlinked_scope_ids
+                    ):
+                        continue
                     if row["object_type"] == "record" and row["object_id"] in losing_local_ids:
                         continue
                     if row["object_type"] == "outbox":
@@ -1219,7 +1509,8 @@ class PersonalContextRepository:
                                 "scope_id": scope_mapping.get(row["scope_id"], row["scope_id"]),
                                 "is_tombstone": bool(row["is_tombstone"]),
                             },
-                            self._replace_link_identities(
+                            self._transform_link_body(
+                                str(row["object_type"]),
                                 body,
                                 old_profile_id=old_profile_id,
                                 new_profile_id=remote.manifest.profile_id,
@@ -1337,6 +1628,7 @@ class PersonalContextRepository:
                         if record_id not in losing_remote_ids
                     }
                 )
+                merged_records.update(remote_tombstones)
                 for record in merged_records.values():
                     ensure_object(
                         "record",
@@ -1385,6 +1677,11 @@ class PersonalContextRepository:
                     connection.execute(f"DELETE FROM {table}")
                     columns = tuple(metadata[0].keys()) if metadata else ()
                     for item in metadata:
+                        if (
+                            table == "local_scope_bindings"
+                            and item[0] in unlinked_scope_ids
+                        ):
+                            continue
                         values = list(item)
                         values[0] = scope_mapping.get(values[0], values[0])
                         connection.execute(
@@ -1404,6 +1701,115 @@ class PersonalContextRepository:
                         "UPDATE encrypted_outbox SET object_id = ? WHERE outbox_id = ?",
                         (mapped_object_id, outbox["outbox_id"]),
                     )
+
+                # Replace the provisional journal with the exact reviewed canonical
+                # materialization delta. Remote winners and exact server heads must
+                # never be echoed, and no stale provisional body may survive rebind.
+                connection.execute("DELETE FROM encrypted_outbox")
+                connection.execute(
+                    "DELETE FROM object_heads WHERE object_type = 'outbox'"
+                )
+                connection.execute(
+                    "DELETE FROM encrypted_objects WHERE object_type = 'outbox'"
+                )
+                linked_scope_ids = {
+                    str(row["scope_id"])
+                    for row in connection.execute(
+                        "SELECT scope_id FROM local_scope_bindings"
+                    ).fetchall()
+                }
+                linked_scope_ids.add(plan.global_scope_mapping[1])
+                remote_heads = {
+                    ("manifest", remote.manifest.profile_id): (
+                        remote.manifest.current_version_id
+                    ),
+                    **{
+                        ("scope", item.scope_id): item.version_id
+                        for item in remote.scopes
+                    },
+                    **{
+                        ("record", item.record_id): item.version_id
+                        for item in remote.records
+                    },
+                    **{
+                        ("proposal", item.proposal_id): (
+                            "sync-proposal-sha256:"
+                            + hashlib.sha256(canonical_bytes(item)).hexdigest()
+                        )
+                        for item in remote.proposals
+                    },
+                }
+                materialization: list[tuple[str, str, str, BaseModel]] = []
+                materialization.extend(
+                    ("scope", item.scope_id, item.version_id, item)
+                    for item in selected_scopes.values()
+                    if item.scope_id in linked_scope_ids
+                )
+                local_history_ids = set(plan.local_only_record_ids)
+                for record_id in sorted(local_history_ids):
+                    final_head = merged_records.get(record_id)
+                    if final_head is None or final_head.scope_id not in linked_scope_ids:
+                        continue
+                    history_rows = connection.execute(
+                        "SELECT * FROM encrypted_objects WHERE object_type = 'record' "
+                        "AND object_id = ?",
+                        (record_id,),
+                    ).fetchall()
+                    history = {
+                        str(row["version_id"]): ProfileRecord.model_validate_json(
+                            self._decrypt_row(row)
+                        )
+                        for row in history_rows
+                    }
+                    lineage: list[ProfileRecord] = []
+                    version_id: str | None = final_head.version_id
+                    seen: set[str] = set()
+                    while version_id is not None:
+                        if version_id in seen or version_id not in history:
+                            raise ValueError("local_record_lineage_invalid")
+                        seen.add(version_id)
+                        item = history[version_id]
+                        lineage.append(item)
+                        version_id = item.parent_version_id
+                    materialization.extend(
+                        ("record", item.record_id, item.version_id, item)
+                        for item in reversed(lineage)
+                    )
+                materialization.extend(
+                    ("record", item.record_id, item.version_id, item)
+                    for item in merged_records.values()
+                    if item.record_id not in local_history_ids
+                    and item.scope_id in linked_scope_ids
+                    and item.controls.sync_mode is SyncMode.SYNCABLE
+                )
+                materialization.extend(
+                    (
+                        "proposal",
+                        item.proposal_id,
+                        "sync-proposal-sha256:"
+                        + hashlib.sha256(canonical_bytes(item)).hexdigest(),
+                        item,
+                    )
+                    for item in merged_proposals.values()
+                    if item.scope_id in linked_scope_ids
+                    and (
+                        item.proposed_record is None
+                        or item.proposed_record.controls.sync_mode is SyncMode.SYNCABLE
+                    )
+                )
+                for object_type, object_id, version_id, item in materialization:
+                    if remote_heads.get((object_type, object_id)) == version_id:
+                        continue
+                    self._insert_outbox(
+                        connection,
+                        object_type=object_type,
+                        object_id=object_id,
+                        version_id=version_id,
+                        body={
+                            "version": 1,
+                            object_type: item.model_dump(mode="json"),
+                        },
+                    )
         except BaseException:
             self._keys = old_keys
             raise
@@ -1418,6 +1824,66 @@ class PersonalContextRepository:
                 "Profile link key activation is pending."
             ) from exc
         return {"rebaseline_version": new_keys.key_version}
+
+    def first_link_head_rows(self) -> tuple[tuple[str, str, str], ...]:
+        """Return content-free canonical head identities for convergence checks."""
+
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT object_type, object_id, version_id FROM object_heads "
+                "WHERE object_type IN ('manifest', 'scope', 'record', 'proposal') "
+                "ORDER BY object_type, object_id"
+            ).fetchall()
+        return tuple(
+            (str(row["object_type"]), str(row["object_id"]), str(row["version_id"]))
+            for row in rows
+        )
+
+    def first_link_sync_heads(self) -> dict[str, dict[str, str]]:
+        """Return exact eligible heads, excluding unlinked and device-only objects."""
+
+        manifest = self.get_manifest()
+        if manifest is None:
+            raise ValueError("link_local_profile_absent")
+        bindings = self.list_validated_scope_bindings()
+        scopes = self.list_scopes()
+        linked_scope_ids = {
+            scope.scope_id
+            for scope in scopes
+            if scope.kind is ScopeKind.GLOBAL or scope.scope_id in bindings
+        }
+        heads: dict[str, dict[str, str]] = {
+            "personal_context.manifest": {
+                manifest.profile_id: manifest.current_version_id
+            },
+            "personal_context.scope": {
+                scope.scope_id: scope.version_id
+                for scope in scopes
+                if scope.scope_id in linked_scope_ids
+            },
+            "personal_context.record": {
+                record.record_id: record.version_id
+                for record in self.list_records()
+                if record.scope_id in linked_scope_ids
+                and record.controls.sync_mode is SyncMode.SYNCABLE
+            },
+            "personal_context.proposal": {},
+        }
+        proposal_versions = {
+            object_id: version_id
+            for object_type, object_id, version_id in self.first_link_head_rows()
+            if object_type == "proposal"
+        }
+        heads["personal_context.proposal"] = {
+            proposal.proposal_id: proposal_versions[proposal.proposal_id]
+            for proposal in self.list_proposals()
+            if proposal.scope_id in linked_scope_ids
+            and (
+                proposal.proposed_record is None
+                or proposal.proposed_record.controls.sync_mode is SyncMode.SYNCABLE
+            )
+        }
+        return heads
 
     def commit_manifest_version(
         self,

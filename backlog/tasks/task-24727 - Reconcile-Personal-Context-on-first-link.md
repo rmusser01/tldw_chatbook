@@ -59,3 +59,46 @@ Reason: ADR-102 already governs reviewed first-link reconciliation, scope mappin
 - [ ] #5 Independent review completed
 - [ ] #6 Known skips or blockers documented
 <!-- DOD:END -->
+
+## Implementation Notes
+
+The Chatbook first-link slice is implemented and remains In Progress pending
+controller verification and cross-repository review. It uses the canonical
+Personal Context records and versions directly; no Chatbook/server projection or
+second authoritative profile was introduced.
+
+- Added typed authenticated bootstrap/completion transport, secure RSA wrapping
+  and staged integrity custody, distinct persistent dataset-staging-key custody,
+  exact durable link receipts, and restart-safe runtime composition.
+- Added a durable exact-snapshot review freeze. Conservative v1 permits reads but
+  rejects ordinary user/agent profile mutations with
+  `personal_context_link_in_progress` until cancel, terminal attention, or exact
+  convergence releases it.
+- Added schema-directed canonical identity rebind, full versioned integrity-tag
+  rebaseline, exact first-link materialization journals, local lineage upload,
+  same-ID merge lineage, remote-loser tombstones, proposal attention, and
+  content-safe verification.
+- Added explicit unlinked/new/mapped workspace outcomes, preallocated reviewed
+  canonical scope IDs, one-to-one bindings, device-only privacy protection, and
+  mapping-created collision prevention before approval.
+- Added a dedicated bounded first-link push/pull cycle with negotiated batch size,
+  include-own confirmation, separate bootstrap and confirmed cursors, exact-head
+  verification, stale destination cleanup, and fail-closed public Personal
+  Context push/pull. Ordinary LocalFirst transport requires the exact complete
+  binding.
+- Added canonical F9 Settings review, attention, retry, cancel, interrupted resume,
+  and linked-state behavior with exact content-free identity/version/quota rows.
+
+Bootstrap may reserve content-free server control-plane scaffolding required by
+the approved server contract. Planning/cancel performs no canonical Personal
+Context content upload or mutation; cancellation leaves both content replicas
+unchanged and releases local freeze/staging.
+
+Verification: the latest touched-scope run completed with 285 passed and 2
+dependency warnings. Ruff, compilation, CSS reproduction, both diff-hygiene
+checks, and the Bandit high-severity gate pass. The full Bandit report contains
+no high-severity issue and retains the repository's known constant-identifier SQL
+and low-severity exception/assert/subprocess findings. Exact commands and counts
+are recorded in the SDD report. The full repository suite and live
+server/keyring/TUI testing were not run, per scoped-verification policy. ADR-102
+remains the governing decision.
