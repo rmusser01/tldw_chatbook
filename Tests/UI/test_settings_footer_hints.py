@@ -77,8 +77,12 @@ def test_category_footer_shortcuts_only_advertise_working_keys():
         category = SettingsCategoryId(category_value)
         shortcuts = SettingsScreen._category_footer_shortcuts(category)
         keys = tuple(key for key, _label in shortcuts)
-        # s/r are only advertised where the guided save/revert path exists.
-        assert ("s" in keys) == (category in GUIDED_SETTINGS_MUTATION_CATEGORIES)
+        # Network has its own immediate save path; guided categories also
+        # expose the draft save/revert pair.
+        assert ("s" in keys) == (
+            category in GUIDED_SETTINGS_MUTATION_CATEGORIES
+            or category is SettingsCategoryId.NETWORK
+        )
         assert ("r" in keys) == (category in GUIDED_SETTINGS_MUTATION_CATEGORIES)
         # t is only advertised where a test action is actually implemented.
         assert ("t" in keys) == (
@@ -90,6 +94,8 @@ def test_category_footer_shortcuts_only_advertise_working_keys():
         expected_labels = []
         if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
             expected_labels += ["save category", "revert category"]
+        elif category is SettingsCategoryId.NETWORK:
+            expected_labels.append("save category")
         if category in SettingsScreen.TESTABLE_SETTINGS_CATEGORIES:
             expected_labels += [
                 SettingsScreen.TEST_ACTION_LABELS.get(category, "test category")
@@ -374,7 +380,7 @@ def test_f1_help_has_contract_content_for_every_category():
     app = _build_test_app()
     screen = SettingsScreen(app)
     members = tuple(SettingsCategoryId)
-    assert len(members) == 26
+    assert len(members) == 28
     for category in members:
         state = screen._workbench_help_state(category)
         body = state.render_text()
@@ -393,9 +399,18 @@ def test_f1_help_has_contract_content_for_every_category():
         ), category
         # Verbs: either real category shortcuts, or an explicit statement
         # that none exist here.
-        assert state.shortcuts or any(
-            note.startswith("No shortcut keys") for note in state.notes
-        ), category
+        if category is SettingsCategoryId.PERSONAL_CONTEXT:
+            # Live profile state narrows this category's actions; the
+            # unmounted screen used here has none active, while the static
+            # contract remains covered by the mounted footer tests above.
+            assert (
+                screen._category_footer_shortcuts(category)
+                == SettingsScreen.PERSONAL_CONTEXT_SHORTCUTS
+            )
+        else:
+            assert state.shortcuts or any(
+                note.startswith("No shortcut keys") for note in state.notes
+            ), category
         # The ownership matrix must actually cover the category -- the
         # missing-record placeholder is developer copy, not help.
         assert "Ownership record missing" not in body, category
@@ -468,10 +483,10 @@ async def test_f1_help_panel_body_carries_category_contract_when_mounted():
 
     * a draft-save category (Storage): save contract, ownership, and its
       real verbs;
-    * a read-only domain category (Schedules -- the page whose F1 body used
-      to open empty, which is what TASK-23110 fixed): the read-only
-      contract, the owning destination, and an explicit "no shortcuts"
-      statement instead of advertised dead keys.
+    * an immediate-write category (Schedules -- the page whose F1 body used
+      to open empty, which is what TASK-23110 fixed): its live ownership
+      contract and an explicit "no shortcuts" statement instead of
+      advertised dead keys.
     """
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -505,7 +520,7 @@ async def test_f1_help_panel_body_carries_category_contract_when_mounted():
         await pilot.press("escape")
         await pilot.pause()
 
-        # --- Read-only domain category -------------------------------
+        # --- Immediate-write domain category -------------------------
         await _click_settings_category(pilot, "schedules")
         screen = _active_destination_screen(host)
         screen.action_show_workbench_help()
@@ -517,14 +532,15 @@ async def test_f1_help_panel_body_carries_category_contract_when_mounted():
         assert "Settings: Schedules" in body, body
         assert len(body.strip().splitlines()) > 1, body
         assert "How this category works" in body, body
-        assert "Save contract: Read-only here." in body, body
+        assert "Save contract: Applies immediately." in body, body
         assert (
-            "Owned by Schedules: workflow actions and setup happen on the "
-            "Schedules screen; Settings shows read-only defaults and status."
+            "Runtime owner: Settings global gate; Schedules runtime actions; "
+            "Artifacts collection cadence."
             in body
         ), body
+        assert "Writes here: yes." in body, body
         assert "No shortcut keys are specific to this category." in body, body
-        # Honesty: a read-only page must not teach save/revert/test keys.
+        # Honesty: immediate persistence must not teach save/revert/test keys.
         for label in _ALL_KNOWN_LABELS:
             assert label not in body, (
                 f"read-only F1 body must not advertise {label!r}, got {body!r}"
@@ -587,11 +603,14 @@ async def test_advertised_capabilities_match_real_action_branches():
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             save_stubbed = any(_SAVE_STUB_TOAST in toast for toast in toasts)
-            if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
+            if (
+                category in GUIDED_SETTINGS_MUTATION_CATEGORIES
+                or category is SettingsCategoryId.NETWORK
+            ):
                 assert not save_stubbed, (
-                    f"{category_value}: guided category hit the save stub -- a "
+                    f"{category_value}: save-capable category hit the save stub -- a "
                     "save branch was removed without updating "
-                    f"GUIDED_SETTINGS_MUTATION_CATEGORIES (toasts: {toasts})"
+                    f"its advertised capability (toasts: {toasts})"
                 )
             else:
                 # Non-guided: guidance only, never a completed real save
