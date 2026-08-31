@@ -688,9 +688,8 @@ class ServerSyncService:
         domains: list[str] | None = None,
         page_size: int | None = None,
         include_own_changes: bool = False,
-        _personal_context_first_link: bool = False,
     ) -> dict[str, Any]:
-        """Pull selected Sync v2 envelopes for restore or incremental sync.
+        """Pull non-Personal-Context envelopes through the public transport.
 
         Args:
             dataset_id: Dataset to pull from.
@@ -707,16 +706,33 @@ class ServerSyncService:
             ValueError: If pulled envelopes or pagination state violate Sync v2 scope.
             PolicyDeniedError: If runtime policy blocks server Sync v2 pull access.
         """
-        if (
-            domains
-            and any(
-                domain == "personal_context"
-                or domain.startswith("personal_context.")
-                for domain in domains
-            )
-            and not _personal_context_first_link
+        if domains and any(
+            domain == "personal_context"
+            or domain.startswith("personal_context.")
+            for domain in domains
         ):
             raise ValueError("personal_context_requires_reviewed_first_link")
+        return await self._pull_v2_envelopes(
+            dataset_id=dataset_id,
+            device_id=device_id,
+            cursor=cursor,
+            domains=domains,
+            page_size=page_size,
+            include_own_changes=include_own_changes,
+        )
+
+    async def _pull_v2_envelopes(
+        self,
+        *,
+        dataset_id: str,
+        device_id: str,
+        cursor: str | None = None,
+        domains: list[str] | None = None,
+        page_size: int | None = None,
+        include_own_changes: bool = False,
+    ) -> dict[str, Any]:
+        """Validate and dispatch one pull after its caller proves domain authority."""
+
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import SyncV2Envelope
 
@@ -761,23 +777,19 @@ class ServerSyncService:
     ) -> dict[str, Any]:
         """Private transport used only by the exact reviewed reconciliation path."""
 
-        return await self.pull_v2_envelopes(
+        return await self._pull_v2_envelopes(
             dataset_id=dataset_id,
             device_id=device_id,
             cursor=cursor,
             domains=domains,
             page_size=page_size,
             include_own_changes=include_own_changes,
-            _personal_context_first_link=True,
         )
 
     async def _pull_v2_personal_context_complete(self, **kwargs: Any) -> dict[str, Any]:
         """Private transport reached only after LocalFirst validates the exact receipt."""
 
-        return await self.pull_v2_envelopes(
-            **kwargs,
-            _personal_context_first_link=True,
-        )
+        return await self._pull_v2_envelopes(**kwargs)
 
     async def list_v2_conflicts(
         self,

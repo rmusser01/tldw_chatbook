@@ -1143,6 +1143,47 @@ async def test_public_pull_rejects_personal_context_before_transport_dispatch():
 
 
 @pytest.mark.asyncio
+async def test_public_pull_has_no_personal_context_bypass_flag():
+    client = FakeSyncClient()
+    service = ServerSyncService(client=client)
+
+    with pytest.raises(TypeError, match="_personal_context_first_link"):
+        await service.pull_v2_envelopes(
+            dataset_id="dataset-1",
+            device_id="device-1",
+            domains=["personal_context.record"],
+            _personal_context_first_link=True,
+        )
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_private_first_link_pull_uses_reviewed_transport_path():
+    client = FakeSyncClient(
+        pull_response={
+            "dataset_id": "dataset-1",
+            "envelopes": [],
+            "next_cursor": "cursor-2",
+            "has_more": False,
+        }
+    )
+    service = ServerSyncService(client=client)
+
+    result = await service._pull_v2_personal_context_first_link(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        cursor="cursor-1",
+        domains=["personal_context.record"],
+        page_size=None,
+        include_own_changes=True,
+    )
+
+    assert result["next_cursor"] == "cursor-2"
+    assert [call[0] for call in client.calls] == ["pull_sync_v2_envelopes"]
+
+
+@pytest.mark.asyncio
 async def test_public_push_rejects_personal_context_before_transport_dispatch():
     client = FakeSyncClient()
     service = ServerSyncService(client=client)

@@ -33,6 +33,9 @@ class _Server:
             "has_more": False,
         }
 
+    async def _pull_v2_personal_context_first_link(self, **kwargs):
+        return await self.pull_v2_envelopes(**kwargs)
+
 
 @pytest.mark.asyncio
 async def test_special_first_link_pull_uses_bootstrap_cursor_and_includes_own(tmp_path):
@@ -112,6 +115,83 @@ async def test_special_first_link_pull_uses_bootstrap_cursor_and_includes_own(tm
         }
     ]
     assert len(dispatcher.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_server_only_unbound_workspace_is_outside_reviewed_convergence_heads(
+    tmp_path,
+):
+    state = SyncStateRepository(tmp_path / "sync.db")
+    scope = {
+        "server_profile_id": "server-1",
+        "authenticated_principal_id": "user-1",
+    }
+    bootstrap = {
+        "personal_context.manifest": {"profile-1": "manifest-v1"},
+        "personal_context.scope": {
+            "scope-global": "scope-global-v1",
+            "scope-unbound": "scope-unbound-v1",
+        },
+        "personal_context.record": {"record-unbound": "record-unbound-v1"},
+        "personal_context.proposal": {},
+    }
+    expected = {
+        "personal_context.manifest": {"profile-1": "manifest-v1"},
+        "personal_context.scope": {"scope-global": "scope-global-v1"},
+        "personal_context.record": {},
+        "personal_context.proposal": {},
+    }
+    state.set_sync_v2_profile_state(
+        **scope,
+        workspace_scope=None,
+        profile_mode="local_first_sync",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        dataset_cursors={"sync_v2": "cursor-bootstrap"},
+    )
+    state.set_personal_context_link_state(
+        **scope,
+        state="reconciling",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        authority_id="authority-1",
+        profile_id="profile-1",
+        integrity_key_id="key-1",
+        key_record_id="key-record-1",
+        purge_generation=0,
+        bootstrap_cursor="cursor-bootstrap",
+        bootstrap_heads=bootstrap,
+        expected_heads=expected,
+        plan_id="plan-1",
+        rebaseline_version=2,
+        attention_code=None,
+    )
+    sync = PersonalContextFirstLinkSync(
+        server_service=_Server(),
+        state_repository=state,
+        dispatcher=_Dispatcher(),
+        personal_context_service=object(),
+        local_store=object(),
+        dataset_keys={"dataset-1": b"s" * 32},
+    )
+
+    result = await sync.converge(
+        **scope,
+        device_id="device-1",
+        dataset_id="dataset-1",
+        profile_id="profile-1",
+        integrity_key_id="key-1",
+        key_record_id="key-record-1",
+        purge_generation=0,
+        bootstrap_cursor="cursor-bootstrap",
+        bootstrap_heads=bootstrap,
+        expected_heads=expected,
+    )
+
+    assert result == {
+        "confirmed_cursor": "cursor-bootstrap",
+        "confirmed_heads": expected,
+    }
 
 
 class _EchoAdapter:

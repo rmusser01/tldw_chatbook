@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 from typing import Any, Mapping
 
 from .envelope_applier import SyncEnvelopeApplier
@@ -66,7 +65,12 @@ class PersonalContextFirstLinkSync:
         bootstrap_heads: Mapping[str, Mapping[str, str]],
         expected_heads: Mapping[str, Mapping[str, str]],
     ) -> dict[str, Any]:
-        """Run the private complete-gated cycle and return an exact confirmation."""
+        """Confirm the exact reviewed, sync-eligible canonical head set.
+
+        Server-only workspace scopes that remain unbound are retained locally but are
+        outside this receipt: they are not agent-accessible and are not eligible for
+        Personal Context Sync until the user explicitly maps them.
+        """
 
         binding = {
             "device_id": device_id,
@@ -180,7 +184,10 @@ class PersonalContextFirstLinkSync:
             )
             if response.get("next_cursor") is not None:
                 push_cursor = str(response["next_cursor"])
-        observed = copy.deepcopy(dict(bootstrap_heads))
+        observed = self._reviewed_bootstrap_heads(
+            bootstrap_heads=bootstrap_heads,
+            expected_heads=expected_heads,
+        )
         cursor: str | None = bootstrap_cursor
         applier = SyncEnvelopeApplier(
             dataset_key=storage_key,
@@ -192,8 +199,10 @@ class PersonalContextFirstLinkSync:
             pull = getattr(
                 self._server,
                 "_pull_v2_personal_context_first_link",
-                self._server.pull_v2_envelopes,
+                None,
             )
+            if not callable(pull):
+                raise RuntimeError("personal_context_first_link_sync_unavailable")
             pulled = await pull(
                 dataset_id=dataset_id,
                 device_id=device_id,
@@ -228,15 +237,59 @@ class PersonalContextFirstLinkSync:
                     raise RuntimeError("personal_context_reconciliation_apply_failed")
                 if envelope.entity_version is None or envelope.object_id is None:
                     raise RuntimeError("personal_context_reconciliation_version_missing")
-                observed.setdefault(envelope.domain, {})[str(envelope.object_id)] = str(
-                    envelope.entity_version
-                )
+                if self._is_reviewed_head(envelope, expected_heads=expected_heads):
+                    observed.setdefault(envelope.domain, {})[
+                        str(envelope.object_id)
+                    ] = str(envelope.entity_version)
             cursor = pulled.get("next_cursor") or cursor
             if not pulled.get("has_more", False):
                 break
         if observed != dict(expected_heads):
             raise RuntimeError("personal_context_convergence_unconfirmed")
         return {"confirmed_cursor": cursor, "confirmed_heads": observed}
+
+    @staticmethod
+    def _reviewed_bootstrap_heads(
+        *,
+        bootstrap_heads: Mapping[str, Mapping[str, str]],
+        expected_heads: Mapping[str, Mapping[str, str]],
+    ) -> dict[str, dict[str, str]]:
+        """Project the full server bootstrap onto the reviewed eligible identities."""
+
+        return {
+            str(domain): {
+                str(object_id): str(bootstrap_version)
+                for object_id in expected_domain
+                if (
+                    bootstrap_version := bootstrap_heads.get(domain, {}).get(object_id)
+                )
+                is not None
+            }
+            for domain, expected_domain in expected_heads.items()
+        }
+
+    @staticmethod
+    def _is_reviewed_head(
+        envelope: Any,
+        *,
+        expected_heads: Mapping[str, Mapping[str, str]],
+    ) -> bool:
+        """Return whether a pulled head participates in the reviewed receipt."""
+
+        object_id = str(envelope.object_id)
+        expected_domain = expected_heads.get(envelope.domain, {})
+        if object_id in expected_domain:
+            return True
+        if envelope.domain == "personal_context.scope":
+            return False
+        if envelope.domain in {
+            "personal_context.record",
+            "personal_context.proposal",
+        }:
+            return str(envelope.parent_id) in expected_heads.get(
+                "personal_context.scope", {}
+            )
+        return True
 
     @staticmethod
     def _coerce(value: Any):
