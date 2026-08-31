@@ -16388,10 +16388,17 @@ class ConsoleChatController:
         persistence = self.store.persistence
         if persistence is None or getattr(persistence, "db", None) is None:
             visible_copy = (
+                # TASK-25714: the old copy said "Restart Chatbook, and check
+                # the app log". Restarting cannot repair an on-disk fault, and
+                # the persistent log admitted only metadata-only records, so
+                # the error was never in the file it named -- the whole
+                # instruction was a dead end. The failure is now recorded as a
+                # `database_open_failed` event (ChaChaNotes_DB), so pointing at
+                # Logs is finally true.
                 "Not sent: your conversation database could not be opened, so "
-                "this message could not be saved. Restart Chatbook, and check "
-                "the app log for the database error if it keeps happening. "
-                "Your draft was kept; a temporary chat still sends."
+                "this message could not be saved. Your draft was kept; a "
+                "temporary chat still sends. Open Logs (F8) for the recorded "
+                "database error."
             )
         else:
             visible_copy = (
