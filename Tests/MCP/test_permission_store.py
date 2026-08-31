@@ -67,6 +67,50 @@ def test_strict_snapshot_rejects_without_touching_bytes(tmp_path, raw):
     assert not path.with_suffix(".json.bak").exists()
 
 
+@pytest.mark.parametrize("raw", [b"{", b'{"schema_version":99}'])
+def test_raw_getters_do_not_recover_invalid_store(tmp_path, raw):
+    """Inspection uses read-only recovery rather than legacy file backup."""
+    path = tmp_path / "mcp_permissions.json"
+    path.write_bytes(raw)
+    store = MCPPermissionStore(path)
+
+    assert store.get_global_default() == DEFAULT_GLOBAL
+    assert store.get_server_entry("local:docs") is None
+    assert store.get_tool_entry("local:docs", "search") is None
+    assert path.read_bytes() == raw
+    assert not path.with_suffix(".json.bak").exists()
+
+
+def test_strict_snapshot_wraps_deeply_nested_json_errors(tmp_path):
+    """A malformed deep document remains a typed, non-mutating failure."""
+    raw = b"[" * 10_000 + b"0" + b"]" * 10_000
+    path = tmp_path / "mcp_permissions.json"
+    path.write_bytes(raw)
+
+    with pytest.raises(PermissionStoreSnapshotError):
+        MCPPermissionStore(path).read_snapshot_strict()
+
+    assert path.read_bytes() == raw
+
+
+def test_strict_snapshot_rejects_float_schema_version(tmp_path):
+    """The strict schema authority accepts integer schema version 1 only."""
+    path = tmp_path / "mcp_permissions.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1.0,
+                "kill_switch": False,
+                "profiles": _fresh_payload_shape()["profiles"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PermissionStoreSnapshotError):
+        MCPPermissionStore(path).read_snapshot_strict()
+
+
 def test_load_backs_up_corrupt_json_and_returns_fresh_default(tmp_path):
     path = tmp_path / "mcp_permissions.json"
     path.write_text("{not valid json", encoding="utf-8")

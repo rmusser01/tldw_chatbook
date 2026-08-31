@@ -322,7 +322,9 @@ def _validate_strict_payload(payload: Any) -> bool:
         "schema_version", "kill_switch", "profiles", "updated_at"
     }:
         return False
-    if payload.get("schema_version") != SCHEMA_VERSION or isinstance(payload.get("schema_version"), bool):
+    if type(payload.get("schema_version")) is not int or payload.get(
+        "schema_version"
+    ) != SCHEMA_VERSION:
         return False
     if not isinstance(payload.get("kill_switch"), bool) or not isinstance(payload.get("profiles"), Mapping):
         return False
@@ -557,7 +559,7 @@ class MCPPermissionStore:
             )
         except PermissionStoreSnapshotError:
             raise
-        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError) as exc:
             raise PermissionStoreSnapshotError("invalid_json") from exc
 
         if not _validate_strict_payload(payload):
@@ -568,6 +570,26 @@ class MCPPermissionStore:
             generation=f"sha256:{hashlib.sha256(raw_bytes).hexdigest()}",
             file_exists=True,
         )
+
+    def _load_for_raw_getter(self) -> dict[str, Any]:
+        """Load a legacy-compatible payload without recovery side effects.
+
+        Raw getters expose a best-effort view for UI inspection. They retain
+        ``load()``'s permissive in-memory fallback but must never back up,
+        create, normalize on disk, or otherwise alter a policy file.
+        """
+        try:
+            raw_text = self.path.read_text(encoding="utf-8")
+            payload = json.loads(raw_text)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError):
+            return _fresh_payload()
+
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schema_version") != SCHEMA_VERSION
+        ):
+            return _fresh_payload()
+        return _normalize_payload_shape(payload)
 
     def save(self, payload: dict[str, Any]) -> None:
         """Atomically write ``payload`` to disk, stamping ``updated_at``.
@@ -689,7 +711,7 @@ class MCPPermissionStore:
         Returns:
             One of ``STORE_STATES``, or ``DEFAULT_GLOBAL`` when unset.
         """
-        payload = self.load()
+        payload = self._load_for_raw_getter()
         profiles = _as_mapping(payload.get("profiles"))
         profile = _as_mapping(profiles.get(profile_id))
         return profile.get("global_default", DEFAULT_GLOBAL)
@@ -729,7 +751,7 @@ class MCPPermissionStore:
             ``"tools"`` key), or None when the server has no entry at all
             (fully "Inherit").
         """
-        payload = self.load()
+        payload = self._load_for_raw_getter()
         profiles = _as_mapping(payload.get("profiles"))
         profile = _as_mapping(profiles.get(profile_id))
         servers = _as_mapping(profile.get("servers"))
@@ -797,7 +819,7 @@ class MCPPermissionStore:
             and ``"config_changed"`` optional), or None when the tool has
             no explicit entry (inherits from the server/global default).
         """
-        payload = self.load()
+        payload = self._load_for_raw_getter()
         profiles = _as_mapping(payload.get("profiles"))
         profile = _as_mapping(profiles.get(profile_id))
         servers = _as_mapping(profile.get("servers"))
