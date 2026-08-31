@@ -1,4 +1,4 @@
-"""ADR-080: permission-summary config resolution."""
+"""ADR-090: permission-summary config resolution."""
 
 from types import SimpleNamespace
 
@@ -78,7 +78,7 @@ def test_explicit_api_key_and_system_prompt_override(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# tail / prompt / call (ADR-080 §4)
+# tail / prompt / call (ADR-090 §4)
 # ---------------------------------------------------------------------------
 
 import json

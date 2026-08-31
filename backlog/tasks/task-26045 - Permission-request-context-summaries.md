@@ -12,7 +12,7 @@ dependencies: []
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Advisory rationale + opt-in fast-LLM summaries on Console approval cards per ADR-080
+Advisory rationale + opt-in fast-LLM summaries on Console approval cards per ADR-090
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -32,7 +32,7 @@ Implement per Docs/superpowers/plans/2026-08-31-permission-request-summaries.md
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Spec: Docs/superpowers/specs/2026-08-31-permission-request-summaries-design.md; ADR: backlog/decisions/080-permission-request-context-summaries.md
+Spec: Docs/superpowers/specs/2026-08-31-permission-request-summaries-design.md; ADR: backlog/decisions/090-permission-request-context-summaries.md
 
 Implemented across 11 commits on feat/permission-request-context-summaries (83ab1ba55..c57d2c531), executed task-by-task with per-task review plus a final whole-branch review (all clean).
 

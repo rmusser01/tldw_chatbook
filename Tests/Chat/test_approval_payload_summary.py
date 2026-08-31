@@ -1,4 +1,4 @@
-"""ADR-080: approval payload marshals rationale/description/summary."""
+"""ADR-090: approval payload marshals rationale/description/summary."""
 
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Chat.console_chat_controller import _build_approval_payload
@@ -29,7 +29,7 @@ def test_payload_carries_row_context_and_summary_slot():
 
 def test_payload_carries_the_dev_row_contract():
     # The extraction must keep every key dev's inline payload emitted --
-    # not just the ADR-080 additions -- or remounts would silently drop
+    # not just the ADR-090 additions -- or remounts would silently drop
     # effects/execution identity from the card's rows.
     payload = _build_approval_payload("r1", "s1", "run-1", [_row()], 30.0, 123.5)
     row = payload["calls"][0]

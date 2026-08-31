@@ -772,7 +772,7 @@ RAW_CLI_DISCLOSURE_LINES = (
     "This is not a sandbox and is not limited to your workspace.",
 )
 
-# ADR-080: ids of the instant-apply [permission_summary] controls, for the
+# ADR-090: ids of the instant-apply [permission_summary] controls, for the
 # same focus-tracking reason as MODEL_CATALOG_FIELD_IDS above.
 PERMISSION_SUMMARY_FIELD_IDS = frozenset(
     {
@@ -4375,7 +4375,7 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _saved_permission_summary_payload(self) -> dict[str, str]:
-        """The normalized saved ``[permission_summary]`` trio (ADR-080).
+        """The normalized saved ``[permission_summary]`` trio (ADR-090).
 
         Reads the cached ``load_settings()`` config -- the model-catalog
         group's source (cheap cache hit, and every config write refreshes
@@ -5073,7 +5073,7 @@ class SettingsScreen(BaseAppScreen):
             logger.warning("Failed to persist status_chips_position.")
 
     def _persist_permission_summary_settings(self) -> None:
-        """Persist the permission-summary trio to ``[permission_summary]`` (ADR-080).
+        """Persist the permission-summary trio to ``[permission_summary]`` (ADR-090).
 
         Instant-apply group (model-catalog pattern, ADR-020/task-1341): the
         disclosure copy is the consent surface, so changes save immediately
@@ -7581,7 +7581,7 @@ class SettingsScreen(BaseAppScreen):
                     "text until the transcript next redraws them.",
                 ),
             )
-        # ADR-080: one shared branch for the instant-apply permission-summary
+        # ADR-090: one shared branch for the instant-apply permission-summary
         # group -- the trio is one consent surface (the disclosure copy above
         # the controls), not three independent fields.
         if (
@@ -7591,7 +7591,7 @@ class SettingsScreen(BaseAppScreen):
             return (
                 (
                     "Purpose",
-                    "Opt-in advisory summaries on agent approval cards (ADR-080).",
+                    "Opt-in advisory summaries on agent approval cards (ADR-090).",
                 ),
                 (
                     "Consequences",
@@ -14094,7 +14094,7 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-console-tool-result-display-chars-help",
                 classes="settings-detail-row",
             )
-            # ADR-080: permission summaries. Instant-apply group (the
+            # ADR-090: permission summaries. Instant-apply group (the
             # model-catalog ADR-020/task-1341 pattern): the controls sit in a
             # bordered group, values initialize inline from the saved config,
             # and changes persist immediately via the handlers below -- the

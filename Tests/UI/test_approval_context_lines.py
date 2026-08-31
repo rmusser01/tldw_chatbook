@@ -1,4 +1,4 @@
-"""ADR-080: advisory context/summary lines on the approval card."""
+"""ADR-090: advisory context/summary lines on the approval card."""
 
 import pytest
 from textual.app import App, ComposeResult

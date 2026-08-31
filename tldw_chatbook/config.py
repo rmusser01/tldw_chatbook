@@ -4259,7 +4259,7 @@ auto_save = false
 show_analysis_button = true
 
 [permission_summary]
-# ADR-080: advisory summaries on Console approval cards.
+# ADR-090: advisory summaries on Console approval cards.
 # mode: off (default) | fallback (only when the model gave no rationale)
 # | always (every approval round). Enabling sends a bounded tail of the
 # conversation (user/assistant text only) to this provider.

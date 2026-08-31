@@ -1,4 +1,4 @@
-"""Shared display helpers for Console tool-approval surfaces (ADR-080).
+"""Shared display helpers for Console tool-approval surfaces (ADR-090).
 
 The argument-summarization helpers below moved here VERBATIM from
 ``tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card`` (task 5 of the
@@ -30,7 +30,7 @@ _ARGS_VALUE_LIMIT = 34
 #: clips the tail) than to render every argument as noise.
 _ARGS_MIN_VALUE_LIMIT = 10
 
-#: ADR-080: display cap for one advisory line (tail-biased).
+#: ADR-090: display cap for one advisory line (tail-biased).
 RATIONALE_DISPLAY_CAP = 240
 CONTEXT_LABEL = "Model context:"
 SUMMARY_LABEL = "Summary:"

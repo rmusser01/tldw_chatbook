@@ -1,4 +1,4 @@
-# ADR-080: Advisory context summaries on Console permission requests
+# ADR-090: Advisory context summaries on Console permission requests
 
 Status: Accepted
 Date: 2026-08-31

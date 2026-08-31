@@ -7168,7 +7168,7 @@ class ChatScreen(BaseAppScreen):
                 self._ensure_console_prompt_history() if prompts is not None else None
             ),
             "set_pending_approval": self._set_console_pending_approval,
-            # ADR-080: UI-thread bridge to patch a mounted approval card's
+            # ADR-090: UI-thread bridge to patch a mounted approval card's
             # advisory summary line in place (never re-runs set_batch).
             "update_pending_approval_summary": self._update_console_approval_summary,
             # Task 9 (parked background approvals): UI-thread bridge target
@@ -19199,7 +19199,7 @@ class ChatScreen(BaseAppScreen):
         )
 
     def _update_console_approval_summary(self, round_id: str, text: str) -> None:
-        """ADR-080: patch the mounted approval card's summary line in place."""
+        """ADR-090: patch the mounted approval card's summary line in place."""
         try:
             task_cards = self.query_one("#console-task-surface", ChatTaskCards)
             card = task_cards.query_one(ChatApprovalCard)

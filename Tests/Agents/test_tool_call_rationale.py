@@ -1,4 +1,4 @@
-"""ADR-080: rationale capture normalization + ToolCall field."""
+"""ADR-090: rationale capture normalization + ToolCall field."""
 
 from tldw_chatbook.Agents.agent_models import (
     RATIONALE_CAPTURE_CAP,
@@ -29,7 +29,7 @@ def test_tool_call_rationale_defaults_empty():
 
 
 # ---------------------------------------------------------------------------
-# with_preamble_rationale + parse_fenced_tool_call (ADR-080 hybrid capture)
+# with_preamble_rationale + parse_fenced_tool_call (ADR-090 hybrid capture)
 # ---------------------------------------------------------------------------
 
 from tldw_chatbook.Agents.agent_models import with_preamble_rationale

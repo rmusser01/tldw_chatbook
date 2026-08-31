@@ -195,7 +195,7 @@ def test_collapsed_rows_disclose_every_argument_set():
 
 @pytest.mark.unit
 def test_grouped_rows_take_the_first_non_empty_rationale():
-    """ADR-080 (task 5): a blank-earlier rationale must not mask a later one.
+    """ADR-090 (task 5): a blank-earlier rationale must not mask a later one.
 
     Fence-path calls collapse by `llm_name`; if the first call's `rationale`
     is blank but a later same-name call states one, the group's row must

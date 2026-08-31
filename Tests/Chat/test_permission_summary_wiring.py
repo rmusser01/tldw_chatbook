@@ -1,4 +1,4 @@
-"""ADR-080: fire-once trigger matrix + guarded delivery, no real threads."""
+"""ADR-090: fire-once trigger matrix + guarded delivery, no real threads."""
 
 import threading
 from types import SimpleNamespace

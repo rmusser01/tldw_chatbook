@@ -468,7 +468,7 @@ CONSOLE_VIEW_HOOK_SLOTS: tuple[ConsoleViewHookSlot, ...] = (
     ConsoleViewHookSlot(
         "update_pending_approval_summary",
         "controller",
-        why="ADR-080: `_deliver_permission_summary` guards with `is not "
+        why="ADR-090: `_deliver_permission_summary` guards with `is not "
         "None` and the summary it would patch is ALREADY durably stored "
         "on the round state and the retained payload before this fires, "
         "so a viewless delivery loses nothing -- the next mount re-renders "

@@ -227,7 +227,7 @@ class ToolSchema:
     parameters: dict
 
 
-#: ADR-080: cap for rationale text captured at parse time (tail-biased).
+#: ADR-090: cap for rationale text captured at parse time (tail-biased).
 RATIONALE_CAPTURE_CAP = 500
 
 _RATIONALE_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -237,7 +237,7 @@ _RATIONALE_WHITESPACE = re.compile(r"\s+")
 def normalize_rationale(text: object, cap: int = RATIONALE_CAPTURE_CAP) -> str:
     """Normalize model-authored advisory text for display-surface transit.
 
-    Untrusted-content hygiene (ADR-080 §Security): strip control characters,
+    Untrusted-content hygiene (ADR-090 §Security): strip control characters,
     collapse all whitespace to single spaces, and cap length keeping the
     TAIL (the end of a preamble is the part adjacent to the tool call; the
     head is often an unrelated answer to the user), prefixing an ellipsis
@@ -267,7 +267,7 @@ def with_preamble_rationale(
 ) -> tuple[ToolCall, ...]:
     """Attach a turn's preamble text as the rationale of calls lacking one.
 
-    The hybrid rule (ADR-080): an explicit fence ``rationale`` key wins, so
+    The hybrid rule (ADR-090): an explicit fence ``rationale`` key wins, so
     calls that already carry a rationale pass through untouched; everything
     else (native turn text, fence preamble) fills in from ``preamble``.
 
@@ -304,7 +304,7 @@ class ToolCall:
     args: dict
     call_id: str = ""
     raw_arguments: str = ""
-    #: ADR-080: the model's own stated reason for this call (explicit fence
+    #: ADR-090: the model's own stated reason for this call (explicit fence
     #: ``rationale`` key, else the turn's preamble text). Advisory display
     #: data for the approval card ONLY -- never persisted, never serialized
     #: into durable captures, never an input to any security verdict.

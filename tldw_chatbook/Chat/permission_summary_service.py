@@ -1,4 +1,4 @@
-"""ADR-080: external fast-LLM summaries for Console approval rounds.
+"""ADR-090: external fast-LLM summaries for Console approval rounds.
 
 Advisory-only by construction: this module resolves config, builds one
 bounded prompt per approval round, and returns a normalized line of text
@@ -46,7 +46,7 @@ class PermissionSummaryResolution:
             for keyless local providers.
         model: Configured model, or None to let the provider default apply.
         timeout_seconds/max_tokens/tail_max_chars/system_prompt: Call
-            parameters; defaults per ADR-080.
+            parameters; defaults per ADR-090.
     """
 
     mode: str
@@ -125,7 +125,7 @@ def build_messages_tail(
 ) -> list[dict[str, str]]:
     """Project stored conversation messages into the bounded summary tail.
 
-    ADR-080 egress bound: user/assistant visible text ONLY -- tool results,
+    ADR-090 egress bound: user/assistant visible text ONLY -- tool results,
     system messages, and anything else never egress. Newest messages are
     kept; the oldest are dropped first once the budget is exceeded (one
     newest message may exceed the budget by itself -- it is kept, bounded
@@ -224,7 +224,7 @@ def summarize_pending_round(
     pending_calls_info: list[dict[str, str]],
     call_fn: Callable[..., Any] = chat_api_call,
 ) -> Optional[str]:
-    """One advisory summary for one approval round; never raises (ADR-080).
+    """One advisory summary for one approval round; never raises (ADR-090).
 
     Args:
         resolution: An ACTIVE resolution (inactive -> None, no call).

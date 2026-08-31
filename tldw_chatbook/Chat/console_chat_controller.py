@@ -1422,7 +1422,7 @@ def _build_approval_payload(
 ) -> dict[str, Any]:
     """Marshal one approval round's card payload.
 
-    ADR-080: rows carry ``rationale`` (the model's advisory context) and
+    ADR-090: rows carry ``rationale`` (the model's advisory context) and
     ``description`` (the tool definition's own text, for the external
     summarizer); the payload carries a ``summary`` slot that starts ``None``
     and is filled by the advisory summarizer -- payload-carried so any
@@ -3202,7 +3202,7 @@ class ConsoleChatController:
         #: _set_console_pending_approval``). Always invoked through
         #: ``self.app.call_from_thread`` from ``request_mcp_approvals``.
         self.set_pending_approval: Callable[[dict[str, Any] | None], None] | None = None
-        #: ADR-080: UI-thread bridge that patches a mounted approval card's
+        #: ADR-090: UI-thread bridge that patches a mounted approval card's
         #: advisory summary line ``(round_id, text)``. Registered by the
         #: Console screen alongside ``set_pending_approval``; None in
         #: headless contexts and delivery silently no-ops.
@@ -9742,7 +9742,7 @@ class ConsoleChatController:
                 self._parked_approval_payloads, session.id
             )
             self.set_pending_approval(payload)
-            # ADR-080: this re-derive bypasses `_marshal_pending_approval`,
+            # ADR-090: this re-derive bypasses `_marshal_pending_approval`,
             # so the summary trigger is armed here too (always None for a
             # fresh session today; fire-once guards any future payload).
             if isinstance(payload, dict):
@@ -10120,7 +10120,7 @@ class ConsoleChatController:
                 self._parked_approval_payloads, session_id
             )
             self.set_pending_approval(payload)
-            # ADR-080: this mount of a stored payload bypasses
+            # ADR-090: this mount of a stored payload bypasses
             # `_marshal_pending_approval`, so a round that armed while
             # parked fires its advisory summary HERE (fire-once makes the
             # switch-away-and-back re-mount safe).
@@ -10299,7 +10299,7 @@ class ConsoleChatController:
                     self._parked_approval_payloads, new_active_id
                 )
                 self.set_pending_approval(payload)
-                # ADR-080: neighbor auto-activation is a mount of a stored
+                # ADR-090: neighbor auto-activation is a mount of a stored
                 # payload outside `_marshal_pending_approval` -- arm the
                 # summary trigger here too (fire-once; None clears no-op).
                 if isinstance(payload, dict):
@@ -10843,7 +10843,7 @@ class ConsoleChatController:
             # approval` snapshots the box before writing to it) can never
             # turn a revoked round back into an approval.
             "revoked": False,
-            # ADR-080: advisory summary for this round (payload-carried so
+            # ADR-090: advisory summary for this round (payload-carried so
             # remounts re-render it) and the fire-once guard for the
             # external summarizer (no-call outcomes also consume it).
             "summary": None,
@@ -11149,7 +11149,7 @@ class ConsoleChatController:
     def _maybe_fire_permission_summary(self, payload: dict[str, Any]) -> None:
         """Fire the external summarizer once per round, if configured.
 
-        ADR-080 trigger: ``fallback`` only when some pending row lacks a
+        ADR-090 trigger: ``fallback`` only when some pending row lacks a
         rationale, ``always`` for every round with rows. One call per
         ``round_id`` -- no-call outcomes also consume the once-flag, so
         exactly one trigger check runs per round no matter how many times
@@ -11208,7 +11208,7 @@ class ConsoleChatController:
 
         The approval wait loop is never blocked and the round's deadline is
         unaffected; a slow call that outlives the round is dropped on
-        delivery. Content-free failures only (ADR-080).
+        delivery. Content-free failures only (ADR-090).
         """
         try:
             tail = build_messages_tail(
@@ -11398,7 +11398,7 @@ class ConsoleChatController:
                 return
             payload = self._head_round_payload(store, target)
             setter(payload)
-            # ADR-080: this is the promotion mount (a head resolving or a
+            # ADR-090: this is the promotion mount (a head resolving or a
             # run revoking hands the card to the queued sibling) and it
             # bypasses `_marshal_pending_approval`, so the summary trigger
             # is armed here too. No-op for non-MCP stores sharing this
@@ -11444,7 +11444,7 @@ class ConsoleChatController:
         if payload is None:
             return False
         self.set_pending_approval(payload)
-        # ADR-080: a headless attach is often the FIRST mount a parked
+        # ADR-090: a headless attach is often the FIRST mount a parked
         # round ever gets -- arm the summary trigger here (bypasses
         # `_marshal_pending_approval`; fire-once makes re-attaches safe).
         if isinstance(payload, dict):

@@ -1011,7 +1011,7 @@ class LocalToolProvider:
             args: The call's arguments, echoed into the pending payload.
             call_id: Provider call identity when available. Empty preserves
                 the name-keyed fence and single-call fallback contract.
-            rationale: The call's advisory rationale (ADR-080), copied
+            rationale: The call's advisory rationale (ADR-090), copied
                 verbatim onto the row.
 
         Returns:
@@ -1254,7 +1254,7 @@ class LocalToolProvider:
             hub: The tool's ``HubTool`` view for permission resolution.
             call_id: Provider call identity when the batch runtime supplied
                 one; empty on the compatible fence/fallback paths.
-            rationale: The call's advisory rationale (ADR-080), copied
+            rationale: The call's advisory rationale (ADR-090), copied
                 verbatim onto the row.
 
         Returns:
@@ -1281,7 +1281,7 @@ class LocalToolProvider:
             if state.risk_floored
             else "ask"
         )
-        # ADR-080: description rides every gate this resolver builds -- both
+        # ADR-090: description rides every gate this resolver builds -- both
         # `pending_gate_for()`'s rows and `_verdict_for()`'s callback gate.
         # `pending_gate_for()` already verified the spec exists; None here
         # (impossible for its calls) still degrades to "" via the getattr.

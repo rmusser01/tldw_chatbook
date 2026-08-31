@@ -2,7 +2,7 @@
 
 - **Date:** 2026-08-31
 - **Status:** Approved design, pending spec review
-- **ADR:** `backlog/decisions/080-permission-request-context-summaries.md`
+- **ADR:** `backlog/decisions/090-permission-request-context-summaries.md`
 - **Related:** ADR-069 (untrusted project-instruction boundary), ADR-032 (local tool permission boundary)
 
 ## Problem
@@ -318,7 +318,7 @@ small, separable change deliberately excluded from this design.
 
 ADR required: **yes** — untrusted model-authored content on a security
 decision surface, a new conversation-data egress path, and a cross-module
-interface change. `backlog/decisions/080-permission-request-context-summaries.md`
+interface change. `backlog/decisions/090-permission-request-context-summaries.md`
 (next free number at design time; verify against the decisions directory head
 at implementation time, since ADR numbering collisions are being resolved
 in-flight).

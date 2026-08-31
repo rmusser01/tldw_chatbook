@@ -232,7 +232,7 @@ def parse_fenced_tool_call(text: str) -> ToolCall | None:
     call_id = payload.get("call_id", "")
     if not isinstance(call_id, str):
         return None
-    # ADR-080: an optional explicit rationale key; wrong-typed values are
+    # ADR-090: an optional explicit rationale key; wrong-typed values are
     # ignored, never fatal -- the call itself must still parse.
     rationale = payload.get("rationale", "")
     if not isinstance(rationale, str):
@@ -1320,14 +1320,14 @@ def run_agent_loop(
             total_tokens += turn.tokens
             calls = list(turn.tool_calls)
             if calls:
-                # ADR-080: native turns -- the assistant text of the same
+                # ADR-090: native turns -- the assistant text of the same
                 # turn is the rationale for every call in it.
                 calls = list(with_preamble_rationale(calls, turn.text))
         fenced = None
         if not calls:
             _visible, fenced = split_visible_text_and_tool_call(turn.text)
             if fenced is not None:
-                # ADR-080: fence turns -- the visible text preceding the
+                # ADR-090: fence turns -- the visible text preceding the
                 # fence is the fallback rationale (explicit key wins inside
                 # with_preamble_rationale).
                 calls = list(with_preamble_rationale([fenced], _visible))
