@@ -610,3 +610,19 @@ ADR path: `backlog/decisions/102-personal-context-profile-authority-sync-and-enc
 Reason: this correction hardens existing ADR-102 contracts and recovery
 authentication; it does not introduce a new storage, authority, or sync policy.
 TASK-24727 remains In Progress and its acceptance criteria remain unchecked.
+
+## Final controller closeout (2026-08-31)
+
+- Final Chatbook commit: `edc9c80be04c530df3aae269b07a30a67d785d2e`.
+- Final reviewed server contract: `0ad1c078c8843692eb7b99cc01a4378159ac1d84`.
+- Controller aggregate: 465 Chatbook tests passed with 2 dependency warnings;
+  382 server tests passed, 2 skipped, with 46 warnings.
+- Ruff, focused compileall, Bandit `-lll`, range diff hygiene, and clean-worktree
+  checks passed for both final correction ranges.
+- Independent Chatbook code-quality, server code-quality, and cross-repository
+  specification/convergence reviews returned APPROVED.
+- No full repository sweep or live external server/keyring/TUI session was run,
+  per scoped-verification policy. Live PostgreSQL was unavailable; two server
+  integration tests were skipped, while executable PostgreSQL contract coverage
+  passed.
+- ADR required: no new ADR. ADR-102 remains governing.

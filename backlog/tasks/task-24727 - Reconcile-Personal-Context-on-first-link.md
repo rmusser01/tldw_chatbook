@@ -1,11 +1,11 @@
 ---
 id: TASK-24727
 title: Reconcile Personal Context on first link
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-30 22:21'
-updated_date: '2026-08-30 22:25'
+updated_date: '2026-08-31 15:44'
 labels:
   - personal-context
   - sync
@@ -29,11 +29,11 @@ Perform a cancellable reviewed first-link reconciliation that adopts the server 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 First-link planning is read-only, encrypted, and blocks upload until the user approves exact profile, scope, object, lineage, quota, and purge-generation outcomes.
-- [ ] #2 Applying approved decisions adopts the server canonical profile ID, preserves canonical object IDs/versions, persists explicit workspace-scope mappings, and remains resumable after interruption.
-- [ ] #3 The authenticated wrapped bootstrap replaces the provisional integrity key and completes a versioned full integrity rebaseline before ordinary push or pull is enabled.
-- [ ] #4 The Settings review surface supports cancel, retry, collision review, unlinked workspace handling, and concurrent local mutation without exposing profile content in logs or Sync metadata.
-- [ ] #5 Targeted reconciliation, first-link, and modal tests plus Ruff, compilation, Bandit, diff hygiene, and independent review pass.
+- [x] #1 First-link planning is read-only, encrypted, and blocks upload until the user approves exact profile, scope, object, lineage, quota, and purge-generation outcomes.
+- [x] #2 Applying approved decisions adopts the server canonical profile ID, preserves canonical object IDs/versions, persists explicit workspace-scope mappings, and remains resumable after interruption.
+- [x] #3 The authenticated wrapped bootstrap replaces the provisional integrity key and completes a versioned full integrity rebaseline before ordinary push or pull is enabled.
+- [x] #4 The Settings review surface supports cancel, retry, collision review, unlinked workspace handling, and concurrent local mutation without exposing profile content in logs or Sync metadata.
+- [x] #5 Targeted reconciliation, first-link, and modal tests plus Ruff, compilation, Bandit, diff hygiene, and independent review pass.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,18 +50,9 @@ ADR path: backlog/decisions/102-personal-context-profile-authority-sync-and-encr
 Reason: ADR-102 already governs reviewed first-link reconciliation, scope mappings, identity adoption, key custody, and Sync gating.
 <!-- SECTION:PLAN:END -->
 
-## Definition of Done
-<!-- DOD:BEGIN -->
-- [ ] #1 Acceptance criteria completed
-- [ ] #2 Targeted tests and verification recorded
-- [ ] #3 Documentation updated
-- [ ] #4 Static and security checks pass
-- [ ] #5 Independent review completed
-- [ ] #6 Known skips or blockers documented
-<!-- DOD:END -->
-
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 The Chatbook first-link slice is implemented and remains In Progress pending
 controller verification and cross-repository review. It uses the canonical
 Personal Context records and versions directly; no Chatbook/server projection or
@@ -186,3 +177,34 @@ and success schemas mirror the reviewed server contract (at most 32 ASCII-safe
 names, strict built-in integers in `0..2**63-1`), and planning rejects any success
 map missing a requested quota. The final cross-repository pin is
 `0ad1c078c8`. TASK-24727 remains In Progress; acceptance criteria remain unchecked.
+
+Final controller closeout completed on 2026-08-31. Chatbook commit
+`edc9c80be04c530df3aae269b07a30a67d785d2e` is pinned to tldw_server
+`0ad1c078c8843692eb7b99cc01a4378159ac1d84`. Both applications use the same
+canonical Personal Context records, IDs, versions, tombstones, and lineage; no
+projection, mirror, or second authority was introduced.
+
+- Controller verification passed 465 Chatbook tests (2 dependency warnings) and
+  382 server tests (2 skipped, 46 warnings).
+- Ruff, focused compileall, Bandit high-severity (`-lll`), range diff hygiene,
+  and clean-worktree checks passed for both final correction ranges.
+- Independent Chatbook code-quality, server code-quality, and cross-repository
+  specification/convergence reviews all returned APPROVED with no remaining
+  actionable findings.
+- The full repository suites were not run, per scoped-verification policy. Live
+  external server, OS keyring, and interactive TUI sessions were not exercised.
+  A live PostgreSQL service was unavailable; two server integration cases were
+  skipped, while executable PostgreSQL locking/SQL contract coverage passed.
+- ADR required: no new ADR. ADR-102 remains the governing authority, encryption,
+  reconciliation, and Sync decision.
+<!-- SECTION:NOTES:END -->
+
+## Definition of Done
+<!-- DOD:BEGIN -->
+- [x] #1 Acceptance criteria completed
+- [x] #2 Targeted tests and verification recorded
+- [x] #3 Documentation updated
+- [x] #4 Static and security checks pass
+- [x] #5 Independent review completed
+- [x] #6 Known skips or blockers documented
+<!-- DOD:END -->
