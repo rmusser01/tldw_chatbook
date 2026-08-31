@@ -3,10 +3,10 @@ id: TASK-25708
 title: >-
   Console: re-derive the workspace-pointer reflow test geometry after the
   Sessions merge
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-30 19:40'
-updated_date: '2026-08-30 22:37'
+updated_date: '2026-08-31 04:55'
 labels:
   - console
   - tests
@@ -28,13 +28,13 @@ test_production_workspace_pointer_keeps_pressed_key_across_outer_reflow scrolls 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Partially re-derived on the TASK-23199 branch; NOT finished.
+Done. Fixed by probing the live geometry rather than guessing coordinates.
 
-Done: the press target is now chosen from the band that is actually visible (intersection of the tree's content region with the outer's clip), scanning outward from the midpoint for a WORKSPACE row, with the expected activation id derived from the node rather than hardcoded to 'workspace-1'. The outer is scrolled away from the top so the reveal has somewhere to move from. With that, the first half passes against the new layout: _pressed_node_key, the active section flipping to 'workspace', outer.scroll_y changing, and tree.content_region.y changing.
+The probe showed the constraint the old fixed offsets had been satisfying by accident: revealing Workspaces scrolls the outer back to the top, moving content DOWN by exactly the current offset, while the pointer deliberately stays still through the reflow. The pressed row must therefore be on the tree BOTH before and after the shift - at least reveal_shift rows into the tree (or the stationary pointer ends up above it) and reveal_shift rows clear of the clip bottom (or it leaves the other side). Encoding both bounds is what made it deterministic.
 
-Remaining: the trailing double-click phase. After the reveal the pressed row lands on row 24 while the outer's content_region.bottom is exactly 24 -- one cell outside the clip -- and centring the row in the tree's own viewport does not move it off that boundary, which suggests the tree extends past the outer clip in a way the tree-relative offset does not account for. pilot.click then refuses the offset.
+Two supporting findings from the same probe: the offset must be small (two rows, not five) because each workspace row is followed by four conversation rows, so a large shift can leave NO workspace row satisfying both bounds; and the tree's own pre-scroll had to go - it existed to bring the hardcoded workspace-1 into view and was shifting the line-to-row mapping out from under the search.
 
-Left xfail rather than tuned to green: I had it passing at one point by hand-picking a scroll offset, then the click coordinate stopped landing, which is the signature of calibrating numbers until the bar turns green. The behaviour under test is unchanged; what is needed is understanding the tree/outer clip interaction, not another guess.
+The test now reads the layout instead of assuming one: it searches the visible band for a workspace row meeting the bounds and derives the expected activation id from that node. It should survive future changes to the rail's section set, which is what broke it in the first place.
 
-Sibling coverage note for whoever picks this up: Tests/UI/test_console_workspace_tree.py covers _pressed_node_key at the WIDGET level (54 tests). What this test uniquely covers is the press surviving a RAIL REFLOW, so the gap while xfailed is real.
+Passes three consecutive runs; test_console_rail_reconciliation.py has no xfails left (54 passed). preflight green.
 <!-- SECTION:NOTES:END -->
