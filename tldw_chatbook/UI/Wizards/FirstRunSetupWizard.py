@@ -7118,11 +7118,6 @@ class SummaryStep(SetupStep):
             yield Button("Explore Home", id="setup-exit-home")
             yield Button("Review settings", id="setup-exit-settings")
 
-    def preferred_focus(self) -> Optional[Widget]:
-        """Keep the primary completion action focused when Summary opens."""
-
-        return self.query_one("#setup-exit-chat", Button)
-
     def on_show(self) -> None:
         super().on_show()
         track = (

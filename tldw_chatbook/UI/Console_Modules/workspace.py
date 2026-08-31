@@ -4920,8 +4920,6 @@ class ConsoleWorkspaceController:
             state: A canonical conversation state.
             conversation_title: Title for the confirmation toast.
         """
-        from ...Chat.console_conversation_actions import conversation_state_label
-
         db = getattr(self.app_instance, "chachanotes_db", None)
         if db is None:
             self.app_instance.notify(
