@@ -10343,3 +10343,35 @@ minutes, and it is the only step that catches the file you did not think to name
 every one of them before writing any of them off. Three of the five here were
 new since the branch point and two of those three traced to a single commit
 (#2220) — a pattern invisible if you check only the failure you recognise.
+
+---
+
+## Establish that a failure is DETERMINISTIC before bisecting it
+
+**Incident.** TASK-25715, 2026-08-31, immediately after the entry above. Of the
+three failures I bisected there, one was flaky, and the bisect did not tell me
+so — it returned a specific, plausible, wrong commit (`0ef6f3fd4`, #2252), which
+I then published in two PR bodies as an attribution.
+
+A binary search assumes the predicate is a function of the commit. Run once per
+step against a ~1-in-12 flake, it instead converges on wherever the coin landed.
+Measured after the fact: **11 passed / 1 failed of 12 at the very commit the
+search had called FIRST BAD**, and 12/12 at the tip. Even the two failures that
+made me open the investigation were the flake — hit twice while the machine was
+busy running other pytest processes concurrently.
+
+Nothing about the output looked wrong. `GOOD / GOOD / BAD / GOOD` reads exactly
+the same whether the predicate is real or a coin. The two genuinely deterministic
+failures in the same batch re-measured 0/5, and their bisects held.
+
+**What to do.** Before bisecting, run the failing test **N times at the tip and N
+times at the presumed-good base** (N≈10 is cheap for a UI test). Bisect only if
+it is 0/N at one end and N/N at the other. If both ends are mixed, you have a
+flake — a different defect with a different owner, and no commit to blame. After
+a bisect names a commit, confirm by re-running the test several times at that
+commit and its parent; a single run at each is the same coin flip that produced
+the answer.
+
+**And be suspicious of your own machine.** Concurrent test runs raise flake rates
+for timing-sensitive UI tests, so failures observed while sweeps or other bisects
+are running deserve a quiet-machine re-check before they become findings.
