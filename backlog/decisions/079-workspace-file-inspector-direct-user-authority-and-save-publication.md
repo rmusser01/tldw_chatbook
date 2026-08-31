@@ -21,7 +21,6 @@ Several boundaries make this more than a modal UI decision:
 - filenames, file text, and Git output can contain terminal/markup control data;
 - asynchronous filesystem and Git work needs bounded lifecycle and shutdown semantics; and
 - Git decoration is useful but must not become a filesystem authority source, execute repository-controlled behavior, or mutate repository state.
-- Git decoration is useful but must not become a filesystem authority source or mutate repository state.
 
 Reusing File Notes would also import synchronization and database ownership that do not belong to direct workspace inspection.
 
@@ -32,10 +31,6 @@ Reusing File Notes would also import synchronization and database ownership that
 Workspace Files is a near-full-screen modal owned by the current Console screen. It receives a stable workspace ID and displays a persistent notice naming both the inspected and active workspaces. Opening, navigating, saving, and closing it do not activate the inspected workspace or mutate Console context. Console admits only one visit: repeated activation focuses that visit, and another workspace cannot retarget or stack a second modal.
 
 The modal owns one selected binding, one selected file, and at most one edit buffer. Recursive filtering is limited to the selected binding; changing bindings is an explicit, revalidated navigation transition rather than a workspace-wide search side effect. It uses the Console safe-dismiss contract for Back to Console, Escape, and backdrop dismissal. While it covers the Console, a privacy-minimized attention summary can report that approvals or new run activity need attention and return the user to the Console, but cannot expose or resolve those items. It is a dedicated UI/service surface and does not reuse File Notes synchronization, persistence, or editor ownership.
-The modal owns one selected binding, one selected file, and at most one edit buffer. Recursive filtering is limited to the selected binding; changing bindings is an explicit, revalidated navigation transition rather than a workspace-wide search side effect. It uses the Console safe-dismiss contract for Back to Console, Escape, and backdrop dismissal. It is a dedicated UI/service surface and does not reuse File Notes synchronization, persistence, or editor ownership.
-Workspace Files is a near-full-screen modal owned by the current Console screen. It receives a stable workspace ID and displays a persistent notice naming both the inspected and active workspaces. Opening, navigating, saving, and closing it do not activate the inspected workspace or mutate Console context.
-
-The modal owns one selected file and at most one edit buffer. It uses the Console safe-dismiss contract for Back/Close, Escape, and backdrop dismissal. It is a dedicated UI/service surface and does not reuse File Notes synchronization, persistence, or editor ownership.
 
 ### 2. Direct user actions use binding authority, not agent approval
 
@@ -54,12 +49,6 @@ One app-scoped root mutation coordinator is keyed by canonical physical roots an
 Before an agent run establishes a change-review baseline or dispatches mutating work, it atomically acquires leases for its participating writable roots. A conflict produces a visible, recoverable admission failure; no agent change-capture window begins.
 
 Entering inspector Edit acquires a manual lease for the selected root. A running agent lease keeps viewing available but disables Edit. A manual lease blocks new overlapping agent-write admission until the edit session releases it. The pinned UI continuously names this reservation. Save and Revert keep the clean edit session and its lease active; explicit **Done editing** returns to Viewing and releases it without closing the inspector. File/binding navigation and dismissal also end the edit session after dirty-state resolution. Invalidated binding authority releases its old canonical-root lease while preserving the draft for Copy. Multi-root acquisition is canonicalized, sorted, and all-or-none. Manual and agent leases release in `finally` on every defined terminal lifecycle path; an agent lease remains held through terminal change-snapshot/review completion, including failure recording.
-Entering inspector Edit acquires a manual lease for the selected root. A running agent lease keeps viewing available but disables Edit. A manual lease blocks new overlapping agent-write admission until the edit session releases it. The pinned UI continuously names this reservation. Save and Revert keep the clean edit session and its lease active; explicit **Done editing** returns to Viewing and releases it without closing the inspector. File/binding navigation and dismissal also end the edit session after dirty-state resolution. Invalidated binding authority releases its old canonical-root lease while preserving the draft for Copy. Multi-root acquisition is canonicalized, sorted, and all-or-none.
-One app-scoped root mutation coordinator is keyed by canonical physical roots and detects ancestor/descendant overlap.
-
-Before an agent run establishes a change-review baseline or dispatches mutating work, it atomically acquires leases for its participating writable roots. A conflict produces a visible, recoverable admission failure; no agent change-capture window begins.
-
-Entering inspector Edit acquires a manual lease for the selected root. A running agent lease keeps viewing available but disables Edit. A manual lease blocks new overlapping agent-write admission until the edit session releases it. Multi-root acquisition is canonicalized, sorted, and all-or-none.
 
 This guarantees that Chatbook-controlled inspector publications do not occur within an overlapping Agent Change Review baseline-to-terminal window. It does not attempt to coordinate external editors; exact-baseline conflict checks remain required.
 
@@ -72,13 +61,6 @@ Binary or invalid UTF-8 content, mixed newlines, unsafe links/aliases, special o
 ### 5. Save reports publication and durability separately
 
 Save performs final authority, containment, file-identity, and exact-baseline validation. For an eligible file it writes an exclusive same-directory temporary file, flushes content, preserves and validates supported metadata, atomically replaces the target, performs supported parent durability steps, and reopens/verifies final bytes, identity, and promised metadata.
-Normal writable UTF-8 files are editable when Chatbook can preserve their byte/line-ending policy, final-newline state, mode, required supported metadata, and safe regular-file identity through publication. Eligibility is based on content and filesystem facts rather than an extension allowlist.
-
-Binary or invalid UTF-8 content, mixed newlines, unsafe links/aliases, special or multiply-linked files, version-control internals, oversized content, unsupported metadata, or a platform publisher that cannot meet the contract are read-only or metadata-only with a plain-language reason. There is no best-effort or “try anyway” write path.
-
-### 5. Save reports publication and durability separately
-
-Save performs final authority, containment, file-identity, and exact-baseline validation. For an eligible file it writes an exclusive same-directory temporary file, flushes content, preserves and validates supported metadata, atomically replaces the target, performs supported parent durability steps, and reopens/hashes the final target.
 
 The contract prevents silent overwrite of an external change detectable before the final pre-publication identity check. It does not claim to exclude an external race after that check.
 
@@ -95,11 +77,6 @@ Graceful application quit reuses the same dirty guard. If a Save is already acti
 ### 6. Git decoration is isolated and non-authoritative
 
 Git status is provided by a separate read-only adapter with bounded concurrency/time/output, absolute executable resolution, `--no-replace-objects`, literal pathspecs, NUL-delimited porcelain-v2 parsing, fsmonitor/rename/maintenance/gc suppression, and an isolated non-interactive no-lazy-fetch environment with system/global config disabled. It never invokes hook-capable behavior, prompts, pagers, editors, caller-supplied Git redirects, or output-derived command arguments. Parsed raw path identity remains separate from escaped display text and every result is revalidated inside the selected binding. The adapter does not refresh or write the index, stage changes, modify configuration, or provide filesystem authority.
-The last outcome is never retried automatically. The inspector remains mounted, briefly freezes input during the non-cancellable publication phase, waits for the terminal result, and offers recovery based on any final identity it could verify. If a final read verifies the draft bytes, they become the clean baseline while the durability warning remains visible. If final bytes cannot be verified, the draft and prior baseline remain pinned and another Save is disabled until Refresh or Compare establishes current disk identity. Because replacement is known, the path is recorded as edited during the modal visit.
-
-### 6. Git decoration is isolated and non-authoritative
-
-Git status is provided by a separate read-only adapter with bounded time/output, a scrubbed non-interactive environment, optional-lock suppression, and porcelain parsing. It does not refresh or write the index, stage changes, modify configuration, or provide filesystem authority.
 
 Git absence, timeout, malformed output, and nested-repository complexity fail locally as unavailable/truncated decoration. They do not prevent browsing or change Save eligibility.
 
@@ -137,9 +114,6 @@ List, read, and filter lanes each permit one active operation and at most one co
 - The UI must preserve recoverable drafts across binding conflicts and uncertain publication while avoiding persistent storage.
 - The modal must implement the app quit hooks, generic Console-attention bridge, bounded worker/subprocess teardown, and hostile-text display path.
 - Memory-only drafts cannot survive force kill, host crash, or operating-system termination.
-- Publication needs platform-specific implementation and real-filesystem tests; some files or platforms will be read-only.
-- Operations must revalidate on every call, increasing service complexity compared with trusting an open tree.
-- The UI must preserve recoverable drafts across binding conflicts and uncertain publication while avoiding persistent storage.
 - Settings documentation must explain binding maximum authority versus agent approval.
 
 ## Alternatives considered
