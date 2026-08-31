@@ -62,6 +62,7 @@ class PersonalContextFirstLinkSync:
         key_record_id: str,
         purge_generation: int,
         bootstrap_cursor: str,
+        sync_transport_cursor: str,
         bootstrap_heads: Mapping[str, Mapping[str, str]],
         expected_heads: Mapping[str, Mapping[str, str]],
         reviewed_lineage: list[list[str]] | tuple[tuple[str, str, str], ...] | None = None,
@@ -81,6 +82,7 @@ class PersonalContextFirstLinkSync:
             "key_record_id": key_record_id,
             "purge_generation": purge_generation,
             "bootstrap_cursor": bootstrap_cursor,
+            "sync_transport_cursor": sync_transport_cursor,
             "bootstrap_heads": dict(bootstrap_heads),
             "expected_heads": dict(expected_heads),
         }
@@ -96,6 +98,12 @@ class PersonalContextFirstLinkSync:
             reviewed_lineage
         ):
             raise ValueError("personal_context_reconciliation_binding_stale")
+        if (
+            not isinstance(sync_transport_cursor, str)
+            or not sync_transport_cursor
+            or len(sync_transport_cursor) > 32_768
+        ):
+            raise ValueError("personal_context_sync_transport_cursor_invalid")
         storage_key = self._dataset_keys.get(dataset_id)
         if storage_key is None or len(storage_key) != 32:
             raise ValueError("personal_context_staging_key_unavailable")
@@ -108,12 +116,7 @@ class PersonalContextFirstLinkSync:
             None if sync_profile is None else sync_profile.get("capabilities"),
             fallback_size=100,
         )
-        transport_cursor = self._transport_cursor(
-            sync_profile,
-            device_id=device_id,
-            dataset_id=dataset_id,
-            bootstrap_cursor=bootstrap_cursor,
-        )
+        transport_cursor = sync_transport_cursor
         push_cursor = transport_cursor
         reviewed_lineage_allowlist = self._reviewed_lineage(
             bootstrap_heads=bootstrap_heads,
@@ -164,13 +167,13 @@ class PersonalContextFirstLinkSync:
                     raise RuntimeError(
                         "personal_context_reconciliation_version_missing"
                     )
-                reviewed_lineage_allowlist.add(
-                    (
-                        envelope.domain,
-                        str(envelope.object_id),
-                        str(envelope.entity_version),
-                    )
+                identity = (
+                    envelope.domain,
+                    str(envelope.object_id),
+                    str(envelope.entity_version),
                 )
+                if identity not in reviewed_lineage_allowlist:
+                    raise RuntimeError("personal_context_reviewed_lineage_changed")
             payloads = [item.model_dump(mode="json") for item in envelopes]
             push = getattr(
                 self._server,
@@ -265,6 +268,7 @@ class PersonalContextFirstLinkSync:
                 )
                 if identity not in reviewed_lineage_allowlist:
                     raise RuntimeError("personal_context_reviewed_lineage_changed")
+            for envelope in pulled_envelopes:
                 writes = getattr(
                     self._profile, "first_link_reconciliation_writes", None
                 )
@@ -294,7 +298,7 @@ class PersonalContextFirstLinkSync:
         expected_heads: Mapping[str, Mapping[str, str]],
         durable_lineage: list[list[str]] | tuple[tuple[str, str, str], ...],
     ) -> set[tuple[str, str, str]]:
-        """Return exact reviewed heads; pushed reviewed history is added in-cycle."""
+        """Return exact reviewed heads and approved retained materialization history."""
 
         reviewed = {
             (str(domain), str(object_id), str(version_id))
@@ -318,29 +322,6 @@ class PersonalContextFirstLinkSync:
             limit=kwargs.pop("batch_size"),
             **kwargs,
         )
-
-    @staticmethod
-    def _transport_cursor(
-        sync_profile: Mapping[str, Any] | None,
-        *,
-        device_id: str,
-        dataset_id: str,
-        bootstrap_cursor: str,
-    ) -> str | None:
-        """Return only a cursor already bound to this exact transport dataset."""
-
-        if (
-            sync_profile is None
-            or sync_profile.get("device_id") != device_id
-            or sync_profile.get("dataset_id") != dataset_id
-        ):
-            return None
-        cursor = (sync_profile.get("dataset_cursors") or {}).get("sync_v2")
-        if not isinstance(cursor, str) or not cursor or cursor == bootstrap_cursor:
-            return None
-        if cursor.startswith("personal-context-bootstrap-v1:"):
-            return None
-        return cursor
 
     @staticmethod
     def _reviewed_bootstrap_heads(

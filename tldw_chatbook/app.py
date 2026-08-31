@@ -11345,7 +11345,10 @@ class TldwCli(
         from .Personal_Context.link_key_custody import (
             KeyringPersonalContextLinkKeyCustodian,
         )
-        from .Personal_Context.link_service import PersonalContextLinkService
+        from .Personal_Context.link_service import (
+            PersonalContextLinkService,
+            cleanup_completed_link_artifacts,
+        )
 
         link = self.sync_state_repository.get_personal_context_link_state(
             server_profile_id=server_profile_id,
@@ -11358,13 +11361,8 @@ class TldwCli(
             **PersonalContextLinkService._key_binding(link)
         )
         service = self.get_personal_context_service(retry_locked=True)
+        cleanup_completed_link_artifacts(service, link)
         custodian.delete(**PersonalContextLinkService._key_binding(link))
-        service.release_first_link_freeze(plan_id=str(link["plan_id"]))
-        service.clear_first_link_rebaseline_commit(
-            plan_id=str(link["plan_id"]),
-            target_profile_id=str(link["profile_id"]),
-            rebaseline_version=int(link["rebaseline_version"]),
-        )
         dispatcher = service.build_personal_context_outbox_dispatcher(
             state_repository=self.sync_state_repository,
             integrity_key_id=str(link["integrity_key_id"]),
@@ -11485,6 +11483,11 @@ class TldwCli(
                     self._reload_personal_context_settings_panel()
                     return
                 if not coordinator.abandon_uncommitted_apply():
+                    mark_attention = getattr(
+                        coordinator, "mark_ambiguous_apply_attention", None
+                    )
+                    if callable(mark_attention):
+                        mark_attention()
                     raise ProfileLockedError(
                         "Interrupted Personal Context link recovery is pending."
                     )

@@ -50,7 +50,7 @@ _SYNC_V2_CONFLICT_RESOLUTION_STATUSES = {
     "defer-later",
 }
 SYNC_V2_CONFLICT_REVIEW_DEFAULT_LIMIT = 100
-SYNC_STATE_SCHEMA_VERSION = 8
+SYNC_STATE_SCHEMA_VERSION = 9
 _FILTER_UNSET = object()
 _PERSONAL_CONTEXT_LINK_STATES = {
     "review_required",
@@ -413,6 +413,7 @@ class SyncStateRepository(BaseDB):
                     key_record_id TEXT NOT NULL,
                     purge_generation INTEGER NOT NULL,
                     bootstrap_cursor TEXT NOT NULL,
+                    sync_transport_cursor TEXT NOT NULL,
                     confirmed_cursor TEXT,
                     bootstrap_heads TEXT NOT NULL DEFAULT '{}',
                     expected_heads TEXT NOT NULL DEFAULT '{}',
@@ -2085,6 +2086,7 @@ class SyncStateRepository(BaseDB):
         plan_id: str,
         rebaseline_version: int,
         attention_code: str | None,
+        sync_transport_cursor: str | None = None,
         expected_states: tuple[str, ...] | None = None,
         confirmed_cursor: str | None = None,
         bootstrap_heads: Mapping[str, Mapping[str, str]] | None = None,
@@ -2106,6 +2108,12 @@ class SyncStateRepository(BaseDB):
             "bootstrap_cursor": bootstrap_cursor,
             "plan_id": plan_id,
         }
+        if sync_transport_cursor is not None and (
+            not isinstance(sync_transport_cursor, str)
+            or not sync_transport_cursor
+            or len(sync_transport_cursor) > 32_768
+        ):
+            raise ValueError("personal_context_sync_transport_cursor_invalid")
         if any(not isinstance(value, str) or not value or len(value) > 512 for value in values.values()):
             raise ValueError("personal_context_link_binding_invalid")
         if type(purge_generation) is not int or purge_generation < 0:
@@ -2119,7 +2127,7 @@ class SyncStateRepository(BaseDB):
         if confirmed_cursor is not None and (
             not isinstance(confirmed_cursor, str)
             or not confirmed_cursor
-            or len(confirmed_cursor) > 512
+            or len(confirmed_cursor) > 32_768
         ):
             raise ValueError("personal_context_confirmed_cursor_invalid")
         normalized_heads = _validate_personal_context_heads(expected_heads or {})
@@ -2156,10 +2164,10 @@ class SyncStateRepository(BaseDB):
                     server_profile_id, authenticated_principal_id, state,
                     device_id, dataset_id, authority_id, profile_id,
                     integrity_key_id, key_record_id, purge_generation,
-                    bootstrap_cursor, confirmed_cursor, bootstrap_heads,
+                    bootstrap_cursor, sync_transport_cursor, confirmed_cursor, bootstrap_heads,
                     expected_heads, reviewed_lineage, plan_id,
                     rebaseline_version, attention_code, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(server_profile_id, authenticated_principal_id)
                 DO UPDATE SET
                     state = excluded.state,
@@ -2171,6 +2179,7 @@ class SyncStateRepository(BaseDB):
                     key_record_id = excluded.key_record_id,
                     purge_generation = excluded.purge_generation,
                     bootstrap_cursor = excluded.bootstrap_cursor,
+                    sync_transport_cursor = excluded.sync_transport_cursor,
                     confirmed_cursor = excluded.confirmed_cursor,
                     bootstrap_heads = excluded.bootstrap_heads,
                     expected_heads = excluded.expected_heads,
@@ -2192,6 +2201,7 @@ class SyncStateRepository(BaseDB):
                     key_record_id,
                     purge_generation,
                     bootstrap_cursor,
+                    sync_transport_cursor or "",
                     confirmed_cursor,
                     _json_dumps(normalized_bootstrap_heads),
                     _json_dumps(normalized_heads),
@@ -2241,6 +2251,7 @@ class SyncStateRepository(BaseDB):
             "key_record_id": row["key_record_id"],
             "purge_generation": int(row["purge_generation"]),
             "bootstrap_cursor": row["bootstrap_cursor"],
+            "sync_transport_cursor": row["sync_transport_cursor"],
             "confirmed_cursor": row["confirmed_cursor"],
             "bootstrap_heads": json.loads(row["bootstrap_heads"]),
             "expected_heads": json.loads(row["expected_heads"]),
@@ -2917,6 +2928,7 @@ class SyncStateRepository(BaseDB):
             "bootstrap_heads": "TEXT NOT NULL DEFAULT '{}'",
             "expected_heads": "TEXT NOT NULL DEFAULT '{}'",
             "reviewed_lineage": "TEXT NOT NULL DEFAULT '[]'",
+            "sync_transport_cursor": "TEXT NOT NULL DEFAULT ''",
         }
         for column_name, definition in column_defs.items():
             if column_name not in existing_columns:

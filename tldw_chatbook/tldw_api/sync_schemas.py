@@ -621,6 +621,7 @@ class SyncPersonalContextBootstrapResponse(BaseModel):
     schema_version: int = Field(..., ge=1)
     quotas: dict[str, int] = Field(default_factory=dict)
     cursor: str = Field(..., min_length=1, max_length=256)
+    sync_transport_cursor: str = Field(..., min_length=1, max_length=32_768)
     integrity_key_id: str = Field(..., min_length=1, max_length=256)
     key_record_id: str = Field(..., min_length=1, max_length=512)
     wrapped_key_blob: str = Field(..., min_length=1, max_length=16_384)

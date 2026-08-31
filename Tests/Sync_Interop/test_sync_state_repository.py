@@ -613,8 +613,8 @@ def test_sync_v2_schema_migration_updates_v3_without_losing_existing_rows(tmp_pa
     assert preserved_profile == "preserved-profile"
     assert preserved_cursor == "preserved-cursor"
     assert preserved_conflict == "preserved-conflict"
-    assert schema_version == 8
-    assert schema_versions == [8]
+    assert schema_version == 9
+    assert schema_versions == [9]
 
 
 def test_sync_state_repository_exposes_explicit_durability(tmp_path):

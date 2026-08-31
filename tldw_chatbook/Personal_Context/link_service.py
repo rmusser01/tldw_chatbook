@@ -23,6 +23,7 @@ class PersonalContextLinkReceipt:
     dataset_id: str
     device_id: str
     bootstrap_cursor: str
+    sync_transport_cursor: str
     confirmed_cursor: str
     rebaseline_version: int
 
@@ -33,6 +34,45 @@ class PersonalContextLinkAttentionRequired(Exception):
     def __init__(self, attention: Any) -> None:
         super().__init__("personal_context_link_attention_required")
         self.attention = attention
+
+
+def cleanup_completed_link_artifacts(
+    profile: Any,
+    state: Mapping[str, Any],
+) -> None:
+    """Remove only artifacts owned by one exact completed link plan."""
+
+    plan_id = str(state["plan_id"])
+    freeze_owner_reader = getattr(profile, "first_link_freeze_plan_id", None)
+    freeze_owner = freeze_owner_reader() if callable(freeze_owner_reader) else None
+    if freeze_owner not in {None, plan_id}:
+        raise ValueError("personal_context_link_cleanup_mismatch")
+    release = getattr(profile, "release_first_link_freeze", None)
+    if freeze_owner == plan_id or not callable(freeze_owner_reader):
+        if callable(release):
+            release(plan_id=plan_id)
+    if callable(freeze_owner_reader) and freeze_owner_reader() is not None:
+        raise ValueError("personal_context_link_cleanup_mismatch")
+
+    marker_owner_reader = getattr(
+        profile, "first_link_rebaseline_commit_plan_id", None
+    )
+    marker_owner = marker_owner_reader() if callable(marker_owner_reader) else None
+    if marker_owner not in {None, plan_id}:
+        raise ValueError("personal_context_link_cleanup_mismatch")
+    clear = getattr(profile, "clear_first_link_rebaseline_commit", None)
+    if marker_owner == plan_id or not callable(marker_owner_reader):
+        if callable(clear):
+            clear(
+                plan_id=plan_id,
+                target_profile_id=str(state["profile_id"]),
+                target_integrity_key_id=str(state["integrity_key_id"]),
+                target_key_record_id=str(state["key_record_id"]),
+                target_purge_generation=int(state["purge_generation"]),
+                rebaseline_version=int(state["rebaseline_version"]),
+            )
+    if callable(marker_owner_reader) and marker_owner_reader() is not None:
+        raise ValueError("personal_context_link_cleanup_mismatch")
 
 
 class PersonalContextLinkService:
@@ -168,6 +208,7 @@ class PersonalContextLinkService:
                 key_record_id=remote.key_record_id,
                 purge_generation=remote.purge_generation,
                 bootstrap_cursor=remote.cursor,
+                sync_transport_cursor=remote.sync_transport_cursor,
                 bootstrap_heads=canonical_snapshot_heads(
                     remote.manifest, remote.scopes, remote.records, remote.proposals
                 ),
@@ -273,7 +314,7 @@ class PersonalContextLinkService:
             **{key: state[key] for key in (
                 "device_id", "dataset_id", "authority_id", "profile_id",
                 "integrity_key_id", "key_record_id", "purge_generation",
-                "bootstrap_cursor", "plan_id", "rebaseline_version",
+                "bootstrap_cursor", "sync_transport_cursor", "plan_id", "rebaseline_version",
                 "bootstrap_heads", "expected_heads", "reviewed_lineage",
                 "attention_code",
             )},
@@ -327,7 +368,7 @@ class PersonalContextLinkService:
             **{key: applying[key] for key in (
                 "device_id", "dataset_id", "authority_id", "profile_id",
                 "integrity_key_id", "key_record_id", "purge_generation",
-                "bootstrap_cursor", "plan_id",
+                "bootstrap_cursor", "sync_transport_cursor", "plan_id",
                 "bootstrap_heads",
             )},
             state="local_rebaseline_complete",
@@ -361,6 +402,8 @@ class PersonalContextLinkService:
         state = self._state.get_personal_context_link_state(**self._scope)
         if state is None or state["state"] != "applying":
             raise ValueError("personal_context_link_recovery_stale")
+        if self.authenticated_committed_rebaseline_version() != rebaseline_version:
+            raise ValueError("personal_context_link_recovery_unconfirmed")
         self._clear_stale_destination(state)
         locally_complete = self._state.set_personal_context_link_state(
             **self._scope,
@@ -375,6 +418,7 @@ class PersonalContextLinkService:
                     "key_record_id",
                     "purge_generation",
                     "bootstrap_cursor",
+                    "sync_transport_cursor",
                     "plan_id",
                     "bootstrap_heads",
                     "expected_heads",
@@ -416,6 +460,7 @@ class PersonalContextLinkService:
                 plan_id=str(state["plan_id"]),
                 target_profile_id=str(state["profile_id"]),
                 target_integrity_key_id=str(state["integrity_key_id"]),
+                target_key_record_id=str(state["key_record_id"]),
                 target_purge_generation=int(state["purge_generation"]),
             )
         except (ProfileLockedError, RuntimeError, ValueError):
@@ -435,6 +480,7 @@ class PersonalContextLinkService:
                     "key_record_id",
                     "purge_generation",
                     "bootstrap_cursor",
+                    "sync_transport_cursor",
                     "plan_id",
                     "rebaseline_version",
                     "bootstrap_heads",
@@ -447,6 +493,42 @@ class PersonalContextLinkService:
             expected_states=("applying",),
         )
         self._recover_attention_artifacts(attention, original_error=None)
+        return True
+
+    def mark_ambiguous_apply_attention(self) -> bool:
+        """Persist retryable attention without releasing ambiguous recovery custody."""
+
+        state = self._state.get_personal_context_link_state(**self._scope)
+        if state is None or state["state"] != "applying":
+            return False
+        fields = {
+            key: state[key]
+            for key in (
+                "device_id",
+                "dataset_id",
+                "authority_id",
+                "profile_id",
+                "integrity_key_id",
+                "key_record_id",
+                "purge_generation",
+                "bootstrap_cursor",
+                "plan_id",
+                "rebaseline_version",
+                "bootstrap_heads",
+                "expected_heads",
+                "reviewed_lineage",
+            )
+        }
+        transport_cursor = state.get("sync_transport_cursor")
+        if isinstance(transport_cursor, str) and transport_cursor:
+            fields["sync_transport_cursor"] = transport_cursor
+        self._state.set_personal_context_link_state(
+            **self._scope,
+            **fields,
+            state="applying",
+            attention_code="local_apply_recovery_ambiguous",
+            expected_states=("applying",),
+        )
         return True
 
     def authenticated_committed_rebaseline_version(self) -> int | None:
@@ -464,6 +546,7 @@ class PersonalContextLinkService:
                 plan_id=str(state["plan_id"]),
                 target_profile_id=str(state["profile_id"]),
                 target_integrity_key_id=str(state["integrity_key_id"]),
+                target_key_record_id=str(state["key_record_id"]),
                 target_purge_generation=int(state["purge_generation"]),
             )
             manifest = self._profile.get_manifest()
@@ -500,6 +583,7 @@ class PersonalContextLinkService:
                 plan_id=str(state["plan_id"]),
                 target_profile_id=str(state["profile_id"]),
                 target_integrity_key_id=str(state["integrity_key_id"]),
+                target_key_record_id=str(state["key_record_id"]),
                 target_purge_generation=int(state["purge_generation"]),
             )
         except (ProfileLockedError, RuntimeError, ValueError, TypeError):
@@ -524,6 +608,7 @@ class PersonalContextLinkService:
                     "key_record_id",
                     "purge_generation",
                     "bootstrap_cursor",
+                    "sync_transport_cursor",
                     "plan_id",
                     "rebaseline_version",
                     "bootstrap_heads",
@@ -586,6 +671,9 @@ class PersonalContextLinkService:
             clear(
                 plan_id=str(state["plan_id"]),
                 target_profile_id=str(state["profile_id"]),
+                target_integrity_key_id=str(state["integrity_key_id"]),
+                target_key_record_id=str(state["key_record_id"]),
+                target_purge_generation=int(state["purge_generation"]),
                 rebaseline_version=int(state["rebaseline_version"]),
             )
 
@@ -624,6 +712,7 @@ class PersonalContextLinkService:
                             "key_record_id",
                             "purge_generation",
                             "bootstrap_cursor",
+                            "sync_transport_cursor",
                             "plan_id",
                             "rebaseline_version",
                             "bootstrap_heads",
@@ -648,6 +737,7 @@ class PersonalContextLinkService:
                 key_record_id=str(state["key_record_id"]),
                 purge_generation=int(state["purge_generation"]),
                 bootstrap_cursor=str(state["bootstrap_cursor"]),
+                sync_transport_cursor=str(state["sync_transport_cursor"]),
                 expected_heads=state["expected_heads"],
                 bootstrap_heads=state["bootstrap_heads"],
                 reviewed_lineage=state["reviewed_lineage"],
@@ -686,7 +776,7 @@ class PersonalContextLinkService:
                 **{key: state[key] for key in (
                     "device_id", "dataset_id", "authority_id", "profile_id",
                     "integrity_key_id", "key_record_id", "purge_generation",
-                    "bootstrap_cursor", "plan_id", "rebaseline_version",
+                    "bootstrap_cursor", "sync_transport_cursor", "plan_id", "rebaseline_version",
                     "expected_heads", "bootstrap_heads", "reviewed_lineage",
                 )},
                 state="complete",
@@ -759,7 +849,7 @@ class PersonalContextLinkService:
             **{key: current[key] for key in (
                 "device_id", "dataset_id", "authority_id", "profile_id",
                 "integrity_key_id", "key_record_id", "purge_generation",
-                "bootstrap_cursor", "plan_id", "rebaseline_version",
+                "bootstrap_cursor", "sync_transport_cursor", "plan_id", "rebaseline_version",
                 "bootstrap_heads", "expected_heads", "reviewed_lineage",
             )},
             state="attention_required",
@@ -777,9 +867,8 @@ class PersonalContextLinkService:
     ) -> PersonalContextLinkReceipt:
         """Retry exception-safe local cleanup after a durable complete receipt."""
 
+        cleanup_completed_link_artifacts(self._profile, state)
         self._custodian.delete(**self._key_binding(state))
-        self._release_freeze(str(state["plan_id"]))
-        self._clear_rebaseline_marker(state)
         self._plans.pop(str(state["plan_id"]), None)
         return self._receipt(state)
 
@@ -790,6 +879,7 @@ class PersonalContextLinkService:
             dataset_id=str(state["dataset_id"]),
             device_id=str(state["device_id"]),
             bootstrap_cursor=str(state["bootstrap_cursor"]),
+            sync_transport_cursor=str(state["sync_transport_cursor"]),
             confirmed_cursor=str(state["confirmed_cursor"]),
             rebaseline_version=int(state["rebaseline_version"]),
         )

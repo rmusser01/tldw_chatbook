@@ -608,6 +608,11 @@ class PersonalContextService:
 
         return self._repo().first_link_freeze_plan_id()
 
+    def first_link_rebaseline_commit_plan_id(self) -> str | None:
+        """Return the content-free durable rebaseline-marker owner, if any."""
+
+        return self._repo().first_link_rebaseline_commit_plan_id()
+
     def first_link_reconciliation_writes(self, *, plan_id: str):
         """Authorize the private confirming pull to update canonical heads."""
 

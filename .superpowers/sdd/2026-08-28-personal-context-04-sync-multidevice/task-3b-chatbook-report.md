@@ -2,10 +2,11 @@
 
 ## Status
 
-Independent-review remediation is implemented, targeted-test clean, and through
-scoped static/security verification. The remediation commit is pending below;
-controller cross-repository review and final backlog closure remain. This report
-does not mark TASK-24727 Done.
+The final recovery-binding and transport-watermark correction is implemented,
+targeted-test clean, and through scoped static/security verification against
+tldw_server `6455ab08cb12ec239c53b7b9180b1cc1ea5f8375`. Controller
+cross-repository review and final backlog closure remain. This report does not
+mark TASK-24727 Done.
 
 ## Commit
 
@@ -21,6 +22,9 @@ contract commit `a92e12110d`.
 
 Final contract-quality remediation commit: this report's implementation commit
 (`fix(personal-context): harden first-link recovery`).
+
+Final recovery-binding/transport-watermark correction: this report's
+implementation commit (`fix(sync): bind reviewed first-link transport`).
 
 ## RED evidence
 
@@ -416,3 +420,90 @@ Known limitations/skips:
   secure-custody failure/retry paths are covered.
 - Server compatibility remains pinned to `a92e12110d`; no server contract was
   weakened by this client-side correction.
+
+## Final recovery-binding and transport-watermark correction (2026-08-31)
+
+Status: implemented and scoped-verification clean; controller re-review pending.
+TASK-24727 remains In Progress. Final server contract pin:
+`6455ab08cb12ec239c53b7b9180b1cc1ea5f8375`.
+
+### RED evidence
+
+- The initial typed-cursor/state focus produced 3 intended failures: the strict
+  API model rejected the server's new field, omission did not have a trusted
+  contract path, and durable link state had no transport-cursor parameter.
+- The recovery/cleanup/lineage/app focus produced 4 intended failures: ambiguous
+  marker recovery advanced, complete cleanup ignored foreign ownership, a stale
+  outbound envelope was pushed, and startup deleted staged custody before
+  validating cleanup ownership.
+- Exact marker extension first failed because key-record identity was absent;
+  the v7 migration regression then failed because schema 7 could not upgrade.
+- `test_unreviewed_remote_version_is_rejected_before_privileged_apply` failed
+  with one already-applied envelope when an unreviewed envelope appeared later
+  in the same pulled page. The page is now preflighted completely before apply.
+- `test_link_state_enforces_transport_cursor_bounds_for_bootstrap_and_confirmation`
+  failed because an empty transport cursor was accepted and confirmed cursors
+  were limited to 512 rather than the server's 32,768-byte token bound.
+- `test_applying_recovery_requires_exact_durable_commit_marker` failed with the
+  absent durable ambiguous-recovery attention seam. It now records retryable
+  attention without releasing freeze or staged custody.
+
+### GREEN evidence
+
+- `PYTHONPATH=.:packages/tldw_profile_core/src ../../.venv/bin/python -m pytest -q --disable-warnings --basetemp=/private/tmp/task3b-final-api Tests/tldw_api/test_personal_context_sync_client.py Tests/tldw_api/test_sync_client.py`
+  - 33 passed, 1 warning.
+- `PYTHONPATH=.:packages/tldw_profile_core/src ../../.venv/bin/python -m pytest -q --disable-warnings --basetemp=/private/tmp/task3b-final-profile Tests/Personal_Context/test_repository.py Tests/Personal_Context/test_service.py Tests/Personal_Context/test_runtime_policy.py Tests/Personal_Context/test_profile_sync_outbox.py Tests/Personal_Context/test_profile_reconciliation.py Tests/Personal_Context/test_profile_link_key_custody.py`
+  - 124 passed, 1 warning.
+- `PYTHONPATH=.:packages/tldw_profile_core/src ../../.venv/bin/python -m pytest -q --disable-warnings --basetemp=/private/tmp/task3b-final-sync-2 Tests/Sync_Interop/test_personal_context_first_link.py Tests/Sync_Interop/test_personal_context_first_link_sync.py Tests/Sync_Interop/test_personal_context_dispatcher.py Tests/Sync_Interop/test_server_sync_service.py Tests/Sync_Interop/test_personal_context_adapter.py Tests/Sync_Interop/test_personal_context_capabilities.py Tests/Sync_Interop/test_local_first_sync_service.py -k 'personal_context or profile or link'`
+  - 116 passed, 57 deselected, 1 warning.
+- `PYTHONPATH=.:packages/tldw_profile_core/src ../../.venv/bin/python -m pytest -q --disable-warnings --basetemp=/private/tmp/task3b-final-state-rerun Tests/Sync_Interop/test_sync_state_repository.py`
+  - 29 passed, 1 warning.
+- `PYTHONPATH=.:packages/tldw_profile_core/src ../../.venv/bin/python -m pytest -q --disable-warnings --basetemp=/private/tmp/task3b-final-ui-2 Tests/UI/test_personal_context_link_modal.py Tests/UI/test_personal_context_link_app_flow.py Tests/UI/test_settings_personal_context.py`
+  - 68 passed, 2 warnings.
+
+Result: 370 distinct targeted tests passed across the touched API, Personal
+Context, Sync, state, and canonical UI files.
+
+- Ruff over all changed Python source/tests: `All checks passed!`.
+- Python `compileall` over all changed Python source/tests: exit 0.
+- Bandit high-severity (`-q -lll`) over changed production modules: exit 0.
+- `git diff --check`: exit 0. Final range diff hygiene is recorded after commit.
+- No TCSS or generated aggregate changed, so CSS reproduction was not applicable.
+
+### Changed files and implementation summary
+
+- Typed bootstrap/state: `tldw_api/sync_schemas.py`,
+  `Personal_Context/reconciliation.py`, and
+  `Sync_Interop/sync_state_repository.py` now require and durably preserve the
+  opaque `sync_transport_cursor` separately from the semantic bootstrap receipt.
+- Recovery/cleanup: `Personal_Context/repository.py`, `service.py`, and
+  `link_service.py` bind the atomic marker to plan/profile/integrity-key/
+  key-record/purge/rebaseline identity, authenticate active version equality,
+  preserve ambiguous recovery custody, and verify cleanup ownership/postconditions.
+- Dedicated convergence: `personal_context_first_link_sync.py` uses only the
+  reviewed transport watermark, checks outbound identities against durable
+  reviewed lineage, and preflights complete pull pages before canonical apply.
+- Production startup: `app.py` records ambiguous recovery attention and wires
+  ordinary Sync only after exact complete-state cleanup succeeds.
+- Focused tests cover strict cursor parsing/bounds/persistence, migration,
+  retained-history watermarks, mixed-page rejection before mutation, stale
+  outbound rejection, exact marker recovery, and ownership/postcondition cleanup.
+- Documentation pins the final server commit in the rollout plan, implementation
+  plan, backlog task, the shared Task 3a report, and this report.
+
+### Self-review and known skips
+
+- Bootstrap semantic receipt and signed transport cursor are never interchanged.
+  Retry/resume preserves both exact values; the confirmed transport cursor alone
+  seeds ordinary Sync after exact canonical convergence.
+- No pulled or staged object outside the reviewed ID/version/lineage set reaches
+  server push or the privileged local apply boundary. Errors remain stable and
+  content-free; tokens, wrapped keys, private material, and profile bodies are
+  not logged.
+- Cleanup does not claim cross-keyring/database atomicity. It verifies durable
+  SQLite ownership/removal first, then performs retryable secure-custody cleanup,
+  leaving ordinary runtime disabled on any failure.
+- No full repository sweep or live external server/keyring/TUI session was run,
+  consistent with repository policy and the assigned scope. Production SQLite,
+  real-httpx schema/client, Textual app-flow, and injected custody failures are
+  covered. Independent controller review remains pending.

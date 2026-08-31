@@ -268,6 +268,7 @@ async def test_app_does_not_replan_when_interrupted_apply_is_not_proven_uncommit
             raise ProfileLockedError("transient staged-key load failure")
 
     plan_calls: list[bool] = []
+    attention_calls: list[bool] = []
 
     class RecoveryCoordinator:
         _key_binding = staticmethod(link_service_module.PersonalContextLinkService._key_binding)
@@ -277,6 +278,10 @@ async def test_app_does_not_replan_when_interrupted_apply_is_not_proven_uncommit
 
         def abandon_uncommitted_apply(self):
             return False
+
+        def mark_ambiguous_apply_attention(self):
+            attention_calls.append(True)
+            return True
 
         async def plan(self, **_kwargs):
             plan_calls.append(True)
@@ -303,6 +308,7 @@ async def test_app_does_not_replan_when_interrupted_apply_is_not_proven_uncommit
     await TldwCli._run_personal_context_link(app)
 
     assert plan_calls == []
+    assert attention_calls == [True]
     assert app.notifications == [
         (
             "Profile linking needs attention. No profile content was shown; "
@@ -321,6 +327,7 @@ def test_lazy_runtime_retries_complete_cleanup_before_enabling_sync(monkeypatch)
         "profile_id": "profile-server",
         "integrity_key_id": "integrity-1",
         "key_record_id": "record-1",
+        "purge_generation": 0,
         "plan_id": "plan-1",
         "rebaseline_version": 2,
     }
@@ -353,6 +360,9 @@ def test_lazy_runtime_retries_complete_cleanup_before_enabling_sync(monkeypatch)
             assert kwargs == {
                 "plan_id": "plan-1",
                 "target_profile_id": "profile-server",
+                "target_integrity_key_id": "integrity-1",
+                "target_key_record_id": "record-1",
+                "target_purge_generation": 0,
                 "rebaseline_version": 2,
             }
             events.append("clear-marker")
@@ -384,7 +394,7 @@ def test_lazy_runtime_retries_complete_cleanup_before_enabling_sync(monkeypatch)
         )
     assert app.sync_v2_dataset_keys == {}
     assert app.local_first_sync_service.personal_context_outbox_dispatcher is None
-    assert "clear-marker" not in events
+    assert events[-3:] == ["release-freeze", "clear-marker", "delete-staged"]
 
     TldwCli._load_personal_context_sync_runtime(
         app,
@@ -393,12 +403,76 @@ def test_lazy_runtime_retries_complete_cleanup_before_enabling_sync(monkeypatch)
     )
 
     assert events[-4:] == [
-        "delete-staged",
         "release-freeze",
         "clear-marker",
+        "delete-staged",
         "build-dispatcher",
     ]
     assert app.sync_v2_dataset_keys == {"dataset-1": b"k" * 32}
     assert app.local_first_sync_service.personal_context_outbox_dispatcher == (
         "dispatcher"
     )
+
+
+def test_lazy_runtime_rejects_different_freeze_owner_before_custody_cleanup(
+    monkeypatch,
+) -> None:
+    link = {
+        "state": "complete",
+        "server_profile_id": "server-config-1",
+        "dataset_id": "dataset-1",
+        "device_id": "device-1",
+        "profile_id": "profile-server",
+        "integrity_key_id": "integrity-1",
+        "key_record_id": "record-1",
+        "plan_id": "plan-1",
+        "rebaseline_version": 2,
+    }
+    events: list[str] = []
+
+    class CompleteStateRepository:
+        def get_personal_context_link_state(self, **_kwargs):
+            return link
+
+    class Custodian:
+        def load_storage_key(self, **_kwargs):
+            return b"k" * 32
+
+        def delete(self, **_kwargs):
+            events.append("delete-staged")
+
+    class WrongOwnerProfile:
+        def first_link_freeze_plan_id(self):
+            return "different-plan"
+
+        def first_link_rebaseline_commit_plan_id(self):
+            return None
+
+        def build_personal_context_outbox_dispatcher(self, **_kwargs):
+            events.append("build-dispatcher")
+            return "dispatcher"
+
+    monkeypatch.setattr(
+        link_key_custody,
+        "KeyringPersonalContextLinkKeyCustodian",
+        Custodian,
+    )
+    app = SimpleNamespace(
+        sync_state_repository=CompleteStateRepository(),
+        sync_v2_dataset_keys={},
+        local_first_sync_service=SimpleNamespace(
+            personal_context_outbox_dispatcher=None,
+            personal_context_service=None,
+        ),
+        get_personal_context_service=lambda **_kwargs: WrongOwnerProfile(),
+    )
+
+    with pytest.raises(ValueError, match="personal_context_link_cleanup_mismatch"):
+        TldwCli._load_personal_context_sync_runtime(
+            app,
+            server_profile_id="server-config-1",
+            authenticated_principal_id="user-1",
+        )
+
+    assert events == []
+    assert app.sync_v2_dataset_keys == {}

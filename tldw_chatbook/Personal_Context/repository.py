@@ -46,7 +46,7 @@ from .repository_models import QuarantineEntry
 from .runtime_policy import GLOBAL_POLICY_ID
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 _ENVELOPE_SCHEMA_VERSION = 1
 _WRAP_NONCE_BYTES = 12
 _PEER_ENVELOPE = "chatbook-local-v1"
@@ -190,6 +190,7 @@ _FIRST_LINK_REBASELINE_SCHEMA = """
         plan_id TEXT NOT NULL,
         target_profile_id TEXT NOT NULL,
         target_integrity_key_id TEXT NOT NULL,
+        target_key_record_id TEXT NOT NULL,
         target_purge_generation INTEGER NOT NULL,
         rebaseline_version INTEGER NOT NULL,
         created_at TEXT NOT NULL
@@ -475,7 +476,7 @@ class PersonalContextRepository:
         if len(rows) != 1 or rows[0]["singleton"] != 1:
             raise RepositorySchemaError("Personal Context schema marker is invalid.")
         version = rows[0]["version"]
-        if version not in {1, 2, 3, 4, 5, 6, SCHEMA_VERSION}:
+        if version not in {1, 2, 3, 4, 5, 6, 7, SCHEMA_VERSION}:
             raise RepositorySchemaError(
                 f"Unsupported Personal Context schema version: {version!r}."
             )
@@ -575,8 +576,21 @@ class PersonalContextRepository:
                         f"ALTER TABLE first_link_freeze ADD COLUMN {column} {definition}"
                     )
             connection.execute(_FIRST_LINK_REBASELINE_SCHEMA)
-            version = SCHEMA_VERSION
+            version = 7
             tables.add("first_link_rebaseline_commit")
+        if version == 7:
+            marker_columns = {
+                row["name"]
+                for row in connection.execute(
+                    "PRAGMA table_info(first_link_rebaseline_commit)"
+                )
+            }
+            if "target_key_record_id" not in marker_columns:
+                connection.execute(
+                    "ALTER TABLE first_link_rebaseline_commit "
+                    "ADD COLUMN target_key_record_id TEXT"
+                )
+            version = SCHEMA_VERSION
         connection.execute(
             "UPDATE personal_context_schema SET version = ? WHERE singleton = 1",
             (version,),
@@ -784,12 +798,22 @@ class PersonalContextRepository:
             ).fetchone()
         return None if row is None else str(row["plan_id"])
 
+    def first_link_rebaseline_commit_plan_id(self) -> str | None:
+        """Return the durable rebaseline-marker owner without key material."""
+
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT plan_id FROM first_link_rebaseline_commit WHERE singleton = 1"
+            ).fetchone()
+        return None if row is None else str(row["plan_id"])
+
     def first_link_apply_recovery_state(
         self,
         *,
         plan_id: str,
         target_profile_id: str,
         target_integrity_key_id: str,
+        target_key_record_id: str,
         target_purge_generation: int,
     ) -> tuple[str, int | None]:
         """Classify an interrupted apply using only exact content-free evidence."""
@@ -803,6 +827,7 @@ class PersonalContextRepository:
                     marker["plan_id"] == plan_id
                     and marker["target_profile_id"] == target_profile_id
                     and marker["target_integrity_key_id"] == target_integrity_key_id
+                    and marker["target_key_record_id"] == target_key_record_id
                     and int(marker["target_purge_generation"])
                     == target_purge_generation
                     and int(marker["rebaseline_version"]) >= 1
@@ -845,6 +870,9 @@ class PersonalContextRepository:
         *,
         plan_id: str,
         target_profile_id: str,
+        target_integrity_key_id: str,
+        target_key_record_id: str,
+        target_purge_generation: int,
         rebaseline_version: int,
     ) -> bool:
         """Clear only the exact durable marker after safe terminal cleanup."""
@@ -853,8 +881,17 @@ class PersonalContextRepository:
             deleted = connection.execute(
                 "DELETE FROM first_link_rebaseline_commit WHERE singleton = 1 "
                 "AND plan_id = ? AND target_profile_id = ? "
+                "AND target_integrity_key_id = ? AND target_key_record_id = ? "
+                "AND target_purge_generation = ? "
                 "AND rebaseline_version = ?",
-                (plan_id, target_profile_id, rebaseline_version),
+                (
+                    plan_id,
+                    target_profile_id,
+                    target_integrity_key_id,
+                    target_key_record_id,
+                    target_purge_generation,
+                    rebaseline_version,
+                ),
             )
         return deleted.rowcount == 1
 
@@ -2043,12 +2080,14 @@ class PersonalContextRepository:
                 connection.execute(
                     "INSERT OR REPLACE INTO first_link_rebaseline_commit("
                     "singleton, plan_id, target_profile_id, "
-                    "target_integrity_key_id, target_purge_generation, "
-                    "rebaseline_version, created_at) VALUES (1, ?, ?, ?, ?, ?, ?)",
+                    "target_integrity_key_id, target_key_record_id, "
+                    "target_purge_generation, rebaseline_version, created_at) "
+                    "VALUES (1, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         plan.plan_id,
                         remote.manifest.profile_id,
                         remote.integrity_key_id,
+                        remote.key_record_id,
                         remote.purge_generation,
                         new_keys.key_version,
                         _now_text(),
