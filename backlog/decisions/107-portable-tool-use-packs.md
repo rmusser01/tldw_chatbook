@@ -1,6 +1,6 @@
 # ADR-107: Portable Tool-use Packs
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-31
 - **Task:** [TASK-25713](../tasks/task-25713%20-%20Design-portable-Tool-use-Pack-export-and-import.md)
 - **Design:** [Portable Tool-use Packs design](../../Docs/superpowers/specs/2026-08-31-tool-use-pack-design.md)

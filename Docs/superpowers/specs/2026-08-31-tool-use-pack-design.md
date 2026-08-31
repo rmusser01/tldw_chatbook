@@ -1,6 +1,6 @@
 # Portable Tool-use Packs — Design
 
-Status: Revised after written-spec review; awaiting re-review
+Status: Approved
 
 Date: 2026-08-31
 
@@ -276,6 +276,14 @@ silently disappearing from the pack. V1 includes:
 - local external MCP connection profiles under `local:<profile_id>`, using live
   definitions or their validated cached definitions.
 
+Code-owned local and Virtual CLI definitions are captured in the unbound fallback
+context: configured `[console].workspace_root` or app cwd, with no selected
+project-instruction binding or admitted-root aliases. Those workspace-specific
+schema additions are deliberately not profile data. If a later bound run projects a
+different contextual schema, the existing destination runtime definition-hash guard
+downgrades the stored exact Allow to Ask; export never embeds a workspace locator or
+tries to make one profile's Allow silently valid across different root schemas.
+
 Current remote/server-source tools that are display-only and do not pass through
 the local permission gate are excluded. Runtime orchestration tools such as
 spawn/wait/load, skills and managed-skill approval tools, capability-gated Library
@@ -467,7 +475,7 @@ durable discriminator `profile_kind: "tool_pack_imported"` and one required
   "pack_digest": "0000000000000000000000000000000000000000000000000000000000000000",
   "imported_at": "2026-08-31T00:00:00Z",
   "first_bind_confirmation_required": true,
-  "receipt_id": "tp-0000000000000000",
+  "receipt_id": "tp-00000000000000000000000000000000",
   "receipt_digest": "0000000000000000000000000000000000000000000000000000000000000000",
   "counts": {"matched": 0, "omitted": 0, "pending_deny": 0},
   "policy_digest": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -534,6 +542,8 @@ can commit. The
 receipt id and receipt digest are linked from `tool_pack_lifecycle`; a referenced
 receipt is never automatically evicted. Import reserves receipt-store capacity
 before writing, and release/cleanup is idempotent.
+Receipt ids use the exact grammar `tp-[0-9a-f]{32}` from 128 random bits; creation
+retries an authenticated-name collision rather than replacing an existing receipt.
 
 Startup reconciliation removes only receipts that no installed profile references,
 that no live review/commit owns, and whose bounded orphan grace period has elapsed.
