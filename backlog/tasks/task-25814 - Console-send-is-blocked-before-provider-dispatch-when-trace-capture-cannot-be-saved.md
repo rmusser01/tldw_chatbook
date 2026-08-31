@@ -96,5 +96,5 @@ max 25813).
 References updated: code comments in `Chat/console_provider_gateway.py` and
 `Chat/console_chat_controller.py`, the pinned test
 (`Tests/Chat/test_task_25814_capture_capability.py`), and the cross-references
-in TASK-25713 and TASK-25721. Commit messages already merged into this branch
+in TASK-25815 and TASK-25721. Commit messages already merged into this branch
 still cite 25712 and are left as historical record.
