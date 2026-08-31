@@ -4,11 +4,13 @@ from unittest.mock import Mock
 import pytest
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Constants import (
-    CONSOLE_NAV_CONTEXT_CONVERSATION_ID,
+    CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID,
     LIBRARY_NAV_CONTEXT_INGEST,
     LIBRARY_NAV_CONTEXT_NOTE_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
+    MEDIA_BROWSE_SUBVIEW_READ_IT_LATER,
+    MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW,
     TAB_LIBRARY,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -1833,7 +1835,7 @@ async def test_home_ready_idle_canvas_primary_start_conversation_routes_to_conso
         await pilot.pause(HOME_MOUNT_PAUSE)
 
     assert seen[-1] == "chat"
-    assert host.seen_contexts[-1] == {CONSOLE_NAV_CONTEXT_CONVERSATION_ID: "conv-9"}
+    assert host.seen_contexts[-1] == {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "conv-9"}
 
 
 @pytest.mark.asyncio
@@ -1894,7 +1896,7 @@ async def test_home_resume_latest_conversation_routes_to_console():
         await pilot.pause(HOME_MOUNT_PAUSE)
 
     assert seen[-1] == "chat"
-    assert host.seen_contexts[-1] == {CONSOLE_NAV_CONTEXT_CONVERSATION_ID: "conv-9"}
+    assert host.seen_contexts[-1] == {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "conv-9"}
 
 
 def test_open_content_item_routes_by_prefix():
@@ -1917,7 +1919,7 @@ def test_open_content_item_routes_by_prefix():
         "library",
         "library",
     ]
-    assert posted[0].screen_context == {CONSOLE_NAV_CONTEXT_CONVERSATION_ID: "42"}
+    assert posted[0].screen_context == {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "42"}
     assert posted[1].screen_context == {LIBRARY_NAV_CONTEXT_NOTE_ID: "7"}
     assert posted[2].screen_context == {
         LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "media",
@@ -2126,7 +2128,87 @@ def test_local_read_later_count_provider():
     from tldw_chatbook.app import TldwCli
 
     fake = SimpleNamespace(
-        media_db=SimpleNamespace(list_read_it_later_media_ids=lambda: [1, 2, 3])
+        media_db=SimpleNamespace(count_read_it_later_media=lambda: 3)
     )
     assert TldwCli._local_read_later_count(fake) == 3
     assert TldwCli._local_read_later_count(SimpleNamespace(media_db=None)) is None
+
+
+# --- Rebase reconciliation + review fixes ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_home_read_it_later_primary_lands_on_queue_subview():
+    """Qodo #1: the read-it-later primary action carries a Media nav context
+    selecting the saved-reading subview, not the generic list."""
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        console_ready=True,
+        read_later_count=2,
+    )
+    seen = []
+    host = HomeHarness(app, seen)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        canvas_title = str(home.query_one("#home-canvas-title").renderable)
+        assert "Read-it-later" in canvas_title
+
+        await pilot.click("#home-primary-action")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+    assert seen[-1] == "media"
+    assert host.seen_contexts[-1] == {
+        MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW: MEDIA_BROWSE_SUBVIEW_READ_IT_LATER
+    }
+
+
+def test_media_screen_navigation_context_stashes_browse_subview():
+    """The Media nav-context contract stashes the subview pre-mount and
+    applies it after the restored state (explicit navigation wins)."""
+    from tldw_chatbook.Constants import MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW
+    from tldw_chatbook.UI.Screens.media_screen import MediaScreen
+
+    app = _build_test_app()
+    screen = MediaScreen(app)
+    assert screen._pending_nav_browse_subview is None
+
+    screen.apply_navigation_context(
+        {MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW: "read-it-later"}
+    )
+    assert screen._pending_nav_browse_subview == "read-it-later"
+
+    # Invalid payloads are ignored, not stashed.
+    screen._pending_nav_browse_subview = None
+    screen.apply_navigation_context({})
+    screen.apply_navigation_context({MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW: ""})
+    screen.apply_navigation_context(None)
+    assert screen._pending_nav_browse_subview is None
+
+
+def test_open_tasks_provider_wiring_flows_to_dashboard_input():
+    """Qodo #12: the production app-to-adapter wiring (constructor lambdas
+    closing over the real provider methods) actually feeds the counts
+    through refresh + build -- not just each side in isolation."""
+    from types import SimpleNamespace
+
+    app = _build_test_app()
+    adapter = getattr(app, "home_active_work_adapter", None)
+    assert adapter is not None, "production adapter must be wired"
+
+    app.local_evaluation_service = SimpleNamespace(
+        list_runs=lambda *, status=None, limit=100, offset=0, **kw: [
+            {"run_id": f"{status}-{i}"} for i in range(2 if status == "pending" else 1)
+        ]
+    )
+    app.media_db = SimpleNamespace(count_read_it_later_media=lambda: 7)
+
+    adapter.refresh_open_tasks_snapshot()
+    state = adapter.build_dashboard_input(providers_models={}, has_recent_work=False)
+    assert state.pending_eval_run_count == 2
+    assert state.failed_eval_run_count == 1
+    assert state.read_later_count == 7

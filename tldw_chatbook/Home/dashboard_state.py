@@ -132,7 +132,16 @@ HOME_OPEN_ITEM_CONTROL_ID = "home-open-item"
 
 
 def content_item_kind(item_id: str) -> str | None:
-    """Return the content kind for a prefixed content item id, else None."""
+    """Return the content kind for a prefixed content item id.
+
+    Args:
+        item_id: A HomeActiveWorkItem item_id, possibly carrying one of the
+            ``LOCAL_*_ITEM_ID_PREFIX`` content prefixes.
+
+    Returns:
+        The content kind (``"conversation"``, ``"note"``, or ``"media"``)
+        matching the prefix, or ``None`` when the id carries none of them.
+    """
     for kind, prefix in (
         (HOME_RESUME_KIND_CONVERSATION, LOCAL_CONVERSATION_ITEM_ID_PREFIX),
         (HOME_RESUME_KIND_NOTE, LOCAL_NOTE_ITEM_ID_PREFIX),
@@ -146,10 +155,20 @@ def content_item_kind(item_id: str) -> str | None:
 def combined_recent_work_items(
     state: "HomeDashboardInput",
 ) -> tuple[HomeActiveWorkItem, ...]:
-    """Merge adapter recents with content recents, newest-first, capped."""
+    """Merge adapter recents with content recents, newest-first, capped.
+
+    Args:
+        state: Adapter-provided dashboard input carrying both recent
+            sources (``recent_work_items`` and ``content_recent_items``).
+
+    Returns:
+        The merged recents tuple, sorted newest-first by ``updated_at``
+        (stable on ties), truncated to ``HOME_RECENT_WORK_LIMIT``.
+    """
     merged = list(state.recent_work_items) + list(state.content_recent_items)
     merged.sort(key=lambda item: item.updated_at, reverse=True)
     return tuple(merged[:HOME_RECENT_WORK_LIMIT])
+
 
 # Prefix for a Library ingest job's HomeActiveWorkItem.item_id
 # ("local:ingest:<job_id>"). Shared by the adapter that builds these items
@@ -316,6 +335,13 @@ def apply_home_content_snapshot(
     has_content = state.has_library_content or any(
         isinstance(count, int) and count > 0 for count in counts
     )
+    # Content recents count as recent work too: either rail rows exist, or
+    # the newest content item fed the resume banner (which is intentionally
+    # excluded from the rows) -- without this, a content-only profile would
+    # still report "No recent work yet" beside a populated Recent rail.
+    has_recent = state.has_recent_work or (
+        bool(snapshot.content_recent_items) or bool(snapshot.resume_id)
+    )
     return replace(
         state,
         console_ready=snapshot.console_ready,
@@ -328,6 +354,7 @@ def apply_home_content_snapshot(
         content_recent_items=snapshot.content_recent_items,
         resume_updated_at=snapshot.resume_updated_at,
         has_library_content=has_content,
+        has_recent_work=has_recent,
     )
 
 

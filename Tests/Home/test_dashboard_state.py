@@ -1624,3 +1624,35 @@ def test_ladder_terminal_falls_back_to_start_conversation_without_recents():
         )
     )
     assert action.action_id == "start_console"
+
+
+def test_content_snapshot_marks_has_recent_work():
+    """Qodo #11: content recents (or a banner-only newest item) must flip
+    has_recent_work, keeping the summary consistent with the rail."""
+    state = HomeDashboardInput()
+    snapshot = HomeContentSnapshot(
+        conversation_count=2,
+        resume_kind="conversation",
+        resume_id="conv-1",
+        resume_title="Only item",
+    )
+    applied = apply_home_content_snapshot(state, snapshot)
+    assert applied.has_recent_work is True
+
+    rows_only = HomeContentSnapshot(
+        note_count=1,
+        content_recent_items=(
+            HomeActiveWorkItem(
+                item_id="local:note:7",
+                title="t",
+                source="Notes",
+                status="ready",
+                updated_at="2026-08-29T10:00:00+00:00",
+            ),
+        ),
+    )
+    applied2 = apply_home_content_snapshot(HomeDashboardInput(), rows_only)
+    assert applied2.has_recent_work is True
+
+    empty = apply_home_content_snapshot(HomeDashboardInput(), HomeContentSnapshot())
+    assert empty.has_recent_work is False

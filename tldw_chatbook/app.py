@@ -986,6 +986,10 @@ def _usable_cpu_count() -> int:
 # file must agree on one spelling. Private to `app.py`: every event emitted
 # here belongs to the application lifecycle.
 _DIAGNOSTICS_COMPONENT_APP = "app"
+# Home's open-eval-runs feed queries pending and failed statuses separately;
+# this cap bounds both queries (a count, not a listing -- anything beyond it
+# still reads as "runs need attention").
+_HOME_EVAL_RUN_QUERY_LIMIT = 50
 # Task-4 review round 2: `_offer_tts_global_override`'s confirmation dialog
 # must name which configured-voice domain actually failed -- a per-character
 # assignment, or the app-wide default voice profile (slice 3, task 4) --
@@ -8623,21 +8627,25 @@ class TldwCli(
         if not callable(list_runs):
             return {"pending": 0, "failed": 0}
         try:
-            pending = len(list_runs(status="pending", limit=50))
-            failed = len(list_runs(status="failed", limit=50))
+            pending = len(list_runs(status="pending", limit=_HOME_EVAL_RUN_QUERY_LIMIT))
+            failed = len(list_runs(status="failed", limit=_HOME_EVAL_RUN_QUERY_LIMIT))
         except Exception:
             logger.opt(exception=True).debug("Home eval run counts failed.")
             return {"pending": 0, "failed": 0}
         return {"pending": pending, "failed": failed}
 
     def _local_read_later_count(self) -> int | None:
-        """Count read-it-later media for Home; None when the DB is absent."""
+        """Count read-it-later media for Home; None when the DB is absent.
+
+        Uses the scalar ``COUNT(*)`` seam rather than materializing the
+        id list -- Home needs only the total.
+        """
         db = getattr(self, "media_db", None)
-        lister = getattr(db, "list_read_it_later_media_ids", None)
-        if not callable(lister):
+        counter = getattr(db, "count_read_it_later_media", None)
+        if not callable(counter):
             return None
         try:
-            return len(lister())
+            return int(counter())
         except Exception:
             logger.opt(exception=True).debug("Home read-it-later count failed.")
             return None

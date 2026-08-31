@@ -70,6 +70,13 @@ WATCHLISTS_NAV_CONTEXT_BRIEFING_ID = "briefing_id"
 WATCHLISTS_SECTION_NOTIFICATIONS = "notifications"
 WATCHLISTS_SECTION_RUNS = "runs"
 
+# Media navigation-context contract keys and values.
+# Applied pre-mount by handle_screen_navigation; MediaScreen stashes the
+# subview and applies it to the freshly composed MediaWindow on mount
+# (mirroring its saved-view restore pattern).
+MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW = "browse_subview"
+MEDIA_BROWSE_SUBVIEW_READ_IT_LATER = "read-it-later"
+
 ALL_TABS = [
     TAB_CHAT,
     TAB_CCP,

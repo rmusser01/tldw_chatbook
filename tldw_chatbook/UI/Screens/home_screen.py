@@ -8,12 +8,11 @@ from datetime import datetime, timezone
 from typing import Any
 
 from loguru import logger
+from rich.markup import escape as escape_markup
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Button, Static
-
-from rich.markup import escape as escape_markup
 
 from tldw_chatbook.Chat.console_session_settings import (
     build_console_settings_readiness,
@@ -25,10 +24,12 @@ from tldw_chatbook.config import (
     save_setting_to_cli_config,
 )
 from tldw_chatbook.Constants import (
-    CONSOLE_NAV_CONTEXT_CONVERSATION_ID,
+    CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID,
     LIBRARY_NAV_CONTEXT_NOTE_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
+    MEDIA_BROWSE_SUBVIEW_READ_IT_LATER,
+    MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW,
     TAB_CHAT,
     TAB_LIBRARY,
     TAB_WATCHLISTS_COLLECTIONS,
@@ -115,10 +116,14 @@ def _home_primary_action_context(
         return {"category": SettingsCategoryId.PROVIDERS_MODELS.value}
     if action_id == "resume_last_conversation":
         # The terminal suggestion deep-links the newest conversation into
-        # Console via the ADR-079 nav-context seam (spec §4).
+        # Console via the resume-navigation seam (spec §4; the contract
+        # shipped upstream as CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID).
         resume_id = str(getattr(dashboard_input, "resume_id", "") or "")
         if resume_id:
-            return {CONSOLE_NAV_CONTEXT_CONVERSATION_ID: resume_id}
+            return {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: resume_id}
+    if action_id == "review_read_later":
+        # Land Media on the saved-reading queue, not the generic list.
+        return {MEDIA_NAV_CONTEXT_BROWSE_SUBVIEW: MEDIA_BROWSE_SUBVIEW_READ_IT_LATER}
     if action_id == "review_notifications" and getattr(
         action, "target_route", None
     ) in {
@@ -915,8 +920,9 @@ class HomeScreen(BaseAppScreen):
         Notes deep-link into the Library notes editor via the existing
         ``LIBRARY_NAV_CONTEXT_NOTE_ID`` navigation-context contract; media
         into the Library item view via the open-source pair; conversations
-        into Console carrying ``CONSOLE_NAV_CONTEXT_CONVERSATION_ID`` so
-        the freshly mounted screen resumes THAT conversation (ADR-079).
+        into Console carrying the resume-local-conversation nav-context id
+        so the freshly mounted screen resumes THAT conversation through
+        the ordered resume-navigation startup.
         Navigation always composes a fresh screen, so the deep link lands
         on a cleanly mounted surface.
         """
@@ -960,7 +966,7 @@ class HomeScreen(BaseAppScreen):
                 NavigateToScreen(
                     TAB_CHAT,
                     {
-                        CONSOLE_NAV_CONTEXT_CONVERSATION_ID: (
+                        CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: (
                             target_id.removeprefix(LOCAL_CONVERSATION_ITEM_ID_PREFIX)
                         )
                     },

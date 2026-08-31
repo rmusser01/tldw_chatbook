@@ -1160,6 +1160,34 @@ class MediaWindow(Container):
                 self.search_panel.keyword_filter,
             )
 
+    def select_browse_subview(self, subview: str) -> None:
+        """Programmatically select a browse subview (navigation deep links).
+
+        Drives the same state + refresh path as the subview Select's event
+        handler, for callers that need to land the window on a specific
+        subview without a widget event (Home's read-it-later suggestion via
+        MediaScreen's navigation context).
+
+        Args:
+            subview: Target subview id (e.g. ``"read-it-later"``); empty
+                values fall back to ``"all"``.
+        """
+        target = str(subview or "all")
+        if self.runtime_state is not None:
+            self.runtime_state.active_browse_subview = target
+        panel = getattr(self, "search_panel", None)
+        if panel is not None:
+            panel.set_browse_subview(target)
+        if self._reset_invalid_saved_view_for_context():
+            return
+        self._sync_saved_view_controls()
+        if self.active_media_type:
+            self._perform_search(
+                self.active_media_type,
+                self.search_panel.search_term,
+                self.search_panel.keyword_filter,
+            )
+
     @on(MediaItemSelectedEvent)
     async def handle_media_item_selected(self, event: MediaItemSelectedEvent) -> None:
         """Start item-detail loading without blocking the destination message pump.
