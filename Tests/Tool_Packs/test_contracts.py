@@ -601,6 +601,24 @@ def test_document_rejects_profile_payload_over_limit_before_schema_work() -> Non
         ToolPackDocument.from_dicts(_manifest(b"{}\n"), profile, profile_bytes=profile_bytes)
 
 
+def test_document_independently_rejects_payload_size_mismatch() -> None:
+    profile = _profile()
+    profile_bytes = canonical_json_bytes(profile)
+    manifest = _manifest(profile_bytes)
+    manifest["files"][0]["size"] = len(profile_bytes) + 1
+    body = dict(manifest)
+    body.pop("content_digest")
+    manifest["content_digest"] = hashlib.sha256(
+        b"tldw.tool-pack/v1\0"
+        + canonical_json_bytes(body)
+        + b"\0"
+        + profile_bytes
+    ).hexdigest()
+
+    with pytest.raises(ToolPackError, match=r"^tool_pack\.import\.manifest_invalid$"):
+        ToolPackDocument.from_dicts(manifest, profile, profile_bytes=profile_bytes)
+
+
 def test_document_independently_rejects_payload_sha256_mismatch() -> None:
     profile = _profile()
     profile_bytes = canonical_json_bytes(profile)
