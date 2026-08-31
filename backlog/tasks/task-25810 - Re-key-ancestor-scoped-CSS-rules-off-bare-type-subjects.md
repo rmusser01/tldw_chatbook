@@ -25,8 +25,11 @@ the screen**. Across the common type keys, **93.2% of candidate work
 (24,487 of 26,279) comes from ancestor-scoped rules that cannot match the
 node considering them.**
 
-This compounds with TASK-25811: the outgoing-screen restyle pays this
-overhead too.
+(An earlier version of this task said the overhead compounds with
+TASK-25811's outgoing-screen restyle. **TASK-25811 was retracted as a
+measurement artifact** in the same PR -- settled windows show zero style
+work on the outgoing screen -- so that interaction does not exist and must
+not be used to prioritise this work.)
 
 ## Evidence
 
@@ -91,8 +94,16 @@ full-screen `stylesheet.update` calls per arm) on a 502-node Console:
 | filter on | **66.2 ms** | 64.8 / 65.8 / 66.2 / 66.8 |
 | **delta** | **−38.8 ms (−37%)** | ranges do not overlap |
 
-That is 37% of the 60% upper bound this task measured, for none of the
-markup churn.
+**That captures roughly 62% of the measured upper bound**, for none of the
+markup churn: a 37-point reduction against a possible ~60-point one
+(38.8 ms of a 60.3 ms available saving; the two arms were measured in
+separate runs with slightly different baselines, 105.0 vs 101.1 ms, so
+compare the percentages rather than the absolute milliseconds).
+
+An earlier revision of this task said "37% of the 60% upper bound", which
+conflated a 37% *reduction* with capturing 37% *of the bound*. It
+understated what the filter achieved and overstated the remaining
+opportunity -- roughly a third of the bound is left, not two thirds.
 
 The filter is conservative by construction: a rule survives unless EVERY one
 of its selector sets states an unmet requirement, and any shape that cannot
