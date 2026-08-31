@@ -358,9 +358,9 @@ Known limitations/skips:
 
 - No full repository sweep or live external server/keyring session was run,
   per repository policy and the assigned focused scope.
-- Cross-repository behavior is contract-pinned to tldw_server `a92e12110d` and
-  covered with real-httpx and production-handler tests; final independent
-  controller review remains pending.
+- At this intermediate checkpoint, cross-repository behavior was pinned to
+  tldw_server `a92e12110d` and covered with real-httpx and production-handler
+  tests; the final pin is recorded in the closing correction below.
 
 ## Restart-safety and reviewed-lineage correction (2026-08-30)
 
@@ -418,8 +418,9 @@ Known limitations/skips:
   consistent with repository scoped-verification policy. Production SQLite,
   production repository/service paths, real-httpx API boundaries, and injected
   secure-custody failure/retry paths are covered.
-- Server compatibility remains pinned to `a92e12110d`; no server contract was
-  weakened by this client-side correction.
+- At this intermediate checkpoint, server compatibility was pinned to
+  `a92e12110d`; no server contract was weakened by this client-side correction.
+  The final reviewed pin is recorded in the closing correction below.
 
 ## Final recovery-binding and transport-watermark correction (2026-08-31)
 
