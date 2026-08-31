@@ -64,10 +64,11 @@ and independent review.
 Ruff, compilation, Bandit, diff hygiene, and review pass; TASK-24727 is
 complete.
 
-**Status:** In Progress — Chatbook targeted tests pass (285 tests); Ruff,
-compilation, CSS reproduction, both diff-hygiene checks, and the Bandit
-high-severity gate pass. Controller-owned independent cross-repository review
-remains before task closure.
+**Status:** Complete — final controller verification passed 465 Chatbook tests
+and 382 server tests with 2 documented server skips. Ruff, compileall, Bandit
+high-severity, diff hygiene, and clean-worktree checks passed. Independent
+Chatbook, server, and cross-repository specification reviews approved the final
+Chatbook `edc9c80be0` / server `0ad1c078c8` contract.
 
 ### Independent-review remediation (2026-08-30)
 
