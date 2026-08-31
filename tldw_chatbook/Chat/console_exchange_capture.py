@@ -263,7 +263,20 @@ def resolve_scoped_boolean(
     next_send: bool | None = None,
     allow_next_send: bool = True,
 ) -> bool:
-    """Resolve a strict bool through next-send, conversation, and global scope."""
+    """Resolve a strict bool through next-send, conversation, and global scope.
+
+    Args:
+        global_default: Required fallback used when no sparse override applies.
+        conversation: Optional conversation-scoped override.
+        next_send: Optional one-shot override with highest precedence.
+        allow_next_send: Whether the one-shot scope is eligible for this caller.
+
+    Returns:
+        The highest-precedence applicable boolean value.
+
+    Raises:
+        TypeError: If a supplied non-None value is not exactly ``bool``.
+    """
 
     if type(global_default) is not bool:
         raise TypeError("global_default")

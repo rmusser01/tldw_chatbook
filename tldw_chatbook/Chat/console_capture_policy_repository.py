@@ -164,7 +164,17 @@ class ConsoleCapturePolicyRepository:
         capture_enabled: bool | None,
         pii_redaction_enabled: bool | None,
     ) -> CapturePolicyWriteResult:
-        """Replace sparse future Capture/PII overrides, preserving provenance."""
+        """Replace sparse future Capture/PII overrides, preserving provenance.
+
+        Args:
+            conversation_id: Durable conversation whose local policy is replaced.
+            capture_enabled: Sparse Capture override, or None to inherit.
+            pii_redaction_enabled: Sparse PII override, or None to inherit.
+
+        Returns:
+            A stored/deleted/unchanged result, a missing-conversation result,
+            or an unavailable result when validation or persistence fails.
+        """
 
         if type(conversation_id) is not str or not conversation_id.strip():
             return CapturePolicyWriteResult(CapturePolicyWriteStatus.UNAVAILABLE, None)

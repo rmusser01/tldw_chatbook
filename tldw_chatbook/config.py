@@ -69,6 +69,7 @@ from tldw_chatbook.Utils.private_paths import (
     verify_trusted_directory,
 )
 from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
+from tldw_chatbook.Utils.trace_privacy_config import validate_trace_privacy_config
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
@@ -6710,15 +6711,9 @@ def runtime_capture_policy() -> RuntimeCapturePolicy:
             detail = CaptureDetail(console.get("exchange_capture_detail", "safe"))
         except (TypeError, ValueError):
             detail = CaptureDetail.SAFE
-        pii_redaction_enabled = coerce_bool_setting(
-            console.get("exchange_capture_pii_redaction", False),
-            False,
-        )
-        viewer_profile = "safe"
-        if console.get("trace_viewer_profile_version") == 1:
-            candidate = console.get("trace_viewer_profile", "safe")
-            if candidate in {"safe", "full"}:
-                viewer_profile = candidate
+        privacy = validate_trace_privacy_config(console)
+        pii_redaction_enabled = privacy.exchange_capture_pii_redaction
+        viewer_profile = privacy.effective_viewer_profile
         current = RuntimeCapturePolicy(
             coerce_bool_setting(console.get("exchange_capture", True), True),
             detail,

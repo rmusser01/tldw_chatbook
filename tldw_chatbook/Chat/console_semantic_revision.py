@@ -203,6 +203,19 @@ def project_semantic_revision_trace_message(
     This trace-only reader never changes the canonical message row. Safe and
     Full viewers call the same function because disclosure profile cannot
     bypass a capture-time credential or PII mask.
+
+    Args:
+        cursor: Caller-owned transaction cursor used for all reads.
+        revision_id: Opaque semantic revision to project.
+        expected_conversation_id: Conversation that must own the revision.
+        policy_id: Frozen trace policy whose credential and PII masks apply.
+
+    Returns:
+        A provider-message mapping safe for trace disclosure.
+
+    Raises:
+        ValueError: If ownership, materialization, or frozen masks cannot be
+            validated against the requested source and policy.
     """
 
     repository = ConsoleTraceRepository()

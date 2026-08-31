@@ -150,7 +150,19 @@ class PIIValueRedactionResult:
 def merge_pii_spans(
     spans: Sequence[PIIRedactionSpan],
 ) -> tuple[PIIRedactionSpan, ...]:
-    """Sort and union overlapping PII spans without retaining matched text."""
+    """Sort and union overlapping PII spans without retaining matched text.
+
+    Args:
+        spans: Content-free detector ranges to normalize.
+
+    Returns:
+        Deterministically ordered, non-overlapping ranges. Overlap between
+        categories is represented as ``mixed``.
+
+    Raises:
+        TypeError: If any item is not a :class:`PIIRedactionSpan`.
+        ValueError: If merged provenance cannot satisfy span metadata bounds.
+    """
 
     normalized = tuple(spans)
     if any(not isinstance(span, PIIRedactionSpan) for span in normalized):
@@ -199,7 +211,20 @@ def apply_pii_mask(
     *,
     marker: str = PII_OMISSION_MARKER,
 ) -> str:
-    """Return a masked projection while leaving the source string unchanged."""
+    """Return a masked projection while leaving the source string unchanged.
+
+    Args:
+        value: Original string indexed by Unicode codepoint offsets.
+        spans: Content-free ranges to replace.
+        marker: Non-empty replacement text used for every merged range.
+
+    Returns:
+        A new string with each merged range replaced by ``marker``.
+
+    Raises:
+        TypeError: If ``value`` or ``marker`` is not a valid string.
+        ValueError: If a range extends beyond ``value`` or has invalid metadata.
+    """
 
     if type(value) is not str or type(marker) is not str or not marker:
         raise TypeError("mask_input")
@@ -250,7 +275,15 @@ class BuiltInPIIDetector:
         return f"{type(self).__name__}()"
 
     def detect(self, value: str) -> PIIDetectionResult:
-        """Return deterministic merged spans or a content-free failure."""
+        """Return deterministic merged spans or a content-free failure.
+
+        Args:
+            value: Text to inspect under this detector's work limits.
+
+        Returns:
+            Merged spans when detection succeeds, otherwise a content-free
+            unavailable result. Source text and matches are never retained.
+        """
 
         try:
             if type(value) is not str or len(value) > self._max_text_codepoints:
@@ -294,6 +327,20 @@ def redact_pii_value(
 
     Structured paths use mapping ordinals instead of raw keys so a PII-bearing
     user-authored key can never be copied into mask metadata.
+
+    Args:
+        value: JSON-like provider-only value to mask without mutation.
+        detector: Optional bounded detector; the built-in detector is the default.
+        max_nodes: Maximum aggregate structured nodes inspected.
+        max_depth: Maximum recursive container depth inspected.
+        max_total_spans: Maximum aggregate ranges retained in metadata.
+
+    Returns:
+        The masked value and content-free field ranges, or a content-free
+        unavailable result when any component cannot be processed safely.
+
+    Raises:
+        ValueError: If a supplied structural work limit is not positive.
     """
 
     active_detector = detector or BuiltInPIIDetector()
@@ -403,7 +450,20 @@ def apply_frozen_pii_masks(
     value: object,
     field_masks: Mapping[str, Sequence[PIIRedactionSpan]],
 ) -> object:
-    """Apply persisted masks to a fresh projection without rerunning detection."""
+    """Apply persisted masks to a fresh projection without rerunning detection.
+
+    Args:
+        value: Fresh JSON-like projection of the original frozen source.
+        field_masks: Content-free structured paths and immutable codepoint ranges.
+
+    Returns:
+        A new projection with every persisted mask applied.
+
+    Raises:
+        TypeError: If the source structure contains unsupported mapping keys.
+        ValueError: If paths, ranges, key collisions, or the source shape do
+            not exactly match the frozen mask metadata.
+    """
 
     masks = {path: tuple(spans) for path, spans in field_masks.items()}
     if any(type(path) is not str or not path for path in masks):

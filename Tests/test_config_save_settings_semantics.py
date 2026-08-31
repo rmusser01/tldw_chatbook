@@ -348,6 +348,33 @@ def test_versioned_viewer_and_pii_choices_restore_independently(monkeypatch) -> 
     assert policy.viewer_profile == "full"
 
 
+def test_malformed_privacy_config_falls_back_to_all_safe_defaults(monkeypatch) -> None:
+    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 63)
+    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(
+        config_module,
+        "_published_runtime_config_snapshot",
+        lambda: config_module.RuntimeConfigSnapshot(
+            63,
+            {
+                "console": {
+                    "exchange_capture": True,
+                    "exchange_capture_detail": "full",
+                    "exchange_capture_pii_redaction": "true",
+                    "trace_viewer_profile": "full",
+                    "trace_viewer_profile_version": "1",
+                }
+            },
+        ),
+    )
+
+    policy = config_module.runtime_capture_policy()
+
+    assert policy.detail is CaptureDetail.FULL
+    assert policy.pii_redaction_enabled is False
+    assert policy.viewer_profile == "safe"
+
+
 def test_failed_more_revealing_privacy_change_is_not_published(monkeypatch) -> None:
     config_module._publish_runtime_capture_policy(
         False,

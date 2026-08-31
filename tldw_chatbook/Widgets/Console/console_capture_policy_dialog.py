@@ -244,6 +244,13 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
     """
 
     def __init__(self, bindings: CapturePolicyBindings) -> None:
+        """Create controls bound to one immutable Inspector target.
+
+        Args:
+            bindings: Session-scoped read and mutation callbacks for Capture
+                and PII privacy policy.
+        """
+
         super().__init__()
         self.bindings = bindings
         self.snapshot = bindings.read()

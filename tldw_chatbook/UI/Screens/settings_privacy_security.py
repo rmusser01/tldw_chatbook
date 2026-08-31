@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
+from tldw_chatbook.Utils.trace_privacy_config import validate_trace_privacy_config
 
 
 SAFE_SKILL_TRUST_STATUSES = frozenset(
@@ -100,11 +101,7 @@ def build_settings_privacy_posture(
     console = app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
     if not isinstance(console, Mapping):
         console = {}
-    trace_viewer_profile = "safe"
-    if console.get("trace_viewer_profile_version") == 1 and console.get(
-        "trace_viewer_profile"
-    ) in {"safe", "full"}:
-        trace_viewer_profile = str(console["trace_viewer_profile"])
+    trace_privacy = validate_trace_privacy_config(console)
     return SettingsPrivacyPosture(
         encryption_enabled=encryption_enabled,
         sensitive_config_fields=_sensitive_config_field_count(app_config),
@@ -121,12 +118,8 @@ def build_settings_privacy_posture(
             trust.get("reduced_rollback_protection")
         ),
         trace_capture_enabled=console.get("exchange_capture", True) is not False,
-        trace_pii_masking_enabled=console.get(
-            "exchange_capture_pii_redaction",
-            False,
-        )
-        is True,
-        trace_viewer_profile=trace_viewer_profile,
+        trace_pii_masking_enabled=trace_privacy.exchange_capture_pii_redaction,
+        trace_viewer_profile=trace_privacy.effective_viewer_profile,
     )
 
 

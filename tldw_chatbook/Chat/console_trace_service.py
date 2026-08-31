@@ -3136,7 +3136,17 @@ class ConsoleTraceService:
         *,
         owner_id: str,
     ) -> dict[SurfaceReferenceKey, object]:
-        """Resolve one reopened projection in bounded SQL batches."""
+        """Resolve canonical provider values in bounded SQL batches.
+
+        This is the provider-surface verification path, not a trace-disclosure
+        reader. It deliberately returns live canonical values without applying
+        trace-only PII masks, because masking must never alter bytes sent to a
+        provider. Historical viewer/export code must instead resolve each call
+        with its frozen policy through
+        ``project_semantic_revision_trace_message``. Retired canonical locators
+        remain unavailable here rather than substituting a masked trace artifact
+        into a future provider request.
+        """
 
         unique = tuple(dict.fromkeys(keys))
         artifact_keys = tuple(key for key in unique if key[1] == "artifact")

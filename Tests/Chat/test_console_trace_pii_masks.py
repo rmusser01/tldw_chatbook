@@ -8,7 +8,9 @@ import pytest
 
 from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
 from tldw_chatbook.Chat.console_trace_redaction import (
+    BUILTIN_PII_RULESET_REVISION_ID,
     BUILTIN_PII_RULESET_VERSION,
+    CREDENTIAL_FILTER_VERSION,
     PII_DETECTOR_UNAVAILABLE,
     BuiltInPIIDetector,
     PIIRedactionSpan,
@@ -208,5 +210,67 @@ def test_canonical_message_stays_unchanged_while_trace_projection_is_masked() ->
 
         assert safe == full == {"role": "user", "content": "Contact [PII omitted]"}
         assert canonical == source
+    finally:
+        database.close_connection()
+
+
+def test_retired_revision_remains_available_through_masked_trace_artifact() -> None:
+    database = CharactersRAGDB(":memory:", "trace-pii-retired-test")
+    repository = ConsoleTraceRepository()
+    coordinator = SemanticRevisionCoordinator(database, repository=repository)
+    conversation_id = database.add_conversation({"title": "Retired PII trace"})
+    assert conversation_id is not None
+    source = "Contact elise@example.test"
+    message_id = database.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "role": "user",
+            "content": source,
+        }
+    )
+    assert message_id is not None
+    policy = FrozenTracePolicy(
+        policy_id=new_opaque_id(),
+        credential_filter_version=CREDENTIAL_FILTER_VERSION,
+        pii_redaction_enabled=True,
+        pii_ruleset_revision_id=BUILTIN_PII_RULESET_REVISION_ID,
+    )
+    try:
+        with database.transaction(immediate=True) as cursor:
+            revision = coordinator.ensure_current_revision(
+                cursor,
+                message_id=message_id,
+            )
+            repository.ensure_policy(cursor, policy)
+            coordinator._materialize_policies(
+                cursor,
+                revision_id=revision.revision_id,
+                policy_ids=(policy.policy_id,),
+                envelope=coordinator._message_envelope(cursor, message_id),
+            )
+            coordinator.mutate_message(
+                cursor,
+                message_id=message_id,
+                creation_reason="message_edit",
+                mutate=lambda mutation_cursor: mutation_cursor.execute(
+                    "UPDATE messages SET content = ? WHERE id = ?",
+                    ("Replacement without PII", message_id),
+                ),
+            )
+
+            projected = project_semantic_revision_trace_message(
+                cursor,
+                revision_id=revision.revision_id,
+                expected_conversation_id=conversation_id,
+                policy_id=policy.policy_id,
+            )
+            canonical = cursor.execute(
+                "SELECT content FROM messages WHERE id = ?",
+                (message_id,),
+            ).fetchone()[0]
+
+        assert projected == {"role": "user", "content": "Contact [PII omitted]"}
+        assert canonical == "Replacement without PII"
     finally:
         database.close_connection()

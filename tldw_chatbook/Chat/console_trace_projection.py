@@ -89,6 +89,16 @@ def project_capture_for_viewer(
     Safe keeps structural facts but never returns sensitive provider-only
     bodies. Full returns every persisted non-credential field available in
     the stored call; legacy Safe captures remain irrecoverably reduced.
+
+    Args:
+        capture: Stored legacy exchange capture to disclose.
+        profile: Explicit local Safe or Full viewer profile.
+
+    Returns:
+        A credential-safe capture containing only fields allowed by ``profile``.
+
+    Raises:
+        TypeError: If ``profile`` is not a :class:`TraceViewerProfile`.
     """
 
     # Keep the Inspector's first-paint import closure small. Export projection is

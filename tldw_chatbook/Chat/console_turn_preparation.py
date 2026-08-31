@@ -118,6 +118,7 @@ class ConsoleTurnPreparation:
     capture_mode: ConsoleTraceCaptureMode = ConsoleTraceCaptureMode.CAPTURE_ON
     pii_redaction_enabled: bool = False
     pii_ruleset_revision_id: str | None = None
+    next_trace_privacy_revision: int | None = None
 
     def __post_init__(self) -> None:
         """Reject malformed, mutable, or internally inconsistent state."""
@@ -746,6 +747,11 @@ def _validate_preparation(preparation: ConsoleTurnPreparation) -> None:
         )
     elif preparation.pii_ruleset_revision_id is not None:
         _invalid("PII ruleset revision ID")
+    if preparation.next_trace_privacy_revision is not None and (
+        type(preparation.next_trace_privacy_revision) is not int
+        or preparation.next_trace_privacy_revision < 0
+    ):
+        _invalid("next trace privacy revision")
     if preparation.one_shot_capture_off and (
         preparation.capture_mode is not ConsoleTraceCaptureMode.CAPTURE_OFF
     ):

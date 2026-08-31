@@ -2485,6 +2485,7 @@ class CapturePurgeStatus(str, Enum):
 
 
 _MISSING_CAPTURE_REVISION = -1
+_UNFROZEN_TRACE_PRIVACY_REVISION = -1
 
 
 @dataclass(frozen=True, slots=True)
@@ -3540,7 +3541,17 @@ class ConsoleChatController:
         pii_redaction_enabled: bool | None,
         expected_policy_revision: int,
     ) -> CapturePolicyMutationResult:
-        """Arm sparse Capture/PII choices for the next eligible send."""
+        """Arm sparse Capture/PII choices for the next eligible send.
+
+        Args:
+            session_id: Live Console session receiving the one-shot override.
+            capture_enabled: Sparse Capture choice, or None to inherit.
+            pii_redaction_enabled: Sparse PII choice, or None to inherit.
+            expected_policy_revision: Optimistic policy revision to replace.
+
+        Returns:
+            Applied or stale mutation result with a fresh policy snapshot.
+        """
 
         try:
             self.store.set_session_next_trace_privacy(
@@ -3571,7 +3582,18 @@ class ConsoleChatController:
         pii_redaction_enabled: bool | None,
         expected_policy_revision: int,
     ) -> CapturePolicyMutationResult:
-        """Persist sparse conversation Capture/PII overrides fail-closed."""
+        """Persist sparse conversation Capture/PII overrides fail-closed.
+
+        Args:
+            session_id: Live Console session whose conversation policy changes.
+            capture_enabled: Sparse Capture override, or None to inherit.
+            pii_redaction_enabled: Sparse PII override, or None to inherit.
+            expected_policy_revision: Optimistic policy revision to replace.
+
+        Returns:
+            Applied, stale, target-missing, or safer-session-only result with
+            the resulting policy snapshot.
+        """
 
         before = self.capture_policy_snapshot(session_id)
         if before.policy_revision != expected_policy_revision:
@@ -3947,7 +3969,9 @@ class ConsoleChatController:
         *,
         frozen_capture_enabled: bool | None = None,
         frozen_pii_redaction_enabled: bool | None = None,
-        privacy_already_frozen: bool = False,
+        frozen_next_trace_privacy_revision: int | None = (
+            _UNFROZEN_TRACE_PRIVACY_REVISION
+        ),
     ) -> ConsoleProviderStreamSignals:
         """Freeze capture detail once, after an accepted owner exists."""
         eligible = origin in {
@@ -4020,14 +4044,19 @@ class ConsoleChatController:
                     exchange_capture_enabled=False,
                     capture_detail=CaptureDetail.SAFE,
                 )
-        if not privacy_already_frozen and eligible and (
-            state.next_capture_enabled is not None
-            or state.next_pii_redaction_enabled is not None
-        ):
+        privacy_revision = frozen_next_trace_privacy_revision
+        if privacy_revision == _UNFROZEN_TRACE_PRIVACY_REVISION:
+            privacy_revision = (
+                state.next_privacy_revision
+                if state.next_capture_enabled is not None
+                or state.next_pii_redaction_enabled is not None
+                else None
+            )
+        if eligible and privacy_revision is not None:
             try:
                 self.store.consume_session_next_trace_privacy(
                     session_id,
-                    expected_next_revision=state.next_privacy_revision,
+                    expected_next_revision=privacy_revision,
                 )
             except Exception as exc:
                 logger.bind(
@@ -7054,6 +7083,9 @@ class ConsoleChatController:
         if resumed_preparation is not None:
             pii_redaction_enabled = resumed_preparation.pii_redaction_enabled
             pii_ruleset_revision_id = resumed_preparation.pii_ruleset_revision_id
+            next_trace_privacy_revision = (
+                resumed_preparation.next_trace_privacy_revision
+            )
         else:
             pii_redaction_enabled = (
                 capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
@@ -7063,6 +7095,15 @@ class ConsoleChatController:
             pii_ruleset_revision_id = (
                 BUILTIN_PII_RULESET_REVISION_ID
                 if pii_redaction_enabled
+                else None
+            )
+            next_trace_privacy_revision = (
+                admission_policy.next_privacy_revision
+                if admission_policy is not None
+                and (
+                    admission_policy.next_capture_enabled is not None
+                    or admission_policy.next_pii_redaction_enabled is not None
+                )
                 else None
             )
         if (
@@ -7095,24 +7136,6 @@ class ConsoleChatController:
                 queue_entry_id=queue_entry_id,
                 provider_started=False,
             )
-
-        if (
-            resumed_preparation is None
-            and admission_policy is not None
-            and (
-                admission_policy.next_capture_enabled is not None
-                or admission_policy.next_pii_redaction_enabled is not None
-            )
-        ):
-            try:
-                self.store.consume_session_next_trace_privacy(
-                    session.id,
-                    expected_next_revision=admission_policy.next_privacy_revision,
-                )
-            except Exception as exc:
-                logger.bind(error_type=type(exc).__name__).warning(
-                    "trace_privacy_one_shot_consumption_failed"
-                )
 
         preparation: ConsoleTurnPreparation | None = resumed_preparation
         preparation_outcome: ConsolePreparationOutcome | None = (
@@ -7194,6 +7217,7 @@ class ConsoleChatController:
                 capture_mode=capture_mode,
                 pii_redaction_enabled=pii_redaction_enabled,
                 pii_ruleset_revision_id=pii_ruleset_revision_id,
+                next_trace_privacy_revision=next_trace_privacy_revision,
             )
             preparation = pause_temporary_capture_on(preparation)
             if self._begin_submit_preparation(active_task, preparation) is None:
@@ -7660,7 +7684,9 @@ class ConsoleChatController:
                     preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
                 ),
                 frozen_pii_redaction_enabled=preparation.pii_redaction_enabled,
-                privacy_already_frozen=True,
+                frozen_next_trace_privacy_revision=(
+                    preparation.next_trace_privacy_revision
+                ),
             )
             self._release_prepared_evidence(prepared_continuation)
             for pending in pendings:
@@ -8354,7 +8380,9 @@ class ConsoleChatController:
                     preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
                 ),
                 frozen_pii_redaction_enabled=preparation.pii_redaction_enabled,
-                privacy_already_frozen=True,
+                frozen_next_trace_privacy_revision=(
+                    preparation.next_trace_privacy_revision
+                ),
             ),
             terminal_citation_finalizer=terminal_citation_finalizer,
         )
