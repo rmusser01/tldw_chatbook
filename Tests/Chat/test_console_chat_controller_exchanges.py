@@ -42,36 +42,37 @@ from types import SimpleNamespace
 import pytest
 from loguru import logger as loguru_logger
 
-from tldw_chatbook.Chat import console_chat_controller as controller_module
+from Tests.console_provider_doubles import provider_resolution
+from tldw_chatbook import config as config_module
 from tldw_chatbook.Chat import console_capture_policy_repository as repository_module
-from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
-from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_capture_policy_repository import (
     CapturePolicyWriteResult,
     CapturePolicyWriteStatus,
 )
+from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleSubmissionOrigin,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
+from tldw_chatbook.Chat.console_library_destination import resolve_console_destination
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
     ConsoleProviderStreamSignals,
 )
-from tldw_chatbook.Chat.console_library_destination import resolve_console_destination
-from tldw_chatbook.Chat.console_trace_service import TraceCallPersistenceError
 from tldw_chatbook.Chat.console_trace_provenance import ConsoleTraceCaptureMode
+from tldw_chatbook.Chat.console_trace_service import TraceCallPersistenceError
 from tldw_chatbook.Chat.console_turn_preparation import (
     ConsolePreparationPauseKind,
     ConsoleTurnPreparationState,
 )
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from Tests.console_provider_doubles import provider_resolution
 
 
 class StreamingGateway:
@@ -1443,6 +1444,30 @@ def test_kill_switch_string_false_disables_capture(monkeypatch):
     signals = controller._new_run_stream_signals()
 
     assert signals.exchange_capture_enabled is False
+
+
+def test_kill_switch_string_true_enables_capture(monkeypatch):
+    """A hand-typed ``"true"`` survives the real runtime-policy coercion path."""
+    controller = _new_controller()
+    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 614)
+    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(
+        config_module,
+        "_published_runtime_config_snapshot",
+        lambda: config_module.RuntimeConfigSnapshot(
+            614,
+            {
+                "console": {
+                    "exchange_capture": "true",
+                    "trace_legacy_writes": "true",
+                }
+            },
+        ),
+    )
+
+    signals = controller._new_run_stream_signals()
+
+    assert signals.exchange_capture_enabled is True
 
 
 def test_legacy_writer_requires_both_capture_and_legacy_rollout_gate(monkeypatch):
