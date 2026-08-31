@@ -843,53 +843,43 @@ class ConsoleWorkspaceController:
             resolution = await asyncio.to_thread(
                 self._resolve_workspace_files_visit, requested_id
             )
-        except Exception:
-            async with self._workspace_files_admission_lock:
-                if self._workspace_files_admission_claim == requested_id:
-                    self._workspace_files_admission_claim = None
-            raise
-        if resolution is None:
-            async with self._workspace_files_admission_lock:
-                if self._workspace_files_admission_claim == requested_id:
-                    self._workspace_files_admission_claim = None
-            self.app_instance.notify(WORKSPACE_FILES_NO_FOLDERS_COPY, severity="warning")
-            return
-        if not resolution.had_bindings:
-            async with self._workspace_files_admission_lock:
-                if self._workspace_files_admission_claim == requested_id:
-                    self._workspace_files_admission_claim = None
-            self.app_instance.notify(WORKSPACE_FILES_NO_FOLDERS_COPY, severity="warning")
-            return
-
-        attention = self._workspace_files_attention_snapshot()
-
-        def _closed() -> None:
-            if self._workspace_files_visit_workspace_id == resolution.workspace_id:
-                self._workspace_files_visit_workspace_id = None
-                self._workspace_files_modal = None
-
-        async with self._workspace_files_admission_lock:
-            if self._workspace_files_modal is not None:
-                # A currently closing visit still wins until its one close
-                # callback clears the ledger; never retarget it.
-                if self._workspace_files_admission_claim == requested_id:
-                    self._workspace_files_admission_claim = None
+            if resolution is None or not resolution.had_bindings:
+                self.app_instance.notify(
+                    WORKSPACE_FILES_NO_FOLDERS_COPY, severity="warning"
+                )
                 return
-            self._workspace_files_visit_workspace_id = resolution.workspace_id
-            self._workspace_files_modal = self.open_workspace_files_modal(
-                inspector=WorkspaceFileInspector(
-                    getattr(self.app_instance, "workspace_registry_service", None)
-                ),
-                inspected_workspace_id=resolution.workspace_id,
-                inspected_workspace_name=resolution.workspace_name,
-                active_workspace_id=resolution.active_workspace_id,
-                active_workspace_name=resolution.active_workspace_name,
-                bindings=resolution.bindings,
-                attention=attention,
-                on_visit_closed=_closed,
-            )
-            if self._workspace_files_admission_claim == requested_id:
-                self._workspace_files_admission_claim = None
+
+            attention = self._workspace_files_attention_snapshot()
+
+            def _closed() -> None:
+                if self._workspace_files_visit_workspace_id == resolution.workspace_id:
+                    self._workspace_files_visit_workspace_id = None
+                    self._workspace_files_modal = None
+
+            async with self._workspace_files_admission_lock:
+                if self._workspace_files_modal is not None:
+                    # A closing visit owns the ledger until its awaited
+                    # unmount callback clears it; never retarget it.
+                    return
+                self._workspace_files_visit_workspace_id = resolution.workspace_id
+                self._workspace_files_modal = self.open_workspace_files_modal(
+                    inspector=WorkspaceFileInspector(
+                        getattr(self.app_instance, "workspace_registry_service", None)
+                    ),
+                    inspected_workspace_id=resolution.workspace_id,
+                    inspected_workspace_name=resolution.workspace_name,
+                    active_workspace_id=resolution.active_workspace_id,
+                    active_workspace_name=resolution.active_workspace_name,
+                    bindings=resolution.bindings,
+                    attention=attention,
+                    on_visit_closed=_closed,
+                )
+        finally:
+            # Cancellation is a normal outcome for a Textual exclusive
+            # worker. The claim must never survive it and block later visits.
+            async with self._workspace_files_admission_lock:
+                if self._workspace_files_admission_claim == requested_id:
+                    self._workspace_files_admission_claim = None
 
     def _resolve_workspace_files_visit(
         self, workspace_id: str
@@ -942,9 +932,15 @@ class ConsoleWorkspaceController:
         """Return only generic Console-attention copy; never payload details."""
         count_getter = getattr(self._screen, "_console_pending_approval_count", None)
         count = int(count_getter()) if callable(count_getter) else 0
-        blocked = bool(getattr(self.app_instance, "console_has_blocked_activity", False))
-        failed = bool(getattr(self.app_instance, "console_has_failed_activity", False))
-        new_activity = bool(getattr(self.app_instance, "console_has_new_activity", False))
+        controller = self._current_chat_controller_accessor()
+        run_state = getattr(controller, "run_state", None)
+        status = str(getattr(run_state, "status", "") or "").casefold()
+        # These all derive from existing Console state: run status and the
+        # durable fleet-unseen marker. No raw tool/approval payload crosses
+        # this boundary.
+        blocked = "block" in status or "approval" in status
+        failed = "fail" in status or "error" in status
+        new_activity = bool(self._fleet_unseen_ids_accessor())
         if count:
             noun = "approval" if count == 1 else "approvals"
             return WorkspaceFilesAttention(
