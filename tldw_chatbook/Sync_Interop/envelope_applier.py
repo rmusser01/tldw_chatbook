@@ -27,13 +27,9 @@ from tldw_chatbook.Sync_Interop.hashing import (
     canonical_payload_hash,
     canonical_thinking_blocks_json,
 )
-from tldw_chatbook.Sync_Interop.personal_context_adapter import (
-    PersonalContextSyncValidationError,
-)
 from tldw_chatbook.Sync_Interop.sync_state import (
     NOTES_ORGANIZATION_DOMAINS,
 )
-from tldw_chatbook.Personal_Context.service import ProfileConflictError
 
 if TYPE_CHECKING:
     from tldw_chatbook.Notes.notes_organization_repository import (
@@ -173,6 +169,11 @@ class SyncEnvelopeApplier:
                 "status": "rejected",
                 "reason_code": "personal_context_runtime_unavailable",
             }
+        from tldw_chatbook.Personal_Context.service import ProfileConflictError
+        from tldw_chatbook.Sync_Interop.personal_context_adapter import (
+            PersonalContextSyncValidationError,
+        )
+
         try:
             self.personal_context_adapter.apply_inbound(
                 envelope,
