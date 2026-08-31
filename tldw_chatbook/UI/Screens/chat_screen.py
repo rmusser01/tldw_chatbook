@@ -1062,6 +1062,16 @@ CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = tuple(
     for pair in CONSOLE_WORKBENCH_SHORTCUTS
 )
 
+#: TASK-25733: the same lie as the setup-blocked case above, from a different
+#: cause -- with the composer collapsed there is nothing to type into and Enter
+#: sends nothing, yet the footer kept offering "Enter send / queue". Escape is
+#: the way back (see the `expand_collapsed_console_composer` priority binding),
+#: so the send hint is replaced by the one action that matters while hidden.
+CONSOLE_WORKBENCH_SHORTCUTS_COMPOSER_COLLAPSED = tuple(
+    ("Esc", "show composer") if pair == ("Enter", "send / queue") else pair
+    for pair in CONSOLE_WORKBENCH_SHORTCUTS
+)
+
 #: TASK-362: the full Console keyboard vocabulary for the F1 help panel, grouped
 #: by surface. The flat CONSOLE_WORKBENCH_SHORTCUTS above stays the compact
 #: footer set; the transcript j/k/c/e/r keys, F2, Shift+Enter and Alt+M were
@@ -3639,6 +3649,12 @@ class ChatScreen(BaseAppScreen):
         """
         if self._console_setup_modal_blocking():
             shortcuts = CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED
+        elif self._console_composer_collapsed:
+            # TASK-25733: same truthfulness rule as the setup-blocked branch --
+            # with no composer mounted, "Enter send" names something the key
+            # cannot do, and Escape (the expand binding) is the action worth
+            # advertising instead.
+            shortcuts = CONSOLE_WORKBENCH_SHORTCUTS_COMPOSER_COLLAPSED
         elif self._console_footer_is_single_pane():
             # TASK-24703: below the single-pane threshold the rail's edge
             # handle is hidden, so Alt+I is the only route in -- and it is
