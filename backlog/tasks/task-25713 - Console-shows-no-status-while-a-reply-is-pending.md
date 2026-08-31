@@ -1,10 +1,10 @@
 ---
 id: TASK-25713
 title: Console shows no status while a reply is pending
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-31 05:07'
-updated_date: '2026-08-31 13:29'
+updated_date: '2026-08-31 14:12'
 labels:
   - console
   - ux-review
@@ -28,27 +28,25 @@ An assistant row mounts as an empty bordered block with no spinner, elapsed time
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-BLOCKED ON TASK-25712 -- evidence is entangled; do not design a fix from my original observation.
+RESOLVED BY OBSERVATION once TASK-25712 unblocked dispatch -- no code change needed here.
 
-I reported 30+ seconds of an empty assistant row against a provider answering in
-0.8s. That is accurate but the run was BLOCKED, never streaming: the
-trace-capture guard (TASK-25712) refused dispatch, so no tokens were ever
-requested. An empty row may well be the CORRECT render for 'accepted but not
-started'.
+My original report (30+ seconds of an empty assistant row) was accurate but the
+run was BLOCKED, never streaming: the trace guard refused dispatch, so no tokens
+were requested and neither the '[streaming]' status token
+(console_transcript.py, task-2154.16) nor the 'Generating…' resolution
+(console_display_state.py, TASK-347) could fire.
 
-The app already has the indicators my finding said were missing:
-  - console_transcript.py carries a '[streaming]'/'[stopped]'/'[failed]' status
-    token rendered as a status line (task-2154.16, FB-01)
-  - console_display_state.py resolves 'Generating…' for a running generation
-    (TASK-347)
-Neither could fire, because nothing was running.
+With 25712 fixed I sent 'Name three primary colors.' against a live local
+provider and watched the row progress:
+    Assistant  Generating…
+    Assistant  Thinking… · <1s
+    Assistant  I couldn't find any color tools in my catalog.
+A state label AND an elapsed timer, exactly what this task asked for. The
+indicators were never missing; nothing was ever running.
 
-So the real question is narrower and currently unanswerable: when a turn is
-ACCEPTED but BLOCKED before dispatch, the row shows neither 'Generating…' (not
-running) nor a block reason (that lives in a card above the transcript), so it
-reads as a hung response. Whether that gap survives once dispatch works can only
-be judged after 25712 is fixed and a genuine streaming turn can be observed.
-
-NEXT STEP: re-observe a real streaming turn once the trace wiring lands, then
-re-scope this to the accepted-but-blocked state only, if it still reproduces.
+REMAINING SLIVER, not worth its own task on current evidence: an ACCEPTED but
+pre-dispatch-BLOCKED turn still renders a bare row while its reason lives in a
+card above the transcript. That state is now rare (25712 removed the path that
+made it universal) and 25715 stops other panels stacking over the card that
+explains it. Re-open only if it is observed again on a healthy dispatch.
 <!-- SECTION:NOTES:END -->

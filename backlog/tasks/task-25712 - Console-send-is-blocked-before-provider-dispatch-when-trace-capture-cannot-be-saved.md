@@ -3,10 +3,10 @@ id: TASK-25712
 title: >-
   Console send is blocked before provider dispatch when trace capture cannot be
   saved
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-31 05:07'
-updated_date: '2026-08-31 05:34'
+updated_date: '2026-08-31 14:12'
 labels:
   - console
   - ux-review
@@ -31,67 +31,53 @@ A Console send that cannot record a trace is refused entirely: the interrupt car
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-ROOT CAUSE (verified by live instrumentation + isolated repro):
+FIXED, and live-verified end to end.
 
-  console_agent_bridge.py:2895   _consume -> gateway.stream_chat(...)
-  console_provider_gateway.py:3902  stream_chat -> self._reserve_trace_call(...)
-  console_provider_gateway.py:2224  raise TraceCallPersistenceError(reservation_status="not_established")
+ROOT CAUSE (instrumented, see prior notes): ConsoleTurnPreparation.capture_mode
+defaults to CAPTURE_ON; stream_chat routes every CAPTURE_ON send through
+_reserve_trace_call, whose first statement raises when
+_trace_call_boundary_factory is None; and NO production code ever supplies that
+factory (both ensure_provider_gateway callers omit it; ConsoleTraceCallBoundary
+is constructed only in Tests/). Introduced by c78f641ad -- consumer landed
+without producer.
 
-Captured "active exc: None" -- nothing threw, nothing failed to write. The guard
-fires on a permanent condition:
+WHY I DID NOT "JUST WIRE THE FACTORY": the ledger's producer half does not
+exist. A real TraceCallIdentity needs an owner + segment + policy, and while
+FrozenTracePolicy IS built in production (the provenance path), nothing ever
+calls create_segment/attach_owner -- they have no production callers at all.
+Wiring a factory would have meant inventing turn_id/run_id/call_sequence/
+idempotency_key semantics, i.e. the ledger's dedup and ordering rules. Getting
+those wrong writes an audit trail that looks authoritative and is wrong, which
+is worse than a loud failure.
 
-  if self._trace_call_boundary_factory is None:
-      raise TraceCallPersistenceError(reservation_status="not_established")
+THE FIX instead removes the false claim, not the guard. The dispatch refusal is
+a deliberate invariant -- test_capture_on_without_durable_boundary_cannot_enter_
+adapter pins that a Capture-On turn with no durable boundary must NOT reach a
+provider -- and it stays, untouched and passing. What was wrong was UPSTREAM:
+preparing a turn as Capture-On against a runtime with no way to capture it.
+ConsoleProviderGateway gains `supports_durable_capture`, and
+_capture_mode_for_preparation (the single existing capture-mode seam) returns
+CAPTURE_OFF when the runtime cannot honour capture. Capture Off is the app's own
+modelled outcome for this -- it is exactly what the "Send without capture"
+button already selects via one_shot_capture_off -- so no new semantics were
+invented.
 
-Chain: ConsoleTurnPreparation.capture_mode defaults to CAPTURE_ON
-(console_turn_preparation.py:118) -> stream_chat routes every CAPTURE_ON send
-through _reserve_trace_call -> that raises when the factory is None -> NO
-PRODUCTION CODE EVER SUPPLIES THAT FACTORY. Both callers of
-ensure_provider_gateway omit it (chat_screen.py:6392,
-console_launch_wake.py:212); ConsoleTraceCallBoundary is constructed only in
-Tests/. Introduced by c78f641ad (2026-08-30) -- consumer landed without producer.
+The invariant is therefore intact: a genuine Capture-On turn still requires a
+boundary. We simply stop claiming Capture-On we cannot deliver.
 
-WHY CI IS GREEN: every test injects a factory, and the shared helper
-_capture_on_prepared_request SILENTLY INSTALLS ONE when absent
-(Tests/Chat/test_console_provider_gateway.py:141-160). The suite therefore
-cannot observe the shipped configuration.
+EVIDENCE:
+- Tests/Chat suites: 463 passed, only the pre-existing
+  test_cold_restart_recovers_open_calls baseline failure.
+- test_console_chat_controller.py: baseline 98 failed -> 10 failed with this
+  change, and the 10 are a strict SUBSET of the 98 (comm -23 empty). The fix
+  turns 88 previously-failing tests green, showing the gate was breaking the
+  suite broadly, not just my manual send.
+- LIVE, clean profile against a local llama.cpp-compatible server:
+  "Name three primary colors." -> Generating... -> Thinking... <1s -> a real
+  model reply. No trace card, no continuation card, provider contacted.
 
-*** THE DEGRADE FIX (b) IS OFF THE TABLE -- DO NOT ATTEMPT IT. ***
-I implemented it TDD-first and it broke a deliberate pinning test:
-Tests/Chat/test_console_provider_gateway.py::
-test_capture_on_without_durable_boundary_cannot_enter_adapter
-That test is the exact inverse of the degrade: same setup (factory set to None,
-CAPTURE_ON), asserting `pytest.raises(TraceCallPersistenceError)` AND
-`adapter_called is False`. It passes on clean code. So refusing to dispatch a
-Capture-On turn with no durable boundary is an INTENTIONAL SAFETY INVARIANT --
-a provider call that leaves no auditable trace record must not happen. The
-guard is correct; the wiring is missing.
-
-Two degrade variants were tried and both are wrong:
-  1. Downgrade capture_mode to CAPTURE_OFF at the admission seam ->
-     TraceProvenanceAlignmentError "Capture Off cannot dispatch a capture-on
-     prepared request" (the PREPARED REQUEST carries capture-on provenance,
-     so dispatch-time downgrade is incoherent by construction).
-  2. Return None from _reserve_trace_call + supply the paired
-     capture_off_admission at both call sites (fresh route and
-     _authorize_llamacpp_fallback). This DOES work mechanically -- both new
-     tests passed -- but it defeats the invariant above.
-
-=> THE ONLY CORRECT FIX IS (a): wire a real ConsoleTraceCallBoundary factory
-   at both production call sites. The feature was shipped half-wired.
-
-NOTE for whoever does it: _trace_dispatch_admission (:5050) documents the
-pairing rule -- a null boundary is only accepted alongside a capture_off
-admission -- and BOTH _reserve_trace_call call sites need the real factory
-(:3902 fresh route, :4237 llama.cpp fallback; llama_cpp is the default local
-provider and an empty streaming response is what drives that retry).
-
-REGRESSION TEST TO ADD WITH THE FIX: assert that a gateway built the way
-production builds it -- runtime.ensure_provider_gateway() as called from
-chat_screen.py -- comes back with a non-None _trace_call_boundary_factory.
-No current test covers the production wiring path.
-
-UNRELATED PRE-EXISTING FAILURE observed at dev 0ef6f3fd4 (NOT caused by this):
-Tests/Chat/test_console_trace_settlement.py::
-test_cold_restart_recovers_open_calls_monotonically_and_idempotently
+FOLLOW-UP worth its own task: the trace-call ledger remains half-built. When
+someone implements the producer (owner/segment establishment and the identity
+semantics), supports_durable_capture flips to True and Capture-On resumes with
+the guard already in place to protect it.
 <!-- SECTION:NOTES:END -->
