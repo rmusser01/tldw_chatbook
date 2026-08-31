@@ -330,6 +330,45 @@ async def test_hub_tool_timeout_raises_and_records(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_hub_tool_cancellation_reraises_and_records_one_terminal_row(tmp_path):
+    service, fake, _client, store = _service(tmp_path)
+    started = asyncio.Event()
+
+    async def _blocked_builtin(tool_name, arguments=None):
+        fake.execute_tool_calls.append((tool_name, dict(arguments or {})))
+        started.set()
+        await asyncio.Future()
+
+    fake.execute_tool = _blocked_builtin
+    pending = asyncio.create_task(
+        service.test_hub_tool(
+            "builtin:tldw_chatbook",
+            "calculator",
+            {"x": 1},
+            registered_argument_names={"x"},
+        )
+    )
+    await started.wait()
+    pending.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+    records = _log_records(store)
+    assert len(records) == 1
+    assert records[0]["status"] == "cancelled"
+    assert records[0]["error_category"] == "cancelled"
+    assert records[0]["exception_type"] == "CancelledError"
+    assert records[0]["initiator"] == "test"
+    assert records[0]["decision"] == "allowed"
+    assert records[0]["duration_ms"] >= 0
+    assert records[0]["argument_names"] == ["x"]
+    assert records[0]["unknown_argument_count"] == 0
+    assert records[0]["result_type"] == "none"
+    assert records[0]["result_size"] == 0
+
+
+@pytest.mark.asyncio
 async def test_hub_tool_log_write_failure_does_not_mask_result(tmp_path, monkeypatch):
     class _RaisingExecutionLog(MCPExecutionLog):
         def append(self, record):
@@ -1135,6 +1174,81 @@ async def test_prepared_hub_real_delegate_appends_exactly_one_terminal_row(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["external", "builtin"])
+async def test_prepared_hub_real_delegate_cancellation_records_once_and_reraises(
+    tmp_path,
+    source,
+):
+    service, fake, client, store = _service(tmp_path)
+    started = asyncio.Event()
+    if source == "external":
+        tool = _prepared_external_tool()
+        _install_prepared_external_catalog(fake, tool)
+
+        async def _blocked_external(server_id, tool_name, arguments):
+            client.call_tool_calls.append((server_id, tool_name, dict(arguments)))
+            started.set()
+            await asyncio.Future()
+
+        client.call_tool = _blocked_external
+        arguments = {"q": "cancel me"}
+    else:
+        tool = HubTool(
+            server_key="builtin:tldw_chatbook",
+            server_label="tldw_chatbook",
+            source="builtin",
+            name="calculator",
+            description="Calculate",
+            input_schema={"type": "object", "properties": {"x": {"type": "number"}}},
+            tags=(),
+            stale=False,
+            executable=True,
+        )
+        fake.get_inventory = lambda: {
+            "tools": [
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "inputSchema": tool.input_schema,
+                }
+            ]
+        }
+
+        async def _blocked_builtin(tool_name, arguments=None):
+            fake.execute_tool_calls.append((tool_name, dict(arguments or {})))
+            started.set()
+            await asyncio.Future()
+
+        fake.execute_tool = _blocked_builtin
+        arguments = {"x": 1}
+    service.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
+    preview = service.prepare_hub_test(tool)
+    pending = asyncio.create_task(
+        service.execute_prepared_hub_test(preview.nonce, "run", arguments)
+    )
+    await started.wait()
+    pending.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+    records = _log_records(store)
+    assert len(records) == 1
+    assert records[0]["status"] == "cancelled"
+    assert records[0]["error_category"] == "cancelled"
+    assert records[0]["exception_type"] == "CancelledError"
+    assert records[0]["server_key"] == tool.server_key
+    assert records[0]["tool_name"] == tool.name
+    assert records[0]["initiator"] == "test"
+    assert records[0]["decision"] == "allowed"
+    assert records[0]["duration_ms"] >= 0
+    assert records[0]["argument_names"] == sorted(arguments)
+    assert records[0]["unknown_argument_count"] == 0
+    assert records[0]["result_type"] == "none"
+    assert records[0]["result_size"] == 0
+
+
+@pytest.mark.asyncio
 async def test_prepared_hub_uses_canonical_copy_when_caller_mutates_during_admission(
     tmp_path,
 ):
@@ -1224,9 +1338,17 @@ async def test_prepared_local_default_seam_fails_closed_after_admission(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["disabled", "root", "provider"])
+@pytest.mark.parametrize(
+    ("failure", "expected_reason"),
+    [
+        ("disabled", "local_tools_disabled"),
+        ("configuration", "local_configuration_unavailable"),
+        ("provider", "local_provider_unavailable"),
+        ("ineligible", "local_tool_ineligible"),
+    ],
+)
 async def test_prepared_local_click_time_configuration_failures_never_reach_handler(
-    tmp_path, monkeypatch, failure
+    tmp_path, monkeypatch, failure, expected_reason
 ):
     import tldw_chatbook.MCP.local_server_tools as local_server_tools
 
@@ -1247,6 +1369,104 @@ async def test_prepared_local_click_time_configuration_failures_never_reach_hand
     authority = capture_directory_chain(tmp_path)
     state = {"enabled": True, "fail": None}
 
+    class _InspectionProvider:
+        def hub_tools(self):
+            return [tool]
+
+    class _ExecutableProvider:
+        def hub_tools(self):
+            return [] if state["fail"] == "ineligible" else [tool]
+
+    class _InspectionHandle:
+        provider = _InspectionProvider()
+
+        def __init__(self):
+            self.authority = authority
+
+        def close(self):
+            return None
+
+    class _ExecutableHandle:
+        provider = _ExecutableProvider()
+
+        def __init__(self):
+            self.authority = authority
+
+        def close(self):
+            return None
+
+    def _root():
+        return tmp_path
+
+    def _provider(*_args, **_kwargs):
+        if state["fail"] == "provider":
+            raise RuntimeError("provider unavailable")
+        return _ExecutableHandle()
+
+    def _setting(section, key, default=None):
+        if state["fail"] == "configuration":
+            raise RuntimeError("configuration unavailable")
+        if (section, key) == ("console", "local_tools_enabled"):
+            return state["enabled"]
+        return default
+
+    monkeypatch.setattr(
+        local_server_tools,
+        "build_hub_local_inspection_provider",
+        lambda *a, **k: _InspectionHandle(),
+    )
+    monkeypatch.setattr(local_server_tools, "build_hub_local_provider", _provider)
+    monkeypatch.setattr(local_server_tools, "resolve_server_workspace_root", _root)
+    monkeypatch.setattr(control_plane_module, "get_cli_setting", _setting)
+    service.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
+    local_handler = AsyncMock(return_value={"should": "not run"})
+    nonlocal_handler = AsyncMock(return_value={"should": "not run"})
+    service._execute_prepared_local_hub_test = local_handler
+    service.test_hub_tool = nonlocal_handler
+    preview = service.prepare_hub_test(tool)
+    if failure == "disabled":
+        state["enabled"] = False
+    else:
+        state["fail"] = failure
+
+    result = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+
+    assert isinstance(result, ToolTestAdmissionStale)
+    assert result.reason == expected_reason
+    assert result.refreshed_preview is not None
+    assert result.refreshed_preview.rendered_gate == "unavailable"
+    local_handler.assert_not_awaited()
+    nonlocal_handler.assert_not_awaited()
+    records = _log_records(store)
+    assert len(records) == 1
+    assert records[0]["initiator"] == "test"
+    assert records[0]["error_category"] == expected_reason
+    assert result.refreshed_preview.safe_authority_label is None
+
+
+@pytest.mark.asyncio
+async def test_prepared_local_rendered_unavailable_stays_blocked_when_fresh_allow(
+    tmp_path, monkeypatch
+):
+    import tldw_chatbook.MCP.local_server_tools as local_server_tools
+
+    service, _fake, _client, store = _service(tmp_path)
+    tool = HubTool(
+        server_key="local:__local__",
+        server_label="Local workspace",
+        source="local",
+        name="fs_read",
+        description="Read a file",
+        input_schema=None,
+        tags=("reads",),
+        stale=False,
+        executable=True,
+    )
+    from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+
+    authority = capture_directory_chain(tmp_path)
+    enabled = {"value": False}
+
     class _Provider:
         def hub_tools(self):
             return [tool]
@@ -1260,50 +1480,45 @@ async def test_prepared_local_click_time_configuration_failures_never_reach_hand
         def close(self):
             return None
 
-    def _root():
-        if state["fail"] == "root":
-            raise OSError("root unavailable")
-        return tmp_path
-
-    def _provider(*_args, **_kwargs):
-        if state["fail"] == "provider":
-            raise RuntimeError("provider unavailable")
-        return _Handle()
-
     monkeypatch.setattr(
         local_server_tools,
         "build_hub_local_inspection_provider",
         lambda *a, **k: _Handle(),
     )
-    monkeypatch.setattr(local_server_tools, "build_hub_local_provider", _provider)
-    monkeypatch.setattr(local_server_tools, "resolve_server_workspace_root", _root)
+    monkeypatch.setattr(
+        local_server_tools, "build_hub_local_provider", lambda *a, **k: _Handle()
+    )
+    monkeypatch.setattr(
+        local_server_tools, "resolve_server_workspace_root", lambda: tmp_path
+    )
     monkeypatch.setattr(
         control_plane_module,
         "get_cli_setting",
         lambda section, key, default=None: (
-            state["enabled"]
+            enabled["value"]
             if (section, key) == ("console", "local_tools_enabled")
             else default
         ),
     )
     service.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
     local_handler = AsyncMock(return_value={"should": "not run"})
+    nonlocal_handler = AsyncMock(return_value={"should": "not run"})
     service._execute_prepared_local_hub_test = local_handler
+    service.test_hub_tool = nonlocal_handler
     preview = service.prepare_hub_test(tool)
-    if failure == "disabled":
-        state["enabled"] = False
-    else:
-        state["fail"] = failure
+    enabled["value"] = True
 
     result = await service.execute_prepared_hub_test(preview.nonce, "run", {})
 
-    assert isinstance(result, ToolTestAdmissionStale)
+    assert isinstance(result, ToolTestAdmissionBlocked)
+    assert result.reason == "permission_unresolved"
     assert result.refreshed_preview is not None
-    assert result.refreshed_preview.rendered_gate == "unavailable"
+    assert result.refreshed_preview.rendered_gate == "allow"
     local_handler.assert_not_awaited()
+    nonlocal_handler.assert_not_awaited()
     records = _log_records(store)
     assert len(records) == 1
-    assert records[0]["initiator"] == "test"
+    assert records[0]["error_category"] == "permission_unresolved"
 
 
 @pytest.mark.asyncio

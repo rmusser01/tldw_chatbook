@@ -2445,6 +2445,24 @@ class UnifiedMCPControlPlaneService:
                 decision=decision,
             )
             raise RuntimeError(message) from None
+        except asyncio.CancelledError:
+            duration_ms = int((time.monotonic() - started) * 1000)
+            self._record_tool_execution(
+                normalized_key,
+                normalized_tool_name,
+                ok=False,
+                duration_ms=duration_ms,
+                status="cancelled",
+                error_category="cancelled",
+                exception_type="CancelledError",
+                status_code=None,
+                arguments=normalized_arguments,
+                registered_argument_names=registered_argument_names,
+                result=None,
+                initiator=initiator,
+                decision=decision,
+            )
+            raise
         except MCPGovernanceDenied as exc:
             # Item 1 (PR-T3 fix round D). Without this branch, a governance
             # refusal fell into the generic `except Exception` below and was
@@ -2650,6 +2668,26 @@ class UnifiedMCPControlPlaneService:
                 reason="identity_changed",
                 refreshed=self._issue_hub_test_preview(resolved),
             )
+        if resolved.unavailable_reason is not None:
+            return self._hub_test_stale(
+                public,
+                reason=resolved.unavailable_reason,
+                refreshed=self._issue_hub_test_preview(resolved),
+            )
+
+        rendered_gate = public.rendered_gate
+        fresh_gate = fresh_preview.rendered_gate
+        if rendered_gate not in {"allow", "ask"}:
+            return self._hub_test_blocked(
+                public,
+                reason=(
+                    "permission_unresolved"
+                    if rendered_gate in {"unavailable", "unresolved"}
+                    else "permission_denied"
+                ),
+                refreshed=self._issue_hub_test_preview(resolved),
+            )
+
         if fresh_preview.definition_hash != public.definition_hash:
             return self._hub_test_stale(
                 public,
@@ -2667,8 +2705,6 @@ class UnifiedMCPControlPlaneService:
                 refreshed=self._issue_hub_test_preview(resolved),
             )
 
-        rendered_gate = public.rendered_gate
-        fresh_gate = fresh_preview.rendered_gate
         if rendered_gate == "allow":
             if intent != "run":
                 return self._hub_test_blocked(
@@ -2695,16 +2731,6 @@ class UnifiedMCPControlPlaneService:
                     reason="gate_changed",
                     refreshed=self._issue_hub_test_preview(resolved),
                 )
-        else:
-            return self._hub_test_blocked(
-                public,
-                reason=(
-                    resolved.unavailable_reason or "permission_unresolved"
-                    if fresh_gate in {"unavailable", "unresolved"}
-                    else "permission_denied"
-                ),
-                refreshed=self._issue_hub_test_preview(resolved),
-            )
 
         # Re-encode the independent object immediately before dispatch. This
         # turns any accidental internal mutation into a closed refusal instead

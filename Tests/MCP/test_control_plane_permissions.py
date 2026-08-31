@@ -951,6 +951,54 @@ async def test_prepared_hub_rendered_ask_run_is_blocked_consumed_and_refreshed(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("rendered_mode", "expected_reason"),
+    [
+        ("unresolved", "permission_unresolved"),
+        ("off", "permission_denied"),
+    ],
+)
+async def test_prepared_hub_non_actionable_render_stays_blocked_when_fresh_allow(
+    tmp_path,
+    rendered_mode,
+    expected_reason,
+):
+    service, store = _service(tmp_path)
+    tool = _tool()
+    state = {"gate": rendered_mode}
+    _install_external_tool(service, tool, state)
+
+    def _gate(_tool):
+        if state["gate"] == "unresolved":
+            return EffectiveToolState(state="ask", origin="gate_error")
+        return EffectiveToolState(
+            state="deny" if state["gate"] == "off" else "allow",
+            origin="tool_override",
+        )
+
+    service.gate_tool_test = _gate
+    nonlocal_handler = AsyncMock(return_value={"should": "not run"})
+    local_handler = AsyncMock(return_value={"should": "not run"})
+    service.test_hub_tool = nonlocal_handler
+    service._execute_prepared_local_hub_test = local_handler
+    preview = service.prepare_hub_test(tool)
+    state["gate"] = "allow"
+
+    result = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+
+    assert isinstance(result, ToolTestAdmissionBlocked)
+    assert result.reason == expected_reason
+    assert result.refreshed_preview is not None
+    assert result.refreshed_preview.rendered_gate == "allow"
+    nonlocal_handler.assert_not_awaited()
+    local_handler.assert_not_awaited()
+    records = _permission_log_records(store)
+    assert len(records) == 1
+    assert records[0]["error_category"] == expected_reason
+    await _assert_consumed_without_second_audit(service, store, preview.nonce)
+
+
+@pytest.mark.asyncio
 async def test_prepared_hub_exact_live_identity_change_is_stale_without_dispatch(
     tmp_path,
 ):
