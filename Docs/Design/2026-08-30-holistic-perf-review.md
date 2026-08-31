@@ -1,0 +1,209 @@
+# Holistic performance review — 2026-08-30
+
+Sixth holistic performance review of tldw_chatbook. Same commissioning
+prompt as the 2026-08-22, 08-24, 08-27 and 08-29 reviews.
+
+* **Pin:** dev `0ef6f3fd4e` (405 commits since the 08-29 pin `bc1e26ce60`).
+* **Machine:** darwin 24.6.0, Python 3.12.11, Textual 8.x.
+* **Method:** measured, not read. Every number below states how it was
+  taken; the ones that were wrong the first time say so.
+
+---
+
+## 0. Ratchet baseline (ADR-097)
+
+Run on the pin, before any change:
+
+| guard | measured | limit | headroom | verdict |
+|---|---|---|---|---|
+| boot import weight | 634 | 660 | 26 | green |
+| `_ui_ready` census | 969 | **972** | **3** | green, at the edge |
+| boot CSS bytes | **878,333** | 860,000 | **−18,333** | **RED** |
+| pre-import payload | 488 / 372,041 LOC | 500 / 380,000 | 12 / 7,959 | green, tight |
+
+Two governance observations:
+
+1. **The `_ui_ready` constant is 972, but ADR-097's table says 970.** It was
+   raised deliberately by the owner on 2026-08-29 (`6fac5dbf95`, "raise
+   ui-ready census ratchet 970->972 for tls_trust (PR #2223, ADR-097
+   deliberate refresh)"). The decision was made and the cause named — but
+   ADR-097 requires an **exception-ledger row in the same commit**, and the
+   ledger still reads *"(none granted yet)"*. The ledger is therefore
+   inaccurate about the one raise that has occurred. Cheap to fix; left as
+   a finding because an audit trail that silently misses entries is worse
+   than no audit trail.
+2. The CSS ratchet has been red since before this review and is the same
+   file flagged as an owner call in the 08-27 and 08-29 reviews. It is now
+   quantified in time (below) rather than only in bytes.
+
+---
+
+## 1. CSS parsing is ~191 ms in a single boot hit, and one file is 28% of it
+
+### What the ratchet says vs what it measures
+
+The CSS byte guard asserts *"Every one of these bytes is parsed before first
+paint"* but prices **bytes**, which nobody had converted into time. Measured:
+
+| source | bytes | rules | cold parse |
+|---|---:|---:|---:|
+| `tldw_cli_modular.tcss` | 671,467 | 3,273 | 119.4 ms |
+| `widget_defaults_scoped.tcss` | 95,077 | 392 | 15.7 ms |
+| `widget_defaults_self.tcss` | 93,110 | 408 | 14.7 ms |
+| `screen_css_scoped.tcss` | 15,216 | 111 | 4.3 ms |
+| `screen_css_self.tcss` | 2,769 | 13 | 1.2 ms |
+| **total** | **877,639** | **4,197** | **155.3 ms** |
+
+In the running app, instrumenting `Stylesheet.parse` directly:
+
+```
+call 1: 191.3 ms      <- the whole bundle, once
+call 2:   1.0 ms      <- _parse_cache hits
+call 3:   0.9 ms
+call 4:   1.0 ms
+```
+
+So it is **one 191 ms hit at boot**, not repeated work. Against a cold start
+of ~1.7 s (module import measured separately at ~1.15 s, three cold runs:
+1.20 / 1.08 / 1.15 s), CSS parse is **≈11–14% of cold boot**.
+
+### Attribution, by ablation
+
+`components/_agentic_terminal.tcss` cannot be parsed standalone — it
+references variables the bundle defines earlier — so its cost was measured
+by removing its segment from the bundle and re-parsing, three cold
+interpreters per arm:
+
+| bundle | rules | cold parse |
+|---|---:|---:|
+| full | 3,273 | 122.9 / 124.3 / 137.4 ms |
+| without `_agentic_terminal.tcss` | 2,022 | 69.0 / 70.0 / 70.0 ms |
+| **attributable** | **1,251 rules** | **≈54 ms** |
+
+One file is **283,119 B (32% of boot CSS bytes), 1,251 rules (38% of the
+bundle's rules), and ≈54 ms (≈28% of the boot CSS parse)**. It also supplied
++12,902 B of the +23,613 B growth that pushed the ratchet red.
+
+### The measurement trap this produced
+
+**In-app timing of CSS parse is unreliable and was wrong by 250×.** A fresh
+`Stylesheet` inside a booted app re-parsed 671 KB in "0.48 ms" — 1.4 GB/s,
+which is impossible for a Python tokenizer. Clearing the two module-level
+caches I could find (`parse_selectors`, `is_id_selector`) did not change it.
+The same content in a **cold interpreter** takes **121 ms** (5.5 MB/s, a
+believable rate). The in-app number was reported to me by my own probe and
+looked plausible enough to build on.
+
+*Rule: parse/boot costs must be measured in a cold subprocess. If a rate
+implies >100 MB/s of Python text processing, the measurement is wrong.*
+
+The instrumented real `Stylesheet.parse` (191 ms) independently confirms the
+cold number and refutes the in-app one.
+
+---
+
+## 2. Method notes / things that did NOT survive
+
+* **A route-visiting loop that measured nothing.** A probe for the
+  `_parse_cache` LRU(64) cliff wrapped `app.switch_screen(route)` in
+  `except Exception: continue`; every route raised, no screen was visited,
+  and it still printed a confident `FINAL sources: 14 / HEADROOM 46`.
+  Discarded. The 08-29 review had already disproved this hypothesis
+  (47 sources, 17 headroom, zero parse calls on warm switches).
+  *A loop whose body can silently skip every iteration must assert that it
+  did work before reporting a total.*
+
+---
+
+## 2. 93% of per-node CSS candidate work comes from rules that cannot match
+
+### Mechanism (verified in Textual's source, not inferred)
+
+`RuleSet._post_parse` indexes each rule under **its rightmost selector
+only**:
+
+```python
+selector = selector_set.selectors[-1]      # textual/css/model.py
+if selector_type == type_type:
+    add_selector(selector.name)
+```
+
+So `#prompt-variables-actions Button:disabled` is filed under `Button`, and
+becomes a candidate for **every Button in the app** — full selector matching
+runs on each before it is rejected.
+
+### Measured on ChatScreen (502 nodes, 4,380 rules)
+
+| type key | rules | ancestor-scoped | live nodes | considerations | re-keyable |
+|---|---:|---:|---:|---:|---:|
+| `Button` | 188 | 180 | 110 | 20,680 | 19,800 |
+| `Static` | 16 | 15 | 220 | 3,520 | 3,300 |
+| `Input` | 38 | 34 | 6 | 228 | 204 |
+| `Vertical` | 13 | 12 | 68 | 884 | 816 |
+| others | — | — | — | 967 | 367 |
+| **total** | | | | **26,279** | **24,487 (93.2%)** |
+
+`Button` alone supplies **71% of all candidate work on the screen**.
+
+### Price, by A/B rather than by inference
+
+Candidate count is not automatically milliseconds, so it was A/B'd: remove
+the 290 ancestor-scoped bare-type rules from the narrowing index and re-time
+a real full-screen restyle (median of 7, after a warm-up):
+
+| arm | `stylesheet.update` |
+|---|---:|
+| baseline | **101.1 ms** |
+| ancestor-scoped bare-type rules ablated | **40.8 ms** |
+| **delta** | **60.4 ms (60%)** |
+
+The ablated arm renders wrong styles — it exists only to price the work, and
+is not a proposed change. **60% is an upper bound**: re-keying moves a rule
+to a narrower key rather than deleting it, so the intended widgets still
+evaluate it. For rules scoped to one panel the realised saving should be
+close to the bound; for broadly-scoped ones it will be less.
+
+**Fix direction:** give the subject its own class. `#prompt-variables-actions
+Button` → a `.prompt-variables-action` class on those buttons. Costs a class
+attribute per widget and removes the rule from 100+ unrelated buttons'
+candidate sets. This is a convention, and is worth a lint that fails new CSS
+whose subject is a bare common type.
+
+---
+
+## 3. Leaving a screen costs more than building the one you asked for
+
+Instrumented `Stylesheet.apply` across an ordinary Console → Library →
+Console → Library navigation. Reproducible to the call across three runs
+(332 / 389 / 1,577 / 384 every time):
+
+| navigation | screen built | nodes | applies | apply ms | wall ms |
+|---|---|---:|---:|---:|---:|
+| → Library (1st) | LibraryScreen | 96 | 332 | 105.0 | 301.6 |
+| → Console (1st) | ChatScreen | 207 | 389 | 79.9 | 160.1 |
+| **→ Library (2nd)** | LibraryScreen | 96 | **1,577** | **540.0** | **1,003.2** |
+| → Console (2nd) | ChatScreen | 207 | 384 | 76.4 | 103.4 |
+
+CSS apply is **50–72% of switch wall time**. The 2nd Library visit costs
+**4.7× the applies of the 1st** — deterministically.
+
+Attributing each apply to the screen its node belongs to explains it:
+
+```
+library#2: total_applies=1577
+    1124 applies under ChatScreen#4992     <- the screen being LEFT
+     247 applies under LibraryScreen#8608  <- the screen being BUILT
+```
+
+**71% of the switch's style work is spent restyling the outgoing screen**, at
+~5.4 applies per node on a 207-node ChatScreen. The first Library visit is
+cheap only because the screen it left was the small splash.
+
+Live instance counts also climb across the same navigation
+(`ChatScreen: 1 → 2`, `LibraryScreen: 1 → 2`), consistent with the
+fresh-screen-per-switch behaviour already filed as TASK-24452 — but the new
+part is that a retained, no-longer-current instance is still absorbing style
+applies.
+
+Findings 2 and 3 compound: the outgoing-screen restyle is itself paying the
+93% candidate overhead from finding 2.
