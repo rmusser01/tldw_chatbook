@@ -2077,3 +2077,56 @@ async def test_home_content_snapshot_uses_library_rail_seams():
     # Hermetic test config (no disk-load markers) -> readiness is honored
     # verbatim and reports not-ready rather than reading the real config.
     assert snapshot.console_ready is False
+
+
+# --- Task 3: open-task providers (eval runs / read-it-later) ---------------
+
+
+def test_local_eval_open_run_counts_never_queries_running():
+    """The provider must only ever query pending/failed -- 'running' rows are
+    orphaned forever by a crash and would permanently pin the suggestion."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.app import TldwCli
+
+    queried = []
+
+    class FakeEvalService:
+        def list_runs(self, *, status=None, limit=100, offset=0):
+            queried.append(status)
+            return [{"run_id": f"{status}-{i}"} for i in range(3)]
+
+    counts = TldwCli._local_eval_open_run_counts(
+        SimpleNamespace(local_evaluation_service=FakeEvalService())
+    )
+    assert counts == {"pending": 3, "failed": 3}
+    assert set(queried) == {"pending", "failed"}
+
+
+def test_local_eval_open_run_counts_degrade_quietly():
+    from types import SimpleNamespace
+
+    from tldw_chatbook.app import TldwCli
+
+    class BrokenEvalService:
+        def list_runs(self, **kwargs):
+            raise RuntimeError("db unavailable")
+
+    assert TldwCli._local_eval_open_run_counts(
+        SimpleNamespace(local_evaluation_service=BrokenEvalService())
+    ) == {"pending": 0, "failed": 0}
+    assert TldwCli._local_eval_open_run_counts(
+        SimpleNamespace(local_evaluation_service=None)
+    ) == {"pending": 0, "failed": 0}
+
+
+def test_local_read_later_count_provider():
+    from types import SimpleNamespace
+
+    from tldw_chatbook.app import TldwCli
+
+    fake = SimpleNamespace(
+        media_db=SimpleNamespace(list_read_it_later_media_ids=lambda: [1, 2, 3])
+    )
+    assert TldwCli._local_read_later_count(fake) == 3
+    assert TldwCli._local_read_later_count(SimpleNamespace(media_db=None)) is None
