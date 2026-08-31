@@ -10,6 +10,7 @@ from textual import events, on
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.geometry import Size
+from textual.widget import Widget
 from textual.widgets import Button
 
 from Tests.UI.test_library_media_side_by_side import (
@@ -589,6 +590,25 @@ def _hold_next_owner_geometry(
     assert len(held) == 1
     assert owner.latest_geometry is held[0].geometry
     return held[0]
+
+
+async def _mount_media_canvas_with_retained_owner(
+    parent: Widget,
+    canvas: Widget,
+    owner: Widget,
+    retained_rows: tuple[Widget, ...],
+    row_scroll_type,
+) -> None:
+    """Remount a canvas but reparent its original row-scroll owner."""
+    await parent.mount(canvas)
+    generated_owner = canvas.query_one("#library-media-row-scroll", row_scroll_type)
+    assert generated_owner is not owner
+    generated_parent = generated_owner.parent
+    assert generated_parent is not None
+    await generated_owner.remove()
+    await generated_parent.mount(owner)
+    for row in retained_rows:
+        await owner.mount(row)
 
 
 @pytest.mark.asyncio
@@ -1608,7 +1628,7 @@ async def test_stale_request_generation_and_subview_fences_cannot_settle(
 async def test_mounted_media_shell_replacement_rejects_delayed_old_owner_geometry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A real shell recompose mints authority only for its replacement tree."""
+    """Changing only the mounted shell identity rejects same-owner geometry."""
     _, _, row_scroll_type, _, geometry_message_type = _require_return_protocol()
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
@@ -1629,7 +1649,72 @@ async def test_mounted_media_shell_replacement_rejects_delayed_old_owner_geometr
             "#library-media-reader-shell", LibraryMediaReaderShell
         )
         old_items = screen.query_one("#library-canvas", Vertical)
-        delayed_geometry = _hold_next_owner_geometry(
+        active_child = old_items.children[0]
+        monkeypatch.setattr(row_scroll_type, "on_resize", lambda _owner, _event: None)
+        stage = screen.query_one("#library-shell-grid", Horizontal)
+        retained_rail = old_shell.library
+        retained_rows = tuple(old_owner.children)
+        for row in retained_rows:
+            await row.remove()
+        await old_owner.remove()
+        await active_child.remove()
+        await old_items.remove()
+        await retained_rail.remove()
+        await old_shell.remove()
+        replacement_shell = LibraryMediaReaderShell(
+            retained_rail,
+            old_items,
+            screen._build_library_media_reader(),
+            screen._library_media_reader_layout,
+            id="library-media-reader-shell",
+        )
+        held_shell_resizes: list[MediaShellResized] = []
+        real_shell_post_message = replacement_shell.post_message
+
+        def hold_shell_resize(message) -> bool:
+            if type(message) is MediaShellResized:
+                held_shell_resizes.append(message)
+                return True
+            return real_shell_post_message(message)
+
+        monkeypatch.setattr(replacement_shell, "post_message", hold_shell_resize)
+        await stage.mount(replacement_shell)
+        await _mount_media_canvas_with_retained_owner(
+            old_items,
+            active_child,
+            old_owner,
+            retained_rows,
+            row_scroll_type,
+        )
+        replacement_shell.sync_layout(screen._library_media_reader_layout)
+        await pilot.pause()
+        assert real_shell_post_message(
+            events.Resize(
+                replacement_shell.size,
+                replacement_shell.virtual_size,
+                replacement_shell.container_size,
+            )
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(held_shell_resizes),
+            message="Replacement shell did not queue its real resize lifecycle.",
+        )
+        replacement_owner = screen.query_one(
+            "#library-media-row-scroll", row_scroll_type
+        )
+        assert screen.query_one(
+            "#library-media-reader-shell", LibraryMediaReaderShell
+        ) is replacement_shell
+        assert screen.query_one("#library-canvas", Vertical) is old_items
+        assert replacement_shell is not old_shell
+        assert replacement_owner is old_owner
+        assert old_items.children[0] is active_child
+        assert old_request.items_host_identity == id(old_items)
+        assert old_request.owner_identity == id(old_owner)
+        assert old_request.shell_identity == id(old_shell)
+
+        current_geometry = _hold_next_owner_geometry(
             monkeypatch,
             old_owner,
             row_scroll_type,
@@ -1637,79 +1722,41 @@ async def test_mounted_media_shell_replacement_rejects_delayed_old_owner_geometr
             real_on_resize,
         )
         monkeypatch.setattr(row_scroll_type, "on_resize", lambda _owner, _event: None)
-        stage = screen.query_one("#library-shell-grid", Horizontal)
-        retained_rail = old_shell.library
-        await retained_rail.remove()
-        await old_shell.remove()
-        replacement_items = Vertical(
-            screen._build_library_media_active_child(),
-            id="library-canvas",
-            classes="destination-workbench-pane",
-        )
-        replacement_shell = LibraryMediaReaderShell(
-            retained_rail,
-            replacement_items,
-            screen._build_library_media_reader(),
-            screen._library_media_reader_layout,
-            id="library-media-reader-shell",
-        )
-        await stage.mount(replacement_shell)
-        await _wait_for_condition(
-            pilot,
-            lambda: replacement_shell.is_attached
-            and screen._library_media_return_settlement is not None
-            and screen._library_media_return_settlement.request_id
-            > old_request.request_id,
-            message="Replacement shell never received fresh lifecycle authority.",
-        )
-        replacement_owner = screen.query_one(
-            "#library-media-row-scroll", row_scroll_type
-        )
-        replacement_request = screen._library_media_return_settlement
-        assert replacement_request is not None
-        assert screen.query_one(
-            "#library-media-reader-shell", LibraryMediaReaderShell
-        ) is replacement_shell
-        assert screen.query_one("#library-canvas", Vertical) is replacement_items
-        assert replacement_shell is not old_shell
-        assert replacement_items is not old_items
-        assert replacement_owner is not old_owner
-        assert replacement_request.shell_identity == id(replacement_shell)
-        assert replacement_request.items_host_identity == id(replacement_items)
-        assert replacement_request.owner_identity == id(replacement_owner)
-
-        assert screen.post_message(delayed_geometry)
+        assert screen.post_message(current_geometry)
         await pilot.pause()
 
-        assert screen._library_media_return_settlement is replacement_request
+        assert screen._library_media_return_settlement is None
         assert screen._library_media_last_settlement_outcome is None
+        assert screen._library_media_last_successful_settlement is None
 
-        monkeypatch.setattr(row_scroll_type, "on_resize", real_on_resize)
-        assert replacement_owner.post_message(
-            events.Resize(
-                replacement_owner.size,
-                replacement_owner.virtual_size,
-                replacement_owner.container_size,
-            )
-        )
+        assert real_shell_post_message(held_shell_resizes.pop(0))
         await _wait_for_condition(
             pilot,
             lambda: screen._library_media_last_successful_settlement is not None
             and screen._library_media_last_successful_settlement[0].request_id
-            == replacement_request.request_id,
-            message="Replacement shell owner geometry did not settle fresh authority.",
+            > old_request.request_id,
+            message=lambda: (
+                "Replacement shell lifecycle did not mint fresh authority: "
+                f"pending={screen._library_pending_list_entry_focus!r}, "
+                f"receipt={screen._library_pending_list_entry_media_return!r}, "
+                f"request={screen._library_media_return_settlement!r}, "
+                f"latest={old_owner.latest_geometry!r}, "
+                f"actual={(old_owner.size, old_owner.virtual_size, old_owner.container_size)!r}, "
+                f"success={screen._library_media_last_successful_settlement!r}, "
+                f"outcome={screen._library_media_last_settlement_outcome!r}"
+            ),
         )
         successful_request = screen._library_media_last_successful_settlement[0]
         assert successful_request.shell_identity == id(replacement_shell)
-        assert successful_request.items_host_identity == id(replacement_items)
-        assert successful_request.owner_identity == id(replacement_owner)
+        assert successful_request.items_host_identity == old_request.items_host_identity
+        assert successful_request.owner_identity == old_request.owner_identity
 
 
 @pytest.mark.asyncio
 async def test_mounted_items_host_replacement_rejects_delayed_old_owner_geometry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A retained shell gives fresh authority only to its recomposed Items tree."""
+    """Changing only the mounted Items identity rejects same-owner geometry."""
     _, _, row_scroll_type, _, geometry_message_type = _require_return_protocol()
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
@@ -1730,29 +1777,47 @@ async def test_mounted_items_host_replacement_rejects_delayed_old_owner_geometry
             "#library-media-reader-shell", LibraryMediaReaderShell
         )
         old_items = screen.query_one("#library-canvas", Vertical)
-        delayed_geometry = _hold_next_owner_geometry(
-            monkeypatch,
-            old_owner,
-            row_scroll_type,
-            geometry_message_type,
-            real_on_resize,
-        )
+        active_child = old_items.children[0]
         monkeypatch.setattr(row_scroll_type, "on_resize", lambda _owner, _event: None)
+        retained_rows = tuple(old_owner.children)
+        for row in retained_rows:
+            await row.remove()
+        await old_owner.remove()
+        await active_child.remove()
+        await old_items.remove()
         replacement_items = Vertical(
-            screen._build_library_media_active_child(),
             id="library-canvas",
             classes="destination-workbench-pane library-adaptive-reader-items",
         )
         shell.items = replacement_items
+        held_shell_resizes: list[MediaShellResized] = []
+        real_shell_post_message = shell.post_message
 
-        await shell.recompose()
+        def hold_shell_resize(message) -> bool:
+            if type(message) is MediaShellResized:
+                held_shell_resizes.append(message)
+                return True
+            return real_shell_post_message(message)
+
+        monkeypatch.setattr(shell, "post_message", hold_shell_resize)
+
+        await shell.mount(replacement_items, before=shell.items_grip)
+        await _mount_media_canvas_with_retained_owner(
+            replacement_items,
+            active_child,
+            old_owner,
+            retained_rows,
+            row_scroll_type,
+        )
         shell.sync_layout(screen._library_media_reader_layout)
+        await pilot.pause()
+        assert real_shell_post_message(
+            events.Resize(shell.size, shell.virtual_size, shell.container_size)
+        )
         await _wait_for_condition(
             pilot,
-            lambda: bool(screen.query("#library-media-row-scroll"))
-            and screen.query_one("#library-media-row-scroll", row_scroll_type)
-            is not old_owner,
-            message="Retained shell did not mount the replacement Items tree.",
+            lambda: bool(held_shell_resizes),
+            message="Retained shell did not queue its real resize lifecycle.",
         )
         replacement_shell = screen.query_one(
             "#library-media-reader-shell", LibraryMediaReaderShell
@@ -1763,31 +1828,40 @@ async def test_mounted_items_host_replacement_rejects_delayed_old_owner_geometry
         assert replacement_shell is shell
         assert screen.query_one("#library-canvas", Vertical) is replacement_items
         assert replacement_items is not old_items
+        assert replacement_items.children[0] is active_child
+        assert replacement_owner is old_owner
+        assert old_request.shell_identity == id(shell)
+        assert old_request.items_host_identity == id(old_items)
+        assert old_request.owner_identity == id(old_owner)
 
-        assert screen.post_message(delayed_geometry)
+        current_geometry = _hold_next_owner_geometry(
+            monkeypatch,
+            old_owner,
+            row_scroll_type,
+            geometry_message_type,
+            real_on_resize,
+        )
+        monkeypatch.setattr(row_scroll_type, "on_resize", lambda _owner, _event: None)
+        assert screen.post_message(current_geometry)
         await pilot.pause()
 
+        assert screen._library_media_return_settlement is None
         assert screen._library_media_last_settlement_outcome is None
         assert screen._library_media_last_successful_settlement is None
 
-        monkeypatch.setattr(row_scroll_type, "on_resize", real_on_resize)
-        assert replacement_owner.post_message(
-            events.Resize(
-                replacement_owner.size,
-                replacement_owner.virtual_size,
-                replacement_owner.container_size,
-            )
-        )
+        assert real_shell_post_message(held_shell_resizes.pop(0))
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_last_successful_settlement is not None,
-            message="Replacement Items owner never received fresh authority.",
+            lambda: screen._library_media_last_successful_settlement is not None
+            and screen._library_media_last_successful_settlement[0].request_id
+            > old_request.request_id,
+            message="Replacement Items lifecycle did not mint fresh authority.",
         )
         successful_request = screen._library_media_last_successful_settlement[0]
         assert successful_request.request_id > old_request.request_id
-        assert successful_request.shell_identity == id(shell)
+        assert successful_request.shell_identity == old_request.shell_identity
         assert successful_request.items_host_identity == id(replacement_items)
-        assert successful_request.owner_identity == id(replacement_owner)
+        assert successful_request.owner_identity == old_request.owner_identity
 
 
 @pytest.mark.asyncio
