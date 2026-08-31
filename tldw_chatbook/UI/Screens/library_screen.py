@@ -6778,6 +6778,8 @@ class LibraryScreen(BaseAppScreen):
     def _advance_library_media_presentation_epoch(
         self,
         owner: LibraryMediaRowScroll | None,
+        *,
+        rearm: bool = True,
     ) -> None:
         """Fence geometry already emitted before a Media presentation change."""
         self._library_media_presentation_epoch += 1
@@ -6794,7 +6796,11 @@ class LibraryScreen(BaseAppScreen):
             )
         self._library_media_return_settlement = None
         receipt = self._library_pending_list_entry_media_return
-        if owner is not None and self._library_media_return_candidate(receipt):
+        if (
+            rearm
+            and owner is not None
+            and self._library_media_return_candidate(receipt)
+        ):
             self._arm_library_media_return_settlement(receipt)
 
     def _library_media_return_candidate(
@@ -6822,6 +6828,19 @@ class LibraryScreen(BaseAppScreen):
             and receipt.layout_signature == self._library_media_layout_signature()
         )
 
+    def _library_media_semantic_row_is_current(
+        self,
+        receipt: _LibraryMediaReturnReceipt,
+        items_host: Vertical,
+    ) -> bool:
+        """Return whether the receipt's attached row belongs to current Items."""
+        return any(
+            row.is_attached
+            and str(getattr(row, "media_id", "") or "") == receipt.stable_id
+            and items_host in row.ancestors
+            for row in self.query(".library-media-row")
+        )
+
     def _library_media_request_matches_current_authority(
         self,
         request: _LibraryMediaReturnSettlement,
@@ -6840,6 +6859,8 @@ class LibraryScreen(BaseAppScreen):
             and request.media_lifecycle_generation
             == self._library_media_lifecycle_generation
             and request.presentation_epoch == self._library_media_presentation_epoch
+            and request.content_signature == self._library_media_content_signature()
+            and request.layout_signature == self._library_media_layout_signature()
             and request.route_identity == self._library_entry_route_key()
             and request.media_view_identity == self._library_media_view == "list"
             and request.shell_identity == id(shell)
@@ -6955,6 +6976,16 @@ class LibraryScreen(BaseAppScreen):
             return None
         shell, items_host, owner = tree
         self._adopt_library_media_row_owner(owner)
+        if (
+            receipt.final_focus_policy == "row"
+            and not self._library_media_exact_return_candidate(receipt)
+            and not self._library_media_semantic_row_is_current(receipt, items_host)
+        ):
+            # A revised list that removed the semantic origin uses the
+            # established retained-row/recovery focus path. It cannot mint a
+            # geometry settlement whose row identity is already gone.
+            self._library_media_return_settlement = None
+            return None
 
         current = self._library_media_return_settlement
         if current is not None:
@@ -7112,6 +7143,8 @@ class LibraryScreen(BaseAppScreen):
             desired,
             outcome,
         )
+        if committed and revised:
+            self._disarm_library_list_entry_focus()
         return committed
 
     def _resolve_library_media_settlement_target(
@@ -7126,7 +7159,7 @@ class LibraryScreen(BaseAppScreen):
         rows = [
             row
             for row in self.query(".library-media-row")
-            if items_host in row.ancestors
+            if row.is_attached and items_host in row.ancestors
         ]
         semantic_row = next(
             (
@@ -7162,9 +7195,14 @@ class LibraryScreen(BaseAppScreen):
                         and not bool(getattr(candidate, "disabled", False))
                     ):
                         control = candidate
-            if control is not None:
+            if semantic_row is None:
+                if not revised:
+                    return None
+                if rows:
+                    return rows[0], True
+            elif control is not None:
                 return control, False
-            if not responsive_layout_revised:
+            if semantic_row is not None and not responsive_layout_revised:
                 return None
             if semantic_row is not None:
                 return semantic_row, True
@@ -8625,10 +8663,15 @@ class LibraryScreen(BaseAppScreen):
         if layout_changed:
             tree = self._library_media_settlement_tree()
             self._advance_library_media_presentation_epoch(
-                tree[2] if tree is not None else None
+                tree[2] if tree is not None else None,
+                rearm=False,
             )
         shell.sync_layout(layout)
         self._library_media_reader_layout = layout
+        if layout_changed:
+            receipt = self._library_pending_list_entry_media_return
+            if self._library_media_return_candidate(receipt):
+                self._arm_library_media_return_settlement(receipt)
         if hidden_focus_target is not None:
             self._focus_library_media_grip_if_current(
                 generation,
@@ -11695,10 +11738,21 @@ class LibraryScreen(BaseAppScreen):
             receipt = self._library_pending_list_entry_media_return
             if self._library_media_return_candidate(receipt):
                 self._arm_library_media_return_settlement(receipt)
-                if self._library_media_settlement_tree() is None:
+                tree = self._library_media_settlement_tree()
+                revised_row_without_origin = bool(
+                    receipt is not None
+                    and receipt.final_focus_policy == "row"
+                    and not self._library_media_exact_return_candidate(receipt)
+                    and tree is not None
+                    and not self._library_media_semantic_row_is_current(
+                        receipt,
+                        tree[1],
+                    )
+                )
+                if tree is None or revised_row_without_origin:
                     # Empty Media has no row-scroll geometry owner. Preserve
-                    # its established Import/recovery focus path; there is no
-                    # list offset to order before that control focus.
+                    # its Import/recovery focus path; a revised list whose
+                    # origin disappeared likewise uses its retained first row.
                     self._focus_library_list_entry()
                 return
             self._focus_library_list_entry()
@@ -17652,7 +17706,7 @@ class LibraryScreen(BaseAppScreen):
                     is pending_receipt
                     and pending_receipt is not None
                 ):
-                    self._arm_library_media_return_settlement(pending_receipt)
+                    self._focus_library_list_entry_if_current(exact_generation)
 
             then = arm_exact_return
         elif pending_entry_focus_generation is not None:
@@ -27038,19 +27092,13 @@ class LibraryScreen(BaseAppScreen):
             pass
         else:
             scroll_offset = (int(scroll.scroll_x), int(scroll.scroll_y))
-        focused = self.focused
-        focus_identity = (
-            str(focused.id)
-            if focused is not None and focused.id
-            else "library-media-trash-open"
-        )
         return _LibraryMediaReturnReceipt(
             stable_id=self._selected_media_id,
             scroll_offset=scroll_offset,
             content_signature=self._library_media_content_signature(),
             layout_signature=self._library_media_layout_signature(),
             final_focus_policy="control",
-            final_focus_identity=focus_identity,
+            final_focus_identity="library-media-trash-open",
         )
 
     @on(Input.Changed, "#library-media-trash-search")

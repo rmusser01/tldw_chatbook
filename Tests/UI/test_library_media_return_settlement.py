@@ -1204,18 +1204,25 @@ async def test_unavailable_trash_control_uses_exact_scroll_row_fallback(
             lambda: screen._library_media_return_settlement is not None,
             message="Trash Back did not arm control-policy settlement authority.",
         )
+        old_request = screen._library_media_return_settlement
+        assert old_request is not None
+        await pilot.resize_terminal(80, 24)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_return_settlement is not None
+            and screen._library_media_return_settlement.request_id
+            > old_request.request_id,
+            message="Responsive layout did not arm fresh control-policy authority.",
+        )
+        request = screen._library_media_return_settlement
+        assert request is not None
         replacement_owner = screen.query_one(
             "#library-media-row-scroll",
             row_scroll_type,
         )
         target_control = screen.query_one("#library-media-trash-open", Button)
         target_control.disabled = True
-        pre_revision_layout = screen._library_media_layout_signature()
-        monkeypatch.setattr(
-            screen,
-            "_library_media_layout_signature",
-            lambda: pre_revision_layout + (("responsive-control-hidden",),),
-        )
+        assert screen._library_media_last_settlement_outcome is None
         monkeypatch.setattr(row_scroll_type, "on_resize", real_on_resize)
         real_on_resize(
             replacement_owner,
@@ -1234,6 +1241,7 @@ async def test_unavailable_trash_control_uses_exact_scroll_row_fallback(
         assert screen._library_media_last_settlement_outcome[1] == (
             "exact-scroll-focus-fallback"
         )
+        assert screen._library_media_last_settlement_outcome[0] == request.request_id
         assert getattr(screen.focused, "media_id", None) == selected_id
         assert (int(replacement_owner.scroll_x), int(replacement_owner.scroll_y)) == (
             scroll_offset
@@ -1245,7 +1253,7 @@ async def test_unavailable_trash_control_uses_exact_scroll_row_fallback(
 async def test_authoritative_content_revision_clamps_once_and_labels_outcome(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A proven logical revision gets one current-geometry clamped commit."""
+    """Applied revision rejects old authority, then fresh geometry clamps once."""
     _require_terminal_outcome_type()
     _, _, row_scroll_type, _, geometry_message_type = _require_return_protocol()
     app = _build_media_test_app()
@@ -1253,7 +1261,7 @@ async def test_authoritative_content_revision_clamps_once_and_labels_outcome(
     host = LibraryProductionCSSHarness(app)
 
     async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
-        screen, owner, media_id, _scroll_offset, real_on_resize = (
+        screen, old_owner, media_id, _scroll_offset, real_on_resize = (
             await _open_pending_viewer_return(
                 host,
                 pilot,
@@ -1261,22 +1269,60 @@ async def test_authoritative_content_revision_clamps_once_and_labels_outcome(
                 row_scroll_type,
             )
         )
-        request = screen._library_media_return_settlement
-        assert request is not None
-        original_content_signature = screen._library_media_content_signature
-        revised_signature = original_content_signature() + (("revision",),)
-        monkeypatch.setattr(
-            screen,
-            "_library_media_content_signature",
-            lambda: revised_signature,
-        )
-        geometry = _hold_next_owner_geometry(
+        old_request = screen._library_media_return_settlement
+        assert old_request is not None
+        old_geometry = _hold_next_owner_geometry(
             monkeypatch,
-            owner,
+            old_owner,
             row_scroll_type,
             geometry_message_type,
             real_on_resize,
         )
+        monkeypatch.setattr(row_scroll_type, "on_resize", lambda _owner, _event: None)
+
+        controller = screen._library_media_browse_controller
+        service = app.media_reading_scope_service
+        removed_id = next(
+            str(item["id"])
+            for item in controller.retained_items
+            if str(item["id"]) != media_id
+        )
+        removed_backing = int(removed_id.rsplit(":", 1)[1])
+        service.media_items = [
+            item
+            for index, item in enumerate(service.media_items)
+            if service._backing_id(item, index) != removed_backing
+        ]
+        screen._request_library_media_browse(
+            controller.mutation_refresh_scope,
+            focus_identity=None,
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: not controller.loading
+            and screen._library_media_content_signature()
+            != old_request.content_signature,
+            message="Authoritative reordered Media content never applied.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_return_settlement is not None
+            and screen._library_media_return_settlement.request_id
+            > old_request.request_id,
+            message="Revised current tree never received fresh immutable authority.",
+        )
+        request = screen._library_media_return_settlement
+        assert request is not None
+        owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
+        assert request.content_signature == screen._library_media_content_signature()
+        assert request.layout_signature == screen._library_media_layout_signature()
+        assert not screen._settle_library_media_return_from_geometry(
+            old_request,
+            old_owner,
+            old_geometry.geometry,
+        )
+        assert screen._library_media_last_settlement_outcome is None
+
         clamped_commits = 0
         real_scroll_to = owner.scroll_to
 
@@ -1287,19 +1333,98 @@ async def test_authoritative_content_revision_clamps_once_and_labels_outcome(
             return real_scroll_to(*args, **kwargs)
 
         monkeypatch.setattr(owner, "scroll_to", observe_clamped_scroll)
-        screen._handle_library_media_row_geometry_changed(geometry)
-        screen._handle_library_media_row_geometry_changed(
-            geometry_message_type(owner, owner.latest_geometry)
+        monkeypatch.setattr(row_scroll_type, "on_resize", real_on_resize)
+        owner.on_resize(
+            events.Resize(owner.size, owner.virtual_size, owner.container_size)
         )
-        await pilot.pause()
-
-        assert screen._library_media_last_settlement_outcome == (
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_last_settlement_outcome is not None,
+            message="Fresh revised request did not reach its clamped commit.",
+        )
+        outcome = screen._library_media_last_settlement_outcome
+        assert outcome == (
             request.request_id,
             "clamped-after-revision",
-            geometry.geometry.revision,
+            owner.latest_geometry.revision,
         )
         assert clamped_commits == 1
         assert getattr(screen.focused, "media_id", None) == media_id
+        assert screen._library_pending_list_entry_focus is False
+        assert screen._library_media_return_settlement is None
+
+        request_counter = screen._library_media_return_request_id
+        owner_before_recompose = owner
+        screen.refresh(recompose=True)
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query("#library-media-row-scroll"))
+            and screen.query_one("#library-media-row-scroll", row_scroll_type)
+            is not owner_before_recompose,
+            message="Terminal revision proof did not cross a mounted recompose.",
+        )
+        await pilot.pause()
+
+        assert screen._library_media_return_request_id == request_counter
+        assert screen._library_media_return_settlement is None
+        assert screen._library_media_last_settlement_outcome == outcome
+        assert clamped_commits == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("signature_kind", ("content", "layout"))
+async def test_existing_request_rejects_live_signature_drift(
+    monkeypatch: pytest.MonkeyPatch,
+    signature_kind: str,
+) -> None:
+    """An immutable request cannot consume geometry after either signature drifts."""
+    _, _, row_scroll_type, _, geometry_message_type = _require_return_protocol()
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, owner, _media_id, _scroll_offset, real_on_resize = (
+            await _open_pending_viewer_return(
+                host,
+                pilot,
+                monkeypatch,
+                row_scroll_type,
+            )
+        )
+        request = screen._library_media_return_settlement
+        assert request is not None
+        geometry = _hold_next_owner_geometry(
+            monkeypatch,
+            owner,
+            row_scroll_type,
+            geometry_message_type,
+            real_on_resize,
+        )
+        signature_method = f"_library_media_{signature_kind}_signature"
+        original_signature = getattr(screen, signature_method)
+        monkeypatch.setattr(
+            screen,
+            signature_method,
+            lambda: original_signature() + (("drift", signature_kind),),
+        )
+        scroll_commits = 0
+        real_scroll_to = owner.scroll_to
+
+        def observe_scroll(*args, **kwargs):
+            nonlocal scroll_commits
+            if kwargs.get("immediate"):
+                scroll_commits += 1
+            return real_scroll_to(*args, **kwargs)
+
+        monkeypatch.setattr(owner, "scroll_to", observe_scroll)
+        screen._handle_library_media_row_geometry_changed(geometry)
+        await pilot.pause()
+
+        assert screen._library_media_return_settlement is None
+        assert screen._library_media_last_settlement_outcome is None
+        assert screen._library_media_last_successful_settlement is None
+        assert scroll_commits == 0
 
 
 @pytest.mark.asyncio
@@ -1477,3 +1602,279 @@ async def test_stale_request_generation_and_subview_fences_cannot_settle(
         assert screen._library_media_last_settlement_outcome is None
         assert screen._library_media_last_exact_settlement is None
         assert getattr(screen.focused, "media_id", None) != media_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("identity_field", ("shell_identity", "items_host_identity"))
+async def test_replaced_shell_and_items_identities_reject_current_geometry(
+    monkeypatch: pytest.MonkeyPatch,
+    identity_field: str,
+) -> None:
+    """Each replaced tree identity independently fences an otherwise-live request."""
+    _, _, row_scroll_type, _, geometry_message_type = _require_return_protocol()
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, owner, _media_id, _scroll_offset, real_on_resize = (
+            await _open_pending_viewer_return(
+                host,
+                pilot,
+                monkeypatch,
+                row_scroll_type,
+            )
+        )
+        request = screen._library_media_return_settlement
+        assert request is not None
+        geometry = _hold_next_owner_geometry(
+            monkeypatch,
+            owner,
+            row_scroll_type,
+            geometry_message_type,
+            real_on_resize,
+        )
+        replacement_request = dataclasses.replace(
+            request,
+            **{identity_field: getattr(request, identity_field) + 1},
+        )
+        screen._library_media_return_settlement = replacement_request
+
+        assert not screen._settle_library_media_return_from_geometry(
+            replacement_request,
+            owner,
+            geometry.geometry,
+        )
+        assert screen._library_media_last_settlement_outcome is None
+        assert screen._library_media_last_successful_settlement is None
+
+
+@pytest.mark.asyncio
+async def test_deadline_with_failed_nongeometry_fence_clears_silently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Expiry after authority loss emits neither fallback outcome nor warning."""
+    _, _, row_scroll_type, _, _ = _require_return_protocol()
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, _owner, _media_id, _scroll_offset, _real_on_resize = (
+            await _open_pending_viewer_return(
+                host,
+                pilot,
+                monkeypatch,
+                row_scroll_type,
+            )
+        )
+        request = screen._library_media_return_settlement
+        assert request is not None
+        notices: list[tuple[str, str | None]] = []
+
+        def capture_notice(message: str, *, severity: str | None = None, **_kwargs):
+            notices.append((message, severity))
+
+        monkeypatch.setattr(app, "notify", capture_notice)
+        screen._library_notes_focus_intent_generation += 1
+        screen._expire_library_media_return_settlement(request.request_id)
+
+        assert notices == []
+        assert screen._library_media_last_settlement_outcome is None
+        assert screen._library_pending_list_entry_focus is False
+        assert screen._library_pending_list_entry_media_return is None
+        assert screen._library_media_return_settlement is None
+        assert screen._library_list_entry_focus_timer is None
+
+
+@pytest.mark.asyncio
+async def test_another_viewer_back_request_invalidates_prior_authority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second mounted viewer round trip supersedes the first request."""
+    _, _, row_scroll_type, _, geometry_message_type = _require_return_protocol()
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, old_owner, media_id, _scroll_offset, real_on_resize = (
+            await _open_pending_viewer_return(
+                host,
+                pilot,
+                monkeypatch,
+                row_scroll_type,
+            )
+        )
+        old_request = screen._library_media_return_settlement
+        assert old_request is not None
+        old_geometry = _hold_next_owner_geometry(
+            monkeypatch,
+            old_owner,
+            row_scroll_type,
+            geometry_message_type,
+            real_on_resize,
+        )
+        monkeypatch.setattr(row_scroll_type, "on_resize", lambda _owner, _event: None)
+        row = next(
+            row
+            for row in screen.query(".library-media-row")
+            if str(getattr(row, "media_id", "") or "") == media_id
+        )
+        row.press()
+        await _wait_for_selector(screen, pilot, "#library-media-back")
+        screen.query_one("#library-media-back", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_return_settlement is not None
+            and screen._library_media_return_settlement.request_id
+            > old_request.request_id,
+            message="Second Back did not supersede the earlier settlement request.",
+        )
+        new_request = screen._library_media_return_settlement
+        assert new_request is not None
+
+        assert not screen._settle_library_media_return_from_geometry(
+            old_request,
+            old_owner,
+            old_geometry.geometry,
+        )
+        assert screen._library_media_return_settlement is new_request
+        assert screen._library_media_last_settlement_outcome is None
+
+
+@pytest.mark.asyncio
+async def test_post_exact_user_takeover_prevents_recompose_renewal() -> None:
+    """After exact success, real user focus ends the outer recompose authority."""
+    _, _, row_scroll_type, _, _ = _require_return_protocol()
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, _media_id, _scroll_offset = await _open_scrolled_compact_media_viewer(
+            host,
+            pilot,
+        )
+        screen.query_one("#library-media-back", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_last_settlement_outcome is not None,
+            message="Initial exact return never settled.",
+        )
+        assert screen._library_media_last_settlement_outcome[1] == "exact-settled"
+        await pilot.pause()
+        control = screen.query_one("#library-media-type-filter", Button)
+        control.focus(scroll_visible=False)
+        await pilot.pause()
+        assert screen.focused is control
+        assert screen._library_pending_list_entry_focus is False
+        request_counter = screen._library_media_return_request_id
+        owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
+
+        screen.refresh(recompose=True)
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query("#library-media-row-scroll"))
+            and screen.query_one("#library-media-row-scroll", row_scroll_type) is not owner,
+            message="User-takeover inverse did not cross a real recompose.",
+        )
+        await pilot.pause()
+
+        assert screen._library_media_return_request_id == request_counter
+        assert screen._library_media_return_settlement is None
+        assert screen._library_pending_list_entry_focus is False
+
+
+@pytest.mark.asyncio
+async def test_trash_capture_uses_opener_identity_without_prefocus() -> None:
+    """Trash captures its semantic opener, never arbitrary current focus."""
+    receipt_type, *_ = _require_return_protocol()
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        unrelated = screen.query_one("#library-media-type-filter", Button)
+        unrelated.focus(scroll_visible=False)
+        await pilot.pause()
+        assert screen.focused is unrelated
+
+        screen.query_one("#library-media-trash-open", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-trash-canvas")
+
+        receipt = screen._library_media_trash_return
+        assert type(receipt) is receipt_type
+        assert receipt.final_focus_policy == "control"
+        assert receipt.final_focus_identity == "library-media-trash-open"
+        assert receipt.final_focus_identity != unrelated.id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("semantic_row_state", ("absent", "mismatched"))
+async def test_control_exact_return_requires_matching_semantic_row(
+    monkeypatch: pytest.MonkeyPatch,
+    semantic_row_state: str,
+) -> None:
+    """A valid captured control cannot bypass exact semantic-row authority."""
+    _, _, row_scroll_type, _, _ = _require_return_protocol()
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _wait_for_selector(screen, pilot, "#library-media-row-15")
+        semantic_row = screen.query_one("#library-media-row-15", Button)
+        selected_id = str(semantic_row.media_id)
+        screen._selected_media_id = selected_id
+        original_owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
+        original_owner.scroll_to(y=42, animate=False, force=True, immediate=True)
+        opener = screen.query_one("#library-media-trash-open", Button)
+        opener.focus()
+        opener.press()
+        await _wait_for_selector(screen, pilot, "#library-media-trash-back")
+
+        real_on_resize = row_scroll_type.on_resize
+        monkeypatch.setattr(row_scroll_type, "on_resize", lambda _owner, _event: None)
+        screen.query_one("#library-media-trash-back", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_return_settlement is not None,
+            message="Trash return did not arm control-policy authority.",
+        )
+        owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
+        current_row = next(
+            row
+            for row in screen.query(".library-media-row")
+            if str(getattr(row, "media_id", "") or "") == selected_id
+        )
+        if semantic_row_state == "absent":
+            await current_row.remove()
+        else:
+            current_row.media_id = f"mismatched:{selected_id}"
+        assert not any(
+            str(getattr(row, "media_id", "") or "") == selected_id
+            for row in screen.query(".library-media-row")
+        )
+        scroll_commits = 0
+        real_scroll_to = owner.scroll_to
+
+        def observe_scroll(*args, **kwargs):
+            nonlocal scroll_commits
+            if kwargs.get("immediate"):
+                scroll_commits += 1
+            return real_scroll_to(*args, **kwargs)
+
+        monkeypatch.setattr(owner, "scroll_to", observe_scroll)
+        monkeypatch.setattr(row_scroll_type, "on_resize", real_on_resize)
+        owner.on_resize(
+            events.Resize(owner.size, owner.virtual_size, owner.container_size)
+        )
+        await pilot.pause()
+
+        assert screen._library_media_last_settlement_outcome is None
+        assert screen._library_media_last_successful_settlement is None
+        assert getattr(screen.focused, "id", None) != "library-media-trash-open"
+        assert scroll_commits == 0
