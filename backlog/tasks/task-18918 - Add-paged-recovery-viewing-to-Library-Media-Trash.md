@@ -308,9 +308,31 @@ Fresh final verification after all five repairs:
   `py_compile` passed for all five changed production files; both the cumulative
   committed diff and working-tree `git diff --check` passed.
 
-TASK-18918 remains **In Progress** until the repaired cumulative branch receives
-fresh green spec and quality reviews. The executable evidence is complete; no
-task status claim is made ahead of those review gates.
+TASK-18918 subsequently received fresh green cumulative spec and quality reviews
+and was moved to **Done** after the required evidence and documentation gates.
+
+### PR #2268 review follow-up
+
+After rebasing all branch commits onto the latest `origin/dev`, the one shared
+lessons-ledger conflict was reconciled by retaining both the newer `dev` lessons
+and this task's current-owner geometry lesson. Qodo then reported three findings,
+each reproduced with a dedicated failing test before repair:
+
+- the uninitialized Trash pager now derives its fallback page size from the
+  requested `MediaTrashScope` instead of duplicating the behavioral literal;
+- database read failures log safe request coordinates, filter-presence booleans,
+  and exception category without raw query text, exception text, or traceback;
+- a schema-valid blank persisted media type no longer turns an already-committed
+  Restore into a false UI failure; the bounded retained summary normalizes it to
+  `None`, while non-string responses remain rejected.
+
+The three exact RED nodes failed for the reported reasons and passed after the
+minimal fixes. Fresh affected verification then passed **115** focused paging
+and mutation tests with **191 deselected**, **367** owner tests, **75** mounted
+Trash tests, and the **5-test** live closeout. The live walkthrough again passed
+at **160×50**, **120×35**, **100×30**, and **80×24** with exact paging, clamping,
+restore/delete, return settlement, privacy, path-authority, and zero-handle
+evidence.
 
 ### ADR check
 

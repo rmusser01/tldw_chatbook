@@ -81,7 +81,11 @@ class LibraryMediaTrashBrowseController:
         return build_library_pager_display(
             applied_page=applied.scope.page if applied is not None else None,
             requested_page=requested_page,
-            page_size=applied.limit if applied is not None else 20,
+            page_size=(
+                applied.limit
+                if applied is not None
+                else self.state.requested_scope.page_size
+            ),
             row_count=len(self.state.retained_items),
             total=(
                 applied.total

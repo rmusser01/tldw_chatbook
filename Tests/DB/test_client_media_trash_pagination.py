@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import io
 import sqlite3
 import threading
 
 import pytest
+from loguru import logger
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import (
+    DatabaseError,
     MediaDatabase,
     permanently_delete_item,
 )
@@ -133,6 +136,45 @@ def test_library_trash_rejects_invalid_coordinates_before_sql(media_db, kwargs):
         connection.set_trace_callback(None)
 
     assert statements == []
+
+
+def test_library_trash_read_failure_logs_safe_request_context(
+    media_db, monkeypatch
+):
+    database, _path = media_db
+    private_query = "private-query-sentinel"
+    private_error = "private-sqlite-sentinel"
+
+    class FailingTransaction:
+        def __enter__(self):
+            raise sqlite3.OperationalError(private_error)
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(database, "transaction", FailingTransaction)
+    output = io.StringIO()
+    sink = logger.add(output, format="{message}", level="ERROR")
+    try:
+        with pytest.raises(DatabaseError):
+            database.list_library_media_trash_page(
+                query=private_query,
+                media_type="pdf",
+                limit=20,
+                offset=40,
+            )
+    finally:
+        logger.remove(sink)
+
+    rendered = output.getvalue()
+    assert "operation=list_library_media_trash" in rendered
+    assert "limit=20" in rendered
+    assert "offset=40" in rendered
+    assert "has_query=True" in rendered
+    assert "has_type=True" in rendered
+    assert "exception_type=OperationalError" in rendered
+    assert private_query not in rendered
+    assert private_error not in rendered
 
 
 def test_library_trash_title_query_matches_like_metacharacters_literally(media_db):

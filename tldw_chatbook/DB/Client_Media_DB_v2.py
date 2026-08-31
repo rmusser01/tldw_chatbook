@@ -8604,7 +8604,15 @@ class MediaDatabase:
                 "types": normalized_types,
             }
         except sqlite3.Error as e:
-            logger.opt(exception=True).error("Error listing library media Trash page")
+            logger.error(
+                "Media operation failed; operation=list_library_media_trash "
+                "limit={} offset={} has_query={} has_type={} exception_type={}",
+                limit,
+                offset,
+                bool(query),
+                media_type is not None,
+                type(e).__name__,
+            )
             raise DatabaseError("Failed to list library media Trash page.") from e
 
     def search_library_media_page(

@@ -17696,13 +17696,12 @@ class LibraryScreen(BaseAppScreen):
             or is_trash != 0
             or type(title) is not str
             or type(media_type) is not str
-            or not media_type.strip()
         ):
             return None
         return {
             "id": restored_id,
             "title": title.strip() or "Untitled",
-            "type": media_type.strip(),
+            "type": media_type.strip() or None,
             "deleted": deleted,
             "is_trash": is_trash,
         }

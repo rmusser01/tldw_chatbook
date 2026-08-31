@@ -95,6 +95,29 @@ def _controller(
     return controller, screen, service
 
 
+def test_pager_fallback_uses_requested_scope_page_size(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """An uninitialized pager derives its limit from the scope authority."""
+    controller, _screen, _service = _controller()
+    observed: dict[str, object] = {}
+    pager = object()
+
+    def capture_pager(**kwargs: object) -> object:
+        observed.update(kwargs)
+        return pager
+
+    monkeypatch.setattr(MediaTrashScope, "page_size", property(lambda _self: 7))
+    monkeypatch.setattr(
+        controller_module,
+        "build_library_pager_display",
+        capture_pager,
+    )
+
+    assert controller.pager is pager
+    assert observed["page_size"] == controller.state.requested_scope.page_size == 7
+
+
 @pytest.mark.asyncio
 async def test_controller_canonicalizes_real_database_trash_titles(tmp_path):
     database = MediaDatabase(

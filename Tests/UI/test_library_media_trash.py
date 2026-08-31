@@ -2245,6 +2245,28 @@ async def test_media_trash_malformed_mutation_results_fail_closed(
         assert not action.disabled
 
 
+def test_media_trash_restore_summary_accepts_blank_persisted_type():
+    """A committed restore normalizes the schema-valid blank type to None."""
+    summary = LibraryScreen._validated_library_media_trash_restore_summary(
+        {
+            "id": 7,
+            "title": "Restored",
+            "type": "   ",
+            "deleted": 0,
+            "is_trash": 0,
+        },
+        media_id=7,
+    )
+
+    assert summary == {
+        "id": 7,
+        "title": "Restored",
+        "type": None,
+        "deleted": 0,
+        "is_trash": 0,
+    }
+
+
 @pytest.mark.asyncio
 async def test_media_trash_restore_bounds_request_and_retained_summary():
     """A successful restore never requests or retains unbounded detail."""
