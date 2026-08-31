@@ -13,6 +13,8 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Button, Static
 
+from rich.markup import escape as escape_markup
+
 from tldw_chatbook.Chat.console_session_settings import (
     build_console_settings_readiness,
     build_default_console_session_settings,
@@ -23,7 +25,10 @@ from tldw_chatbook.config import (
     save_setting_to_cli_config,
 )
 from tldw_chatbook.Constants import (
+    CONSOLE_NAV_CONTEXT_CONVERSATION_ID,
     LIBRARY_NAV_CONTEXT_NOTE_ID,
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
     TAB_CHAT,
     TAB_LIBRARY,
     TAB_WATCHLISTS_COLLECTIONS,
@@ -32,11 +37,17 @@ from tldw_chatbook.Constants import (
     WATCHLISTS_SECTION_RUNS,
 )
 from tldw_chatbook.Home.dashboard_state import (
+    HOME_OPEN_ITEM_CONTROL_ID,
     HOME_PRIMARY_ACTION_ID,
     HOME_RESUME_KIND_CONVERSATION,
+    HOME_RESUME_KIND_MEDIA,
     HOME_RESUME_KIND_NOTE,
     HOME_RESUME_LATEST_CONTROL_ID,
     HOME_START_CONVERSATION_CONTROL_ID,
+    LOCAL_CONVERSATION_ITEM_ID_PREFIX,
+    LOCAL_MEDIA_ITEM_ID_PREFIX,
+    LOCAL_NOTE_ITEM_ID_PREFIX,
+    HomeActiveWorkItem,
     HomeContentSnapshot,
     HomeControl,
     HomeDashboard,
@@ -44,6 +55,7 @@ from tldw_chatbook.Home.dashboard_state import (
     apply_home_content_snapshot,
     build_home_triage_state,
     choose_home_selected_item,
+    content_item_kind,
     summarize_home_dashboard,
 )
 from tldw_chatbook.Home.home_rail_state import (
@@ -198,36 +210,108 @@ def _home_record_timestamp(record: Mapping[str, Any] | None) -> datetime:
     return fallback
 
 
-def _home_resume_fields(
-    latest_note: Mapping[str, Any] | None,
-    latest_conversation: Mapping[str, Any] | None,
-) -> tuple[str, str, str]:
-    """Pick the newest resume candidate (note vs conversation).
+_HOME_CONTENT_FETCH_LIMIT = 8
 
-    Args:
-        latest_note: The newest local note record, if any.
-        latest_conversation: The newest local conversation record, if any.
 
-    Returns:
-        ``(resume_kind, resume_id, resume_title)`` -- all empty when
-        neither candidate has a usable id. Ties go to the conversation
-        (Console resume is the tighter loop). The title stays RAW here;
-        it is escaped once in ``build_home_resume_control``.
+def _home_content_records(
+    notes_result: Any,
+    conversations_result: Any,
+    media_result: Any,
+) -> list[tuple[str, Mapping[str, Any]]]:
+    """Merge the three content seams into (kind, raw record) newest-first.
+
+    Shapes mirror ``_home_first_record``: a seam result is either a bare
+    list of records or a mapping carrying ``items``. Records without a
+    usable id are dropped.
     """
-    candidates = []
-    if isinstance(latest_conversation, Mapping) and latest_conversation.get(
-        "id"
-    ) not in (None, ""):
-        candidates.append((HOME_RESUME_KIND_CONVERSATION, latest_conversation))
-    if isinstance(latest_note, Mapping) and latest_note.get("id") not in (None, ""):
-        candidates.append((HOME_RESUME_KIND_NOTE, latest_note))
-    if not candidates:
-        return "", "", ""
-    kind, record = max(candidates, key=lambda pair: _home_record_timestamp(pair[1]))
+    merged: list[tuple[str, Mapping[str, Any]]] = []
+    for kind, result in (
+        (HOME_RESUME_KIND_CONVERSATION, conversations_result),
+        (HOME_RESUME_KIND_NOTE, notes_result),
+        (HOME_RESUME_KIND_MEDIA, media_result),
+    ):
+        records = result.get("items") if isinstance(result, Mapping) else result
+        if not isinstance(records, Sequence) or isinstance(
+            records, (str, bytes, bytearray)
+        ):
+            continue
+        for record in records:
+            if isinstance(record, Mapping) and record.get("id") not in (None, ""):
+                merged.append((kind, record))
+    merged.sort(key=lambda pair: _home_record_timestamp(pair[1]), reverse=True)
+    return merged
+
+
+def _home_content_resume_fields(
+    merged: list[tuple[str, Mapping[str, Any]]],
+) -> tuple[str, str, str, str]:
+    """(resume_kind, resume_id, raw truncated title, updated_at) of the top.
+
+    The title stays RAW here (truncated before escaping so escape
+    backslashes can never be cut mid-sequence); it is escaped exactly
+    once, in ``build_home_resume_control``.
+    """
+    if not merged:
+        return "", "", "", ""
+    kind, record = merged[0]
     title = " ".join(str(record.get("title") or "").split())
     if len(title) > _HOME_RESUME_TITLE_MAX_CHARS:
         title = title[: _HOME_RESUME_TITLE_MAX_CHARS - 1].rstrip() + "…"
-    return kind, str(record.get("id")), title
+    return (
+        kind,
+        str(record.get("id")),
+        title,
+        _home_record_timestamp(record).isoformat(),
+    )
+
+
+# (source label, detail route) per content kind for rail rows.
+_HOME_CONTENT_SOURCE_LABELS = {
+    HOME_RESUME_KIND_CONVERSATION: ("Conversations", "chat"),
+    HOME_RESUME_KIND_NOTE: ("Notes", "library"),
+    HOME_RESUME_KIND_MEDIA: ("Media", "library"),
+}
+_HOME_CONTENT_ID_PREFIXES = {
+    HOME_RESUME_KIND_CONVERSATION: LOCAL_CONVERSATION_ITEM_ID_PREFIX,
+    HOME_RESUME_KIND_NOTE: LOCAL_NOTE_ITEM_ID_PREFIX,
+    HOME_RESUME_KIND_MEDIA: LOCAL_MEDIA_ITEM_ID_PREFIX,
+}
+
+
+def _home_content_recent_items(
+    merged: list[tuple[str, Mapping[str, Any]]],
+    *,
+    exclude_id: str,
+) -> tuple[HomeActiveWorkItem, ...]:
+    """Build rail-ready content items, excluding the banner item.
+
+    Titles are markup-escaped HERE (rail rows render straight into Button
+    labels, which parse Rich markup); the banner's raw title is handled
+    separately by ``_home_content_resume_fields`` -- exactly one escape
+    per surface.
+    """
+    items: list[HomeActiveWorkItem] = []
+    for kind, record in merged:
+        item_id = f"{_HOME_CONTENT_ID_PREFIXES[kind]}{record.get('id')}"
+        if item_id == exclude_id:
+            continue
+        source, route = _HOME_CONTENT_SOURCE_LABELS[kind]
+        raw_title = " ".join(str(record.get("title") or "").split())
+        title = escape_markup(raw_title) or escape_markup(
+            f"{kind.title()} {record.get('id')}"
+        )
+        items.append(
+            HomeActiveWorkItem(
+                item_id=item_id,
+                title=title,
+                source=source,
+                status="ready",
+                detail_route=route,
+                console_available=(kind == HOME_RESUME_KIND_CONVERSATION),
+                updated_at=_home_record_timestamp(record).isoformat(),
+            )
+        )
+    return tuple(items)
 
 
 class HomeActionButton(Button):
@@ -384,7 +468,7 @@ class HomeScreen(BaseAppScreen):
         notes_result = await self._home_content_seam_call(
             getattr(notes_service, "list_notes", None),
             scope="local_note",
-            limit=1,
+            limit=_HOME_CONTENT_FETCH_LIMIT,
             user_id=notes_user_id,
         )
         conversations_result = await self._home_content_seam_call(
@@ -394,20 +478,22 @@ class HomeScreen(BaseAppScreen):
             # as Library's rail count: Console chats persisted inside a
             # workspace session would be invisible under 'global'.
             scope_type="all",
-            limit=1,
+            limit=_HOME_CONTENT_FETCH_LIMIT,
             offset=0,
         )
         media_result = await self._home_content_seam_call(
             getattr(media_service, "list_media_items", None),
             mode="local",
             page=1,
-            results_per_page=1,
+            results_per_page=_HOME_CONTENT_FETCH_LIMIT,
             include_keywords=False,
         )
 
-        resume_kind, resume_id, resume_title = _home_resume_fields(
-            _home_first_record(notes_result),
-            _home_first_record(conversations_result),
+        merged = _home_content_records(
+            notes_result, conversations_result, media_result
+        )
+        resume_kind, resume_id, resume_title, resume_updated_at = (
+            _home_content_resume_fields(merged)
         )
         return HomeContentSnapshot(
             console_ready=console_ready,
@@ -419,6 +505,15 @@ class HomeScreen(BaseAppScreen):
             resume_kind=resume_kind,
             resume_id=resume_id,
             resume_title=resume_title,
+            resume_updated_at=resume_updated_at,
+            content_recent_items=_home_content_recent_items(
+                merged,
+                exclude_id=(
+                    f"{_HOME_CONTENT_ID_PREFIXES[resume_kind]}{resume_id}"
+                    if resume_kind and resume_id
+                    else ""
+                ),
+            ),
         )
 
     async def _home_content_seam_call(self, callable_obj: Any, **kwargs: Any) -> Any:
@@ -759,6 +854,9 @@ class HomeScreen(BaseAppScreen):
         if button_id == HOME_RESUME_LATEST_CONTROL_ID:
             self._activate_home_resume_latest()
             return
+        if button_id == HOME_OPEN_ITEM_CONTROL_ID:
+            self._activate_home_open_item()
+            return
         dashboard = self._current_dashboard
         if dashboard is None:
             return
@@ -807,9 +905,12 @@ class HomeScreen(BaseAppScreen):
         """Route the resume-latest control to its one-click destination.
 
         Notes deep-link into the Library notes editor via the existing
-        ``LIBRARY_NAV_CONTEXT_NOTE_ID`` navigation-context contract;
-        conversations route to Console. Navigation always composes a fresh
-        screen, so the deep link lands on a cleanly mounted surface.
+        ``LIBRARY_NAV_CONTEXT_NOTE_ID`` navigation-context contract; media
+        into the Library item view via the open-source pair; conversations
+        into Console carrying ``CONSOLE_NAV_CONTEXT_CONVERSATION_ID`` so
+        the freshly mounted screen resumes THAT conversation (ADR-079).
+        Navigation always composes a fresh screen, so the deep link lands
+        on a cleanly mounted surface.
         """
         control = next(
             (
@@ -819,14 +920,64 @@ class HomeScreen(BaseAppScreen):
             ),
             None,
         )
-        if control is None:
+        if control is None or not control.target_id:
             return
-        if control.target_route == TAB_LIBRARY and control.target_id:
+        self._open_content_item(control.target_id)
+
+    def _activate_home_open_item(self) -> None:
+        """Route the selected content row's Open control (same dispatch)."""
+        control = next(
+            (
+                item
+                for item in self._current_canvas_controls
+                if item.control_id == HOME_OPEN_ITEM_CONTROL_ID
+            ),
+            None,
+        )
+        if control is None or not control.target_id:
+            return
+        self._open_content_item(control.target_id)
+
+    def _open_content_item(self, target_id: str) -> None:
+        """Deep-link a prefixed content item id to its surface.
+
+        Conversations land in Console on that conversation; notes in the
+        Library notes editor; media in the Library item view. Unknown
+        prefixes are a silent no-op (defensive: dispatch only ever builds
+        content ids via ``_home_content_recent_items``).
+        """
+        kind = content_item_kind(target_id)
+        if kind == HOME_RESUME_KIND_CONVERSATION:
+            self.post_message(
+                NavigateToScreen(
+                    TAB_CHAT,
+                    {
+                        CONSOLE_NAV_CONTEXT_CONVERSATION_ID: (
+                            target_id.removeprefix(LOCAL_CONVERSATION_ITEM_ID_PREFIX)
+                        )
+                    },
+                )
+            )
+        elif kind == HOME_RESUME_KIND_NOTE:
             self.post_message(
                 NavigateToScreen(
                     TAB_LIBRARY,
-                    {LIBRARY_NAV_CONTEXT_NOTE_ID: control.target_id},
+                    {
+                        LIBRARY_NAV_CONTEXT_NOTE_ID: target_id.removeprefix(
+                            LOCAL_NOTE_ITEM_ID_PREFIX
+                        )
+                    },
                 )
             )
-            return
-        self.post_message(NavigateToScreen(TAB_CHAT))
+        elif kind == HOME_RESUME_KIND_MEDIA:
+            self.post_message(
+                NavigateToScreen(
+                    TAB_LIBRARY,
+                    {
+                        LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "media",
+                        LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: (
+                            target_id.removeprefix(LOCAL_MEDIA_ITEM_ID_PREFIX)
+                        ),
+                    },
+                )
+            )

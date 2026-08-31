@@ -4,8 +4,11 @@ from unittest.mock import Mock
 import pytest
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Constants import (
+    CONSOLE_NAV_CONTEXT_CONVERSATION_ID,
     LIBRARY_NAV_CONTEXT_INGEST,
     LIBRARY_NAV_CONTEXT_NOTE_ID,
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
+    LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
     TAB_LIBRARY,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -406,7 +409,8 @@ async def test_home_recent_work_empty_state_sets_expectation():
 
         recent_text = str(home.query_one("#home-rail-empty-recent").renderable)
         assert (
-            "Runs, chatbooks, imports, and schedules will appear here." in recent_text
+            "Conversations, notes, media, runs, chatbooks, and imports will appear"
+            in recent_text
         )
 
 
@@ -1888,6 +1892,35 @@ async def test_home_resume_latest_conversation_routes_to_console():
         await pilot.pause(HOME_MOUNT_PAUSE)
 
     assert seen[-1] == "chat"
+    assert host.seen_contexts[-1] == {CONSOLE_NAV_CONTEXT_CONVERSATION_ID: "conv-9"}
+
+
+def test_open_content_item_routes_by_prefix():
+    """Content deep-links route by prefixed id: conversations carry the
+    Console nav-context id, notes the Library note id, media the Library
+    open-source pair."""
+    app = _build_test_app()
+    home = HomeScreen(app)
+
+    posted = []
+    home.post_message = lambda message: posted.append(message)
+
+    home._open_content_item("local:conversation:42")
+    home._open_content_item("local:note:7")
+    home._open_content_item("local:media:9")
+    home._open_content_item("local:ingest:3")  # unknown prefix: no-op
+
+    assert [message.screen_name for message in posted] == [
+        "chat",
+        "library",
+        "library",
+    ]
+    assert posted[0].screen_context == {CONSOLE_NAV_CONTEXT_CONVERSATION_ID: "42"}
+    assert posted[1].screen_context == {LIBRARY_NAV_CONTEXT_NOTE_ID: "7"}
+    assert posted[2].screen_context == {
+        LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "media",
+        LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID: "9",
+    }
 
 
 @pytest.mark.asyncio
