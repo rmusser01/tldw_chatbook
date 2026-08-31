@@ -28,6 +28,7 @@ from uuid import uuid4
 
 if TYPE_CHECKING:
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
+    from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
     from tldw_chatbook.UI.Screens.change_review_screen import (
         AgentRunsChangeReviewProvider,
     )
@@ -217,12 +218,6 @@ from tldw_chatbook.Internal_Prompts.catalog import CATALOG
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Utils.token_counter import get_model_token_limit
-from tldw_chatbook.Personal_Context.context_service import (
-    ProfileContextRequest,
-    ProfileContextSnapshot,
-)
-
-
 def _retire_generation_attempt_after_reply(
     method: Callable[..., Any],
 ) -> Callable[..., Any]:
@@ -3731,6 +3726,11 @@ def build_console_first_request_plan(
         A frozen catalog, config, message, schema, and run-log plan shared by
         preview and live dispatch.
     """
+    from tldw_chatbook.Personal_Context.context_service import (
+        ProfileContextRequest,
+        ProfileContextSnapshot,
+    )
+
     fresh = bool(
         skills_present
         or mcp_provider is not None

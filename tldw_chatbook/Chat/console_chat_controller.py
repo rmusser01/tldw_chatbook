@@ -129,15 +129,6 @@ from tldw_chatbook.Chat.console_history_budget import (
     provider_continuation_owner_groups,
 )
 from tldw_chatbook.Agents.agent_service import append_personal_context
-from tldw_chatbook.Personal_Context.context_service import (
-    ProfileContextService,
-    ProfileContextSnapshot,
-)
-from tldw_chatbook.Personal_Context.service import PersonalContextService
-from tldw_chatbook.Agents.profile_tool_provider import (
-    ProfileToolProvider,
-    ProfileToolRunScope,
-)
 from tldw_chatbook.Chat.console_context_compaction import (
     NO_LEGACY_MEMORY,
     CompactionAdmission,
@@ -444,6 +435,12 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+    from tldw_chatbook.Agents.profile_tool_provider import ProfileToolProvider
+    from tldw_chatbook.Personal_Context.context_service import (
+        ProfileContextService,
+        ProfileContextSnapshot,
+    )
+    from tldw_chatbook.Personal_Context.service import PersonalContextService
 
 
 def get_internal_prompt(prompt_id: str) -> str:
@@ -2720,6 +2717,14 @@ def _retire_generation_before_agent_handoff(method: Callable[..., Any]):
 _PERSONAL_CONTEXT_SERVICE_UNSET = object()
 
 
+def _empty_profile_context_snapshot() -> "ProfileContextSnapshot":
+    """Create the fail-closed snapshot without loading profiles at startup."""
+
+    from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
+
+    return ProfileContextSnapshot.empty()
+
+
 def _compose_profile_tool_provider(
     service: PersonalContextService,
     *,
@@ -2735,6 +2740,11 @@ def _compose_profile_tool_provider(
 
     if ephemeral:
         return None
+    from tldw_chatbook.Agents.profile_tool_provider import (
+        ProfileToolProvider,
+        ProfileToolRunScope,
+    )
+
     active_workspace_id = (
         None if workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID else workspace_id
     )
@@ -15164,7 +15174,7 @@ class ConsoleChatController:
                 for row in provider_messages
             ]
 
-            personal_context_snapshot = ProfileContextSnapshot.empty()
+            personal_context_snapshot = _empty_profile_context_snapshot()
             if dispatch_eligible:
                 personal_context_snapshot = await self._build_personal_context_snapshot(
                     session,
@@ -15320,7 +15330,7 @@ class ConsoleChatController:
                     },
                     "error": f"Failed to build context snapshot: {exc}",
                 },
-                personal_context_snapshot=ProfileContextSnapshot.empty(),
+                personal_context_snapshot=_empty_profile_context_snapshot(),
             )
 
     async def _personal_context_service(self) -> PersonalContextService | None:
@@ -15349,6 +15359,10 @@ class ConsoleChatController:
             if service is _PERSONAL_CONTEXT_SERVICE_UNSET
             else service
         )
+        from tldw_chatbook.Personal_Context.context_service import (
+            ProfileContextService,
+        )
+
         return ProfileContextService(resolved) if resolved is not None else None
 
     async def _build_personal_context_snapshot(
@@ -15368,13 +15382,13 @@ class ConsoleChatController:
         bridge = self._agent_bridge
         build_preview = getattr(bridge, "build_personal_context_preview_snapshot", None)
         if builder is None or session is None or not callable(build_preview):
-            return ProfileContextSnapshot.empty()
+            return _empty_profile_context_snapshot()
         try:
             resolution = await self.provider_gateway.resolve_for_send(
                 provider_selection
             )
             if not getattr(resolution, "ready", True):
-                return ProfileContextSnapshot.empty()
+                return _empty_profile_context_snapshot()
             profile_provider = await asyncio.to_thread(
                 _compose_profile_tool_provider,
                 personal_context_service,
@@ -15472,7 +15486,7 @@ class ConsoleChatController:
                 session_system_prompt = str(agent_messages[0].get("content", ""))
                 agent_messages = agent_messages[1:]
         except Exception:  # noqa: BLE001 - uncertain budget fails closed
-            return ProfileContextSnapshot.empty()
+            return _empty_profile_context_snapshot()
         try:
             return await asyncio.to_thread(
                 build_preview,
@@ -15505,7 +15519,7 @@ class ConsoleChatController:
                 profile_context_service=builder,
             )
         except Exception:  # noqa: BLE001 - personalization never blocks preview
-            return ProfileContextSnapshot.empty()
+            return _empty_profile_context_snapshot()
 
     async def _build_project_instruction_preview_for_session(
         self,

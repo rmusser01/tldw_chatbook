@@ -110,6 +110,9 @@ MAX_TLDW_MODULES_AT_UI_READY = 972
 #: trajectory family TASK-22213 took off the Chat leg.
 ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Chunking",
+    # Personal Context is user/setup/settings/send work. Its encrypted store,
+    # interview coordinator, and agent tools must not delay the first frame.
+    "tldw_chatbook.Personal_Context",
     "tldw_chatbook.RAG_Search.simplified",
 )
 ABSENT_AT_READY_MODULES = (
@@ -141,6 +144,7 @@ ABSENT_AT_READY_MODULES = (
     "tldw_chatbook.Sync_Interop.notes_outbox_producer",
     # ADR-090: the external-summary LLM graph is approval-time work.
     "tldw_chatbook.Chat.permission_summary_service",
+    "tldw_chatbook.Agents.profile_tool_provider",
     # TASK-23113.7: normalization is idle maintenance. Its adapter and worker
     # import graph must stay outside the first-interactive-frame window even
     # on slow runners where mount settling continues after ``_ui_ready``.

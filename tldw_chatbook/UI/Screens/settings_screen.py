@@ -261,9 +261,6 @@ from ...Widgets.Settings_Widgets.speech_tts_settings_panel import (
     SpeechTTSPanelDraftSnapshot,
     SpeechTTSSettingsPanel,
 )
-from ...Widgets.Settings_Widgets.personal_context_panel import (
-    PersonalContextSettingsPanel,
-)
 from ...Model_Artifacts.service import ArtifactRef
 from ...Model_Artifacts.store import managed_service
 from ...TTS.audio_cpp_guided_config import (
@@ -399,10 +396,23 @@ if TYPE_CHECKING:
     # Type-only: the create dialog is a shared modal imported locally at its
     # one call site (handle_workspace_create) to avoid a real import cycle.
     from ...Widgets.workspace_create_modal import WorkspaceCreateResult
+    from ...Widgets.Settings_Widgets.personal_context_panel import (
+        PersonalContextSettingsPanel,
+    )
     from .settings_network_defaults import SettingsNetworkTLS
 
 
 logger = logging.getLogger(__name__)
+
+
+def _personal_context_settings_panel_class() -> type["PersonalContextSettingsPanel"]:
+    """Load the profile settings implementation only when that category opens."""
+
+    from ...Widgets.Settings_Widgets.personal_context_panel import (
+        PersonalContextSettingsPanel,
+    )
+
+    return PersonalContextSettingsPanel
 
 
 def get_image_generation_config(*args: Any, **kwargs: Any) -> Any:
@@ -3003,9 +3013,10 @@ class SettingsScreen(BaseAppScreen):
         return shortcuts
 
     def _active_personal_context_shortcuts(self) -> tuple[tuple[str, str], ...]:
+        panel_class = _personal_context_settings_panel_class()
         try:
             panel = self.query_one(
-                "#personal-context-settings-panel", PersonalContextSettingsPanel
+                "#personal-context-settings-panel", panel_class
             )
         except QueryError:
             return ()
@@ -16871,10 +16882,11 @@ class SettingsScreen(BaseAppScreen):
         if category is SettingsCategoryId.OVERVIEW:
             yield from self._render_overview_detail()
         elif category is SettingsCategoryId.PERSONAL_CONTEXT:
+            panel_class = _personal_context_settings_panel_class()
             service = self._personal_context_service_injection
             if service is None:
                 service = self.app_instance.get_personal_context_service
-            yield PersonalContextSettingsPanel(
+            yield panel_class(
                 service,
                 id="personal-context-settings-panel",
             )
@@ -24832,9 +24844,10 @@ class SettingsScreen(BaseAppScreen):
 
         if self._active_category_id() is not SettingsCategoryId.PERSONAL_CONTEXT:
             return
+        panel_class = _personal_context_settings_panel_class()
         try:
             panel = self.query_one(
-                "#personal-context-settings-panel", PersonalContextSettingsPanel
+                "#personal-context-settings-panel", panel_class
             )
         except QueryError:
             return
