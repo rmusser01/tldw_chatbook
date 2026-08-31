@@ -1,10 +1,10 @@
 ---
 id: TASK-18918
 title: Add paged recovery viewing to Library Media Trash
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-15 02:51'
-updated_date: '2026-08-31 16:17'
+updated_date: '2026-08-31 17:22'
 labels:
   - library
   - pagination
