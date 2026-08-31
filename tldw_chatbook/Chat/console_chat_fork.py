@@ -7,7 +7,7 @@ import json
 import warnings
 from dataclasses import dataclass
 from io import BytesIO
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from PIL import Image as PILImage
 
@@ -36,7 +36,6 @@ from tldw_chatbook.Chat.console_project_instructions import (
     sanitize_fork_project_instruction_state,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
-from tldw_chatbook.Chat.console_trace_repository import TraceForkBoundary
 from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
 from tldw_chatbook.Chat.thinking_blocks import (
     ThinkingHistoryPolicy,
@@ -50,6 +49,9 @@ from tldw_chatbook.Utils.input_validation import (
     CONSOLE_FORK_TITLE_MAX_LENGTH as CONSOLE_FORK_TITLE_MAX_LENGTH,
     validate_console_fork_title,
 )
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_trace_repository import TraceForkBoundary
 
 
 CONSOLE_FORK_FINGERPRINT_JSON_MAX_BYTES = 64 * 1024

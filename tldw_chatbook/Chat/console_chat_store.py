@@ -160,7 +160,6 @@ from tldw_chatbook.Chat.console_trace_projection import (
     ProjectedTraceCall,
 )
 from tldw_chatbook.Chat.console_trace_provenance import ConsoleTraceCaptureMode
-from tldw_chatbook.Chat.console_trace_repository import TraceForkBoundary
 from tldw_chatbook.Chat.console_capture_policy_repository import (
     CapturePolicyReadResult,
     CapturePolicyReadStatus,
@@ -364,6 +363,7 @@ if TYPE_CHECKING:
     # to exist at runtime here -- only ``capture_to_blob`` (imported above)
     # is actually called.
     from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
+    from tldw_chatbook.Chat.console_trace_repository import TraceForkBoundary
 
 #: Maximum number of attachments a Console session may stage before send.
 MAX_PENDING_ATTACHMENTS = 5
