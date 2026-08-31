@@ -97,7 +97,8 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-105](105-portable-notes-organization-and-agent-lessons.md) | Accepted | Consume the server's complete Notes organization group, preserve device-private filesystem ownership, and layer conflict-safe Agent Lessons on ordinary untrusted Notes. |
 | [ADR-104](104-token-budgeted-agent-tool-disclosure.md) | Accepted | Replace fixed tool-count disclosure and lifetime activation caps with model-relative schema-token budgets, ranked search, and replaceable working sets. |
 | [ADR-106](106-human-reviewed-agent-lesson-promotion.md) | Accepted | Force foreground approval for Agent Lesson mutations and permit only exact, human-reviewed promotion through existing instruction and trust authorities. |
-| [ADR-107](107-collections-capture-authority-and-legacy-boundary.md) | Accepted | Separate Local and Server Collections capture authority from Media and preserve obsolete generic containers as explicit read-only legacy data. |
+| [ADR-107](107-portable-tool-use-packs.md) | Proposed | Export one flattened Tool policy profile as deterministic policy-only content; import it unbound with exact mapping, first-bind confirmation, and deny tombstones. |
+| [ADR-113](113-collections-capture-authority-and-legacy-boundary.md) | Accepted | Separate Local and Server Collections capture authority from Media and preserve obsolete generic containers as explicit read-only legacy data. |
 
 ## Historical Decision Material
 

@@ -2,7 +2,7 @@
 
 **Task:** TASK-18919
 
-**ADR:** `backlog/decisions/107-collections-capture-authority-and-legacy-boundary.md`
+**ADR:** `backlog/decisions/113-collections-capture-authority-and-legacy-boundary.md`
 
 **Checkpoint:** Task 14 cutover implemented; Task 15 Local verification passed and enabled-Server
 verification is blocked by the unreachable configured deployment
@@ -51,7 +51,7 @@ The following remain outside this cutover and must not be renamed or removed by 
 
 - One implementation branch exists: `codex/task-18919-collections-reader`.
 - The open-PR search for `18919 Collections capture` returned no match.
-- One canonical `TASK-18919` task and one canonical accepted `ADR-107` exist; the other matches are
+- One canonical `TASK-18919` task and one canonical accepted `ADR-113` exist; the other matches are
   their intentional references in the spec, plan, ADR index, and pagination design.
 - The Backlog task already contains the required ADR implementation block verbatim.
 

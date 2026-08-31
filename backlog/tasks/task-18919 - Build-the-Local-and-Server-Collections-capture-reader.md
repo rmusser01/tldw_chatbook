@@ -34,7 +34,7 @@ references:
   - >-
     Docs/superpowers/specs/2026-08-31-library-collections-capture-reader-design.md
   - backlog/decisions/067-library-top-level-pagination-contracts.md
-  - backlog/decisions/107-collections-capture-authority-and-legacy-boundary.md
+  - backlog/decisions/113-collections-capture-authority-and-legacy-boundary.md
 priority: medium
 ---
 
@@ -73,7 +73,7 @@ Detailed executable plan: `Docs/superpowers/plans/2026-08-31-library-collections
 
 ADR required: yes
 
-ADR path: `backlog/decisions/107-collections-capture-authority-and-legacy-boundary.md`
+ADR path: `backlog/decisions/113-collections-capture-authority-and-legacy-boundary.md`
 
 Reason: TASK-18919 changes durable Collections storage, source authority, migration, service, and legacy-data boundaries.
 <!-- SECTION:PLAN:END -->
@@ -97,7 +97,7 @@ evidence is in `Docs/superpowers/reviews/2026-08-31-library-collections-live-ver
 
 ADR required: yes
 
-ADR path: `backlog/decisions/107-collections-capture-authority-and-legacy-boundary.md`
+ADR path: `backlog/decisions/113-collections-capture-authority-and-legacy-boundary.md`
 
 Reason: TASK-18919 changes durable Collections storage, source authority, migration, service, and
 legacy-data boundaries.
@@ -123,6 +123,6 @@ Collections flows, two added service-wiring warnings contain no user content, an
 store's persistent sinks are limited to validated private bytes and its lifecycle lock; the reviewed
 production-diagnostic inventory was regenerated accordingly. All 12 new Collections indexes are
 now backed by no-statistics `EXPLAIN QUERY PLAN` assertions and recorded as plan-pinned. No new ADR
-was required because these changes enforce ADR-107's existing authority and fail-closed capability
+was required because these changes enforce ADR-113's existing authority and fail-closed capability
 boundaries. TASK-18919 is complete.
 <!-- SECTION:NOTES:END -->
