@@ -127,9 +127,7 @@ LOCAL_ROOT_CHANGED_REFUSAL = (
 LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL = (
     "Private scratch space is unavailable; the tool was not run."
 )
-PROMOTION_APPROVAL_REQUIRED = (
-    "A fresh exact Agent Lesson promotion approval is required; the file was not changed."
-)
+PROMOTION_APPROVAL_REQUIRED = "A fresh exact Agent Lesson promotion approval is required; the file was not changed."
 PROMOTION_FOREGROUND_REQUIRED = (
     "Agent Lesson promotion requires the foreground primary; the file was not changed."
 )
@@ -621,7 +619,8 @@ class LocalToolProvider:
         self._promotion_revalidator = promotion_revalidator
         self._promotion_stamps: dict[tuple[str, str, str], str] = {}
         self._promotion_proposals: dict[
-            tuple[str, str], tuple[RepositoryInstructionProposal, InstructionPromotionSnapshot]
+            tuple[str, str],
+            tuple[RepositoryInstructionProposal, InstructionPromotionSnapshot],
         ] = {}
         self._promotion_lock = threading.RLock()
         # PR2a Task 5: keyed (run_id, tool_name), not tool_name -- one
@@ -1039,9 +1038,7 @@ class LocalToolProvider:
             args,
             promotion_args=promotion_args,
             selected_root_alias=(
-                promotion_authority.alias
-                if promotion_authority is not None
-                else None
+                promotion_authority.alias if promotion_authority is not None else None
             ),
             call_id=call_id,
             run_id=run_id,
@@ -1605,9 +1602,7 @@ class LocalToolProvider:
             ):
                 return ToolResult.blocked(PROMOTION_STALE_REFUSAL)
             preview_args = {
-                key: value
-                for key, value in args.items()
-                if key != "promotion"
+                key: value for key, value in args.items() if key != "promotion"
             }
             preview_args["dry_run"] = True
             preview_args.pop("expected_sha256", None)
@@ -1636,9 +1631,10 @@ class LocalToolProvider:
                 proposal,
                 snapshot,
             )
-            while len(
-                [key for key in self._promotion_proposals if key[0] == run_id]
-            ) > _MAX_PROMOTION_PROPOSALS_PER_RUN:
+            while (
+                len([key for key in self._promotion_proposals if key[0] == run_id])
+                > _MAX_PROMOTION_PROPOSALS_PER_RUN
+            ):
                 first = next(
                     key for key in self._promotion_proposals if key[0] == run_id
                 )
@@ -1668,9 +1664,7 @@ class LocalToolProvider:
         if type(proposal_digest) is not str:
             return ToolResult.blocked(PROMOTION_APPROVAL_REQUIRED)
         with self._promotion_lock:
-            retained = self._promotion_proposals.pop(
-                (run_id, proposal_digest), None
-            )
+            retained = self._promotion_proposals.pop((run_id, proposal_digest), None)
         if retained is None or not _application_matches(
             retained[0],
             args,
@@ -1689,9 +1683,7 @@ class LocalToolProvider:
                 f"{PROMOTION_STALE_REFUSAL} ({revalidation.reason_code})"
             )
         invoke_args = {
-            key: value
-            for key, value in clean_args.items()
-            if key != "proposal_digest"
+            key: value for key, value in clean_args.items() if key != "proposal_digest"
         }
         try:
             content = spec.handler(invoke_args)
