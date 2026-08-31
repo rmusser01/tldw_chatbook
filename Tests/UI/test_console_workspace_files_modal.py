@@ -550,6 +550,51 @@ async def test_compact_viewer_has_a_focusable_back_to_files_route() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("width", (80, 99, 100, 111))
+async def test_compact_viewer_actions_fit_labels_and_remain_focusable(width: int) -> None:
+    """Pinned compact actions reserve their labels and Textual button chrome."""
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=_Inspector([]), inspected_workspace_id="ws-a", inspected_workspace_name="A",
+        active_workspace_id="ws-a", active_workspace_name="A",
+        bindings=(WorkspaceFilesBinding("binding-a", "Project", _scope()),),
+    )
+    app = _Host()
+    async with app.run_test(size=(width, 24)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal._state = replace(
+            modal.state,
+            compact_stage="viewer",
+            selected_file=FileRef(("preview.txt",), "preview.txt"),
+            file_result=FileReadResult(FileReadKind.TEXT, text="safe preview"),
+        )
+        modal._sync_layout()
+        await modal._render_viewer()
+        action_ids = (
+            "console-workspace-files-back",
+            "console-workspace-files-back-to-files",
+            "console-workspace-files-details",
+            "console-workspace-files-previous",
+            "console-workspace-files-next",
+            "console-workspace-files-refresh",
+        )
+        actions = [modal.query_one(f"#{action_id}", Button) for action_id in action_ids]
+        assert all(button.can_focus and button.region.height > 0 for button in actions)
+        widths = [
+            (
+                str(button.label),
+                button.region.width,
+                len(str(button.label)) + 2,
+                str(button.styles.width),
+            )
+            for button in actions
+        ]
+        assert all(actual >= minimum for _label, actual, minimum, _style in widths), widths
+        for left, right in zip(actions, actions[1:]):
+            assert left.region.x + left.region.width <= right.region.x
+
+
+@pytest.mark.asyncio
 async def test_filter_enter_cancel_and_clear_restore_the_directory_view() -> None:
     inspector = _Inspector([])
     modal = ConsoleWorkspaceFilesModal(
