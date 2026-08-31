@@ -295,7 +295,7 @@ def test_menu_width_constant_and_stylesheet_cannot_drift() -> None:
     )
 
 
-# ---- Copy as markdown (TASK-25714) ---------------------------------------
+# ---- Copy as markdown (TASK-25836) ---------------------------------------
 
 
 def _copy_target(**overrides):

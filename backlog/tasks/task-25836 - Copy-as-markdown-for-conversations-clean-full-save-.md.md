@@ -1,5 +1,5 @@
 ---
-id: TASK-25714
+id: TASK-25836
 title: 'Copy-as-markdown for conversations (clean, full, save .md)'
 status: In Progress
 assignee:
@@ -20,6 +20,15 @@ Add a Copy-as page to the conversation action menu: Clean markdown and Full tran
 <!-- AC:BEGIN -->
 - [ ] #1 The conversation menu root offers Copy as (page opener with disclosure glyph) opening Clean markdown / Full transcript / Save .md… / Back,Clean copies role headings plus verbatim user/assistant content with tool activity, thinking, and system noise skipped and images as placeholders,Full also renders tool rows and thinking as collapsed details blocks with citations under their message,Copy works for persisted rows (DB source) and open native session rows (store source) in both the grouped browser and the Workspaces tree,Save .md validates the path and writes the slug-named file,Empty chats disable the copy entries with a stated reason
 <!-- AC:END -->
+
+## Renumbering
+
+TASK-19601 owner rule: this task originally took id 25714, which collided
+with the older arrival ``task-25714 - Console-Context-rail-still-overflows-
+below-140x40.md`` already on dev. Renumbered to TASK-25836 with this
+provenance section; frontmatter, doc comments, and test references were
+updated with it. Earlier commit messages on this branch still name
+TASK-25714.
 
 ## Implementation Plan
 

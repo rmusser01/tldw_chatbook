@@ -5144,7 +5144,7 @@ class ChatScreen(BaseAppScreen):
     ) -> bool:
         """Cheap open-time probe: does this row have any messages?
 
-        TASK-25714: gates the copy entries. A native session asks the live
+        TASK-25836: gates the copy entries. A native session asks the live
         store; a persisted conversation asks the database for a single row.
         """
         if native_session_id:
@@ -5168,7 +5168,7 @@ class ChatScreen(BaseAppScreen):
     def _console_markdown_source_messages(self, target) -> list:
         """Return normalized messages for a copy target, or [].
 
-        Source pick (TASK-25714): an open native session reads the LIVE
+        Source pick (TASK-25836): an open native session reads the LIVE
         chat store (richest fidelity -- in-flight tool structure never
         needed serializing); a persisted conversation reads the database,
         paginated so long chats are not silently truncated at the default
@@ -5332,7 +5332,7 @@ class ChatScreen(BaseAppScreen):
         target = event.target
         action_id = event.action_id
         conversation_id = (target.conversation_id or "").strip()
-        # TASK-25714: copy/save work for open native sessions too (their
+        # TASK-25836: copy/save work for open native sessions too (their
         # messages come from the live store), so they route BEFORE the
         # persisted-id guard below.
         if action_id in ("copy-markdown:clean", "copy-markdown:full"):

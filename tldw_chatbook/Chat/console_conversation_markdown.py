@@ -1,4 +1,4 @@
-"""Pure markdown rendering for one Console conversation (TASK-25714).
+"""Pure markdown rendering for one Console conversation (TASK-25836).
 
 Copy-as-markdown backs the conversation action menu's "Copy as" page: Clean
 copies a shareable rendering (role headings plus verbatim user/assistant

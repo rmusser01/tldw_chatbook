@@ -1,4 +1,4 @@
-"""One-field path prompt for Save .md (TASK-25714).
+"""One-field path prompt for Save .md (TASK-25836).
 
 Mirrors ``ConsoleWorkspaceRenameModal``'s contract: pushes with a callback
 receiving the entered string or None on cancel/dismiss. The default value is

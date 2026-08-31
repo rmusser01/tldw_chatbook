@@ -1,4 +1,4 @@
-"""Golden-string tests for the conversation markdown renderer (TASK-25714)."""
+"""Golden-string tests for the conversation markdown renderer (TASK-25836)."""
 
 from __future__ import annotations
 
