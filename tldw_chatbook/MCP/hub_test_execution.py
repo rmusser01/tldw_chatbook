@@ -11,7 +11,7 @@ import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Any, Literal, cast
+from typing import Any, Callable, Literal, cast
 
 from tldw_chatbook.Utils.filesystem_identity import DirectoryChain
 
@@ -162,6 +162,7 @@ class ToolTestPreviewRegistry:
         *,
         max_entries: int = 64,
         ttl_seconds: float = 300.0,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         if max_entries <= 0:
             raise ValueError("max_entries must be positive")
@@ -169,6 +170,7 @@ class ToolTestPreviewRegistry:
             raise ValueError("ttl_seconds must be finite and positive")
         self._max_entries = max_entries
         self._ttl_seconds = ttl_seconds
+        self._clock = clock if clock is not None else time.monotonic
         self._lock = threading.Lock()
         self._entries: OrderedDict[str, RegisteredToolTestPreview] = OrderedDict()
 
@@ -184,7 +186,7 @@ class ToolTestPreviewRegistry:
     ) -> ToolTestAdmissionPreview:
         """Mint and retain one immutable preview, evicting oldest entries."""
         with self._lock:
-            now = time.monotonic()
+            now = self._clock()
             self._purge_expired_locked(now)
             while len(self._entries) >= self._max_entries:
                 self._entries.popitem(last=False)
@@ -212,7 +214,7 @@ class ToolTestPreviewRegistry:
     def consume(self, nonce: str) -> RegisteredToolTestPreview | None:
         """Atomically remove and return one unexpired preview."""
         with self._lock:
-            now = time.monotonic()
+            now = self._clock()
             self._purge_expired_locked(now)
             return self._entries.pop(nonce, None)
 

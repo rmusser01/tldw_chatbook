@@ -27,19 +27,25 @@ from tldw_chatbook.MCP.hub_test_execution import (
     ToolTestAdmissionBlocked,
     ToolTestAdmissionPreview,
     ToolTestAdmissionStale,
+    ToolTestPreviewRegistry,
     authority_fingerprint,
 )
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.local_store import LocalMCPStore
 from tldw_chatbook.MCP.permission_store import (
     BUILTIN_TOOL_SERVER_KEY,
+    EffectiveToolState,
     MCPPermissionStore,
     definition_hash,
 )
 from tldw_chatbook.MCP.unified_control_plane_service import (
     UnifiedMCPControlPlaneService,
 )
-from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+from tldw_chatbook.Utils.filesystem_identity import (
+    DirectoryChain,
+    DirectoryIdentity,
+    capture_directory_chain,
+)
 
 
 def _tool(
@@ -823,6 +829,256 @@ def test_set_server_and_global_defaults_write_to_named_profile(tmp_path):
 
 
 # -- immutable Hub Test Tool admission --------------------------------------
+
+
+def _install_external_tool(service, tool: HubTool, state: dict) -> None:
+    def _catalog():
+        if not state.get("present", True):
+            return []
+        profile_id = state.get("profile_id", tool.server_key.split(":", 1)[1])
+        return [
+            {
+                "profile_id": profile_id,
+                "is_connected": True,
+                "discovery_snapshot": {
+                    "tools": [
+                        {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "inputSchema": tool.input_schema,
+                        }
+                    ]
+                },
+            }
+        ]
+
+    service.local_service.get_external_servers = _catalog
+
+
+async def _assert_consumed_without_second_audit(
+    service: UnifiedMCPControlPlaneService,
+    store: LocalMCPStore,
+    nonce: str,
+) -> None:
+    records_before_reuse = _permission_log_records(store)
+    reused = await service.execute_prepared_hub_test(nonce, "run", {})
+    assert isinstance(reused, ToolTestAdmissionStale)
+    assert reused.reason == "preview_unavailable"
+    assert reused.refreshed_preview is None
+    assert _permission_log_records(store) == records_before_reuse
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("rendered_gate", "fresh_mode", "intent", "expected_refreshed_gate"),
+    [
+        ("allow", "off", "run", "deny"),
+        ("ask", "off", "approve_once", "deny"),
+        ("ask", "unresolved", "approve_once", "unresolved"),
+        ("ask", "error", "approve_once", "unresolved"),
+    ],
+)
+async def test_prepared_hub_gate_races_consume_and_refresh_without_dispatch(
+    tmp_path,
+    rendered_gate,
+    fresh_mode,
+    intent,
+    expected_refreshed_gate,
+):
+    service, store = _service(tmp_path)
+    tool = _tool()
+    state = {"gate": rendered_gate}
+    _install_external_tool(service, tool, state)
+
+    def _gate(_tool):
+        mode = state["gate"]
+        if mode == "error":
+            raise RuntimeError("permission store unavailable")
+        if mode == "unresolved":
+            return EffectiveToolState(state="ask", origin="gate_error")
+        return EffectiveToolState(
+            state="deny" if mode == "off" else mode,
+            origin="tool_override",
+        )
+
+    service.gate_tool_test = _gate
+    nonlocal_handler = AsyncMock(return_value={"should": "not run"})
+    local_handler = AsyncMock(return_value={"should": "not run"})
+    service.test_hub_tool = nonlocal_handler
+    service._execute_prepared_local_hub_test = local_handler
+    preview = service.prepare_hub_test(tool)
+    state["gate"] = fresh_mode
+
+    result = await service.execute_prepared_hub_test(preview.nonce, intent, {})
+
+    assert isinstance(result, ToolTestAdmissionStale)
+    assert result.reason == "gate_changed"
+    assert result.refreshed_preview is not None
+    assert result.refreshed_preview.rendered_gate == expected_refreshed_gate
+    nonlocal_handler.assert_not_awaited()
+    local_handler.assert_not_awaited()
+    records = _permission_log_records(store)
+    assert len(records) == 1
+    assert records[0]["error_category"] == "gate_changed"
+    await _assert_consumed_without_second_audit(service, store, preview.nonce)
+
+
+@pytest.mark.asyncio
+async def test_prepared_hub_rendered_ask_run_is_blocked_consumed_and_refreshed(
+    tmp_path,
+):
+    service, store = _service(tmp_path)
+    tool = _tool()
+    _install_external_tool(service, tool, {})
+    handler = AsyncMock(return_value={"should": "not run"})
+    local_handler = AsyncMock(return_value={"should": "not run"})
+    service.test_hub_tool = handler
+    service._execute_prepared_local_hub_test = local_handler
+    preview = service.prepare_hub_test(tool)
+
+    result = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+
+    assert isinstance(result, ToolTestAdmissionBlocked)
+    assert result.reason == "intent_mismatch"
+    assert result.refreshed_preview is not None
+    assert result.refreshed_preview.rendered_gate == "ask"
+    handler.assert_not_awaited()
+    local_handler.assert_not_awaited()
+    records = _permission_log_records(store)
+    assert len(records) == 1
+    assert records[0]["error_category"] == "intent_mismatch"
+    await _assert_consumed_without_second_audit(service, store, preview.nonce)
+
+
+@pytest.mark.asyncio
+async def test_prepared_hub_exact_live_identity_change_is_stale_without_dispatch(
+    tmp_path,
+):
+    service, store = _service(tmp_path)
+    tool = _tool(server_key="local:demo")
+    state = {"profile_id": "demo"}
+    _install_external_tool(service, tool, state)
+    handler = AsyncMock(return_value={"should": "not run"})
+    local_handler = AsyncMock(return_value={"should": "not run"})
+    service.test_hub_tool = handler
+    service._execute_prepared_local_hub_test = local_handler
+    preview = service.prepare_hub_test(tool)
+    state["profile_id"] = "replacement"
+
+    result = await service.execute_prepared_hub_test(preview.nonce, "approve_once", {})
+
+    assert isinstance(result, ToolTestAdmissionStale)
+    assert result.reason == "identity_changed"
+    assert result.refreshed_preview is None
+    handler.assert_not_awaited()
+    local_handler.assert_not_awaited()
+    records = _permission_log_records(store)
+    assert len(records) == 1
+    assert records[0]["error_category"] == "identity_changed"
+    await _assert_consumed_without_second_audit(service, store, preview.nonce)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("identity_index", [0, 1], ids=["root", "ancestor"])
+async def test_prepared_local_directory_chain_identity_change_is_stale(
+    tmp_path, monkeypatch, identity_index
+):
+    import tldw_chatbook.MCP.local_server_tools as local_server_tools
+    import tldw_chatbook.MCP.unified_control_plane_service as service_module
+
+    service, store = _service(tmp_path)
+    tool = _tool(server_key=LOCAL_SERVER_KEY, name="fs_read")
+    original = capture_directory_chain(tmp_path)
+    changed_identities = list(original.identities)
+    changed_identity = changed_identities[identity_index]
+    changed_identities[identity_index] = DirectoryIdentity(
+        device=changed_identity.device,
+        inode=changed_identity.inode + 1,
+        mode=changed_identity.mode,
+        reparse=changed_identity.reparse,
+    )
+    changed_authority = DirectoryChain(
+        canonical_root=original.canonical_root,
+        identities=tuple(changed_identities),
+    )
+    authority = {"value": original}
+
+    class _Provider:
+        def hub_tools(self):
+            return [tool]
+
+    class _Handle:
+        provider = _Provider()
+
+        @property
+        def authority(self):
+            return authority["value"]
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(
+        local_server_tools,
+        "build_hub_local_inspection_provider",
+        lambda *a, **k: _Handle(),
+    )
+    monkeypatch.setattr(
+        local_server_tools, "build_hub_local_provider", lambda *a, **k: _Handle()
+    )
+    monkeypatch.setattr(
+        local_server_tools, "resolve_server_workspace_root", lambda: tmp_path
+    )
+    monkeypatch.setattr(service_module, "get_cli_setting", lambda *a, **k: True)
+    service.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
+    local_handler = AsyncMock(return_value={"should": "not run"})
+    nonlocal_handler = AsyncMock(return_value={"should": "not run"})
+    service._execute_prepared_local_hub_test = local_handler
+    service.test_hub_tool = nonlocal_handler
+    preview = service.prepare_hub_test(tool)
+    authority["value"] = changed_authority
+
+    result = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+
+    assert isinstance(result, ToolTestAdmissionStale)
+    assert result.reason == "authority_changed"
+    assert result.refreshed_preview is not None
+    assert result.refreshed_preview.authority_fingerprint == authority_fingerprint(
+        changed_authority
+    )
+    local_handler.assert_not_awaited()
+    nonlocal_handler.assert_not_awaited()
+    records = _permission_log_records(store)
+    assert len(records) == 1
+    assert records[0]["error_category"] == "authority_changed"
+    await _assert_consumed_without_second_audit(service, store, preview.nonce)
+
+
+@pytest.mark.asyncio
+async def test_prepared_hub_preview_expiry_uses_injected_registry_clock(tmp_path):
+    service, store = _service(tmp_path)
+    tool = _tool()
+    _install_external_tool(service, tool, {})
+    now = {"value": 10.0}
+    service._hub_test_previews = ToolTestPreviewRegistry(
+        ttl_seconds=5.0,
+        clock=lambda: now["value"],
+    )
+    handler = AsyncMock(return_value={"should": "not run"})
+    local_handler = AsyncMock(return_value={"should": "not run"})
+    service.test_hub_tool = handler
+    service._execute_prepared_local_hub_test = local_handler
+    preview = service.prepare_hub_test(tool)
+    now["value"] = 15.0
+
+    result = await service.execute_prepared_hub_test(preview.nonce, "approve_once", {})
+
+    assert isinstance(result, ToolTestAdmissionStale)
+    assert result.reason == "preview_unavailable"
+    assert result.refreshed_preview is None
+    handler.assert_not_awaited()
+    local_handler.assert_not_awaited()
+    assert _permission_log_records(store) == []
+    await _assert_consumed_without_second_audit(service, store, preview.nonce)
 
 
 def test_admission_preview_resolves_live_exact_definition_gate_and_authority(

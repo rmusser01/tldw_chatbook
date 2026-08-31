@@ -1039,6 +1039,102 @@ async def test_prepared_hub_invalid_arguments_fail_before_nonce_consumption_or_a
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid_arguments",
+    [
+        pytest.param({"custom": object()}, id="custom-value"),
+        pytest.param({"number": float("nan")}, id="nan"),
+        pytest.param({"number": float("inf")}, id="positive-infinity"),
+        pytest.param({"number": float("-inf")}, id="negative-infinity"),
+        pytest.param({"nested": [{"number": float("nan")}]}, id="nested-nan"),
+        pytest.param({1: "non-string key"}, id="non-string-key"),
+        pytest.param({"nested": {2: "non-string key"}}, id="nested-non-string-key"),
+    ],
+)
+async def test_prepared_hub_strict_json_rejection_preserves_nonce_and_audit(
+    tmp_path,
+    invalid_arguments,
+):
+    service, fake, _client, store = _service(tmp_path)
+    tool = _prepared_external_tool()
+    _install_prepared_external_catalog(fake, tool)
+    service.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
+    service.test_hub_tool = AsyncMock(return_value={"ok": True})
+    preview = service.prepare_hub_test(tool)
+
+    with pytest.raises(ValueError):
+        await service.execute_prepared_hub_test(
+            preview.nonce,
+            "run",
+            invalid_arguments,
+        )
+
+    assert _log_records(store) == []
+    service.test_hub_tool.assert_not_awaited()
+    result = await service.execute_prepared_hub_test(
+        preview.nonce,
+        "run",
+        {"q": "valid"},
+    )
+    assert result == {"ok": True}
+    service.test_hub_tool.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["external", "builtin"])
+async def test_prepared_hub_real_delegate_appends_exactly_one_terminal_row(
+    tmp_path,
+    source,
+):
+    service, fake, client, store = _service(tmp_path)
+    if source == "external":
+        tool = _prepared_external_tool()
+        _install_prepared_external_catalog(fake, tool)
+        arguments = {"q": "real delegate"}
+    else:
+        tool = HubTool(
+            server_key="builtin:tldw_chatbook",
+            server_label="tldw_chatbook",
+            source="builtin",
+            name="calculator",
+            description="Calculate",
+            input_schema={"type": "object", "properties": {"x": {"type": "number"}}},
+            tags=(),
+            stale=False,
+            executable=True,
+        )
+        fake.get_inventory = lambda: {
+            "tools": [
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "inputSchema": tool.input_schema,
+                }
+            ]
+        }
+        arguments = {"x": 1}
+    service.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
+    preview = service.prepare_hub_test(tool)
+
+    result = await service.execute_prepared_hub_test(
+        preview.nonce,
+        "run",
+        arguments,
+    )
+
+    assert result == (
+        client.call_tool_response if source == "external" else fake.builtin_result
+    )
+    records = _log_records(store)
+    assert len(records) == 1
+    assert records[0]["status"] == "success"
+    assert records[0]["server_key"] == tool.server_key
+    assert records[0]["tool_name"] == tool.name
+    assert records[0]["initiator"] == "test"
+    assert records[0]["decision"] == "allowed"
+
+
+@pytest.mark.asyncio
 async def test_prepared_hub_uses_canonical_copy_when_caller_mutates_during_admission(
     tmp_path,
 ):
