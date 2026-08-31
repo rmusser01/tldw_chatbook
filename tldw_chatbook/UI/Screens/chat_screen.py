@@ -4456,8 +4456,15 @@ class ChatScreen(BaseAppScreen):
             # task-25836: once the snapshot loads, the Next Send header
             # count switches from the draft-only pre-load value to the whole
             # next-send request (system + messages + tools + staged
-            # evidence) this estimate computes from the payload.
-            payload_estimate=self._console_next_send_token_estimate,
+            # evidence) this estimate computes from the payload. The
+            # session is captured so a session switch behind the open
+            # inspector cannot splice the wrong session's staged evidence
+            # into the estimate.
+            payload_estimate=lambda snapshot: (
+                self._console_next_send_token_estimate(
+                    snapshot, session_id=session_id
+                )
+            ),
             **project_instruction_ui.project_instruction_context_kwargs(
                 self, controller, session_id
             ),
@@ -4537,7 +4544,7 @@ class ChatScreen(BaseAppScreen):
         return estimate_tokens(text, "", "")
 
     def _console_next_send_token_estimate(
-        self, snapshot: Any
+        self, snapshot: Any, session_id: Optional[str] = None
     ) -> Optional[int]:
         """Estimate the tokens the snapshot's next-send payload will ship.
 
@@ -4551,10 +4558,24 @@ class ChatScreen(BaseAppScreen):
         zero-I/O seam ``console_prompted_evidence_text`` the settings
         estimate and cost chip already read). Degrades to ``None`` on an
         assembly-error payload -- no count is better than a wrong one.
+
+        ``session_id`` is the session the snapshot was captured for; the
+        screen-global staged launch is folded in ONLY while that session is
+        still the active one, mirroring
+        ``_console_settings_context_estimate_for_session``'s
+        ``include_active_staging`` gate -- a session switch behind an open
+        inspector must not splice the new session's staged evidence into
+        the old session's estimate.
         """
         payload = getattr(snapshot, "next_send_payload", None)
         if not isinstance(payload, dict) or payload.get("error"):
             return None
+        include_staged = True
+        if session_id is not None:
+            store = self._console_chat_store
+            include_staged = (
+                store is not None and store.active_session_id == session_id
+            )
         provider, model, _settings = self._active_console_provider_model_display()
         return estimate_console_next_send_tokens(
             payload_messages=payload.get("messages") or [],
@@ -4564,7 +4585,9 @@ class ChatScreen(BaseAppScreen):
                 console_prompted_evidence_text(
                     self._pending_console_launch_context
                 ),
-            ),
+            )
+            if include_staged
+            else (),
             model=model or "",
             provider=provider or "",
         )
@@ -8282,13 +8305,18 @@ class ChatScreen(BaseAppScreen):
 
         task-25836: while a conversation has no answered/billed turns, the
         next request carries the session system prompt, the native tool
-        schemas, and the composer draft -- none of which are transcript
-        rows, so the cost chip under-reported a first send as "0 tok".
-        Returns duck-typed rows (``.role``/``.content``/``.usage=None``,
-        the same contract as the staged-evidence pseudo-row) that
-        ``build_cost_snapshot`` prices through its ESTIMATED-row branch,
-        flipping `has_estimated_entries` so the chip's ``~`` honesty marker
-        shows.
+        schemas, the effective-memory rows, an optional response prefill,
+        and the composer draft -- none of which are transcript rows, so the
+        cost chip under-reported a first send as "0 tok". Memory and
+        prefill are resolved through the controller's own read-only seams
+        (``_project_session_effective_memory`` /
+        ``_resolve_submit_prefill`` -- the same projections the real
+        assembly uses) rather than re-derived here, so the estimate tracks
+        what dispatch would actually carry. Returns duck-typed rows
+        (``.role``/``.content``/``.usage=None``, the same contract as the
+        staged-evidence pseudo-row) that ``build_cost_snapshot`` prices
+        through its ESTIMATED-row branch, flipping
+        ``has_estimated_entries`` so the chip's ``~`` honesty marker shows.
 
         Empty when no send is pending: a blank draft short-circuits before
         any state is read (the steady-state cost of this on the sync tick
@@ -8296,6 +8324,12 @@ class ChatScreen(BaseAppScreen):
         has ANY assistant row or recorded usage -- after that the chip is a
         running total of what was actually sent, and re-adding
         system/tools per tick would corrupt it.
+
+        The DRAFT row is dropped when the trailing transcript row is a
+        user message carrying the same text: that is the mouse-send window
+        where the real user row is already persisted (and priced) but the
+        composer draft is not cleared until the send completes -- appending
+        the draft again would double-count it.
         """
         composer = self._console_composer_or_none()
         draft = composer.draft_text() if composer is not None else ""
@@ -8314,6 +8348,19 @@ class ChatScreen(BaseAppScreen):
                 return []
             if str(getattr(message.role, "value", message.role)) == "assistant":
                 return []
+        # Qodo review finding 2 (mouse-send race): with no assistant/usage
+        # rows, a trailing user row whose content matches the draft means
+        # the send is already in flight and the draft is persisted as a
+        # real (estimated) row -- re-adding it here would double-count.
+        draft_pending = True
+        if messages:
+            last = messages[-1]
+            if (
+                str(getattr(last.role, "value", last.role)) == "user"
+                and str(getattr(last, "content", "") or "").strip()
+                == str(draft).strip()
+            ):
+                draft_pending = False
         rows: list[Any] = []
         settings = self._session._active_console_session_settings()
         system_prompt = str(getattr(settings, "system_prompt", "") or "")
@@ -8336,7 +8383,44 @@ class ChatScreen(BaseAppScreen):
                     role="system", content=json.dumps(schemas, default=str), usage=None
                 )
             )
-        rows.append(SimpleNamespace(role="user", content=draft, usage=None))
+        # Qodo review finding 1: fold the controller's own effective-memory
+        # and prefill projections in rather than under-counting a
+        # configured session. Both seams are synchronous and read-only
+        # (the preview path uses them the same way, without consuming the
+        # one-shot); best-effort, since a chip estimate must never raise.
+        controller = self._console_chat_controller
+        try:
+            projection_rows = [
+                {"role": str(getattr(row.role, "value", row.role)), "content": row.content}
+                for row in rows
+            ]
+            _effective, projection = (
+                controller._project_session_effective_memory(
+                    session_id, projection_rows
+                )
+            )
+            for memory_row in projection.memory:
+                content = memory_row.get("content", "")
+                if str(content).strip():
+                    rows.append(
+                        SimpleNamespace(
+                            role=memory_row.get("role", "system"),
+                            content=content,
+                            usage=None,
+                        )
+                    )
+        except Exception:
+            pass
+        try:
+            prefill, _from_one_shot = controller._resolve_submit_prefill(session_id)
+        except Exception:
+            prefill = None
+        if prefill and str(prefill).strip():
+            rows.append(
+                SimpleNamespace(role="assistant", content=prefill, usage=None)
+            )
+        if draft_pending:
+            rows.append(SimpleNamespace(role="user", content=draft, usage=None))
         return rows
 
     def _build_console_cost_state(self) -> ConsoleCostState | None:

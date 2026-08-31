@@ -689,3 +689,23 @@ def test_next_send_estimate_accepts_multimodal_part_list_content():
 
     assert total is not None
     assert total > 0
+
+
+@pytest.mark.unit
+def test_next_send_estimate_skips_schemas_that_cannot_serialize():
+    """Qodo finding 3: a schema object whose serialization raises must
+    degrade to "no tools row", not propagate out of the estimator."""
+
+    class _Unserializable:
+        def __str__(self):  # pragma: no cover - exercised via dumps
+            raise TypeError("no repr for you")
+
+    total = estimate_console_next_send_tokens(
+        payload_messages=_FIRST_SEND_MESSAGES,
+        tools_info={"native_schemas": [{"name": _Unserializable()}]},
+    )
+    without = estimate_console_next_send_tokens(
+        payload_messages=_FIRST_SEND_MESSAGES
+    )
+
+    assert total == without

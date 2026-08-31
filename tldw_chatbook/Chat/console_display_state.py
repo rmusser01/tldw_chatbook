@@ -1067,9 +1067,17 @@ def estimate_console_next_send_tokens(
         else None
     )
     if schemas:
-        rows.append(
-            {"role": "system", "content": json.dumps(schemas, default=str)}
-        )
+        # Serialization is guarded, not assumed: a schema object whose
+        # repr raises (or a cyclic structure a provider handed back) must
+        # degrade to "no tools row" rather than propagate out of the
+        # estimator -- "no count is better than a wrong one" cuts both
+        # ways.
+        try:
+            schemas_text = json.dumps(schemas, default=str)
+        except (TypeError, ValueError):
+            schemas_text = ""
+        if schemas_text:
+            rows.append({"role": "system", "content": schemas_text})
     for text in extra_texts:
         if str(text).strip():
             rows.append({"role": "user", "content": text})
