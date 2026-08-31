@@ -3461,7 +3461,8 @@ enabled = false
 # Bind address. Loopback by default; prometheus_client's own default is
 # 0.0.0.0, which would expose the endpoint to your whole network.
 bind_address = "127.0.0.1"
-port = 8000
+# 9090 is the Prometheus convention. 8000 is already taken by [web_server].
+port = 9090
 
 [database]
 # scheduled_tasks_db_path = "/custom/path.db"  # optional override

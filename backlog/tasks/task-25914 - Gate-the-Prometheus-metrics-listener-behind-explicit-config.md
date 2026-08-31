@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-31 15:11'
-updated_date: '2026-08-31 16:25'
+updated_date: '2026-08-31 16:52'
 labels:
   - ops
   - security
@@ -47,23 +47,30 @@ ADR required: no. A defect fix that adds one config gate; it removes a network s
 <!-- SECTION:NOTES:BEGIN -->
 Gated the Prometheus listener on `[metrics] enabled`, defaulting off, and moved port/bind-address resolution into `Metrics/metrics.py` so the gate sits at the choke point rather than the call site.
 
-**Approach.** The gate lives in `init_metrics_server`, not in `app.py`, so any future caller inherits it. `_metrics_server_config()` resolves the three settings through `_get_cli_setting`, a thin indirection that keeps the `config` import lazy (this module is imported early) and lets tests exercise resolution with no config file on disk. The bind address defaults to `127.0.0.1`; `prometheus_client.start_http_server` defaults to `0.0.0.0`, which is exactly the behaviour that made this a defect.
+**Approach.** The gate lives in `init_metrics_server`, not in `app.py`, so any future caller inherits it, and it is checked *before* `PROMETHEUS_AVAILABLE` so a missing dependency can never mask a broken gate. `_metrics_server_config()` resolves the three settings through `_get_cli_setting`, a thin indirection that keeps the `config` import lazy (this module is imported early) and lets tests exercise resolution with no config file on disk. Bind address defaults to `127.0.0.1`; `prometheus_client.start_http_server` defaults to `0.0.0.0`, which is what made this a defect rather than a preference.
+
+**Every value fails closed.** Coercion goes through the shared `config.coerce_bool_setting` / `coerce_int_setting` helpers rather than builtins. This matters: `bool("false")` is `True` in Python, so a user quoting the boolean out of YAML or env habit would have meant *off* and got an unauthenticated listener - the same fail-open shape this task exists to remove, relocated from dependency-presence to value coercion. Caught in review, not by me. A non-string or empty `bind_address` also falls back to loopback, because `str(0)` is `"0"` and `getaddrinfo` resolves that to `0.0.0.0`.
 
 **Behaviour changes worth knowing.**
-- `app.py` no longer reads `METRICS_PORT` with a `"8000"` fallback. That fallback meant the env default silently overrode a configured port. The variable still overrides the port, now resolved in one place, but it no longer *enables* the listener.
-- The unimplemented 2026-08-12 launch-diagnostics plan proposed "environment port alone opts in". That conflicts with AC#1, which requires a config setting, so the AC was followed and the divergence is recorded here rather than decided silently. If env-as-consent is wanted, it is a one-line change and an owner call.
-- When metrics are disabled the function logs at DEBUG, not INFO: a feature the user never turned on should not narrate itself at startup. A new test pins that.
+- Default port is now 9090 (Prometheus convention). 8000 collided with `[web_server] port`; both bound localhost:8000 and whichever started second would fail.
+- A non-loopback bind logs at WARNING, not INFO, naming the address - exposing an unauthenticated endpoint to the network should be hard to miss.
+- `app.py` no longer reads `METRICS_PORT` with a `"8000"` fallback. `METRICS_PORT` still overrides the port, resolved in one place, and a junk value now falls back to the *configured* port rather than the built-in default. It does not enable the listener. (Correction to an earlier draft of these notes: that fallback could not previously have overridden "a configured port", because `[metrics]` did not exist before this change. Removing it is still right; the justification was retroactive.)
+- The unimplemented 2026-08-12 launch-diagnostics plan proposed "environment port alone opts in". That conflicts with AC#1, so the AC was followed and the divergence recorded rather than decided silently. Making env-as-consent is a one-line change and an owner call.
+- When metrics are disabled the function logs at DEBUG: a feature the user never enabled should not narrate itself at startup.
 
-**Existing tests updated, not bypassed.** Three tests in `test_startup_metric_outcomes.py` pinned the old contract and failed. Each protects a real invariant that was preserved: dependency-unavailable still returns False with an honest message (now reachable only when enabled), a start failure still propagates with no success log, and an explicit port is still honoured. Their stubs took `(port)` only and were widened for the `addr` keyword.
+**Existing tests updated, not bypassed.** Three tests in `test_startup_metric_outcomes.py` pinned the old contract. Each protects a real invariant that was preserved - dependency-unavailable returns False with an honest message, a start failure propagates with no success log, an explicit port is honoured - and their stubs were widened for the `addr` keyword. The rewrites are strictly stronger: `calls == [8123]` became `calls == [(8123, "127.0.0.1")]`, pinning the loopback default at the call boundary.
 
-**Verification.** 22 tests pass in `Tests/Metrics/`; 268 pass across `Tests/Metrics/`, `Tests/App/`, `Tests/Utils/test_metrics_logger.py`. Three collection errors under `Tests/Terminal/` are baseline (`No module named 'pyte'`), confirmed by re-collecting with the changes stashed.
+**Verification.** 295 tests pass across `Tests/Metrics/`, `Tests/App/`, `Tests/Utils/test_metrics_logger.py` and `Tests/Packaging/test_config_import_closure.py`. Three collection errors under `Tests/Terminal/` are baseline (`No module named 'pyte'`), confirmed by re-collecting with the changes stashed.
 
-Because `prometheus_client` is not in the project venv, the socket-level criteria were verified against the real dependency in an isolated venv on `PYTHONPATH`:
-- AC#2: disabled -> returns False, nothing listening on the port. Enabled -> returns True and the port accepts a connection.
+`prometheus_client` is not in the project venv, so the socket-level criteria were verified against the real dependency in an isolated venv on `PYTHONPATH`:
+- AC#2: disabled -> returns False, nothing listening. Enabled -> returns True, port accepts a connection.
 - AC#3: `lsof -nP -iTCP:8758 -sTCP:LISTEN` reported `TCP 127.0.0.1:8758 (LISTEN)` - loopback, not `*:8758`.
-- AC#5: with the listener off, a counter recorded 3.0 and a histogram count 1.0 in the real registry. The in-suite test only proves the call path stays reachable, since the metric classes are no-op stand-ins without the dependency; its docstring says so.
+- AC#5: with the listener off, a counter recorded 3.0 and a histogram count 1.0 in the real registry.
+- Post-review: `enabled = "false"` returns False and binds nothing, against the real dependency.
+
+**Review round.** A code review found one Important fail-open (the `bool()` coercion above) plus eight Minor items; all were fixed rather than deferred, since they were the same class of defect as the one being closed: unusable `bind_address`/`port` values now fall back instead of reaching the socket layer, junk `METRICS_PORT` no longer discards a configured port, non-loopback binds warn, the port default moved off the `[web_server]` collision, the unused `addr` parameter was dropped, and stale references in the sample comment, `Docs/Development/Metrics/STARTUP_METRICS_SUMMARY.md` and a dead `test_startup_init_hygiene.py` fixture entry were cleaned up. The review also showed two tests were asserting `default == default` through a stubbed resolver, so they pinned module constants rather than shipped behaviour; a template-parse test and an out-of-process test that reads a real config file through the real loader were added. That second one matters because every other test here stubs the resolver and would stay green if the `get_cli_setting` lookup shape silently stopped resolving - a failure this repo has had before (TASK-1771's dotted-section trap).
 
 A trap worth repeating: the first socket check ran a script from the scratchpad and silently imported `tldw_chatbook` from the **main checkout** via the editable install, because `sys.path[0]` is the script's directory. It reported a passing-looking result for code that was never under test. Verification scripts must put the worktree on `PYTHONPATH` and assert `module.__file__` before trusting anything.
 
-**Files:** `tldw_chatbook/Metrics/metrics.py` (gate, config resolution, imports), `tldw_chatbook/app.py` (call site), `tldw_chatbook/config.py` (`[metrics]` block in `CONFIG_TOML_CONTENT`), `Tests/Metrics/test_metrics_server_gate.py` (new, 8 tests), `Tests/Metrics/test_startup_metric_outcomes.py` (3 updated, 1 added).
+**Files:** `tldw_chatbook/Metrics/metrics.py`, `tldw_chatbook/app.py`, `tldw_chatbook/config.py`, `Docs/Development/Metrics/STARTUP_METRICS_SUMMARY.md`, `Tests/Metrics/test_metrics_server_gate.py` (new), `Tests/Metrics/test_startup_metric_outcomes.py`, `Tests/App/test_startup_init_hygiene.py`.
 <!-- SECTION:NOTES:END -->

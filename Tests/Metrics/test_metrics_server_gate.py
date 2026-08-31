@@ -144,3 +144,162 @@ def test_metrics_port_env_var_overrides_configured_port(monkeypatch):
 
     assert resolved["port"] == 9555
     assert resolved["enabled"] is False, "env var must not enable the listener"
+
+
+# --- coercion: the gate must fail CLOSED on odd values, not open -------------
+# Review finding 1/3/5 on TASK-25914. bool("false") is True in Python, so a user
+# who quotes the boolean out of YAML/env habit meant "off" and would have got an
+# unauthenticated listener -- the same fail-open shape this task set out to
+# remove, relocated from dependency-presence to value coercion.
+
+
+@pytest.mark.parametrize("raw", ["false", "0", "no", "off", ""])
+def test_stringly_false_does_not_enable_the_listener(monkeypatch, raw):
+    monkeypatch.setattr(
+        prometheus_metrics,
+        "_get_cli_setting",
+        lambda section, key, default: raw if key == "enabled" else default,
+    )
+
+    assert prometheus_metrics._metrics_server_config()["enabled"] is False
+
+
+@pytest.mark.parametrize("raw", ["true", "1", "yes"])
+def test_stringly_true_still_enables_the_listener(monkeypatch, raw):
+    monkeypatch.setattr(
+        prometheus_metrics,
+        "_get_cli_setting",
+        lambda section, key, default: raw if key == "enabled" else default,
+    )
+
+    assert prometheus_metrics._metrics_server_config()["enabled"] is True
+
+
+@pytest.mark.parametrize("raw", [0, "", None, [], 123])
+def test_unusable_bind_address_falls_back_to_loopback(monkeypatch, raw):
+    """str(0) is "0", which getaddrinfo resolves to 0.0.0.0 -- all interfaces."""
+    monkeypatch.setattr(
+        prometheus_metrics,
+        "_get_cli_setting",
+        lambda section, key, default: raw if key == "bind_address" else default,
+    )
+
+    assert prometheus_metrics._metrics_server_config()["bind_address"] == "127.0.0.1"
+
+
+@pytest.mark.parametrize("raw", [0, 70000, "garbage", None])
+def test_unusable_port_falls_back_to_default(monkeypatch, raw):
+    monkeypatch.setattr(
+        prometheus_metrics,
+        "_get_cli_setting",
+        lambda section, key, default: raw if key == "port" else default,
+    )
+
+    assert prometheus_metrics._metrics_server_config()["port"] == 9090
+
+
+def test_garbage_env_port_falls_back_to_the_configured_port(monkeypatch):
+    """A junk env var must not discard a deliberately configured port."""
+    monkeypatch.setenv("METRICS_PORT", "not-a-port")
+    monkeypatch.setattr(
+        prometheus_metrics,
+        "_get_cli_setting",
+        lambda section, key, default: 9000 if key == "port" else default,
+    )
+
+    assert prometheus_metrics._metrics_server_config()["port"] == 9000
+
+
+def test_non_loopback_bind_is_logged_as_a_warning(monkeypatch, binder, caplog):
+    """Exposing the endpoint beyond localhost must be hard to miss."""
+    _with_config(monkeypatch, enabled=True, port=9123, bind_address="0.0.0.0")
+
+    with caplog.at_level(logging.DEBUG):
+        prometheus_metrics.init_metrics_server()
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warnings, "a non-loopback bind should warn"
+    assert "0.0.0.0" in " ".join(warnings)
+
+
+def test_shipped_config_template_ships_metrics_off():
+    """Pins the default that actually ships, not the module constant."""
+    import tomllib
+
+    from tldw_chatbook import config as config_module
+
+    section = tomllib.loads(config_module.CONFIG_TOML_CONTENT)["metrics"]
+    assert section["enabled"] is False
+    assert section["bind_address"] == "127.0.0.1"
+
+
+@pytest.mark.parametrize("raw", ["on", "enable", "sure", "maybe", object()])
+def test_unrecognised_enabled_value_fails_closed(monkeypatch, raw):
+    """An value the coercion helper does not understand must mean OFF.
+
+    Note the asymmetry in config.coerce_bool_setting: "off" is in its falsy set
+    but "on" is not in its truthy set. For a gate whose default is off that is
+    the safe direction -- both land on "do not bind" -- so this pins the
+    behaviour rather than treating it as a bug to route around.
+    """
+    monkeypatch.setattr(
+        prometheus_metrics,
+        "_get_cli_setting",
+        lambda section, key, default: raw if key == "enabled" else default,
+    )
+
+    assert prometheus_metrics._metrics_server_config()["enabled"] is False
+
+
+def test_real_config_chain_resolves_a_user_enabled_listener(tmp_path):
+    """Pins the actual get_cli_setting("metrics", ...) chain, not a stub.
+
+    Every other test here monkeypatches the resolver, so all of them would stay
+    green if the config lookup shape silently stopped resolving -- a failure
+    this repo has had before (the dotted-section trap, TASK-1771). This one
+    writes a real config file and reads it through the real loader.
+
+    Out-of-process because config is cached per-process and TLDW_CONFIG_PATH is
+    consulted at import time.
+    """
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    config_file = tmp_path / "config.toml"
+    config_file.write_text(
+        '[metrics]\nenabled = true\nport = 9191\nbind_address = "127.0.0.1"\n',
+        encoding="utf-8",
+    )
+
+    repo_root = Path(__file__).resolve().parents[2]
+    env = dict(os.environ, TLDW_CONFIG_PATH=str(config_file))
+    env.pop("METRICS_PORT", None)
+    env["PYTHONPATH"] = str(repo_root) + os.pathsep + env.get("PYTHONPATH", "")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import json;"
+            "import tldw_chatbook.Metrics.metrics as m;"
+            "print('RESULT=' + json.dumps(m._metrics_server_config()))",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(repo_root),
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    line = next(
+        ln for ln in result.stdout.splitlines() if ln.startswith("RESULT=")
+    )
+    resolved = json.loads(line[len("RESULT=") :])
+
+    assert resolved == {
+        "enabled": True,
+        "port": 9191,
+        "bind_address": "127.0.0.1",
+    }

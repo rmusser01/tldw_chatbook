@@ -560,8 +560,7 @@ def test_prometheus_available_returns_true_without_real_listener(
 
     assert calls == [(8123, "127.0.0.1")]
     assert [record.getMessage() for record in caplog.records] == [
-        "Prometheus metrics listener started on 127.0.0.1:8123 (unauthenticated "
-        "-- bind address is configurable via [metrics] bind_address)"
+        "Prometheus metrics listener started on 127.0.0.1:8123"
     ]
 
 
