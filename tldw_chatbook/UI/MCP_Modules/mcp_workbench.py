@@ -100,6 +100,7 @@ from tldw_chatbook.Utils.path_validation import is_safe_path, validate_path
 # Sentinel distinguishing "key absent from a restore blob" from "key present
 # with value None" -- see `_apply_view_state()`'s scope_ref handling.
 _UNSET: Any = object()
+_TOOL_TEST_ACTIVE_POLL_SECONDS = 0.05
 
 
 def _target_id_from_server_key(key: str | None) -> str | None:
@@ -3855,16 +3856,24 @@ class MCPWorkbench(Container):
             )
             return
         try:
-            active = await asyncio.to_thread(
+            was_active = False
+            while await asyncio.to_thread(
                 service.hub_test_active, tool.server_key, tool.name
-            )
-            if active:
-                if self._test_panel_is_current(tool, generation):
-                    self.query_one(MCPInspector).show_test_active(True)
+            ):
+                if not self._test_panel_is_current(tool, generation):
+                    return
+                self.query_one(MCPInspector).show_test_active(True)
+                was_active = True
+                await asyncio.sleep(_TOOL_TEST_ACTIVE_POLL_SECONDS)
+            if not self._test_panel_is_current(tool, generation):
                 return
-            preview = await asyncio.to_thread(service.prepare_hub_test, tool)
+            if was_active:
+                self.query_one(MCPInspector).show_test_preparing()
+            preview = await self._mint_test_preview(service, tool)
             if not isinstance(preview, ToolTestAdmissionPreview):
                 raise TypeError("The service returned an invalid test preview.")
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
             self._render_test_unavailable_if_current(
                 tool, generation, _safe_exception_text(exc)
@@ -3876,8 +3885,33 @@ class MCPWorkbench(Container):
         self._tool_test_preview_nonce = preview.nonce
         self.query_one(MCPInspector).show_test_preview(preview)
 
+    async def _mint_test_preview(
+        self, service: Any, tool: HubTool
+    ) -> ToolTestAdmissionPreview:
+        """Mint off-loop and reclaim a nonce even if its owner is cancelled."""
+        mint_task = asyncio.create_task(
+            asyncio.to_thread(service.prepare_hub_test, tool),
+            name=f"mcp-tool-test-preview-mint:{tool.tool_id}",
+        )
+        try:
+            return await asyncio.shield(mint_task)
+        except asyncio.CancelledError as cancelled:
+            try:
+                preview = await asyncio.shield(mint_task)
+            except Exception as exc:
+                logger.debug(
+                    "Cancelled MCP tool-test preview mint ended with {}",
+                    type(exc).__name__,
+                )
+            else:
+                if isinstance(preview, ToolTestAdmissionPreview):
+                    await asyncio.shield(
+                        self._revoke_test_nonce(preview.nonce, service=service)
+                    )
+            raise cancelled
+
     def _test_panel_is_current(self, tool: HubTool, generation: int) -> bool:
-        if generation != self._tool_test_generation or not self.is_mounted:
+        if generation != self._tool_test_generation or not self.is_attached:
             return False
         try:
             inspector = self.query_one(MCPInspector)
@@ -3912,10 +3946,12 @@ class MCPWorkbench(Container):
             exclusive=False,
         )
 
-    async def _revoke_test_nonce(self, nonce: str | None) -> None:
+    async def _revoke_test_nonce(
+        self, nonce: str | None, *, service: Any | None = None
+    ) -> None:
         if not nonce:
             return
-        service = self._service()
+        service = service or self._service()
         revoke = getattr(service, "revoke_hub_test_preview", None)
         if not callable(revoke):
             return
@@ -4006,7 +4042,7 @@ class MCPWorkbench(Container):
             return
 
         inspector = self.query_one(MCPInspector)
-        if isinstance(outcome, (ToolTestAdmissionBlocked, ToolTestAdmissionStale)):
+        if isinstance(outcome, ToolTestAdmissionStale):
             reason = self._prepared_test_reason(outcome.reason)
             inspector.show_tool_result(
                 server_key=tool.server_key,
@@ -4014,7 +4050,26 @@ class MCPWorkbench(Container):
                 ok=False,
                 text=reason,
                 duration_ms=0,
-                blocked=isinstance(outcome, ToolTestAdmissionBlocked),
+                admission_changed=True,
+            )
+            if outcome.refreshed_preview is not None:
+                self._tool_test_preview_nonce = outcome.refreshed_preview.nonce
+                inspector.show_test_preview(outcome.refreshed_preview)
+            else:
+                inspector.show_test_preparing()
+                await self._prepare_tool_test_preview(tool, generation)
+            await self._refresh_test_audit()
+            return
+
+        if isinstance(outcome, ToolTestAdmissionBlocked):
+            reason = self._prepared_test_reason(outcome.reason)
+            inspector.show_tool_result(
+                server_key=tool.server_key,
+                tool_name=tool.name,
+                ok=False,
+                text=reason,
+                duration_ms=0,
+                blocked=True,
             )
             if outcome.refreshed_preview is not None:
                 self._tool_test_preview_nonce = outcome.refreshed_preview.nonce

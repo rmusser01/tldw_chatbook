@@ -4342,14 +4342,16 @@ async def test_test_tool_panel_open_reads_service_active_state():
         await pilot.pause()
         await _select_tools_mode_row(app, pilot, 0)
         await pilot.click("#mcp-inspector-test-tool")
-        await app.workers.wait_for_complete()
-        await pilot.pause()
 
-        button = app.query_one("#mcp-inspector-test-run", Button)
+        button = await _wait_for_test_button_label(app, pilot, "Running…")
         assert str(button.label) == "Running…"
         assert button.disabled is True
         assert app.unified_mcp_service._preview_count == 0
-        assert app.unified_mcp_service.active_calls == [("local:docs", "fetch")]
+        assert app.unified_mcp_service.active_calls
+        assert set(app.unified_mcp_service.active_calls) == {("local:docs", "fetch")}
+
+        app.unified_mcp_service._active_tests.discard(("local:docs", "fetch"))
+        await _wait_for_test_button_label(app, pilot, "Run")
 
 
 @pytest.mark.asyncio
@@ -4382,6 +4384,8 @@ async def test_test_tool_preview_stale_refresh_preserves_current_arguments():
         assert app.query_one("#mcp-schema-field-0", Input).value == "keep me"
         assert str(button.label) == "Run"
         result = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert result.splitlines()[0] == "Changed · not run"
+        assert not result.startswith("Failed")
         assert "tool definition changed" in result.lower()
 
 
@@ -4441,7 +4445,7 @@ async def test_test_tool_preview_long_error_is_bounded_and_recoverable():
         RuntimeError(
             {
                 "api_key": "sk-live-mapping-secret",
-                "path": "/private/tmp/private-token.json",
+                "path": r"\\?\C:\private\private-token.json",
                 "detail": "x" * 4_000,
             }
         ),
@@ -4468,6 +4472,7 @@ async def test_test_tool_preview_failure_redacts_secrets_paths_and_bounds_text(f
         assert "sk-live" not in rendered
         assert "/Users/" not in rendered
         assert "/private/" not in rendered
+        assert "private-token.json" not in rendered
         assert len(rendered) <= 560
 
 
@@ -4515,13 +4520,21 @@ async def test_test_tool_execution_failure_redacts_secrets_paths_and_bounds_text
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure_branch", ["access", "read"])
+@pytest.mark.parametrize(
+    "private_path",
+    [
+        r"\\server\share\private\audit.json",
+        r"\\?\C:\private\audit.json",
+        r"\\.\pipe\private-audit",
+    ],
+)
 async def test_test_tool_audit_sync_log_redacts_real_service_failure_branches(
     failure_branch: str,
+    private_path: str,
     caplog: pytest.LogCaptureFixture,
 ):
     app = ToolTestApp()
     secret = "sk-live-audit-log-secret"
-    private_path = "/Users/alice/private/audit.json"
     failure = RuntimeError(
         f"api_key={secret} failed at {private_path} " + ("x" * 4_000)
     )
@@ -4620,7 +4633,6 @@ async def _open_fetch_test_preview(app: ToolTestApp, pilot) -> str:
 async def _wait_for_test_button_label(app: ToolTestApp, pilot, label: str) -> Button:
     """Wait for the worker-driven preview render, checking observable state."""
     for _ in range(40):
-        await app.workers.wait_for_complete()
         buttons = list(app.query("#mcp-inspector-test-run"))
         if buttons and str(buttons[0].label) == label:
             return buttons[0]
@@ -4735,6 +4747,204 @@ async def test_test_tool_delayed_preview_cannot_update_closed_stale_generation()
 
         assert not list(app.query("#mcp-inspector-test-panel"))
         assert "preview-1" in app.unified_mcp_service.revoked_nonces
+
+
+@pytest.mark.asyncio
+async def test_test_tool_cancelled_unmount_retrieves_and_revokes_late_minted_nonce():
+    app = ToolTestApp()
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    original_prepare = app.unified_mcp_service.prepare_hub_test
+
+    def delayed_prepare(tool: HubTool) -> ToolTestAdmissionPreview:
+        started.set()
+        assert release.wait(timeout=2)
+        preview = original_prepare(tool)
+        finished.set()
+        return preview
+
+    app.unified_mcp_service.prepare_hub_test = delayed_prepare
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)
+        await pilot.click("#mcp-inspector-test-tool")
+        assert await asyncio.to_thread(started.wait, 1)
+        worker = next(
+            worker for worker in app.workers if worker.name == "mcp-tool-test-preview"
+        )
+
+        removal = workbench.remove()
+        for _ in range(40):
+            if worker.is_cancelled:
+                break
+            await pilot.pause()
+        assert worker.is_cancelled
+        release.set()
+        await removal
+        assert await asyncio.to_thread(finished.wait, 1)
+        for _ in range(40):
+            if app.unified_mcp_service.revoked_nonces:
+                break
+            await pilot.pause()
+
+        assert app.unified_mcp_service._previews == {}
+        assert app.unified_mcp_service.revoked_nonces == ["preview-1"]
+        assert not list(app.query("#mcp-inspector-test-panel"))
+
+
+@pytest.mark.asyncio
+async def test_test_tool_rapid_reopen_cleans_cancelled_mint_without_stale_update():
+    app = ToolTestApp()
+    first_started = threading.Event()
+    first_release = threading.Event()
+    original_prepare = app.unified_mcp_service.prepare_hub_test
+    calls = 0
+
+    def first_prepare_blocks(tool: HubTool) -> ToolTestAdmissionPreview:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            first_started.set()
+            assert first_release.wait(timeout=2)
+        return original_prepare(tool)
+
+    app.unified_mcp_service.prepare_hub_test = first_prepare_blocks
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)
+        await pilot.click("#mcp-inspector-test-tool")
+        assert await asyncio.to_thread(first_started.wait, 1)
+        first_worker = next(
+            worker for worker in app.workers if worker.name == "mcp-tool-test-preview"
+        )
+
+        await _select_tools_mode_row(app, pilot, 1)
+        await _select_tools_mode_row(app, pilot, 0)
+        await pilot.click("#mcp-inspector-test-tool")
+        for _ in range(40):
+            buttons = list(app.query("#mcp-inspector-test-run"))
+            if buttons and str(buttons[0].label) == "Run":
+                break
+            await pilot.pause()
+        assert str(app.query_one("#mcp-inspector-test-run", Button).label) == "Run"
+        current_nonce = app.query_one(MCPInspector)._test_preview.nonce
+        assert first_worker.is_cancelled
+
+        first_release.set()
+        for _ in range(40):
+            if len(app.unified_mcp_service.revoked_nonces) == 1:
+                break
+            await pilot.pause()
+
+        assert app.query_one(MCPInspector)._test_preview.nonce == current_nonce
+        assert set(app.unified_mcp_service._previews) == {current_nonce}
+        assert app.unified_mcp_service.revoked_nonces == ["preview-2"]
+
+
+@pytest.mark.asyncio
+async def test_test_tool_active_watcher_recovers_ready_and_preserves_arguments():
+    app = ToolTestApp()
+    key = ("local:docs", "search")
+    app.unified_mcp_service._active_tests.add(key)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 1)
+        await pilot.click("#mcp-inspector-test-tool")
+        button = await _wait_for_test_button_label(app, pilot, "Running…")
+        field = app.query_one("#mcp-schema-field-0", Input)
+        field.value = "preserve while active"
+
+        app.unified_mcp_service._active_tests.discard(key)
+        for _ in range(80):
+            if str(button.label) == "Run":
+                break
+            await pilot.pause()
+
+        assert str(button.label) == "Run"
+        assert button.disabled is False
+        assert field.value == "preserve while active"
+        assert app.query_one(MCPInspector)._test_preview is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("leave_by", ["switch", "unmount"])
+async def test_test_tool_active_watcher_never_updates_stale_panel(leave_by: str):
+    app = ToolTestApp()
+    key = ("local:docs", "fetch")
+    app.unified_mcp_service._active_tests.add(key)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)
+        await pilot.click("#mcp-inspector-test-tool")
+        await _wait_for_test_button_label(app, pilot, "Running…")
+
+        if leave_by == "switch":
+            await _select_tools_mode_row(app, pilot, 1)
+        else:
+            await workbench.remove()
+        app.unified_mcp_service._active_tests.discard(key)
+        for _ in range(20):
+            await pilot.pause()
+
+        assert app.unified_mcp_service._previews == {}
+        if leave_by == "switch":
+            inspector = app.query_one(MCPInspector)
+            assert inspector.current_tool is not None
+            assert inspector.current_tool.name == "search"
+            assert not list(inspector.query("#mcp-inspector-test-panel"))
+        else:
+            assert not workbench.is_attached
+
+
+@pytest.mark.asyncio
+async def test_test_tool_retry_preview_uses_service_and_preserves_form_values():
+    app = ToolTestApp()
+    original_prepare = app.unified_mcp_service.prepare_hub_test
+    attempts = 0
+
+    def fail_once(tool: HubTool) -> ToolTestAdmissionPreview:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("Preview service is temporarily unavailable.")
+        return original_prepare(tool)
+
+    app.unified_mcp_service.prepare_hub_test = fail_once
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 1)
+        await pilot.click("#mcp-inspector-test-tool")
+        await app.workers.wait_for_complete()
+        field = app.query_one("#mcp-schema-field-0", Input)
+        field.value = "keep through retry"
+        retry = app.query_one("#mcp-inspector-test-retry", Button)
+        assert retry.display is True
+
+        retry.focus()
+        await pilot.press("enter")
+        button = await _wait_for_test_button_label(app, pilot, "Run")
+
+        assert attempts == 2
+        assert button.disabled is False
+        assert field.value == "keep through retry"
+        assert retry is app.query_one("#mcp-inspector-test-retry", Button)
+        assert retry.display is False
 
 
 @pytest.mark.asyncio

@@ -3038,10 +3038,20 @@ async def test_test_tool_preview_close_revokes_nonce_and_late_preview_is_ignored
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("surface", ["preview", "result"])
-async def test_test_tool_failure_surfaces_redact_secrets_paths_and_bound_text(surface):
+@pytest.mark.parametrize(
+    "absolute_path",
+    [
+        "/Users/alice/private/project/credentials.json",
+        r"\\server\share\private\credentials.json",
+        r"\\?\C:\private\credentials.json",
+        r"\\.\pipe\private-token",
+    ],
+)
+async def test_test_tool_failure_surfaces_redact_secrets_paths_and_bound_text(
+    surface, absolute_path
+):
     """The inspector is the final fail-closed boundary for service text."""
     secret = "sk-live-super-secret-value"
-    absolute_path = "/Users/alice/private/project/credentials.json"
     hostile = f"api_key={secret} failed at {absolute_path} " + ("x" * 4_000)
     app = InspectorApp()
     async with app.run_test(size=(100, 60)) as pilot:
@@ -3076,7 +3086,57 @@ async def test_test_tool_failure_surfaces_redact_secrets_paths_and_bound_text(su
         assert len(rendered) <= 560
 
 
-# -- Task 7: permission explanation# -- Task 7: permission explanation + re-allow -------------------------------
+@pytest.mark.asyncio
+async def test_test_tool_unavailable_retry_is_keyboard_accessible_and_preserves_form():
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        tool = _tool()
+        await inspector.show_tool(tool)
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        for _ in range(40):
+            fields = list(app.query("#mcp-schema-field-0"))
+            if fields:
+                break
+            await pilot.pause()
+        assert fields
+
+        inspector.show_test_preview(_test_preview(tool, gate="allow", nonce="old"))
+        field = fields[0]
+        field.value = "keep this exact value"
+        inspector.show_test_unavailable("The preview service timed out.")
+
+        retry = app.query_one("#mcp-inspector-test-retry", Button)
+        assert retry.display is True
+        assert retry.disabled is False
+        retry.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert field.value == "keep this exact value"
+        assert app.query_one("#mcp-inspector-test-panel").is_attached
+        assert [
+            event.preview_nonce
+            for event in app.events
+            if isinstance(event, MCPInspector.ToolTestPreviewRevocationRequested)
+        ] == ["old"]
+        requests = [
+            event
+            for event in app.events
+            if isinstance(event, MCPInspector.ToolTestPreviewRequested)
+        ]
+        assert len(requests) == 2
+        assert (requests[-1].server_key, requests[-1].tool_name) == (
+            tool.server_key,
+            tool.name,
+        )
+        assert str(app.query_one("#mcp-inspector-test-run", Button).label) == (
+            "Preparing…"
+        )
+
+
+# -- Task 7: permission explanation + re-allow -------------------------------
 
 
 @pytest.mark.asyncio

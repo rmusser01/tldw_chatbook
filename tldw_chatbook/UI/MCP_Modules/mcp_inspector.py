@@ -65,7 +65,7 @@ _TOOL_TEST_SECRET_ASSIGNMENT = re.compile(
 _TOOL_TEST_BEARER = re.compile(r"(?i)\bbearer\s+(?:\[redacted\]|[^\s,;}\]]+)")
 _TOOL_TEST_KEY_VALUE = re.compile(r"\bsk-[A-Za-z0-9_-]{6,}\b")
 _TOOL_TEST_ABSOLUTE_PATH = re.compile(
-    r"(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|/)[^\s'\"<>]+"
+    r"(?<![A-Za-z0-9])(?:\\\\[^\s'\"<>]+|[A-Za-z]:[\\/][^\s'\"<>]+|/[^\s'\"<>]+)"
 )
 
 
@@ -2166,6 +2166,7 @@ class MCPInspector(Vertical):
                 tooltip=_TEST_RUN_TOOLTIP,
                 disabled=True,
             ),
+            self._build_test_retry_button(),
             Button(
                 "Close",
                 id="mcp-inspector-test-close",
@@ -2239,6 +2240,21 @@ class MCPInspector(Vertical):
             classes="console-action-secondary",
             compact=True,
             tooltip=_GOTO_PERMISSION_TOOLTIP,
+        )
+        button.display = False
+        return button
+
+    @staticmethod
+    def _build_test_retry_button() -> Button:
+        """Build the stable, normally-hidden transient preview retry action."""
+        button = Button(
+            "Retry preview",
+            id="mcp-inspector-test-retry",
+            classes="console-action-secondary",
+            compact=True,
+            tooltip=(
+                "Request a fresh permission preview without changing these arguments."
+            ),
         )
         button.display = False
         return button
@@ -2367,8 +2383,11 @@ class MCPInspector(Vertical):
             button = self.query_one("#mcp-inspector-test-run", Button)
             status = self.query_one("#mcp-inspector-test-preview", Static)
             goto = self.query_one("#mcp-inspector-goto-permission-test", Button)
+            retry = self.query_one("#mcp-inspector-test-retry", Button)
         except NoMatches:
             return
+        retry.display = False
+        retry.disabled = True
         gate = preview.rendered_gate
         if gate == "allow":
             button.label = "Run"
@@ -2394,6 +2413,8 @@ class MCPInspector(Vertical):
             button.disabled = True
             status.update(_TEST_UNAVAILABLE_TEXT)
             goto.display = True
+            retry.display = True
+            retry.disabled = False
 
     def clear_test_preview(self) -> str | None:
         """Drop the rendered preview and return its nonce for revocation."""
@@ -2404,34 +2425,40 @@ class MCPInspector(Vertical):
     def show_test_preparing(self) -> None:
         """Fail closed while a service preview is being prepared."""
         self.clear_test_preview()
-        self._set_test_unavailable("Preparing…", _TEST_PREPARING_TEXT)
+        self._set_test_unavailable("Preparing…", _TEST_PREPARING_TEXT, retry=False)
 
     def show_test_unavailable(self, reason: str | None = None) -> None:
         """Fail closed with bounded recovery copy when previewing fails."""
-        self.clear_test_preview()
         message = _TEST_UNAVAILABLE_TEXT
         if reason:
             safe_reason = _safe_tool_test_text(reason, limit=240)
             message = f"Unavailable. {safe_reason} Try again."
-        self._set_test_unavailable("Unavailable", message)
+        self._set_test_unavailable("Unavailable", message, retry=True)
 
     def show_test_active(self, active: bool) -> None:
         """Render service-owned active state without becoming its authority."""
         if not active:
             return
         self._set_test_unavailable(
-            "Running…", "A test for this tool is already active. Wait for it to finish."
+            "Running…",
+            "A test for this tool is already active. Wait for it to finish.",
+            retry=False,
         )
 
-    def _set_test_unavailable(self, label: str, message: str) -> None:
+    def _set_test_unavailable(
+        self, label: str, message: str, *, retry: bool = False
+    ) -> None:
         try:
             button = self.query_one("#mcp-inspector-test-run", Button)
             status = self.query_one("#mcp-inspector-test-preview", Static)
+            retry_button = self.query_one("#mcp-inspector-test-retry", Button)
         except NoMatches:
             return
         button.label = label
         button.disabled = True
         status.update(message)
+        retry_button.display = retry
+        retry_button.disabled = not retry
 
     def _handle_test_run(self) -> None:
         """Handle a Run press: collect arguments and dispatch a test run.
@@ -2525,6 +2552,7 @@ class MCPInspector(Vertical):
         source: str | None = None,
         raw: str | None = None,
         blocked: bool = False,
+        admission_changed: bool = False,
         decision_note: str | None = None,
         show_permission_jump: bool = True,
     ) -> None:
@@ -2627,7 +2655,11 @@ class MCPInspector(Vertical):
             return
 
         interpretation: str | None = None
-        if blocked:
+        if admission_changed:
+            result_widget.update(
+                f"Changed · not run\n{_safe_tool_test_text(text or '')}"
+            )
+        elif blocked:
             result_widget.update(
                 f"{_ADVANCED_BLOCKED_HEADING}\n{_safe_tool_test_text(text or '')}"
             )
@@ -2684,7 +2716,9 @@ class MCPInspector(Vertical):
                 raw_collapsible.display = False
 
         try:
-            self.query_one("#mcp-inspector-test-run", Button).disabled = False
+            self.query_one(
+                "#mcp-inspector-test-run", Button
+            ).disabled = admission_changed
         except NoMatches:
             pass
         # Task 3 (MCP Hub Phase 6): `blocked=True` is the deny-gate's
@@ -3124,6 +3158,17 @@ class MCPInspector(Vertical):
         if button_id == "mcp-inspector-test-run":
             event.stop()
             self._handle_test_run()
+            return
+        if button_id == "mcp-inspector-test-retry":
+            event.stop()
+            tool = self._current_tool
+            if tool is None:
+                return
+            nonce = self.clear_test_preview()
+            if nonce:
+                self.post_message(self.ToolTestPreviewRevocationRequested(nonce))
+            self.show_test_preparing()
+            self.post_message(self.ToolTestPreviewRequested(tool.server_key, tool.name))
             return
         if button_id == "mcp-inspector-test-close":
             event.stop()
