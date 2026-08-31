@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 from tldw_profile_core import (
     AgentVisibility,
@@ -479,7 +481,8 @@ def test_reviewed_apply_adopts_server_identity_and_rebaselines_every_artifact(
         integrity_key=b"s" * 32,
     )
 
-    assert result == {"rebaseline_version": old_material.key_version + 1}
+    assert result["rebaseline_version"] == old_material.key_version + 1
+    assert result["reviewed_lineage"]
     assert repository.get_manifest() == remote.manifest
     retained = repository.get_record("record-local")
     assert retained is not None
@@ -915,6 +918,11 @@ def test_local_only_multiversion_record_journals_oldest_to_head(tmp_path) -> Non
         if entry.object_type == "record" and entry.object_id == "record-local"
     ]
     assert versions == ["record-v1", "record-v2"]
+    lineage = {tuple(item) for item in repository.first_link_reviewed_lineage()}
+    assert {
+        ("personal_context.record", "record-local", "record-v1"),
+        ("personal_context.record", "record-local", "record-v2"),
+    }.issubset(lineage)
 
 
 def test_local_same_id_winner_is_rebased_on_server_head(tmp_path) -> None:
@@ -1094,3 +1102,67 @@ def test_staged_integrity_key_recovers_interruption_after_database_rebaseline(
     assert PersonalContextRepository(
         db_path, key_protector=protector
     ).get_manifest() == remote.manifest
+
+
+def test_rebaseline_commit_marker_is_atomic_content_free_and_exact(tmp_path) -> None:
+    protector = _FailOnceActivationProtector()
+    db_path = tmp_path / "profile-marker.db"
+    repository = PersonalContextRepository(db_path, key_protector=protector)
+    local_manifest = _manifest("profile-local", "manifest-local")
+    local_scope = _scope("profile-local", "scope-local", ScopeKind.GLOBAL)
+    repository.create_profile_with_global_scope(local_manifest, local_scope)
+    remote_scope = _scope("profile-server", "scope-server", ScopeKind.GLOBAL)
+    remote = _snapshot(scopes=(remote_scope,), records=())
+    plan = build_reconciliation_plan(
+        local_manifest=local_manifest,
+        local_scopes=(local_scope,),
+        local_records=(),
+        local_proposals=(),
+        remote=remote,
+        local_workspace_bindings={},
+    )
+    _freeze(repository, plan)
+
+    assert repository.first_link_apply_recovery_state(
+        plan_id=plan.plan_id,
+        target_profile_id="profile-server",
+        target_integrity_key_id="key-1",
+        target_purge_generation=0,
+    ) == ("uncommitted", None)
+
+    with pytest.raises(ProfileKeyActivationPendingError):
+        repository.apply_reviewed_link(
+            plan=plan,
+            remote=remote,
+            decisions={},
+            integrity_key=b"s" * 32,
+        )
+
+    assert repository.first_link_apply_recovery_state(
+        plan_id=plan.plan_id,
+        target_profile_id="profile-server",
+        target_integrity_key_id="key-1",
+        target_purge_generation=0,
+    ) == ("committed", 2)
+    assert repository.first_link_apply_recovery_state(
+        plan_id=plan.plan_id,
+        target_profile_id="other-profile",
+        target_integrity_key_id="key-1",
+        target_purge_generation=0,
+    ) == ("ambiguous", None)
+    raw = db_path.read_bytes()
+    assert b"profile-server" in raw
+    assert b"key-1" in raw
+    assert b"wrapped-private-material" not in raw
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE first_link_rebaseline_commit "
+            "SET rebaseline_version = 0 WHERE singleton = 1"
+        )
+    assert repository.first_link_apply_recovery_state(
+        plan_id=plan.plan_id,
+        target_profile_id="profile-server",
+        target_integrity_key_id="key-1",
+        target_purge_generation=0,
+    ) == ("ambiguous", None)
