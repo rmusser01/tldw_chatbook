@@ -2751,6 +2751,130 @@ class LibrarySummaryLocalService:
         return [f"type-{index:02}" for index in range(61)]
 
 
+class LibraryTrashLocalService:
+    def __init__(self, payload=None):
+        self.calls = []
+        self.payload = payload or {
+            "items": [
+                {
+                    "id": 41,
+                    "title": "",
+                    "type": "",
+                    "trash_date": "2026-08-30T12:00:00Z",
+                }
+            ],
+            "total": 45,
+            "limit": 20,
+            "offset": 40,
+            "types": ["pdf", "article"],
+            "private_envelope": "PRIVATE_ENVELOPE_SENTINEL",
+        }
+
+    def list_library_media_trash(
+        self, *, query="", media_type=None, limit=20, offset=0
+    ):
+        self.calls.append(
+            {
+                "query": query,
+                "media_type": media_type,
+                "limit": limit,
+                "offset": offset,
+            }
+        )
+        return self.payload
+
+
+@pytest.mark.asyncio
+async def test_scope_library_media_trash_is_local_only_and_canonical(monkeypatch, caplog):
+    local = LibraryTrashLocalService()
+    server = FakeServerMediaService()
+    scope_service = MediaReadingScopeService(local_service=local, server_service=server)
+    thread_calls = []
+
+    async def recording_to_thread(fn, *args, **kwargs):
+        thread_calls.append((fn.__name__, args, kwargs))
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Media.media_reading_scope_service.asyncio.to_thread",
+        recording_to_thread,
+    )
+
+    payload = await scope_service.list_library_media_trash(
+        mode="local", query="doc", media_type="pdf", limit=20, offset=40
+    )
+
+    assert set(payload) == {"items", "total", "limit", "offset", "types"}
+    assert set(payload["items"][0]) == {
+        "id",
+        "backing_media_id",
+        "title",
+        "media_type",
+        "trash_date",
+    }
+    assert payload["items"][0] == {
+        "id": "local:media:41",
+        "backing_media_id": 41,
+        "title": "Untitled",
+        "media_type": None,
+        "trash_date": "2026-08-30T12:00:00Z",
+    }
+    assert local.calls == [
+        {"query": "doc", "media_type": "pdf", "limit": 20, "offset": 40}
+    ]
+    assert thread_calls == [
+        (
+            "list_library_media_trash",
+            (),
+            {"query": "doc", "media_type": "pdf", "limit": 20, "offset": 40},
+        )
+    ]
+    assert server.calls == []
+    assert "PRIVATE_ENVELOPE_SENTINEL" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_scope_library_media_trash_preserves_missing_and_malformed_envelope_values():
+    payload = {"items": None, "total": "45", "limit": 21, "types": ("pdf",)}
+    local = LibraryTrashLocalService(payload)
+    scope_service = MediaReadingScopeService(local_service=local, server_service=None)
+
+    result = await scope_service.list_library_media_trash(
+        mode="local", limit=20, offset=40
+    )
+
+    assert result == payload
+    assert "offset" not in result
+
+
+@pytest.mark.asyncio
+async def test_scope_library_media_trash_enforces_existing_list_policy_before_local_call():
+    local = LibraryTrashLocalService()
+    policy_enforcer = FakePolicyEnforcer(denied_reason="policy_denied")
+    scope_service = MediaReadingScopeService(
+        local_service=local,
+        server_service=None,
+        policy_enforcer=policy_enforcer,
+    )
+
+    with pytest.raises(PolicyDeniedError):
+        await scope_service.list_library_media_trash(mode="local")
+
+    assert policy_enforcer.calls == ["media.items.trash.list.local"]
+    assert local.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scope_library_media_trash_rejects_server_before_touching_server_service():
+    server = FakeServerMediaService()
+    scope_service = MediaReadingScopeService(local_service=None, server_service=server)
+
+    with pytest.raises(ValueError, match="local"):
+        await scope_service.list_library_media_trash(mode="server")
+
+    assert server.calls == []
+
+
 @pytest.mark.asyncio
 async def test_scope_service_library_media_summary_preserves_envelope_and_five_keys():
     local = LibrarySummaryLocalService()
