@@ -368,6 +368,33 @@ BASE_ACTIONS_WIDTH = 6 + MIC_SEND_GAP + 11 + 6
 ATTACHMENT_ACTIONS_WIDTH = BASE_ACTIONS_WIDTH + 4
 
 
+#: TASK-25826: every label this control can display for a given state, so its
+#: width can be fixed once instead of tracking the current string. The price
+#: suffix appears mid-typing (`sync_action_state` runs on the keystroke path),
+#: and sizing from the live label widened the button under the cursor and
+#: shifted the composer's right edge while the user was typing.
+_SEND_BUTTON_LABEL_VARIANTS = (
+    "Send",
+    "Send | $",
+    "Queue",
+    "Queue | $",
+    "Run",
+    "Queue full",
+    "Preparing...",
+)
+
+
+def send_button_width_for(label: str) -> int:
+    """Return the send control's width -- stable across label variants.
+
+    Sized for the widest label the control can take, so swapping Send/Queue
+    or gaining the price suffix never moves the button's edge.
+    """
+
+    widest = max(cell_len(variant) for variant in _SEND_BUTTON_LABEL_VARIANTS)
+    return max(6, max(widest, cell_len(label)) + 2)
+
+
 class ConsoleComposerBar(Horizontal):
     """Expose Console-owned composer actions while reusing active chat sessions."""
 
@@ -2107,7 +2134,7 @@ class ConsoleComposerBar(Horizontal):
         if price_available:
             displayed_send_label = f"{normalized_send_label} | $"
 
-        self._send_button_width = max(6, cell_len(displayed_send_label) + 2)
+        self._send_button_width = send_button_width_for(displayed_send_label)
         send_button.label = displayed_send_label
         send_button.styles.width = self._send_button_width
         send_button.styles.min_width = self._send_button_width

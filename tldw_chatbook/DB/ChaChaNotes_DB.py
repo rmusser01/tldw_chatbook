@@ -69,6 +69,8 @@ if TYPE_CHECKING:
     )
 
 from loguru import logger
+
+from tldw_chatbook.Utils.persistent_diagnostics import persist_event
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 
@@ -7711,6 +7713,33 @@ UPDATE db_schema_version
                 f"db_sha256={self._db_diagnostic_ref} "
                 f"exception_type={type(e).__name__}"
             )
+            # TASK-25816: Console tells the user to "check the app log for the
+            # database error", but PersistentDiagnosticFilter admits only
+            # records marked by persist_event -- an ordinary logger.error above
+            # never reaches that file, so the instruction led nowhere. The
+            # filter is a deliberate privacy boundary (exception text can carry
+            # paths and secrets), so this emits the fault as METADATA ONLY:
+            # error class and a quick_check verdict, never the message.
+            try:
+                # Deliberately NO probe query here. Re-entering the connection
+                # from inside a failed __init__ deadlocked
+                # test_unopenable_database_still_sends_a_temporary_conversation.
+                # `sqlite3.DatabaseError` with a malformed image is the
+                # repairable shape (an index rebuild fixes it); classify from
+                # the exception alone and keep this path allocation-free.
+                text = str(e).lower()
+                repairable = "malformed" in text or "corrupt" in text
+                persist_event(
+                    "database",
+                    "database_open_failed",
+                    level=logging.ERROR,
+                    schema=self._SCHEMA_NAME,
+                    error_type=type(e).__name__,
+                    repairable=repairable,
+                )
+            except Exception:
+                # Diagnostics must never replace the original failure.
+                pass
             raise SchemaError(
                 f"Schema initialization/migration for '{self._SCHEMA_NAME}' failed: {e}"
             ) from e

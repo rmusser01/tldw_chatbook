@@ -15376,7 +15376,7 @@ class SettingsScreen(BaseAppScreen):
                         compact=True,
                     )
                 with Horizontal(classes="settings-input-row settings-select-row"):
-                    yield Static("Assistant Library access", classes="settings-input-label")
+                    yield Static("Agent Library access", classes="settings-input-label")
                     yield Select(
                         [("Blocked", "blocked"), ("Allowed", "allowed")],
                         value=(

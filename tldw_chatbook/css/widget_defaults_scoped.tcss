@@ -49,6 +49,23 @@
 
 
 
+/* ===== WIDGET: TraceCallRecoveryCallout (UI/Console_Modules/provider_continuation_recovery.py) ===== */
+
+    /* TASK-25830: `height: auto` was unbounded, so at 80x24 -- the default
+       terminal size -- this card grew until NO transcript was visible and the
+       user was asked to choose an action without being able to see the message
+       it applied to. Bounded to just over half the region and scrolled inside
+       that bound; Textual scrolls a focused button into view, so keyboard
+       traversal still reaches every action. */
+
+
+
+
+    /* A trailing row under each of four buttons is four rows of a 24-row
+       screen; the buttons' own borders already separate them. */
+
+
+
 /* ===== WIDGET: LLMManagementWindow (UI/LLM_Management_Window.py) ===== */
 
 
