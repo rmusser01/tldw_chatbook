@@ -37,16 +37,17 @@ Two things to know before trusting it:
 
 Section state survives restarts (collapsed/expanded is saved to your config);
 **Details starts collapsed**. Empty sections say so in plain words: "No
-approvals or failures pending.", "Nothing running right now.", "Runs,
-chatbooks, imports, and schedules will appear here."
+approvals or failures pending.", "Nothing running right now.",
+"Conversations, notes, media, runs, chatbooks, and imports will appear here."
 
 ![Home idle, nothing needing attention](images/home/idle.svg)
 
 With nothing needing attention, the canvas *is* the suggestion: a title like
-"Start a conversation", the reason ("Console is ready for a task."), a
+"Resume last conversation" (or "Start a conversation" on a fresh profile), the
+reason ("Pick up where you left off." / "Console is ready for a task."), a
 content-count line ("Conversations: 2 · Notes: 1 · Media: 1" — only non-zero
-counts appear), and buttons — **Resume note: \<title\>** (or **Resume
-conversation: \<title\>**) and the suggestion itself.
+counts appear), and buttons — **Resume conversation/note/reading: \<title\>
+(\<age\>)** for the thing you touched last, and the suggestion itself.
 
 ## Features & controls
 
@@ -58,8 +59,11 @@ conversation: \<title\>**) and the suggestion itself.
   row when Study cards are waiting.
 - **Running** — in-flight watchlist runs and Library imports
   (queued / parsing / writing).
-- **Recent** — the last 8 finished things: terminal runs, done imports,
-  Chatbook artifacts, each with an age ("Library - 6d").
+- **Recent** — the last 8 things you touched, newest first: conversations,
+  notes, and media you recently worked on or read, terminal runs, done
+  imports, and Chatbook artifacts, each with an age ("Conversations - 3m").
+  The single newest conversation/note/media item feeds the resume banner
+  instead of repeating as the first row.
 
 Selecting a row repaints the canvas for that item; the highest-priority item
 (approval > failed > running > paused) is selected for you when you arrive.
@@ -71,6 +75,7 @@ Selecting a row repaints the canvas for that item; the highest-priority item
 | **Retry** | Real for Library import jobs: "Retry queued for \<file\>." (or "This import job can no longer be retried." for permanent failures — those rows omit the button). For anything else, see the warning below. |
 | **Open details** | Navigates to the owning screen — "Opening Library import job details." lands on Library's import queue; a watchlist run opens Watchlists at that run. |
 | **Open in Console** | Only offered for watchlist runs and Chatbook artifacts — opens Console following that work. |
+| **Open** | On a selected **Recent** conversation/note/media row — one click resumes it: conversations open in Console *at that conversation* (a live session is switched to when one already holds it), notes in Library's notes editor, media in Library's item view. A conversation whose record has gone missing explains itself with a warning toast. |
 | **Approve** / **Reject** / **Pause** / **Resume** | **Decorative today.** Each shows the same warning toast — "\<Label\> is not connected to an active run service yet. Open details or Console to inspect the work." — and changes nothing. Decide approvals on the owning screen. |
 | **Review flashcards** | On the "Flashcards due: N" row — opens Study directly at its flashcards section. Study's breadcrumb reads "Home ▸ Study" and Escape returns here, to Home (task-4011). |
 
@@ -87,9 +92,12 @@ card) is the first match in a fixed priority order:
 | 4 | "Review failed work" — Failed work needs recovery. | the failed item's screen |
 | 5 | "Resume active work" — Live work is already running. | Console |
 | 6 | "Review notifications" — Unread notifications need review. | **Watchlists** (that is where notifications live) |
-| 7 | "Import Library sources" — Library content makes Console and RAG more useful. | Library (its default view, not an import form — task-2765) |
-| 8 | "Search your Library" | unreachable today (task-2761) |
-| 9-10 | "Start a conversation" / "Start in Console" — Console is ready for a task. | Console |
+| 7 | "Review eval runs" — Pending or failed eval runs need attention. | Evals |
+| 8 | "Read-it-later: N items" — Your saved reading queue is waiting. | Media |
+| 9 | "Import Library sources" — Library content makes Console and RAG more useful. | Library (its default view, not an import form — task-2765) |
+| 10 | "Search your Library" | unreachable today (task-2761) |
+| 11 | "Resume last conversation" — Pick up where you left off. With a recent conversation, this replaces the plain start suggestion and deep-links that conversation into Console. | Console |
+| 12 | "Start a conversation" / "Start in Console" — Console is ready for a task (fresh profiles, or when the newest work wasn't a conversation). | Console |
 
 **The suggestion button can disagree with its own label** when a failed item
 is selected — see Quirks (task-2760).
@@ -116,9 +124,12 @@ hard-coded, and "Model: Ready" is optimistic.
    [Library ▸ Import & export](library/import-and-export.md); Home itself
    will not update while you watch (task-2763).
 2. **Pick up where you left off.** With nothing urgent, the canvas offers
-   **Resume note: \<title\>** / **Resume conversation: \<title\>** — the
-   newest of each, ties going to the conversation. Notes open in Library,
-   conversations in Console.
+   **Resume conversation/note/reading: \<title\> (\<age\>)** for the newest
+   thing you touched, and the terminal suggestion itself becomes "Resume
+   last conversation" when one exists. Notes open in Library's editor,
+   media in Library's item view, conversations in Console *at that
+   conversation* — the one place "resume" actually resumes. Older work is
+   one section down, in **Recent**.
 3. **Clear flashcards that are due.** The "Flashcards due: N" row's **Review
    flashcards** lands on Study's flashcards section.
 4. **See why agent work is blocked.** Expand **Details** for the runtime,
