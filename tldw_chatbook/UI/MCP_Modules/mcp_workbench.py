@@ -1772,67 +1772,49 @@ class MCPWorkbench(Container):
         return tools
 
     def _local_agent_hub_tools(self) -> list[HubTool]:
-        """The workspace, web, and Watchlists agent tool set as HubTools.
+        """Collect service-owned local projection plus local Virtual CLI.
 
-        task-2838: the Hub catalog's fourth source. The provider is built
-        catalog-view only -- no Console ``SessionTodoStore``, so
-        ``todo_create``, ``todo_update``, ``todo_get``, and ``todo_list`` stay
-        unregistered and the retired ``todo_write`` remains absent. There are
-        no approval callbacks: state resolution happens hub-side, via the same
-        `_sync_children()` `effective_tool_states()` pass against the same
-        `mcp_permissions.json` store the Console agent gates on
-        (`local:__local__` server key, `Agents/local_tool_provider.py`).
-
-        `executable` is downgraded to False at THIS layer (the provider's
-        own view stays invocation-capable): the Hub has no execution path
-        for these tools yet -- Test Tool routing through a fail-closed
-        provider is the deliberate follow-up -- and
-        `mcp_inspector._test_gate_state()` renders the honest
-        "not_executable" state from this flag.
-
-        Fail-soft (mirrors the built-in-inventory read above): ANY failure
-        -- workspace-root resolution, provider construction, a spec that
-        breaks `hub_tool_for` -- degrades to "no Local workspace group"
-        with a warning log; the profile/built-in catalog must never be
-        broken or emptied by the local tool view.
-
-        Master switch: the group lists only when
-        ``[console] local_tools_enabled`` is on -- the SAME opt-in the
-        Console composition (`_compose_local_provider()`) and the external
-        MCP exposure (`[mcp] expose_local_tools`) already apply to this
-        workspace, web, and Watchlists tool set. When the feature is off
-        everywhere, the management surface does not advertise it either.
-        Coerced at read time: a quoted ``"false"`` in the TOML must not fail
-        this OPEN.
+        The control-plane service owns the full workspace/web/Watchlists
+        inspection catalog and exact executable projection. This widget keeps
+        only the separately governed, always non-executable Virtual CLI view.
         """
-        if not coerce_bool_setting(
+        tools: list[HubTool] = []
+        service = self._service()
+        local_hub_tools = getattr(service, "local_hub_tools", None)
+        if callable(local_hub_tools):
+            try:
+                tools.extend(local_hub_tools())
+            except Exception as exc:  # noqa: BLE001 -- catalog view is fail-soft
+                logger.warning(
+                    "MCP local agent tool catalog unavailable "
+                    f"(exception_type={type(exc).__name__})"
+                )
+
+        enabled = coerce_bool_setting(
             get_cli_setting(
                 "console", "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
             ),
             LOCAL_TOOLS_DEFAULT_ENABLED,
-        ):
-            return []
+        )
+        if not enabled:
+            return tools
         try:
             root = resolve_server_workspace_root()
-            from tldw_chatbook.Agents.local_tool_provider import (
-                LocalToolProvider,
-            )
             from tldw_chatbook.Agents.virtual_cli_provider import (
                 VirtualCliProvider,
             )
 
-            providers = (
-                LocalToolProvider(workspace_root=root),
-                VirtualCliProvider(workspace_root=root),
-            )
-            return [
+            provider = VirtualCliProvider(workspace_root=root)
+            tools.extend(
                 replace(hub, executable=False)
-                for provider in providers
                 for hub in provider.hub_tools()
-            ]
+            )
         except Exception as exc:  # noqa: BLE001 -- catalog view must never break the hub
-            logger.warning(f"MCP local agent tool catalog unavailable: {exc}")
-            return []
+            logger.warning(
+                "MCP Virtual CLI catalog unavailable "
+                f"(exception_type={type(exc).__name__})"
+            )
+        return tools
 
     def _raw_shell_hub_tool(self) -> HubTool | None:
         """Project raw-shell policy when this app owns the required runtime."""

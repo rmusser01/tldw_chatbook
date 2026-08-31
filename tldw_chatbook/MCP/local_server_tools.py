@@ -35,6 +35,7 @@ JSON parameters, handler); ``MCP/server.py`` stages them on the gateway when
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 import threading
 from typing import Any, Callable, NamedTuple
@@ -65,6 +66,10 @@ from tldw_chatbook.runtime_policy.bootstrap import (
     load_default_runtime_source_state,
 )
 from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
+from tldw_chatbook.Utils.filesystem_identity import (
+    DirectoryChain,
+    capture_directory_chain,
+)
 
 EXTERNAL_NO_CALLBACK_REFUSAL = (
     "tool requires operator approval (permission state is 'ask' and external "
@@ -125,6 +130,126 @@ class _LazyWatchlistsDBResolver:
 
             self._database = candidate
             return candidate
+
+    def close(self) -> None:
+        """Close retained Watchlists storage once; unopened resolvers are safe."""
+        with self._lock:
+            database = self._database
+            pending = self._pending_cleanup
+            self._database = None
+            self._pending_cleanup = None
+            if database is not None:
+                database.close()
+            elif pending is not None:
+                pending[0].close()
+
+
+@dataclass(slots=True)
+class HubLocalProviderHandle:
+    """One fresh Hub-local provider and the resources it exclusively owns."""
+
+    provider: "LocalToolProvider"
+    authority: DirectoryChain
+    resolver: _LazyWatchlistsDBResolver
+
+    def __enter__(self) -> "HubLocalProviderHandle":
+        return self
+
+    def __exit__(self, *_exc_info: Any) -> None:
+        self.close()
+
+    def close(self) -> None:
+        self.resolver.close()
+
+
+def _build_hub_local_provider_handle(
+    workspace_root: Path,
+    *,
+    resolve_state: Callable[[Any], Any],
+    approval_callback: Callable[[list[Any]], dict[str, str]] | None,
+    shared_only: bool,
+) -> HubLocalProviderHandle:
+    """Compose one closable Hub-local provider over a captured authority."""
+    from tldw_chatbook.Agents.local_tool_provider import (
+        LocalToolExposure,
+        LocalToolProvider,
+        WorkspaceToolExecutor,
+        _default_specs,
+    )
+
+    authority = capture_directory_chain(Path(workspace_root))
+    resolver = _LazyWatchlistsDBResolver()
+    try:
+        watchlists_service = WatchlistsToolService(
+            db_resolver=resolver,
+            runtime_source_loader=load_default_runtime_source_state,
+        )
+        workspace_executor = WorkspaceToolExecutor(authority.canonical_root)
+        specs = _default_specs(
+            authority.canonical_root,
+            workspace_executor=workspace_executor,
+            watchlists_service=watchlists_service,
+        )
+        if shared_only:
+            specs = [
+                spec
+                for spec in specs
+                if spec.exposure is LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP
+            ]
+
+        def _root_guard() -> bool:
+            try:
+                return capture_directory_chain(authority.canonical_root) == authority
+            except Exception:  # noqa: BLE001 -- a raced authority fails closed
+                return False
+
+        provider = LocalToolProvider(
+            workspace_root=authority.canonical_root,
+            specs=specs,
+            resolve_state=resolve_state,
+            kill_switch=lambda: False,
+            approval_callback=approval_callback,
+            root_guard=_root_guard,
+            result_redaction_root=authority.canonical_root,
+            workspace_executor=workspace_executor,
+        )
+        return HubLocalProviderHandle(
+            provider=provider,
+            authority=authority,
+            resolver=resolver,
+        )
+    except BaseException:
+        resolver.close()
+        raise
+
+
+def build_hub_local_provider(
+    workspace_root: Path,
+    *,
+    resolve_state: Callable[[Any], Any],
+    approval_callback: Callable[[list[Any]], dict[str, str]] | None,
+) -> HubLocalProviderHandle:
+    """Build the descriptor-filtered provider used by Hub-local execution."""
+    return _build_hub_local_provider_handle(
+        workspace_root,
+        resolve_state=resolve_state,
+        approval_callback=approval_callback,
+        shared_only=True,
+    )
+
+
+def build_hub_local_inspection_provider(
+    workspace_root: Path,
+    *,
+    resolve_state: Callable[[Any], Any],
+) -> HubLocalProviderHandle:
+    """Build the ordinary full provider used only as the Hub inspection source."""
+    return _build_hub_local_provider_handle(
+        workspace_root,
+        resolve_state=resolve_state,
+        approval_callback=None,
+        shared_only=False,
+    )
 
 
 def build_server_local_provider(

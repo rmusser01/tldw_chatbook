@@ -21,6 +21,7 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_DENY_REFUSAL,
     LOCAL_GATE_ERROR_REFUSAL,
     LOCAL_KILL_SWITCH_REFUSAL,
+    LocalToolExposure,
     LocalToolProvider,
 )
 from tldw_chatbook.DB.Subscriptions_DB import (
@@ -34,7 +35,11 @@ from tldw_chatbook.MCP.local_server_tools import (
     _local_agent_tool_registrations,
     build_server_local_provider,
 )
-from tldw_chatbook.MCP.permission_store import MCPPermissionStore, definition_hash
+from tldw_chatbook.MCP.permission_store import (
+    EffectiveToolState,
+    MCPPermissionStore,
+    definition_hash,
+)
 from tldw_chatbook.MCP.server import TldwMCPServer, _describe_local_tools
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from Tests.DB.test_subscriptions_db_briefing_provenance_migration import _build_v1
@@ -147,6 +152,95 @@ def _grant(store, provider, name):
         "allow",
         definition_hash=definition_hash(hub.description, hub.input_schema),
     )
+
+
+def test_hub_local_factory_filters_shared_descriptors_and_wires_runtime_seams(
+    workspace,
+):
+    resolved = EffectiveToolState(state="allow", origin="tool")
+
+    def resolve_state(_hub):
+        return resolved
+
+    def approve_once(_pending):
+        return {}
+
+    handle = local_server_tools.build_hub_local_provider(
+        workspace,
+        resolve_state=resolve_state,
+        approval_callback=approve_once,
+    )
+    try:
+        provider = handle.provider
+        names = {entry.name for entry in provider.list_catalog()}
+        expected = {
+            spec.name
+            for spec in LocalToolProvider(
+                workspace_root=workspace
+            ).specs_for_exposure(LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP)
+        }
+
+        assert names == expected
+        assert TASK_TOOL_NAMES.isdisjoint(names)
+        assert {
+            "watchlists_search_items",
+            "watchlists_get_item",
+            "watchlists_get_briefing",
+        }.isdisjoint(names)
+        assert provider._resolve_state is resolve_state
+        assert provider._resolve_state(provider.hub_tool_for("fs_read")) is resolved
+        assert provider._approval_callback is approve_once
+        assert provider._kill_switch() is False
+        assert provider._record_decision is None
+        assert provider._result_redaction_root == workspace.resolve()
+        assert handle.authority.canonical_root == workspace.resolve()
+    finally:
+        handle.close()
+
+
+def test_hub_local_handle_closes_opened_lazy_database_once_on_exception(
+    monkeypatch, workspace
+):
+    instances = []
+
+    class Candidate:
+        def __init__(self):
+            self.close_calls = 0
+
+        def assert_agent_read_ready(self):
+            return None
+
+        def close(self):
+            self.close_calls += 1
+
+    def construct_database(_path, _client_id="default", *, read_only=False):
+        assert read_only is True
+        candidate = Candidate()
+        instances.append(candidate)
+        return candidate
+
+    monkeypatch.setattr(local_server_tools, "SubscriptionsDB", construct_database)
+    monkeypatch.setattr(
+        local_server_tools,
+        "get_subscriptions_db_path",
+        lambda: workspace / "subscriptions.db",
+    )
+
+    handle = local_server_tools.build_hub_local_provider(
+        workspace,
+        resolve_state=lambda _hub: EffectiveToolState(
+            state="allow", origin="tool"
+        ),
+        approval_callback=None,
+    )
+    with pytest.raises(RuntimeError, match="body failed"):
+        with handle:
+            assert handle.resolver() is handle.resolver()
+            raise RuntimeError("body failed")
+
+    handle.close()
+    assert len(instances) == 1
+    assert instances[0].close_calls == 1
 
 
 def test_granted_tool_executes(monkeypatch, workspace, store):

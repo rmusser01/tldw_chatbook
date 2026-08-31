@@ -11,7 +11,7 @@ from typing import Any
 
 from loguru import logger
 
-from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 from .execution_log import MCPExecutionLog, build_record
@@ -2572,6 +2572,93 @@ class UnifiedMCPControlPlaneService:
             timeout_seconds=self._lifecycle_timeout(),
             registered_argument_names=registered_argument_names,
         )
+
+    def local_hub_tools(self) -> list[HubTool]:
+        """Project the full local catalog with exact executable identities.
+
+        Inspection always comes from the ordinary, unfiltered provider. A
+        second descriptor-filtered composition contributes only an exact
+        ``(server_key, name, definition_hash)`` eligibility set. Configuration
+        or filtered-composition failures therefore remove execution authority
+        without removing visible local rows.
+        """
+        from . import local_server_tools
+
+        inspection_handle = None
+        executable_handle = None
+        try:
+            try:
+                inspection_handle = (
+                    local_server_tools.build_hub_local_inspection_provider(
+                        Path.cwd(),
+                        resolve_state=self.gate_tool_test,
+                    )
+                )
+                inspection = [
+                    replace(tool, executable=False)
+                    for tool in inspection_handle.provider.hub_tools()
+                ]
+            except Exception as exc:  # noqa: BLE001 -- catalog is fail-soft
+                logger.warning(
+                    "MCP local inspection catalog unavailable "
+                    "(exception_type={})",
+                    type(exc).__name__,
+                )
+                return []
+
+            enabled = coerce_bool_setting(
+                get_cli_setting("console", "local_tools_enabled", True),
+                True,
+            )
+            if not enabled:
+                return inspection
+
+            try:
+                root = local_server_tools.resolve_server_workspace_root()
+                executable_handle = local_server_tools.build_hub_local_provider(
+                    root,
+                    resolve_state=self.gate_tool_test,
+                    approval_callback=None,
+                )
+                executable_identities = {
+                    (
+                        tool.server_key,
+                        tool.name,
+                        definition_hash(tool.description, tool.input_schema),
+                    )
+                    for tool in executable_handle.provider.hub_tools()
+                }
+            except Exception as exc:  # noqa: BLE001 -- inspection remains useful
+                logger.warning(
+                    "MCP local executable projection unavailable "
+                    "(exception_type={})",
+                    type(exc).__name__,
+                )
+                return inspection
+
+            return [
+                replace(
+                    tool,
+                    executable=(
+                        tool.server_key,
+                        tool.name,
+                        definition_hash(tool.description, tool.input_schema),
+                    )
+                    in executable_identities,
+                )
+                for tool in inspection
+            ]
+        finally:
+            for handle in (executable_handle, inspection_handle):
+                if handle is None:
+                    continue
+                try:
+                    handle.close()
+                except Exception as exc:  # noqa: BLE001 -- catalog stays fail-soft
+                    logger.warning(
+                        "MCP local provider cleanup failed (exception_type={})",
+                        type(exc).__name__,
+                    )
 
     # ---- Local MCP prompt-reduction recommendations -----------------------
     # This is intentionally local/MCP-only (ADR-081): no shell command

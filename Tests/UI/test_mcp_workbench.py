@@ -18,6 +18,8 @@ from textual.containers import Vertical
 from textual.widgets import Button, Checkbox, ContentSwitcher, DataTable, Input, Select, Static, TextArea
 
 import tldw_chatbook
+import tldw_chatbook.MCP.local_server_tools as local_server_tools_module
+import tldw_chatbook.MCP.unified_control_plane_service as unified_service_module
 import tldw_chatbook.UI.MCP_Modules.mcp_inspector as mcp_inspector_module
 import tldw_chatbook.UI.MCP_Modules.mcp_workbench as mcp_workbench_module
 from tldw_chatbook.Agents.raw_shell_tool_provider import (
@@ -37,6 +39,7 @@ from tldw_chatbook.MCP.readiness import HubAction
 from tldw_chatbook.MCP.unified_control_models import UnifiedMCPContext
 from tldw_chatbook.MCP.unified_control_plane_service import (
     MCPServerSourceDisplayOnlyError,
+    UnifiedMCPControlPlaneService,
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
@@ -165,6 +168,37 @@ class WorkbenchApp(ConsolidatedCSSApp):
 
     def compose(self) -> ComposeResult:
         yield MCPWorkbench(app_instance=self, id="mcp-workbench")
+
+
+class HubLocalProjectionService(FakeHubService):
+    """Use the production local projection while retaining the compact UI fake."""
+
+    class LocalService:
+        def get_inventory(self):
+            return {
+                "tools": [
+                    {
+                        "name": "builtin_probe",
+                        "description": "Unrelated built-in projection probe.",
+                    }
+                ]
+            }
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.local_service = self.LocalService()
+
+    def gate_tool_test(self, _tool):
+        return EffectiveToolState(state="ask", origin="global_default")
+
+    def local_hub_tools(self):
+        return UnifiedMCPControlPlaneService.local_hub_tools(self)
+
+
+class HubLocalWorkbenchApp(WorkbenchApp):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unified_mcp_service = HubLocalProjectionService()
 
 
 @pytest.mark.asyncio
@@ -8741,6 +8775,17 @@ _LOCAL_AGENT_TOOL_NAMES = {
     "git_branches", "web_fetch", "web_search", "web_crawl",
     "watchlists_search_items", "watchlists_get_item",
 }
+_CONSOLE_ONLY_LOCAL_NAMES = {
+    "watchlists_search_items",
+    "watchlists_get_item",
+    "watchlists_get_briefing",
+    "watchlists_create_sources",
+    "watchlists_create_collection",
+    "watchlists_update_collection_sources",
+    "watchlists_check_sources",
+    "watchlists_set_briefing_schedule",
+    "watchlists_generate_briefing",
+}
 
 
 def _enable_local_tools(monkeypatch):
@@ -8754,6 +8799,7 @@ def _enable_local_tools(monkeypatch):
         return original(section, key, default)
 
     monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", _patched)
+    monkeypatch.setattr(unified_service_module, "get_cli_setting", _patched)
 
 
 def _missing_local_master_uses_default(monkeypatch):
@@ -8766,12 +8812,27 @@ def _missing_local_master_uses_default(monkeypatch):
         return original(section, key, default)
 
     monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", _patched)
+    monkeypatch.setattr(unified_service_module, "get_cli_setting", _patched)
+
+
+def _disable_local_tools(monkeypatch):
+    original = mcp_workbench_module.get_cli_setting
+
+    def _patched(section, key=None, default=None):
+        if section == "console" and key == "local_tools_enabled":
+            return False
+        if section == "mcp" and key == "expose_local_tools":
+            return True
+        return original(section, key, default)
+
+    monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", _patched)
+    monkeypatch.setattr(unified_service_module, "get_cli_setting", _patched)
 
 
 @pytest.mark.asyncio
 async def test_tools_catalog_includes_local_agent_tools_as_own_group(monkeypatch):
     _enable_local_tools(monkeypatch)
-    app = WorkbenchApp()
+    app = HubLocalWorkbenchApp()
     async with app.run_test() as pilot:
         await pilot.pause()
         await app.workers.wait_for_complete()
@@ -8788,13 +8849,22 @@ async def test_tools_catalog_includes_local_agent_tools_as_own_group(monkeypatch
         # No Console SessionTodoStore exists at the Hub catalog layer.
         assert "todo_write" not in names
         assert TASK_TOOL_NAMES.isdisjoint(names)
-        # One coherent group, honestly non-executable until Hub-side
-        # execution is wired (inspector renders "not_executable" from this).
+        # The full ordinary catalog remains the inspection source. Only
+        # descriptor-approved shared identities gain the executable flag.
         assert all(
             t.server_label == "Local workspace, web, and Watchlists" for t in local
         )
         assert all(t.source == "local" for t in local)
-        assert all(t.executable is False for t in local)
+        assert all(
+            t.executable is False
+            for t in local
+            if t.name in _CONSOLE_ONLY_LOCAL_NAMES
+        )
+        assert all(
+            t.executable is True
+            for t in local
+            if t.name not in _CONSOLE_ONLY_LOCAL_NAMES
+        )
         assert all(t.stale is False for t in local)
         # Schemas and risk tags ride along for the inspector and the
         # permission risk floor.
@@ -8822,12 +8892,17 @@ async def test_tools_catalog_includes_local_agent_tools_as_own_group(monkeypatch
         assert any(
             t.server_key == "local:docs" for t in workbench._last_hub_tools
         )
+        assert any(
+            t.server_key == "builtin:tldw_chatbook"
+            and t.name == "builtin_probe"
+            for t in workbench._last_hub_tools
+        )
 
 
 @pytest.mark.asyncio
 async def test_tools_catalog_lists_virtual_cli_as_an_independent_group(monkeypatch):
     _enable_local_tools(monkeypatch)
-    app = WorkbenchApp()
+    app = HubLocalWorkbenchApp()
     async with app.run_test() as pilot:
         await pilot.pause()
         await app.workers.wait_for_complete()
@@ -8860,8 +8935,11 @@ async def test_tools_catalog_lists_virtual_cli_as_an_independent_group(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_local_agent_group_absent_when_master_flag_explicitly_off():
-    app = WorkbenchApp()
+async def test_hub_local_group_stays_visible_but_disabled_when_master_flag_off(
+    monkeypatch,
+):
+    _disable_local_tools(monkeypatch)
+    app = HubLocalWorkbenchApp()
     app.raw_cli_runtime = SimpleNamespace(permitted=False, armed=False)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -8869,12 +8947,18 @@ async def test_local_agent_group_absent_when_master_flag_explicitly_off():
         workbench = app.query_one(MCPWorkbench)
         await workbench._mount_deferred_canvases()
         await workbench._sync_children()
-        local_names = {
-            tool.name
+        local = [
+            tool
             for tool in workbench._last_hub_tools
-            if tool.server_key == RAW_SHELL_SERVER_KEY
-        }
-        assert local_names == {RAW_SHELL_TOOL_NAME}
+            if tool.server_key == "local:__local__"
+            and tool.name != RAW_SHELL_TOOL_NAME
+        ]
+        assert _LOCAL_AGENT_TOOL_NAMES <= {tool.name for tool in local}
+        assert all(tool.executable is False for tool in local)
+        assert any(
+            tool.server_key == "local:docs"
+            for tool in workbench._last_hub_tools
+        )
         assert app.query_one("#mcp-tools-local-config").display is True
         assert app.query_one("#mcp-tools-local-enabled", Checkbox).value is False
 
@@ -8882,7 +8966,7 @@ async def test_local_agent_group_absent_when_master_flag_explicitly_off():
 @pytest.mark.asyncio
 async def test_local_agent_group_present_when_master_key_is_missing(monkeypatch):
     _missing_local_master_uses_default(monkeypatch)
-    app = WorkbenchApp()
+    app = HubLocalWorkbenchApp()
     async with app.run_test() as pilot:
         await pilot.pause()
         await app.workers.wait_for_complete()
@@ -8914,11 +8998,12 @@ async def test_tools_mode_local_controls_round_trip_master_and_workspace(
         return True
 
     monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", fake_get)
+    monkeypatch.setattr(unified_service_module, "get_cli_setting", fake_get)
     monkeypatch.setattr(mcp_workbench_module, "save_setting_to_cli_config", fake_save)
 
     notes_root = tmp_path / "notes-workspace"
     notes_root.mkdir()
-    app = WorkbenchApp()
+    app = HubLocalWorkbenchApp()
     async with app.run_test(size=(120, 42)) as pilot:
         await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
@@ -9086,20 +9171,24 @@ async def test_tools_mode_workspace_root_uses_shared_path_validator(
 
 
 @pytest.mark.asyncio
-async def test_local_agent_catalog_failure_degrades_to_no_local_group(monkeypatch):
+@pytest.mark.parametrize("failure_stage", ["root", "filtered_provider"])
+async def test_hub_local_projection_failure_keeps_full_disabled_group(
+    monkeypatch, failure_stage
+):
     _enable_local_tools(monkeypatch)
 
     def _boom(*args, **kwargs):
         raise RuntimeError("provider construction exploded")
 
-    # task-24458: `mcp_workbench` no longer imports `LocalToolProvider` at
-    # module scope -- it is imported at the construction site so the workspace
-    # tool cluster stays off the screen pre-import payload. Patch the defining
-    # module instead, which is what that deferred import resolves against.
-    monkeypatch.setattr(
-        "tldw_chatbook.Agents.local_tool_provider.LocalToolProvider", _boom
-    )
-    app = WorkbenchApp()
+    if failure_stage == "root":
+        monkeypatch.setattr(
+            local_server_tools_module, "resolve_server_workspace_root", _boom
+        )
+    else:
+        monkeypatch.setattr(
+            local_server_tools_module, "build_hub_local_provider", _boom
+        )
+    app = HubLocalWorkbenchApp()
     app.raw_cli_runtime = SimpleNamespace(permitted=False, armed=False)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -9108,16 +9197,21 @@ async def test_local_agent_catalog_failure_degrades_to_no_local_group(monkeypatc
         await workbench._mount_deferred_canvases()
         await workbench._sync_children()
 
-        # The workspace-agent group is absent, while raw-shell policy
-        # discoverability remains independent of provider construction.
-        assert {
-            tool.name
+        local = [
+            tool
             for tool in workbench._last_hub_tools
-            if tool.server_key == RAW_SHELL_SERVER_KEY
-        } == {RAW_SHELL_TOOL_NAME}
-        # ...and the rest of the catalog was neither broken nor emptied.
+            if tool.server_key == "local:__local__"
+            and tool.name != RAW_SHELL_TOOL_NAME
+        ]
+        assert _LOCAL_AGENT_TOOL_NAMES <= {tool.name for tool in local}
+        assert all(tool.executable is False for tool in local)
         assert any(
             t.server_key == "local:docs" for t in workbench._last_hub_tools
+        )
+        assert any(
+            t.server_key == "builtin:tldw_chatbook"
+            and t.name == "builtin_probe"
+            for t in workbench._last_hub_tools
         )
 
 
