@@ -16,7 +16,7 @@ from tldw_chatbook.DB.base_db import BaseDB
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.DB.sql_validation import validate_column_name
 from tldw_chatbook.runtime_policy.server_parity_models import SourceAuthority
-from tldw_chatbook.Sync_Interop.notes_organization import NOTES_ORGANIZATION_DOMAINS
+from tldw_chatbook.Sync_Interop.sync_state import NOTES_ORGANIZATION_DOMAINS
 
 if TYPE_CHECKING:
     from tldw_chatbook.tldw_api import SyncV2Envelope

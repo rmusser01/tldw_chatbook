@@ -9,7 +9,7 @@ from tldw_chatbook.Sync_Interop.conflict_review import (
     SyncV2ConflictReviewItem,
     SyncV2ConflictReviewService,
 )
-from tldw_chatbook.Sync_Interop.notes_organization import NOTES_ORGANIZATION_DOMAINS
+from tldw_chatbook.Sync_Interop.sync_state import NOTES_ORGANIZATION_DOMAINS
 from tldw_chatbook.Sync_Interop.sync_state import is_local_first_sync_profile_mode
 
 ManualSyncStatus = Literal[

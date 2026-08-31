@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Any, Mapping, Optional
 
-from tldw_chatbook.Sync_Interop.notes_organization import NOTES_ORGANIZATION_DOMAINS
+from tldw_chatbook.Sync_Interop.sync_state import NOTES_ORGANIZATION_DOMAINS
 from tldw_chatbook.Sync_Interop.sync_state import SyncV2ProfileMode
 from tldw_chatbook.Sync_Interop.validation import (
     validate_outgoing_envelope_scope,

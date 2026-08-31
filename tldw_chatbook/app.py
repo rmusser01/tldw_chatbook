@@ -417,13 +417,9 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSAudioBookGenerateEvent,
 )
 from .Notes.Notes_Library import NotesInteropService
-from .Notes.agent_lessons import initialize_agent_lessons_folder
 from .Notes.file_notes_git_service import build_file_notes_session_owner
 from .Notes.note_folder_repository import LocalNoteFolderRepository
-from .Notes.notes_organization_repository import NotesOrganizationRepository
 from .Notes.notes_scope_service import NotesScopeService, ScopeType
-from .Sync_Interop.notes_outbox_producer import NotesSyncV2OutboxProducer
-from .Sync_Interop.notes_organization_sync_service import NotesOrganizationSyncService
 # TASK-21108: `notes_sync_runtime` (and `notes_sync_legacy`, which the
 # TASK-21112 start gate reads) are imported inside
 # `_construct_notes_sync_runtime_owner`, the single place that needs them, so the
@@ -778,6 +774,10 @@ if TYPE_CHECKING:
 API_IMPORTS_SUCCESSFUL = True
 
 DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
+#: Notes organization composition is not needed for the first interactive
+#: frame. Keep its repository, validator, and agent-lesson seed imports beyond
+#: the ADR-097 UI-ready module census.
+DEFERRED_NOTES_ORGANIZATION_WIRING_DELAY_SECONDS = 0.1
 #: Workspace agent provisioning (task-8) deferral: after `_ui_ready` so
 #: `Workspaces.agent_provisioning` stays out of the UI-ready census
 #: (ADR-097); same 0.1-0.2 s non-essential-startup window as audio.
@@ -6851,6 +6851,17 @@ def _build_notes_scope_service(
 def _wire_notes_sync_services(app: Any) -> None:
     """Finish Notes Sync composition after both SQLite owners exist."""
 
+    from tldw_chatbook.Notes.agent_lessons import initialize_agent_lessons_folder
+    from tldw_chatbook.Notes.notes_organization_repository import (
+        NotesOrganizationRepository,
+    )
+    from tldw_chatbook.Sync_Interop.notes_organization_sync_service import (
+        NotesOrganizationSyncService,
+    )
+    from tldw_chatbook.Sync_Interop.notes_outbox_producer import (
+        NotesSyncV2OutboxProducer,
+    )
+
     notes_db = getattr(app, "chachanotes_db", None)
     state_repository = getattr(app, "sync_state_repository", None)
     notes_scope_service = getattr(app, "notes_scope_service", None)
@@ -7624,7 +7635,6 @@ class TldwCli(
             policy_enforcer=self.service_policy_enforcer,
             sync_scope_service=getattr(self, "sync_scope_service", None),
         )
-        _wire_notes_sync_services(self)
         # TASK-21108: the lasting-sync runtime is built on FIRST ACCESS, not
         # here. Its construction is what drags `Notes/notes_sync_runtime` and
         # (through the TASK-21112 start gate) `Notes/notes_sync_legacy` --
@@ -8865,6 +8875,17 @@ class TldwCli(
         except Exception as exc:
             self.loguru_logger.warning(
                 "Deferred workspace agent provisioning wiring failed; error_type={}",
+                type(exc).__name__,
+            )
+
+    def _deferred_wire_notes_sync_services(self) -> None:
+        """Compose Notes organization Sync after the first interactive frame."""
+
+        try:
+            _wire_notes_sync_services(self)
+        except Exception as exc:
+            self.loguru_logger.warning(
+                "Deferred Notes organization Sync wiring failed; error_type={}",
                 type(exc).__name__,
             )
 
@@ -14262,6 +14283,10 @@ class TldwCli(
         self.set_timer(
             DEFERRED_AUDIO_SERVICE_DELAY_SECONDS,
             self._start_deferred_audio_service_initialization,
+        )
+        self.set_timer(
+            DEFERRED_NOTES_ORGANIZATION_WIRING_DELAY_SECONDS,
+            self._deferred_wire_notes_sync_services,
         )
         # Workspace agent provisioning (task-8): best-effort hook attach +
         # startup backfill, deferred past `_ui_ready` so the provisioning

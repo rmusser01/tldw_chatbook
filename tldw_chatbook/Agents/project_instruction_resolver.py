@@ -195,6 +195,22 @@ class ProjectInstructionResolver:
         relative = target.relative_to(root)
         if not relative.parts or ".." in relative.parts:
             raise InstructionPromotionSnapshotError("ineligible_target")
+        try:
+            from tldw_chatbook.Utils.path_validation import validate_path
+
+            validated_parent = validate_path(
+                target.parent,
+                root,
+                redact_paths=True,
+                allow_hidden=True,
+            )
+        except (OSError, RuntimeError, ValueError):
+            raise InstructionPromotionSnapshotError("ineligible_target") from None
+        # Validate the parent, then restore the allowlisted final filename so
+        # the descriptor reader below can still reject a final-component
+        # symlink rather than silently following it.
+        target = validated_parent / target.name
+        relative = target.relative_to(root)
 
         target_before = _read_promotion_target_state(
             root=root,

@@ -14,6 +14,11 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Notes.note_folder_models import (
+    NotesOrganizationRepositoryError,
+    portable_collision_key,
+    portable_relative_path,
+)
 from tldw_chatbook.Sync_Interop.notes_organization import (
     parse_notes_organization_payload,
     validate_organization_object_id,
@@ -25,16 +30,7 @@ _RESOURCE_TABLES = {
     "notes.folder": ("note_folders", "name"),
 }
 _HEX_HASH = re.compile(r"[0-9a-f]{64}")
-_PORTABLE_PATH_LIMIT = 500
 LOCAL_ID_ALLOCATION_ATTEMPTS = 8
-
-
-class NotesOrganizationRepositoryError(ValueError):
-    """Reject an organization projection that cannot be represented safely."""
-
-    def __init__(self, reason_code: str, message: str) -> None:
-        super().__init__(message)
-        self.reason_code = reason_code
 
 
 @dataclass(frozen=True)
@@ -56,46 +52,6 @@ class _IntentLineage:
     base_object_revision: int | None
     base_object_hash: str | None
     next_source_version: int
-
-
-def portable_collision_key(name: str, *, maximum: int = 500) -> str:
-    """Return the server-compatible casefold key for one portable segment."""
-
-    if not isinstance(name, str):
-        raise NotesOrganizationRepositoryError("invalid_name", "name must be text")
-    display = name.strip()
-    if (
-        not display
-        or display in {".", ".."}
-        or len(display) > maximum
-        or "/" in display
-        or "\\" in display
-        or "\x00" in display
-    ):
-        raise NotesOrganizationRepositoryError(
-            "invalid_name", "name is not a portable path segment"
-        )
-    key = display.casefold()
-    if not key or key in {".", ".."} or "/" in key or "\\" in key:
-        raise NotesOrganizationRepositoryError(
-            "invalid_name", "name is not a portable path segment"
-        )
-    return key
-
-
-def portable_relative_path(segments: Sequence[str]) -> str:
-    """Build a bounded relative portable path from validated segments."""
-
-    if isinstance(segments, (str, bytes)) or not segments:
-        raise NotesOrganizationRepositoryError(
-            "invalid_path", "portable path requires at least one segment"
-        )
-    path = "/".join(portable_collision_key(segment) for segment in segments)
-    if len(path) > _PORTABLE_PATH_LIMIT:
-        raise NotesOrganizationRepositoryError(
-            "invalid_path", "portable relative path exceeds 500 characters"
-        )
-    return path
 
 
 class NotesOrganizationRepository:
@@ -121,10 +77,14 @@ class NotesOrganizationRepository:
             raise NotesOrganizationRepositoryError(
                 "invalid_domain", "domain is not an organization resource"
             )
-        connection = cursor if cursor is not None else self.db.get_connection()
-        return connection.execute(
-            f"SELECT * FROM {table_column[0]} WHERE sync_id = ?", (sync_id,)
-        ).fetchone()
+        if cursor is not None:
+            return cursor.execute(
+                f"SELECT * FROM {table_column[0]} WHERE sync_id = ?", (sync_id,)
+            ).fetchone()
+        with self.db.transaction() as owned_cursor:
+            return owned_cursor.execute(
+                f"SELECT * FROM {table_column[0]} WHERE sync_id = ?", (sync_id,)
+            ).fetchone()
 
     def apply_envelope(
         self,

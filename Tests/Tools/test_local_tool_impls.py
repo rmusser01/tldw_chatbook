@@ -1,8 +1,10 @@
 import hashlib
 import json
+import multiprocessing
 import threading
 from pathlib import Path
 
+import portalocker
 import pytest
 
 from tldw_chatbook.Tools import local_tool_impls
@@ -18,6 +20,20 @@ from tldw_chatbook.Tools.local_tool_impls import (
     write_file,
 )
 from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+
+def _write_while_locked(workspace: str, expected: str, outcomes) -> None:
+    try:
+        write_file(
+            "AGENTS.md",
+            "replacement",
+            workspace_root=Path(workspace),
+            expected_sha256=expected,
+        )
+    except LocalToolError:
+        outcomes.put("blocked")
+    else:
+        outcomes.put("written")
 
 
 @pytest.mark.parametrize(
@@ -360,6 +376,36 @@ def test_two_same_expectation_writers_allow_exactly_one(tmp_path):
 
     assert sorted(outcomes) == ["stale", "written"]
     assert target.read_text() in {"first", "second"}
+
+
+def test_expected_digest_write_respects_cross_process_target_lock(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    target = ws / "AGENTS.md"
+    target.write_text("before")
+    expected = hashlib.sha256(b"before").hexdigest()
+    context = multiprocessing.get_context("spawn")
+    outcomes = context.Queue()
+
+    with target.open("r+b") as handle:
+        portalocker.lock(
+            handle,
+            portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING,
+        )
+        process = context.Process(
+            target=_write_while_locked,
+            args=(str(ws), expected, outcomes),
+        )
+        process.start()
+        process.join(timeout=10)
+        if process.is_alive():
+            process.terminate()
+            process.join()
+            pytest.fail("CAS writer blocked instead of failing closed")
+
+    assert process.exitcode == 0
+    assert outcomes.get(timeout=1) == "blocked"
+    assert target.read_text() == "before"
 
 
 def test_fs_write_requires_existing_parent(tmp_path):

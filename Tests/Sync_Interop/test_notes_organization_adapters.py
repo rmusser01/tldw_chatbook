@@ -12,9 +12,6 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Notes.notes_organization_repository import (
     NotesOrganizationRepository,
 )
-from tldw_chatbook.Sync_Interop.domain_adapters import (
-    NotesOrganizationSyncAdapter,
-)
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
 from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
 from tldw_chatbook.Sync_Interop.notes_organization import (
@@ -101,17 +98,13 @@ def _seed_note(db: CharactersRAGDB, note_id: str) -> None:
         )
 
 
-def test_applier_registers_one_adapter_family_for_all_six_domains(
+def test_applier_defers_one_adapter_family_for_all_six_domains(
     organization_db: CharactersRAGDB,
 ) -> None:
     applier = _applier(organization_db)
 
-    adapters = [applier._adapters[domain] for domain in NOTES_ORGANIZATION_DOMAINS]
-
-    assert all(
-        isinstance(adapter, NotesOrganizationSyncAdapter) for adapter in adapters
-    )
-    assert len({id(adapter) for adapter in adapters}) == 1
+    assert set(NOTES_ORGANIZATION_DOMAINS).isdisjoint(applier._adapters)
+    assert applier._notes_organization_adapter is None
 
 
 def test_applier_projects_every_notes_organization_domain(

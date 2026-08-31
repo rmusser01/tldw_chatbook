@@ -8,14 +8,8 @@ import uuid
 from collections.abc import Mapping, Sequence
 from typing import Never, cast
 
-
-NOTES_ORGANIZATION_DOMAINS = (
-    "notes.keyword",
-    "notes.keyword_link",
-    "notes.keyword_collection",
-    "notes.keyword_collection_link",
-    "notes.folder",
-    "notes.folder_link",
+from tldw_chatbook.Sync_Interop.sync_state import (
+    NOTES_ORGANIZATION_DOMAINS,
 )
 
 _RESOURCE_DOMAINS = frozenset(

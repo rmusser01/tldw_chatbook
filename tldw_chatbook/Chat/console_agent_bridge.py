@@ -82,6 +82,7 @@ from tldw_chatbook.Agents.agent_service import (
     build_run_log_request_plan,
 )
 from tldw_chatbook.Agents.project_instruction_resolver import (
+    InstructionPromotionSnapshot,
     InstructionSnapshot,
     StartupInstructionCandidate,
 )
@@ -89,6 +90,7 @@ from tldw_chatbook.Agents.project_instruction_runtime import (
     InstructionActivationLedger,
     InstructionDeliveryReceipt,
     InstructionPreparation,
+    PromotionSnapshotRevalidation,
 )
 from tldw_chatbook.Agents.native_tools import provider_supports_native_tools
 from tldw_chatbook.Agents.agent_stream import StreamGate
@@ -2306,12 +2308,30 @@ class _ProjectInstructionDispatchContext:
     def discard_primary_snapshot(self) -> None:
         self._ledger = None
 
-    def snapshot_promotion_target(self, target_relative_path: str):
-        """Snapshot one eligible promotion target from the accepted ledger."""
+    def snapshot_promotion_target(
+        self, target_relative_path: str
+    ) -> InstructionPromotionSnapshot:
+        """Snapshot one eligible promotion target from the accepted ledger.
+
+        Args:
+            target_relative_path: Workspace-relative instruction target.
+
+        Returns:
+            The immutable target and effective-chain snapshot.
+        """
         return self._require_ledger().snapshot_promotion_target(target_relative_path)
 
-    def revalidate_promotion_target(self, prepared):
-        """Revalidate a prepared target against the accepted live ledger."""
+    def revalidate_promotion_target(
+        self, prepared: InstructionPromotionSnapshot
+    ) -> PromotionSnapshotRevalidation:
+        """Revalidate a prepared target against the accepted live ledger.
+
+        Args:
+            prepared: Previously captured promotion snapshot.
+
+        Returns:
+            Eligibility and a content-free reason code.
+        """
         return self._require_ledger().revalidate_promotion_target(prepared)
 
     def initial_context_for_chain(self, chain_id, payload_state):

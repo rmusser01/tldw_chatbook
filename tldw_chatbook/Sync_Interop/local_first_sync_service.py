@@ -7,7 +7,7 @@ import json
 from typing import Any, Mapping, Sequence, TYPE_CHECKING
 
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
-from tldw_chatbook.Sync_Interop.notes_organization import NOTES_ORGANIZATION_DOMAINS
+from tldw_chatbook.Sync_Interop.sync_state import NOTES_ORGANIZATION_DOMAINS
 from tldw_chatbook.Sync_Interop.sync_state import is_local_first_sync_profile_mode
 from tldw_chatbook.Sync_Interop.validation import (
     validate_pull_pagination_state,

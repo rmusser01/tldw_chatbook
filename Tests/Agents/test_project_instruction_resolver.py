@@ -72,6 +72,35 @@ def test_promotion_snapshot_represents_missing_target_as_expected_absent(
     assert snapshot.effective_chain == ()
 
 
+def test_promotion_snapshot_uses_central_path_validator_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    requested = tmp_path / "requested"
+    requested.mkdir()
+    validated = tmp_path / "validated"
+    validated.mkdir()
+    calls: list[tuple[Path, Path]] = []
+
+    def validate_path(user_path, base_directory, **_kwargs):
+        calls.append((Path(user_path), Path(base_directory)))
+        return validated
+
+    from tldw_chatbook.Utils import path_validation
+
+    monkeypatch.setattr(path_validation, "validate_path", validate_path)
+
+    snapshot = ProjectInstructionResolver().snapshot_promotion_target(
+        binding_id="binding-1",
+        binding_root=tmp_path,
+        locator_fingerprint="fingerprint",
+        target_path=requested / "AGENTS.md",
+        activation_revision=0,
+    )
+
+    assert calls == [(requested, tmp_path.resolve())]
+    assert snapshot.target_relative_path == "validated/AGENTS.md"
+
+
 def test_promotion_snapshot_rejects_symlink_target(tmp_path: Path) -> None:
     outside = tmp_path / "outside"
     outside.write_text("outside")

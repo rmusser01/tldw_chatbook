@@ -17,7 +17,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass, field
 import threading
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 from uuid import uuid4
 import weakref
 
@@ -49,12 +49,8 @@ from tldw_chatbook.Library.library_tool_contract import (
     json_dumps_compact,
     make_public_id,
 )
-from tldw_chatbook.Notes.agent_lessons import (
-    AgentLessonClassification,
-    canonical_call_digest,
-    classify_agent_lesson,
-    lesson_content_digest,
-)
+if TYPE_CHECKING:
+    from tldw_chatbook.Notes.agent_lessons import AgentLessonClassification
 
 
 class AgentLessonPreflightError(RuntimeError):
@@ -311,6 +307,12 @@ class LibraryToolProvider(_BuiltinLibraryAuthorityIssuer):
                     raise AgentLessonPreflightError()
                 receipt_requested_marker = "agent-lesson" in receipt_keywords
 
+        from tldw_chatbook.Notes.agent_lessons import (
+            canonical_call_digest,
+            classify_agent_lesson,
+            lesson_content_digest,
+        )
+
         classification = classify_agent_lesson(
             requested_keywords=tuple(requested),
             current_keywords=current_keywords,
@@ -453,6 +455,11 @@ class LibraryToolProvider(_BuiltinLibraryAuthorityIssuer):
             or context.issuer is not self
         ):
             raise _AgentLessonAuthorityRefusal("approval_required")
+        from tldw_chatbook.Notes.agent_lessons import (
+            canonical_call_digest,
+            lesson_content_digest,
+        )
+
         try:
             call_digest = canonical_call_digest("library_save_note", raw_arguments)
             content_digest = lesson_content_digest(raw_arguments.get("content"))

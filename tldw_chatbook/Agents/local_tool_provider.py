@@ -41,11 +41,6 @@ from tldw_chatbook.Tools.workspace_tool_executor import (
 
 from ..config import coerce_bool_setting, get_cli_setting
 from .agent_models import ToolCatalogEntry, ToolResult, ToolSchema
-from .agent_lesson_promotion import (
-    PromotionEvidence,
-    RepositoryInstructionProposal,
-    assess_promotion_evidence,
-)
 from .mcp_tool_provider import MCPPendingCall
 from .project_instruction_resolver import InstructionPromotionSnapshot
 from .project_instruction_runtime import PromotionSnapshotRevalidation
@@ -69,6 +64,10 @@ from .session_todo_store import (
 )
 
 if TYPE_CHECKING:
+    from .agent_lesson_promotion import (
+        PromotionEvidence,
+        RepositoryInstructionProposal,
+    )
     from tldw_chatbook.Tools.watchlists_command_service import WatchlistsCommandService
     from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
 from .tool_catalog import ToolExecutionPolicy, ToolPathTarget, redact_root_locator
@@ -965,23 +964,29 @@ class LocalToolProvider:
         """
         promotion_kind = _promotion_call_kind(name, args)
         promotion_args = args
+        promotion_authority: RunAdmittedWorkspaceRoot | None = None
         if promotion_kind is not None:
             bare_name = name.split(":", 1)[1] if ":" in name else name
             promotion_spec = self._specs.get(bare_name)
             if promotion_spec is None:
                 return None
             try:
-                authority, promotion_args = self._select_admitted_root(
+                promotion_authority, promotion_args = self._select_admitted_root(
                     bare_name, args
                 )
             except ValueError:
                 return None
-            if not self._authority_is_valid(authority, write=True):
+            if not self._authority_is_valid(promotion_authority, write=True):
                 return None
         promotion_gate = self._pending_promotion_gate(
             name,
             args,
             promotion_args=promotion_args,
+            selected_root_alias=(
+                promotion_authority.alias
+                if promotion_authority is not None
+                else None
+            ),
             call_id=call_id,
             run_id=run_id,
         )
@@ -1018,6 +1023,7 @@ class LocalToolProvider:
         args: dict,
         *,
         promotion_args: Mapping[str, Any],
+        selected_root_alias: str | None,
         call_id: str,
         run_id: str,
     ) -> MCPPendingCall | None:
@@ -1042,7 +1048,9 @@ class LocalToolProvider:
                 return None
             with self._promotion_lock:
                 retained = self._promotion_proposals.get((run_id, digest))
-            if retained is None or not _application_matches(retained[0], args):
+            if retained is None or not _application_matches(
+                retained[0], args, selected_root_alias=selected_root_alias
+            ):
                 return None
             arguments = {
                 "action": "apply_agent_lesson_promotion",
@@ -1055,6 +1063,8 @@ class LocalToolProvider:
                 )
             except ValueError:
                 return None
+            from .agent_lesson_promotion import assess_promotion_evidence
+
             eligibility = assess_promotion_evidence(evidence)
             if not eligibility.eligible:
                 return None
@@ -1414,6 +1424,11 @@ class LocalToolProvider:
         authority: RunAdmittedWorkspaceRoot | None,
     ) -> ToolResult:
         try:
+            from .agent_lesson_promotion import (
+                RepositoryInstructionProposal,
+                assess_promotion_evidence,
+            )
+
             evidence, verification_command, verification_text = (
                 _parse_promotion_request(args)
             )
@@ -1454,9 +1469,6 @@ class LocalToolProvider:
         except Exception:  # noqa: BLE001 - content-free promotion refusal
             return ToolResult.blocked(PROMOTION_STALE_REFUSAL)
         with self._promotion_lock:
-            existing = [key for key in self._promotion_proposals if key[0] == run_id]
-            for key in existing:
-                self._promotion_proposals.pop(key, None)
             self._promotion_proposals[(run_id, proposal.proposal_digest)] = (
                 proposal,
                 snapshot,
@@ -1496,7 +1508,11 @@ class LocalToolProvider:
             retained = self._promotion_proposals.pop(
                 (run_id, proposal_digest), None
             )
-        if retained is None or not _application_matches(retained[0], args):
+        if retained is None or not _application_matches(
+            retained[0],
+            args,
+            selected_root_alias=authority.alias if authority is not None else None,
+        ):
             return ToolResult.blocked(PROMOTION_APPROVAL_REQUIRED)
         proposal, snapshot = retained
         if authority is not None and authority.binding_id != proposal.binding_id:
@@ -1737,6 +1753,8 @@ def _parse_promotion_request(
     for field_name in optional:
         if field_name in raw and type(raw[field_name]) is not bool:
             raise ValueError("invalid promotion evidence")
+    from .agent_lesson_promotion import PromotionEvidence
+
     evidence = PromotionEvidence(
         lesson_note_ids=tuple(note_ids),
         summary=raw["summary"],
@@ -1758,7 +1776,10 @@ def _parse_promotion_request(
 
 
 def _application_matches(
-    proposal: RepositoryInstructionProposal, args: object
+    proposal: RepositoryInstructionProposal,
+    args: object,
+    *,
+    selected_root_alias: str | None,
 ) -> bool:
     if type(args) is not dict:
         return False
@@ -1773,8 +1794,9 @@ def _application_matches(
     }
     if set(args) - allowed:
         return False
-    if "root_alias" in args and args.get("root_alias") != proposal.binding_id:
-        return False
+    if "root_alias" in args:
+        if selected_root_alias is None or args.get("root_alias") != selected_root_alias:
+            return False
     if args.get("path") != proposal.target_path:
         return False
     if args.get("content") != proposal.replacement_content:

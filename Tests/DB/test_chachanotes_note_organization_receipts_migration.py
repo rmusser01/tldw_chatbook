@@ -336,6 +336,9 @@ def test_real_v59_reopen_adds_publication_intents_without_rewriting_receipts(
     migrated = CharactersRAGDB(path, client_id="publication-v60-migrate")
     try:
         connection = migrated.get_connection()
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'"
+        ).fetchone() is None
         assert _schema_version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         assert _receipt_schema(connection) == receipt_schema
         assert PUBLICATION_TABLE in _table_names(connection)
@@ -471,6 +474,9 @@ def test_current_schema_reopen_restores_link_lookup_indexes_and_query_plans(
     reopened = CharactersRAGDB(path, client_id="receipt-v59-index-open")
     try:
         connection = reopened.get_connection()
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'"
+        ).fetchone() is None
         assert LINK_LOOKUP_INDEXES <= _index_names(connection)
 
         traced: list[str] = []
@@ -508,6 +514,19 @@ def test_receipt_constraints_enforce_one_unresolved_state_per_note() -> None:
         connection = db.get_connection()
         first_note_id = str(db.add_note("First", "Body"))
         second_note_id = str(db.add_note("Second", "Body"))
+
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'"
+        ).fetchone() is None
+        plan = connection.execute(
+            "EXPLAIN QUERY PLAN SELECT receipt_id "
+            "FROM note_organization_receipts WHERE note_id = ?",
+            (first_note_id,),
+        ).fetchall()
+        assert any(
+            "uq_note_organization_receipts_unresolved_note" in str(row[3])
+            for row in plan
+        )
 
         _insert_receipt(connection, receipt_id="pending", note_id=first_note_id)
         with pytest.raises(sqlite3.IntegrityError):

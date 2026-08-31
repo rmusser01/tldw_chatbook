@@ -1,6 +1,8 @@
 # Notes_Library.py
 # Description: This module provides a service layer for managing notes and note keywords
 #
+from __future__ import annotations
+
 # Imports
 import hashlib
 import logging
@@ -14,7 +16,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from collections.abc import Callable, Mapping
-from typing import List, Dict, Optional, Any, Sequence, Union
+from typing import TYPE_CHECKING, List, Dict, Optional, Any, Sequence, Union
 
 #
 # Third-Party Imports
@@ -34,18 +36,18 @@ from tldw_chatbook.Utils.private_paths import (
     lexical_path,
     verify_trusted_directory,
 )
-from tldw_chatbook.Notes.notes_organization_repository import (
-    NotesOrganizationRepository,
+from tldw_chatbook.Notes.note_folder_models import (
     NotesOrganizationRepositoryError,
     portable_collision_key,
     portable_relative_path,
 )
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
-from tldw_chatbook.Sync_Interop.notes_organization import (
-    organization_link_id,
-    validate_resource_sync_id,
-)
 from ..Metrics.metrics_logger import log_counter, log_histogram
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Notes.notes_organization_repository import (
+        NotesOrganizationRepository,
+    )
 #
 #######################################################################################################################
 #
@@ -581,6 +583,10 @@ class NotesInteropService:
     ) -> str:
         """Validate a public folder identity and its complete active lineage."""
 
+        from tldw_chatbook.Sync_Interop.notes_organization import (
+            validate_resource_sync_id,
+        )
+
         try:
             validated = validate_resource_sync_id(folder_sync_id.strip())
         except (AttributeError, ValueError) as exc:
@@ -741,6 +747,10 @@ class NotesInteropService:
             portable_collision_key(folder, maximum=255)
             folder = folder.strip()
         if folder_sync_id is not None:
+            from tldw_chatbook.Sync_Interop.notes_organization import (
+                validate_resource_sync_id,
+            )
+
             folder_sync_id = validate_resource_sync_id(folder_sync_id.strip())
         requested_keywords = self._normalize_ensured_keywords(ensure_keywords)
         organization_requested = bool(requested_keywords or folder or folder_sync_id)
@@ -1115,6 +1125,10 @@ class NotesInteropService:
             self._inject_organization_failure("after_membership")
 
             if profile is not None and dataset is not None:
+                from tldw_chatbook.Notes.notes_organization_repository import (
+                    NotesOrganizationRepository,
+                )
+
                 organization = NotesOrganizationRepository(
                     db, server_profile_id=profile
                 )
@@ -1426,6 +1440,8 @@ class NotesInteropService:
         members: Sequence[str],
         payload: Mapping[str, object],
     ) -> None:
+        from tldw_chatbook.Sync_Interop.notes_organization import organization_link_id
+
         object_id = organization_link_id(domain, members)
         repository._record_inferred_intent_with_cursor(
             cursor,

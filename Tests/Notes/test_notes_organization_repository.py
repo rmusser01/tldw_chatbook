@@ -6,6 +6,7 @@ import hashlib
 import json
 import uuid
 from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pytest
 
@@ -39,6 +40,25 @@ def _hash(payload: object) -> str:
         payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     ).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def test_resource_lookup_without_cursor_owns_a_transaction(
+    repository: NotesOrganizationRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_transaction = repository.db.transaction
+    calls = 0
+
+    @contextmanager
+    def tracked_transaction():
+        nonlocal calls
+        calls += 1
+        with real_transaction() as cursor:
+            yield cursor
+
+    monkeypatch.setattr(repository.db, "transaction", tracked_transaction)
+
+    assert repository.get_resource_by_sync_id("notes.folder", _id(999)) is None
+    assert calls == 1
 
 
 def _apply(

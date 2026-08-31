@@ -251,6 +251,67 @@ def test_fresh_v58_schema_matches_migration_constraints() -> None:
             row for row in _intent_columns(connection) if row[1] == "intent_sequence"
         )
         assert sequence_column[2:5] == ("INTEGER", 1, None)
+
+
+@pytest.mark.parametrize(
+    ("index_name", "statement", "params"),
+    (
+        (
+            "uq_keywords_sync_id",
+            "SELECT id FROM keywords WHERE sync_id = ?",
+            (str(uuid.uuid4()),),
+        ),
+        (
+            "uq_keyword_collections_sync_id",
+            "SELECT id FROM keyword_collections WHERE sync_id = ?",
+            (str(uuid.uuid4()),),
+        ),
+        (
+            "uq_note_folders_sync_id",
+            "SELECT id FROM note_folders WHERE sync_id = ?",
+            (str(uuid.uuid4()),),
+        ),
+        (
+            "idx_notes_organization_intents_pending",
+            "SELECT intent_id FROM notes_organization_sync_intents "
+            "WHERE server_profile_id = ? AND dataset_id = ? "
+            "AND acknowledged_at IS NULL ORDER BY intent_sequence",
+            ("server-a", "dataset-a"),
+        ),
+        (
+            "idx_notes_organization_heads_cursor",
+            "SELECT object_id FROM notes_organization_heads "
+            "WHERE server_profile_id = ? AND dataset_id = ? AND server_cursor = ?",
+            ("server-a", "dataset-a", "cursor-a"),
+        ),
+        (
+            "idx_notes_organization_adoption_reviews_open",
+            "SELECT review_id FROM notes_organization_adoption_reviews "
+            "WHERE server_profile_id = ? AND dataset_id = ? AND domain = ? "
+            "AND state = 'open' ORDER BY created_at",
+            ("server-a", "dataset-a", "notes.folder"),
+        ),
+    ),
+)
+def test_notes_organization_indexes_have_stats_free_query_plans(
+    index_name: str, statement: str, params: tuple[object, ...]
+) -> None:
+    with chachanotes_db_at_version(
+        ":memory:", 58, client_id="v58-query-plans"
+    ) as db:
+        connection = db.get_connection()
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'"
+        ).fetchone() is None
+
+        details = [
+            str(row[3])
+            for row in connection.execute(
+                f"EXPLAIN QUERY PLAN {statement}", params
+            ).fetchall()
+        ]
+
+        assert any(index_name in detail for detail in details), details
         predecessor_column = next(
             row
             for row in _intent_columns(connection)

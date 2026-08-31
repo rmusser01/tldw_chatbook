@@ -34,7 +34,6 @@ from tldw_chatbook.Chat.console_history_budget import (
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.trajectory import contains_local_path, redact_local_paths
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from tldw_chatbook.Notes.agent_lessons import build_agent_lessons_runtime_guidance
 from tldw_chatbook.Utils.token_counter import (
     count_tokens_messages,
     estimate_tokens,
@@ -44,7 +43,6 @@ from tldw_chatbook.Utils.log_sanitizer import REDACTION_MARKER, redact_log_line
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_history_budget import count_console_messages_tokens
 
-from .agent_lesson_promotion import build_agent_lesson_promotion_guidance
 from .agent_models import (
     AGENT_LIFECYCLE_INDEX_BASE,
     AGENT_KIND_PRIMARY,
@@ -1946,6 +1944,11 @@ class AgentService:
                 system_content = f"{system_content}\n\n{protocol_text}"
         if log_active:
             system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
+        from tldw_chatbook.Notes.agent_lessons import (
+            build_agent_lessons_runtime_guidance,
+        )
+        from .agent_lesson_promotion import build_agent_lesson_promotion_guidance
+
         guidance = build_agent_lessons_runtime_guidance(
             schemas, trusted_role=trusted_role
         )
@@ -2276,6 +2279,11 @@ class AgentService:
                     system_content = f"{config.system_prompt}\n\n{protocol_text}"
             if effective_log_active:
                 system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
+            from tldw_chatbook.Notes.agent_lessons import (
+                build_agent_lessons_runtime_guidance,
+            )
+            from .agent_lesson_promotion import build_agent_lesson_promotion_guidance
+
             guidance = build_agent_lessons_runtime_guidance(
                 schemas, trusted_role=trusted_role
             )

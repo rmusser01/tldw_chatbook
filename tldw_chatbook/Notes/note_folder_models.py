@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal
@@ -14,6 +14,55 @@ FolderManagedState = Literal["normal", "protected", "inactive_managed"]
 FolderCapabilityName = Literal[
     "list", "create", "rename", "move", "delete", "restore", "membership"
 ]
+_PORTABLE_PATH_LIMIT = 500
+
+
+class NotesOrganizationRepositoryError(ValueError):
+    """Reject an organization projection that cannot be represented safely."""
+
+    def __init__(self, reason_code: str, message: str) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+
+
+def portable_collision_key(name: str, *, maximum: int = 500) -> str:
+    """Return the server-compatible casefold key for one portable segment."""
+
+    if not isinstance(name, str):
+        raise NotesOrganizationRepositoryError("invalid_name", "name must be text")
+    display = name.strip()
+    if (
+        not display
+        or display in {".", ".."}
+        or len(display) > maximum
+        or "/" in display
+        or "\\" in display
+        or "\x00" in display
+    ):
+        raise NotesOrganizationRepositoryError(
+            "invalid_name", "name is not a portable path segment"
+        )
+    key = display.casefold()
+    if not key or key in {".", ".."} or "/" in key or "\\" in key:
+        raise NotesOrganizationRepositoryError(
+            "invalid_name", "name is not a portable path segment"
+        )
+    return key
+
+
+def portable_relative_path(segments: Sequence[str]) -> str:
+    """Build a bounded relative portable path from validated segments."""
+
+    if isinstance(segments, (str, bytes)) or not segments:
+        raise NotesOrganizationRepositoryError(
+            "invalid_path", "portable path requires at least one segment"
+        )
+    path = "/".join(portable_collision_key(segment) for segment in segments)
+    if len(path) > _PORTABLE_PATH_LIMIT:
+        raise NotesOrganizationRepositoryError(
+            "invalid_path", "portable relative path exceeds 500 characters"
+        )
+    return path
 
 
 class FolderValidationError(ValueError):

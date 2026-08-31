@@ -9,6 +9,29 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Rebase before measuring a startup import closure
+
+**PR #2250 follow-up, 2026-08-30.** The Agent Lessons branch passed its focused
+feature tests, but after rebasing onto current `dev` the UI-ready module census
+failed in CI at 979 modules against a 972-module cap (the local platform measured
+977). The feature's apparently small app imports pulled in seven interaction- or
+sync-only implementation modules through package initializers and shared contract
+constants. Deferring the Notes organization composition until just after the
+first interactive frame, moving constants and leaf helpers into already-resident
+modules, and making promotion/adapter imports first-use reduced the real mounted
+census to 970 locally while an exact absent-at-ready list pinned the intended
+seams.
+
+**What to do.** For a long-lived feature branch, rebase onto the actual merge
+base before treating startup evidence as final. Measure the mounted app's full
+import closure on every supported CI platform, not just direct imports or a
+feature-only test process. When a new domain is not required for first paint,
+defer its composition or import it at first use and add its implementation
+modules to the absent-at-ready contract; retain a little platform headroom
+instead of landing exactly at the local cap.
+
+---
+
 ## Shipped migration and ADR numbers are allocation records, not merge labels
 
 **TASK-24613, 2026-08-30.** The Agent Lessons worktree and a newer `dev`

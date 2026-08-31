@@ -6,7 +6,7 @@ from typing import Any, TYPE_CHECKING
 
 from tldw_chatbook.Sync_Interop.crypto import unwrap_recovery_bundle
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
-from tldw_chatbook.Sync_Interop.notes_organization import NOTES_ORGANIZATION_DOMAINS
+from tldw_chatbook.Sync_Interop.sync_state import NOTES_ORGANIZATION_DOMAINS
 from tldw_chatbook.Sync_Interop.validation import (
     validate_pull_pagination_state,
     validate_pulled_response_scope,

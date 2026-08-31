@@ -323,7 +323,21 @@ class InstructionActivationLedger:
         self, target_relative_path: str
     ) -> InstructionPromotionSnapshot:
         """Capture current target and chain state under this run's authority."""
-        target = self._snapshot.binding_root / target_relative_path
+        relative = Path(target_relative_path)
+        if relative.name not in {"AGENTS.md", "AGENTS.override.md"}:
+            raise InstructionPromotionSnapshotError("ineligible_target")
+        try:
+            from tldw_chatbook.Utils.path_validation import validate_path
+
+            validated_parent = validate_path(
+                relative.parent,
+                self._snapshot.binding_root,
+                redact_paths=True,
+                allow_hidden=True,
+            )
+        except (OSError, RuntimeError, ValueError):
+            raise InstructionPromotionSnapshotError("ineligible_target") from None
+        target = validated_parent / relative.name
         with self._lock:
             revision = self._activation_revision
         return self._resolver.snapshot_promotion_target(

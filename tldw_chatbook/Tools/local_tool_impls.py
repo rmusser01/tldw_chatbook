@@ -57,7 +57,7 @@ import stat as stat_module
 import threading
 import uuid
 from pathlib import Path
-from typing import Literal
+from typing import BinaryIO, Literal
 
 from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Utils.sensitive_paths import (
@@ -594,7 +594,15 @@ def _atomic_write_target(
         raise LocalToolError(f"write parent changed: {shown}") from None
     temp_name = f".chatbook-write-{uuid.uuid4().hex}.tmp"
     temp_created = False
+    target_lock = None
     try:
+        if expected_sha256 is not None:
+            target_lock = _acquire_expected_target_lock(
+                parent_fd,
+                target.name,
+                shown,
+                expected_sha256,
+            )
         # Recheck after acquiring the retained directory descriptor.  This is
         # the mutation boundary; no later path traversal is used.
         live, live_mode = _read_relative_descriptor(parent_fd, target.name, shown)
@@ -630,6 +638,14 @@ def _atomic_write_target(
             os.unlink(temp_name, dir_fd=parent_fd)
             temp_created = False
         else:
+            if target_lock is not None:
+                _assert_expected_target_is_current(
+                    parent_fd,
+                    target.name,
+                    shown,
+                    expected_sha256,
+                    target_lock,
+                )
             os.replace(
                 temp_name,
                 target.name,
@@ -650,7 +666,94 @@ def _atomic_write_target(
                 os.unlink(temp_name, dir_fd=parent_fd)
             except OSError:
                 pass
+        if target_lock is not None:
+            try:
+                import portalocker
+
+                portalocker.unlock(target_lock)
+            except Exception:  # noqa: BLE001 - best-effort lock release
+                pass
+            target_lock.close()
         os.close(parent_fd)
+
+
+def _acquire_expected_target_lock(
+    parent_fd: int,
+    filename: str,
+    shown: str,
+    expected_sha256: str,
+) -> BinaryIO:
+    """Acquire a non-blocking process lock on the expected target inode."""
+    import portalocker
+
+    flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(filename, flags, dir_fd=parent_fd)
+        handle = os.fdopen(descriptor, "r+b", buffering=0)
+    except OSError:
+        raise LocalToolError("write precondition failed: target digest changed") from None
+    try:
+        portalocker.lock(
+            handle,
+            portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING,
+        )
+    except portalocker.exceptions.LockException:
+        handle.close()
+        raise LocalToolError(
+            "write precondition failed: target is being modified"
+        ) from None
+    try:
+        _assert_expected_target_is_current(
+            parent_fd,
+            filename,
+            shown,
+            expected_sha256,
+            handle,
+        )
+    except Exception:
+        try:
+            portalocker.unlock(handle)
+        except Exception:  # noqa: BLE001 - preserve the validation failure
+            pass
+        handle.close()
+        raise
+    return handle
+
+
+def _assert_expected_target_is_current(
+    parent_fd: int,
+    filename: str,
+    shown: str,
+    expected_sha256: str | None,
+    locked_handle: BinaryIO,
+) -> None:
+    """Verify the locked inode is still the named path with the expected bytes."""
+    if expected_sha256 is None:
+        raise LocalToolError("write precondition failed: target digest changed")
+    locked_info = os.fstat(locked_handle.fileno())
+    if not stat_module.S_ISREG(locked_info.st_mode):
+        raise LocalToolError(f"write target is not a regular file: {shown}")
+    locked_handle.seek(0)
+    locked_digest = hashlib.sha256(locked_handle.read()).hexdigest()
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        current_fd = os.open(filename, flags, dir_fd=parent_fd)
+    except OSError:
+        raise LocalToolError("write precondition failed: target digest changed") from None
+    try:
+        current_info = os.fstat(current_fd)
+    finally:
+        os.close(current_fd)
+    if (
+        (locked_info.st_dev, locked_info.st_ino)
+        != (current_info.st_dev, current_info.st_ino)
+        or locked_digest != expected_sha256
+    ):
+        raise LocalToolError("write precondition failed: target digest changed")
 
 
 def _read_relative_descriptor(
