@@ -264,8 +264,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 64,
-      "diagnostic_digest": "8e4cd57b99d587547deb",
+      "call_count": 65,
+      "diagnostic_digest": "a6dabc979ad955aa725b",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_chat_controller.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -1482,6 +1482,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 4,
+      "diagnostic_digest": "45d839f1307b3c5a334d",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Personal_Context/interview_launch.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 1,
       "diagnostic_digest": "8f71e7a1b3c45701e66f",
       "owner": "TASK-494",
@@ -2694,7 +2701,7 @@
     },
     {
       "call_count": 120,
-      "diagnostic_digest": "bf6d797a14fe17e73c33",
+      "diagnostic_digest": "9b6675a1b85f33a30984",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/library_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3820,8 +3827,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 368,
-      "diagnostic_digest": "6f0ad85ce1974dc46ef9",
+      "call_count": 370,
+      "diagnostic_digest": "517770cd2c0c6b933ba0",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -11036,6 +11043,23 @@
       ]
     },
     {
+      "path": "tldw_chatbook/Personal_Context/export_service.py",
+      "sinks": [
+        {
+          "digest": "c3c1fe1b3f5a717e",
+          "kind": "atomic_private_write_bytes",
+          "method": "atomic_private_write_bytes",
+          "scope": "export_plaintext"
+        },
+        {
+          "digest": "bc5a857a701c2dc1",
+          "kind": "atomic_private_write_bytes",
+          "method": "atomic_private_write_bytes",
+          "scope": "export_recovery"
+        }
+      ]
+    },
+    {
       "path": "tldw_chatbook/Utils/private_paths.py",
       "sinks": [
         {
@@ -11107,10 +11131,10 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 550,
+    "owner_files": 551,
     "path_privacy_candidate_calls": 711,
-    "persistent_sink_files": 8,
-    "task_492_calls": 1307,
-    "task_494_calls": 7417
+    "persistent_sink_files": 9,
+    "task_492_calls": 1308,
+    "task_494_calls": 7423
   }
 }

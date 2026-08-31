@@ -243,6 +243,6 @@ disabled at runtime without deleting data or silently stopping synchronization.
 
 - [Approved design](../../Docs/superpowers/specs/2026-08-28-unified-personal-context-profile-design.md)
 - [Implementation index](../../Docs/superpowers/plans/2026-08-28-personal-context-implementation-index.md)
-- [Backlog task 23193](../tasks/task-23193%20-%20Record-personal-context-profile-authority-ADR.md)
+- [Backlog task 26831](../tasks/task-26831%20-%20Record-personal-context-profile-authority-ADR.md)
 - [ADR-008 — Sync V2 client M1 contract alignment](008-sync-v2-client-m1-contract-alignment.md)
 - [ADR-037 — Persona and User Profile separation](037-roleplay-assistant-identity-and-persona-user-profile-separation.md)

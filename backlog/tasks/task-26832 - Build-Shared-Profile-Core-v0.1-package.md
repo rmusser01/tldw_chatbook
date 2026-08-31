@@ -1,14 +1,18 @@
 ---
-id: TASK-23194
+id: TASK-26832
 title: Build Shared Profile Core v0.1 package
 status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-29 06:24'
-updated_date: '2026-08-29 17:01'
+updated_date: '2026-08-31 12:00'
 labels: []
 dependencies: []
 ---
+
+## Renumbering provenance
+
+Renumbered from `TASK-23194` to `TASK-26832` on 2026-08-31 after integration with current `dev` showed that the older Console Context rail cleanup task already owned `TASK-23194`.
 
 ## Description
 

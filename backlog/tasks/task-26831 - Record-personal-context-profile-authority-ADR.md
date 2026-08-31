@@ -1,14 +1,18 @@
 ---
-id: TASK-23193
+id: TASK-26831
 title: Record personal context profile authority ADR
 status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-29 05:22'
-updated_date: '2026-08-29 05:56'
+updated_date: '2026-08-31 12:00'
 labels: []
 dependencies: []
 ---
+
+## Renumbering provenance
+
+Renumbered from `TASK-23193` to `TASK-26831` on 2026-08-31 after integration with current `dev` showed that the older Console Context rail task already owned `TASK-23193`.
 
 ## Description
 

@@ -1,11 +1,11 @@
 ---
-id: TASK-24403
+id: TASK-26833
 title: Inject bounded Personal Context into Console requests
 status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-29 22:12'
-updated_date: '2026-08-30 00:11'
+updated_date: '2026-08-31 12:00'
 labels:
   - personal-context
   - console
@@ -14,6 +14,10 @@ dependencies:
   - TASK-24401
 priority: high
 ---
+
+## Renumbering provenance
+
+Renumbered from `TASK-24403` to `TASK-26833` on 2026-08-31 after integration with current `dev` showed that the older fast-PR lane task already owned `TASK-24403`.
 
 ## Description
 
