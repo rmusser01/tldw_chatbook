@@ -65,11 +65,39 @@ _TOOL_TEST_SECRET_ASSIGNMENT = re.compile(
 _TOOL_TEST_BEARER = re.compile(r"(?i)\bbearer\s+(?:\[redacted\]|[^\s,;}\]]+)")
 _TOOL_TEST_KEY_VALUE = re.compile(r"\bsk-[A-Za-z0-9_-]{6,}\b")
 _TOOL_TEST_PATH_START = re.compile(
-    r"(?<![A-Za-z0-9:/])(?:"
+    r"(?<![A-Za-z0-9])(?:"
     r"[A-Za-z]:[\\/]"
     r"|\\\\(?:[?.][\\/]|[^\\/\s'\"<>]+[\\/][^\\/\s'\"<>]+)"
     r"|/)"
 )
+
+
+def _http_url_end(text: str, path_start: int) -> int | None:
+    """Return the end of an HTTP URL whose first slash looked path-like."""
+    prefix = text[:path_start].lower()
+    if not (prefix.endswith("http:") or prefix.endswith("https:")):
+        return None
+    match = re.match(r"[^\s'\"<>]+", text[path_start:])
+    return path_start + len(match.group(0)) if match is not None else path_start
+
+
+def _unquoted_tool_test_path_end(candidate: str) -> int:
+    """Include a slash-bearing suffix after spaces without swallowing prose."""
+    diagnostic = re.search(r":(?=\s)", candidate[2:])
+    if diagnostic is not None:
+        return 2 + diagnostic.start()
+    tokens = list(re.finditer(r"\S+", candidate))
+    if not tokens:
+        return 0
+    end = tokens[0].end()
+    for token in tokens[1:]:
+        token_text = token.group(0)
+        normalized = token_text.lstrip("([{").lower()
+        if normalized.startswith(("http://", "https://")):
+            break
+        if "/" in token_text or "\\" in token_text:
+            end = token.end()
+    return end
 
 
 def _redact_tool_test_paths(text: str) -> str:
@@ -78,6 +106,11 @@ def _redact_tool_test_paths(text: str) -> str:
     cursor = 0
     while match := _TOOL_TEST_PATH_START.search(text, cursor):
         start = match.start()
+        url_end = _http_url_end(text, start)
+        if url_end is not None:
+            parts.append(text[cursor:url_end])
+            cursor = url_end
+            continue
         parts.append(text[cursor:start])
         quote = text[start - 1] if start and text[start - 1] in {'"', "'"} else None
         if quote is not None:
@@ -85,17 +118,12 @@ def _redact_tool_test_paths(text: str) -> str:
             end = closing_quote if closing_quote >= 0 else len(text)
         else:
             hard_end = len(text)
-            for marker in "\r\n\t<>\"'":
+            for marker in "\r\n\t<>\"';":
                 marker_at = text.find(marker, match.end())
                 if marker_at >= 0:
                     hard_end = min(hard_end, marker_at)
             candidate = text[start:hard_end]
-            diagnostic = re.search(r":(?=\s)", candidate[2:])
-            if diagnostic is not None:
-                end = start + 2 + diagnostic.start()
-            else:
-                whitespace = re.search(r"\s", candidate)
-                end = start + whitespace.start() if whitespace is not None else hard_end
+            end = start + _unquoted_tool_test_path_end(candidate)
             while end > start and text[end - 1] in ",;)]}":
                 end -= 1
         parts.append("[path]")

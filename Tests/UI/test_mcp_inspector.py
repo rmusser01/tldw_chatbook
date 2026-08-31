@@ -3051,6 +3051,22 @@ async def test_test_tool_preview_close_revokes_nonce_and_late_preview_is_ignored
             "Private Project",
         ),
         (
+            "/Users/alice/Private Project/credentials.json failed to open",
+            "Project/credentials.json",
+        ),
+        (
+            "/Users/alice/Private Failed Project/credentials.json",
+            "Project/credentials.json",
+        ),
+        (
+            "root:/Users/alice/private/credentials.json",
+            "credentials.json",
+        ),
+        (
+            "file:///Users/alice/private/credentials.json",
+            "credentials.json",
+        ),
+        (
             r"C:\Private Folder\credentials.json: permission denied",
             "Private Folder",
         ),
@@ -3111,6 +3127,7 @@ async def test_test_tool_failure_surfaces_redact_secrets_paths_and_bound_text(
         r"Expected regex \\d+\\w+ here.",
         "See https://example.test/docs/private/file.txt for recovery.",
         r"Expected escaped token \\w+ and relative path docs/private.txt.",
+        "Status at 12:34/56 remains ready: retry later.",
     ],
 )
 def test_test_tool_text_scrubber_preserves_urls_regex_and_relative_paths(value: str):
@@ -3124,6 +3141,8 @@ def test_test_tool_mapping_exception_preserves_innocuous_paths_and_escapes():
                 "pattern": r"\\d+\\w+",
                 "docs": "https://example.test/docs/private/file.txt",
                 "relative": "docs/private.txt",
+                "timestamp": "12:34/56",
+                "status": "ready: retry later",
             }
         )
     )
@@ -3131,6 +3150,60 @@ def test_test_tool_mapping_exception_preserves_innocuous_paths_and_escapes():
     assert "[path]" not in rendered
     assert "example.test/docs/private/file.txt" in rendered
     assert "docs/private.txt" in rendered
+    assert "12:34/56" in rendered
+    assert "ready: retry later" in rendered
+
+
+def test_test_tool_mapping_exception_redacts_local_uri_and_spaced_suffix():
+    rendered = mcp_inspector_module._safe_exception_text(
+        RuntimeError(
+            {
+                "path": "file:///Users/alice/Private Project/credentials.json",
+                "detail": "Open failed; see https://example.test/recovery.",
+            }
+        )
+    )
+
+    assert "Users/alice" not in rendered
+    assert "Project/credentials.json" not in rendered
+    assert "[path]" in rendered
+    assert "https://example.test/recovery" in rendered
+
+
+def test_test_tool_path_scrubber_keeps_http_recovery_after_spaced_path():
+    rendered = mcp_inspector_module._safe_tool_test_text(
+        "Failed at /Users/alice/Private Project/credentials.json; "
+        "see docs/recovery.md and https://example.test/recovery."
+    )
+
+    assert "Users/alice" not in rendered
+    assert "Project/credentials.json" not in rendered
+    assert "docs/recovery.md" in rendered
+    assert "https://example.test/recovery" in rendered
+
+
+@pytest.mark.asyncio
+async def test_test_tool_unavailable_surface_preserves_nonfilesystem_diagnostics():
+    message = (
+        r"See https://example.test/docs/private/file.txt at 12:34/56; "
+        r"pattern \\d+; relative docs/private.txt."
+    )
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        inspector.show_test_unavailable(message)
+        rendered = str(app.query_one("#mcp-inspector-test-preview", Static).renderable)
+
+        assert "https://example.test/docs/private/file.txt" in rendered
+        assert "12:34/56" in rendered
+        assert r"\\d+" in rendered
+        assert "docs/private.txt" in rendered
+        assert "[path]" not in rendered
 
 
 @pytest.mark.asyncio
