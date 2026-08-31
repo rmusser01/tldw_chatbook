@@ -843,6 +843,14 @@ MIN_CONSOLE_AGENT_MAX_TOTAL_TOKENS = 0
 #: really executes on its abandoned thread -- see
 #: `RunBudget.max_tool_call_seconds`.
 DEFAULT_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS = 3600.0
+#: TASK-25901: transient model failures (429, 5xx, dropped connection) retried
+#: inside the loop before a run gives up. Two rides out a brief blip without
+#: keeping a user waiting on a provider that is genuinely down; 0 restores the
+#: pre-retry behaviour of ending the run on the first failure. Terminal errors
+#: (auth, bad request, config) are never retried at any setting.
+DEFAULT_CONSOLE_AGENT_MAX_MODEL_RETRIES = 2
+MIN_CONSOLE_AGENT_MAX_MODEL_RETRIES = 0
+
 MIN_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS = 0.0
 
 # Ephemeral side chat (Console selection menu): the default prompt template

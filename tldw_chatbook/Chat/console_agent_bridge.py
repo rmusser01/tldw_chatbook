@@ -516,11 +516,13 @@ def console_run_budget() -> RunBudget:
         from tldw_chatbook.config import (
             DEFAULT_CONSOLE_AGENT_MAX_MODEL_TURNS,
             DEFAULT_CONSOLE_AGENT_MAX_STEPS,
+            DEFAULT_CONSOLE_AGENT_MAX_MODEL_RETRIES,
             DEFAULT_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
             DEFAULT_CONSOLE_AGENT_MAX_TOTAL_TOKENS,
             DEFAULT_CONSOLE_AGENT_MAX_WALL_SECONDS,
             MIN_CONSOLE_AGENT_MAX_MODEL_TURNS,
             MIN_CONSOLE_AGENT_MAX_STEPS,
+            MIN_CONSOLE_AGENT_MAX_MODEL_RETRIES,
             MIN_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
             MIN_CONSOLE_AGENT_MAX_TOTAL_TOKENS,
             MIN_CONSOLE_AGENT_MAX_WALL_SECONDS,
@@ -586,6 +588,13 @@ def console_run_budget() -> RunBudget:
             "agent_max_tool_call_seconds",
             DEFAULT_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
             MIN_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
+        ),
+        # TASK-25901: 0 disables retry and restores the pre-retry behaviour of
+        # ending the run on the first transient failure.
+        max_model_retries=_int(
+            "agent_max_model_retries",
+            DEFAULT_CONSOLE_AGENT_MAX_MODEL_RETRIES,
+            MIN_CONSOLE_AGENT_MAX_MODEL_RETRIES,
         ),
     )
 

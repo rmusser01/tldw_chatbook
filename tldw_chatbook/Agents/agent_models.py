@@ -398,6 +398,11 @@ class RunBudget:
     # wrapper reporting "timed out" for a call that later really executes
     # on its abandoned thread -- see `_call_with_timeout`'s docstring).
     max_tool_call_seconds: float = 300.0
+    #: TASK-25901: how many times a TRANSIENT model failure may be retried
+    #: inside the loop before the run gives up. 0 reproduces the pre-retry
+    #: behaviour exactly (raise on the first failure). Terminal errors ignore
+    #: this entirely -- they are never retried at any setting.
+    max_model_retries: int = 2
 
     def __post_init__(self) -> None:
         if self.max_steps > MAX_RUN_CONTROL_STEPS:

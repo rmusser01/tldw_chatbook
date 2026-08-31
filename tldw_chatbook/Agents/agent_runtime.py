@@ -6,6 +6,7 @@ No Textual, app, DB, or I/O imports.
 from __future__ import annotations
 
 import json
+import time
 from collections import deque
 from collections.abc import Mapping
 from copy import deepcopy
@@ -28,6 +29,11 @@ from tldw_chatbook.model_capabilities import (
     moonshot_model_returns_reasoning_content,
 )
 
+from .model_retry import (
+    RetryPolicy,
+    is_transient_model_error,
+    retry_delay_seconds,
+)
 from .agent_models import (
     CHECK_AGENTS_TOOL_NAME,
     FENCE_TOOL_RESULT_PREFIX,
@@ -537,6 +543,11 @@ class LoopDeps:
     ) = None
     owner_seq_start: int = 0
     next_owner_seq: Callable[[], int] | None = None
+    # Appended after every pre-existing field, per this class's convention, so
+    # legacy positional LoopDeps callers keep their exact slots.
+    # TASK-25901: injected so retry backoff is testable without real sleeping.
+    sleep: Callable[[float], None] = time.sleep
+
 
 
 def _continuation_calls_match(
@@ -887,6 +898,11 @@ def _effective_review_verdict(
     return verdicts.get(call.name, "proceed")
 
 
+#: Backoff shape for transient model failures. The attempt COUNT is per-run
+#: config (`RunBudget.max_model_retries`); this is only the delay curve.
+_MODEL_RETRY_POLICY = RetryPolicy(max_attempts=0, base_delay=1.0, max_delay=30.0)
+
+
 def run_agent_loop(
     config: AgentConfig,
     initial_messages: list[dict],
@@ -943,6 +959,10 @@ def run_agent_loop(
     coherent_len = len(messages)
     active = list(active_schemas)
     started = deps.clock()
+    #: TASK-25901: transient-failure retries used so far in THIS run. Counted
+    #: per run rather than per turn: a provider failing every turn is a failing
+    #: provider, and should stop the run rather than pay the budget down twice.
+    model_retry_attempts = 0
     spawned = 0
     model_turns = 0
     total_tokens = 0
@@ -1290,7 +1310,39 @@ def run_agent_loop(
                     if deps.call_model_with_continuation is not None
                     else deps.call_model(messages, tuple(active))
                 )
-            except Exception:
+            except Exception as exc:
+                # TASK-25901: a transient provider failure used to discard the
+                # whole run along with every tool result already in it. Retry
+                # in place -- deliberately NOT by rebuilding LoopDeps, which
+                # would reset the wall-budget origin TASK-25913's tool clamp
+                # reads from and quietly make that bound permissive.
+                if (
+                    is_transient_model_error(exc)
+                    and model_retry_attempts < budget.max_model_retries
+                ):
+                    delay = retry_delay_seconds(
+                        model_retry_attempts + 1, exc, _MODEL_RETRY_POLICY
+                    )
+                    remaining_wall = budget.max_wall_seconds - (
+                        deps.clock() - started
+                    )
+                    if delay <= remaining_wall:
+                        model_retry_attempts += 1
+                        trace(
+                            STEP_MODEL_ERROR,
+                            summary=(
+                                f"Model request failed; retry "
+                                f"{model_retry_attempts} of "
+                                f"{budget.max_model_retries} in {delay:.2f}s "
+                                f"({type(exc).__name__})"
+                            ),
+                            status="failed",
+                            field_states={"payload": "omitted"},
+                            sensitivity="diagnostic",
+                            parent_step_index=model_request_step.index,
+                        )
+                        deps.sleep(delay)
+                        continue
                 trace(
                     STEP_MODEL_ERROR,
                     summary="Model request failed",
