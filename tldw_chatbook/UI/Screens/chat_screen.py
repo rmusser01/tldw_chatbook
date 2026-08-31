@@ -610,6 +610,13 @@ NoteRequested = ConsoleSelectionNoteRequested
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.Widgets.Console.console_workspace_action_menu import (
+        WorkspaceActionChosen,
+        WorkspaceActionMenuDismissed,
+    )
+    from tldw_chatbook.Widgets.Console.console_workspace_tree import (
+        WorkspaceTreeMenuRequested,
+    )
 
 logger = logger.bind(module="ChatScreen")
 _CONSOLE_DEFAULT_RESERVATION_ATTEMPTS = 8
@@ -4614,8 +4621,7 @@ class ChatScreen(BaseAppScreen):
         # otherwise anchor a menu that runs off the end of the screen.
         region = opener.region
         menu_width = ConsoleConversationActionMenu.MENU_WIDTH
-        # Root page is the tallest: five items plus the rounded border.
-        menu_height = 7
+        menu_height = ConsoleConversationActionMenu.ROOT_PAGE_HEIGHT
         screen_region = self.region
         await self._mount_console_row_action_menu(
             target,
@@ -4763,8 +4769,7 @@ class ChatScreen(BaseAppScreen):
         for menu in workspace_action_menus_on_screen(self):
             await menu.await_detachment()
         menu_width = ConsoleWorkspaceActionMenu.MENU_WIDTH
-        # Root page is the tallest: five items plus the rounded border.
-        menu_height = 7
+        menu_height = ConsoleWorkspaceActionMenu.ROOT_PAGE_HEIGHT
         screen_region = self.region
         self.screen.mount(
             ConsoleWorkspaceActionMenu(
@@ -4784,6 +4789,7 @@ class ChatScreen(BaseAppScreen):
         self,
         *,
         conversation_id: str | None,
+        title: str,
         screen_x: int,
         screen_y: int,
     ) -> None:
@@ -4791,7 +4797,10 @@ class ChatScreen(BaseAppScreen):
 
         Args:
             conversation_id: Persisted conversation id of the row, or None
-                when the tree row has no persisted conversation yet.
+                when the tree row has no persisted conversation yet (the
+                tree's synthetic ``native:`` identity never reaches here).
+            title: The row's display title, so rename, delete, and the
+                confirmations name the chat the user pressed.
             screen_x: Absolute anchor column.
             screen_y: Absolute anchor row.
         """
@@ -4812,13 +4821,13 @@ class ChatScreen(BaseAppScreen):
                 starred = bool(is_starred(conversation_id))
         target = ConversationMenuTarget(
             conversation_id=conversation_id,
-            title="",
+            title=title,
             state=self._console_conversation_state(conversation_id),
             starred=starred,
             favorites_available=marks_service is not None,
         )
         menu_width = ConsoleConversationActionMenu.MENU_WIDTH
-        menu_height = 7
+        menu_height = ConsoleConversationActionMenu.ROOT_PAGE_HEIGHT
         screen_region = self.region
         await self._mount_console_row_action_menu(
             target,
@@ -4869,7 +4878,9 @@ class ChatScreen(BaseAppScreen):
             )
         )
 
-    def on_workspace_tree_menu_requested(self, event) -> None:
+    def on_workspace_tree_menu_requested(
+        self, event: "WorkspaceTreeMenuRequested"
+    ) -> None:
         """Mount the row menu a Workspaces-tree asterisk asked for.
 
         Dispatched by handler-name convention (ADR-097 lazy-import rule).
@@ -4889,6 +4900,7 @@ class ChatScreen(BaseAppScreen):
         self.run_worker(
             self._open_console_tree_conversation_action_menu(
                 conversation_id=event.conversation_id,
+                title=event.title,
                 screen_x=event.screen_x,
                 screen_y=event.screen_y,
             ),
@@ -4900,14 +4912,47 @@ class ChatScreen(BaseAppScreen):
         """Activate a workspace, then create the new chat inside it.
 
         TASK-25710: "New chat" on a non-active workspace composes the two
-        existing operations -- activation is idempotent, and session
-        creation targets the active workspace -- rather than threading a
-        workspace parameter through session creation.
+        existing operations -- activation, then session creation, which
+        targets the active workspace -- rather than threading a workspace
+        parameter through session creation.
+
+        Review, PR #2255: the activation wrapper deliberately discards
+        ``_switch_console_workspace``'s failure result (its other callers
+        are fire-and-forget), so success is verified against the registry
+        afterwards. A missing workspace or a failed switch must NOT create
+        the chat in the previously active workspace -- the user asked for
+        it somewhere specific.
         """
-        self._workspace.activate_workspace_id(workspace_id)
+        registry_service = getattr(
+            self.app_instance, "workspace_registry_service", None
+        )
+
+        def _record():
+            return (
+                registry_service.get_workspace(workspace_id)
+                if registry_service is not None
+                else None
+            )
+
+        record = _record()
+        if record is None:
+            self.app_instance.notify(
+                "This workspace is no longer available.", severity="warning"
+            )
+            return
+        if not getattr(record, "active", False):
+            self._workspace.activate_workspace_id(workspace_id)
+            record = _record()
+            if record is None or not getattr(record, "active", False):
+                self.app_instance.notify(
+                    f"Could not activate {record.name if record else workspace_id}. "
+                    "New chat was not created.",
+                    severity="warning",
+                )
+                return
         await self._session._create_native_console_session_from_active_context()
 
-    def on_workspace_action_chosen(self, event) -> None:
+    def on_workspace_action_chosen(self, event: "WorkspaceActionChosen") -> None:
         """Run the chosen workspace command against the captured row.
 
         Dispatched by handler-name convention (ADR-097 lazy-import rule).
@@ -4947,7 +4992,9 @@ class ChatScreen(BaseAppScreen):
             self._workspace._confirm_console_workspace_archive(workspace_id)
             return
 
-    def on_workspace_action_menu_dismissed(self, event) -> None:
+    def on_workspace_action_menu_dismissed(
+        self, event: "WorkspaceActionMenuDismissed"
+    ) -> None:
         """Return focus to the tree that opened the workspace menu.
 
         Dispatched by handler-name convention (ADR-097 lazy-import rule);

@@ -149,6 +149,153 @@ async def test_workspace_menu_pages_and_escapes_like_the_conversation_menu(
 
 
 @pytest.mark.asyncio
+async def test_unsaved_native_rows_get_none_and_gate_saved_only_actions() -> None:
+    """A synthetic `native:` tree identity must not reach persistence.
+
+    Review, PR #2255: unsaved rows carry ``native:<session-id>`` as their
+    tree identity; the menu must see ``conversation_id=None`` so the pure
+    model disables Favourite/status/archive/rename with the "send or save"
+    reason instead of handing the synthetic key to the database.
+    """
+    from tldw_chatbook.Widgets.Console.console_workspace_tree import (
+        WorkspaceTreeNodeData,
+        _menu_conversation_payload,
+    )
+
+    unsaved = WorkspaceTreeNodeData.conversation(
+        "ws-alpha",
+        "native:session-7",
+        "Untitled",
+        starred=False,
+        selected=True,
+        star_enabled=False,
+    )
+    conversation_id, title = _menu_conversation_payload(unsaved)
+    assert conversation_id is None, "native: identity leaked to the menu"
+    assert title == "Untitled"
+
+    saved = WorkspaceTreeNodeData.conversation(
+        "ws-alpha",
+        "conv-123",
+        "Real chat",
+        starred=False,
+        selected=False,
+        star_enabled=True,
+    )
+    conversation_id, title = _menu_conversation_payload(saved)
+    assert conversation_id == "conv-123"
+    assert title == "Real chat"
+
+    async with make_console_pilot(size=(160, 44), production_styles=True) as pilot:
+        console = pilot.app.screen
+        _request_menu(
+            console, kind="conversation", conversation_id=None, title="Untitled"
+        )
+        await pilot.pause(0.4)
+        menu = console.query_one(ConsoleConversationActionMenu)
+        assert menu.target.conversation_id is None
+        # Rename carries the unsaved reason regardless of whether the marks
+        # service exists (Favourite's reason folds in availability too).
+        rename = menu.query_one("#console-conversation-action-rename", Button)
+        assert rename.disabled is True
+        assert rename.tooltip == "Send or save this chat first."
+
+
+@pytest.mark.asyncio
+async def test_tree_menu_target_carries_the_row_title() -> None:
+    """The row's title reaches the menu target (rename/delete copy)."""
+    async with make_console_pilot(size=(160, 44), production_styles=True) as pilot:
+        console = pilot.app.screen
+        _request_menu(
+            console,
+            kind="conversation",
+            conversation_id="conv-a0",
+            title="Alpha conversation 0",
+        )
+        await pilot.pause(0.4)
+        menu = console.query_one(ConsoleConversationActionMenu)
+        assert menu.target.title == "Alpha conversation 0"
+
+
+@pytest.mark.asyncio
+async def test_new_chat_does_not_create_when_activation_cannot_land(
+    monkeypatch,
+) -> None:
+    """A vanished workspace or a failed switch must not create a chat.
+
+    Review, PR #2255: the activation wrapper discards the switch result, so
+    the composite verifies the registry state afterwards; a new chat must
+    only appear in the workspace the user actually picked.
+    """
+    async with make_console_pilot(size=(160, 44), production_styles=True) as pilot:
+        console = pilot.app.screen
+        calls: list[str] = []
+
+        async def _fake_create():
+            calls.append("created")
+
+        monkeypatch.setattr(
+            console._session,
+            "_create_native_console_session_from_active_context",
+            _fake_create,
+        )
+        monkeypatch.setattr(
+            console._workspace,
+            "activate_workspace_id",
+            lambda ws_id: calls.append("activated"),
+        )
+
+        # Workspace vanished between open and choose: no create.
+        console.app_instance.workspace_registry_service = SimpleNamespace(
+            get_workspace=lambda ws_id: None
+        )
+        from tldw_chatbook.Chat.console_workspace_actions import (
+            ACTION_NEW_CHAT,
+            WorkspaceMenuTarget,
+        )
+        from tldw_chatbook.Widgets.Console.console_workspace_action_menu import (
+            WorkspaceActionChosen,
+        )
+
+        console.on_workspace_action_chosen(
+            WorkspaceActionChosen(
+                ACTION_NEW_CHAT,
+                WorkspaceMenuTarget(workspace_id="ws-beta", name="Beta"),
+            )
+        )
+        await pilot.pause(0.8)
+        assert calls == [], "created a chat for a vanished workspace"
+
+        # Workspace exists but the switch cannot land (still inactive): no create.
+        record = SimpleNamespace(
+            workspace_id="ws-beta", name="Beta", active=False
+        )
+        console.app_instance.workspace_registry_service = SimpleNamespace(
+            get_workspace=lambda ws_id: record
+        )
+        console.on_workspace_action_chosen(
+            WorkspaceActionChosen(
+                ACTION_NEW_CHAT,
+                WorkspaceMenuTarget(workspace_id="ws-beta", name="Beta"),
+            )
+        )
+        await pilot.pause(0.8)
+        assert "activated" in calls
+        assert "created" not in calls, "created a chat after a failed switch"
+
+        # Already active: straight to creation.
+        record.active = True
+        console.on_workspace_action_chosen(
+            WorkspaceActionChosen(
+                ACTION_NEW_CHAT,
+                WorkspaceMenuTarget(workspace_id="ws-beta", name="Beta"),
+            )
+        )
+        await pilot.pause(0.8)
+        assert calls[-1] == "created"
+
+
+@pytest.mark.asyncio
 async def test_tree_chat_row_opens_the_shared_conversation_menu() -> None:
     async with make_console_pilot(size=(160, 44), production_styles=True) as pilot:
         console = pilot.app.screen
@@ -267,6 +414,14 @@ async def test_workspace_actions_route_through_the_existing_seams(
             console._session,
             "_create_native_console_session_from_active_context",
             _fake_create,
+        )
+        # The guard verifies activation against the registry afterwards, so
+        # the stub's record must actually flip to active when "activated".
+        beta = SimpleNamespace(
+            workspace_id="ws-beta", name="Workspace Beta", active=True
+        )
+        console.app_instance.workspace_registry_service = SimpleNamespace(
+            get_workspace=lambda ws_id: beta if ws_id == "ws-beta" else None
         )
 
         from tldw_chatbook.Chat.console_workspace_actions import (

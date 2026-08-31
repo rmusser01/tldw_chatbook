@@ -132,6 +132,12 @@ class ConsoleConversationActionMenu(Vertical):
 
     can_focus = True
 
+    #: Painted height of the menu's tallest page (the root: five one-row
+    #: buttons plus the rounded border), used by the screen's anchor
+    #: clamping. Keep in lockstep with the root page's item count.
+    ROOT_PAGE_HEIGHT = 7
+
+
     #: Anchoring clamps against this; the stylesheet below must declare the
     #: same width or viewport clamping drifts from what is painted (Qodo
     #: review, PR #2233). It CANNOT be interpolated: `css/build_css.py`

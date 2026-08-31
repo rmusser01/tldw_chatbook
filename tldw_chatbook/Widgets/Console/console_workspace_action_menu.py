@@ -125,6 +125,12 @@ class ConsoleWorkspaceActionMenu(Vertical):
 
     can_focus = True
 
+    #: Painted height of the menu's tallest page (the root: five one-row
+    #: buttons plus the rounded border), used by the screen's anchor
+    #: clamping. Keep in lockstep with the root page's item count.
+    ROOT_PAGE_HEIGHT = 7
+
+
     #: Anchoring clamps against this; the stylesheet below must declare the
     #: same width or viewport clamping drifts from what is painted. Pinned
     #: together by test the same way the conversation menu's pair is.
@@ -219,10 +225,17 @@ class ConsoleWorkspaceActionMenu(Vertical):
             yield button
 
     def on_mount(self) -> None:
+        """Anchor at the captured screen cell and seat focus on row one."""
         self.absolute_offset = Offset(*self._anchor)
         self._focus_first_enabled()
 
     def _focus_first_enabled(self) -> None:
+        """Focus the first enabled entry, skipping gated ones.
+
+        Focusing a disabled button drops focus entirely, which would strand
+        keyboard navigation, so disabled entries are skipped rather than
+        visited.
+        """
         for button in self.query(Button):
             if not button.disabled:
                 button.focus(scroll_visible=False)
@@ -268,6 +281,12 @@ class ConsoleWorkspaceActionMenu(Vertical):
         return self._removal
 
     def on_key(self, event: Key) -> None:
+        """Handle the menu's keyboard contract: cycle, page, or dismiss.
+
+        Args:
+            event: The key event delivered while the menu (or one of its
+                buttons) holds focus.
+        """
         if event.key == "escape":
             event.stop()
             event.prevent_default()

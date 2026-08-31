@@ -187,6 +187,7 @@ class WorkspaceTreeMenuRequested(Message):
         kind: str,
         workspace_id: str,
         conversation_id: str | None = None,
+        title: str = "",
         screen_x: int,
         screen_y: int,
     ) -> None:
@@ -195,8 +196,12 @@ class WorkspaceTreeMenuRequested(Message):
         Args:
             kind: ``KIND_WORKSPACE`` or ``KIND_CONVERSATION``.
             workspace_id: The workspace the row belongs to.
-            conversation_id: The persisted conversation id for chat rows;
-                None for workspace rows.
+            conversation_id: The PERSISTED conversation id for chat rows;
+                None for workspace rows and for unsaved native rows (whose
+                tree identity is a synthetic ``native:<session-id>`` key the
+                menu must never hand to persistence APIs).
+            title: The row's display title (first physical line), for the
+                conversation menu's target.
             screen_x: Absolute column to anchor the menu at.
             screen_y: Absolute row to anchor the menu at (the screen mounts
                 the menu just below this row).
@@ -204,9 +209,30 @@ class WorkspaceTreeMenuRequested(Message):
         self.kind = kind
         self.workspace_id = workspace_id
         self.conversation_id = conversation_id
+        self.title = title
         self.screen_x = screen_x
         self.screen_y = screen_y
         super().__init__()
+
+
+def _menu_conversation_payload(
+    data: WorkspaceTreeNodeData,
+) -> tuple[str | None, str]:
+    """Return the menu's persisted conversation id and title for one row.
+
+    TASK-25710 review (PR #2255): unsaved native rows carry a synthetic
+    ``native:<session-id>`` key as their tree identity. The action menu must
+    see ``None`` for those, so the pure model disables persistence-only
+    commands ("Send or save this chat first") instead of handing the
+    synthetic key to the database. The title is the row's first physical
+    line, so rename/delete/confirmations name the chat the user pressed.
+    """
+
+    conversation_id = data.conversation_id
+    if conversation_id is not None and conversation_id.startswith("native:"):
+        conversation_id = None
+    first_line = str(data.raw_label or "").splitlines()[:1]
+    return conversation_id, (first_line[0] if first_line else "")
 
 
 class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
@@ -950,6 +976,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
                 # instead of selecting/activating, exactly like the grouped
                 # browser's asterisk column.
                 self._last_pointer_click_key = None
+                conversation_id, title = _menu_conversation_payload(data)
                 self.post_message(
                     WorkspaceTreeMenuRequested(
                         kind=(
@@ -958,7 +985,8 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
                             else WorkspaceTreeMenuRequested.KIND_CONVERSATION
                         ),
                         workspace_id=str(data.workspace_id or ""),
-                        conversation_id=data.conversation_id,
+                        conversation_id=conversation_id,
+                        title=title,
                         screen_x=event.screen_x,
                         screen_y=event.screen_y + 1,
                     )
@@ -1001,6 +1029,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         anchor_y = region.y + max(
             0, line - int(self.scroll_offset.y)
         ) + 1
+        conversation_id, title = _menu_conversation_payload(data)
         self.post_message(
             WorkspaceTreeMenuRequested(
                 kind=(
@@ -1009,7 +1038,8 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
                     else WorkspaceTreeMenuRequested.KIND_CONVERSATION
                 ),
                 workspace_id=str(data.workspace_id or ""),
-                conversation_id=data.conversation_id,
+                conversation_id=conversation_id,
+                title=title,
                 screen_x=anchor_x,
                 screen_y=anchor_y,
             )
