@@ -89,7 +89,14 @@ def _unquoted_tool_test_path_end(candidate: str) -> int:
     tokens = list(re.finditer(r"\S+", candidate))
     if not tokens:
         return 0
+    first_token = tokens[0].group(0)
     end = tokens[0].end()
+    bridge_available = (
+        re.search(r"(?:\.[A-Za-z0-9_-]{1,16}|[,;:!?])[])}.,;:!?]*$", first_token)
+        is None
+    )
+    bridge_pending = False
+    continued = False
     for token in tokens[1:]:
         token_text = token.group(0)
         normalized = token_text.lstrip("([{").lower()
@@ -97,6 +104,14 @@ def _unquoted_tool_test_path_end(candidate: str) -> int:
             break
         if "/" in token_text or "\\" in token_text:
             end = token.end()
+            bridge_pending = False
+            continued = True
+            continue
+        if continued or bridge_pending or not bridge_available:
+            break
+        # One unresolved token may be the middle of an unquoted spaced path.
+        # A second one is prose, so it fences later relative paths and escapes.
+        bridge_pending = True
     return end
 
 

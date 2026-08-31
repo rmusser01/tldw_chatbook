@@ -4646,6 +4646,52 @@ async def test_test_tool_audit_sync_log_preserves_nonfilesystem_diagnostics(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure_branch", ["access", "read"])
+async def test_test_tool_audit_sync_log_preserves_diagnostics_after_initial_path(
+    failure_branch: str, caplog: pytest.LogCaptureFixture
+):
+    app = ToolTestApp()
+    failure = RuntimeError(
+        r"failed at /Users/alice/Private Project/credentials.json and see "
+        r"docs/recovery.md with pattern \\d+; visit https://example.test/help."
+    )
+
+    class AccessFailureService:
+        @property
+        def execution_log(self):
+            raise failure
+
+    class ReadFailureLog:
+        def read_recent(self, _limit: int):
+            raise failure
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        app.unified_mcp_service = (
+            AccessFailureService()
+            if failure_branch == "access"
+            else SimpleNamespace(execution_log=ReadFailureLog())
+        )
+        caplog.clear()
+        sink = mcp_workbench_module.logger.add(
+            caplog.handler, level="WARNING", format="{message}"
+        )
+        try:
+            await workbench._sync_audit_log_entries()
+        finally:
+            mcp_workbench_module.logger.remove(sink)
+
+        prefix = f"MCP execution log {failure_branch} failed"
+        rendered = "".join(message for message in caplog.messages if prefix in message)
+        assert "Users/alice" not in rendered
+        assert "Project/credentials.json" not in rendered
+        assert "docs/recovery.md" in rendered
+        assert r"\\d+" in rendered
+        assert "https://example.test/help" in rendered
+
+
+@pytest.mark.asyncio
 async def test_test_tool_typed_failure_outcome_is_redacted_and_bounded():
     app = ToolTestApp()
     app.unified_mcp_service.next_prepared_outcome = LocalHubExecutionOutcome(

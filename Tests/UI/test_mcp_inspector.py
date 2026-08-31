@@ -3182,6 +3182,71 @@ def test_test_tool_path_scrubber_keeps_http_recovery_after_spaced_path():
     assert "https://example.test/recovery" in rendered
 
 
+@pytest.mark.parametrize(
+    ("message", "preserved"),
+    [
+        (
+            r"failed at /Users/alice/Private Project/credentials.json and see "
+            r"docs/recovery.md with pattern \\d+ for help",
+            ("and see", "docs/recovery.md", r"\\d+", "for help"),
+        ),
+        (
+            r"failed at /Users/alice/Private Failed Project/credentials.json and "
+            r"see docs/recovery.md with pattern \\d+ for help",
+            ("and see", "docs/recovery.md", r"\\d+", "for help"),
+        ),
+        (
+            r"failed at /Users/alice/Private Project/credentials.json, consult "
+            r"docs/recovery.md, pattern \\w+, or visit https://example.test/help.",
+            (
+                "consult",
+                "docs/recovery.md",
+                r"\\w+",
+                "or visit",
+                "https://example.test/help",
+            ),
+        ),
+        (
+            r"failed at root:/Users/alice/Private Project/credentials.json — then "
+            r"read docs/recovery.md (pattern \\s+) before retrying.",
+            ("then read", "docs/recovery.md", r"\\s+", "before retrying"),
+        ),
+    ],
+)
+def test_test_tool_path_scrubber_stops_after_initial_local_path(
+    message: str, preserved: tuple[str, ...]
+):
+    """Later diagnostics are not part of an earlier spaced absolute path."""
+    rendered = mcp_inspector_module._safe_tool_test_text(message)
+
+    assert "Users/alice" not in rendered
+    assert "Project/credentials.json" not in rendered
+    assert "[path]" in rendered
+    for fragment in preserved:
+        assert fragment in rendered
+
+
+def test_test_tool_mapping_exception_preserves_diagnostics_after_initial_path():
+    rendered = mcp_inspector_module._safe_exception_text(
+        RuntimeError(
+            {
+                "detail": (
+                    r"failed at /Users/alice/Private Project/credentials.json and "
+                    r"see docs/recovery.md with pattern \\d+ for help"
+                ),
+                "recovery": "https://example.test/help",
+            }
+        )
+    )
+
+    assert "Users/alice" not in rendered
+    assert "Project/credentials.json" not in rendered
+    assert "docs/recovery.md" in rendered
+    assert r"\\d+" in rendered
+    assert "for help" in rendered
+    assert "https://example.test/help" in rendered
+
+
 @pytest.mark.asyncio
 async def test_test_tool_unavailable_surface_preserves_nonfilesystem_diagnostics():
     message = (
@@ -3204,6 +3269,30 @@ async def test_test_tool_unavailable_surface_preserves_nonfilesystem_diagnostics
         assert r"\\d+" in rendered
         assert "docs/private.txt" in rendered
         assert "[path]" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_test_tool_unavailable_surface_preserves_diagnostics_after_initial_path():
+    message = (
+        r"failed at /Users/alice/Private Project/credentials.json and see "
+        r"docs/recovery.md with pattern \\d+; visit https://example.test/help."
+    )
+    app = InspectorApp()
+    async with app.run_test(size=(100, 60)) as pilot:
+        inspector = app.query_one(MCPInspector)
+        await inspector.show_tool(_tool())
+        await pilot.pause()
+        await pilot.click("#mcp-inspector-test-tool")
+        await pilot.pause()
+
+        inspector.show_test_unavailable(message)
+        rendered = str(app.query_one("#mcp-inspector-test-preview", Static).renderable)
+
+        assert "Users/alice" not in rendered
+        assert "Project/credentials.json" not in rendered
+        assert "docs/recovery.md" in rendered
+        assert r"\\d+" in rendered
+        assert "https://example.test/help" in rendered
 
 
 @pytest.mark.asyncio
