@@ -242,6 +242,27 @@ until you choose the reset action. Loading and failed refreshes do not use this
 empty presentation: they keep their status, pager authority, and **Retry** so a
 previously empty page cannot hide an in-progress or recoverable request.
 
+#### Media Trash
+
+Open **Trash** from Browse › Media to recover local deleted items. Trash shows
+at most 20 items per page in a stable newest-first order. **Previous** and
+**Next** reach every page; the range and total are exact while the page is
+fresh. A submitted title search and the exact type chooser filter the complete
+Trash collection before paging. During loading or after a failed refresh, the
+last good page can remain visible, but paging and destructive actions stay
+disabled until **Retry** restores authoritative results. Selection belongs only
+to the current page and filter.
+
+**Restore** removes the item from Trash and marks the retained normal Media page
+stale; it does not insert or reorder the restored item without a fresh Media
+read. **Delete permanently** requires inline confirmation and cannot be undone.
+Back returns to the exact normal Media page, selected item, list scroll, and
+control that opened Trash. Returning from the Media viewer likewise restores
+the exact list scroll and finishes focus on the item row. These returns settle
+after the current Items layout is measured, including when the Library rail or
+Items pane is independently collapsed; collapsing the Library rail gives the
+Items title and detail area the reclaimed width.
+
 | Row | Opens | Details on |
 |---|---|---|
 | **Media** | The media list and viewer. | [Media & conversations](library/media-and-conversations.md) |

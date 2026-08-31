@@ -10264,6 +10264,25 @@ Do not keep and press a control captured before a branch refresh.
 
 ---
 
+## Callback turns are not layout evidence after same-size recomposition
+
+**TASK-18918, 2026-08-30.** Media Back retained the correct semantic row and
+requested scroll `(0, 42)`, but a same-size cross-reader recompose could keep the
+previous Notes presentation long enough for the replacement Media list to clamp
+at `(0, 33)`. Four remedies based on adding callback turns sometimes passed and
+sometimes failed in fresh processes because none proved that the current scroll
+owner had received its final geometry.
+
+The gate became deterministic only when `LibraryMediaRowScroll`, the producer
+that owns the relevant geometry, emitted Resize-derived evidence for its current
+owner and presentation epoch. Five fresh-process exact-return runs and the
+four-size live walkthrough then passed. When correctness depends on layout after
+recomposition, fixed callback counts or sleeps are not readiness signals; wait
+for a public event from the current geometry owner and fence it by identity and
+epoch.
+
+---
+
 ## A required check that exempts admins or accepts a stale base is advisory
 
 **Incident.** TASK-25705, 2026-08-30. PR #2228 merged into `dev` before its

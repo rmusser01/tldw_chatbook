@@ -349,6 +349,44 @@ def test_retain_stale_items_does_not_forge_exact_metadata() -> None:
 
 
 @pytest.mark.asyncio
+async def test_media_trash_restore_marks_normal_media_stale_without_changing_page() -> (
+    None
+):
+    """A Trash restore withdraws authority without guessing ranked placement."""
+    screen = _Screen()
+    service = _Service(_page(2, 40), types=("audio", "video"))
+    controller = _controller(screen, service)
+    scope = MediaBrowseScope(
+        query="retained", media_type="video", sort_by="title_asc", page=2
+    )
+    controller.request(scope, focus_identity=None)
+    await screen.pending.pop()
+    controller.request_facets(fingerprint=scope.fingerprint)
+    await screen.pending.pop()
+
+    applied = controller.applied_result
+    retained = controller.retained_items
+    requested = controller.requested_scope
+    type_options = controller.type_options
+    facet_fingerprint = controller.facet_fingerprint
+
+    controller.mark_stale_after_trash_restore()
+
+    assert controller.applied_result is applied
+    assert controller.retained_items is retained
+    assert controller.requested_scope == requested == scope
+    assert controller.type_options == type_options == ("audio", "video")
+    assert controller.facet_fingerprint == facet_fingerprint == scope.fingerprint
+    assert controller.freshness == "stale"
+    assert controller.loading is False
+    assert controller.error_copy == ""
+    assert controller.stale_copy == "Media changed; retry to load a current page."
+    assert controller.pager.title_count is None
+    assert controller.pager.page_copy == ""
+    assert controller.pager.retry_visible is True
+
+
+@pytest.mark.asyncio
 async def test_committed_mutation_reconciles_retained_without_forging_envelope() -> (
     None
 ):

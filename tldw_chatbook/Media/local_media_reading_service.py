@@ -171,6 +171,22 @@ class LocalMediaReadingService:
             "limit": limit,
         }
 
+    def list_library_media_trash(
+        self,
+        *,
+        query: str = "",
+        media_type: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Page local trashed media using the canonical library envelope."""
+        return self._require_db().list_library_media_trash_page(
+            query=query,
+            media_type=media_type,
+            limit=limit,
+            offset=offset,
+        )
+
     def get_library_media_text(
         self, media_uuid: str, *, start: int = 0, max_chars: int = 8000
     ) -> Optional[dict[str, Any]]:
@@ -667,17 +683,10 @@ class LocalMediaReadingService:
 
         db = self._require_db()
         normalized_media_id = self._coerce_media_id(media_id)
-        current = db.get_media_by_id(normalized_media_id, include_trash=True)
-        if current is None:
-            raise KeyError(f"Local media item not found: {media_id}")
-        if not current.get("is_trash"):
-            raise ValueError(
-                "Local media item must be in trash before permanent deletion."
-            )
         deleted = permanently_delete_item(db, normalized_media_id)
         if not deleted:
             raise ValueError(
-                f"Local media item could not be permanently deleted: {media_id}"
+                "Local media item must exist in trash before permanent deletion."
             )
         return {"ok": True, "media_id": normalized_media_id}
 

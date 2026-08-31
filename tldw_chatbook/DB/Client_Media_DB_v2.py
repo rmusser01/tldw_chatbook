@@ -2369,11 +2369,14 @@ class MediaDatabase:
         try:
             # Delete based on rowid, ignore if not found
             conn.execute("DELETE FROM media_fts WHERE rowid = ?", (media_id,))
-            logging.debug(f"Deleted FTS entry for Media ID {media_id}")
+            logging.debug(
+                "Media FTS mutation operation=delete status=committed count=1"
+            )
         except sqlite3.Error as e:
             logging.error(
-                f"Failed to delete from media_fts for Media ID {media_id}: {e}",
-                exc_info=True,
+                "Media FTS mutation operation=delete status=failed count=0 "
+                "category=%s",
+                type(e).__name__,
             )
             raise DatabaseError(
                 f"Failed to delete FTS for Media ID {media_id}: {e}"
@@ -8504,6 +8507,114 @@ class MediaDatabase:
             )
             raise DatabaseError(f"Failed to list library media page: {e}") from e
 
+    def list_library_media_trash_page(
+        self,
+        *,
+        query: str = "",
+        media_type: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        """Return raw local Trash rows plus coherent total and complete facets.
+
+        The filtered rows and count include only active Trash records. Facets
+        instead describe every active Trash record, regardless of the current
+        query, type filter, or page. All three reads share one transaction.
+
+        Args:
+            query: Optional title substring matched literally.
+            media_type: Optional trimmed, exact case-sensitive type filter.
+            limit: Required page size, exactly 20.
+            offset: Number of matching records to skip.
+
+        Returns:
+            Dict containing narrow raw Trash ``items``, ``total``, request
+            coordinates, and complete-source ``types`` facets.
+
+        Raises:
+            ValueError: If request coordinates or filters are invalid.
+            DatabaseError: If the read cannot be completed.
+        """
+        if type(limit) is not int or limit != 20:
+            raise ValueError("Library Media Trash limit must equal 20.")
+        if type(offset) is not int or not 0 <= offset <= 2**63 - 1:
+            raise ValueError("Library Media Trash offset is invalid.")
+        if not isinstance(query, str):
+            raise ValueError("Library Media Trash query is invalid.")
+        query = query.strip()
+        if "\x00" in query or len(query) > 200:
+            raise ValueError("Library Media Trash query is invalid.")
+        if media_type is not None and not isinstance(media_type, str):
+            raise ValueError("Library Media Trash media type is invalid.")
+        media_type = media_type.strip() if media_type is not None else None
+        media_type = media_type or None
+
+        conditions = ["deleted = 0", "is_trash = 1"]
+        params: List[Any] = []
+        if query:
+            conditions.append("title LIKE ? ESCAPE '\\'")
+            params.append(f"%{self._escape_library_like(query)}%")
+        if media_type is not None:
+            conditions.append("TRIM(type) = ? COLLATE BINARY")
+            params.append(media_type)
+        where_clause = " AND ".join(conditions)
+
+        try:
+            with self.transaction() as conn:
+                total = conn.execute(
+                    f"SELECT COUNT(*) AS count FROM Media WHERE {where_clause}",
+                    tuple(params),
+                ).fetchone()["count"]
+                rows = conn.execute(
+                    f"""
+                    SELECT id, title, type, trash_date
+                    FROM Media
+                    WHERE {where_clause}
+                    ORDER BY trash_date IS NULL ASC,
+                             trash_date DESC,
+                             last_modified IS NULL ASC,
+                             last_modified DESC,
+                             id DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    tuple(params + [limit, offset]),
+                ).fetchall()
+                types = conn.execute(
+                    """
+                    SELECT DISTINCT TRIM(type) AS type
+                    FROM Media
+                    WHERE deleted = 0
+                      AND is_trash = 1
+                      AND TRIM(type) <> ''
+                    ORDER BY type COLLATE BINARY
+                    """
+                ).fetchall()
+            normalized_types = sorted(
+                {
+                    media_type_value.strip()
+                    for row in types
+                    if (media_type_value := row["type"]).strip()
+                }
+            )
+            return {
+                "items": [dict(row) for row in rows],
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "types": normalized_types,
+            }
+        except sqlite3.Error as e:
+            logger.error(
+                "Media operation failed; operation=list_library_media_trash "
+                "limit={} offset={} has_query={} has_type={} exception_type={}",
+                limit,
+                offset,
+                bool(query),
+                media_type is not None,
+                type(e).__name__,
+            )
+            raise DatabaseError("Failed to list library media Trash page.") from e
+
     def search_library_media_page(
         self, *, query: str, limit: int, offset: int
     ) -> Dict[str, Any]:
@@ -9783,7 +9894,7 @@ def get_all_content_from_database(db_instance: MediaDatabase) -> List[Dict[str, 
 
 def permanently_delete_item(db_instance: MediaDatabase, media_id: int) -> bool:
     """
-    Performs a HARD delete of a media item and its related data via cascades.
+    Permanently deletes one active Trash item and its related data via cascades.
 
     **DANGER:** This operation bypasses the soft delete mechanism and the sync log.
     It physically removes the row from the `Media` table. Foreign key constraints
@@ -9798,7 +9909,7 @@ def permanently_delete_item(db_instance: MediaDatabase, media_id: int) -> bool:
         media_id (int): The ID of the Media item to permanently delete.
 
     Returns:
-        bool: True if the item was found and deleted, False otherwise.
+        bool: True if the item was in Trash and deleted, False otherwise.
 
     Raises:
         TypeError: If `db_instance` is not a Database object.
@@ -9807,38 +9918,52 @@ def permanently_delete_item(db_instance: MediaDatabase, media_id: int) -> bool:
     if not isinstance(db_instance, MediaDatabase):
         raise TypeError("db_instance required.")
     logger.warning(
-        f"!!! PERMANENT DELETE initiated Media ID: {media_id} DB {db_instance.db_path_str}. NOT SYNCED !!!"
+        "Media mutation operation=permanent_delete status=started count=1"
     )
     try:
-        with db_instance.transaction() as conn:
+        with db_instance.transaction(immediate=True) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT 1 FROM Media WHERE id = ?", (media_id,))
-            if not cursor.fetchone():
-                logger.warning(f"Permanent delete failed: Media {media_id} not found.")
-                return False
-            # Hard delete - Cascades should handle children via FKs
-            cursor.execute("DELETE FROM Media WHERE id = ?", (media_id,))
+            cursor.execute(
+                "DELETE FROM Media "
+                "WHERE id = ? AND deleted = 0 AND is_trash = 1",
+                (media_id,),
+            )
             deleted_count = cursor.rowcount
+            if deleted_count == 0:
+                cursor.execute("SELECT 1 FROM Media WHERE id = ?", (media_id,))
+                status = "not_in_trash" if cursor.fetchone() else "not_found"
+                logger.warning(
+                    "Media mutation operation=permanent_delete "
+                    "status={} count=0",
+                    status,
+                )
+                return False
             # Manually delete from FTS (cascade should work, but belt-and-suspenders)
             db_instance._delete_fts_media(conn, media_id)
         if deleted_count > 0:
             logger.info(
-                f"Permanently deleted Media ID: {media_id}. NO sync log generated."
+                "Media mutation operation=permanent_delete "
+                "status=committed count=1"
             )
             return True
         else:
-            logger.error(f"Permanent delete failed unexpectedly Media {media_id}.")
+            logger.error(
+                "Media mutation operation=permanent_delete "
+                "status=no_rows count=0"
+            )
             return False
     except sqlite3.Error as e:
-        logger.opt(exception=True).error(
-            f"Error permanently deleting Media {media_id}: {e}"
+        logger.error(
+            "Media mutation operation=permanent_delete status=failed count=0 "
+            "category={}",
+            type(e).__name__,
         )
         raise DatabaseError(f"Failed permanently delete item: {e}") from e
     except Exception as e:
-        (
-            logger.opt(exception=True).error(
-                f"Unexpected error permanently deleting Media {media_id}: {e}"
-            )
+        logger.error(
+            "Media mutation operation=permanent_delete status=failed count=0 "
+            "category={}",
+            type(e).__name__,
         )
         raise DatabaseError(f"Unexpected permanent delete error: {e}") from e
 

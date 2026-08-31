@@ -731,6 +731,188 @@ async def test_trash_view_stays_single_column_at_wide_width() -> None:
         assert trash_list.region.width >= int(canvas.region.width * 0.9)
 
 
+@pytest.mark.asyncio
+async def test_media_trash_collapse_choices_survive_filter_and_page_refresh() -> None:
+    """Real pane-grip activation remains durable across Trash recomposes."""
+    from textual.widgets import Input
+
+    from Tests.UI.test_library_media_trash import (
+        _MountedTrashFeed,
+        _canonical_trash_items,
+    )
+    from tldw_chatbook.Library.library_media_state import MediaTrashScope
+
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    feed = _MountedTrashFeed(_canonical_trash_items())
+    feed.install(app.media_reading_scope_service)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(160, 50)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen.query_one("#library-media-trash-open", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-trash-row-0")
+        controller = screen._library_media_trash_browse_controller
+
+        items = screen.query_one("#library-canvas")
+        initial_width = items.region.width
+        library_grip = screen.query_one("#library-media-library-grip", Button)
+        library_grip.focus()
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen._library_media_reader_layout.library_open,
+            message="Library grip did not collapse the Library pane.",
+        )
+        assert items.region.width > initial_width
+
+        search = screen.query_one("#library-media-trash-search", Input)
+        search.focus()
+        await pilot.press("t", "r", "a", "s", "h", "enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                controller.state.applied_result is not None
+                and controller.state.applied_result.scope.query == "trash"
+            ),
+            message="Trash filter refresh never settled.",
+        )
+        assert screen._library_media_reader_layout.library_open is False
+
+        library_grip = screen.query_one("#library-media-library-grip", Button)
+        library_grip.focus()
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_layout.library_open,
+            message="Library grip did not reopen the Library pane.",
+        )
+
+        items_grip = screen.query_one("#library-media-items-grip", Button)
+        items_grip.focus()
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen._library_media_reader_layout.items_open,
+            message="Items grip did not collapse the Items pane.",
+        )
+        screen._request_library_media_trash_page(
+            2, focus_identity="#library-media-trash-next"
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                controller.state.applied_result is not None
+                and controller.state.applied_result.scope
+                == MediaTrashScope(query="trash", page=2)
+            ),
+            message="Hidden Items page refresh never settled.",
+        )
+        assert screen._library_media_reader_layout.items_open is False
+
+
+@pytest.mark.asyncio
+async def test_media_trash_compact_pane_priority_survives_page_and_filter_refresh() -> (
+    None
+):
+    """Compact recomposes retain whichever mutually exclusive pane was opened."""
+    from textual.widgets import Input
+
+    from Tests.UI.test_library_media_trash import (
+        _MountedTrashFeed,
+        _canonical_trash_items,
+    )
+    from tldw_chatbook.Library.library_media_state import MediaTrashScope
+
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    feed = _MountedTrashFeed(_canonical_trash_items())
+    feed.install(app.media_reading_scope_service)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(80, 24)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_layout.reader_width > 0,
+            message="Compact Media layout never settled.",
+        )
+        if not screen._library_media_reader_layout.items_open:
+            items_grip = screen.query_one("#library-media-items-grip", Button)
+            items_grip.focus()
+            await pilot.press("enter")
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._library_media_reader_layout.items_open,
+                message="Compact Items pane never opened.",
+            )
+        await pilot.pause()
+        opener = screen.query_one("#library-media-trash-open", Button)
+        opener.focus()
+        await pilot.press("enter")
+        controller = screen._library_media_trash_browse_controller
+        await _wait_for_condition(
+            pilot,
+            lambda: controller.state.applied_result is not None,
+            message="Compact Trash page never applied.",
+        )
+
+        library_grip = screen.query_one("#library-media-library-grip", Button)
+        library_grip.focus()
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_media_reader_layout.library_open
+                and not screen._library_media_reader_layout.items_open
+            ),
+            message="Compact Library pane did not become the explicit priority.",
+        )
+        screen._sync_library_media_reader_layout_from_shell()
+        await pilot.pause()
+        assert screen._library_media_reader_layout.library_open is True
+        assert screen._library_media_reader_layout.items_open is False
+        screen._request_library_media_trash_page(
+            2, focus_identity="#library-media-trash-next"
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                controller.state.applied_result is not None
+                and controller.state.applied_result.scope == MediaTrashScope(page=2)
+            ),
+            message="Compact page refresh never settled.",
+        )
+        assert screen._library_media_reader_layout.library_open is True
+        assert screen._library_media_reader_layout.items_open is False
+
+        items_grip = screen.query_one("#library-media-items-grip", Button)
+        items_grip.focus()
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_media_reader_layout.items_open
+                and not screen._library_media_reader_layout.library_open
+            ),
+            message="Compact Items pane did not become the explicit priority.",
+        )
+        search = screen.query_one("#library-media-trash-search", Input)
+        search.focus()
+        await pilot.press("t", "r", "a", "s", "h", "enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                controller.state.applied_result is not None
+                and controller.state.applied_result.scope
+                == MediaTrashScope(query="trash")
+            ),
+            message="Compact filter refresh never settled.",
+        )
+        assert screen._library_media_reader_layout.items_open is True
+        assert screen._library_media_reader_layout.library_open is False
+
+
 # ---------------------------------------------------------------------------
 # AC#2: keyboard traversal (rows, preview actions, viewer entry) + footer.
 # ---------------------------------------------------------------------------

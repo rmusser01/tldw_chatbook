@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from rich.markup import escape as escape_markup
+from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
+from textual.geometry import Size
+from textual.message import Message
 from textual.widgets import Button, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
@@ -32,6 +36,54 @@ from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 _MEDIA_ROW_COMPACT_HEIGHT = 1
 _MEDIA_ROW_WIDE_HEIGHT = 2
+
+
+@dataclass(frozen=True)
+class LibraryMediaRowGeometry:
+    """One public Textual geometry revision from a Media row-scroll owner."""
+
+    revision: int
+    size: Size
+    virtual_size: Size
+    container_size: Size | None
+
+
+class LibraryMediaRowGeometryChanged(Message):
+    """Report one concrete Media row-scroll owner's revised geometry."""
+
+    def __init__(
+        self,
+        owner: "LibraryMediaRowScroll",
+        geometry: LibraryMediaRowGeometry,
+    ) -> None:
+        super().__init__()
+        self.owner = owner
+        self.geometry = geometry
+
+
+class LibraryMediaRowScroll(VerticalScroll):
+    """Publish distinct Resize-derived geometry for the owning Media list."""
+
+    latest_geometry: LibraryMediaRowGeometry | None = None
+
+    def on_resize(self, event: events.Resize) -> None:
+        """Publish distinct, monotonically revised owner geometry after reflow."""
+        previous = self.latest_geometry
+        geometry_values = (event.size, event.virtual_size, event.container_size)
+        if previous is not None and geometry_values == (
+            previous.size,
+            previous.virtual_size,
+            previous.container_size,
+        ):
+            return
+        geometry = LibraryMediaRowGeometry(
+            revision=1 if previous is None else previous.revision + 1,
+            size=event.size,
+            virtual_size=event.virtual_size,
+            container_size=event.container_size,
+        )
+        self.latest_geometry = geometry
+        self.post_message(LibraryMediaRowGeometryChanged(self, geometry))
 
 
 def _media_row_label_rest(
@@ -610,7 +662,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         with workbench:
             media_list = Vertical(id="library-media-list")
             with media_list:
-                with VerticalScroll(id="library-media-row-scroll"):
+                with LibraryMediaRowScroll(id="library-media-row-scroll"):
                     row_height = (
                         _MEDIA_ROW_COMPACT_HEIGHT
                         if self.compact
