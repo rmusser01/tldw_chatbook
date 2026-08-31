@@ -1082,6 +1082,16 @@ class _LibraryMediaReturnSettlement:
 
 
 @dataclasses.dataclass(frozen=True)
+class _LibraryMediaSuccessfulFocusOwnership:
+    """ABA-fenced focus ownership retained after one exact settlement."""
+
+    request: _LibraryMediaReturnSettlement
+    outer_generation: int
+    selected_media_id: str | None
+    target: Widget
+
+
+@dataclasses.dataclass(frozen=True)
 class _LibraryEmergencyReturnEligibility:
     """One immutable truth source for narrow-canvas recovery chrome."""
 
@@ -3773,6 +3783,9 @@ class LibraryScreen(BaseAppScreen):
                 tuple[object, ...],
             ]
             | None
+        ) = None
+        self._library_media_successful_focus_ownership: (
+            _LibraryMediaSuccessfulFocusOwnership | None
         ) = None
         self._library_media_last_settlement_attempt: tuple[int, int] | None = None
         self._library_media_last_settlement_outcome: (
@@ -6890,13 +6903,54 @@ class LibraryScreen(BaseAppScreen):
             return True
         guarded_target = target or self._library_notes_programmatic_focus_target
         receipt = self._library_pending_list_entry_media_return
-        return bool(
+        transient_focus_allowed = bool(
             guarded_target is not None
             and focused is guarded_target
             and self._library_notes_programmatic_focus_target is guarded_target
             and receipt is not None
             and self._library_media_focus_target_matches_receipt(
                 focused,
+                receipt,
+                stable_id,
+            )
+        )
+        return transient_focus_allowed or bool(
+            receipt is not None
+            and self._library_media_successful_focus_is_allowed(
+                receipt,
+                stable_id,
+            )
+        )
+
+    def _library_media_successful_focus_is_allowed(
+        self,
+        receipt: _LibraryMediaReturnReceipt,
+        stable_id: str,
+    ) -> bool:
+        """Recognize exact-settled focus for this outer arm only."""
+        ownership = self._library_media_successful_focus_ownership
+        if ownership is None:
+            return False
+        request = ownership.request
+        target = ownership.target
+        return bool(
+            self._library_pending_list_entry_focus
+            and self._library_pending_list_entry_media_return is receipt
+            and ownership.outer_generation
+            == self._library_list_entry_focus_generation
+            and request.receipt is receipt
+            and request.request_id <= self._library_media_return_request_id
+            and request.focus_intent_generation
+            == self._library_notes_focus_intent_generation
+            and request.route_identity == self._library_entry_route_key()
+            and request.media_view_identity == self._library_media_view == "list"
+            and request.final_focus_policy == receipt.final_focus_policy
+            and request.final_focus_identity == receipt.final_focus_identity
+            and request.receipt.stable_id == stable_id
+            and ownership.selected_media_id == self._selected_media_id == stable_id
+            and self.focused is target
+            and self._library_media_focus_target_matches_receipt(
+                target,
                 receipt,
                 stable_id,
             )
@@ -7049,7 +7103,9 @@ class LibraryScreen(BaseAppScreen):
             focus_anchor=self._library_pending_list_entry_focus_anchor,
         )
         self._library_media_return_settlement = request
+        self._library_media_last_exact_settlement = None
         self._library_media_last_successful_settlement = None
+        self._library_media_last_settlement_attempt = None
         self._library_media_last_settlement_outcome = None
         self._bind_library_media_settlement_deadline(request.request_id)
         latest = owner.latest_geometry
@@ -7337,6 +7393,16 @@ class LibraryScreen(BaseAppScreen):
                         geometry.revision,
                         current_content_signature,
                         current_layout_signature,
+                    )
+                    self._library_media_successful_focus_ownership = (
+                        _LibraryMediaSuccessfulFocusOwnership(
+                            request=request,
+                            outer_generation=self._library_list_entry_focus_generation,
+                            selected_media_id=pre_selected_id,
+                            target=target,
+                        )
+                        if outcome == "exact-settled"
+                        else None
                     )
                     self._library_media_return_settlement = None
         finally:
@@ -11554,6 +11620,7 @@ class LibraryScreen(BaseAppScreen):
         new one is scheduled, so only the most recent arm's timer is ever
         live.
         """
+        self._library_media_successful_focus_ownership = None
         if self._library_list_entry_focus_timer is not None:
             self._library_list_entry_focus_timer.stop()
             self._library_list_entry_focus_timer = None
@@ -11608,6 +11675,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_return_settlement = None
         self._library_media_last_exact_settlement = None
         self._library_media_last_successful_settlement = None
+        self._library_media_successful_focus_ownership = None
         self._library_media_last_settlement_attempt = None
         self._library_list_entry_focus_deadline = None
         if self._library_list_entry_focus_timer is not None:
@@ -11644,18 +11712,26 @@ class LibraryScreen(BaseAppScreen):
             return
         self._remember_library_notes_authority_focus(focused)
         target_restore = self._library_notes_programmatic_focus_target is focused
+        pending_receipt = self._library_pending_list_entry_media_return
+        successful_return_focus = bool(
+            pending_receipt is not None
+            and self._library_media_successful_focus_is_allowed(
+                pending_receipt,
+                pending_receipt.stable_id,
+            )
+        )
         programmatic = bool(
             target_restore
+            or successful_return_focus
             or self._library_notes_restoring_focus
             or self._library_notes_resize_settling
         )
-        pending_receipt = self._library_pending_list_entry_media_return
         if (
             self._library_pending_list_entry_focus
             and pending_receipt is not None
         ):
             guarded_return_focus = bool(
-                target_restore
+                (target_restore or successful_return_focus)
                 and focused is not None
                 and self._library_media_focus_target_matches_receipt(
                     focused,
@@ -11711,7 +11787,11 @@ class LibraryScreen(BaseAppScreen):
 
         if not self._library_pending_list_entry_focus:
             return
-        if target_restore and pending_receipt is not None and focused is not None:
+        if (
+            (target_restore or successful_return_focus)
+            and pending_receipt is not None
+            and focused is not None
+        ):
             if self._library_media_focus_target_matches_receipt(
                 focused,
                 pending_receipt,

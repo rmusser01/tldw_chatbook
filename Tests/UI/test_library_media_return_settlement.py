@@ -539,6 +539,95 @@ async def test_authoritative_recompose_rearms_before_replacement_geometry(
         assert getattr(screen.focused, "media_id", None) == media_id
 
 
+@pytest.mark.asyncio
+async def test_post_exact_responsive_revision_renews_after_focus_guard_drains(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The settled focus target owns one real breakpoint-crossing renewal."""
+    _, settlement_type, row_scroll_type, _, _ = _require_return_protocol()
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, media_id, _scroll_offset = await _open_scrolled_compact_media_viewer(
+            host,
+            pilot,
+        )
+        screen.query_one("#library-media-back", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_last_settlement_outcome is not None
+            and screen._library_media_last_settlement_outcome[1] == "exact-settled",
+            message="Initial exact Media return never settled.",
+        )
+        initial_request = screen._library_media_last_exact_settlement
+        assert initial_request is not None
+        initial_request_id = initial_request[0].request_id
+        settled_target = screen.focused
+        assert getattr(settled_target, "media_id", None) == media_id
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_notes_programmatic_focus_target is None,
+            message="Queued programmatic focus guard did not drain.",
+        )
+        assert screen.focused is settled_target
+
+        owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
+        real_on_resize = row_scroll_type.on_resize
+        monkeypatch.setattr(row_scroll_type, "on_resize", lambda _owner, _event: None)
+        await pilot.resize_terminal(170, 48)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_return_settlement is not None
+            and screen._library_media_return_settlement.request_id
+            > initial_request_id,
+            message=lambda: (
+                "Responsive revision did not renew exact settlement authority: "
+                f"focus={screen.focused!r}, "
+                f"guard={screen._library_notes_programmatic_focus_target!r}, "
+                f"request={screen._library_media_return_settlement!r}, "
+                f"outcome={screen._library_media_last_settlement_outcome!r}"
+            ),
+        )
+        request = screen._library_media_return_settlement
+        assert type(request) is settlement_type
+        assert request.request_id > initial_request_id
+        assert request.content_signature == screen._library_media_content_signature()
+        assert request.layout_signature == screen._library_media_layout_signature()
+        assert screen._library_media_last_exact_settlement is None
+        assert screen._library_media_last_settlement_attempt is None
+        assert screen._library_media_last_settlement_outcome is None
+        assert screen.focused is settled_target
+
+        current_owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
+        assert current_owner is owner
+        monkeypatch.setattr(row_scroll_type, "on_resize", real_on_resize)
+        real_on_resize(
+            current_owner,
+            events.Resize(
+                current_owner.size,
+                current_owner.virtual_size,
+                current_owner.container_size,
+            ),
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_last_settlement_outcome is not None,
+            message="Current responsive geometry did not settle fresh authority.",
+        )
+
+        assert screen._library_media_last_settlement_outcome == (
+            request.request_id,
+            "clamped-after-revision",
+            current_owner.latest_geometry.revision,
+        )
+        assert screen._library_media_last_exact_settlement is None
+        assert screen._library_media_return_settlement is None
+        assert screen._library_pending_list_entry_focus is False
+        assert getattr(screen.focused, "media_id", None) == media_id
+
+
 async def _open_pending_viewer_return(
     host,
     pilot,
@@ -2005,11 +2094,15 @@ async def test_post_exact_user_takeover_prevents_recompose_renewal() -> None:
         )
         assert screen._library_media_last_settlement_outcome[1] == "exact-settled"
         await pilot.pause()
+        ownership = screen._library_media_successful_focus_ownership
+        assert ownership is not None
+        assert ownership.target is screen.focused
         control = screen.query_one("#library-media-type-filter", Button)
         control.focus(scroll_visible=False)
         await pilot.pause()
         assert screen.focused is control
         assert screen._library_pending_list_entry_focus is False
+        assert screen._library_media_successful_focus_ownership is None
         request_counter = screen._library_media_return_request_id
         owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
 
