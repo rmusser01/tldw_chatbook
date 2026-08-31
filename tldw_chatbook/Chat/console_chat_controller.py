@@ -320,6 +320,12 @@ from tldw_chatbook.Chat.console_skill_resolver import (
     resolve_skill_command,
 )
 from tldw_chatbook.Chat.prompt_history import PromptHistory
+from tldw_chatbook.Chat.permission_summary_service import (
+    build_messages_tail,
+    pending_calls_info_from_payload,
+    resolve_permission_summary,
+    summarize_pending_round,
+)
 
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.agent_lesson_promotion import ManagedSkillProposalGate
@@ -372,6 +378,7 @@ from tldw_chatbook.config import (
     get_cli_setting,
     apply_console_capture_settings,
     runtime_capture_policy,
+    get_runtime_config_snapshot,
 )
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 from tldw_chatbook.Library.library_rag_service import (
@@ -3195,6 +3202,11 @@ class ConsoleChatController:
         #: _set_console_pending_approval``). Always invoked through
         #: ``self.app.call_from_thread`` from ``request_mcp_approvals``.
         self.set_pending_approval: Callable[[dict[str, Any] | None], None] | None = None
+        #: ADR-080: UI-thread bridge that patches a mounted approval card's
+        #: advisory summary line ``(round_id, text)``. Registered by the
+        #: Console screen alongside ``set_pending_approval``; None in
+        #: headless contexts and delivery silently no-ops.
+        self.update_pending_approval_summary: Callable[[str, str], None] | None = None
         #: Task 9 (parked background approvals): UI-thread callback invoked
         #: (via ``self.app.call_from_thread``) when ``request_mcp_approvals``
         #: raises a round for a NON-active session -- sets the fleet
@@ -10814,6 +10826,11 @@ class ConsoleChatController:
             # approval` snapshots the box before writing to it) can never
             # turn a revoked round back into an approval.
             "revoked": False,
+            # ADR-080: advisory summary for this round (payload-carried so
+            # remounts re-render it) and the fire-once guard for the
+            # external summarizer (no-call outcomes also consume it).
+            "summary": None,
+            "summary_fired": False,
         }
         # F2b fix (Qodo wave): guard the round registration -- the UI
         # thread's `resolve_pending_approval` (TASK-913: fails closed by
@@ -11109,6 +11126,115 @@ class ConsoleChatController:
         """Push ``payload`` (or clear it) onto the UI thread, if wired."""
         if self.app is not None and self.set_pending_approval is not None:
             self.app.call_from_thread(self.set_pending_approval, payload)
+        if isinstance(payload, dict):
+            self._maybe_fire_permission_summary(payload)
+
+    def _maybe_fire_permission_summary(self, payload: dict[str, Any]) -> None:
+        """Fire the external summarizer once per round, if configured.
+
+        ADR-080 trigger: ``fallback`` only when some pending row lacks a
+        rationale, ``always`` for every round with rows. One call per
+        ``round_id`` -- no-call outcomes also consume the once-flag. Fired
+        from ``_marshal_pending_approval`` (the arm-time head mount); the
+        session-activation remounts (``switch_session``/attach) mount via
+        ``set_pending_approval`` directly and never re-fire -- a round that
+        armed while parked fires only if a later marshal-mount reaches it.
+        Never raises.
+        """
+        round_id = str(payload.get("round_id") or "")
+        rows = payload.get("calls") or []
+        if not round_id or not rows:
+            return
+        with self._approval_state_lock:
+            state = self._pending_approval_rounds.get(round_id)
+            if state is None or state.get("summary_fired"):
+                return
+            try:
+                resolution = resolve_permission_summary(
+                    get_runtime_config_snapshot().values
+                )
+            except Exception:  # noqa: BLE001 -- advisory only
+                resolution = None
+            if resolution is None or not resolution.active:
+                state["summary_fired"] = True
+                return
+            needs = resolution.mode == "always" or any(
+                not str(row.get("rationale") or "") for row in rows
+            )
+            state["summary_fired"] = True
+            if not needs:
+                return
+        threading.Thread(
+            target=self._permission_summary_worker,
+            args=(round_id, payload, resolution),
+            daemon=True,
+            name=f"permission-summary-{round_id}",
+        ).start()
+
+    def _permission_summary_worker(
+        self, round_id: str, payload: dict[str, Any], resolution: object
+    ) -> None:
+        """Worker THREAD: run the advisory call, deliver on the UI thread.
+
+        The approval wait loop is never blocked and the round's deadline is
+        unaffected; a slow call that outlives the round is dropped on
+        delivery. Content-free failures only (ADR-080).
+        """
+        try:
+            tail = build_messages_tail(
+                self._summary_tail_messages(payload), resolution.tail_max_chars
+            )
+            info = pending_calls_info_from_payload(payload.get("calls") or [])
+            text = summarize_pending_round(resolution, tail, info)
+        except Exception:  # noqa: BLE001 -- advisory only
+            text = None
+        if not text or self.app is None:
+            return
+        self.app.call_from_thread(
+            self._deliver_permission_summary, round_id, payload, text
+        )
+
+    def _summary_tail_messages(self, payload: dict[str, Any]) -> list:
+        """User/assistant text projection of the round's stored conversation.
+
+        Uses the same message flattening as world-info scanning
+        (``_normalize_world_info_history``) and the same stored-message
+        source its call sites feed it (``_provider_messages_for_session``,
+        which reads ``self.store.messages_for_session`` and emits the
+        provider-dict shape the flattener consumes); keeps the defensive
+        no-raise posture.
+        """
+        try:
+            session_id = str(payload.get("session_id") or "")
+            messages: list = list(
+                self._provider_messages_for_session(session_id)
+                if session_id
+                else []
+            )
+        except Exception:  # noqa: BLE001 -- advisory only
+            return []
+        return _normalize_world_info_history(messages)
+
+    def _deliver_permission_summary(
+        self, round_id: str, payload: dict[str, Any], text: str
+    ) -> None:
+        """UI THREAD: store the summary, then patch the mounted card.
+
+        Drops resolved/revoked rounds and unknown ids; writes the payload's
+        ``summary`` slot (the source of truth for remounts) before the live
+        patch. Never re-runs ``set_batch``.
+        """
+        with self._approval_state_lock:
+            state = self._pending_approval_rounds.get(round_id)
+            if state is None or state["event"].is_set():
+                return
+            state["summary"] = text
+        payload["summary"] = text
+        if self.update_pending_approval_summary is not None:
+            try:
+                self.update_pending_approval_summary(round_id, text)
+            except Exception:  # noqa: BLE001 -- advisory only
+                pass
 
     # -- PR0: per-round retained payloads ------------------------------
     #
