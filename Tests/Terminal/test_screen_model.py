@@ -413,6 +413,7 @@ def test_parser_failure_stops_projection_with_a_content_free_reason(
         model.feed(b"later")
 
     snapshot = model.snapshot()
+    assert model.failure_reason is TerminalReason.TERMINAL_PROTOCOL_FAILED
     assert snapshot.failure_reason is TerminalReason.TERMINAL_PROTOCOL_FAILED
     assert snapshot.lines[0].text == ""
     assert "SECRET" not in repr(snapshot)
