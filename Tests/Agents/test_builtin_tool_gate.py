@@ -79,6 +79,7 @@ class _FakeService:
         self._kill = kill
         self._session = set(session)
         self.session_approved = []
+        self.session_reads = []
 
     @property
     def loads(self):
@@ -88,6 +89,7 @@ class _FakeService:
         return self._kill
 
     def is_session_approved(self, server_key, tool_name, *, profile_id="default"):
+        self.session_reads.append((server_key, tool_name, profile_id))
         return tool_name in self._session
 
     def approve_for_session(self, server_key, tool_name, *, profile_id="default"):
@@ -184,6 +186,9 @@ def test_named_profile_is_used_for_resolution_and_session_approval():
 
     assert state.state == "ask"
     assert svc.session_approved == [("calculator", "research")]
+    assert svc.session_reads == [
+        ("agent:builtin", "calculator", "research")
+    ]
     assert approved is True
 
 
