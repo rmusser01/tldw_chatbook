@@ -61,6 +61,8 @@ The separate workspace switcher remains unchanged and does not gain a fourth per
 
 The default workspace and workspaces with no local-folder bindings keep the action visible as a focusable, pressable-but-blocked control rather than an unfocusable disabled button. Its tooltip and activation response both say `No local folders are attached. Add one in Settings.` A stale event that reaches the modal after bindings disappear opens the same empty recovery state rather than switching context or selecting another workspace.
 
+Console owns one modal-admission gate. Repeated activation for the already inspected workspace focuses the mounted modal instead of creating another visit. A request for a different workspace while Workspace Files is topmost is blocked, keeps the existing inspected identity unchanged, and says `Close Workspace Files before inspecting another workspace.` No request retargets a mounted modal or duplicates its workers, visit ledger, draft, or root lease.
+
 ### Modal shell
 
 The modal covers most of the Console while leaving a visible backdrop whenever the terminal has enough room. Its header contains:
@@ -69,7 +71,9 @@ The modal covers most of the Console while leaving a visible backdrop whenever t
 - `Workspace files — <inspected workspace>`; and
 - a pinned identity notice: `Inspector only · Console remains <active workspace>`.
 
-Directly below the identity notice, a pinned contract row names the current mode, selected folder access, draft/save state, and root-reservation state. Examples are `Viewing · read/write`, `Unsaved · local draft only`, and `Editing <folder> · overlapping agent writes paused`. It shows **Done editing** at the far edge whenever a manual edit lease is held. The active-workspace notice and contract row remain visible while navigating, editing, resolving conflicts, and saving.
+Directly below the identity notice, a pinned contract row names the current mode, selected folder access, draft/save state, and root-reservation state. Examples are `Viewing · read/write`, `Unsaved · local draft only`, and `Editing <folder> · new agent writes blocked`. It shows **Done editing** at the far edge whenever a manual edit lease is held. The active-workspace notice and contract row remain visible while navigating, editing, resolving conflicts, and saving.
+
+A separate pinned Console-attention row appears only when the covered Console needs action. Its typed summary can report pending-approval count plus a generic blocked/failed/new-activity flag, with copy such as `Console needs attention · 2 approvals waiting` or `Console has new activity`, and provides **Back to Console**. It never includes approval bodies, file content, paths, tool arguments, or error details, and it never resolves the underlying action. A generation-checked summary from `ChatScreen` updates this row while the modal is open; ordinary app notifications may supplement it but are not the only carrier. The conditional row is included in the 80×24/short-layout height budget and yields body space rather than clipping the pinned contract or actions.
 
 The modal records its opener and restores focus to it when possible, falling back to the Console composer if the opener was recomposed or removed.
 
@@ -117,7 +121,7 @@ Paths use middle ellipsis while reserving cells for status marks. Full root-rela
 
 ### Viewer and editor
 
-Opening a file begins in viewing mode. A normal writable file exposes **Edit**. Entering Edit acquires the canonical-root manual edit lease and changes the contract row to `Editing <folder> · overlapping agent writes paused`. If an overlapping agent run owns that root, viewing remains available and the blocked Edit action has adjacent copy: `An agent is working in this folder. Editing will be available when that run finishes.` The reason is never tooltip-only.
+Opening a file begins in viewing mode. A normal writable file exposes **Edit**. Entering Edit acquires the canonical-root manual edit lease and changes the contract row to `Editing <folder> · new agent writes blocked`. If an overlapping agent run owns that root, viewing remains available and the blocked Edit action has adjacent copy: `An agent is working in this folder. Editing will be available when that run finishes.` The reason is never tooltip-only.
 
 Editing provides:
 
@@ -159,6 +163,14 @@ Save can produce these user-visible outcomes:
 - **Saved, confirmation incomplete:** replacement occurred but final durability could not be confirmed. Copy leads with `The file was replaced, but Chatbook could not confirm that it was safely committed to disk. Your draft is still available. Refresh is the safest next step.` The app does not retry automatically. The modal stays open with primary **Refresh**, then **Compare** and **More… → Copy draft**, and reports any final on-disk identity it could verify. If a final read verifies the draft bytes, they become the clean baseline while the warning remains visible. If final bytes cannot be verified, the app pins the draft and prior baseline, disables another Save, and requires Refresh or Compare before further publication.
 
 The UI never implies that a reported failure guarantees unchanged disk state if replacement already occurred.
+
+### Graceful application quit
+
+Workspace Files participates in the application’s existing top-screen quit protocol through `confirm_quit()` and `prepare_for_quit()`; it does not bind or shadow global Ctrl+Q. A graceful quit while a draft is dirty reuses the same inline guard with the typed pending intent `Quit Chatbook`. **Keep editing** cancels quit. **Discard** clears the draft and permits preparation. **Save and continue** performs exactly one Save and permits quit only after a `published_durable` result leaves the buffer clean. Conflict, access change, Save failure, cancellation, or unresolved publication durability keeps Chatbook and the inspector open with the relevant recovery focused.
+
+If Ctrl+Q arrives during either Saving state, the inspector does not start another Save or reinterpret the request as Save cancellation. It briefly freezes further editor input and waits for that single operation’s terminal result. A durable, verified Save with a clean buffer may continue quit; every other outcome remains open for recovery. This is the same rule for a Save started from the dirty guard or from the ordinary Save action.
+
+After confirmation, the modal’s `prepare_for_quit()` cancels and joins bounded list/read/filter/Git work, terminates any owned Git subprocess, invalidates operation generations, and releases its manual lease in `finally`. The app’s existing Console shutdown path tears down active runs and releases their agent leases through the same coordinator only after each terminal snapshot/review path has completed or recorded failure. A force kill, terminal/process crash, or operating-system termination bypasses this protocol: memory-only drafts may be lost and post-publication durability confirmation may be incomplete. V1 deliberately does not persist a recovery draft.
 
 ### Plain-language status copy
 
@@ -222,7 +234,17 @@ The modal owns a single selected file and at most one edit buffer. Its primary s
 - `PublishedDurabilityUnknown`
 - `MissingOrUnsupported`
 
-The modal also owns the selected `FileRef`, exact baseline `FileRevision`, current draft and draft revision, pending navigation, root edit lease, operation generations, and visit ledger.
+The modal also owns the selected `FileRef`, exact baseline `FileRevision`, current draft and draft revision, pending navigation, root edit lease, operation generations, and visit ledger. `FileRef` stores the workspace and binding fingerprints plus raw root-relative path components; display labels are derived separately and are never parsed back into an operation path.
+
+`FileRevision` is a frozen exact-baseline record captured from the no-follow file handle. It contains:
+
+- file kind, link count, byte size, and strong content hash;
+- stable file identity—POSIX device/inode or the platform’s volume/file-index equivalent;
+- parent-directory identity needed to validate safe same-directory replacement and containment;
+- BOM policy, newline convention, and final-newline state; and
+- mode plus a digest/snapshot of every supported metadata field the active publisher promises to preserve.
+
+Modification time may be retained for diagnostics but is never sufficient identity. If the platform publisher cannot obtain a stable file and parent identity, the file is read-only. A pre-publication mismatch in bytes, stable identity, kind, link count, parent identity, or promised metadata is a Conflict, including replacement with a different file that happens to contain identical bytes. Final verification compares draft bytes plus safe replacement identity, type/link facts, and all promised metadata before reporting `published_durable`.
 
 Transitions that replace the buffer must resolve dirty state first. Filesystem and Git results carry an operation token containing at least the modal visit, workspace/binding fingerprint, root-qualified path, relevant baseline, and buffer revision. Results whose token no longer matches current modal state are discarded without changing the UI.
 
@@ -251,7 +273,7 @@ Console integration remains thin:
 
 - `tldw_chatbook/UI/Console_Modules/wiring.py` routes typed entry intents.
 - `tldw_chatbook/Widgets/Console/console_workspace_context.py` owns the exact active-card and grouped-browser entry placement and emits `WorkspaceFilesRequested`.
-- `tldw_chatbook/UI/Screens/chat_screen.py` installs/dismisses the modal and supplies the active workspace identity; it does not perform filesystem work.
+- `tldw_chatbook/UI/Screens/chat_screen.py` owns the single-modal admission gate, installs/dismisses the modal, and supplies the active workspace identity plus a generic Console-attention summary; it does not perform filesystem work or resolve attention from the modal.
 
 New workspace services:
 
@@ -267,7 +289,11 @@ Leaf widgets emit typed intents upward. The modal is the sole UI owner that call
 
 Directory listing, file reading, filter walking, Git querying, and saving run in separate worker lanes. Operations expected to exceed 100 ms never block the Textual event loop.
 
-List/read/filter/Git work is logically cancellable. A thread-level filesystem operation may finish after cancellation, but its stale token prevents UI publication. Save is cancellable only before its publication linearization point through the visible **Cancel save** action. Cancellation and publication race through one typed terminal outcome: an acknowledged cancellation returns `not_published`; once publication wins, the operation becomes non-cancellable. After replacement begins, the modal remains mounted and awaits a terminal publication outcome.
+List, read, and filter each allow one active operation and at most one coalesced latest pending request. Each binding’s Git sub-lane has the same rule, with no more than two Git subprocesses active across the modal. Superseded requests do not create unbounded workers or queues. Directory and filter walks check cancellation at bounded intervals; a blocking filesystem call may finish after logical cancellation, but its stale token prevents UI publication. Git cancellation first requests graceful subprocess-group termination, then force-terminates after a bounded grace period while safely draining only the capped output.
+
+The Save lane is strictly single-flight: Save is disabled/ignored after the first accepted request. Save is cancellable only before its publication linearization point through the visible **Cancel save** action. Cancellation and publication race through one typed terminal outcome: an acknowledged cancellation returns `not_published`; once publication wins, the operation becomes non-cancellable. After replacement begins, the modal remains mounted and awaits a terminal publication outcome.
+
+Unmount invalidates the visit generation, cancels/joins the non-Save lanes, terminates owned subprocesses, and releases a clean manual lease in `finally`. A post-publication Save prevents graceful unmount until its terminal result. Agent leases are likewise released in `finally` after terminal change-snapshot/review completion, approval denial, cancellation, worker failure, or graceful app teardown; if terminal snapshotting fails, the failure is first recorded and then the lease is released. A clean lifecycle leaves no orphan in-memory lease or worker. Forced process termination clears the in-memory coordinator with the process but provides none of the graceful draft/durability guarantees.
 
 ## Authority and scope
 
@@ -291,7 +317,7 @@ Settings copy must state that a binding’s mode is the shared maximum authority
 
 ## Canonical-root edit lease
 
-The app owns one `RootMutationCoordinator`, keyed by canonical physical roots and aware of overlapping ancestor/descendant roots. It coordinates only Chatbook-controlled inspector editing and agent run admission; external editors remain outside this mechanism and are covered by baseline conflict detection.
+The app owns one `RootMutationCoordinator`, keyed by canonical physical roots and aware of overlapping ancestor/descendant roots. Overlap uses normalized path-component comparison under the platform’s case and alias semantics, never string-prefix comparison; for example, `/work/app` does not overlap `/work/apple`. It coordinates only Chatbook-controlled inspector editing and agent run admission; external editors remain outside this mechanism and are covered by baseline conflict detection.
 
 ### Agent admission
 
@@ -332,11 +358,19 @@ Save preserves BOM presence, newline convention, final-newline state, file mode,
 
 ### View-only or metadata-only
 
-- More than 200,000 characters through 8 MiB: bounded read-only excerpt of at most 100,000 characters, with truncation disclosed.
+- More than 200,000 decoded characters through 8 MiB: revision-pinned read-only pages of at most 100,000 decoded characters. **Previous** and **Next** are explicit controls, and the viewer announces the current character range plus a known total or `at least` count while the bounded scan is still establishing it, such as `Characters 100,001–200,000 of 612,044`.
 - More than 8 MiB: metadata only.
-- Invalid UTF-8, binary content, mixed newline convention, symlink/reparse targets, special files, multiply-linked files, unsafe metadata, version-control internals, or unsupported publication semantics: read-only or metadata-only with a specific reason.
+- Invalid UTF-8, binary content, mixed newline convention, symlink/reparse targets, special files, multiply-linked files, unsafe metadata, version-control internals, or unsupported publication semantics: safe read-only preview or metadata-only with a specific reason.
 
 There is no “try anyway” write option.
+
+Paging decodes incrementally on UTF-8 character boundaries and never splits a code point. Each page read revalidates the same exact `FileRevision`; a changed file cannot be combined with already displayed pages. The viewer instead says the file changed and offers **Refresh**, which discards the page cache and restarts at the first page under a new revision. Memory holds the current page plus at most one adjacent page on either side, all generation-tagged. A sparse offset index is built incrementally, so paging is worker-backed and does not retain or decode the entire file merely to revisit a page.
+
+### Hostile filesystem text
+
+Raw path components and bytes remain authority data; rendered names are a one-way safe representation. Every file-derived label is rendered with Rich/Textual markup disabled or explicitly escaped. The formatter visibly escapes C0/C1 controls, ESC, embedded newline/tab, bidi control characters, and undecodable surrogate bytes while retaining the raw component separately for revalidated operations. A filename or Git path can therefore neither inject terminal controls nor create an operation target through its displayed form.
+
+Ordinary Unicode and natural right-to-left text remain viewable. A valid UTF-8 file containing unsafe terminal controls or directional control codes opens only as a labeled, escaped read-only preview unless the editor can prove a safe literal rendering path; it is never silently normalized and never editable in v1. Raw filesystem/Git exception text is sanitized rather than rendered.
 
 ### Directory listing and filter bounds
 
@@ -355,7 +389,7 @@ There is no “try anyway” write option.
 
 Save accepts a `SaveCommand` containing the current workspace/binding fingerprint, root-qualified path, exact base revision, draft bytes/encoding policy, and operation token.
 
-The service performs final authority and containment validation, then uses descriptor-based/no-follow access where the platform supports it to confirm the target remains the expected regular file. It compares the exact current disk identity with the base revision immediately before publication.
+The service performs final authority and containment validation, then uses descriptor-based/no-follow access where the platform supports it to confirm the target remains the expected regular file. It reconstructs `FileRevision` from that handle and compares the full revision with the base immediately before publication; content hash or modification time alone can never pass this check.
 
 For an eligible file, the publisher:
 
@@ -365,7 +399,7 @@ For an eligible file, the publisher:
 4. applies and validates preserved metadata;
 5. performs an atomic same-directory replacement;
 6. flushes parent-directory metadata where the platform supports and requires it; and
-7. reopens and hashes the final target to report its exact final revision.
+7. reopens the final target without following links and verifies its exact bytes, identity, link/type facts, and all promised metadata to report its final revision.
 
 The guarantee is deliberately narrow: no external change detectable before the final pre-publication identity check is silently overwritten. An external process can still race after that check; the app does not claim a cross-process lock it cannot enforce.
 
@@ -379,13 +413,19 @@ Temporary artifacts are cleaned up only when their identity is known and cleanup
 
 ## Isolated Git decoration
 
-`file_git_status_reader.py` is a read-only, non-authoritative adapter. It may invoke an installed Git executable with a porcelain-v2, NUL-delimited status mode. It:
+`file_git_status_reader.py` is a read-only, non-authoritative adapter. It follows the repository’s established File Notes Git-isolation contract while remaining independent of the File Notes high-level service. Shared pure command/environment/parsing helpers may be extracted only when that does not import sync/database ownership. The adapter invokes an absolute resolved Git executable with `--no-replace-objects`, `--literal-pathspecs`, and porcelain-v2 NUL-delimited status equivalent to:
 
-- never stages, refreshes, writes the index, or mutates repository configuration;
-- uses `GIT_TERMINAL_PROMPT=0` and `GIT_OPTIONAL_LOCKS=0` with a scrubbed environment;
-- has a 10-second timeout and 2 MiB combined-output cap;
+`-c core.fsmonitor=false -c status.renames=false -c diff.renames=false -c maintenance.auto=false -c gc.auto=0 status --porcelain=v2 -z --untracked-files=all --ignored=matching --no-renames`
+
+It:
+
+- never stages, refreshes, writes the index, runs a hook-capable operation, performs lazy fetch, or mutates repository/configuration state;
+- uses `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`, `GIT_NO_LAZY_FETCH=1`, `GIT_CONFIG_NOSYSTEM=1`, `LC_ALL=C`, and a null-device `GIT_CONFIG_GLOBAL`; disables pager/editor/askpass; and ignores caller-provided redirecting or dynamic variables including `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, object/alternate-object paths, config-count/key/value injections, `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_GLOBAL`, and `GIT_EXEC_PATH` before installing those safe values;
+- has a 10-second timeout and 2 MiB combined-output cap, with the subprocess limits and teardown rules defined above;
+- parses NUL-delimited path bytes without shell interpolation or lossy blind decoding, preserves OS filesystem/surrogate identity separately from safe display text, and never feeds output back as command arguments;
+- revalidates every repository-relative result inside the selected binding before decoration;
 - queries per binding and filters results to that binding;
-- discovers/query nested repositories lazily when their directory is expanded; and
+- discovers/queries nested repositories lazily when their directory is expanded; and
 - refreshes on modal open, explicit Refresh, and known successful Save.
 
 Git failure, absence, malformed output, timeout, or truncation produces a local unavailable/truncated decoration. It never grants or revokes file access, prevents tree browsing, or changes Save decisions.
@@ -404,6 +444,8 @@ Operational logs use sanitized error codes, opaque workspace/binding identifiers
 
 Clipboard use is an explicit user-requested transfer to shared external state and is described as such by the Copy action.
 
+Because drafts are intentionally memory-only, graceful quit resolves them through the dirty guard while a force kill, crash, or host termination can lose them. The UI does not promise crash recovery or persist a hidden draft to simulate it.
+
 ## Accessibility and input
 
 - Every decoration has a visible text/glyph meaning in addition to color, and the selected-file region expands compact marks into full words.
@@ -420,6 +462,7 @@ The input/focus contract is:
 | Filter | filter field | typing updates bounded filter; Escape clears an active query first; Tab reaches Cancel/Clear/results | first result only on explicit navigation |
 | Wide tree file open | selected tree row | continued arrows preview other files; Tab enters viewer/actions | exact selected row is remembered |
 | Compact viewer | viewer or first safe action | **Back to files** returns to tree; **Back to Console** dismisses | exact selected tree row |
+| Paged large-file viewer | read-only page viewport | Tab reaches **Previous**/**Next**; either action announces the new character range | page viewport, or the unavailable boundary control |
 | Viewing editable file | **Edit** when entered from compact viewer; tree remains focused in wide preview | Edit requests lease | editor after lease success; blocked reason after denial |
 | Editing | editor | text input stays with editor; Tab reaches Save/Undo/Redo/More and contract-row Done editing | editor after Save/Undo/Redo |
 | Dirty guard | **Keep editing** | Escape/backdrop = Keep editing; Save/Discard run pending intent | editor when kept; destination after resolution |
@@ -428,6 +471,8 @@ The input/focus contract is:
 | Conflict | **Compare** | Base/Draft/Disk selector in compact; Reload or Keep draft | editor after Keep draft; selected file identity after Reload |
 | Saved | editor | no forced focus movement | current logical focus |
 | Done editing | contract-row action | dirty state invokes guard; clean state releases lease | selected tree row in wide; Edit in compact viewer |
+| Console attention | **Back to Console** when invoked | dismiss through normal guard and return to the covered Console | existing approval/activity recovery target when still present, otherwise composer |
+| Graceful Ctrl+Q | current logical focus, or **Keep editing** for a new dirty guard | clean permits preparation; dirty uses Save/Discard/Keep; active Save waits once | application exits only after resolved clean state, otherwise recovery remains focused |
 
 Escape has ordered meaning: during non-cancellable publication it does nothing; inside the dirty guard it means Keep editing; while focus is in a non-empty filter it clears that filter; otherwise it requests normal safe dismissal. **Back to files** exists only in the compact viewer/editor; **← Back to Console** is always the dismissal action. The exact modal opener is restored through `SafeModalDismissMixin`, including its click-chain shield and widget-ID fallback after recomposition.
 
@@ -442,6 +487,7 @@ Verification uses real temporary filesystems and repositories for authority/publ
 | Workspace B is not active | Open B from either entry | Inspection for B | Header names B; notice says Console remains A | Active workspace, task, conversation, composer, and approval state fingerprints remain unchanged |
 | Active rail is 24–30 cells or grouped header label is long | Focus both entry actions | UI-only | Complete text action remains visible and focusable; workspace label truncates first | No clipped or invisible clickable region; switcher remains unchanged |
 | Workspace has no local folders | Focus/press Files | Blocked intent | Inline/activation guidance points to Settings | No modal, activation, or unfocusable disabled mystery control |
+| Workspace Files is already mounted | Activate same workspace, then another workspace | Existing visit focused; other request blocked | Existing inspected identity remains visible | No second modal, retarget, worker set, visit ledger, or lease |
 | Read A is slow, then user selects B | B read finishes before A | B snapshot accepted; A token stale | Viewer shows only B | A bytes never flash or replace B |
 | Workspace has bindings A and B with the same relative path | Filter while A is selected | Results scoped to A | Contract/filter status names A; only A results appear | No B traversal, ambiguity, or silent binding change |
 | Binding is read-only | Select file and attempt Edit/Save | Editability denied | File is viewable with read-only reason | No temp file, write, approval prompt, or permission mutation |
@@ -451,11 +497,18 @@ Verification uses real temporary filesystems and repositories for authority/publ
 | Clean editor owns root | Choose Done editing, then start agent | Lease released | Viewing state; agent admission can proceed | No stale inspector lease |
 | Dirty editor owns root | Choose Done editing | Pending dirty guard | Keep editing focused; destination named | Lease not released until Save/Discard resolves |
 | Save is preparing | Choose Cancel before/at publication race | Typed terminal outcome | Unsaved editor if cancellation wins; Finishing save if publication wins | No ambiguous cancelled message and no cancellation after publication |
+| Dirty editor, then Ctrl+Q | Save and continue | Quit waits on the one Save | Exit only after durable verified Save; otherwise recovery remains open | No parallel Save, optimistic exit, or unresolved draft loss during graceful quit |
+| Save is already active, then Ctrl+Q | Wait for terminal outcome | Existing Save remains single-flight | Typing briefly frozen; success can continue quit, any unresolved result remains open | Quit does not cancel, duplicate, or hide the Save |
 | External editor changes disk after load | Save draft | `conflict` / `not_published` | Base/Draft/Disk conflict view | External bytes are not silently overwritten |
+| File is replaced with identical bytes or promised metadata changes | Save draft | `conflict` / `not_published` | Exact identity conflict is explained | Hash/mtime equality never bypasses file identity or metadata checks |
 | Replace succeeds, directory flush fails | Finish Save | `published_durability_unknown` | Modal stays open with warning and recovery | No automatic retry; UI does not claim disk unchanged |
 | Clipboard adapter fails | Copy draft | Clipboard failure | Error; draft remains available | No disk, persistence, or dirty-state change |
 | Git missing, malformed, or times out | Open/Refresh | Decoration unavailable | Tree and editor remain functional | Authority and Save eligibility unchanged |
+| Repository config names a hostile fsmonitor or the caller environment redirects Git | Refresh Git | Isolated status or unavailable | Decoration remains safe and local | Hook, prompt, pager, editor, lazy fetch, caller-supplied alternate object/index/config target, and repository mutation never occur |
+| Filename or Git path contains ESC, newline, bidi control, or undecodable bytes | List/decorate/open | Raw identity retained; safe label rendered | Visible escaped representation | No markup/terminal injection, lossy authority reconstruction, or path escape |
+| File exceeds 200,000 characters but is at most 8 MiB | Move Next/Previous across pages | Revision-pinned page | Exact range announced; any file change requires Refresh | No split code point, mixed revision, or whole-file retention |
 | Huge directory/filter corpus | Page or filter | Bounded/truncated result | Counts and truncation disclosed | Event-loop heartbeat remains responsive; caps are not exceeded |
+| Approval or blocked/error activity arrives behind modal | Wait for Console summary update | Generic attention event | Pinned attention row and Back to Console appear | No approval body/detail leak and no action resolved inside modal |
 | Unique secret in path/content/draft/filter/error | Exercise read/edit/error paths | Sanitized operational result | Secret may appear only in intended local view | Secret absent from captured logs, notifications, conversation, DB, and review metadata |
 | Dirty narrow modal is resized | Wide → narrow → wide | UI-only transition | Draft, baseline, pending guard, and logical focus preserved | Modal is not dismissed or recreated |
 | Modal is exercised at 80×24, 100×30, 120×40, and 160×50 | Resize/open in every primary state | UI-only | Required compact/wide/short contract and focus mapping hold | No clipped controls, offscreen actions, lost undo, or hidden status |
@@ -465,31 +518,36 @@ Verification uses real temporary filesystems and repositories for authority/publ
 ### Test layers
 
 1. **Pure service tests**
-   - containment, canonical binding identity, link and special-file rejection;
-   - encoding/newline/size classification;
+   - component-aware containment/canonical overlap, binding identity, link and special-file rejection;
+   - exact `FileRevision` comparison, including identical-byte replacement, link/type changes, parent identity, and supported metadata changes;
+   - encoding/newline/size classification, revision-pinned paging across UTF-8 boundaries, and changed-file reset;
+   - hostile filename/content display escaping while raw path identity remains unchanged;
    - selected-binding-only filter scope, stable ordering, filter states, bounds, and truncation;
    - operation token and typed outcome construction.
 
 2. **Publication and race tests on real temporary filesystems**
-   - exact baseline conflict, retarget/revoke races, and external modification barriers;
-   - atomic replacement, metadata preservation, final re-read/hash;
+   - exact baseline conflict, same-byte identity replacement, promised metadata change, retarget/revoke races, and external modification barriers;
+   - atomic replacement, metadata preservation, and final byte/identity/metadata verification;
    - injected pre-publication and post-replacement failures;
    - Linux, macOS, and Windows-specific publisher behavior where CI supports it;
    - a platform incapable of satisfying the contract produces read-only classification.
 
 3. **Root coordinator tests**
-   - ancestor/descendant overlap;
+   - component-aware ancestor/descendant overlap, platform case behavior, and non-overlap of prefix siblings;
    - atomic multi-root agent admission and deterministic ordering;
-   - manual-versus-agent exclusion, explicit Done-editing release, release on all terminal paths, uncertain-publication retention, and no baseline on denied admission.
+   - manual-versus-agent exclusion, explicit Done-editing release, release in `finally` after every agent/manual terminal path and graceful quit, uncertain-publication retention, and no baseline on denied admission.
 
 4. **Git adapter tests with real repositories**
-   - tracked/untracked/conflicted/ignored parsing, rename paths, nested repositories, timeout/output caps;
+   - tracked/untracked/conflicted/ignored parsing, rename paths, control/newline/non-decodable path bytes, nested repositories, timeout/output caps, and subprocess teardown;
+   - hostile fsmonitor/config/environment isolation proves no hook, redirect, lazy fetch, prompt, pager, or editor runs;
    - index and repository fingerprints prove no mutation.
 
 5. **Production-shaped Textual tests**
    - mount `TldwCli` using its exact `CSS_PATH` stack;
    - exercise both exact entry surfaces at the incumbent rail widths, including blocked entry guidance and unchanged switcher geometry;
-   - exercise safe dismiss paths, inline dirty guard defaults, pre-publication Cancel race, explicit Done editing, stale-result suppression, and focus restoration;
+   - exercise the single-modal gate, safe dismiss paths, inline dirty guard defaults, graceful Ctrl+Q before/during Save, pre-publication Cancel race, explicit Done editing, stale-result suppression, and focus restoration;
+   - inject pending approval and generic run activity behind the modal and verify the privacy-minimized attention row plus Back-to-Console recovery;
+   - coalesce rapid list/read/filter/Git requests, double-activate Save, close with work in flight, and assert bounded workers/subprocesses and no orphan leases;
    - exercise 80×24, 100×30, 120×40, and 160×50 in Viewing, Unsaved, Saving, Conflict, and uncertain-publication states;
    - re-query widgets after recomposition;
    - inspect compositor frames and geometric containment, not only widget existence.
@@ -497,8 +555,12 @@ Verification uses real temporary filesystems and repositories for authority/publ
 6. **Live scratch verification**
    - launch with an isolated `TLDW_CONFIG_PATH` and temporary roots;
    - open a non-active workspace through both entry points;
-   - view, edit, Save, conflict, Copy, dismiss, and resize using actual UI input;
+   - view, page a large file, edit, Save, conflict, Copy, dismiss, gracefully quit, and resize using actual UI input;
    - compare before/after fingerprints for unrelated Console state and for intended file publication only.
+
+### Performance gates
+
+The threshold is a shipped product promise, not an unmeasured guess. Targeted benchmarks exercise an editable 200,000-character file, 10,000 lines, one extremely long line, and an 8 MiB paged file while sampling the Textual event-loop heartbeat. Worker-backed reads/pages must never perform synchronous work expected to exceed 100 ms on the UI loop, and typing/navigation must remain observably responsive without unbounded memory or worker growth. If the production editor cannot meet this gate at 200,000 characters, Slice 2 must lower the explicit editable threshold in this specification and its acceptance criteria before approval; the implementation must not silently apply a device-dependent threshold.
 
 Privacy tests seed unique secrets and assert their absence from every captured persistence/logging channel. Test assertions must inspect both positive outcomes and prohibited side effects.
 
@@ -511,8 +573,9 @@ The overall v1 consists of three dependency-ordered, independently reviewable sl
 ### Slice 1 — Read-only inspector
 
 - Both typed entry points and non-activating modal shell.
-- Binding/root presentation, bounded tree, safe file viewer, filter, responsive layout, focus/dismiss behavior.
-- Revalidation, stale-result suppression, privacy controls, and read-only/live evidence.
+- Single-modal admission, generic Console attention, and graceful clean/dirty lifecycle hooks.
+- Binding/root presentation, bounded tree, safe file viewer with 100,000-character revision-pinned paging, filter, responsive layout, and focus/dismiss behavior.
+- Revalidation, hostile-text rendering, bounded/coalesced workers, stale-result suppression, privacy controls, and read-only/live evidence.
 - Delivers standalone inspection value without editor or Git assumptions.
 
 ### Slice 2 — Secure editing and publication
@@ -520,11 +583,11 @@ The overall v1 consists of three dependency-ordered, independently reviewable sl
 - Single buffer, Edit/Save/undo/redo/Revert, dirty guard, Copy draft, and conflict view.
 - Canonical-root mutation coordinator integrated with agent admission.
 - Safe file classifier and platform publisher with typed publication outcomes.
-- Race, platform, provenance, privacy, and live Save verification.
+- Exact `FileRevision`, graceful-quit Save waiting, race, platform, provenance, privacy, performance, and live Save verification.
 
 ### Slice 3 — Isolated Git decoration
 
-- Read-only Git adapter, bounded refresh, nested-repository behavior, accessible tree/status decoration.
+- Hardened read-only Git adapter, bounded refresh/subprocess lifecycle, nested-repository behavior, hostile-path handling, and accessible tree/status decoration.
 - Failure isolation, no-mutation evidence, and integrated live verification.
 
 ## Acceptance criteria
@@ -532,19 +595,26 @@ The overall v1 consists of three dependency-ordered, independently reviewable sl
 ### Overall v1
 
 - [ ] Either entry point opens the selected named workspace without changing any Console context.
+- [ ] Only one inspector visit can mount at once; repeat activation focuses it and another-workspace activation cannot retarget it.
 - [ ] Entry actions remain visible, focusable, and unclipped in incumbent rail/group geometry; the separate workspace switcher remains unchanged.
 - [ ] Every visible local-folder binding is explicitly represented with identity, access mode, and availability.
 - [ ] Filtering is bounded to the explicitly selected binding, exposes complete progress/truncation states, and never traverses another binding.
-- [ ] Tree, viewer, filter, and Git work are cancellable where safe and stale-result resistant.
+- [ ] Tree, viewer, filter, and Git work are bounded, coalesced, cancellable where safe, stale-result resistant, and leave no workers/subprocesses behind after graceful teardown.
+- [ ] Files over 200,000 characters through 8 MiB are viewable in revision-pinned pages of at most 100,000 decoded characters without combining revisions or splitting UTF-8 code points.
+- [ ] Hostile filesystem/Git names and file controls render as safe visible text while raw authority identity remains separate.
 - [ ] Ordinary writable UTF-8 files can be deliberately edited and atomically published; unsupported files are read-only with a reason.
 - [ ] Dirty navigation/dismissal, conflicts, binding changes, and uncertain publication preserve recoverable user work.
 - [ ] Inspector publication and overlapping agent change-capture windows are mutually excluded by canonical root.
 - [ ] The edit lease is continuously visible and **Done editing** releases it without closing the inspector; every other terminal path has a tested lease outcome.
 - [ ] Pre-publication Save can be cancelled visibly, while post-publication Save remains mounted and non-cancellable until its terminal outcome.
-- [ ] Git decoration is isolated, read-only, accessible, and non-authoritative.
+- [ ] Graceful Ctrl+Q reuses the dirty guard and waits for an active single-flight Save; it exits only after recoverable draft state and publication outcome are resolved.
+- [ ] Exact baseline validation includes bytes, stable identity, type/link facts, parent identity, and every promised metadata field rather than trusting mtime or hash alone.
+- [ ] Generic pending Console attention remains visible behind the modal boundary without exposing or resolving approval details.
+- [ ] Git decoration is environment/config isolated, read-only, hook-free, accessible, and non-authoritative.
 - [ ] No file data or sensitive path/filter/error material enters persistence, logs, agent context, conversation, or Agent Change Review.
 - [ ] The specified wide/compact/short layouts meet the same safety model at 80×24, 100×30, 120×40, and 160×50 and preserve modal state across resize.
 - [ ] Targeted automated and live evidence covers successful behavior and prohibited side effects.
+- [ ] The explicit editable/viewer thresholds pass the defined long-line, many-line, 200,000-character, and 8 MiB responsiveness gates; any lower threshold is reviewed in the spec before implementation ships.
 
 ### Slice completion gates
 
