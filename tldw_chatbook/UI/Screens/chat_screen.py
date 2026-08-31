@@ -1536,6 +1536,37 @@ class _ControllerState:
         setattr(self._owner(instance), self._state_name, value)
 
 
+def _active_lineage_rows(
+    db, conversation_id: str, rows: list[dict]
+) -> list[dict]:
+    """Filter fetched rows to the conversation's active branch.
+
+    PR #2262 review: a conversation can hold off-path branches (regenerate
+    siblings) and unselected variants; the transcript the user sees is the
+    parent-chain from ``active_leaf_message_id``. Falls back to every row
+    for legacy conversations with no leaf pointer.
+    """
+    by_id = {str(row.get("id")): row for row in rows}
+    record = None
+    try:
+        record = db.get_conversation_by_id(conversation_id)
+    except Exception:
+        record = None
+    leaf = str((record or {}).get("active_leaf_message_id") or "") or None
+    if leaf is None or leaf not in by_id:
+        return rows
+    lineage: list[dict] = []
+    seen: set[str] = set()
+    current: str | None = leaf
+    while current is not None and current in by_id and current not in seen:
+        seen.add(current)
+        lineage.append(by_id[current])
+        parent = by_id[current].get("parent_message_id")
+        current = str(parent) if parent else None
+    lineage.reverse()
+    return lineage if len(lineage) == len(seen) else lineage
+
+
 class ChatScreen(BaseAppScreen):
     """
     Chat screen with comprehensive state management.
@@ -5169,15 +5200,19 @@ class ChatScreen(BaseAppScreen):
         rows: list[dict] = []
         page_size = 200
         offset = 0
-        while True:
-            page = db.get_messages_for_conversation(
-                conversation_id, limit=page_size, offset=offset
-            )
-            rows.extend(page)
-            if len(page) < page_size:
-                break
-            offset += page_size
-        return markdown_messages_from_db_rows(rows)
+        # PR #2262 review: one logical read, one transaction (reads use the
+        # shared context manager too), then a lineage filter below.
+        with db.transaction():
+            while True:
+                page = db.get_messages_for_conversation(
+                    conversation_id, limit=page_size, offset=offset
+                )
+                rows.extend(page)
+                if len(page) < page_size:
+                    break
+                offset += page_size
+            active_rows = _active_lineage_rows(db, conversation_id, rows)
+        return markdown_messages_from_db_rows(active_rows)
 
     def _render_console_conversation_markdown(self, target, fidelity: str):
         """Render the target chat as markdown, or None when empty."""
@@ -5198,7 +5233,13 @@ class ChatScreen(BaseAppScreen):
 
     async def _copy_console_conversation_markdown(self, target, fidelity: str) -> None:
         """Copy one conversation to the clipboard as markdown."""
-        markdown = self._render_console_conversation_markdown(target, fidelity)
+        import asyncio
+
+        # PR #2262 review: the paginated read + render are blocking work;
+        # coroutine workers still run on the UI loop, so push them off it.
+        markdown = await asyncio.to_thread(
+            self._render_console_conversation_markdown, target, fidelity
+        )
         if markdown is None:
             self.app.notify("This chat has no messages to copy.", severity="warning")
             return
@@ -5220,7 +5261,11 @@ class ChatScreen(BaseAppScreen):
             markdown_filename_slug,
         )
 
-        markdown = self._render_console_conversation_markdown(target, "clean")
+        import asyncio
+
+        markdown = await asyncio.to_thread(
+            self._render_console_conversation_markdown, target, "clean"
+        )
         if markdown is None:
             self.app.notify("This chat has no messages to save.", severity="warning")
             return

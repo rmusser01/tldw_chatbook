@@ -2,9 +2,9 @@
 
 Copy-as-markdown backs the conversation action menu's "Copy as" page: Clean
 copies a shareable rendering (role headings plus verbatim user/assistant
-content) and Full copies a faithful transcript (tool rows, thinking, system
-prompts, and citations included as collapsed ``<details>`` blocks so the
-document stays readable in any markdown viewer).
+content) and Full copies a faithful transcript (tool rows, thinking, and
+system prompts included as collapsed ``<details>`` blocks so the document
+stays readable in any markdown viewer).
 
 Everything here is pure: a normalized message list in, a string out. No DOM,
 no database, no store -- both sources (persisted rows from
@@ -12,14 +12,24 @@ no database, no store -- both sources (persisted rows from
 ``messages_for_session``) adapt into ``MarkdownMessage`` at the call site,
 and the fidelity rules are testable as golden strings.
 
-Scope note (deliberate): the DB adapter below reconstructs what was
-PERSISTED -- thinking blocks and tool message content survive, but live
-open sessions render richest because their in-flight tool-call structure
-never needed serializing.
+Deliberate scope limits, recorded so they read as decisions:
+
+* Message CONTENT is verbatim by design -- it is the user's own transcript,
+  and the export would be useless laundered. Interpolated METADATA (titles,
+  labels, summaries) is escaped and any URL-ish placeholder text is
+  protocol-checked, so a hostile title cannot inject structure.
+* Citations are NOT exported. The Console's citation sources are served
+  through the governed, authorization-gated citation hydration graph (the
+  same seam the sources modal uses); a clipboard export must not bypass
+  that authorization, so v1 simply does not promise sources.
+* Image bytes never enter markdown; image-bearing messages render a
+  sanitized placeholder label.
 """
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -30,6 +40,23 @@ _ROLE_HEADINGS = {
     "assistant": "## Assistant",
 }
 
+_SAFE_LABEL = re.compile(r"[^\w\s.,:;!?'\"()/+-]")
+
+
+def _safe_label(value: object) -> str:
+    """Return an interpolation-safe label for titles and placeholders.
+
+    Args:
+        value: Untrusted text (a conversation title, attachment label...).
+
+    Returns:
+        The text with markdown/HTML-structural characters stripped to
+        word-ish punctuation, single-spaced, bounded to 120 characters --
+        safe to interpolate into headings, summaries, and image alt text.
+    """
+    text = _SAFE_LABEL.sub(" ", str(value or ""))
+    return " ".join(text.split())[:120]
+
 
 @dataclass(frozen=True, slots=True)
 class MarkdownMessage:
@@ -39,17 +66,16 @@ class MarkdownMessage:
         role: ``user`` / ``assistant`` / ``system`` / ``tool``.
         content: Verbatim text content (may be empty for image messages).
         tool_label: Display name of the tool for ``tool`` rows.
-        thinking: The assistant's reasoning text, when captured.
-        citations: ``(label, url)`` pairs cited by this message.
-        image_label: Attachment label for image-bearing messages, rendered
-            as a placeholder (image bytes never enter markdown).
+        thinking: The assistant's displayable reasoning text, when captured.
+        image_label: Label for image-bearing messages, rendered as a
+            placeholder (image bytes never enter markdown).
+        attachments: Display names of file attachments.
     """
 
     role: str
     content: str = ""
     tool_label: str = ""
     thinking: str = ""
-    citations: tuple[tuple[str, str], ...] = ()
     image_label: str = ""
     attachments: tuple[str, ...] = field(default=())
 
@@ -90,14 +116,16 @@ def render_conversation_markdown(
         return None
 
     lines: list[str] = [
-        f"# {title or 'Untitled conversation'}",
+        f"# {_safe_label(title) or 'Untitled conversation'}",
         "",
-        f"_{rendered_at} · {len(clean_messages)} messages_",
+        f"_{_safe_label(rendered_at)} · {len(clean_messages)} messages_",
         "",
     ]
     for message in clean_messages:
         if message.role == "tool":
-            lines.extend(_details(f"Tool: {message.tool_label or 'tool'}", message.content))
+            lines.extend(
+                _details(f"Tool: {_safe_label(message.tool_label) or 'tool'}", message.content)
+            )
             continue
         if message.role == "system":
             lines.extend(_details("System", message.content))
@@ -105,23 +133,16 @@ def render_conversation_markdown(
         lines.append(_ROLE_HEADINGS.get(message.role, f"## {message.role.title()}"))
         lines.append("")
         if message.image_label:
-            lines.append(f"![image]({message.image_label})")
+            lines.append(f"![image]({_safe_label(message.image_label)})")
         if message.content:
             lines.append(message.content)
         for attachment in message.attachments:
-            lines.append(f"_(attached: {attachment})_")
+            lines.append(f"_(attached: {_safe_label(attachment)})_")
         if not (message.image_label or message.content or message.attachments):
             lines.append("_(empty message)_")
         lines.append("")
         if fidelity == "full" and message.thinking:
             lines.extend(_details("Thinking", message.thinking))
-        if message.citations:
-            lines.append("**Sources**")
-            lines.append("")
-            lines.extend(
-                f"- [{label}]({url})" for label, url in message.citations
-            )
-            lines.append("")
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
@@ -129,13 +150,54 @@ def _details(summary: str, body: str) -> list[str]:
     """Return a collapsed ``details`` block for non-chat content."""
     return [
         "<details>",
-        f"<summary>{summary}</summary>",
+        f"<summary>{_safe_label(summary)}</summary>",
         "",
         body,
         "",
         "</details>",
         "",
     ]
+
+
+def _role_value(role: object) -> str:
+    """Return a bare role string from an enum or plain string.
+
+    ``str(ConsoleMessageRole.USER)`` yields the CLASS name, not ``user``
+    (PR #2262 review), which silently emptied every live-session export;
+    enums are read through ``.value`` and plain strings pass through.
+    """
+    value = getattr(role, "value", role)
+    return str(value or "").strip().lower()
+
+
+def _thinking_text(thinking: object) -> str:
+    """Extract displayable text from a live ThinkingEnvelope.
+
+    Proprietary blocks are content-free by contract and render nothing;
+    displayable blocks contribute their ``text`` in envelope order.
+    """
+    blocks = getattr(thinking, "blocks", None) or ()
+    parts = [
+        block_text
+        for block in blocks
+        if (block_text := str(getattr(block, "text", "") or "").strip())
+    ]
+    return "\n\n".join(parts)
+
+
+def _attachment_names(attachments: object) -> tuple[str, ...]:
+    """Return attachment display names, never their binary payloads.
+
+    Stringifying a ``MessageAttachment`` embeds its ``data`` bytes (PR
+    #2262 review); only the display name is safe metadata.
+    """
+    names: list[str] = []
+    for attachment in attachments or ():
+        name = getattr(attachment, "display_name", None)
+        if name is None:
+            continue
+        names.append(str(name))
+    return tuple(names)
 
 
 def markdown_messages_from_store(
@@ -154,26 +216,23 @@ def markdown_messages_from_store(
 
     normalized: list[MarkdownMessage] = []
     for message in store_messages:
-        citations = [
-            (
-                str(getattr(citation, "label", "") or "source"),
-                str(getattr(citation, "url", "") or ""),
-            )
-            for citation in getattr(message, "citations", ()) or ()
-        ]
+        role = _role_value(getattr(message, "role", "assistant"))
+        content = str(getattr(message, "content", "") or "")
+        if role == "tool":
+            # Tool rows carry the untruncated result separately; the
+            # content field holds the UI preview (PR #2262 review).
+            full_output = getattr(message, "tool_output_full", None)
+            if full_output:
+                content = str(full_output)
         normalized.append(
             MarkdownMessage(
-                role=str(getattr(message, "role", "assistant")),
-                content=str(getattr(message, "content", "") or ""),
+                role=role,
+                content=content,
                 tool_label=str(getattr(message, "tool_label", "") or ""),
-                thinking=str(getattr(message, "thinking", "") or ""),
-                citations=tuple(
-                    (label, url) for label, url in citations if url
-                ),
+                thinking=_thinking_text(getattr(message, "thinking", None)),
                 image_label=str(getattr(message, "attachment_label", "") or ""),
-                attachments=tuple(
-                    str(attachment)
-                    for attachment in getattr(message, "attachments", ()) or ()
+                attachments=_attachment_names(
+                    getattr(message, "attachments", ()) or ()
                 ),
             )
         )
@@ -185,13 +244,12 @@ def markdown_messages_from_db_rows(rows: list[dict]) -> list[MarkdownMessage]:
 
     Args:
         rows: Message row dicts, transcript order. Tool thinking arrives as
-            ``thinking_blocks_json``; tool rows are the ``tool`` sender.
+            ``thinking_blocks_json``; image presence is signalled by
+            ``image_mime_type`` (there is no attachment label column).
 
     Returns:
         Transcript-ordered normalized messages.
     """
-
-    import json
 
     normalized: list[MarkdownMessage] = []
     for row in rows:
@@ -208,12 +266,15 @@ def markdown_messages_from_db_rows(rows: list[dict]) -> list[MarkdownMessage]:
                     for block in blocks
                     if isinstance(block, dict)
                 ).strip()
+        image_label = (
+            "image" if str(row.get("image_mime_type", "") or "") else ""
+        )
         normalized.append(
             MarkdownMessage(
-                role=str(row.get("sender", "") or "assistant").lower(),
+                role=_role_value(row.get("sender", "") or "assistant"),
                 content=str(row.get("content", "") or ""),
                 thinking=thinking,
-                image_label=str(row.get("attachment_label", "") or ""),
+                image_label=image_label,
             )
         )
     return normalized

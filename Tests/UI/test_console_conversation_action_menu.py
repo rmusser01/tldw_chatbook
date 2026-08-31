@@ -467,3 +467,67 @@ async def test_save_writes_validated_markdown_file(monkeypatch, tmp_path) -> Non
         written = target.read_text(encoding="utf-8")
         assert "persisted question" in written
         assert written.startswith("# ")
+
+
+@pytest.mark.asyncio
+async def test_copy_follows_the_active_branch_not_every_sibling(
+    monkeypatch, tmp_path
+) -> None:
+    """Regenerated branches must not bleed into the export (PR #2262)."""
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
+        ConversationActionChosen,
+    )
+
+    async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
+        screen = pilot.app.screen
+        screen.app_instance.chachanotes_db = CharactersRAGDB(
+            str(tmp_path / "branch.db"), "branch-test"
+        )
+        db = screen.app_instance.chachanotes_db
+        conv_id = db.add_conversation({"title": "Branched chat"})
+        root = db.add_message(
+            {"conversation_id": conv_id, "sender": "user", "content": "question"}
+        )
+        db.add_message(
+            {
+                "conversation_id": conv_id,
+                "sender": "assistant",
+                "content": "first attempt",
+                "parent_message_id": root,
+            }
+        )
+        db.update_conversation(
+            conv_id, {"active_leaf_message_id": root}, expected_version=1
+        )
+        # Direct leaf update (update_conversation whitelists fields): the
+        # leaf points at root, so neither assistant branch exports.
+        import sqlite3 as _sqlite
+
+        conn = _sqlite.connect(str(tmp_path / "branch.db"))
+        second = conn.execute(
+            "SELECT id FROM messages WHERE content='first attempt'"
+        ).fetchone()[0]
+        conn.execute(
+            "UPDATE conversations SET active_leaf_message_id=? WHERE id=?",
+            (second, conv_id),
+        )
+        conn.commit()
+        conn.close()
+
+        copied: list[str] = []
+        monkeypatch.setattr(
+            screen.app_instance, "copy_to_clipboard", lambda t: copied.append(t)
+        )
+        screen.on_conversation_action_chosen(
+            ConversationActionChosen(
+                "copy-markdown:full",
+                _copy_target(conversation_id=conv_id, title="Branched chat"),
+            )
+        )
+        await pilot.pause(1.0)
+
+        assert len(copied) == 1
+        assert "question" in copied[0]
+        assert "first attempt" in copied[0]
+        assert copied[0].count("## Assistant") == 1
