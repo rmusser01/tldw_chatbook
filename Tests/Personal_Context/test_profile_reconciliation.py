@@ -707,6 +707,43 @@ def test_workspace_link_decision_is_explicit_and_never_reuses_provisional_id(
         assert retained.scope_id in repository.list_validated_scope_bindings()
 
 
+def test_workspace_link_decision_cannot_target_remote_global_scope(tmp_path) -> None:
+    repository = PersonalContextRepository(
+        tmp_path / "global-target.db",
+        key_protector=InMemoryProfileKeyProtector(),
+    )
+    manifest = _manifest("profile-local", "manifest-local")
+    global_scope = _scope("profile-local", "scope-local-global", ScopeKind.GLOBAL)
+    workspace = _scope("profile-local", "scope-local-workspace", ScopeKind.WORKSPACE)
+    repository.create_profile_with_global_scope(manifest, global_scope)
+    repository.commit_scope_with_binding(
+        workspace,
+        {"version": 1, "local_workspace_id": "workspace-local", "label": "Project"},
+    )
+    remote_global = _scope("profile-server", "scope-server-global", ScopeKind.GLOBAL)
+    remote = _snapshot(scopes=(remote_global,), records=())
+    plan = build_reconciliation_plan(
+        local_manifest=manifest,
+        local_scopes=(global_scope, workspace),
+        local_records=(),
+        local_proposals=(),
+        remote=remote,
+        local_workspace_bindings=repository.list_validated_scope_bindings(),
+    )
+    _freeze(repository, plan)
+
+    with pytest.raises(ValueError, match="workspace_mapping_invalid"):
+        repository.apply_reviewed_link(
+            plan=plan,
+            remote=remote,
+            decisions={f"workspace:{workspace.scope_id}": remote_global.scope_id},
+            integrity_key=b"s" * 32,
+        )
+
+    assert repository.get_manifest() == manifest
+    assert repository.get_scope(workspace.scope_id) == workspace
+
+
 def test_local_only_multiversion_record_journals_oldest_to_head(tmp_path) -> None:
     repository = PersonalContextRepository(
         tmp_path / "lineage.db", key_protector=InMemoryProfileKeyProtector()

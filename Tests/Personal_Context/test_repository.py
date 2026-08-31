@@ -673,6 +673,34 @@ def test_v1_repository_migrates_atomically_and_preserves_encrypted_objects(
         ).fetchone() == ("local_record_links",)
 
 
+def test_v5_repository_adds_explicit_unlinked_workspace_state(
+    tmp_path, memory_protector
+) -> None:
+    db_path = tmp_path / "personal-context.db"
+    original = PersonalContextRepository(db_path, key_protector=memory_protector)
+    manifest = original.create_provisional_profile()
+    original.close()
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("DROP TABLE local_unlinked_scopes")
+        connection.execute(
+            "UPDATE personal_context_schema SET version = 5 WHERE singleton = 1"
+        )
+
+    migrated = PersonalContextRepository(db_path, key_protector=memory_protector)
+
+    assert migrated.get_manifest() == manifest
+    assert migrated.is_scope_explicitly_unlinked("scope-unknown") is False
+    with sqlite3.connect(db_path) as connection:
+        assert connection.execute(
+            "SELECT version FROM personal_context_schema WHERE singleton = 1"
+        ).fetchone() == (repository_module.SCHEMA_VERSION,)
+        assert connection.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'local_unlinked_scopes'"
+        ).fetchone() == ("local_unlinked_scopes",)
+
+
 def test_existing_repository_with_missing_protector_never_creates_replacement(
     tmp_path, memory_protector
 ) -> None:

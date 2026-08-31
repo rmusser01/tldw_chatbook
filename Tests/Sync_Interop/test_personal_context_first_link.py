@@ -7,9 +7,16 @@ from tldw_chatbook.Personal_Context.link_key_custody import (
     InMemoryPersonalContextLinkKeyCustodian,
 )
 from tldw_chatbook.Personal_Context.link_service import PersonalContextLinkService
+from tldw_chatbook.Personal_Context.key_protector import InMemoryProfileKeyProtector
+from tldw_chatbook.Personal_Context.reconciliation import (
+    CanonicalBootstrapSnapshot,
+    build_reconciliation_plan,
+)
 from tldw_chatbook.Personal_Context.repository import (
+    PersonalContextRepository,
     ProfileKeyActivationPendingError,
 )
+from tldw_chatbook.Personal_Context.service import PersonalContextService
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 from tldw_chatbook.Sync_Interop.sync_readiness import (
     PERSONAL_CONTEXT_MINIMUM_QUOTAS,
@@ -402,6 +409,64 @@ async def test_restart_discards_only_expired_review_before_freezing_fresh_plan(
     assert state.get_personal_context_link_state(**SCOPE)["plan_id"] == fresh.plan_id
     assert profile.apply_calls == []
     assert len(server.bootstrap_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_restart_releases_orphaned_persisted_freeze_without_link_state(
+    tmp_path,
+) -> None:
+    protector = InMemoryProfileKeyProtector()
+    profile_path = tmp_path / "profile.db"
+    sync_path = tmp_path / "sync.db"
+    repository = PersonalContextRepository(
+        profile_path,
+        key_protector=protector,
+    )
+    profile = PersonalContextService(repository)
+    profile.create_profile()
+    server = FakeServerSync()
+    response = await server.bootstrap_personal_context_link()
+    remote = CanonicalBootstrapSnapshot.from_response(response)
+    manifest, scopes, records, proposals, bindings = profile.first_link_snapshot()
+    orphan = build_reconciliation_plan(
+        local_manifest=manifest,
+        local_scopes=scopes,
+        local_records=records,
+        local_proposals=proposals,
+        remote=remote,
+        local_workspace_bindings=bindings,
+    )
+    profile.acquire_first_link_freeze(
+        plan_id=orphan.plan_id,
+        snapshot_token=orphan.local_snapshot_token,
+    )
+    initial_state = SyncStateRepository(sync_path)
+    assert initial_state.get_personal_context_link_state(**SCOPE) is None
+    initial_state.close()
+
+    restarted_profile = PersonalContextService(
+        PersonalContextRepository(profile_path, key_protector=protector)
+    )
+    restarted_state = SyncStateRepository(sync_path)
+    restarted = PersonalContextLinkService(
+        personal_context_service=restarted_profile,
+        server_sync_service=server,
+        state_repository=restarted_state,
+        wrapping_key_provider=FakeWrappingProvider(),
+        key_custodian=InMemoryPersonalContextLinkKeyCustodian(),
+        first_link_sync=FakeFirstLinkSync(),
+        server_profile_id="server-config-1",
+        authenticated_principal_id="user-1",
+        display_name="Laptop",
+    )
+
+    fresh = await restarted.plan()
+
+    assert fresh.plan_id != orphan.plan_id
+    assert restarted_state.get_personal_context_link_state(**SCOPE)["plan_id"] == (
+        fresh.plan_id
+    )
+    assert restarted.cancel(fresh.plan_id) is True
 
 
 class _DeleteFailsOnceCustodian(InMemoryPersonalContextLinkKeyCustodian):

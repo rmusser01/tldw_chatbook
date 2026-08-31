@@ -35,6 +35,18 @@ class ProfileSyncOutbox:
             for row in self.repository.list_pending_outbox(limit=limit)
         )
 
+    def list_dispatchable(
+        self,
+        *,
+        limit: int = 100,
+    ) -> tuple[ProfileSyncOutboxEntry, ...]:
+        """List entries eligible under current global/workspace bindings."""
+
+        return tuple(
+            ProfileSyncOutboxEntry(**row)
+            for row in self.repository.list_dispatchable_outbox(limit=limit)
+        )
+
     def read_body(self, outbox_id: str) -> dict[str, Any] | None:
         return self.repository.get_outbox_body(outbox_id)
 

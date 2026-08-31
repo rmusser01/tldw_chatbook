@@ -85,7 +85,12 @@ class PersonalContextOutboxDispatcher:
 
         dispatched = 0
         quarantined = 0
-        for entry in self.profile_outbox.list_pending(limit=limit):
+        list_dispatchable = getattr(
+            self.profile_outbox,
+            "list_dispatchable",
+            self.profile_outbox.list_pending,
+        )
+        for entry in list_dispatchable(limit=limit):
             client_envelope_id = f"personal-context:{entry.outbox_id}"
             try:
                 body = self.profile_outbox.read_body(entry.outbox_id)

@@ -1,12 +1,42 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from tldw_profile_core import (
+    AgentVisibility,
+    PreferencePayload,
+    ProfileControls,
+    ProfileManifest,
+    ProfileProposal,
+    ProfileScope,
+    ProposalOperation,
+    ScopeKind,
+    SemanticKey,
+    SyncMode,
+)
 
+from tldw_chatbook.Personal_Context.key_protector import InMemoryProfileKeyProtector
+from tldw_chatbook.Personal_Context.reconciliation import (
+    CanonicalBootstrapSnapshot,
+    build_reconciliation_plan,
+)
+from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
+from tldw_chatbook.Personal_Context.service import (
+    PersonalContextService,
+    RecordMutation,
+)
+from tldw_chatbook.Personal_Context.sync_outbox import ProfileSyncOutbox
 from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
 from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
 from tldw_chatbook.Sync_Interop.local_first_sync_service import LocalFirstSyncService
+from tldw_chatbook.Sync_Interop.personal_context_adapter import (
+    PersonalContextSyncAdapter,
+)
+from tldw_chatbook.Sync_Interop.personal_context_dispatcher import (
+    PersonalContextOutboxDispatcher,
+)
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 from tldw_chatbook.tldw_api import SyncV2Envelope
 
@@ -129,6 +159,15 @@ class RecordingLocalStore:
 
     def record_conflict(self, conflict: dict) -> None:
         self.conflicts.append(conflict)
+
+
+class _Ids:
+    def __init__(self) -> None:
+        self.value = 0
+
+    def __call__(self, label: str) -> str:
+        self.value += 1
+        return f"{label}-{self.value}"
 
 
 def _repo_with_profile(
@@ -2087,6 +2126,303 @@ async def test_local_first_complete_binding_uses_private_personal_context_transp
     assert result["pushed_envelopes"] == 1
     assert server.personal_context_complete_pushes == 1
     assert server.personal_context_complete_pulls == 1
+
+
+async def test_unlinked_workspace_edit_stays_local_until_explicitly_mapped(
+    tmp_path,
+) -> None:
+    profile_path = tmp_path / "profile.db"
+    protector = InMemoryProfileKeyProtector()
+    ids = _Ids()
+    profile_repository = PersonalContextRepository(
+        profile_path,
+        key_protector=protector,
+    )
+    profile = PersonalContextService(profile_repository, id_factory=ids)
+    local_manifest = profile.create_profile()
+    local_global = profile.list_scopes()[0]
+    local_workspace = profile.create_workspace_scope("workspace-local", "Project")
+    record = profile.create_manual_record(
+        scope_id=local_workspace.scope_id,
+        payload=PreferencePayload(
+            subject="project.goal",
+            polarity="like",
+            value="ship",
+        ),
+        semantic_key=SemanticKey(namespace="preference", subject="project.goal"),
+        controls=ProfileControls(
+            sync_mode=SyncMode.SYNCABLE,
+            agent_visibility=AgentVisibility.AGENT_VISIBLE,
+        ),
+    )
+    local_manifest = profile.get_manifest()
+    remote_manifest = ProfileManifest(
+        profile_id="profile-server",
+        revision=0,
+        purge_generation=0,
+        created_at=local_manifest.created_at,
+        updated_at=local_manifest.updated_at,
+        current_version_id="manifest-server-v1",
+    )
+    remote_global = ProfileScope(
+        profile_id=remote_manifest.profile_id,
+        scope_id="scope-server-global",
+        kind=ScopeKind.GLOBAL,
+        version_id="scope-server-global-v1",
+        created_at=local_global.created_at,
+        updated_at=local_global.updated_at,
+    )
+    remote = CanonicalBootstrapSnapshot(
+        dataset_id="dataset-1",
+        authority_id="authority-1",
+        manifest=remote_manifest,
+        scopes=(remote_global,),
+        records=(),
+        proposals=(),
+        purge_generation=0,
+        schema_version=1,
+        quotas={"max_record_bytes": 16_384},
+        cursor="cursor-bootstrap",
+        integrity_key_id="integrity-1",
+        key_record_id="key-record-1",
+        wrapped_key_blob="wrapped",
+    )
+    plan = build_reconciliation_plan(
+        local_manifest=local_manifest,
+        local_scopes=(local_global, local_workspace),
+        local_records=(record,),
+        local_proposals=(),
+        remote=remote,
+        local_workspace_bindings=profile.list_workspace_bindings(),
+    )
+    profile.acquire_first_link_freeze(
+        plan_id=plan.plan_id,
+        snapshot_token=plan.local_snapshot_token,
+    )
+    profile.apply_reviewed_link(
+        plan=plan,
+        remote=remote,
+        decisions={f"workspace:{local_workspace.scope_id}": "unlinked"},
+        integrity_key=b"i" * 32,
+    )
+    profile.release_first_link_freeze(plan_id=plan.plan_id)
+    profile_outbox = ProfileSyncOutbox(profile_repository)
+    for entry in profile_outbox.list_pending():
+        profile_outbox.acknowledge(entry.outbox_id, f"first-link:{entry.outbox_id}")
+    profile_repository.close()
+    profile_repository = PersonalContextRepository(
+        profile_path,
+        key_protector=protector,
+    )
+    profile = PersonalContextService(profile_repository, id_factory=ids)
+    profile_outbox = ProfileSyncOutbox(profile_repository)
+
+    retained = profile.get_record(record.record_id)
+    assert retained is not None
+    updated = profile.update_record(
+        retained.record_id,
+        RecordMutation(
+            payload=PreferencePayload(
+                subject="project.goal",
+                polarity="like",
+                value="ship safely",
+            )
+        ),
+        expected_version_id=retained.version_id,
+    )
+    retained_scope = next(
+        scope
+        for scope in profile.list_scopes()
+        if scope.scope_id == local_workspace.scope_id
+    )
+    updated_scope = retained_scope.model_copy(
+        update={
+            "version_id": "scope-unlinked-later-v2",
+            "updated_at": retained_scope.updated_at + timedelta(seconds=1),
+        }
+    )
+    profile_repository.commit_scope(
+        updated_scope,
+        expected_version_id=retained_scope.version_id,
+    )
+    profile_repository.commit_outbox_body(
+        object_type="scope",
+        object_id=updated_scope.scope_id,
+        version_id=updated_scope.version_id,
+        body={"version": 1, "scope": updated_scope.model_dump(mode="json")},
+    )
+    proposed_record = updated.model_copy(
+        update={
+            "record_id": "record-proposed-unlinked",
+            "version_id": "record-proposed-unlinked-v1",
+            "parent_version_id": None,
+            "payload": PreferencePayload(
+                subject="project.constraint",
+                polarity="like",
+                value="preserve local context",
+            ),
+            "semantic_key": SemanticKey(
+                namespace="preference",
+                subject="project.constraint",
+            ),
+        }
+    )
+    proposal = ProfileProposal(
+        proposal_id="proposal-unlinked-later",
+        profile_id=updated.profile_id,
+        scope_id=updated.scope_id,
+        operation=ProposalOperation.CREATE,
+        target_record_id=None,
+        base_version_id=None,
+        proposed_record=proposed_record,
+        provenance=updated.provenance,
+        confidence=0.8,
+        created_at=updated.updated_at,
+        expires_at=updated.updated_at + timedelta(days=90),
+    )
+    profile_repository.commit_proposal(proposal)
+    sync_repository = SyncStateRepository(tmp_path / "sync-state.db")
+    sync_repository.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope=None,
+        profile_mode="local_first_sync",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        dataset_cursors={"sync_v2": "9"},
+        capabilities={
+            "supported_domains": [
+                "personal_context.manifest",
+                "personal_context.scope",
+                "personal_context.record",
+                "personal_context.proposal",
+            ]
+        },
+    )
+    sync_repository.set_personal_context_link_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        state="complete",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        authority_id="authority-1",
+        profile_id=remote_manifest.profile_id,
+        integrity_key_id="integrity-1",
+        key_record_id="key-record-1",
+        purge_generation=0,
+        bootstrap_cursor="cursor-bootstrap",
+        confirmed_cursor="9",
+        expected_heads=profile.first_link_sync_heads(),
+        plan_id=plan.plan_id,
+        rebaseline_version=2,
+        attention_code=None,
+    )
+    adapter = PersonalContextSyncAdapter(
+        integrity_key=b"i" * 32,
+        integrity_key_id="integrity-1",
+    )
+    dispatcher = PersonalContextOutboxDispatcher(
+        profile_outbox=profile_outbox,
+        state_repository=sync_repository,
+        adapter=adapter,
+    )
+    server = FakeLocalFirstServer()
+    local_first = LocalFirstSyncService(
+        server_service=server,
+        state_repository=sync_repository,
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": b"s" * 32},
+        personal_context_outbox_dispatcher=dispatcher,
+        personal_context_service=profile,
+    )
+    domains = [
+        "personal_context.manifest",
+        "personal_context.scope",
+        "personal_context.record",
+        "personal_context.proposal",
+    ]
+
+    await local_first.sync_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope=None,
+        domains=domains,
+    )
+
+    pushed_domains = {
+        envelope["domain"]
+        for call in server.calls
+        if call[0] == "push"
+        for envelope in call[3]
+    }
+    assert pushed_domains.isdisjoint(
+        {
+            "personal_context.scope",
+            "personal_context.record",
+            "personal_context.proposal",
+        }
+    )
+    pending_unlinked = {
+        entry.object_type: entry
+        for entry in profile_outbox.list_pending()
+        if entry.object_type in {"scope", "record", "proposal"}
+    }
+    assert set(pending_unlinked) == {"scope", "record", "proposal"}
+    assert all(
+        profile_outbox.read_body(entry.outbox_id) is not None
+        for entry in pending_unlinked.values()
+    )
+    assert profile.get_record(record.record_id) == updated
+    assert updated_scope in profile.list_scopes()
+    assert proposal in profile_repository.list_proposals()
+
+    profile.map_workspace_scope("workspace-remapped", local_workspace.scope_id)
+    await local_first.sync_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope=None,
+        domains=domains,
+    )
+    retained_head_retry = next(
+        entry
+        for entry in profile_outbox.list_pending()
+        if entry.object_type == "record" and entry.version_id == updated.version_id
+    )
+    assert profile_outbox.read_body(retained_head_retry.outbox_id) is not None
+    await local_first.sync_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope=None,
+        domains=domains,
+    )
+
+    pushed_after_mapping = {
+        envelope["domain"]
+        for call in server.calls
+        if call[0] == "push"
+        for envelope in call[3]
+    }
+    assert {
+        "personal_context.scope",
+        "personal_context.record",
+        "personal_context.proposal",
+    } <= pushed_after_mapping
+    pushed_record_versions = [
+        (envelope["base_version"], envelope["entity_version"])
+        for call in server.calls
+        if call[0] == "push"
+        for envelope in call[3]
+        if envelope["domain"] == "personal_context.record"
+        and envelope["object_id"] == record.record_id
+    ]
+    assert pushed_record_versions == [
+        (None, retained.version_id),
+        (retained.version_id, updated.version_id),
+    ]
+    assert all(
+        entry.object_type not in {"scope", "record", "proposal"}
+        for entry in profile_outbox.list_pending()
+    )
 
 
 async def test_local_first_sync_once_requires_profile_device_dataset_and_dataset_key(
