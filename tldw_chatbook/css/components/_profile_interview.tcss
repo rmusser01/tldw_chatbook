@@ -3,13 +3,15 @@
 ProfileInterviewScreen,
 ProfileInterviewCancelModal,
 PersonalContextReviewModal,
-PersonalContextProposalReviewModal {
+PersonalContextProposalReviewModal,
+PersonalContextLinkModal {
     align: center middle;
     background: $background 70%;
 }
 
 #profile-interview-shell,
 #personal-context-review-modal,
+#personal-context-link-modal,
 #profile-interview-cancel-modal {
     min-width: 0;
     border: round $surface-lighten-2;
@@ -29,6 +31,13 @@ PersonalContextProposalReviewModal {
     max-width: 96%;
     height: 90%;
     max-height: 30;
+}
+
+#personal-context-link-modal {
+    width: 88;
+    max-width: 96%;
+    height: 82%;
+    max-height: 28;
 }
 
 #profile-interview-cancel-modal {
@@ -68,10 +77,20 @@ PersonalContextProposalReviewModal {
 }
 
 #profile-interview-body,
-#personal-context-review-list {
+#personal-context-review-list,
+#personal-context-link-review-list {
     width: 100%;
     min-width: 0;
     height: 1fr;
+}
+
+.personal-context-link-decision-row {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    padding: 0 1;
+    margin: 0 0 1 0;
+    background: $surface;
 }
 
 .profile-interview-question {

@@ -73,6 +73,10 @@ class ProfileDestroyedError(ProfileLockedError):
     """Report an attempt to mutate a durably destroyed profile."""
 
 
+class ProfileKeyActivationPendingError(ProfileLockedError):
+    """Report a committed rebaseline awaiting secure key-store activation."""
+
+
 class ProposalLimitExceededError(RuntimeError):
     """Report that the durable unresolved proposal ceiling was reached."""
 
@@ -246,7 +250,24 @@ class PersonalContextRepository:
         db_path: str | os.PathLike[str],
         *,
         key_protector: ProfileKeyProtector | None = None,
+        recovery_integrity_key: bytes | None = None,
+        expected_recovery_profile_id: str | None = None,
     ) -> None:
+        if (recovery_integrity_key is None) != (
+            expected_recovery_profile_id is None
+        ):
+            raise ValueError("link_recovery_binding_incomplete")
+        if recovery_integrity_key is not None and (
+            not isinstance(recovery_integrity_key, bytes)
+            or len(recovery_integrity_key) != 32
+        ):
+            raise ValueError("link_recovery_integrity_key_invalid")
+        if expected_recovery_profile_id is not None and (
+            not isinstance(expected_recovery_profile_id, str)
+            or not expected_recovery_profile_id
+            or len(expected_recovery_profile_id) > 512
+        ):
+            raise ValueError("link_recovery_profile_id_invalid")
         self.db_path = Path(db_path)
         self._profile_ref = (
             "personal-context:"
@@ -258,18 +279,56 @@ class PersonalContextRepository:
         with self._transaction() as connection:
             is_new = self._inspect_schema(connection)
             if is_new:
+                if recovery_integrity_key is not None:
+                    raise ProfileLockedError("No interrupted profile link is present.")
                 keys = self._protector.load_or_create(self._profile_ref)
                 self._initialize_schema(connection)
             else:
                 meta = connection.execute(
                     "SELECT destroyed FROM profile_meta WHERE singleton = 1"
                 ).fetchone()
-                keys = (
+                protected_keys = (
                     None
                     if meta is not None and bool(meta["destroyed"])
                     else self._protector.load(self._profile_ref)
                 )
+                keys = protected_keys
+                if recovery_integrity_key is not None:
+                    if protected_keys is None:
+                        raise ProfileLockedError(
+                            "Destroyed profile keys cannot be recovered."
+                        )
+                    versions = {
+                        int(row["key_version"])
+                        for row in connection.execute(
+                            "SELECT DISTINCT key_version FROM encrypted_objects"
+                        )
+                    }
+                    if len(versions) != 1:
+                        raise ProfileLockedError(
+                            "Interrupted profile link rebaseline is incomplete."
+                        )
+                    keys = ProfileKeyMaterial(
+                        encryption_key=protected_keys.encryption_key,
+                        integrity_key=recovery_integrity_key,
+                        key_version=versions.pop(),
+                    )
         self._keys = keys
+        if recovery_integrity_key is not None:
+            manifest = self.get_manifest()
+            if (
+                manifest is None
+                or manifest.profile_id != expected_recovery_profile_id
+            ):
+                self._keys = protected_keys
+                raise ProfileLockedError(
+                    "Interrupted profile link binding could not be authenticated."
+                )
+            try:
+                self._protector.replace(self._profile_ref, keys)
+            except BaseException:
+                self._keys = protected_keys
+                raise
 
     def _connect(self) -> sqlite3.Connection:
         """Open a new owner-checked autocommit connection for this operation."""
@@ -315,6 +374,11 @@ class PersonalContextRepository:
 
     def close(self) -> None:
         """Close the repository; operations own no persistent connection."""
+
+    def current_key_version(self) -> int:
+        """Return the active authenticated profile-key generation."""
+
+        return self._require_keys().key_version
 
     def is_destroyed(self) -> bool:
         """Return the content-free durable local-removal marker."""
@@ -935,6 +999,425 @@ class PersonalContextRepository:
             raise ProfileLockedError(
                 "The profile manifest could not be authenticated."
             ) from exc
+
+    @staticmethod
+    def _replace_link_identities(
+        value: Any,
+        *,
+        old_profile_id: str,
+        new_profile_id: str,
+        scope_mapping: Mapping[str, str],
+    ) -> Any:
+        """Replace only exact canonical identity strings in one transient value."""
+
+        if isinstance(value, dict):
+            return {
+                key: PersonalContextRepository._replace_link_identities(
+                    item,
+                    old_profile_id=old_profile_id,
+                    new_profile_id=new_profile_id,
+                    scope_mapping=scope_mapping,
+                )
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [
+                PersonalContextRepository._replace_link_identities(
+                    item,
+                    old_profile_id=old_profile_id,
+                    new_profile_id=new_profile_id,
+                    scope_mapping=scope_mapping,
+                )
+                for item in value
+            ]
+        if value == old_profile_id:
+            return new_profile_id
+        if isinstance(value, str):
+            return scope_mapping.get(value, value)
+        return value
+
+    def apply_reviewed_link(
+        self,
+        *,
+        plan: Any,
+        remote: Any,
+        decisions: Mapping[str, str],
+        integrity_key: bytes,
+    ) -> dict[str, int]:
+        """Adopt one reviewed canonical snapshot and rebaseline every retained artifact.
+
+        SQLite convergence is one transaction. Secure key-custody activation occurs
+        immediately afterward and is deliberately not described as cross-store atomic;
+        callers retain the staged integrity key until this method returns.
+        """
+
+        from .reconciliation import build_reconciliation_plan
+
+        old_keys = self._require_keys()
+        if not isinstance(integrity_key, bytes) or len(integrity_key) != 32:
+            raise ValueError("integrity_key_invalid")
+        if integrity_key == old_keys.encryption_key:
+            raise ValueError("integrity_key_invalid")
+        if plan.dataset_id != remote.dataset_id or plan.bootstrap_cursor != remote.cursor:
+            raise ValueError("link_binding_stale")
+
+        current_manifest = self.get_manifest()
+        if current_manifest is None:
+            raise ValueError("link_local_profile_absent")
+        current_scopes = self.list_scopes()
+        current_records = self.list_records()
+        current_proposals = self.list_proposals()
+        current_plan = build_reconciliation_plan(
+            local_manifest=current_manifest,
+            local_scopes=current_scopes,
+            local_records=current_records,
+            local_proposals=current_proposals,
+            remote=remote,
+            local_workspace_bindings=self.list_validated_scope_bindings(),
+            plan_id=plan.plan_id,
+        )
+        if current_plan.local_snapshot_token != plan.local_snapshot_token:
+            raise ValueError("link_plan_stale")
+        if set(decisions) != set(plan.required_decision_ids):
+            raise ValueError("link_decisions_incomplete")
+
+        remote_scope_ids = {scope.scope_id for scope in remote.scopes}
+        scope_mapping = {plan.global_scope_mapping[0]: plan.global_scope_mapping[1]}
+        for local_scope_id in plan.local_workspace_scope_ids:
+            choice = decisions[f"workspace:{local_scope_id}"]
+            if choice == "new":
+                scope_mapping[local_scope_id] = local_scope_id
+            elif choice in remote_scope_ids:
+                scope_mapping[local_scope_id] = choice
+            else:
+                raise ValueError("workspace_mapping_invalid")
+
+        selected_local_records = {
+            record.record_id: record.model_copy(
+                update={
+                    "profile_id": remote.manifest.profile_id,
+                    "scope_id": scope_mapping.get(record.scope_id, record.scope_id),
+                }
+            )
+            for record in current_records
+        }
+        selected_remote_records = {record.record_id: record for record in remote.records}
+        selected_local_proposals = {
+            proposal.proposal_id: ProfileProposal.model_validate(
+                self._replace_link_identities(
+                    proposal.model_dump(mode="python"),
+                    old_profile_id=current_manifest.profile_id,
+                    new_profile_id=remote.manifest.profile_id,
+                    scope_mapping=scope_mapping,
+                )
+            )
+            for proposal in current_proposals
+        }
+        selected_remote_proposals = {
+            proposal.proposal_id: proposal for proposal in remote.proposals
+        }
+        losing_local_ids: set[str] = set()
+        losing_remote_ids: set[str] = set()
+        for conflict in plan.version_conflicts:
+            choice = decisions[conflict.decision_id]
+            if choice == "local":
+                losing_remote_ids.add(conflict.record_id)
+            elif choice == "server":
+                losing_local_ids.add(conflict.record_id)
+            else:
+                raise ValueError("record_decision_invalid")
+        for collision in plan.key_collisions:
+            choice = decisions[collision.decision_id]
+            if choice in {"local", "server"}:
+                candidates = [
+                    record_id
+                    for record_id in collision.record_ids
+                    if (
+                        record_id in selected_local_records
+                        if choice == "local"
+                        else record_id in selected_remote_records
+                    )
+                ]
+                if len(candidates) != 1:
+                    raise ValueError("record_decision_invalid")
+                choice = candidates[0]
+            elif choice not in collision.record_ids:
+                raise ValueError("record_decision_invalid")
+            for record_id in collision.record_ids:
+                if record_id == choice:
+                    continue
+                if record_id in selected_local_records:
+                    losing_local_ids.add(record_id)
+                if record_id in selected_remote_records:
+                    losing_remote_ids.add(record_id)
+
+        new_keys = ProfileKeyMaterial(
+            encryption_key=old_keys.encryption_key,
+            integrity_key=integrity_key,
+            key_version=old_keys.key_version + 1,
+        )
+        old_profile_id = current_manifest.profile_id
+        try:
+            with self._transaction() as connection:
+                heads = connection.execute(
+                    "SELECT object_type, object_id, version_id FROM object_heads"
+                ).fetchall()
+                transformed_heads: list[tuple[str, str, str]] = []
+                for head in heads:
+                    object_type = str(head["object_type"])
+                    object_id = str(head["object_id"])
+                    if object_type == "record" and object_id in losing_local_ids:
+                        continue
+                    if object_type == "outbox":
+                        outbox = connection.execute(
+                            "SELECT object_id FROM encrypted_outbox WHERE outbox_id = ?",
+                            (object_id,),
+                        ).fetchone()
+                        if outbox is not None and outbox["object_id"] in losing_local_ids:
+                            continue
+                    if object_type == "manifest" and object_id == old_profile_id:
+                        object_id = remote.manifest.profile_id
+                    elif object_type in {
+                        "scope",
+                        "scope_binding",
+                        "scope_runtime_policy",
+                    }:
+                        object_id = scope_mapping.get(object_id, object_id)
+                    transformed_heads.append(
+                        (object_type, object_id, str(head["version_id"]))
+                    )
+                rows = connection.execute(
+                    "SELECT * FROM encrypted_objects ORDER BY rowid"
+                ).fetchall()
+                transformed: list[tuple[dict[str, Any], dict[str, Any]]] = []
+                for row in rows:
+                    if row["object_type"] == "record" and row["object_id"] in losing_local_ids:
+                        continue
+                    if row["object_type"] == "outbox":
+                        outbox = connection.execute(
+                            "SELECT object_id FROM encrypted_outbox WHERE outbox_id = ?",
+                            (row["object_id"],),
+                        ).fetchone()
+                        if outbox is not None and outbox["object_id"] in losing_local_ids:
+                            continue
+                    body = json.loads(self._decrypt_row(row))
+                    object_id = row["object_id"]
+                    if row["object_type"] == "manifest" and object_id == old_profile_id:
+                        object_id = remote.manifest.profile_id
+                    elif row["object_type"] in {
+                        "scope",
+                        "scope_binding",
+                        "scope_runtime_policy",
+                    }:
+                        object_id = scope_mapping.get(object_id, object_id)
+                    transformed.append(
+                        (
+                            {
+                                "object_type": row["object_type"],
+                                "object_id": object_id,
+                                "version_id": row["version_id"],
+                                "scope_id": scope_mapping.get(row["scope_id"], row["scope_id"]),
+                                "is_tombstone": bool(row["is_tombstone"]),
+                            },
+                            self._replace_link_identities(
+                                body,
+                                old_profile_id=old_profile_id,
+                                new_profile_id=remote.manifest.profile_id,
+                                scope_mapping=scope_mapping,
+                            ),
+                        )
+                    )
+
+                if losing_local_ids:
+                    connection.execute(
+                        "DELETE FROM encrypted_outbox WHERE object_id IN (%s)"
+                        % ",".join("?" for _ in losing_local_ids),
+                        tuple(losing_local_ids),
+                    )
+                connection.execute("DELETE FROM encrypted_objects")
+                connection.execute("DELETE FROM object_heads")
+                self._keys = new_keys
+                for metadata, body in transformed:
+                    self._insert_encrypted(connection, value=body, **metadata)
+                for object_type, object_id, version_id in transformed_heads:
+                    if object_type in {"manifest", "scope", "record", "proposal"}:
+                        continue
+                    exists = connection.execute(
+                        "SELECT 1 FROM encrypted_objects WHERE object_type = ? "
+                        "AND object_id = ? AND version_id = ?",
+                        (object_type, object_id, version_id),
+                    ).fetchone()
+                    if exists is not None:
+                        connection.execute(
+                            "INSERT OR REPLACE INTO object_heads VALUES (?, ?, ?)",
+                            (object_type, object_id, version_id),
+                        )
+
+                def ensure_object(
+                    object_type: str,
+                    object_id: str,
+                    version_id: str,
+                    value: BaseModel,
+                    scope_id: str | None = None,
+                ) -> None:
+                    existing = connection.execute(
+                        "SELECT * FROM encrypted_objects WHERE object_type = ? "
+                        "AND object_id = ? AND version_id = ?",
+                        (object_type, object_id, version_id),
+                    ).fetchone()
+                    if existing is not None:
+                        if self._decrypt_row(existing) != self._canonical_payload(value):
+                            connection.execute(
+                                "DELETE FROM encrypted_objects WHERE object_type = ? "
+                                "AND object_id = ? AND version_id = ?",
+                                (object_type, object_id, version_id),
+                            )
+                        else:
+                            return
+                    self._insert_encrypted(
+                        connection,
+                        object_type=object_type,
+                        object_id=object_id,
+                        version_id=version_id,
+                        scope_id=scope_id,
+                        is_tombstone=(
+                            object_type == "record"
+                            and getattr(value, "state", None) is RecordState.DELETED
+                        ),
+                        value=value,
+                    )
+
+                ensure_object(
+                    "manifest",
+                    remote.manifest.profile_id,
+                    remote.manifest.current_version_id,
+                    remote.manifest,
+                )
+                connection.execute(
+                    "INSERT INTO object_heads VALUES (?, ?, ?)",
+                    (
+                        "manifest",
+                        remote.manifest.profile_id,
+                        remote.manifest.current_version_id,
+                    ),
+                )
+                selected_scopes: dict[str, ProfileScope] = {
+                    scope.scope_id: scope for scope in remote.scopes
+                }
+                for scope in current_scopes:
+                    if scope.kind is ScopeKind.GLOBAL:
+                        continue
+                    mapped_id = scope_mapping.get(scope.scope_id, scope.scope_id)
+                    if mapped_id in selected_scopes:
+                        continue
+                    selected_scopes[mapped_id] = scope.model_copy(
+                        update={
+                            "profile_id": remote.manifest.profile_id,
+                            "scope_id": mapped_id,
+                        }
+                    )
+                for scope in selected_scopes.values():
+                    ensure_object(
+                        "scope", scope.scope_id, scope.version_id, scope, scope.scope_id
+                    )
+                    connection.execute(
+                        "INSERT OR REPLACE INTO object_heads VALUES (?, ?, ?)",
+                        ("scope", scope.scope_id, scope.version_id),
+                    )
+
+                merged_records = {
+                    record_id: record
+                    for record_id, record in selected_local_records.items()
+                    if record_id not in losing_local_ids
+                }
+                merged_records.update(
+                    {
+                        record_id: record
+                        for record_id, record in selected_remote_records.items()
+                        if record_id not in losing_remote_ids
+                    }
+                )
+                for record in merged_records.values():
+                    ensure_object(
+                        "record",
+                        record.record_id,
+                        record.version_id,
+                        record,
+                        record.scope_id,
+                    )
+                    connection.execute(
+                        "INSERT OR REPLACE INTO object_heads VALUES (?, ?, ?)",
+                        ("record", record.record_id, record.version_id),
+                    )
+
+                merged_proposals = dict(selected_local_proposals)
+                merged_proposals.update(selected_remote_proposals)
+                for proposal in merged_proposals.values():
+                    proposal_version = (
+                        "sync-proposal-sha256:"
+                        + hashlib.sha256(canonical_bytes(proposal)).hexdigest()
+                    )
+                    ensure_object(
+                        "proposal",
+                        proposal.proposal_id,
+                        proposal_version,
+                        proposal,
+                        proposal.scope_id,
+                    )
+                    connection.execute(
+                        "INSERT OR REPLACE INTO object_heads VALUES (?, ?, ?)",
+                        ("proposal", proposal.proposal_id, proposal_version),
+                    )
+
+                connection.execute(
+                    "UPDATE profile_meta SET profile_id = ?, purge_generation = ?, "
+                    "current_manifest_version = ? WHERE singleton = 1",
+                    (
+                        remote.manifest.profile_id,
+                        remote.purge_generation,
+                        remote.manifest.current_version_id,
+                    ),
+                )
+                for table in ("local_runtime_policy", "local_scope_bindings"):
+                    metadata = connection.execute(
+                        f"SELECT * FROM {table}"
+                    ).fetchall()
+                    connection.execute(f"DELETE FROM {table}")
+                    columns = tuple(metadata[0].keys()) if metadata else ()
+                    for item in metadata:
+                        values = list(item)
+                        values[0] = scope_mapping.get(values[0], values[0])
+                        connection.execute(
+                            f"INSERT OR REPLACE INTO {table}({','.join(columns)}) "
+                            f"VALUES ({','.join('?' for _ in columns)})",
+                            values,
+                        )
+                for outbox in connection.execute(
+                    "SELECT outbox_id, object_type, object_id FROM encrypted_outbox"
+                ).fetchall():
+                    mapped_object_id = outbox["object_id"]
+                    if outbox["object_type"] == "manifest" and mapped_object_id == old_profile_id:
+                        mapped_object_id = remote.manifest.profile_id
+                    elif outbox["object_type"] == "scope":
+                        mapped_object_id = scope_mapping.get(mapped_object_id, mapped_object_id)
+                    connection.execute(
+                        "UPDATE encrypted_outbox SET object_id = ? WHERE outbox_id = ?",
+                        (mapped_object_id, outbox["outbox_id"]),
+                    )
+        except BaseException:
+            self._keys = old_keys
+            raise
+
+        replace = getattr(self._protector, "replace", None)
+        if not callable(replace):
+            raise ProfileLockedError("Profile key protector cannot activate link keys.")
+        try:
+            replace(self._profile_ref, new_keys)
+        except BaseException as exc:
+            raise ProfileKeyActivationPendingError(
+                "Profile link key activation is pending."
+            ) from exc
+        return {"rebaseline_version": new_keys.key_version}
 
     def commit_manifest_version(
         self,

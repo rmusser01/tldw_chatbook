@@ -137,6 +137,11 @@ class LocalFirstSyncService:
             or self.personal_context_service is None
         ):
             raise ValueError("personal_context_sync_transport_unavailable")
+        if uses_personal_context and not self.state_repository.personal_context_sync_enabled(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+        ):
+            raise ValueError("personal_context_link_incomplete")
 
         profile_outbox_result = {"dispatched": 0, "quarantined": 0}
         if uses_personal_context:

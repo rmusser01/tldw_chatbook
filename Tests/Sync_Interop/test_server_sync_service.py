@@ -21,6 +21,10 @@ from tldw_chatbook.tldw_api import (
 )
 
 
+class FakeWrappingProvider:
+    public_key_pem = "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----\n"
+
+
 def _payload() -> ClientChangesPayload:
     return ClientChangesPayload(
         client_id="chatbook-client-1",
@@ -187,6 +191,20 @@ class FakeSyncClient:
             "server_capabilities": await self.get_sync_v2_capabilities(),
             "required_actions": [],
         }
+
+    async def bootstrap_sync_v2_personal_context(self, request_data):
+        self.calls.append(
+            ("bootstrap_sync_v2_personal_context", request_data.model_dump(mode="json"))
+        )
+        return {"dataset_id": "dataset-personal-context"}
+
+    async def complete_sync_v2_personal_context_link(self, request_data):
+        self.calls.append(
+            (
+                "complete_sync_v2_personal_context_link",
+                request_data.model_dump(mode="json"),
+            )
+        )
 
     async def enroll_sync_v2_dataset(self, request_data):
         self.calls.append(
@@ -497,12 +515,11 @@ async def test_server_sync_service_blocks_unavailable_personal_context_before_li
     service = ServerSyncService(client=client, state_repository=repo)
 
     with pytest.raises(ValueError, match="personal_context_profile_key_unavailable"):
-        await service.run_v2_dry_run(
+        await service.bootstrap_personal_context_link(
             server_profile_id="server-a",
             authenticated_principal_id="user-a",
             display_name="Laptop",
-            domains=["personal_context"],
-            encryption_policy="server_trusted_v1",
+            wrapping_key_provider=FakeWrappingProvider(),
         )
 
     assert not any(call[0] == "register_sync_v2_device" for call in client.calls)
@@ -518,7 +535,7 @@ async def test_server_sync_service_rejects_partial_personal_context_before_mutat
     repo = SyncStateRepository(tmp_path / "sync_state.db")
     service = ServerSyncService(client=client, state_repository=repo)
 
-    with pytest.raises(ValueError, match="personal_context_sync_domains_incomplete"):
+    with pytest.raises(ValueError, match="personal_context_requires_reviewed_first_link"):
         await service.run_v2_dry_run(
             server_profile_id="server-a",
             authenticated_principal_id="user-a",
@@ -527,11 +544,11 @@ async def test_server_sync_service_rejects_partial_personal_context_before_mutat
             encryption_policy="server_trusted_v1",
         )
 
-    assert client.calls == [("get_sync_v2_capabilities",)]
+    assert client.calls == []
 
 
 @pytest.mark.asyncio
-async def test_server_sync_service_persists_successful_personal_context_negotiation(
+async def test_server_sync_service_never_negotiates_personal_context_via_generic_enroll(
     tmp_path,
 ) -> None:
     client = FakeSyncClient(
@@ -540,26 +557,104 @@ async def test_server_sync_service_persists_successful_personal_context_negotiat
     repo = SyncStateRepository(tmp_path / "sync_state.db")
     service = ServerSyncService(client=client, state_repository=repo)
 
-    result = await service.run_v2_dry_run(
+    with pytest.raises(ValueError, match="personal_context_requires_reviewed_first_link"):
+        await service.run_v2_dry_run(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            display_name="Laptop",
+            domains=["personal_context"],
+            encryption_policy="server_trusted_v1",
+        )
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_personal_context_bootstrap_registers_wrapping_key_without_generic_enroll(
+    tmp_path,
+) -> None:
+    client = FakeSyncClient(
+        capabilities_response=_personal_context_capabilities(available=True)
+    )
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    service = ServerSyncService(client=client, state_repository=repo)
+
+    response = await service.bootstrap_personal_context_link(
         server_profile_id="server-a",
         authenticated_principal_id="user-a",
         display_name="Laptop",
-        domains=["personal_context"],
-        encryption_policy="server_trusted_v1",
+        wrapping_key_provider=FakeWrappingProvider(),
+        required_schema_version=1,
+        required_quotas={"max_record_bytes": 16_384},
+        expected_purge_generation=2,
     )
 
-    assert result["domains"] == list(_personal_context_capabilities()["domains"])
-    assert result["personal_context_readiness"] == {
-        "read_enabled": True,
-        "write_enabled": True,
-        "blockers": [],
-        "negotiated_schema_version": 1,
+    assert response == {
+        "device_id": "device-1",
+        "dataset_id": "dataset-personal-context",
     }
-    register_call = next(
-        call for call in client.calls if call[0] == "register_sync_v2_device"
+    register = next(call for call in client.calls if call[0] == "register_sync_v2_device")
+    assert register[1]["capabilities"]["personal_context_wrapping_public_key"].startswith(
+        "-----BEGIN PUBLIC KEY-----"
     )
-    assert register_call[1]["capabilities"]["personal_context"] == {"schema_version": 1}
-    assert ("get_sync_v2_capabilities", "dataset-1") in client.calls
+    bootstrap = next(
+        call for call in client.calls if call[0] == "bootstrap_sync_v2_personal_context"
+    )
+    assert bootstrap[1] == {
+        "device_id": "device-1",
+        "required_schema_version": 1,
+        "required_quotas": {"max_record_bytes": 16_384},
+        "expected_purge_generation": 2,
+    }
+    assert not any(call[0] == "enroll_sync_v2_dataset" for call in client.calls)
+    assert not any(call[0] == "push_sync_v2_envelopes" for call in client.calls)
+
+
+@pytest.mark.asyncio
+async def test_personal_context_complete_uses_exact_reviewed_binding() -> None:
+    client = FakeSyncClient()
+    service = ServerSyncService(client=client)
+
+    await service.complete_personal_context_link(
+        device_id="device-1",
+        dataset_id="dataset-1",
+        bootstrap_cursor="sha256:" + "a" * 64,
+    )
+
+    assert client.calls == [
+        (
+            "complete_sync_v2_personal_context_link",
+            {
+                "device_id": "device-1",
+                "dataset_id": "dataset-1",
+                "bootstrap_cursor": "sha256:" + "a" * 64,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_generic_dry_run_rejects_personal_context_before_device_mutation(
+    tmp_path,
+) -> None:
+    client = FakeSyncClient(
+        capabilities_response=_personal_context_capabilities(available=True)
+    )
+    service = ServerSyncService(
+        client=client,
+        state_repository=SyncStateRepository(tmp_path / "sync.db"),
+    )
+
+    with pytest.raises(ValueError, match="personal_context_requires_reviewed_first_link"):
+        await service.run_v2_dry_run(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            display_name="Laptop",
+            domains=["personal_context"],
+            encryption_policy="server_trusted_v1",
+        )
+
+    assert client.calls == []
 
 
 @pytest.mark.asyncio

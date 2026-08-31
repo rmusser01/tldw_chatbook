@@ -32,6 +32,12 @@ class PersonalContextOutboxDispatcher:
     ) -> dict[str, int]:
         """Copy pending entries, then receipt and shred each source body."""
 
+        if not self.state_repository.personal_context_sync_enabled(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+        ):
+            raise ValueError("personal_context_link_incomplete")
+
         dispatched = 0
         quarantined = 0
         for entry in self.profile_outbox.list_pending(limit=limit):
