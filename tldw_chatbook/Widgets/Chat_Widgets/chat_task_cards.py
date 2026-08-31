@@ -73,6 +73,10 @@ class ChatTaskCards(Container):
             # `ConsoleChatController.resolve_pending_approval`.
             round_id=approval.get("round_id"),
             phase=str(approval.get("phase") or "approval"),
+            # ADR-080 (task 5): the payload-carried advisory summary -- the
+            # slot starts None and is filled by the advisory summarizer;
+            # payload carriage means any remount re-renders it.
+            summary=approval.get("summary"),
         )
         install_card.set_install(task_state.pending_skill_install)
         script_card.set_script(task_state.pending_skill_script)
