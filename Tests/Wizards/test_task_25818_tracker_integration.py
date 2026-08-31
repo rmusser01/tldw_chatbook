@@ -1,4 +1,4 @@
-"""TASK-25716 integration: the tracker must RENDER the attention state.
+"""TASK-25818 integration: the tracker must RENDER the attention state.
 
 Qodo review (PR #2256) was right that unit-testing `setup_attention_ids`
 alone leaves the wiring untested -- a rebuild or rendering regression would

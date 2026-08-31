@@ -1,5 +1,5 @@
 ---
-id: TASK-25732
+id: TASK-25834
 title: Console exposes internal vocabulary and unexplained glyphs
 status: Done
 assignee: []

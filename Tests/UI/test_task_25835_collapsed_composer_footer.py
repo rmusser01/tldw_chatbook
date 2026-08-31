@@ -1,4 +1,4 @@
-"""TASK-25733: don't advertise Enter-to-send with no composer on screen.
+"""TASK-25835: don't advertise Enter-to-send with no composer on screen.
 
 Collapsing the composer leaves the footer still offering "Enter send / queue"
 while there is nothing to type into and Enter sends nothing. The screen already

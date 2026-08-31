@@ -36,7 +36,7 @@ class ConsoleLibraryPolicySaveOutcome:
 class ConsoleAccessRadioButton(RadioButton):
     """RadioButton whose selected state is structural, not colour-only.
 
-    TASK-25729, mirroring the wizard's SetupRadioButton (TASK-1497): stock
+    TASK-25831, mirroring the wizard's SetupRadioButton (TASK-1497): stock
     ToggleButton renders ONE constant BUTTON_INNER glyph and conveys on/off
     purely through that glyph's colour. Measured live in this modal, the off
     state painted 1.42:1 against its track -- indistinguishable in a
@@ -306,7 +306,7 @@ class ConsoleLibraryAccessModal(SafeModalDismissMixin, ModalScreen[None]):
             or self._operation_pending
             or not self._state.editing_enabled
         )
-        # TASK-25722 / Qodo review (PR #2256): the cancel control is relabelled
+        # TASK-25824 / Qodo review (PR #2256): the cancel control is relabelled
         # "Keep editing" when a dirty close is refused. Returning to a clean
         # state -- a successful save, or the user reverting by hand -- makes a
         # cancel dismiss immediately, so the label and the discard option have
@@ -433,7 +433,7 @@ class ConsoleLibraryAccessModal(SafeModalDismissMixin, ModalScreen[None]):
                 focus=True,
             )
             self.query_one("#library-access-discard", Button).display = True
-            # TASK-25722: with Discard on screen, "Cancel" stops meaning
+            # TASK-25824: with Discard on screen, "Cancel" stops meaning
             # "abandon my edits" and starts meaning "stay here" -- the same
             # word for two different outcomes. Name the outcome instead, so
             # the pair reads Keep editing / Discard changes.

@@ -130,7 +130,7 @@ class UnknownMembership:
 
 _MEMBERSHIP_UNKNOWN = UnknownMembership()
 
-# TASK-25725: two unrelated failures used to share one sentence, so the rail
+# TASK-25827: two unrelated failures used to share one sentence, so the rail
 # could not tell "we could not check your access" from "the query failed" --
 # and at the rail's width the shared sentence clipped to "Workspace
 # conversations a...", which named neither. Keep these short enough to read
@@ -1508,7 +1508,7 @@ class ConsoleWorkspaceController:
             )
             result = await result if inspect.isawaitable(result) else result
         except Exception:
-            # TASK-25725: this was the ONLY record of why the rail failed and
+            # TASK-25827: this was the ONLY record of why the rail failed and
             # it sat at debug, so "check the app log" led nowhere.
             logger.opt(exception=True).warning(
                 "Unable to load Console workspace page workspace_id={}", workspace_id

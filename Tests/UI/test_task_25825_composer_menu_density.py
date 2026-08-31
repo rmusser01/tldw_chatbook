@@ -1,4 +1,4 @@
-"""TASK-25723: six actions should not cost thirty rows.
+"""TASK-25825: six actions should not cost thirty rows.
 
 The composer menu gave each row `height: 3` plus `margin-bottom: 1` -- four
 rows per item, ~30 for six actions -- and centred every label, so the list

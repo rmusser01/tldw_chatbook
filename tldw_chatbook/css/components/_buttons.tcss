@@ -34,7 +34,7 @@ Button:hover:focus {
 }
 
 /* Disabled state.
-   TASK-25720: the darkened surface plus muted-but-readable text IS the cue --
+   TASK-25822: the darkened surface plus muted-but-readable text IS the cue --
    an additional `opacity: 50%` composited the label down to 1.34:1 and made
    the control look absent. Two non-colour cues remain (surface + weight). */
 Button:disabled,

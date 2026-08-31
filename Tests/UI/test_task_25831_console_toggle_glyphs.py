@@ -1,4 +1,4 @@
-"""TASK-25729: Console radios convey state through colour alone.
+"""TASK-25831: Console radios convey state through colour alone.
 
 The wizard already fixed this class -- SetupRadioButton exists because "stock
 ToggleButton renders one constant BUTTON_INNER glyph and conveys on/off purely

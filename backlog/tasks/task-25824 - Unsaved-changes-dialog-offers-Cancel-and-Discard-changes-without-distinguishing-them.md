@@ -1,5 +1,5 @@
 ---
-id: TASK-25722
+id: TASK-25824
 title: >-
   Unsaved-changes dialog offers Cancel and Discard changes without
   distinguishing them

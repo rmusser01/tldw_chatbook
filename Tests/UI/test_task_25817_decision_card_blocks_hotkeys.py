@@ -1,4 +1,4 @@
-"""TASK-25715: don't stack panels over a decision the app is waiting on.
+"""TASK-25817: don't stack panels over a decision the app is waiting on.
 
 With "Trace capture blocked -- Choose one action" mounted, Ctrl+K opened the
 session switcher on top of it and F1 opened help on top of that: three layers

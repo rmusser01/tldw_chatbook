@@ -1,4 +1,4 @@
-"""TASK-25724: the Send button must not resize while the user types.
+"""TASK-25826: the Send button must not resize while the user types.
 
 `sync_action_state` runs on the keystroke path and sized the button from the
 CURRENT label. The label gains a " | $" suffix the moment a price estimate

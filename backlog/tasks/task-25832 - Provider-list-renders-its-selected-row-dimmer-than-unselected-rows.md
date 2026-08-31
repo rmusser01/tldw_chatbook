@@ -1,5 +1,5 @@
 ---
-id: TASK-25730
+id: TASK-25832
 title: Provider list renders its selected row dimmer than unselected rows
 status: Done
 assignee: []

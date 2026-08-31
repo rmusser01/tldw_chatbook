@@ -368,7 +368,7 @@ BASE_ACTIONS_WIDTH = 6 + MIC_SEND_GAP + 11 + 6
 ATTACHMENT_ACTIONS_WIDTH = BASE_ACTIONS_WIDTH + 4
 
 
-#: TASK-25724: every label this control can display for a given state, so its
+#: TASK-25826: every label this control can display for a given state, so its
 #: width can be fixed once instead of tracking the current string. The price
 #: suffix appears mid-typing (`sync_action_state` runs on the keystroke path),
 #: and sizing from the live label widened the button under the cursor and

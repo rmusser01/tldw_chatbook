@@ -7713,7 +7713,7 @@ UPDATE db_schema_version
                 f"db_sha256={self._db_diagnostic_ref} "
                 f"exception_type={type(e).__name__}"
             )
-            # TASK-25714: Console tells the user to "check the app log for the
+            # TASK-25816: Console tells the user to "check the app log for the
             # database error", but PersistentDiagnosticFilter admits only
             # records marked by persist_event -- an ordinary logger.error above
             # never reaches that file, so the instruction led nowhere. The

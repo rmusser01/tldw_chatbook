@@ -1,5 +1,5 @@
 ---
-id: TASK-25728
+id: TASK-25830
 title: Interrupt card consumes the entire transcript at eighty by twenty-four
 status: Done
 assignee: []

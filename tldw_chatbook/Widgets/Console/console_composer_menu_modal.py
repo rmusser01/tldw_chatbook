@@ -192,7 +192,7 @@ class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"])
 
     /* Height only. Alignment and spacing live in the app stylesheet
        (_agentic_terminal.tcss) -- Button's own rules outrank this block,
-       so stating them here would measurably do nothing (TASK-25723). */
+       so stating them here would measurably do nothing (TASK-25825). */
     .console-composer-menu-item {
         width: 100%;
         height: 3;

@@ -1,5 +1,5 @@
 ---
-id: TASK-25717
+id: TASK-25819
 title: First-run wizard discards the provider endpoint the user entered and tested
 status: Done
 assignee: []

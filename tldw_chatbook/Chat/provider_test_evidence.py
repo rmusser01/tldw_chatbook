@@ -97,7 +97,7 @@ _FAILURE_CATEGORIES = frozenset(
         "connection_error",
     }
 )
-# TASK-25731: these are read by a first-time user deciding what to do next,
+# TASK-25833: these are read by a first-time user deciding what to do next,
 # not by the implementer. Each names what happened in plain language and the
 # one action that addresses it -- "The model listing request had a connection
 # error" named a subsystem and no next step.
@@ -244,7 +244,7 @@ def provider_readiness_verdict(
         return ProviderReadinessVerdict(
             "verified", "Model listing reached and selected model confirmed.", True
         )
-    # TASK-25731: "reached; not confirmed" mixes a tick with a failure and
+    # TASK-25833: "reached; not confirmed" mixes a tick with a failure and
     # leaves the user unsure whether it is safe to continue. Say which half
     # worked and what to do about the other half.
     return ProviderReadinessVerdict(

@@ -1,5 +1,5 @@
 ---
-id: TASK-25727
+id: TASK-25829
 title: Footer database size and token timers stall the event loop
 status: Done
 assignee: []

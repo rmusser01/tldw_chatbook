@@ -1277,7 +1277,7 @@ def setup_attention_ids(
 ) -> frozenset[str]:
     """Which visited steps must not wear the completion tick.
 
-    TASK-25716: the tracker only downgraded Provider/Model when a probe had
+    TASK-25818: the tracker only downgraded Provider/Model when a probe had
     demonstrably failed, so a step the user walked through WITHOUT
     configuring anything still showed the same ✓ as a finished one. The
     summary screen already told the truth ("✗ Provider — no credentials or

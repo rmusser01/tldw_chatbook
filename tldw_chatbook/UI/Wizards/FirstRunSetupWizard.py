@@ -218,7 +218,7 @@ class SetupRadioSet(RadioSet):
         self.post_message(self.AdvanceRequested())
 
 
-#: TASK-25719: steps 1-5 teach "Esc skip setup" / "Esc exit setup" and Esc
+#: TASK-25821: steps 1-5 teach "Esc skip setup" / "Esc exit setup" and Esc
 #: works. On the summary the cancel button is hidden and Esc goes inert, but
 #: the hint line simply dropped the exit vocabulary -- so the key the wizard
 #: spent five screens teaching stopped working with no explanation, and
@@ -8758,7 +8758,7 @@ class SetupWizardContainer(WizardContainer):
         try:
             # TASK-21143 (UAT N-7): a visited Provider/Model pair whose
             # probe failed shows "!" instead of the ✓ users read as "OK".
-            # TASK-25716 widens that to the step the user simply walked
+            # TASK-25818 widens that to the step the user simply walked
             # through without configuring: the summary already reports it as
             # unconfigured, and the tracker must not disagree.
             attention = wizard_state.setup_attention_ids(

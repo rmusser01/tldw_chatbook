@@ -1,5 +1,5 @@
 ---
-id: TASK-25719
+id: TASK-25821
 title: First-run wizard's final step removes every exit affordance
 status: Done
 assignee: []

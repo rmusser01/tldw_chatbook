@@ -1,4 +1,4 @@
-"""TASK-25719: the summary step withdrew Esc without saying so.
+"""TASK-25821: the summary step withdrew Esc without saying so.
 
 Steps 1-5 advertise "Esc skip setup" / "Esc exit setup" and Esc works. On the
 summary the hint collapses to "Ctrl+B back" and Esc silently stops working --

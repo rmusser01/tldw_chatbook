@@ -113,7 +113,7 @@ class TraceCallRecoveryCallout(Vertical):
     """Terminal-native warning with explicit, focusable recovery actions."""
 
     BUNDLED_CSS = """
-    /* TASK-25728: `height: auto` was unbounded, so at 80x24 -- the default
+    /* TASK-25830: `height: auto` was unbounded, so at 80x24 -- the default
        terminal size -- this card grew until NO transcript was visible and the
        user was asked to choose an action without being able to see the message
        it applied to. Bounded to just over half the region and scrolled inside

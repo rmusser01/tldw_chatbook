@@ -67,5 +67,5 @@ already landed. This task is not yet merged, so moving it is the change with no
 blast radius.
 
 Renumbered to 25815 (next free after 25814, swept across all refs and
-worktrees). References updated in TASK-25814 and TASK-25721. Earlier commit
+worktrees). References updated in TASK-25814 and TASK-25823. Earlier commit
 messages on this branch still cite 25713 and are left as historical record.

@@ -1,4 +1,4 @@
-"""TASK-25720: a disabled control must read as unavailable, not absent.
+"""TASK-25822: a disabled control must read as unavailable, not absent.
 
 `Button:disabled` stacked `opacity: 50%` on top of an already-dim
 `$text-disabled`. Measured live in the Console Library-access modal, the

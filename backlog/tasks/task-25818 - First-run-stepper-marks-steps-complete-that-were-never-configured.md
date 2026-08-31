@@ -1,5 +1,5 @@
 ---
-id: TASK-25716
+id: TASK-25818
 title: First-run stepper marks steps complete that were never configured
 status: Done
 assignee: []
@@ -28,5 +28,5 @@ The setup wizard stamps a checkmark on each step the user passes through, regard
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-The three-state tracker already existed (SetupWizardProgress renders complete/attention/upcoming, and build_setup_progress already downgrades completed steps via attention_ids, documented as 'a visited step whose probe demonstrably failed must not wear the ✓'). The defect was that attention_ids was fed ONLY by provider_probe_failure(), so a step walked through without configuring anything still showed ✓ -- while the summary screen reported it as unconfigured. Fix: new pure helper setup_attention_ids(wizard_data, probe_failed=) feeding the same mechanism, flagging a visited-but-unconfigured Provider or Model. Deliberately scoped to those two: skipping voice or key encryption is legitimate under the wizard's skip-safe design (see TASK-25718), so flagging them would cry wolf. 5 unit tests + full wizard suite 392 passed / 0 failed.
+The three-state tracker already existed (SetupWizardProgress renders complete/attention/upcoming, and build_setup_progress already downgrades completed steps via attention_ids, documented as 'a visited step whose probe demonstrably failed must not wear the ✓'). The defect was that attention_ids was fed ONLY by provider_probe_failure(), so a step walked through without configuring anything still showed ✓ -- while the summary screen reported it as unconfigured. Fix: new pure helper setup_attention_ids(wizard_data, probe_failed=) feeding the same mechanism, flagging a visited-but-unconfigured Provider or Model. Deliberately scoped to those two: skipping voice or key encryption is legitimate under the wizard's skip-safe design (see TASK-25820), so flagging them would cry wolf. 5 unit tests + full wizard suite 392 passed / 0 failed.
 <!-- SECTION:NOTES:END -->

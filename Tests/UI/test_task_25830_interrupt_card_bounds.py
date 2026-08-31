@@ -1,4 +1,4 @@
-"""TASK-25728: a decision card must not consume the whole screen.
+"""TASK-25830: a decision card must not consume the whole screen.
 
 At 80x24 -- the default terminal, and the size this user runs -- the
 trace-recovery card's `height: auto` grew until no transcript was visible at

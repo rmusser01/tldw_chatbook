@@ -70,7 +70,7 @@ $ds-status-error-readable: #ff8fa3;
    than a real value ($text, rgb 224), so a placeholder still reads as an
    absent value rather than as content. */
 $ds-text-placeholder: #8a8a8a;
-/* TASK-25720 (a11y): `Button:disabled` stacked `opacity: 50%` ON TOP of an
+/* TASK-25822 (a11y): `Button:disabled` stacked `opacity: 50%` ON TOP of an
    already-dim $text-disabled, compositing to a measured 1.34:1 -- a disabled
    primary read as ABSENT, not unavailable, while the dismissive action beside
    it stayed near 14:1 and inverted the dialog's hierarchy. This grey clears
@@ -971,7 +971,7 @@ Button:hover:focus {
 }
 
 /* Disabled state.
-   TASK-25720: the darkened surface plus muted-but-readable text IS the cue --
+   TASK-25822: the darkened surface plus muted-but-readable text IS the cue --
    an additional `opacity: 50%` composited the label down to 1.34:1 and made
    the control look absent. Two non-colour cues remain (surface + weight). */
 Button:disabled,
@@ -11652,7 +11652,7 @@ ImageGenSettingsPanel Checkbox.-on > .toggle--button {
    The Console states every temporary-chat restriction on a disabled row, so
    an illegible disabled label voids that whole convention. Disabled stays
    plainly dimmer than enabled (12.63:1) so the state is still obvious. */
-/* TASK-25723: six actions previously cost ~30 rows -- `height: 3` plus a
+/* TASK-25825: six actions previously cost ~30 rows -- `height: 3` plus a
    trailing `margin-bottom: 1` on every row -- and every label was centred,
    so the list scanned badly and occluded the transcript to present very
    little. The trailing gap also pushed each disabled row's explanatory

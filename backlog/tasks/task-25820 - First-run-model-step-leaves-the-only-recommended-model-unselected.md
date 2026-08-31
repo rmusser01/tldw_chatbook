@@ -1,5 +1,5 @@
 ---
-id: TASK-25718
+id: TASK-25820
 title: First-run model step leaves the only recommended model unselected
 status: Done
 assignee: []
@@ -48,5 +48,5 @@ id into config on a step the user only passed through.
 The underlying UX complaint is still real but must be solved WITHOUT
 auto-committing: e.g. make Next surface "No model selected -- pick one or
 continue without a default", or mark the step incomplete in the stepper
-(TASK-25716) so the summary's honesty is reflected earlier. Reverted.
+(TASK-25818) so the summary's honesty is reflected earlier. Reverted.
 <!-- SECTION:NOTES:END -->

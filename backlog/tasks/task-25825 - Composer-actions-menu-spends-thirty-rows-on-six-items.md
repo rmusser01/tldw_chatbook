@@ -1,5 +1,5 @@
 ---
-id: TASK-25723
+id: TASK-25825
 title: Composer actions menu spends thirty rows on six items
 status: Done
 assignee: []

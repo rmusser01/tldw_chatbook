@@ -1,5 +1,5 @@
 ---
-id: TASK-25721
+id: TASK-25823
 title: Provider continuation card shows remote-handoff copy during local sends
 status: Done
 assignee: []

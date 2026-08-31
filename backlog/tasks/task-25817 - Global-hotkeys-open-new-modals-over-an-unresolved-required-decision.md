@@ -1,5 +1,5 @@
 ---
-id: TASK-25715
+id: TASK-25817
 title: Global hotkeys open new modals over an unresolved required decision
 status: Done
 assignee: []
@@ -30,7 +30,7 @@ While a blocking interrupt card is mounted and asking the user to choose one act
 <!-- SECTION:NOTES:BEGIN -->
 Fixed the stacking half. The recovery callouts ask 'Choose one action' and hold the turn, but they are mounted INSIDE the workbench rather than pushed as screens, so nothing stopped Ctrl+K or F1 opening a panel over the top -- I reached three layers deep with the original decision unresolved. Added _console_decision_blocking(), mirroring the existing _console_setup_modal_blocking() that these same actions already honour for the first-run modal, and wired it into the Ctrl+K switcher and F1 help.
 
-NOT addressed (needs a decision, not a patch): the missing scrim. Textual dims pushed SCREENS, but these callouts are in-workbench widgets by design -- that is what lets the transcript stay visible behind them (see TASK-25728). Adding a scrim means either promoting them to screens, which costs that visibility, or hand-dimming the region. Both are design changes rather than fixes, so I left the visual layer alone and closed the input-routing hole instead.
+NOT addressed (needs a decision, not a patch): the missing scrim. Textual dims pushed SCREENS, but these callouts are in-workbench widgets by design -- that is what lets the transcript stay visible behind them (see TASK-25830). Adding a scrim means either promoting them to screens, which costs that visibility, or hand-dimming the region. Both are design changes rather than fixes, so I left the visual layer alone and closed the input-routing hole instead.
 
 Baseline confirmed unchanged: 2 pre-existing failures in test_console_workbench_contract.py.
 <!-- SECTION:NOTES:END -->

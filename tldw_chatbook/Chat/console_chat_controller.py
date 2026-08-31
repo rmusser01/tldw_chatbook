@@ -16406,7 +16406,7 @@ class ConsoleChatController:
         persistence = self.store.persistence
         if persistence is None or getattr(persistence, "db", None) is None:
             visible_copy = (
-                # TASK-25714: the old copy said "Restart Chatbook, and check
+                # TASK-25816: the old copy said "Restart Chatbook, and check
                 # the app log". Restarting cannot repair an on-disk fault, and
                 # the persistent log admitted only metadata-only records, so
                 # the error was never in the file it named -- the whole

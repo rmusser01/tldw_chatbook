@@ -1,5 +1,5 @@
 ---
-id: TASK-25733
+id: TASK-25835
 title: >-
   Composer collapse hides the only input while the footer still advertises
   sending

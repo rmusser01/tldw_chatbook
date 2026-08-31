@@ -1,5 +1,5 @@
 ---
-id: TASK-25726
+id: TASK-25828
 title: Console status bar clips mid-label instead of prioritising its content
 status: Done
 assignee: []

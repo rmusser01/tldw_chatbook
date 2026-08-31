@@ -1,4 +1,4 @@
-"""TASK-25714: a database failure must reach the log users are told to check.
+"""TASK-25816: a database failure must reach the log users are told to check.
 
 Console refuses a send with "check the app log for the database error if it
 keeps happening". The persistent log admits ONLY records marked metadata-only

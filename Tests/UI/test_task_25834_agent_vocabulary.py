@@ -1,4 +1,4 @@
-"""TASK-25732: the chip and the surface it opens must use one word.
+"""TASK-25834: the chip and the surface it opens must use one word.
 
 The Console status strip renders "Library · Auto off · Agent blocked"; clicking
 it opened a modal whose matching control was labelled "Assistant Library
