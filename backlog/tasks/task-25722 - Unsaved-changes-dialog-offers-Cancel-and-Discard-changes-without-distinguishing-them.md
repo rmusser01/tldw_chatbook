@@ -3,9 +3,10 @@ id: TASK-25722
 title: >-
   Unsaved-changes dialog offers Cancel and Discard changes without
   distinguishing them
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-31 05:08'
+updated_date: '2026-08-31 06:36'
 labels:
   - console
   - ux-review
@@ -25,3 +26,9 @@ Dismissing a settings modal with unsaved edits silently adds a third button so t
 - [ ] #2 Each button names the outcome it produces rather than a generic verb
 - [ ] #3 Controls appearing in response to unsaved edits are announced rather than added silently
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Partly overstated as filed: the dialog DOES announce 'Unsaved changes. Save them or choose Discard changes.' (pinned by an existing test), so the 'added silently' criterion was already met. The real defect stands: once Discard appears, 'Cancel' silently stops meaning 'abandon my edits' and starts meaning 'stay here' -- one word, two outcomes. Fix: relabel it 'Keep editing' at the moment Discard is revealed, so the pair names the two outcomes actually on offer.
+<!-- SECTION:NOTES:END -->

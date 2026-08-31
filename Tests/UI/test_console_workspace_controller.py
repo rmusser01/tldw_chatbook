@@ -871,7 +871,7 @@ async def test_workspace_page_retry_generation_rejects_stale_failure() -> None:
     attempt = controller._workspace_page_attempts["workspace-7"]
     stale_generation = attempt.generation
     stale_key = attempt.request_key
-    assert attempt.error == "Workspace conversations are unavailable."
+    assert attempt.error == "Couldn't load conversations."
     assert attempt.retry_cursor == 75
     assert [row.conversation_id for row in attempt.rows] == ["existing"]
 
@@ -990,7 +990,7 @@ async def test_page_completion_with_unknown_membership_preserves_settled_retry()
     assert attempt.rows == settled
     assert attempt.next_cursor == 75
     assert attempt.membership_unknown is True
-    assert attempt.error == "Workspace conversations are unavailable."
+    assert attempt.error == "Workspace access unknown."
     assert attempt.retry_cursor == 75
     public = {
         node.workspace_id: node for node in controller.workspace_tree_projection()
@@ -1000,7 +1000,7 @@ async def test_page_completion_with_unknown_membership_preserves_settled_retry()
         public.error,
         public.retry_cursor,
         public.membership_unknown,
-    ) == (False, "Workspace conversations are unavailable.", 75, True)
+    ) == (False, "Workspace access unknown.", 75, True)
     assert controller._workspace_page_attempts["workspace-8"] is other_attempt
     assert other_attempt.rows == other_rows
     assert controller._workspace_tree_search.rows == workspace_rows
@@ -1487,7 +1487,7 @@ async def test_membership_read_failure_preserves_settled_page_and_retry_state() 
         for row in node.conversations
     ] == ["settled"]
     assert state.workspace_tree[0].next_cursor == 75
-    assert attempt.error == "Workspace conversations are unavailable."
+    assert attempt.error == "Workspace access unknown."
     assert attempt.retry_cursor == 75
 
 

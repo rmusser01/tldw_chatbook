@@ -130,6 +130,15 @@ class UnknownMembership:
 
 _MEMBERSHIP_UNKNOWN = UnknownMembership()
 
+# TASK-25725: two unrelated failures used to share one sentence, so the rail
+# could not tell "we could not check your access" from "the query failed" --
+# and at the rail's width the shared sentence clipped to "Workspace
+# conversations a...", which named neither. Keep these short enough to read
+# in the rail and distinct enough to act on.
+WORKSPACE_CONVERSATIONS_ACCESS_UNKNOWN = "Workspace access unknown."
+WORKSPACE_CONVERSATIONS_LOAD_FAILED = "Couldn't load conversations."
+
+
 
 @dataclass(slots=True)
 class SearchAttemptState:
@@ -1223,7 +1232,7 @@ class ConsoleWorkspaceController:
         membership_token = self._workspace_membership_token(workspace_id)
         if membership_token is _MEMBERSHIP_UNKNOWN:
             attempt.loading = False
-            attempt.error = "Workspace conversations are unavailable."
+            attempt.error = WORKSPACE_CONVERSATIONS_ACCESS_UNKNOWN
             attempt.retry_cursor = cursor
             attempt.membership_unknown = True
             self._sync_console_workspace_context()
@@ -1414,7 +1423,7 @@ class ConsoleWorkspaceController:
         ):
             return
         attempt = self._workspace_page_attempts[workspace_id]
-        attempt.error = "Workspace conversations are unavailable."
+        attempt.error = WORKSPACE_CONVERSATIONS_LOAD_FAILED
         attempt.retry_cursor = request_key[3] if request_key is not None else None
         attempt.membership_unknown = False
 
@@ -1499,10 +1508,12 @@ class ConsoleWorkspaceController:
             )
             result = await result if inspect.isawaitable(result) else result
         except Exception:
-            logger.opt(exception=True).debug(
+            # TASK-25725: this was the ONLY record of why the rail failed and
+            # it sat at debug, so "check the app log" led nowhere.
+            logger.opt(exception=True).warning(
                 "Unable to load Console workspace page workspace_id={}", workspace_id
             )
-            return (), None, "Workspace conversations are unavailable."
+            return (), None, WORKSPACE_CONVERSATIONS_LOAD_FAILED
         if not isinstance(result, dict):
             return (), 0, ""
         items = result.get("items") if isinstance(result.get("items"), list) else []
@@ -1720,7 +1731,7 @@ class ConsoleWorkspaceController:
         attempt = self._workspace_page_attempts.get(workspace_id)
         if attempt is None:
             return
-        attempt.error = "Workspace conversations are unavailable."
+        attempt.error = WORKSPACE_CONVERSATIONS_ACCESS_UNKNOWN
         attempt.loading = False
         attempt.retry_cursor = (
             attempt.next_cursor if attempt.next_cursor is not None else 0

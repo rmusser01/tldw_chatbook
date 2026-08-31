@@ -403,6 +403,11 @@ class ConsoleLibraryAccessModal(SafeModalDismissMixin, ModalScreen[None]):
                 focus=True,
             )
             self.query_one("#library-access-discard", Button).display = True
+            # TASK-25722: with Discard on screen, "Cancel" stops meaning
+            # "abandon my edits" and starts meaning "stay here" -- the same
+            # word for two different outcomes. Name the outcome instead, so
+            # the pair reads Keep editing / Discard changes.
+            self.query_one("#library-access-cancel", Button).label = "Keep editing"
             return
         self.dismiss_safe_once(None)
 
