@@ -955,28 +955,39 @@ current raw census, and complete lineage were rebuilt.
 #### Task 4 Execution Record (2026-08-30)
 
 - Pins: task base/current
-  `872a325483679d2880fcfe2a6e2b9fc82e12f42d`, common
+  `05c858e87cc1f11c96d6b384b34fdaf914efc51e`, common
   `f0e8961222fe1a7a3ac7566f7f78142e717358f3`, historical base
   `31ed49bb368f54211d6482599e00a5c1340f80b2`, pre-closeout
   `1f4f72ac5ff02f5237a4946745e82e8932cd41cf`, and closeout
   `642b1c782fe6c066a781314dae669a55b05b62ad`.
 - Historical/current counts: `M=99`, `B=64`, `C=77`, `C-B=16`, `B-C=3`,
-  `H=61`, `F_closeout=1,738`, `F_common=1,746`, and current failures `=1,923`.
-  The exhaustive comparison is `historical_still_current=47`,
-  `historical_no_longer_current=14`, `shared_ancestor_debt=1,617`, and
-  `current_line_drift=259`; blockers remained zero.
-- Live ownership capture inspected all ten open PRs at the snapshot. Exact current
-  failure overlaps were PR `#2244` (30 paths), `#2230` (one), `#2196` (11,
-  including one also owned by `#2244`), `#2059` (one), and `#1655` (two,
-  including one also owned by `#2059`); PRs `#2026`, `#1991`, `#1903`, `#1851`,
-  and `#1651` had no overlap. Matching active worktrees and the explicit
+  `H=61`, `F_closeout=1,738`, `F_common=1,746`, and current failures `=1,903`.
+  The exhaustive comparison is `historical_still_current=41`,
+  `historical_no_longer_current=20`, `shared_ancestor_debt=1,599`, and
+  `current_line_drift=263`; blockers remained zero.
+- All 263 current-line-drift rows were replayed commit by commit with the pinned
+  Ruff 0.15.22 tool and applicable config, selecting the first formatter exit-1
+  source state within first-parent integration chronology. Spot checks include
+  `tldw_chatbook/config.py` at
+  `c6218918d1e70c1938f7e11df592d0c70ca60383` and
+  `Tests/UI/test_library_notes_folder_navigator.py` at
+  `f7b64d1a4801ece98cd0d3ee8f868dcfac63ab2e`. Three transient unparsable
+  intermediate states across two paths were recorded and excluded as non-formatter
+  results; no ambiguous chronology remained in the 263 final rows.
+- Live ownership capture inspected all nine open PRs at
+  `2026-08-31T02:08:11Z`; the previously captured PR `#2244` was no longer open
+  and is not live authority. Complete paginated API paths and exact heads were
+  checked against local `05c858e...head` diffs for every PR. Exact current failure
+  overlaps were PR `#2230` (one), `#2196` (11), `#2059` (one), and `#1655`
+  (two, including one also owned by `#2059`); PRs `#2026`, `#1991`, `#1903`,
+  `#1851`, and `#1651` had no overlap. Matching active worktrees and the explicit
   `origin/dev` 14-day Python history were projected into each batch's nonempty
   `conflict_basis`.
-- The 38 sorted stable labels are `ruff-agents-runtime`, `ruff-api`,
-  `ruff-api-client-large`, `ruff-app-shell-large`, `ruff-chachanotes-db-large`,
+- The 36 sorted stable labels are `ruff-agents-runtime`, `ruff-api`,
+  `ruff-api-client-large`, `ruff-app-shell-large`,
   `ruff-character-persona`, `ruff-chat-core`, `ruff-chunking`,
   `ruff-ci-workflow-active`, `ruff-console-composer-active`,
-  `ruff-console-performance-active`, `ruff-console-trace-ledger-active`,
+  `ruff-console-performance-active`,
   `ruff-console-ui`, `ruff-core-runtime`, `ruff-database`, `ruff-evals`,
   `ruff-generation-media`, `ruff-ingestion-web-media`, `ruff-integration-live`,
   `ruff-library`, `ruff-library-screen-large`, `ruff-notes`, `ruff-performance`,
@@ -991,8 +1002,8 @@ current raw census, and complete lineage were rebuilt.
   Its built-in suite printed exactly
   `manifest self-tests: 2 positive phases and 14 deterministic mutations passed`;
   an independent run reproduced all 14 named first error codes, and real
-  `--phase pre-records` accepted the canonical 16-key manifest with 2,037 identities,
-  38 batches, zero blockers, and zero cleanup records.
+  `--phase pre-records` accepted the canonical 16-key manifest with 2,041 identities,
+  36 batches, zero blockers, and zero cleanup records.
 
 ---
 
