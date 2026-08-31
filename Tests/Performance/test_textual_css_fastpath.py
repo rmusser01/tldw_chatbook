@@ -288,3 +288,113 @@ async def test_filter_follows_a_class_added_to_an_ancestor_at_runtime() -> None:
             f"removing the ancestor class did not withdraw the rule "
             f"({len(with_class)} -> {len(after)})"
         )
+
+
+#: TASK-25810 ratchet: ancestor-scoped rules whose SUBJECT is a bare common
+#: type. Textual indexes each rule under its rightmost selector only, so
+#: every one of these is a candidate for every widget of that type in the
+#: app -- `#panel Button` costs all ~110 live Buttons a full selector
+#: evaluation (the ancestor filter rejects most cheaply, but the candidate
+#: set is still built). Measured 2026-08-30: these rules were 93% of all
+#: per-node candidate work on a 502-node Console.
+#:
+#: NEVER RAISE this constant (ADR-097's ratchet discipline; the CSS byte
+#: budget's history is three cycles of silent regrowth). On a breach:
+#: re-key the new rule -- give its subject a class carried only by the
+#: intended widgets (`#panel Button` -> `Button.panel-action`) -- instead of
+#: widening the budget. When re-keying work lands, LOWER it to the new count.
+#:
+#: Pinned 2026-08-31 at measured 274 + 10 slack (ADR-097's convention:
+#: enough headroom that one ordinary PR does not red the build, little
+#: enough that regrowth forces the re-keying conversation).
+MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES = 284
+
+#: Anti-vacuity floor: the census walking a hollow stylesheet (bundle
+#: missing, parse failure swallowed) must fail loudly, not pass at zero.
+MIN_ANCESTOR_SCOPED_BARE_TYPE_RULES = 150
+
+#: The type keys that are worth guarding: common enough that one scoped rule
+#: taxes dozens-to-hundreds of live nodes. (`Widget` is excluded -- its one
+#: rule is upstream's, and rare bespoke types are self-limiting.)
+_GUARDED_TYPE_KEYS = (
+    "Button",
+    "Static",
+    "Input",
+    "Select",
+    "Checkbox",
+    "Vertical",
+    "Horizontal",
+    "VerticalScroll",
+)
+
+
+@pytest.mark.ui
+@pytest.mark.asyncio
+async def test_ancestor_scoped_bare_type_rule_count_is_a_ratchet() -> None:
+    """New CSS must not grow the bare-type-subject candidate tax.
+
+    Counts, in the app's real parsed stylesheet, the rules that are (a)
+    indexed under one of the common bare type keys and (b) ancestor-scoped
+    (some selector set has a descendant/child hop, so the type is the
+    subject and the scope rides an ancestor). These are exactly the rules
+    the rightmost-selector index over-distributes.
+
+    Counting the PARSED stylesheet rather than grepping .tcss text is
+    deliberate: a 2026-08-29 dead-CSS sweep built on a text regex
+    mis-parsed every selector and would have deleted live CSS. The parser
+    is the only honest tokenizer for its own syntax.
+    """
+    from collections import Counter
+
+    from Tests.UI.app_factory import _build_test_app
+
+    app = _build_test_app()
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        rules_map = app.stylesheet.rules_map
+
+        per_key: Counter = Counter()
+        offenders: list[str] = []
+        counted: set[int] = set()
+        for key in _GUARDED_TYPE_KEYS:
+            for rule in rules_map.get(key, ()):
+                if id(rule) in counted:
+                    continue  # a rule can index under several names
+                if any(
+                    len(sset.selectors) > 1 for sset in rule.selector_set
+                ):
+                    counted.add(id(rule))
+                    per_key[key] += 1
+                    if len(offenders) < 400:
+                        offenders.append(f"[{key}] {rule.selectors}")
+
+        total = sum(per_key.values())
+        breakdown = ", ".join(
+            f"{key}={count}" for key, count in per_key.most_common()
+        )
+
+        print(f"\n[census] total={total} ({breakdown})")
+        assert total >= MIN_ANCESTOR_SCOPED_BARE_TYPE_RULES, (
+            f"census found only {total} ancestor-scoped bare-type rules "
+            f"({breakdown}) -- below the anti-vacuity floor "
+            f"({MIN_ANCESTOR_SCOPED_BARE_TYPE_RULES}). The census is walking "
+            "a hollow stylesheet, not a real boot; a passing ratchet here "
+            "would prove nothing."
+        )
+        assert total <= MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES, (
+            f"{total} ancestor-scoped bare-type-subject rules "
+            f"(ratchet limit {MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES}; "
+            f"{breakdown}).\n"
+            "Each of these is a style-apply candidate for EVERY widget of "
+            "its type in the app, because Textual indexes rules by their "
+            "rightmost selector only. Do not raise the constant (see the "
+            "constant's comment and ADR-097's ratchet discipline): re-key "
+            "the new rule instead -- give its subject a class carried only "
+            "by the intended widgets, e.g. `#panel Button` -> "
+            "`Button.panel-action` plus that class in compose().\n"
+            "Newest offenders are easiest to find with: git diff on "
+            "tldw_chatbook/css/ for selectors ending in a bare "
+            f"{'/'.join(_GUARDED_TYPE_KEYS[:3])}... type.\n"
+            "Sample of current offenders:\n  "
+            + "\n  ".join(offenders[:15])
+        )

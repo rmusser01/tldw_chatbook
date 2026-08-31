@@ -63,10 +63,19 @@ evaluate it.
 - [ ] No visual regression: the re-keyed rules still apply to exactly the
       widgets they applied to before (assert computed styles, not
       selector text)
-- [ ] A guard fails new CSS whose subject selector is a bare common type
+- [x] A guard fails new CSS whose subject selector is a bare common type
       (`Button`, `Static`, `Input`, `Vertical`, `Horizontal`) with an
       ancestor qualifier — otherwise this regrows, as the boot CSS budget
-      did three cycles running
+      did three cycles running.
+      *Done 2026-08-31 as a RATCHET, not a lint:
+      `test_ancestor_scoped_bare_type_rule_count_is_a_ratchet` in
+      `Tests/Performance/test_textual_css_fastpath.py`, pinned at measured
+      274 + 10 slack = 284, never raised, with an anti-vacuity floor of
+      150. Counts the PARSED stylesheet, not .tcss text — a text regex is
+      how the 08-29 dead-CSS sweep went wrong. Both assertions
+      mutation-tested (MAX below actual fails naming offenders; floor
+      above actual fails as hollow-census). Already runs per-PR: the file
+      is in `perf-guard.yml`. When re-keying lands, LOWER the constant.*
 
 ## Notes
 
