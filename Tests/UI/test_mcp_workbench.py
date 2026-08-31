@@ -4753,6 +4753,56 @@ async def test_test_tool_audit_sync_log_redacts_terminal_multiword_paths(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure_branch", ["access", "read"])
+@pytest.mark.parametrize(
+    "clause",
+    [
+        "while preparing the preview",
+        "DUE-TO a stale permission snapshot",
+    ],
+)
+async def test_test_tool_audit_sync_log_preserves_diagnostic_clause_after_directory(
+    failure_branch: str,
+    clause: str,
+    caplog: pytest.LogCaptureFixture,
+):
+    app = ToolTestApp()
+    failure = RuntimeError(f"failed at /Users/alice/Very Long Private Project {clause}")
+
+    class AccessFailureService:
+        @property
+        def execution_log(self):
+            raise failure
+
+    class ReadFailureLog:
+        def read_recent(self, _limit: int):
+            raise failure
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        app.unified_mcp_service = (
+            AccessFailureService()
+            if failure_branch == "access"
+            else SimpleNamespace(execution_log=ReadFailureLog())
+        )
+        caplog.clear()
+        sink = mcp_workbench_module.logger.add(
+            caplog.handler, level="WARNING", format="{message}"
+        )
+        try:
+            await workbench._sync_audit_log_entries()
+        finally:
+            mcp_workbench_module.logger.remove(sink)
+
+        prefix = f"MCP execution log {failure_branch} failed"
+        rendered = "".join(message for message in caplog.messages if prefix in message)
+        assert "Users/alice" not in rendered
+        assert "Long Private Project" not in rendered
+        assert clause in rendered
+
+
+@pytest.mark.asyncio
 async def test_test_tool_typed_failure_outcome_is_redacted_and_bounded():
     app = ToolTestApp()
     app.unified_mcp_service.next_prepared_outcome = LocalHubExecutionOutcome(
