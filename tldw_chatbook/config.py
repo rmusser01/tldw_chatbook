@@ -4258,6 +4258,20 @@ auto_save = false
 # Show analysis button in media viewer by default
 show_analysis_button = true
 
+[permission_summary]
+# ADR-080: advisory summaries on Console approval cards.
+# mode: off (default) | fallback (only when the model gave no rationale)
+# | always (every approval round). Enabling sends a bounded tail of the
+# conversation (user/assistant text only) to this provider.
+mode = "off"
+provider = ""
+model = ""
+# api_key = ""           # optional; else the provider's configured key
+timeout_seconds = 4
+max_tokens = 120
+tail_max_chars = 4000
+# system_prompt = ""     # optional override of the built-in neutral prompt
+
 [llm_management]
 # LLM Management settings
 model_download_dir = "~/Downloads/tldw_models"  # Legacy read-only scan root for Installed models
