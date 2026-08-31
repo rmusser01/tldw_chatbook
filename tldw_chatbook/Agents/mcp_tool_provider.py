@@ -148,6 +148,12 @@ class MCPPendingCall:
     #: Runtime ownership after approved execution starts.  Unknown/external
     #: rows retain the bounded default; only an exact code-owned enum opts in.
     execution_policy: ToolExecutionPolicy = ToolExecutionPolicy.BOUNDED_ABANDONABLE
+    #: ADR-080: the model's advisory rationale for this call (advisory
+    #: display only -- never gates, never persists).
+    rationale: str = ""
+    #: ADR-080: the tool definition's description, for the external
+    #: summarizer prompt; "" when the owner had none at hand.
+    description: str = ""
 
 
 def _has_non_text_content(value: Any) -> bool:
@@ -578,7 +584,11 @@ class MCPToolProvider:
     # -- gate resolution for the batch-review hook (worker thread) --------
 
     def pending_gate_for(
-        self, llm_name: str, args: dict, call_id: str = ""
+        self,
+        llm_name: str,
+        args: dict,
+        call_id: str = "",
+        rationale: str = "",
     ) -> MCPPendingCall | None:
         """Resolve one call's gate; return a pending descriptor iff it needs asking.
 
@@ -606,6 +616,8 @@ class MCPToolProvider:
                 (`ensure_tool_call_ids` fills those in for the native path);
                 an empty id makes the row collapse by name, which shares one
                 verdict across every same-name call in the batch.
+            rationale: The call's advisory rationale (ADR-080), copied
+                verbatim onto the row.
 
         Returns:
             An `MCPPendingCall` describing what needs asking, or `None`
@@ -645,6 +657,8 @@ class MCPToolProvider:
             # every same-name MCP call into one `xN` row with one verdict --
             # the defect the per-call re-key fixed for built-in tools.
             call_id=call_id,
+            rationale=rationale,
+            description=str(getattr(tool, "description", "") or "")[:300],
             reason=_pending_reason(state),
         )
 

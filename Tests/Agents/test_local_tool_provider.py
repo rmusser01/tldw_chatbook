@@ -2020,6 +2020,13 @@ def test_pending_gate_for_ask_returns_pending_call(tmp_path):
     assert p.pending_gate_for("unknown", {}) is None
 
 
+def test_pending_gate_for_carries_rationale(tmp_path):
+    p = make_provider(state=ASK, root=tmp_path)
+    row = p.pending_gate_for("fs_list", {"path": "."}, rationale="checking config")
+    assert row is not None
+    assert row.rationale == "checking config"
+
+
 def test_stamp_scope_isolates_nested_run(tmp_path):
     p = make_provider(state=ASK, root=tmp_path)
     p.apply_batch_decisions(RUN, {"fs_list": "approve_once"})

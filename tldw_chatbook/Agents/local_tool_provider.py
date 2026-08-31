@@ -999,6 +999,7 @@ class LocalToolProvider:
         name: str,
         args: dict,
         call_id: str = "",
+        rationale: str = "",
         *,
         run_id: str = "",
     ) -> MCPPendingCall | None:
@@ -1010,6 +1011,8 @@ class LocalToolProvider:
             args: The call's arguments, echoed into the pending payload.
             call_id: Provider call identity when available. Empty preserves
                 the name-keyed fence and single-call fallback contract.
+            rationale: The call's advisory rationale (ADR-080), copied
+                verbatim onto the row.
 
         Returns:
             The ``MCPPendingCall`` to render for approval, or ``None``
@@ -1066,7 +1069,7 @@ class LocalToolProvider:
         ):
             return None
         gate, _resolve_failed = self._resolve_pending_gate(
-            name, args, self.hub_tool_for(name), call_id=call_id
+            name, args, self.hub_tool_for(name), call_id=call_id, rationale=rationale
         )
         return gate
 
@@ -1216,7 +1219,13 @@ class LocalToolProvider:
             self._promotion_proposals.clear()
 
     def _resolve_pending_gate(
-        self, name: str, args: dict, hub: HubTool, *, call_id: str = ""
+        self,
+        name: str,
+        args: dict,
+        hub: HubTool,
+        *,
+        call_id: str = "",
+        rationale: str = "",
     ) -> tuple[MCPPendingCall | None, bool]:
         """Shared resolution behind `pending_gate_for()`, plus (Fix Round I,
         Item 5) whether a `None` result came from the resolver RAISING.
@@ -1245,6 +1254,8 @@ class LocalToolProvider:
             hub: The tool's ``HubTool`` view for permission resolution.
             call_id: Provider call identity when the batch runtime supplied
                 one; empty on the compatible fence/fallback paths.
+            rationale: The call's advisory rationale (ADR-080), copied
+                verbatim onto the row.
 
         Returns:
             ``(gate, resolve_failed)`` -- ``gate`` is the pending call to
@@ -1270,6 +1281,11 @@ class LocalToolProvider:
             if state.risk_floored
             else "ask"
         )
+        # ADR-080: description rides every gate this resolver builds -- both
+        # `pending_gate_for()`'s rows and `_verdict_for()`'s callback gate.
+        # `pending_gate_for()` already verified the spec exists; None here
+        # (impossible for its calls) still degrades to "" via the getattr.
+        spec = self._specs.get(name)
         gate = MCPPendingCall(
             llm_name=name,
             server_key=LOCAL_SERVER_KEY,
@@ -1280,6 +1296,8 @@ class LocalToolProvider:
                 if self._specs[name].approval_arguments is not None
                 else args
             ),
+            rationale=rationale,
+            description=str(getattr(spec, "description", "") or "")[:300],
             reason=reason,
             call_id=str(call_id or ""),
             effects=self._specs[name].approval_effects,

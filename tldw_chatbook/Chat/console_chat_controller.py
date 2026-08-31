@@ -1395,7 +1395,10 @@ def _collect_mcp_pending(
     pending: list["MCPPendingCall"] = []
     for call in calls:
         gate = provider.pending_gate_for(
-            call.name, call.args, str(getattr(call, "call_id", "") or "")
+            call.name,
+            call.args,
+            str(getattr(call, "call_id", "") or ""),
+            rationale=str(getattr(call, "rationale", "") or ""),
         )
         if gate is not None:
             pending.append(gate)
@@ -1814,6 +1817,8 @@ def build_tool_review_hook(
                     # refuse another in the same batch. Empty on the fence
                     # path, where the runtime falls back to the name.
                     call_id=str(getattr(call, "call_id", "") or ""),
+                    rationale=str(getattr(call, "rationale", "") or ""),
+                    description=str(getattr(tool, "description", "") or "")[:300],
                     reason="risk_floored" if state.risk_floored else "ask",
                     options=("approve_once", "approve_session", "deny"),
                     # TASK-1231/F3 AC2: pre-flight the roots check for the
