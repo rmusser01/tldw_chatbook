@@ -136,3 +136,18 @@ construction here would duplicate a private contract that
 `test_upstream_apply_still_has_the_shape_the_fastpath_assumes` would then
 have to pin as well. Worth measuring the hit rate before deciding it is
 worth that coupling.
+
+## The user-facing number
+
+The −37% above is a synthetic full-screen `stylesheet.update`. On a real,
+settled Console → Library navigation (three interleaved pairs):
+
+| arm | apply time per switch |
+|---|---:|
+| filter off | 72.7 ms |
+| filter on | **53.9 ms** |
+| **delta** | **−18.8 ms (−26%)** |
+
+**Quote 26%, not 37%, as the user-facing benefit.** A navigation does more
+than restyle, so the filter's share of it is smaller. Remaining CSS re-keying
+headroom should be measured against these numbers, not the synthetic ones.

@@ -477,3 +477,25 @@ SCREEN takes boot sources 14 → ~20, well clear; splitting per-component would
 walk back into that cliff.
 
 Recommendation and the do-not-do are recorded on TASK-25812.
+
+---
+
+## 8. What the filter is worth on a real navigation
+
+§5's −37% was a synthetic full-screen `stylesheet.update`. What a user
+actually waits for is a screen switch, so the same A/B was run across
+settled Console → Library navigations, three interleaved pairs:
+
+| arm | apply time per switch | samples |
+|---|---:|---|
+| filter off | 72.7 ms | 70.6 / 72.7 / 88.2 |
+| filter on | **53.9 ms** | 49.0 / 53.9 / 69.6 |
+| **delta** | **−18.8 ms (−26%)** | just non-overlapping (69.6 < 70.6) |
+
+**26%, not 37%, is the user-facing number**, and it is the honest one to
+quote: a navigation does more than restyle, so the filter's share of it is
+smaller. Against a switch whose total apply cost is 45–79 ms (§6), removing
+~19 ms is a real but bounded win.
+
+Windows were settled before every measurement. Skipping that is what
+produced the retracted §3.
