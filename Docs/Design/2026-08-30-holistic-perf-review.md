@@ -444,3 +444,36 @@ what made it convincing — three runs, identical counts — and that is the
 part worth remembering: **a deterministic artifact is indistinguishable
 from a real effect by repetition alone. Only changing the window exposed
 it.**
+
+---
+
+## 7. TASK-25812 investigation: deferral is feasible, but not by moving the file
+
+Two prior reviews raised `components/_agentic_terminal.tcss` as an owner call
+and neither was actioned. The investigation explains why: the obvious fix is
+wrong.
+
+**The timing window is real.** Textual loads a screen's own `CSS_PATH` lazily
+(`App._load_screen_css`). Measured: first paint at 577.9 ms,
+`ChatScreen.__init__` first called at **2049.6 ms** — 1.47 s of slack.
+
+**But the file is not Console CSS.** Of 964 distinct id/class tokens: 411
+`console-*`, but also 259 `library-*`, 91 `settings-*`, 37 `mcp-*`, plus
+personas, home, notes, acp, prompt. Moving it onto ChatScreen would break
+five other screens.
+
+**It is cleanly splittable, though.** Attributing each rule block to the
+screen its selectors name: console 43.0%, library 26.9%, settings 10.7%, and
+**only 15 rules (3.6%) genuinely span screens**.
+
+*Method limit:* the regex attributed 167,869 B of 283,119 B; the rest is
+comments, whitespace and nested blocks it does not capture. The shares
+describe the shape of a split, not exact byte savings.
+
+**The constraint.** `app.py`'s `_get_default_css` records TASK-15450:
+Textual's parse cache is an `LRUCache(64)` per stylesheet, and a tour that
+reached 94 sources made every parse run fully cold (125–380 ms). Splitting by
+SCREEN takes boot sources 14 → ~20, well clear; splitting per-component would
+walk back into that cliff.
+
+Recommendation and the do-not-do are recorded on TASK-25812.

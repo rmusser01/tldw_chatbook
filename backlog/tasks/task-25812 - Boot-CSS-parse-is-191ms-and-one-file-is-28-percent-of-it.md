@@ -75,6 +75,75 @@ TASK-24451 covers splitting this file; this task is specifically about
 getting it OFF the pre-first-paint parse and clearing the standing ratchet
 breach. Coordinate rather than duplicating.
 
+## Investigation for AC #1 (2026-08-31) — deferral is feasible, but NOT by moving the file
+
+### The timing window exists
+
+Textual loads a screen's own `CSS_PATH` lazily (`App._load_screen_css`, called
+from `push_screen`/`switch_screen`), so per-screen CSS is parsed when that
+screen is first built. Measured:
+
+| event | at |
+|---|---:|
+| first paint (`run_test` entered) | 577.9 ms |
+| `ChatScreen.__init__` first called | **2049.6 ms** |
+
+ChatScreen is constructed **1.47 s after first paint**, exactly once. So CSS
+moved onto it genuinely leaves the pre-first-paint leg, with ample slack.
+
+### But the file is not Console CSS, despite its name
+
+`components/_agentic_terminal.tcss` is a grab-bag. Of 964 distinct id/class
+tokens: 411 `console-*`, **259 `library-*`, 91 `settings-*`, 37 `mcp-*`**,
+plus personas, home, notes, acp, prompt. **Moving it to ChatScreen would
+break five other screens.** That is very likely why the "split this file"
+owner call from the 08-27 and 08-29 reviews was never actioned: the obvious
+move does not work.
+
+### It is, however, cleanly splittable
+
+Attributing each rule block to the screen its selectors name:
+
+| owner | bytes | rules | share of attributed |
+|---|---:|---:|---:|
+| console | 72,257 | 452 | 43.0% |
+| library | 45,104 | 268 | 26.9% |
+| settings | 17,891 | 94 | 10.7% |
+| **MIXED (spans screens)** | **6,074** | **15** | **3.6%** |
+| mcp / prompt / approval / personas / home / notes / exchange / internal / acp | 15,702 | 102 | 9.4% |
+| (unattributed) | 10,841 | 82 | 6.5% |
+
+**Only 15 rules genuinely span screens.** Console + Library + Settings alone
+are 81% of attributed bytes and could each move to their own screen's
+`CSS_PATH`.
+
+*Method limit, stated because it bounds the confidence:* the regex attributed
+167,869 B of the file's 283,119 B. The remainder is comments, whitespace and
+blocks a flat rule-block regex does not capture (nested rules). The shares
+above are **of attributed bytes, not of the file** — treat them as the shape
+of the split, not as the exact byte savings.
+
+### The constraint any split must respect
+
+`app.py`'s `_get_default_css` records TASK-15450: Textual's parse cache is an
+`LRUCache(64)` **per stylesheet**, and a destination tour that reached 94
+sources made *every* `Stylesheet.parse()` run fully cold (125–380 ms
+measured). That is why widget CSS was consolidated into one source in the
+first place. A split into ~6 per-screen sheets takes boot sources from 14 to
+~20 — well clear of 64 — but the split must be by SCREEN, not per-component,
+or it walks back into that cliff.
+
+### Recommendation for the owner call
+
+Split by owning screen and attach each part to that screen's `CSS_PATH`,
+keeping the 15 MIXED rules plus the unattributed remainder in the boot
+bundle. Coordinate with TASK-24451, which covers the split itself — this task
+is specifically about getting the result OFF the pre-first-paint parse and
+clearing the standing ratchet breach.
+
+Do not attempt the one-line version (move the whole file to ChatScreen); it
+is measurably wrong.
+
 *(This file existed as two copies — the review filing on PR #2258 and the
 implementation record on PR #2281 — merged by union here when #2281 landed
 on dev first, exactly as both copies' provenance notes anticipated.)*
