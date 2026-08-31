@@ -7118,7 +7118,7 @@ class LibraryScreen(BaseAppScreen):
         return self._library_media_return_settlement
 
     def _bind_library_media_settlement_deadline(self, request_id: int) -> None:
-        """Bind the existing outer deadline to one ABA-safe request ID."""
+        """Bind the outer deadline to its Media request and focus generation."""
         deadline = self._library_list_entry_focus_deadline
         if deadline is None or not self._library_pending_list_entry_focus:
             return
@@ -7127,7 +7127,11 @@ class LibraryScreen(BaseAppScreen):
         remaining = max(0.0, deadline - time.monotonic())
         self._library_list_entry_focus_timer = self.set_timer(
             remaining,
-            partial(self._expire_library_media_return_settlement, request_id),
+            partial(
+                self._expire_library_media_return_settlement,
+                request_id,
+                self._library_list_entry_focus_generation,
+            ),
         )
 
     def _settle_library_media_return_from_geometry(
@@ -7433,12 +7437,20 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_programmatic_focus_target = target
         return committed
 
-    def _expire_library_media_return_settlement(self, request_id: int) -> None:
+    def _expire_library_media_return_settlement(
+        self,
+        request_id: int,
+        outer_generation: int,
+    ) -> None:
         """Finish one ABA-bound outer arm without inferring layout readiness."""
+        if (
+            request_id != self._library_media_return_request_id
+            or outer_generation != self._library_list_entry_focus_generation
+        ):
+            return
         request = self._library_media_return_settlement
         if request is None:
-            if request_id == self._library_media_return_request_id:
-                self._disarm_library_list_entry_focus()
+            self._disarm_library_list_entry_focus()
             return
         if request.request_id != request_id:
             return

@@ -20,6 +20,7 @@ from Tests.UI.test_library_media_side_by_side import (
     _open_media_list,
     _open_scrolled_compact_media_viewer,
 )
+from Tests.UI.test_library_prompts_canvas import _FakePromptScopeServiceWithList
 from Tests.UI.test_library_shell import (
     LibraryProductionCSSHarness,
     _active_library_screen,
@@ -1116,6 +1117,108 @@ async def test_post_exact_direct_ingest_route_synchronously_disarms_lifecycle() 
 
 
 @pytest.mark.asyncio
+async def test_old_media_deadline_cannot_cancel_new_prompts_list_focus_arm() -> None:
+    """A stale Media timer cannot disarm a newer destination's focus arm."""
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    app.prompt_scope_service = _FakePromptScopeServiceWithList(
+        [
+            {
+                "id": 1,
+                "name": "Settlement prompt",
+                "last_modified": "2026-08-30T12:00:00+00:00",
+                "version": 1,
+            }
+        ]
+    )
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        row = screen.query_one("#library-media-row-19", Button)
+        scroll = screen.query_one("#library-media-row-scroll")
+        row.focus()
+        row.scroll_visible(animate=False, force=True, immediate=True)
+        await _wait_for_condition(
+            pilot,
+            lambda: scroll.scroll_y > 0,
+            message="Wide Media Items never reached a nonzero scroll offset.",
+        )
+        row.press()
+        await _wait_for_selector(screen, pilot, "#library-media-back")
+        screen.query_one("#library-media-back", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_last_settlement_outcome is not None
+            and screen._library_media_last_settlement_outcome[1] == "exact-settled",
+            message="Initial exact Media return never settled.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_notes_programmatic_focus_target is None,
+            message="Queued exact-return focus guard did not drain.",
+        )
+        old_media_timer = screen._library_list_entry_focus_timer
+        assert old_media_timer is not None
+        old_media_deadline_callback = old_media_timer._callback
+        assert callable(old_media_deadline_callback)
+
+        await screen._select_library_rail_row(
+            library_screen_module.LIBRARY_ROW_BROWSE_PROMPTS
+        )
+
+        destination_timer = screen._library_list_entry_focus_timer
+        assert destination_timer is not None
+        assert destination_timer is not old_media_timer
+        assert screen._library_pending_list_entry_focus is True
+        assert screen._library_pending_list_entry_media_return is None
+        destination_state = (
+            screen._library_pending_list_entry_focus,
+            screen._library_pending_list_entry_media_return,
+            screen._library_pending_list_entry_focus_anchor,
+            screen._library_list_entry_focus_timer,
+            screen._library_list_entry_focus_deadline,
+            screen._library_list_entry_focus_generation,
+            screen._library_media_return_settlement,
+            screen._library_media_last_exact_settlement,
+            screen._library_media_last_successful_settlement,
+            screen._library_media_last_settlement_attempt,
+            screen._library_media_last_settlement_outcome,
+            screen._library_media_successful_focus_ownership,
+            screen._library_notes_programmatic_focus_target,
+        )
+
+        old_media_deadline_callback()
+        await pilot.pause()
+
+        assert (
+            screen._library_pending_list_entry_focus,
+            screen._library_pending_list_entry_media_return,
+            screen._library_pending_list_entry_focus_anchor,
+            screen._library_list_entry_focus_timer,
+            screen._library_list_entry_focus_deadline,
+            screen._library_list_entry_focus_generation,
+            screen._library_media_return_settlement,
+            screen._library_media_last_exact_settlement,
+            screen._library_media_last_successful_settlement,
+            screen._library_media_last_settlement_attempt,
+            screen._library_media_last_settlement_outcome,
+            screen._library_media_successful_focus_ownership,
+            screen._library_notes_programmatic_focus_target,
+        ) == destination_state
+        await _wait_for_selector(screen, pilot, ".library-prompt-row")
+        await screen.recompose()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.focused is not None
+            and screen.focused.has_class("library-prompt-row"),
+            message="Prompt list focus did not settle after the stale Media deadline.",
+        )
+        assert screen._library_pending_list_entry_focus is True
+        assert screen._library_list_entry_focus_timer is destination_timer
+
+
+@pytest.mark.asyncio
 async def test_post_exact_trash_entry_preserves_only_trash_return_receipt() -> None:
     """Trash captures its return before clearing old exact-settlement state."""
     app = _build_media_test_app()
@@ -1714,8 +1817,15 @@ async def test_deadline_uses_one_current_geometry_fallback_and_never_requeues(
             return real_set_focus(widget, *args, **kwargs)
 
         monkeypatch.setattr(screen, "set_focus", observe_focus)
-        screen._expire_library_media_return_settlement(request.request_id)
-        screen._expire_library_media_return_settlement(request.request_id)
+        outer_generation = screen._library_list_entry_focus_generation
+        screen._expire_library_media_return_settlement(
+            request.request_id,
+            outer_generation,
+        )
+        screen._expire_library_media_return_settlement(
+            request.request_id,
+            outer_generation,
+        )
 
         assert screen._library_media_last_settlement_outcome == (
             request.request_id,
@@ -1758,8 +1868,15 @@ async def test_deadline_without_geometry_fails_once_with_metadata_only_warning(
             notices.append((message, severity))
 
         monkeypatch.setattr(app, "notify", capture_notice)
-        screen._expire_library_media_return_settlement(request.request_id)
-        screen._expire_library_media_return_settlement(request.request_id)
+        outer_generation = screen._library_list_entry_focus_generation
+        screen._expire_library_media_return_settlement(
+            request.request_id,
+            outer_generation,
+        )
+        screen._expire_library_media_return_settlement(
+            request.request_id,
+            outer_generation,
+        )
 
         assert screen._library_media_last_settlement_outcome == (
             request.request_id,
