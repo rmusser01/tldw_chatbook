@@ -25,6 +25,7 @@ import asyncio
 import inspect
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from textual.events import Key
@@ -267,6 +268,7 @@ def test_attach_and_detach_cover_exactly_the_same_slot_set():
             for name in inspect.signature(ConsoleFleetLifecycleController).parameters
         }
     )
+    screen._library_activity = SimpleNamespace(build_provider=no_op)
     declared = {slot.name for slot in CONSOLE_VIEW_HOOK_SLOTS}
     provided = set(ChatScreen.console_view_hooks(screen))
 
