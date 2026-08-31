@@ -11682,6 +11682,12 @@ class LibraryScreen(BaseAppScreen):
             self._library_list_entry_focus_timer.stop()
             self._library_list_entry_focus_timer = None
 
+    def _disarm_library_media_return_for_route_change(self) -> None:
+        """Clear all transient Media-return state at an admitted route exit."""
+        self._disarm_library_list_entry_focus()
+        self._library_media_last_settlement_outcome = None
+        self._library_notes_programmatic_focus_target = None
+
     def on_descendant_focus(self, event: DescendantFocus) -> None:
         """Record Notes focus intent and disarm foreign list-entry focus.
 
@@ -25850,6 +25856,12 @@ class LibraryScreen(BaseAppScreen):
         self._advance_library_stage_interaction()
         if self._try_switch_retained_library_notes_route(row_id):
             return
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+            and self._library_media_view == "list"
+            and row_id != LIBRARY_ROW_BROWSE_MEDIA
+        ):
+            self._disarm_library_media_return_for_route_change()
         self._acknowledge_library_destination_change()
         self._cancel_library_media_selection_settlement()
         if row_id != LIBRARY_ROW_BROWSE_MEDIA:
@@ -27141,6 +27153,7 @@ class LibraryScreen(BaseAppScreen):
         if self._library_media_bulk_delete_in_flight:
             return
         self._library_media_trash_return = self._capture_library_media_trash_return()
+        self._disarm_library_media_return_for_route_change()
         self._exit_library_media_select_mode(announce_discard=True)
         self._library_media_delete_receipt_ids = ()
         self._library_media_type_choices_visible = False

@@ -1037,6 +1037,133 @@ async def test_route_change_rejects_later_geometry_settlement(
 
 
 @pytest.mark.asyncio
+async def test_post_exact_direct_ingest_route_synchronously_disarms_lifecycle() -> None:
+    """An admitted route change clears exact-return state without focus help."""
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, _media_id, _scroll_offset = await _open_scrolled_compact_media_viewer(
+            host,
+            pilot,
+        )
+        screen.query_one("#library-media-back", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_last_settlement_outcome is not None
+            and screen._library_media_last_settlement_outcome[1] == "exact-settled",
+            message="Initial exact Media return never settled.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_notes_programmatic_focus_target is None,
+            message="Queued exact-return focus guard did not drain.",
+        )
+        assert screen._library_media_successful_focus_ownership is not None
+        assert screen._library_media_last_exact_settlement is not None
+        assert screen._library_media_last_successful_settlement is not None
+        assert screen._library_media_last_settlement_attempt is not None
+        timer = screen._library_list_entry_focus_timer
+        assert timer is not None
+        stale_deadline_callback = timer._callback
+        assert callable(stale_deadline_callback)
+        request_counter = screen._library_media_return_request_id
+
+        await screen._select_library_rail_row(
+            library_screen_module.LIBRARY_ROW_INGEST_MEDIA
+        )
+
+        assert (
+            screen._library_selected_row_id
+            == library_screen_module.LIBRARY_ROW_INGEST_MEDIA
+        )
+        assert screen.query("#library-ingest-canvas")
+        assert screen._library_pending_list_entry_focus is False
+        assert screen._library_pending_list_entry_media_return is None
+        assert screen._library_pending_list_entry_focus_anchor is None
+        assert screen._library_media_return_settlement is None
+        assert screen._library_list_entry_focus_deadline is None
+        assert screen._library_list_entry_focus_timer is None
+        assert screen._library_media_successful_focus_ownership is None
+        assert screen._library_media_last_exact_settlement is None
+        assert screen._library_media_last_successful_settlement is None
+        assert screen._library_media_last_settlement_attempt is None
+        assert screen._library_media_last_settlement_outcome is None
+        assert screen._library_notes_programmatic_focus_target is None
+
+        stale_deadline_callback()
+        await pilot.pause()
+
+        assert screen._library_media_return_request_id == request_counter
+        assert screen._library_pending_list_entry_focus is False
+        assert screen._library_pending_list_entry_media_return is None
+        assert screen._library_media_return_settlement is None
+        assert screen._library_media_last_settlement_outcome is None
+
+        await screen.recompose()
+        await pilot.pause()
+
+        assert (
+            screen._library_selected_row_id
+            == library_screen_module.LIBRARY_ROW_INGEST_MEDIA
+        )
+        assert screen._library_media_return_request_id == request_counter
+        assert screen._library_pending_list_entry_focus is False
+        assert screen._library_media_return_settlement is None
+        assert screen._library_media_successful_focus_ownership is None
+        assert screen._library_media_last_settlement_outcome is None
+
+
+@pytest.mark.asyncio
+async def test_post_exact_trash_entry_preserves_only_trash_return_receipt() -> None:
+    """Trash captures its return before clearing old exact-settlement state."""
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, media_id, scroll_offset = await _open_scrolled_compact_media_viewer(
+            host,
+            pilot,
+        )
+        screen.query_one("#library-media-back", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_last_settlement_outcome is not None
+            and screen._library_media_last_settlement_outcome[1] == "exact-settled",
+            message="Initial exact Media return never settled.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_notes_programmatic_focus_target is None,
+            message="Queued exact-return focus guard did not drain.",
+        )
+        assert screen._library_media_successful_focus_ownership is not None
+
+        screen.query_one("#library-media-trash-open", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-trash-canvas")
+
+        trash_return = screen._library_media_trash_return
+        assert trash_return is not None
+        assert trash_return.stable_id == media_id
+        assert trash_return.scroll_offset == scroll_offset
+        assert trash_return.final_focus_policy == "control"
+        assert trash_return.final_focus_identity == "library-media-trash-open"
+        assert screen._library_media_view == "trash"
+        assert screen._library_pending_list_entry_focus is False
+        assert screen._library_pending_list_entry_media_return is None
+        assert screen._library_media_return_settlement is None
+        assert screen._library_list_entry_focus_timer is None
+        assert screen._library_media_successful_focus_ownership is None
+        assert screen._library_media_last_exact_settlement is None
+        assert screen._library_media_last_successful_settlement is None
+        assert screen._library_media_last_settlement_attempt is None
+        assert screen._library_media_last_settlement_outcome is None
+        assert screen._library_notes_programmatic_focus_target is None
+
+
+@pytest.mark.asyncio
 async def test_detached_current_owner_rejects_later_geometry_settlement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
