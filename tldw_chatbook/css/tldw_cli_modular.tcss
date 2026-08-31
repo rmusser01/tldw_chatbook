@@ -6142,11 +6142,26 @@ with stray left-edge border fragments), and padding 0 1 so the full
     content-align: left middle;
 }
 
+/* TASK-25715: the Context header and the Inspector's group heading are one
+   shared band -- same background, colour and padding -- and a contract test
+   pins them together. #2220/TASK-24609 moved the Inspector side to `padding:
+   0` so its headings start in the same column as the rows they label, which
+   silently broke the band from the other side.
+
+   Context follows the Inspector rather than the reverse. Re-indenting the
+   Inspector heading would restore the band by re-opening the heading/row
+   misalignment TASK-24609 fixed, and padding its ROWS instead was already
+   measured and rejected there: it costs each row a column and wrapped two
+   live-work rows at the rail's 46-column width. Dropping this indent costs
+   the Context header nothing -- the raised background still spans the full
+   row -- and gives the section title one more column, which the 27-column
+   rail can use. The border-top rule and the 2-row minimum are deliberate
+   (TASK-23193) and stay. */
 .console-rail-section-header {
     height: auto;
     min-height: 2;
     border-top: solid $ds-column-line;
-    padding: 0 1;
+    padding: 0;
     background: $ds-surface-raised;
     color: $ds-text-primary;
     content-align: center middle;

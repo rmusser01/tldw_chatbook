@@ -149,6 +149,31 @@ traceback with `--tb=long` from an actual failure.
 **Findings 1 and 3 are unaffected** -- both re-measured 0 passed / 5 failed of
 5, deterministic, and their bisects to `c2f64f690` (#2220) stand.
 
+## Progress (2026-08-31)
+
+**Finding 1 is FIXED.** `test_context_section_headers_match_inspector_title_band`
+passes. Not by re-indenting the Inspector: that would have restored the band by
+re-opening the heading/row misalignment TASK-24609 deliberately fixed, and
+padding the inspector ROWS instead was already measured and rejected there (it
+costs each row a column and wrapped two live-work rows at 46 columns). Context
+follows the Inspector instead -- `.console-rail-section-header` drops
+`padding: 0 1` to `padding: 0`. The raised background still spans the full row,
+the section title gains a column the 27-column rail can use, and the border-top
+rule and 2-row minimum (TASK-23193, reviewer's explicit choice) are untouched.
+
+**Finding 3 -- a lead, not a fix.** The snapshot asserts `'Blocked impact'`, and
+that row is emitted in exactly ONE place: the `if setup_blocker_copy:` branch in
+`chat_screen.py` (~line 10976), which fires only when provider configuration is
+required. Everywhere else the label appears it is being *read* (the auto-open
+predicate at ~10367, the ownership map), never emitted. The same test file
+asserts the fixture is a configured, healthy run (`"Model: gpt-5.6-terra"`,
+`"Send disabled" not in svg`, `"Setup required" not in svg`), so the assertion
+wants a row that only exists in the blocked state while asserting the app is not
+in it. That reads as a stale assertion from when the fixture rendered blocked --
+but confirming which side is wrong needs someone who knows what #2220 intended
+the healthy-run Run group to contain, so it is left as AC #3 rather than guessed
+at.
+
 ## Notes
 
 Filed in the same spirit as TASK-15512. `origin/dev` had by this point absorbed
