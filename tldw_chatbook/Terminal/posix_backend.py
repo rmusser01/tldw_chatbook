@@ -617,6 +617,16 @@ class PosixTerminalBackend:
             self._input_pending.clear()
         self._input_pending.set()
 
+    def finalize_shutdown(self) -> None:
+        """Close remaining parent-owned handles without another wait."""
+        self.request_priority_close()
+        self._monitor_stop.set()
+        with self._io_lock:
+            with self._state_lock:
+                fd = self._master_fd
+                self._master_fd = None
+            _safe_close(fd)
+
     def cleanup(self, attempt: CleanupAttempt) -> CleanupProof:
         """Run identity-safe cleanup under absolute ADR-099 boundaries.
 

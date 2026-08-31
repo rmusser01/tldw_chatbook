@@ -1233,6 +1233,20 @@ def test_nonblocking_read_resize_winch_and_alternate_screen(
     assert b"\x1b[?1049l" in output
 
 
+def test_finalize_shutdown_closes_the_master_without_waiting(
+    backend: PosixTerminalBackend,
+) -> None:
+    master_fd = backend._master_fd
+    assert master_fd is not None
+
+    backend.finalize_shutdown()
+    backend.finalize_shutdown()
+
+    assert backend._master_fd is None
+    with pytest.raises(OSError):
+        os.fstat(master_fd)
+
+
 def test_exact_shell_exit_is_singly_reaped_and_pty_reaches_eof(
     backend: PosixTerminalBackend,
 ) -> None:

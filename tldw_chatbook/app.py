@@ -220,6 +220,8 @@ from tldw_chatbook.Chat.console_settings_defaults import ConsoleDefaultDurabilit
 from tldw_chatbook.Chat.server_chat_conversation_service import (
     ServerChatConversationService,
 )
+from tldw_chatbook.Terminal.backend import TerminalBackend  # noqa: E402
+from tldw_chatbook.Terminal.session_manager import TerminalSessionManager  # noqa: E402
 from tldw_chatbook.DB.Client_Media_DB_v2 import (
     DatabaseError as MediaDatabaseError,
     InputError as MediaInputError,
@@ -1064,6 +1066,15 @@ def _read_app_raw_cli_permitted(app: object) -> bool:
         return False
     console = config.get("console")
     return isinstance(console, Mapping) and console.get("raw_cli_permitted") is True
+
+
+def _build_terminal_backend() -> TerminalBackend:
+    """Build the supported platform backend without eager platform imports."""
+    if os.name != "posix":
+        raise OSError("persistent Terminal backend unavailable")
+    from tldw_chatbook.Terminal.posix_backend import PosixTerminalBackend
+
+    return PosixTerminalBackend()
 
 
 # --- Global variable for config ---
@@ -7266,6 +7277,11 @@ class TldwCli(
         self.app_config = load_settings()
         self.raw_cli_runtime = RawCliRuntime(lambda: _read_app_raw_cli_permitted(self))
         self._raw_cli_runtime_shutdown_task: asyncio.Task[Any] | None = None
+        self.terminal_session_manager = TerminalSessionManager(
+            lambda: _read_app_raw_cli_permitted(self),
+            _build_terminal_backend,
+        )
+        self._terminal_session_manager_shutdown_task: asyncio.Task[None] | None = None
         # Default-save failures belong to the application lifetime rather
         # than whichever Console screen happens to be mounted.  New-chat
         # generation advances only after a Make Default intent is fully
@@ -15587,6 +15603,27 @@ class TldwCli(
             self._raw_cli_runtime_shutdown_task = task
         await asyncio.shield(task)
 
+    async def _run_terminal_session_manager_shutdown(self) -> None:
+        """Drain Terminal once, then close remaining parent-owned handles."""
+        manager = getattr(self, "terminal_session_manager", None)
+        if manager is None:
+            return
+        try:
+            await manager.shutdown(deadline_seconds=5.0)
+        finally:
+            manager.finalize_shutdown()
+
+    async def _shutdown_terminal_session_manager(self) -> None:
+        """Share one cancellation-resistant Terminal shutdown task."""
+        task = getattr(self, "_terminal_session_manager_shutdown_task", None)
+        if task is None:
+            task = asyncio.create_task(
+                self._run_terminal_session_manager_shutdown(),
+                name="shutdown_terminal_session_manager",
+            )
+            self._terminal_session_manager_shutdown_task = task
+        await asyncio.shield(task)
+
     async def _shutdown_console_settings_durability(self) -> None:
         """Drain admitted settings writes without cancelling thread work.
 
@@ -15613,6 +15650,7 @@ class TldwCli(
         # Console shutdown terminally fences every trusted Buddy producer
         # before Buddy itself closes admission and drains owned work.
         await self._shutdown_raw_cli_runtime()
+        await self._shutdown_terminal_session_manager()
         await self._shutdown_console_settings_durability()
         await self._shutdown_console_runtime()
         change_review = getattr(self, "change_review_consent_service", None)

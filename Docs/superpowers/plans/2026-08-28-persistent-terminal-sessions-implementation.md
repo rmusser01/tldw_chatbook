@@ -951,8 +951,14 @@ git commit -m "feat: add admitted windows conpty backend"
 
 **Files:**
 - Modify: `tldw_chatbook/app.py`
+- Modify: `tldw_chatbook/Terminal/backend.py`
+- Modify: `tldw_chatbook/Terminal/session_manager.py`
+- Modify: `tldw_chatbook/Terminal/posix_backend.py`
 - Modify: `Tests/UI/test_console_runtime_ownership.py`
-- Modify: `Tests/Chat/test_console_runtime_lifetime.py`
+- Modify: `Tests/Terminal/test_contracts.py`
+- Modify: `Tests/Terminal/test_session_manager.py`
+- Modify: `Tests/Terminal/test_posix_backend.py`
+- Reference: `Tests/Chat/test_console_runtime_lifetime.py`
 
 - [ ] **Step 1: Write app-ownership and launch-reset RED tests**
 
@@ -1013,7 +1019,15 @@ git diff --check
 Expected: PASS.
 
 ```bash
-git add tldw_chatbook/app.py Tests/UI/test_console_runtime_ownership.py Tests/Chat/test_console_runtime_lifetime.py
+git add tldw_chatbook/app.py \
+  tldw_chatbook/Terminal/backend.py \
+  tldw_chatbook/Terminal/session_manager.py \
+  tldw_chatbook/Terminal/posix_backend.py \
+  Tests/UI/test_console_runtime_ownership.py \
+  Tests/Terminal/test_contracts.py \
+  Tests/Terminal/test_session_manager.py \
+  Tests/Terminal/test_posix_backend.py \
+  Docs/superpowers/plans/2026-08-28-persistent-terminal-sessions-implementation.md
 git commit -m "feat: own terminal manager at app lifetime"
 ```
 

@@ -144,6 +144,9 @@ def test_terminal_backend_protocol_signatures_match_the_brief() -> None:
         "request_priority_close": inspect.Signature(
             [parameter("self", positional)], return_annotation=None
         ),
+        "finalize_shutdown": inspect.Signature(
+            [parameter("self", positional)], return_annotation=None
+        ),
         "cleanup": inspect.Signature(
             [
                 parameter("self", positional),
