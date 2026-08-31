@@ -2183,6 +2183,7 @@ async def test_unlinked_workspace_edit_stays_local_until_explicitly_mapped(
         schema_version=1,
         quotas={"max_record_bytes": 16_384},
         cursor="cursor-bootstrap",
+        sync_transport_cursor="transport-bootstrap",
         integrity_key_id="integrity-1",
         key_record_id="key-record-1",
         wrapped_key_blob="wrapped",

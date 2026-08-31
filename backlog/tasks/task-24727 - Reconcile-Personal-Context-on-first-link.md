@@ -88,12 +88,11 @@ second authoritative profile was introduced.
   binding.
 - Added canonical F9 Settings review, attention, retry, cancel, interrupted resume,
   and linked-state behavior with exact content-free identity/version/quota rows.
-- Integrated the structured bootstrap attention contract pinned to tldw_server
-  `a92e12110d`. Chatbook strictly validates schema-range, quota-deficit, and
-  purge-generation 409 variants, carries only the typed safe object across the
-  link boundary, and shows exact values in the canonical modal with approval
-  disabled and retry/cancel available. Malformed bodies remain generic and no
-  raw response content is logged or displayed.
+- Integrated the final bootstrap contract pinned to tldw_server
+  `6455ab08cb12ec239c53b7b9180b1cc1ea5f8375`. Chatbook strictly validates
+  schema-range, quota-deficit, and purge-generation 409 variants plus the
+  separate successful-bootstrap `sync_transport_cursor`; malformed bodies remain
+  generic and no raw response content is logged or displayed.
 
 Bootstrap may reserve content-free server control-plane scaffolding required by
 the approved server contract. Planning/cancel performs no canonical Personal
@@ -146,3 +145,20 @@ and marker removal before ordinary Personal Context Sync collaborators are
 enabled. Fresh broad affected verification is 123 Personal Context + 136 Sync +
 97 API/UI tests passing (357 total); Ruff, compilation, Bandit high-severity, and diff
 hygiene pass. TASK-24727 remains In Progress for controller review.
+
+Final recovery/transport correction binds the durable rebaseline marker to the
+exact plan, canonical profile, integrity-key ID, key-record ID, purge generation,
+and rebaseline version, then authenticates that marker against the active key
+generation before resuming. Ambiguous legacy or mismatched applying state records
+retryable content-free attention while retaining its exact freeze and staged
+custody. First-link push/pull rejects any destination envelope outside the
+durable reviewed lineage, and each pulled page is fully preflighted before any
+privileged apply. Complete-state cleanup verifies exact freeze/marker ownership
+and removal before staged-key deletion or ordinary runtime wiring. The new
+`sync_transport_cursor` remains separate from the immutable semantic bootstrap
+receipt, survives retry/resume, skips retained pre-bootstrap history, and seeds
+only the private reviewed reconciliation path. Fresh targeted verification is
+124 Personal Context + 116 Sync + 33 API + 29 Sync-state + 68 canonical UI tests
+passing (370 total), with Ruff, compileall, Bandit high-severity, and diff hygiene
+green. No TCSS changed, so CSS reproduction was not applicable. TASK-24727 stays
+In Progress for controller review; acceptance criteria and DoD remain unchecked.

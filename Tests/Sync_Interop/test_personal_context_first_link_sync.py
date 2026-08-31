@@ -121,6 +121,7 @@ async def test_special_first_link_pull_uses_existing_transport_cursor_and_includ
         key_record_id="key-record-1",
         purge_generation=0,
         bootstrap_cursor="personal-context-bootstrap-v1:" + "a" * 64,
+        sync_transport_cursor="transport-bootstrap",
         bootstrap_heads=heads,
         expected_heads=heads,
         plan_id="plan-1",
@@ -148,19 +149,20 @@ async def test_special_first_link_pull_uses_existing_transport_cursor_and_includ
         key_record_id="key-record-1",
         purge_generation=0,
         bootstrap_cursor="personal-context-bootstrap-v1:" + "a" * 64,
+        sync_transport_cursor="transport-bootstrap",
         bootstrap_heads=heads,
         expected_heads=heads,
     )
 
     assert result == {
-        "confirmed_cursor": "17",
+        "confirmed_cursor": "transport-bootstrap",
         "confirmed_heads": heads,
     }
     assert server.calls == [
         {
             "dataset_id": "dataset-1",
             "device_id": "device-1",
-            "cursor": "17",
+            "cursor": "transport-bootstrap",
             "domains": [
                 "personal_context.manifest",
                 "personal_context.scope",
@@ -188,6 +190,7 @@ async def test_special_first_link_pull_uses_existing_transport_cursor_and_includ
             key_record_id="key-record-1",
             purge_generation=0,
             bootstrap_cursor="personal-context-bootstrap-v1:" + "a" * 64,
+            sync_transport_cursor="transport-bootstrap",
             bootstrap_heads=heads,
             expected_heads=heads,
         )
@@ -237,6 +240,7 @@ async def test_server_only_unbound_workspace_is_outside_reviewed_convergence_hea
         key_record_id="key-record-1",
         purge_generation=0,
         bootstrap_cursor="cursor-bootstrap",
+        sync_transport_cursor="transport-bootstrap",
         bootstrap_heads=bootstrap,
         expected_heads=expected,
         plan_id="plan-1",
@@ -262,12 +266,13 @@ async def test_server_only_unbound_workspace_is_outside_reviewed_convergence_hea
         key_record_id="key-record-1",
         purge_generation=0,
         bootstrap_cursor="cursor-bootstrap",
+        sync_transport_cursor="transport-bootstrap",
         bootstrap_heads=bootstrap,
         expected_heads=expected,
     )
 
     assert result == {
-        "confirmed_cursor": None,
+        "confirmed_cursor": "transport-bootstrap",
         "confirmed_heads": expected,
     }
 
@@ -348,6 +353,7 @@ async def test_unreviewed_remote_version_is_rejected_before_privileged_apply(tmp
         key_record_id="key-record-1",
         purge_generation=0,
         bootstrap_cursor="cursor-bootstrap",
+        sync_transport_cursor="transport-bootstrap",
         bootstrap_heads=reviewed,
         expected_heads=reviewed,
         plan_id="plan-1",
@@ -368,7 +374,35 @@ async def test_unreviewed_remote_version_is_rejected_before_privileged_apply(tmp
         payload_hash="hmac-sha256-v1:" + "b" * 64,
         encryption_policy="server_trusted_v1",
     )
-    server = _DeltaServer(concurrent)
+    reviewed_scope = SyncV2Envelope(
+        client_envelope_id="device-1:scope-reviewed",
+        dataset_id="dataset-1",
+        domain="personal_context.scope",
+        object_id="scope-1",
+        parent_id="profile-1",
+        operation="upsert",
+        device_id="device-1",
+        base_version=None,
+        entity_version="scope-v1",
+        payload={"schema_version": 1},
+        payload_hash="hmac-sha256-v1:" + "a" * 64,
+        encryption_policy="server_trusted_v1",
+    )
+
+    class MixedPageServer(_DeltaServer):
+        async def pull_v2_envelopes(self, **kwargs):
+            self.calls.append(kwargs)
+            return {
+                "dataset_id": kwargs["dataset_id"],
+                "envelopes": [
+                    reviewed_scope.model_dump(mode="json"),
+                    concurrent.model_dump(mode="json"),
+                ],
+                "next_cursor": "cursor-confirmed",
+                "has_more": False,
+            }
+
+    server = MixedPageServer(concurrent)
     profile = _ReconciliationProfile()
     sync = PersonalContextFirstLinkSync(
         server_service=server,
@@ -391,10 +425,129 @@ async def test_unreviewed_remote_version_is_rejected_before_privileged_apply(tmp
             key_record_id="key-record-1",
             purge_generation=0,
             bootstrap_cursor="cursor-bootstrap",
+            sync_transport_cursor="transport-bootstrap",
             bootstrap_heads=reviewed,
             expected_heads=reviewed,
         )
 
+    assert profile.applied == []
+
+
+@pytest.mark.asyncio
+async def test_transport_boundary_skips_retained_history_and_rejects_late_change(
+    tmp_path,
+) -> None:
+    def envelope(domain: str, object_id: str, version_id: str) -> SyncV2Envelope:
+        return SyncV2Envelope(
+            client_envelope_id=f"history:{domain}:{version_id}",
+            dataset_id="dataset-1",
+            domain=domain,
+            object_id=object_id,
+            parent_id=None,
+            operation="upsert",
+            device_id="other-device",
+            base_version=None,
+            entity_version=version_id,
+            payload={"schema_version": 1},
+            payload_hash="hmac-sha256-v1:" + "a" * 64,
+            encryption_policy="server_trusted_v1",
+        )
+
+    retained = [
+        (1, envelope("personal_context.manifest", "profile-1", "manifest-v1")),
+        (2, envelope("personal_context.record", "record-1", "record-v1")),
+        (3, envelope("personal_context.record", "record-1", "record-v2")),
+        (4, envelope("personal_context.record", "record-1", "record-v3")),
+        (5, envelope("personal_context.scope", "scope-1", "scope-v1")),
+        (6, envelope("personal_context.proposal", "proposal-1", "proposal-v1")),
+    ]
+    late = envelope("personal_context.record", "record-late", "record-late-v1")
+
+    class CursorBoundaryServer(_Server):
+        def __init__(self) -> None:
+            super().__init__()
+            self.events = [*retained, (7, late)]
+            self.returned_ids: list[str] = []
+
+        async def _pull_v2_personal_context_first_link(self, **kwargs):
+            self.calls.append(kwargs)
+            after = int(kwargs["cursor"])
+            selected = [item for position, item in self.events if position > after]
+            self.returned_ids = [str(item.object_id) for item in selected]
+            return {
+                "dataset_id": kwargs["dataset_id"],
+                "envelopes": [item.model_dump(mode="json") for item in selected],
+                "next_cursor": "7",
+                "has_more": False,
+            }
+
+    state = SyncStateRepository(tmp_path / "sync.db")
+    scope = {
+        "server_profile_id": "server-1",
+        "authenticated_principal_id": "user-1",
+    }
+    reviewed = {
+        "personal_context.manifest": {"profile-1": "manifest-v1"},
+        "personal_context.scope": {"scope-1": "scope-v1"},
+        "personal_context.record": {"record-1": "record-v3"},
+        "personal_context.proposal": {"proposal-1": "proposal-v1"},
+    }
+    state.set_sync_v2_profile_state(
+        **scope,
+        workspace_scope=None,
+        profile_mode="local_first_sync",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        dataset_cursors={"sync_v2": "stale-generic-cursor"},
+    )
+    state.set_personal_context_link_state(
+        **scope,
+        state="reconciling",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        authority_id="authority-1",
+        profile_id="profile-1",
+        integrity_key_id="key-1",
+        key_record_id="key-record-1",
+        purge_generation=0,
+        bootstrap_cursor="bootstrap-receipt-hash",
+        sync_transport_cursor="6",
+        bootstrap_heads=reviewed,
+        expected_heads=reviewed,
+        plan_id="plan-1",
+        rebaseline_version=2,
+        attention_code=None,
+    )
+    server = CursorBoundaryServer()
+    profile = _ReconciliationProfile()
+    sync = PersonalContextFirstLinkSync(
+        server_service=server,
+        state_repository=state,
+        dispatcher=_DeltaDispatcher(),
+        personal_context_service=profile,
+        local_store=object(),
+        dataset_keys={"dataset-1": b"s" * 32},
+    )
+
+    with pytest.raises(
+        RuntimeError, match="personal_context_reviewed_lineage_changed"
+    ):
+        await sync.converge(
+            **scope,
+            device_id="device-1",
+            dataset_id="dataset-1",
+            profile_id="profile-1",
+            integrity_key_id="key-1",
+            key_record_id="key-record-1",
+            purge_generation=0,
+            bootstrap_cursor="bootstrap-receipt-hash",
+            sync_transport_cursor="6",
+            bootstrap_heads=reviewed,
+            expected_heads=reviewed,
+        )
+
+    assert server.calls[0]["cursor"] == "6"
+    assert server.returned_ids == ["record-late"]
     assert profile.applied == []
 
 
@@ -434,6 +587,7 @@ async def test_concurrent_remote_object_cannot_mutate_production_repository(tmp_
         schema_version=1,
         quotas={"max_record_bytes": 16_384},
         cursor="cursor-bootstrap",
+        sync_transport_cursor="transport-bootstrap",
         integrity_key_id="key-1",
         key_record_id="key-record-1",
         wrapped_key_blob="content-free-test-wrapper",
@@ -514,6 +668,7 @@ async def test_concurrent_remote_object_cannot_mutate_production_repository(tmp_
         key_record_id="key-record-1",
         purge_generation=0,
         bootstrap_cursor="cursor-bootstrap",
+        sync_transport_cursor="transport-bootstrap",
         bootstrap_heads=reviewed,
         expected_heads=reviewed,
         plan_id=plan.plan_id,
@@ -543,6 +698,7 @@ async def test_concurrent_remote_object_cannot_mutate_production_repository(tmp_
             key_record_id="key-record-1",
             purge_generation=0,
             bootstrap_cursor="cursor-bootstrap",
+            sync_transport_cursor="transport-bootstrap",
             bootstrap_heads=reviewed,
             expected_heads=reviewed,
         )
@@ -560,6 +716,7 @@ async def test_concurrent_remote_object_cannot_mutate_production_repository(tmp_
         schema_version=reviewed_snapshot.schema_version,
         quotas=reviewed_snapshot.quotas,
         cursor="cursor-after-concurrent-write",
+        sync_transport_cursor="transport-after-concurrent-write",
         integrity_key_id=reviewed_snapshot.integrity_key_id,
         key_record_id=reviewed_snapshot.key_record_id,
         wrapped_key_blob=reviewed_snapshot.wrapped_key_blob,
@@ -606,6 +763,7 @@ async def test_special_cycle_requires_echoed_materialized_delta_before_confirmin
         key_record_id="key-record-1",
         purge_generation=0,
         bootstrap_cursor="cursor-bootstrap",
+        sync_transport_cursor="transport-bootstrap",
         bootstrap_heads=bootstrap,
         expected_heads=expected,
         plan_id="plan-1",
@@ -652,6 +810,7 @@ async def test_special_cycle_requires_echoed_materialized_delta_before_confirmin
         key_record_id="key-record-1",
         purge_generation=0,
         bootstrap_cursor="cursor-bootstrap",
+        sync_transport_cursor="transport-bootstrap",
         bootstrap_heads=bootstrap,
         expected_heads=expected,
     )
@@ -659,11 +818,103 @@ async def test_special_cycle_requires_echoed_materialized_delta_before_confirmin
     assert result["confirmed_heads"] == expected
     assert result["confirmed_cursor"] == "cursor-confirmed"
     assert len(server.pushes) == 1
-    assert server.pushes[0]["last_known_cursor"] == "19"
+    assert server.pushes[0]["last_known_cursor"] == "transport-bootstrap"
     assert server.pushes[0]["last_known_cursor"] != "cursor-bootstrap"
     assert server.calls[0]["include_own_changes"] is True
-    assert server.calls[0]["cursor"] == "19"
+    assert server.calls[0]["cursor"] == "transport-bootstrap"
     assert profile.applied == ["applied"]
+
+
+@pytest.mark.asyncio
+async def test_special_cycle_rejects_unreviewed_staged_envelope_before_push(tmp_path):
+    state = SyncStateRepository(tmp_path / "sync.db")
+    scope = {
+        "server_profile_id": "server-1",
+        "authenticated_principal_id": "user-1",
+    }
+    reviewed = {"personal_context.manifest": {"profile-1": "manifest-v1"}}
+    state.set_sync_v2_profile_state(
+        **scope,
+        workspace_scope=None,
+        profile_mode="local_first_sync",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        dataset_cursors={"sync_v2": "transport-42"},
+    )
+    state.set_personal_context_link_state(
+        **scope,
+        state="reconciling",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        authority_id="authority-1",
+        profile_id="profile-1",
+        integrity_key_id="key-1",
+        key_record_id="key-record-1",
+        purge_generation=0,
+        bootstrap_cursor="bootstrap-receipt",
+        sync_transport_cursor="transport-42",
+        bootstrap_heads=reviewed,
+        expected_heads=reviewed,
+        reviewed_lineage=[
+            ["personal_context.manifest", "profile-1", "manifest-v1"]
+        ],
+        plan_id="plan-1",
+        rebaseline_version=2,
+        attention_code=None,
+    )
+    stale = SyncV2Envelope(
+        client_envelope_id="stale-destination-copy",
+        dataset_id="dataset-1",
+        domain="personal_context.record",
+        object_id="record-stale",
+        parent_id="scope-1",
+        operation="upsert",
+        device_id="device-1",
+        base_version=None,
+        entity_version="record-stale-v1",
+        payload={"schema_version": 1},
+        payload_hash="hmac-sha256-v1:" + "f" * 64,
+        encryption_policy="server_trusted_v1",
+    )
+    state.enqueue_sync_v2_outbox_envelope(
+        **scope,
+        workspace_scope=None,
+        dataset_id="dataset-1",
+        envelope=stale,
+    )
+    server = _DeltaServer(stale)
+    profile = _ReconciliationProfile()
+    sync = PersonalContextFirstLinkSync(
+        server_service=server,
+        state_repository=state,
+        dispatcher=_DeltaDispatcher(),
+        personal_context_service=profile,
+        local_store=object(),
+        dataset_keys={"dataset-1": b"s" * 32},
+    )
+
+    with pytest.raises(
+        RuntimeError, match="personal_context_reviewed_lineage_changed"
+    ):
+        await sync.converge(
+            **scope,
+            device_id="device-1",
+            dataset_id="dataset-1",
+            profile_id="profile-1",
+            integrity_key_id="key-1",
+            key_record_id="key-record-1",
+            purge_generation=0,
+            bootstrap_cursor="bootstrap-receipt",
+            sync_transport_cursor="transport-42",
+            bootstrap_heads=reviewed,
+            expected_heads=reviewed,
+            reviewed_lineage=[
+                ["personal_context.manifest", "profile-1", "manifest-v1"]
+            ],
+        )
+
+    assert server.pushes == []
+    assert profile.applied == []
 
 
 class _PagedDeltaDispatcher:
@@ -772,6 +1023,7 @@ async def test_special_cycle_drains_101_entries_in_negotiated_push_batches(tmp_p
         key_record_id="key-record-1",
         purge_generation=0,
         bootstrap_cursor="cursor-bootstrap",
+        sync_transport_cursor="transport-bootstrap",
         bootstrap_heads=bootstrap,
         expected_heads=expected,
         plan_id="plan-1",
@@ -799,6 +1051,7 @@ async def test_special_cycle_drains_101_entries_in_negotiated_push_batches(tmp_p
         key_record_id="key-record-1",
         purge_generation=0,
         bootstrap_cursor="cursor-bootstrap",
+        sync_transport_cursor="transport-bootstrap",
         bootstrap_heads=bootstrap,
         expected_heads=expected,
     )

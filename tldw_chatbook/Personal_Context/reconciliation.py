@@ -38,6 +38,7 @@ class CanonicalBootstrapSnapshot:
     schema_version: int
     quotas: Mapping[str, int] = field(repr=False)
     cursor: str
+    sync_transport_cursor: str = field(repr=False)
     integrity_key_id: str
     key_record_id: str
     wrapped_key_blob: str = field(repr=False)
@@ -52,7 +53,13 @@ class CanonicalBootstrapSnapshot:
             raise ValueError("bootstrap_record_profile_mismatch")
         if any(item.profile_id != profile_id for item in self.proposals):
             raise ValueError("bootstrap_proposal_profile_mismatch")
-        if not self.dataset_id or not self.authority_id or not self.cursor:
+        if (
+            not self.dataset_id
+            or not self.authority_id
+            or not self.cursor
+            or not self.sync_transport_cursor
+            or len(self.sync_transport_cursor) > 32_768
+        ):
             raise ValueError("bootstrap_binding_invalid")
 
     @classmethod
@@ -84,6 +91,7 @@ class CanonicalBootstrapSnapshot:
             schema_version=int(field_value("schema_version")),
             quotas=dict(field_value("quotas")),
             cursor=str(field_value("cursor")),
+            sync_transport_cursor=str(field_value("sync_transport_cursor")),
             integrity_key_id=str(field_value("integrity_key_id")),
             key_record_id=str(field_value("key_record_id")),
             wrapped_key_blob=str(field_value("wrapped_key_blob")),
@@ -124,6 +132,7 @@ class ReconciliationPlan:
     local_profile_id: str
     server_profile_id: str
     bootstrap_cursor: str
+    sync_transport_cursor: str = field(repr=False)
     integrity_key_id: str
     key_record_id: str
     purge_generation: int
@@ -560,6 +569,7 @@ def build_reconciliation_plan(
         local_profile_id=local_manifest.profile_id,
         server_profile_id=remote.manifest.profile_id,
         bootstrap_cursor=remote.cursor,
+        sync_transport_cursor=remote.sync_transport_cursor,
         integrity_key_id=remote.integrity_key_id,
         key_record_id=remote.key_record_id,
         purge_generation=remote.purge_generation,

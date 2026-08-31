@@ -36,6 +36,7 @@ BOOTSTRAP = {
     "schema_version": 1,
     "quotas": {"max_record_bytes": 16_384},
     "cursor": "sha256:" + "a" * 64,
+    "sync_transport_cursor": "4271",
     "integrity_key_id": "integrity-key-server",
     "key_record_id": "key-record-device",
     "wrapped_key_blob": "rsa-oaep-sha256:ciphertext",
@@ -131,9 +132,25 @@ def test_personal_context_bootstrap_schemas_are_strict_and_typed() -> None:
     }
     assert response.manifest.profile_id == "profile-server"
     assert response.cursor == BOOTSTRAP["cursor"]
+    assert response.sync_transport_cursor == "4271"
     assert response.wrapped_key_blob == BOOTSTRAP["wrapped_key_blob"]
     with pytest.raises(ValidationError, match="extra_forbidden"):
         SyncPersonalContextBootstrapRequest(device_id="device-1", secret="nope")
+
+
+@pytest.mark.parametrize(
+    "value",
+    (None, "", "x" * 32_769),
+)
+def test_personal_context_bootstrap_requires_bounded_transport_cursor(value) -> None:
+    payload = copy.deepcopy(BOOTSTRAP)
+    if value is None:
+        payload.pop("sync_transport_cursor")
+    else:
+        payload["sync_transport_cursor"] = value
+
+    with pytest.raises(ValidationError):
+        SyncPersonalContextBootstrapResponse.model_validate(payload)
 
 
 @pytest.mark.parametrize(("kind", "error_code", "attention"), ATTENTION_CASES)

@@ -55,6 +55,7 @@ def test_link_state_persists_exact_binding_and_gates_ordinary_sync(tmp_path) -> 
         key_record_id="key-record-1",
         purge_generation=2,
         bootstrap_cursor="sha256:" + "b" * 64,
+        sync_transport_cursor="42",
         plan_id="plan-1",
         rebaseline_version=1,
         attention_code=None,
@@ -68,6 +69,7 @@ def test_link_state_persists_exact_binding_and_gates_ordinary_sync(tmp_path) -> 
     assert state["profile_id"] == "profile-server"
     assert state["integrity_key_id"] == "key-1"
     assert state["purge_generation"] == 2
+    assert state["sync_transport_cursor"] == "42"
     assert reopened.personal_context_sync_enabled(**SCOPE) is False
 
     reopened.set_personal_context_link_state(
@@ -81,6 +83,7 @@ def test_link_state_persists_exact_binding_and_gates_ordinary_sync(tmp_path) -> 
         key_record_id="key-record-1",
         purge_generation=2,
         bootstrap_cursor="sha256:" + "b" * 64,
+        sync_transport_cursor="42",
         confirmed_cursor="cursor-confirmed",
         plan_id="plan-1",
         rebaseline_version=1,
@@ -104,6 +107,50 @@ def test_link_state_persists_exact_binding_and_gates_ordinary_sync(tmp_path) -> 
         purge_generation=2,
         confirmed_cursor="cursor-confirmed",
     ) is True
+
+
+def test_link_state_enforces_transport_cursor_bounds_for_bootstrap_and_confirmation(
+    tmp_path,
+) -> None:
+    repo = SyncStateRepository(tmp_path / "sync.db")
+    base = {
+        **SCOPE,
+        "state": "reconciling",
+        "device_id": "device-1",
+        "dataset_id": "dataset-1",
+        "authority_id": "authority-1",
+        "profile_id": "profile-server",
+        "integrity_key_id": "key-1",
+        "key_record_id": "key-record-1",
+        "purge_generation": 0,
+        "bootstrap_cursor": "bootstrap-receipt",
+        "plan_id": "plan-1",
+        "rebaseline_version": 2,
+        "attention_code": None,
+    }
+
+    with pytest.raises(
+        ValueError, match="personal_context_sync_transport_cursor_invalid"
+    ):
+        repo.set_personal_context_link_state(
+            **base,
+            sync_transport_cursor="",
+        )
+
+    persisted = repo.set_personal_context_link_state(
+        **base,
+        sync_transport_cursor="t" * 32_768,
+        confirmed_cursor="c" * 32_768,
+    )
+    assert len(persisted["sync_transport_cursor"]) == 32_768
+    assert len(persisted["confirmed_cursor"]) == 32_768
+
+    with pytest.raises(ValueError, match="personal_context_confirmed_cursor_invalid"):
+        repo.set_personal_context_link_state(
+            **base,
+            sync_transport_cursor="transport",
+            confirmed_cursor="c" * 32_769,
+        )
 
 
 def test_cancelled_plan_removes_only_unapproved_link_state(tmp_path) -> None:
@@ -228,11 +275,11 @@ class FakeProfileService:
 
     def apply_reviewed_link(self, **kwargs):
         self.apply_calls.append(kwargs)
+        self.manifest = kwargs["remote"].manifest
         if self.activation_pending:
             raise ProfileKeyActivationPendingError(
                 "injected secure-custody activation interruption"
             )
-        self.manifest = kwargs["remote"].manifest
         return {"rebaseline_version": 2}
 
     def first_link_sync_heads(self):
@@ -256,6 +303,9 @@ class FakeProfileService:
         if self.manifest.profile_id == "profile-local":
             return ("uncommitted", None)
         return ("committed", 2)
+
+    def first_link_rebaseline_version(self):
+        return 2
 
 
 class FakeServerSync:
@@ -281,6 +331,7 @@ class FakeServerSync:
             "schema_version": 1,
             "quotas": dict(PERSONAL_CONTEXT_MINIMUM_QUOTAS),
             "cursor": "sha256:" + "e" * 64,
+            "sync_transport_cursor": "transport-bootstrap-42",
             "integrity_key_id": "integrity-1",
             "key_record_id": "key-record-1",
             "wrapped_key_blob": "wrapped",
@@ -611,7 +662,7 @@ class _DeleteFailsOnceCustodian(InMemoryPersonalContextLinkKeyCustodian):
 
 
 @pytest.mark.asyncio
-async def test_complete_receipt_preserves_freeze_until_staged_key_cleanup_retry(
+async def test_complete_receipt_cleans_artifacts_before_staged_key_cleanup_retry(
     tmp_path,
 ) -> None:
     profile = FakeProfileService()
@@ -635,7 +686,7 @@ async def test_complete_receipt_preserves_freeze_until_staged_key_cleanup_retry(
 
     complete = state.get_personal_context_link_state(**SCOPE)
     assert complete["state"] == "complete"
-    assert profile.frozen_plan_id == plan.plan_id
+    assert profile.frozen_plan_id is None
     receipt = await service.resume()
     assert receipt.confirmed_cursor == "cursor-confirmed-9"
     assert profile.frozen_plan_id is None
@@ -673,6 +724,7 @@ async def test_applying_recovery_clears_stale_pc_destination_before_convergence(
                 "key_record_id",
                 "purge_generation",
                 "bootstrap_cursor",
+                "sync_transport_cursor",
                 "plan_id",
                 "rebaseline_version",
                 "bootstrap_heads",
@@ -703,6 +755,7 @@ async def test_applying_recovery_clears_stale_pc_destination_before_convergence(
         dataset_id="dataset-1",
         envelope=stale,
     )
+    profile.manifest = _manifest("profile-server", "manifest-server")
 
     await service.resume_after_local_activation(rebaseline_version=2)
 
@@ -712,6 +765,164 @@ async def test_applying_recovery_clears_stale_pc_destination_before_convergence(
         dataset_id="dataset-1",
         domains=["personal_context.record"],
     ) == []
+
+
+@pytest.mark.asyncio
+async def test_applying_recovery_requires_exact_durable_commit_marker(tmp_path) -> None:
+    profile = FakeProfileService()
+    state = SyncStateRepository(tmp_path / "sync.db")
+    custodian = InMemoryPersonalContextLinkKeyCustodian()
+    service = PersonalContextLinkService(
+        personal_context_service=profile,
+        server_sync_service=FakeServerSync(),
+        state_repository=state,
+        wrapping_key_provider=FakeWrappingProvider(),
+        key_custodian=custodian,
+        first_link_sync=FakeFirstLinkSync(),
+        server_profile_id="server-config-1",
+        authenticated_principal_id="user-1",
+        display_name="Laptop",
+    )
+    await service.plan()
+    review = state.get_personal_context_link_state(**SCOPE)
+    applying = state.set_personal_context_link_state(
+        **SCOPE,
+        **{
+            key: review[key]
+            for key in (
+                "device_id",
+                "dataset_id",
+                "authority_id",
+                "profile_id",
+                "integrity_key_id",
+                "key_record_id",
+                "purge_generation",
+                "bootstrap_cursor",
+                "sync_transport_cursor",
+                "plan_id",
+                "rebaseline_version",
+                "bootstrap_heads",
+                "expected_heads",
+            )
+        },
+        state="applying",
+        attention_code=None,
+        expected_states=("review_required",),
+    )
+    custodian.stage(**service._key_binding(applying), integrity_key=b"s" * 32)
+    profile.first_link_apply_recovery_state = lambda **_kwargs: ("ambiguous", None)
+
+    with pytest.raises(
+        ValueError, match="personal_context_link_recovery_unconfirmed"
+    ):
+        await service.resume_after_local_activation(rebaseline_version=2)
+
+    assert service.mark_ambiguous_apply_attention() is True
+    recovery = state.get_personal_context_link_state(**SCOPE)
+    assert recovery["state"] == "applying"
+    assert recovery["attention_code"] == "local_apply_recovery_ambiguous"
+    assert profile.frozen_plan_id == review["plan_id"]
+    assert custodian.load(**service._key_binding(applying)) == b"s" * 32
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("freeze_owner", "marker_owner"),
+    (("different-plan", None), (None, "different-plan")),
+)
+async def test_complete_cleanup_rejects_different_artifact_owner_before_key_delete(
+    tmp_path, freeze_owner, marker_owner,
+) -> None:
+    profile = FakeProfileService()
+    profile.frozen_plan_id = freeze_owner
+    profile.first_link_freeze_plan_id = lambda: profile.frozen_plan_id
+    profile.first_link_rebaseline_commit_plan_id = lambda: marker_owner
+    state = SyncStateRepository(tmp_path / "sync.db")
+    state.set_personal_context_link_state(
+        **SCOPE,
+        state="complete",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        authority_id="authority-1",
+        profile_id="profile-server",
+        integrity_key_id="key-1",
+        key_record_id="key-record-1",
+        purge_generation=0,
+        bootstrap_cursor="bootstrap-receipt",
+        confirmed_cursor="transport-confirmed",
+        plan_id="plan-1",
+        rebaseline_version=2,
+        attention_code=None,
+    )
+    custodian = InMemoryPersonalContextLinkKeyCustodian()
+    service = PersonalContextLinkService(
+        personal_context_service=profile,
+        server_sync_service=FakeServerSync(),
+        state_repository=state,
+        wrapping_key_provider=FakeWrappingProvider(),
+        key_custodian=custodian,
+        first_link_sync=FakeFirstLinkSync(),
+        server_profile_id="server-config-1",
+        authenticated_principal_id="user-1",
+        display_name="Laptop",
+    )
+    complete = state.get_personal_context_link_state(**SCOPE)
+    custodian.stage(**service._key_binding(complete), integrity_key=b"s" * 32)
+
+    with pytest.raises(ValueError, match="personal_context_link_cleanup_mismatch"):
+        await service.resume()
+
+    assert custodian.load(**service._key_binding(complete)) == b"s" * 32
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stuck_artifact", ("freeze", "marker"))
+async def test_complete_cleanup_verifies_artifact_removal_before_key_delete(
+    tmp_path, stuck_artifact,
+) -> None:
+    profile = FakeProfileService()
+    profile.frozen_plan_id = "plan-1" if stuck_artifact == "freeze" else None
+    marker_owner = "plan-1" if stuck_artifact == "marker" else None
+    profile.first_link_freeze_plan_id = lambda: profile.frozen_plan_id
+    profile.first_link_rebaseline_commit_plan_id = lambda: marker_owner
+    if stuck_artifact == "freeze":
+        profile.release_first_link_freeze = lambda **_kwargs: False
+    state = SyncStateRepository(tmp_path / "sync.db")
+    state.set_personal_context_link_state(
+        **SCOPE,
+        state="complete",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        authority_id="authority-1",
+        profile_id="profile-server",
+        integrity_key_id="key-1",
+        key_record_id="key-record-1",
+        purge_generation=0,
+        bootstrap_cursor="bootstrap-receipt",
+        confirmed_cursor="transport-confirmed",
+        plan_id="plan-1",
+        rebaseline_version=2,
+        attention_code=None,
+    )
+    custodian = InMemoryPersonalContextLinkKeyCustodian()
+    service = PersonalContextLinkService(
+        personal_context_service=profile,
+        server_sync_service=FakeServerSync(),
+        state_repository=state,
+        wrapping_key_provider=FakeWrappingProvider(),
+        key_custodian=custodian,
+        first_link_sync=FakeFirstLinkSync(),
+        server_profile_id="server-config-1",
+        authenticated_principal_id="user-1",
+        display_name="Laptop",
+    )
+    complete = state.get_personal_context_link_state(**SCOPE)
+    custodian.stage(**service._key_binding(complete), integrity_key=b"s" * 32)
+
+    with pytest.raises(ValueError, match="personal_context_link_cleanup_mismatch"):
+        await service.resume()
+
+    assert custodian.load(**service._key_binding(complete)) == b"s" * 32
 
 
 @pytest.mark.asyncio
@@ -1383,6 +1594,7 @@ async def test_precommit_interruption_discards_only_the_uncommitted_staged_key(
                 "key_record_id",
                 "purge_generation",
                 "bootstrap_cursor",
+                "sync_transport_cursor",
                 "plan_id",
                 "rebaseline_version",
                 "attention_code",

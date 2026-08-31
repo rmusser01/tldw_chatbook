@@ -115,6 +115,7 @@ def _snapshot(
         schema_version=schema_version,
         quotas=quotas or {"max_record_bytes": 16_384},
         cursor="sha256:" + "a" * 64,
+        sync_transport_cursor="transport-bootstrap",
         integrity_key_id="key-1",
         key_record_id="key-record-1",
         wrapped_key_blob="wrapped-private-material",
@@ -1127,6 +1128,7 @@ def test_rebaseline_commit_marker_is_atomic_content_free_and_exact(tmp_path) -> 
         plan_id=plan.plan_id,
         target_profile_id="profile-server",
         target_integrity_key_id="key-1",
+        target_key_record_id="key-record-1",
         target_purge_generation=0,
     ) == ("uncommitted", None)
 
@@ -1142,12 +1144,21 @@ def test_rebaseline_commit_marker_is_atomic_content_free_and_exact(tmp_path) -> 
         plan_id=plan.plan_id,
         target_profile_id="profile-server",
         target_integrity_key_id="key-1",
+        target_key_record_id="key-record-1",
         target_purge_generation=0,
     ) == ("committed", 2)
     assert repository.first_link_apply_recovery_state(
         plan_id=plan.plan_id,
         target_profile_id="other-profile",
         target_integrity_key_id="key-1",
+        target_key_record_id="key-record-1",
+        target_purge_generation=0,
+    ) == ("ambiguous", None)
+    assert repository.first_link_apply_recovery_state(
+        plan_id=plan.plan_id,
+        target_profile_id="profile-server",
+        target_integrity_key_id="key-1",
+        target_key_record_id="other-key-record",
         target_purge_generation=0,
     ) == ("ambiguous", None)
     raw = db_path.read_bytes()
@@ -1164,5 +1175,63 @@ def test_rebaseline_commit_marker_is_atomic_content_free_and_exact(tmp_path) -> 
         plan_id=plan.plan_id,
         target_profile_id="profile-server",
         target_integrity_key_id="key-1",
+        target_key_record_id="key-record-1",
+        target_purge_generation=0,
+    ) == ("ambiguous", None)
+
+
+def test_schema_v7_marker_migrates_to_ambiguous_key_record_binding(tmp_path) -> None:
+    protector = InMemoryProfileKeyProtector()
+    db_path = tmp_path / "profile-v7-marker.db"
+    repository = PersonalContextRepository(db_path, key_protector=protector)
+    repository.create_profile_with_global_scope(
+        _manifest("profile-server", "manifest-server"),
+        _scope("profile-server", "scope-server", ScopeKind.GLOBAL),
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("DROP TABLE first_link_rebaseline_commit")
+        connection.execute(
+            """
+            CREATE TABLE first_link_rebaseline_commit (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                plan_id TEXT NOT NULL,
+                target_profile_id TEXT NOT NULL,
+                target_integrity_key_id TEXT NOT NULL,
+                target_purge_generation INTEGER NOT NULL,
+                rebaseline_version INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO first_link_rebaseline_commit VALUES (1, ?, ?, ?, ?, ?, ?)",
+            (
+                "plan-v7",
+                "profile-server",
+                "key-1",
+                0,
+                2,
+                NOW,
+            ),
+        )
+        connection.execute(
+            "UPDATE personal_context_schema SET version = 7 WHERE singleton = 1"
+        )
+
+    reopened = PersonalContextRepository(db_path, key_protector=protector)
+
+    with sqlite3.connect(db_path) as connection:
+        columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(first_link_rebaseline_commit)"
+            )
+        }
+    assert "target_key_record_id" in columns
+    assert reopened.first_link_apply_recovery_state(
+        plan_id="plan-v7",
+        target_profile_id="profile-server",
+        target_integrity_key_id="key-1",
+        target_key_record_id="key-record-1",
         target_purge_generation=0,
     ) == ("ambiguous", None)

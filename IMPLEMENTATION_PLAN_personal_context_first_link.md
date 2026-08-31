@@ -46,11 +46,13 @@ clear and content-free.
 
 **Status:** Complete (Chatbook slice)
 
-**Cross-repository contract pin:** tldw_server commit `a92e12110d` preserves the
-successful bootstrap shape and adds strict, content-free HTTP 409 attention for
-schema range, quota shortfall, and purge-generation mismatch. Chatbook accepts
-only those discriminated typed shapes; malformed or inconsistent bodies remain
-generic failures and never enter the trusted Settings review surface.
+**Cross-repository contract pin:** tldw_server commit
+`6455ab08cb12ec239c53b7b9180b1cc1ea5f8375` is the final reviewed contract. It
+retains the strict content-free HTTP 409 attention introduced at `a92e12110d`
+and adds the required `sync_transport_cursor` watermark to successful bootstrap.
+Chatbook accepts only the exact typed success/attention shapes; malformed or
+inconsistent bodies remain generic failures and never enter the trusted Settings
+review surface.
 
 ## Stage 4: Verification and review
 
@@ -172,6 +174,35 @@ remains In Progress for controller review and cross-repository closure.
 **Correction verification:** 357 broad affected tests pass across Personal
 Context, Sync, API, and canonical UI groups. Ruff, compileall, Bandit `-lll`,
 and diff hygiene pass. The task remains In Progress for controller review.
+
+### Final recovery-binding and transport-watermark correction (2026-08-31)
+
+- The atomic rebaseline marker now binds the exact plan, canonical profile,
+  integrity-key ID, key-record ID, purge generation, and rebaseline version.
+  Resume additionally requires the authenticated active key generation to equal
+  the committed marker. Migrated marker rows without the new key-record binding
+  remain ambiguous and cannot open convergence.
+- Ambiguous applying-state recovery records a stable, retryable attention code
+  while preserving the durable freeze and staged custody. Proven uncommitted
+  state may still be abandoned safely; exact committed state resumes normally.
+- First-link push and pull validate every envelope against the durable reviewed
+  object/version/lineage allowlist. A mixed pull page is preflighted completely
+  before any privileged canonical apply, preventing partial mutation when a
+  later envelope is unreviewed.
+- Completed-link startup and coordinator cleanup verify exact freeze and marker
+  ownership plus their removal postconditions before deleting staged integrity
+  custody or wiring ordinary Personal Context Sync.
+- The server's opaque `sync_transport_cursor` is strictly required, bounded to
+  the server pull-token limit, persisted separately from the semantic bootstrap
+  receipt, and used unchanged for the private first-link push/pull boundary.
+  The eventual confirmed transport cursor seeds ordinary Sync; retained history
+  at or before the bootstrap watermark is skipped.
+
+**Final correction verification:** 124 Personal Context, 116 focused Sync,
+33 typed API, 29 Sync-state, and 68 canonical UI/Settings tests pass (370 total).
+Ruff, compileall, Bandit high-severity, and diff hygiene pass. No TCSS changed,
+so CSS aggregate reproduction was not applicable. The task remains In Progress
+for controller review.
 
 ## ADR check
 
