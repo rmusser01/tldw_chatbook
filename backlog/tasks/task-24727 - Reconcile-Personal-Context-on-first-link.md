@@ -88,6 +88,12 @@ second authoritative profile was introduced.
   binding.
 - Added canonical F9 Settings review, attention, retry, cancel, interrupted resume,
   and linked-state behavior with exact content-free identity/version/quota rows.
+- Integrated the structured bootstrap attention contract pinned to tldw_server
+  `a92e12110d`. Chatbook strictly validates schema-range, quota-deficit, and
+  purge-generation 409 variants, carries only the typed safe object across the
+  link boundary, and shows exact values in the canonical modal with approval
+  disabled and retry/cancel available. Malformed bodies remain generic and no
+  raw response content is logged or displayed.
 
 Bootstrap may reserve content-free server control-plane scaffolding required by
 the approved server contract. Planning/cancel performs no canonical Personal
@@ -102,3 +108,9 @@ and low-severity exception/assert/subprocess findings. Exact commands and counts
 are recorded in the SDD report. The full repository suite and live
 server/keyring/TUI testing were not run, per scoped-verification policy. ADR-102
 remains the governing decision.
+
+Structured-attention verification: 86 typed API/coordinator/transport tests,
+12 canonical modal/app-flow tests, and 52 Settings tests pass. The focused Ruff,
+compile, CSS reproduction, high-severity Bandit, Impeccable detector, and diff
+hygiene checks also pass. Implementation is committed as `f42c173c55`; the task
+remains In Progress for controller verification and independent review.

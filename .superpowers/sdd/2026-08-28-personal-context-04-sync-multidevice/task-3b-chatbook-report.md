@@ -15,6 +15,10 @@ Implementation commit: `2043974607a9d30a32b3a6bfa754b01a64f39c35`
 Independent-review remediation commit: `a86e19828c`
 (`fix(personal-context): verify first-link convergence`).
 
+Structured bootstrap attention integration commit: `f42c173c55`
+(`fix(personal-context): surface bootstrap attention`), consuming tldw_server
+contract commit `a92e12110d`.
+
 ## RED evidence
 
 All feature work began with focused failing tests. Principal RED observations:
@@ -189,7 +193,7 @@ directories. No product-test failure remained.
   instruction to use targeted verification only.
 - No live server/keyring/TUI session was run in this child slice. Server contract
   behavior is pinned with typed client and production-shaped service tests
-  against the contract from server commit `45826ab93d`; secure custody is tested
+  against the contract from server commit `a92e12110d`; secure custody is tested
   with injected providers.
 - Production linking requires a verified secure OS keyring and advertised
   compatible server capabilities. Missing custody or capabilities fail closed.
@@ -244,3 +248,76 @@ Additional implementation summary:
 The remediation commit and final aggregate verification counts are recorded by the
 controller after this report update. Full-suite execution remains intentionally
 skipped under repository policy.
+
+## Structured bootstrap attention integration (2026-08-30)
+
+Status: implemented and focused-verification clean in `f42c173c55`; controller
+cross-repository review remains pending and TASK-24727 remains In Progress.
+
+RED evidence:
+
+- Strict schema focus initially failed 3 cases because the bootstrap error
+  response and discriminated attention models did not exist; after strict
+  parsing and semantic validation, 7 focused schema cases passed.
+- Real-httpx client focus initially failed 6 cases because 409 responses had no
+  typed attention exception or malformed-body fallback; all 6 passed after the
+  client boundary was implemented.
+- Link-service focus initially failed 3 cases because typed attention was not
+  mapped into a content-free Settings boundary; all 3 passed after the new link
+  exception was added without creating review/freeze state.
+- Modal focus initially failed 4 cases because there was no exact blocked
+  attention surface; all 4 passed after exact rows, disabled approval,
+  retry, and cancel were added.
+- Public API export focus failed 1 case because the discriminated attention
+  alias was not exported; it passed after the lazy package export was added.
+
+GREEN evidence:
+
+- `PYTHONPATH=.:packages/tldw_profile_core/src PYTEST_DEBUG_TEMPROOT=/private/tmp/task3b-attention-structured ../../.venv/bin/python -m pytest -q --disable-warnings Tests/tldw_api/test_personal_context_sync_client.py Tests/Sync_Interop/test_personal_context_first_link.py Tests/Sync_Interop/test_server_sync_service.py`
+  - 86 passed, 1 dependency warning in 1.88 seconds.
+- `PYTHONPATH=.:packages/tldw_profile_core/src PYTEST_DEBUG_TEMPROOT=/private/tmp/task3b-attention-structured ../../.venv/bin/python -m pytest -q --disable-warnings Tests/UI/test_personal_context_link_modal.py Tests/UI/test_personal_context_link_app_flow.py`
+  - 12 passed, 1 dependency warning in 3.25 seconds.
+- `PYTHONPATH=.:packages/tldw_profile_core/src PYTEST_DEBUG_TEMPROOT=/private/tmp/task3b-attention-structured ../../.venv/bin/python -m pytest -q --disable-warnings Tests/UI/test_settings_personal_context.py`
+  - 52 passed, 2 dependency warnings in 43.48 seconds.
+- Ruff over every changed Python source and test: `All checks passed!`.
+- Python compilation over changed production/test modules: exit 0.
+- CSS authoritative-source reproduction: all bundles reproduce exactly.
+- High-severity Bandit gate over changed production modules: exit 0 with no
+  finding.
+- Impeccable detector over the canonical modal/app UI diff: no finding.
+- `git diff --check` and range diff from `73f0a0bf75`: exit 0.
+
+Changed files:
+
+- Typed API: `tldw_api/sync_schemas.py`, `tldw_api/client.py`,
+  `tldw_api/exceptions.py`, and lazy exports in `tldw_api/__init__.py`.
+- Link/UI production: `Personal_Context/link_service.py`, canonical
+  `personal_context_link_modal.py`, and `app.py`.
+- Tests: typed client/schema, first-link boundary, canonical modal, and new
+  production app-flow coverage.
+- Documentation: implementation plan, cross-repository rollout plan, backlog
+  task notes, and this report.
+
+Implementation summary and self-review:
+
+- Only a fully validated discriminated attention object crosses the client and
+  link-service boundary. Error-code/kind mismatches, extra fields, coercion,
+  inconsistent quota deficits, compatible schema claims, and equal purge
+  generations fail closed.
+- Canonical Settings shows exact safe schema bounds, required/server quotas and
+  deficits, or expected/current purge generations. Approval is disabled and the
+  owning worker handles retry/cancel without creating or orphaning link state.
+- Malformed/unstructured 409 responses never enter the modal and produce only
+  the existing generic content-safe notification. Raw server messages/bodies are
+  not logged or displayed.
+- Successful bootstrap and the previously reviewed convergence path are
+  unchanged. No new storage, sync identity, or profile-content representation
+  was introduced.
+
+Known limitations/skips:
+
+- No full repository sweep or live external server/keyring session was run,
+  per repository policy and the assigned focused scope.
+- Cross-repository behavior is contract-pinned to tldw_server `a92e12110d` and
+  covered with real-httpx and production-handler tests; final independent
+  controller review remains pending.
