@@ -242,6 +242,7 @@ class ConsoleWorkspaceContextState:
     #: sentinel states below, which have no real ``workspace_id`` to scope.
     rag_scope_enabled: bool = False
     workspace_files_available: bool = False
+    workspace_files_available_by_id: Mapping[str, bool] = field(default_factory=dict)
     server_readiness_label: str = "Server: local fallback"
     server_readiness_detail: str = (
         "Local registry is authoritative. No background sync is running."
@@ -450,8 +451,9 @@ def build_console_workspace_state(
         new_workspace_enabled=True,
         rag_scope_enabled=True,
         workspace_files_available=any(
-            str(getattr(binding, "binding_kind", "")) == "local-filesystem"
-            and str(getattr(binding, "status", "")) == "ready"
+            getattr(binding, "binding_kind", None)
+            is RuntimeBindingKind.LOCAL_FILESYSTEM
+            and getattr(binding, "status", None) is RuntimeBindingStatus.READY
             for binding in runtime_bindings
         ),
         authority_label=f"Authority: {active_workspace.authority.value}",

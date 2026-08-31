@@ -234,7 +234,11 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         first_available = next((item for item in self._workspace_bindings if item.available), None)
         self._state = WorkspaceFilesViewState(
             selected_binding_id=first_available.binding_id if first_available else None,
-            status_copy="Loading folder…" if first_available else "No available local folder binding.",
+            status_copy=(
+                "Loading folder…"
+                if first_available
+                else "No local folders are attached. Add one in Settings."
+            ),
         )
         self._generation = 0
         self._workspace_files_closing = False
@@ -289,7 +293,12 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
             yield Static("", id="console-workspace-files-status", markup=False)
             with Horizontal(id="console-workspace-files-body"):
                 with VerticalScroll(id="console-workspace-files-tree"):
-                    yield Static("Loading folder…", markup=False)
+                    yield Static(
+                        "Loading folder…"
+                        if self._state.selected_binding_id is not None
+                        else "No local folders are attached. Add one in Settings.",
+                        markup=False,
+                    )
                 with VerticalScroll(id="console-workspace-files-viewer"):
                     yield Static("Select a file to view its safe preview.", markup=False)
             with Horizontal(id="console-workspace-files-actions"):

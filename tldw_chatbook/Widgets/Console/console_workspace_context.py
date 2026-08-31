@@ -1818,10 +1818,19 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 compact=True,
             )
             files.workspace_id = group.workspace_id
+            files.workspace_files_expected_available = bool(
+                self.state.workspace_files_available_by_id.get(
+                    group.workspace_id, False
+                )
+            )
             files.styles.width = 7
             files.styles.min_width = 7
             files.styles.max_width = 7
-            files.tooltip = "Show files for this workspace"
+            files.tooltip = (
+                "Show files for this workspace"
+                if files.workspace_files_expected_available
+                else "No local folders are attached. Add one in Settings."
+            )
             yield files
             toggle = Button(
                 resolve_glyph(GLYPH_COLLAPSED if group.collapsed else GLYPH_EXPANDED),

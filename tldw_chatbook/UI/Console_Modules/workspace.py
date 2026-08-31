@@ -64,6 +64,7 @@ from ...Widgets.Console.console_workspace_files_modal import (
     WorkspaceFilesService,
 )
 from ...Workspaces.file_inspector import ScopeCaptureError, WorkspaceFileInspector
+from ...Workspaces.models import RuntimeBindingKind, RuntimeBindingStatus
 from ...Widgets.project_skills_import_modal import maybe_offer_project_skills_import
 from ...Workspaces import (
     CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
@@ -4494,10 +4495,23 @@ class ConsoleWorkspaceController:
             ),
         )
         state = self._with_native_console_session_rows(state)
-        return self._with_console_conversation_browser_state(
+        state = self._with_console_conversation_browser_state(
             state,
             current_conversation_id=current_conversation,
         )
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        availability: dict[str, bool] = {}
+        if registry is not None:
+            for workspace in self._console_browser_workspace_records():
+                try:
+                    availability[workspace.workspace_id] = any(
+                        binding.binding_kind is RuntimeBindingKind.LOCAL_FILESYSTEM
+                        and binding.status is RuntimeBindingStatus.READY
+                        for binding in registry.list_folder_bindings(workspace.workspace_id)
+                    )
+                except Exception:
+                    availability[workspace.workspace_id] = False
+        return replace(state, workspace_files_available_by_id=availability)
 
     def _console_workspace_build_fingerprint(self) -> tuple | None:
         """Cheap change token over the context build's volatile inputs.
