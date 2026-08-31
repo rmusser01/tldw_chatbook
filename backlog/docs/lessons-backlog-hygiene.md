@@ -665,6 +665,40 @@ ancestor and review the exact commit count and branch-range diff.
 
 ---
 
+## A background merge loop must hold a lock — `pkill -f` will not find its sibling
+
+**Incident.** PR #2260, 2026-08-31. I started a background merge loop
+(`/tmp/merge3.sh`), decided it was gating wrongly, wrote a replacement
+(`/tmp/merge3b.sh`), and killed the old one with `pkill -f merge3b.sh` — the
+NEW script's name. `merge3b.sh` is not a substring of `merge3.sh`, so nothing
+matched and the original kept running, invisible, for another forty minutes.
+
+Two loops then ran concurrently against one branch, each doing
+`fetch` → `rebase` → `push --force-with-lease`. The older one rebased my branch
+out from under a commit I had just pushed, leaving local and origin diverged
+(7 commits vs 4) with no error anywhere. Nothing was lost, but only by luck:
+branch protection refused its merge attempt, and its second pass happened to
+stop on an unrelated preflight failure instead of force-pushing through.
+
+That preflight failure was itself real and load-bearing — a `TASK-25713`
+collision with a task `dev` had landed fifteen minutes earlier — so the rogue
+loop caught, by accident, a problem I would otherwise have force-pushed past.
+
+**What to do.** Any background loop that mutates git state takes a single-instance
+lock (`mkdir /tmp/<name>.lock` succeeds atomically; `trap 'rmdir' EXIT` releases
+it) so a second copy exits instead of racing. Kill by the pattern you actually
+started (`pkill -f merge3` matches both), and **verify with `ps` that nothing
+survived** rather than trusting `pkill`'s silence — it is silent both when it
+kills something and when it matches nothing. Give the loop a hard stop on
+rebase conflict or preflight failure rather than letting it push through.
+
+**Corollary for long-lived branches.** A backlog task id reserved locally is not
+reserved on `dev`. Between `backlog task create` and pushing, `dev` can land the
+same id — it did here, by fifteen minutes. Re-run `./scripts/preflight.sh`
+immediately before every push, not just before the first one.
+
+---
+
 ## Related
 
 - `lessons-testing-evidence.md`

@@ -9839,6 +9839,29 @@ messages on both sides.
 anyway, `git diff --stat` before AND after the swap and compare the numbers —
 that is the only cheap detector for both failure modes above.
 
+**Extension — TASK-25715, 2026-08-31: pick the base commit, not `dev`.** The
+worktree method above is right, but "the base" is the commit your work branched
+from, not wherever `dev` is now. Two Console rail tests were failing on my
+branch; I ran them in a pristine `origin/dev` worktree, saw them fail there too,
+and wrote "pre-existing on dev, not from this branch" into a PR body. The
+measurement was real and the conclusion did not follow: `dev` had by then
+absorbed my own two earlier PRs, so red-on-dev could no longer separate someone
+else's regression from mine. Re-run at the pre-branch commit, both tests
+**passed** — meaning I had shipped a claim of innocence I had not tested.
+
+They did turn out to be someone else's, but only a first-parent binary search
+over the 60 merges in between could say so: the header-padding failure came
+from #2220 changing the *Inspector* side of a band the test pins to the Context
+side, and the reveal-queue failure from #2252 resolving `#console-left-rail-body`
+unguarded. The same search is what actively cleared my own merges — which is the
+part "it fails on dev too" can never do.
+
+**What to do.** Once any of your work has merged to the base branch, `dev` is no
+longer a neutral witness about your work. Verify at the commit you branched from,
+and if that is green, bisect — a binary search over first-parent merges costs
+~6 test runs and names a commit, where "pre-existing" names nobody and quietly
+includes you.
+
 ## A focusable widget can be painting nothing (TASK-23100, 2026-08-28)
 
 A UX critique drove the real Schedules create form and found that choosing "Recurring"
@@ -10238,3 +10261,38 @@ merger and to the current base revision. Enforce required checks for
 administrators, require the latest base, and verify the live protection API
 after changing it. The workflow's eventual failure proves the checker works;
 it does not prove the branch was protected at merge time.
+
+---
+
+## A strict gate slower than the base branch's merge cadence punishes eager rebasing
+
+**Incident.** PR #2260, 2026-08-31. The follow-on cost of the fix above. With
+`strict: true`, any movement on `dev` makes an open PR out-of-date, so my merge
+loop rebased and force-pushed the moment it saw itself behind. It never landed.
+
+Measured afterwards: `Derived artifacts reproduce from their sources` is
+`needs: [pr-fast-lane]`, and that lane runs a pytest suite — **~20 minutes**
+end-to-end including shared-pool queue. `dev` was merging every **~13 minutes**
+that day. Each rebase restarted a 20-minute clock that a 13-minute cadence was
+already beating, so the gate never reported for the commit that was still HEAD.
+It had in fact **passed three times** — for `6ab0cf5e`, `8493ddbf` and
+`92e325ec` — each time finishing after I had already replaced the commit it was
+green for. One run went green six minutes *after* I force-pushed past it.
+
+I spent an hour reporting this as CI queue congestion, citing an existing
+backlog task about exactly that, without once opening
+`.github/workflows/derived-artifacts.yml`. The workflow's own header comment
+documents the same pathology from the cancellation side (TASK-21250: 45
+cancelled / 14 success over 60 runs, a 23% success rate for a required check).
+
+**What to do.** Poll and merge the *instant* the gate is green; never rebase
+pre-emptively. Move HEAD only when GitHub itself reports `BEHIND`, and prefer
+`gh pr update-branch` over a rebase + force-push so the commits stay reviewable.
+Check `gh pr merge --auto` first — it removes your reaction time from the race
+entirely — but confirm it is enabled: `enablePullRequestAutoMerge` is off for
+this repository, which is why the polling loop is necessary here.
+
+**Before blaming shared CI, read the workflow file.** `gh run view <id> --json
+jobs` shows whether the job ran and what it was waiting on, and it is the
+difference between "the queue is slow" and "I keep invalidating my own green
+check".
