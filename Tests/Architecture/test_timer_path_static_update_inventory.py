@@ -365,12 +365,6 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "with the poster-text fallback), so the box really does resize per "
         "frame."
     ),
-    # -- tldw_chatbook/Widgets/Console/console_workspace_context.py
-    (
-        "tldw_chatbook/Widgets/Console/console_workspace_context.py",
-        "ConsoleWorkspaceContextTray._update_workspace_tree_selection_context",
-        "context",
-    ): "NEEDS-LAYOUT: the context tray line count tracks the selection.",
     # -- tldw_chatbook/Widgets/Library/library_file_notes_workspace.py
     (
         "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",

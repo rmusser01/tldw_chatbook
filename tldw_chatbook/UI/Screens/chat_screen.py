@@ -4542,7 +4542,7 @@ class ChatScreen(BaseAppScreen):
     # ---- Conversation action menu (TASK-23200) -------------------------
 
     def _dismiss_console_conversation_action_menus(self) -> bool:
-        """Fold any open conversation row menu; True when one was open.
+        """Fold any open row action menu; True when one was open.
 
         TASK-25709: the Escape consumers' guard, slotting in exactly where
         ``_dismiss_console_command_popup`` already sits -- an open menu
@@ -4552,14 +4552,37 @@ class ChatScreen(BaseAppScreen):
         so the user's focus stays where it is. Lazy import per ADR-097 --
         this module must stay off the ``_ui_ready`` boot leg.
 
+        TASK-25710: covers BOTH row menus -- the conversation menu and the
+        Workspaces-tree workspace menu -- so any open row menu claims the
+        Escape regardless of kind.
+
         Returns:
             True when a menu was open and has been dismissed.
         """
         from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
             dismiss_conversation_action_menus,
         )
+        from tldw_chatbook.Widgets.Console.console_workspace_action_menu import (
+            dismiss_workspace_action_menus,
+        )
 
-        return dismiss_conversation_action_menus(self, restore_focus=False) > 0
+        dismissed = dismiss_conversation_action_menus(self, restore_focus=False)
+        dismissed += dismiss_workspace_action_menus(self, restore_focus=False)
+        return dismissed > 0
+
+    def _restore_console_menu_opener_focus(self, opener_id: str) -> None:
+        """Return focus to whatever widget opened a row action menu.
+
+        TASK-25710: the conversation menu's openers are asterisk ``Button``s,
+        but the workspace menu's opener is the Workspaces tree, so the
+        restore is by DOM id on any focusable widget -- not Button-typed.
+        """
+        if not opener_id:
+            return
+        try:
+            self.query_one(f"#{opener_id}").focus()
+        except (NoMatches, QueryError):
+            pass
 
     async def _open_console_conversation_action_menu(self, opener: Button) -> None:
         """Anchor the row action menu beneath the pressed asterisk.
@@ -4572,18 +4595,10 @@ class ChatScreen(BaseAppScreen):
         )
         from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
             ConsoleConversationActionMenu,
-            conversation_action_menus_on_screen,
         )
 
-        # Only one menu at a time; a second asterisk replaces the first
-        # rather than stacking two overlays the user must dismiss twice.
-        # The awaits are load-bearing (TASK-25709): ``remove()`` only
-        # schedules the prune, so mounting the same DOM id over a
-        # still-attached menu raised Textual's app-fatal ``DuplicateIds``
-        # on consecutive opens.
-        for menu in conversation_action_menus_on_screen(self):
-            await menu.await_detachment()
-
+        # One row menu at a time (across kinds) and the DuplicateIds detach
+        # guard both live in the shared mount helper (TASK-25709/25710).
         conversation_id = (
             str(getattr(opener, "conversation_id", "") or "").strip() or None
         )
@@ -4602,8 +4617,8 @@ class ChatScreen(BaseAppScreen):
         # Root page is the tallest: five items plus the rounded border.
         menu_height = 7
         screen_region = self.region
-        menu = ConsoleConversationActionMenu(
-            target=target,
+        await self._mount_console_row_action_menu(
+            target,
             opener_id=str(opener.id or ""),
             screen_x=max(
                 screen_region.x, min(region.x, screen_region.right - menu_width)
@@ -4613,7 +4628,6 @@ class ChatScreen(BaseAppScreen):
                 min(region.bottom, screen_region.bottom - menu_height),
             ),
         )
-        self.screen.mount(menu)
 
     def _console_conversation_state(self, conversation_id: str | None) -> str:
         """Return one conversation's PERSISTED state, or the default.
@@ -4679,12 +4693,270 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         if not getattr(event, "restore_focus", True):
             return
-        if not event.opener_id:
+        self._restore_console_menu_opener_focus(event.opener_id)
+
+    # ---- Workspace action menu (TASK-25710) ----------------------------
+
+    def _workspace_menu_target(self, workspace_id: str):
+        """Build the pure menu target from registry truth.
+
+        Args:
+            workspace_id: Registry id of the workspace row pressed.
+
+        Returns:
+            A ``WorkspaceMenuTarget`` (imported lazily per ADR-097) or None
+            when the workspace is no longer resolvable -- the caller then
+            just does not open a menu.
+        """
+        from tldw_chatbook.Chat.console_workspace_actions import (
+            WorkspaceMenuTarget,
+        )
+
+        registry_service = getattr(
+            self.app_instance, "workspace_registry_service", None
+        )
+        record = (
+            registry_service.get_workspace(workspace_id)
+            if registry_service is not None
+            else None
+        )
+        if record is None:
+            return None
+        return WorkspaceMenuTarget(
+            workspace_id=workspace_id,
+            name=str(getattr(record, "name", "") or ""),
+            is_active=bool(getattr(record, "active", False)),
+        )
+
+    async def _open_console_workspace_action_menu(
+        self,
+        *,
+        workspace_id: str,
+        screen_x: int,
+        screen_y: int,
+    ) -> None:
+        """Anchor the workspace action menu at the pressed tree asterisk.
+
+        Args:
+            workspace_id: Registry id of the workspace row.
+            screen_x: Absolute anchor column.
+            screen_y: Absolute anchor row.
+        """
+        target = self._workspace_menu_target(workspace_id)
+        if target is None:
+            self.app_instance.notify(
+                "This workspace is no longer available.", severity="warning"
+            )
             return
-        try:
-            self.query_one(f"#{event.opener_id}", Button).focus()
-        except (NoMatches, QueryError):
-            pass
+        from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
+            conversation_action_menus_on_screen,
+        )
+        from tldw_chatbook.Widgets.Console.console_workspace_action_menu import (
+            ConsoleWorkspaceActionMenu,
+            workspace_action_menus_on_screen,
+        )
+
+        # One row menu on screen at a time, across kinds; the awaits are
+        # the DuplicateIds guard (see the conversation open path).
+        for menu in conversation_action_menus_on_screen(self):
+            await menu.await_detachment()
+        for menu in workspace_action_menus_on_screen(self):
+            await menu.await_detachment()
+        menu_width = ConsoleWorkspaceActionMenu.MENU_WIDTH
+        # Root page is the tallest: five items plus the rounded border.
+        menu_height = 7
+        screen_region = self.region
+        self.screen.mount(
+            ConsoleWorkspaceActionMenu(
+                target=target,
+                opener_id="console-workspace-tree",
+                screen_x=max(
+                    screen_region.x, min(screen_x, screen_region.right - menu_width)
+                ),
+                screen_y=max(
+                    screen_region.y,
+                    min(screen_y, screen_region.bottom - menu_height),
+                ),
+            )
+        )
+
+    async def _open_console_tree_conversation_action_menu(
+        self,
+        *,
+        conversation_id: str | None,
+        screen_x: int,
+        screen_y: int,
+    ) -> None:
+        """Open the shared conversation menu for one Workspaces-tree chat row.
+
+        Args:
+            conversation_id: Persisted conversation id of the row, or None
+                when the tree row has no persisted conversation yet.
+            screen_x: Absolute anchor column.
+            screen_y: Absolute anchor row.
+        """
+        from tldw_chatbook.Chat.console_conversation_actions import (
+            ConversationMenuTarget,
+        )
+        from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
+            ConsoleConversationActionMenu,
+        )
+
+        marks_service = getattr(
+            self.app_instance, "conversation_local_marks_service", None
+        )
+        starred = False
+        if conversation_id and marks_service is not None:
+            is_starred = getattr(marks_service, "is_starred", None)
+            if callable(is_starred):
+                starred = bool(is_starred(conversation_id))
+        target = ConversationMenuTarget(
+            conversation_id=conversation_id,
+            title="",
+            state=self._console_conversation_state(conversation_id),
+            starred=starred,
+            favorites_available=marks_service is not None,
+        )
+        menu_width = ConsoleConversationActionMenu.MENU_WIDTH
+        menu_height = 7
+        screen_region = self.region
+        await self._mount_console_row_action_menu(
+            target,
+            opener_id="console-workspace-tree",
+            screen_x=max(
+                screen_region.x, min(screen_x, screen_region.right - menu_width)
+            ),
+            screen_y=max(
+                screen_region.y,
+                min(screen_y, screen_region.bottom - menu_height),
+            ),
+        )
+
+    async def _mount_console_row_action_menu(
+        self,
+        target,
+        *,
+        opener_id: str,
+        screen_x: int,
+        screen_y: int,
+    ) -> None:
+        """Mount one shared conversation menu with the detach guard.
+
+        Args:
+            target: The ``ConversationMenuTarget`` captured at open time.
+            opener_id: DOM id of the opener used for focus restoration.
+            screen_x: Absolute anchor column.
+            screen_y: Absolute anchor row.
+        """
+        from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
+            ConsoleConversationActionMenu,
+            conversation_action_menus_on_screen,
+        )
+        from tldw_chatbook.Widgets.Console.console_workspace_action_menu import (
+            workspace_action_menus_on_screen,
+        )
+
+        for menu in conversation_action_menus_on_screen(self):
+            await menu.await_detachment()
+        for menu in workspace_action_menus_on_screen(self):
+            await menu.await_detachment()
+        self.screen.mount(
+            ConsoleConversationActionMenu(
+                target=target,
+                opener_id=opener_id,
+                screen_x=screen_x,
+                screen_y=screen_y,
+            )
+        )
+
+    def on_workspace_tree_menu_requested(self, event) -> None:
+        """Mount the row menu a Workspaces-tree asterisk asked for.
+
+        Dispatched by handler-name convention (ADR-097 lazy-import rule).
+        """
+        event.stop()
+        if event.kind == "workspace":
+            self.run_worker(
+                self._open_console_workspace_action_menu(
+                    workspace_id=event.workspace_id,
+                    screen_x=event.screen_x,
+                    screen_y=event.screen_y,
+                ),
+                exclusive=True,
+                group="console-row-action-menu-open",
+            )
+            return
+        self.run_worker(
+            self._open_console_tree_conversation_action_menu(
+                conversation_id=event.conversation_id,
+                screen_x=event.screen_x,
+                screen_y=event.screen_y,
+            ),
+            exclusive=True,
+            group="console-row-action-menu-open",
+        )
+
+    async def _create_console_chat_in_workspace(self, workspace_id: str) -> None:
+        """Activate a workspace, then create the new chat inside it.
+
+        TASK-25710: "New chat" on a non-active workspace composes the two
+        existing operations -- activation is idempotent, and session
+        creation targets the active workspace -- rather than threading a
+        workspace parameter through session creation.
+        """
+        self._workspace.activate_workspace_id(workspace_id)
+        await self._session._create_native_console_session_from_active_context()
+
+    def on_workspace_action_chosen(self, event) -> None:
+        """Run the chosen workspace command against the captured row.
+
+        Dispatched by handler-name convention (ADR-097 lazy-import rule).
+        """
+        from tldw_chatbook.Chat.console_workspace_actions import (
+            ACTION_ACTIVATE,
+            ACTION_ARCHIVE,
+            ACTION_NEW_CHAT,
+            ACTION_RAG_SCOPE,
+            ACTION_RENAME,
+        )
+
+        event.stop()
+        target = event.target
+        workspace_id = str(target.workspace_id)
+        if event.action_id == ACTION_ACTIVATE:
+            self._workspace.activate_workspace_id(workspace_id)
+            return
+        if event.action_id == ACTION_NEW_CHAT:
+            self.run_worker(
+                self._create_console_chat_in_workspace(workspace_id),
+                exclusive=True,
+                group="console-workspace-new-chat",
+            )
+            return
+        if event.action_id == ACTION_RENAME:
+            self._workspace._open_console_workspace_rename(workspace_id)
+            return
+        if event.action_id == ACTION_RAG_SCOPE:
+            self.run_worker(
+                self._workspace._open_console_workspace_scope_picker(),
+                exclusive=True,
+                group="console-workspace-scope-open",
+            )
+            return
+        if event.action_id == ACTION_ARCHIVE:
+            self._workspace._confirm_console_workspace_archive(workspace_id)
+            return
+
+    def on_workspace_action_menu_dismissed(self, event) -> None:
+        """Return focus to the tree that opened the workspace menu.
+
+        Dispatched by handler-name convention (ADR-097 lazy-import rule);
+        ``restore_focus`` semantics mirror the conversation menu's.
+        """
+        event.stop()
+        if not getattr(event, "restore_focus", True):
+            return
+        self._restore_console_menu_opener_focus(event.opener_id)
 
     def on_conversation_action_chosen(self, event: Message) -> None:
         """Run the chosen row command against the captured conversation.
@@ -17900,6 +18172,9 @@ class ChatScreen(BaseAppScreen):
                 # TASK-25709: the row menu owns its in-area interaction --
                 # border and padding clicks must not fold it mid-press.
                 return
+            if getattr(node, "id", None) == "console-workspace-action-menu":
+                # TASK-25710: the workspace row menu owns the same contract.
+                return
             node = getattr(node, "parent", None)
         menus = selection_menus_on_screen(self)
         more_menus = message_more_menus_on_screen(self)
@@ -17909,8 +18184,12 @@ class ChatScreen(BaseAppScreen):
         from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
             conversation_action_menus_on_screen,
         )
+        from tldw_chatbook.Widgets.Console.console_workspace_action_menu import (
+            workspace_action_menus_on_screen,
+        )
 
         conversation_menus = conversation_action_menus_on_screen(self)
+        workspace_menus = workspace_action_menus_on_screen(self)
         # Only transcripts the cleanup would actually change; on the rest,
         # all three steps below are provable no-ops (see
         # ``ConsoleTranscript.has_pending_selection_ui``).
@@ -17919,7 +18198,13 @@ class ChatScreen(BaseAppScreen):
             for transcript in console_transcripts_on_screen(self)
             if transcript.has_pending_selection_ui
         ]
-        if not menus and not more_menus and not conversation_menus and not transcripts:
+        if (
+            not menus
+            and not more_menus
+            and not conversation_menus
+            and not workspace_menus
+            and not transcripts
+        ):
             return  # the common case: no selection UI anywhere on the screen
         # Menus mount on the screen now; route the dismissal through every
         # transcript's centralized selection-UI cleanup (clears highlight +
@@ -17935,8 +18220,11 @@ class ChatScreen(BaseAppScreen):
         dismiss_message_more_menus(more_menus)
         # restore_focus=False: Textual has already moved focus to the clicked
         # widget (it focuses before the press bubbles here), and the opener
-        # restore would pull focus back to the rail.
+        # restore would pull focus back to the rail. TASK-25710: the
+        # Workspaces-tree menu folds on the same contract.
         for menu in conversation_menus:
+            menu.dismiss_menu(restore_focus=False)
+        for menu in workspace_menus:
             menu.dismiss_menu(restore_focus=False)
 
     def on_mouse_down(self, event: MouseDown) -> None:

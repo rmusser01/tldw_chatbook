@@ -79,7 +79,6 @@ from ...Widgets.Console import (
     WorkspaceTreeContextChanged,
     WorkspaceTreeExpansionChanged,
     WorkspaceTreeFocusRecoveryRequested,
-    WorkspaceTreeStarRequested,
 )
 from ...Widgets.Console.console_agent_steering_bar import (
     STEERING_BAR_ID,
@@ -2414,19 +2413,6 @@ class ConsoleLeftRail(Vertical):
         if button_id == "console-character-reaction-open":
             event.stop()
             self.post_message(self.ReactionPickerRequested())
-            return
-        if button_id == "console-workspace-tree-star":
-            event.stop()
-            workspace_id = getattr(event.button, "workspace_id", None)
-            conversation_id = getattr(event.button, "conversation_id", None)
-            if workspace_id and conversation_id:
-                self.post_message(
-                    WorkspaceTreeStarRequested(
-                        workspace_id,
-                        conversation_id,
-                        starred=bool(getattr(event.button, "starred", False)),
-                    )
-                )
             return
         if not button_id.startswith(RAIL_SECTION_TOGGLE_PREFIX):
             return
