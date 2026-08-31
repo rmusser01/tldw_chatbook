@@ -43,7 +43,7 @@ which the turn was reconciled through the dispatch-recovery path and classified
 REMOTE_DISPATCH_STARTED. So the question is why a local unresolved dispatch is
 treated as remote -- a classification bug in the recovery path, not wording.
 
-BLOCKED ON TASK-25712, like TASK-25713: the only route I have to this state runs
+BLOCKED ON TASK-25814, like TASK-25713: the only route I have to this state runs
 through the trace block, so I cannot tell whether it reproduces on a healthy
 dispatch. Re-test once the trace wiring lands; if a local send can still land in
 REMOTE_DISPATCH_STARTED, fix the classification and leave the remote copy alone.

@@ -7073,7 +7073,7 @@ class ConsoleChatController:
                         ConsoleSubmissionOrigin.QUEUED,
                     }
                     and admission_policy.effective_capture_enabled
-                    # TASK-25712: policy alone is not enough -- the RUNTIME has
+                    # TASK-25814: policy alone is not enough -- the RUNTIME has
                     # to be able to honour it. The gateway's durable-capture
                     # seam is optional and unsupplied in production, so
                     # preparing Capture-On against a gateway without one

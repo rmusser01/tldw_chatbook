@@ -1,5 +1,5 @@
 ---
-id: TASK-25712
+id: TASK-25814
 title: >-
   Console send is blocked before provider dispatch when trace capture cannot be
   saved
@@ -81,3 +81,20 @@ someone implements the producer (owner/segment establishment and the identity
 semantics), supports_durable_capture flips to True and Capture-On resumes with
 the guard already in place to protect it.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering
+
+Filed as TASK-25712 on 2026-08-31 05:07. `dev` merged PR #2255 the same morning
+carrying its own TASK-25712 ("Workspace and tree chat action menus in the
+Console Context rail", created 04:34), so the backlog guard flagged a duplicate.
+
+Per the 2026-08-21 owner rule (TASK-19601) the OLDER arrival keeps the id: the
+workspace-menus task was created 33 minutes earlier and keeps 25712; this task
+renumbers to 25814 (the next free id after a sweep of all refs and worktrees,
+max 25813).
+
+References updated: code comments in `Chat/console_provider_gateway.py` and
+`Chat/console_chat_controller.py`, the pinned test
+(`Tests/Chat/test_task_25814_capture_capability.py`), and the cross-references
+in TASK-25713 and TASK-25721. Commit messages already merged into this branch
+still cite 25712 and are left as historical record.

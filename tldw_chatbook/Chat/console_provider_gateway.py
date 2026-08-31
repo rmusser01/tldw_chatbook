@@ -2206,7 +2206,7 @@ class ConsoleProviderGateway:
     def supports_durable_capture(self) -> bool:
         """Whether this gateway can actually reserve a durable trace call.
 
-        TASK-25712: `trace_call_boundary_factory` is documented as optional
+        TASK-25814: `trace_call_boundary_factory` is documented as optional
         ("Optional hard-off normalized-writer seam"), and in production it is
         never supplied -- both callers of `ensure_provider_gateway` omit it.
         Capture-On dispatch nonetheless requires it, so a turn prepared as

@@ -28,7 +28,7 @@ An assistant row mounts as an empty bordered block with no spinner, elapsed time
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-RESOLVED BY OBSERVATION once TASK-25712 unblocked dispatch -- no code change needed here.
+RESOLVED BY OBSERVATION once TASK-25814 unblocked dispatch -- no code change needed here.
 
 My original report (30+ seconds of an empty assistant row) was accurate but the
 run was BLOCKED, never streaming: the trace guard refused dispatch, so no tokens

@@ -1,4 +1,4 @@
-"""TASK-25712: don't claim Capture-On the runtime cannot deliver.
+"""TASK-25814: don't claim Capture-On the runtime cannot deliver.
 
 `ConsoleProviderGateway._trace_call_boundary_factory` is never supplied in
 production -- both callers of `ensure_provider_gateway` omit it and
