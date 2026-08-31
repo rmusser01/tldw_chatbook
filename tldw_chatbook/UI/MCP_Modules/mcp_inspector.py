@@ -2502,7 +2502,7 @@ class MCPInspector(Vertical):
             button.disabled = False
             status.update(_TEST_ASK_TEXT)
             goto.display = True
-        elif gate == "off":
+        elif gate in {"deny", "off"}:
             button.label = "Blocked"
             button.disabled = True
             status.update(_TEST_OFF_TEXT)

@@ -1365,19 +1365,20 @@ class LocalToolProvider:
             if authority is not None and name in _PATH_AUTHORITY_LOCAL_NAMES
             else spec
         )
-        promotion_result = self._invoke_promotion(
+        promotion_invocation = self._invoke_promotion(
             name,
             args,
             clean_args=dict(clean_args),
             spec=selected_spec,
             authority=authority,
         )
-        if promotion_result is not None:
+        if promotion_invocation is not None:
+            promotion_result, approval_consumed = promotion_invocation
             if promotion_result.ok:
                 return LocalToolInvocationResult(
                     result=promotion_result,
                     final_gate="not_checked",
-                    approval_consumed=False,
+                    approval_consumed=approval_consumed,
                     reason_code=LocalToolInvocationReason.HANDLER_RETURNED,
                     dispatch_started=True,
                     provider_terminal=LocalProviderTerminal.RETURNED,
@@ -1385,7 +1386,7 @@ class LocalToolProvider:
             return LocalToolInvocationResult(
                 result=promotion_result,
                 final_gate="not_checked",
-                approval_consumed=False,
+                approval_consumed=approval_consumed,
                 reason_code=LocalToolInvocationReason.APPROVAL_REFUSED,
                 dispatch_started=False,
                 provider_terminal=LocalProviderTerminal.NOT_STARTED,
@@ -1537,7 +1538,7 @@ class LocalToolProvider:
         clean_args: dict,
         spec: LocalToolSpec,
         authority: RunAdmittedWorkspaceRoot | None,
-    ) -> ToolResult | None:
+    ) -> tuple[ToolResult, bool] | None:
         kind = _promotion_call_kind(name, args)
         if kind is None:
             return None
@@ -1545,16 +1546,16 @@ class LocalToolProvider:
         run_id = current_run_id()
         call_id = current_tool_call_id()
         if actor is None or actor.kind != "primary" or not run_id:
-            return ToolResult.blocked(PROMOTION_FOREGROUND_REQUIRED)
+            return ToolResult.blocked(PROMOTION_FOREGROUND_REQUIRED), False
         if not call_id:
-            return ToolResult.blocked(PROMOTION_APPROVAL_REQUIRED)
+            return ToolResult.blocked(PROMOTION_APPROVAL_REQUIRED), False
         call_digest = _promotion_call_digest(name, args)
         stamp_key = (run_id, call_id, call_digest)
         with self._promotion_lock:
             if self._promotion_stamps.pop(stamp_key, None) != "approve_once":
-                return ToolResult.blocked(PROMOTION_APPROVAL_REQUIRED)
+                return ToolResult.blocked(PROMOTION_APPROVAL_REQUIRED), False
         if self._promotion_snapshotter is None or self._promotion_revalidator is None:
-            return ToolResult.blocked(PROMOTION_APPROVAL_REQUIRED)
+            return ToolResult.blocked(PROMOTION_APPROVAL_REQUIRED), True
 
         def invoke_selected() -> ToolResult:
             if not self._authority_is_valid(authority, write=True):
@@ -1571,10 +1572,10 @@ class LocalToolProvider:
         if scope is not None:
             try:
                 with scope():
-                    return invoke_selected()
+                    return invoke_selected(), True
             except Exception:  # noqa: BLE001 - lease failure is fail-closed
-                return ToolResult.blocked(LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL)
-        return invoke_selected()
+                return ToolResult.blocked(LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL), True
+        return invoke_selected(), True
 
     def _prepare_repository_promotion(
         self,

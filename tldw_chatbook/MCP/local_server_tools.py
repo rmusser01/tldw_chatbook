@@ -184,8 +184,15 @@ def _build_hub_local_provider_handle(
         WorkspaceToolExecutor,
         _default_specs,
     )
+    from tldw_chatbook.Utils.path_validation import validate_path
 
-    authority = capture_directory_chain(Path(workspace_root))
+    validated_root = validate_path(
+        workspace_root,
+        workspace_root,
+        redact_paths=True,
+        allow_hidden=True,
+    )
+    authority = capture_directory_chain(validated_root)
     resolver = _LazyWatchlistsDBResolver()
     try:
         watchlists_service = WatchlistsToolService(

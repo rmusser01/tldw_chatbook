@@ -2738,10 +2738,11 @@ class UnifiedMCPControlPlaneService:
                 if cancelled is not None:
                     raise cancelled
                 return result
+            refreshed = await asyncio.to_thread(self._refresh_hub_test_preview, public)
             return self._hub_test_blocked(
                 public,
                 reason="intent_invalid",
-                refreshed=self._refresh_hub_test_preview(public),
+                refreshed=refreshed,
             )
 
         if public.server_key == "local:__local__":

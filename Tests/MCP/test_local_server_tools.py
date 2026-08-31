@@ -199,6 +199,37 @@ def test_hub_local_factory_filters_shared_descriptors_and_wires_runtime_seams(
         handle.close()
 
 
+def test_hub_local_factory_uses_the_central_validated_root(
+    monkeypatch, workspace, tmp_path
+):
+    from tldw_chatbook.Utils import path_validation
+
+    validated_root = tmp_path / "validated-workspace"
+    validated_root.mkdir()
+    calls = []
+
+    def validate_path(user_path, base_directory, **kwargs):
+        calls.append((user_path, base_directory, kwargs))
+        return validated_root.resolve()
+
+    monkeypatch.setattr(path_validation, "validate_path", validate_path)
+
+    with local_server_tools.build_hub_local_inspection_provider(
+        workspace,
+        resolve_state=lambda _hub: EffectiveToolState(state="allow", origin="tool"),
+    ) as handle:
+        assert handle.authority.canonical_root == validated_root.resolve()
+        assert handle.provider._result_redaction_root == validated_root.resolve()
+
+    assert calls == [
+        (
+            workspace,
+            workspace,
+            {"redact_paths": True, "allow_hidden": True},
+        )
+    ]
+
+
 def test_hub_local_dispatch_guard_stops_immediately_before_handler(
     monkeypatch, workspace
 ):

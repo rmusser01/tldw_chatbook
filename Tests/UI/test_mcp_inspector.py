@@ -2980,11 +2980,14 @@ async def test_test_tool_preview_ask_is_one_click_approve_once_and_keeps_edits()
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("gate", "label", "reason"),
-    [("off", "Blocked", "Permissions"), ("unresolved", "Unavailable", "Try again")],
+    ("gate", "label", "reason", "retry_visible"),
+    [
+        ("deny", "Blocked", "Permissions", False),
+        ("unresolved", "Unavailable", "Try again", True),
+    ],
 )
 async def test_test_tool_preview_non_actionable_is_disabled_with_recovery(
-    gate: str, label: str, reason: str
+    gate: str, label: str, reason: str, retry_visible: bool
 ):
     app = InspectorApp()
     async with app.run_test(size=(100, 60)) as pilot:
@@ -3001,6 +3004,9 @@ async def test_test_tool_preview_non_actionable_is_disabled_with_recovery(
         assert button.disabled is True
         assert reason in str(
             app.query_one("#mcp-inspector-test-preview", Static).renderable
+        )
+        assert (
+            app.query_one("#mcp-inspector-test-retry", Button).display is retry_visible
         )
         assert not [
             event

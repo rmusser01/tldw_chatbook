@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import threading
 import asyncio
+import inspect
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError, asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, get_type_hints
 
 import pytest
 
@@ -126,6 +128,28 @@ def test_canonical_arguments_return_a_dispatch_copy_independent_of_the_caller():
     assert dispatch == {"outer": {"items": ["original", "dispatch mutation"]}}
 
 
+def test_canonical_arguments_use_the_shared_input_validation_boundary(monkeypatch):
+    arguments = {"query": "hello"}
+    observed = []
+
+    def validate(value: object) -> dict[str, Any]:
+        observed.append(value)
+        return value  # type: ignore[return-value]
+
+    monkeypatch.setattr(
+        hub_test_execution,
+        "validate_tool_arguments",
+        validate,
+        raising=False,
+    )
+
+    encoded, dispatch = canonicalize_arguments(arguments)
+
+    assert observed == [arguments]
+    assert encoded == b'{"query":"hello"}'
+    assert dispatch == arguments
+
+
 @pytest.mark.parametrize("value", [None, [], ["not", "an", "object"], "text", 3])
 def test_canonical_arguments_reject_top_level_non_objects(value: Any):
     with pytest.raises(ValueError, match="JSON object"):
@@ -162,6 +186,15 @@ def test_authority_fingerprint_is_deterministic_for_identical_full_chains():
     )
 
     assert authority_fingerprint(left) == authority_fingerprint(right)
+
+
+def test_public_admission_helpers_keep_their_typed_documented_contract():
+    hints = get_type_hints(OneShotLocalHubApproval.invocation_scope)
+    doc = inspect.getdoc(authority_fingerprint) or ""
+
+    assert hints["return"] == Iterator[None]
+    assert "\nArgs:" in doc
+    assert "\nReturns:" in doc
 
 
 @pytest.mark.parametrize(

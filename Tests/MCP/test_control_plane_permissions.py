@@ -12,6 +12,7 @@ the Test Tool button, no audit emission, kill switch deliberately ignored).
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -946,6 +947,36 @@ async def test_prepared_hub_rendered_ask_run_is_blocked_consumed_and_refreshed(
     assert len(records) == 1
     assert records[0]["error_category"] == "intent_mismatch"
     await _assert_consumed_without_second_audit(service, store, preview.nonce)
+
+
+@pytest.mark.asyncio
+async def test_prepared_nonlocal_invalid_intent_refreshes_off_the_ui_loop(
+    tmp_path, monkeypatch
+):
+    service, _store = _service(tmp_path)
+    tool = _tool()
+    _install_external_tool(service, tool, {})
+    preview = service.prepare_hub_test(tool)
+    ui_thread = threading.get_ident()
+    refresh_threads = []
+    original_refresh = service._refresh_hub_test_preview
+
+    def refresh(public):
+        refresh_threads.append(threading.get_ident())
+        return original_refresh(public)
+
+    monkeypatch.setattr(service, "_refresh_hub_test_preview", refresh)
+
+    result = await service.execute_prepared_hub_test(
+        preview.nonce,
+        "invalid",  # type: ignore[arg-type]
+        {},
+    )
+
+    assert isinstance(result, ToolTestAdmissionBlocked)
+    assert result.reason == "intent_invalid"
+    assert refresh_threads
+    assert all(thread_id != ui_thread for thread_id in refresh_threads)
 
 
 @pytest.mark.asyncio

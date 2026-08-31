@@ -4118,6 +4118,13 @@ class MCPWorkbench(Container):
         if isinstance(outcome, LocalHubExecutionOutcome):
             result = outcome.result
             text = result.content if result.ok else result.error
+            decision_note = None
+            if outcome.dispatch_started:
+                decision_note = (
+                    "Approved for this invocation only; permission was not changed."
+                    if outcome.approval_consumed
+                    else "Ran from the prepared Allow preview."
+                )
             self._show_tool_test_result(
                 server_key=tool.server_key,
                 tool_name=tool.name,
@@ -4125,11 +4132,7 @@ class MCPWorkbench(Container):
                 text=text,
                 duration_ms=outcome.duration_ms,
                 blocked=outcome.status == "blocked",
-                decision_note=(
-                    "Approved for this invocation only; permission was not changed."
-                    if outcome.approval_consumed
-                    else "Ran from the prepared Allow preview."
-                ),
+                decision_note=decision_note,
             )
         elif isinstance(outcome, Mapping):
             try:

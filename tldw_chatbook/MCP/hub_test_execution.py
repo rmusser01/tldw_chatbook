@@ -14,11 +14,12 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from contextlib import contextmanager
 from contextvars import ContextVar
-from collections.abc import Coroutine
+from collections.abc import Coroutine, Iterator
 from typing import Any, Callable, Literal, cast
 
 from tldw_chatbook.Agents.agent_models import ToolResult
 from tldw_chatbook.Utils.filesystem_identity import DirectoryChain
+from tldw_chatbook.Utils.input_validation import validate_tool_arguments
 
 
 LocalHubDecision = Literal["allowed", "approved", "denied"]
@@ -184,7 +185,7 @@ class OneShotLocalHubApproval:
         self._lock = threading.Lock()
 
     @contextmanager
-    def invocation_scope(self):
+    def invocation_scope(self) -> Iterator[None]:
         """Bind this callback to its one exact provider invocation thread."""
         token = _LOCAL_HUB_APPROVAL_BINDING.set(self._binding)
         try:
@@ -237,11 +238,9 @@ def canonicalize_arguments(value: object) -> tuple[bytes, dict[str, Any]]:
     Raises:
         ValueError: If the value is not a strict JSON object with finite numbers.
     """
-    if type(value) is not dict:
-        raise ValueError("tool arguments must be a JSON object")
-    _validate_json_value(value, path="$", active_containers=set())
+    validated = validate_tool_arguments(value)
     encoded = json.dumps(
-        value,
+        validated,
         sort_keys=True,
         separators=(",", ":"),
         allow_nan=False,
@@ -250,58 +249,15 @@ def canonicalize_arguments(value: object) -> tuple[bytes, dict[str, Any]]:
     return encoded, dispatch
 
 
-def _validate_json_value(
-    value: object,
-    *,
-    path: str,
-    active_containers: set[int],
-) -> None:
-    value_type = type(value)
-    if value is None or value_type in (str, bool, int):
-        return
-    if value_type is float:
-        if not math.isfinite(cast(float, value)):
-            raise ValueError(f"JSON number at {path} must be finite")
-        return
-    if value_type is list:
-        _validate_json_container(value, path=path, active_containers=active_containers)
-        for index, item in enumerate(cast(list[object], value)):
-            _validate_json_value(
-                item,
-                path=f"{path}[{index}]",
-                active_containers=active_containers,
-            )
-        active_containers.remove(id(value))
-        return
-    if value_type is dict:
-        _validate_json_container(value, path=path, active_containers=active_containers)
-        for key, item in cast(dict[object, object], value).items():
-            if type(key) is not str:
-                raise ValueError(f"JSON object key at {path} must be a string")
-            _validate_json_value(
-                item,
-                path=f"{path}.{key}",
-                active_containers=active_containers,
-            )
-        active_containers.remove(id(value))
-        return
-    raise ValueError(f"value at {path} is not a JSON value")
-
-
-def _validate_json_container(
-    value: object,
-    *,
-    path: str,
-    active_containers: set[int],
-) -> None:
-    marker = id(value)
-    if marker in active_containers:
-        raise ValueError(f"JSON value at {path} contains a circular reference")
-    active_containers.add(marker)
-
-
 def authority_fingerprint(authority: DirectoryChain) -> str:
-    """Hash the canonical locator and complete root-first identity chain."""
+    """Hash the canonical locator and complete root-first identity chain.
+
+    Args:
+        authority: Captured canonical root and root-first directory identities.
+
+    Returns:
+        The SHA-256 hexadecimal fingerprint of the complete authority chain.
+    """
     payload = {
         "canonical_root": os.fspath(authority.canonical_root),
         "identities": [

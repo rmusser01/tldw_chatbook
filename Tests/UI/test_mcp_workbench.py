@@ -4922,6 +4922,40 @@ async def test_test_tool_typed_failure_outcome_is_redacted_and_bounded():
         assert len(rendered) <= 560
 
 
+@pytest.mark.asyncio
+async def test_test_tool_never_started_outcome_omits_success_decision_note():
+    app = ToolTestApp()
+    app.unified_mcp_service.next_prepared_outcome = LocalHubExecutionOutcome(
+        decision="denied",
+        status="blocked",
+        error_category="permission_denied",
+        final_gate="deny",
+        approval_consumed=False,
+        dispatch_started=False,
+        provider_terminal="not_started",
+        duration_ms=0,
+        result=ToolResult.blocked("Permission denied."),
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_mode("tools")
+        await pilot.pause()
+        await _select_tools_mode_row(app, pilot, 0)
+        await pilot.click("#mcp-inspector-test-tool")
+        await app.workers.wait_for_complete()
+        await pilot.click("#mcp-inspector-test-run")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        note = app.query_one("#mcp-inspector-test-result-note", Static)
+        rendered = str(app.query_one("#mcp-inspector-test-result", Static).renderable)
+        assert note.display is False
+        assert "Ran from the prepared Allow preview" not in str(note.renderable)
+        assert rendered.startswith("Blocked · not run")
+
+
 async def _open_fetch_test_preview(app: ToolTestApp, pilot) -> str:
     workbench = app.query_one(MCPWorkbench)
     workbench.set_mode("tools")
