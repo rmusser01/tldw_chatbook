@@ -74,9 +74,19 @@ def _dependencies(tmp_path, *, link_complete: bool = True):
             key_record_id="key-record-1",
             purge_generation=0,
             bootstrap_cursor="sha256:" + "a" * 64,
+            confirmed_cursor="cursor-confirmed",
             plan_id="plan-1",
             rebaseline_version=1,
             attention_code=None,
+        )
+        sync_repository.set_sync_v2_profile_state(
+            server_profile_id=SCOPE["server_profile_id"],
+            authenticated_principal_id=SCOPE["authenticated_principal_id"],
+            workspace_scope=None,
+            profile_mode="local_first_sync",
+            device_id="device-1",
+            dataset_id=SCOPE["dataset_id"],
+            dataset_cursors={"sync_v2": "cursor-confirmed"},
         )
     adapter = PersonalContextSyncAdapter(
         integrity_key=b"i" * 32,

@@ -29,12 +29,57 @@ class PersonalContextOutboxDispatcher:
         device_id: str,
         storage_key: bytes,
         limit: int = 100,
+        profile_id: str | None = None,
+        integrity_key_id: str | None = None,
+        key_record_id: str | None = None,
+        purge_generation: int | None = None,
+        confirmed_cursor: str | None = None,
+        _reconciling: bool = False,
+        bootstrap_cursor: str | None = None,
     ) -> dict[str, int]:
         """Copy pending entries, then receipt and shred each source body."""
 
-        if not self.state_repository.personal_context_sync_enabled(
+        link = self.state_repository.get_personal_context_link_state(
             server_profile_id=server_profile_id,
             authenticated_principal_id=authenticated_principal_id,
+        )
+        if _reconciling:
+            exact = {
+                "state": "reconciling",
+                "dataset_id": dataset_id,
+                "device_id": device_id,
+                "profile_id": profile_id,
+                "integrity_key_id": integrity_key_id,
+                "key_record_id": key_record_id,
+                "purge_generation": purge_generation,
+                "bootstrap_cursor": bootstrap_cursor,
+            }
+            if link is None or any(link.get(key) != value for key, value in exact.items()):
+                raise ValueError("personal_context_reconciliation_binding_stale")
+        elif link is None or not self.state_repository.personal_context_sync_enabled(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            dataset_id=dataset_id,
+            device_id=device_id,
+            profile_id=(profile_id if profile_id is not None else link["profile_id"]),
+            integrity_key_id=(
+                integrity_key_id
+                if integrity_key_id is not None
+                else link["integrity_key_id"]
+            ),
+            key_record_id=(
+                key_record_id if key_record_id is not None else link["key_record_id"]
+            ),
+            purge_generation=(
+                purge_generation
+                if purge_generation is not None
+                else link["purge_generation"]
+            ),
+            confirmed_cursor=(
+                confirmed_cursor
+                if confirmed_cursor is not None
+                else link["confirmed_cursor"]
+            ),
         ):
             raise ValueError("personal_context_link_incomplete")
 
@@ -156,6 +201,11 @@ class PersonalContextOutboxDispatcher:
             )
             dispatched += 1
         return {"dispatched": dispatched, "quarantined": quarantined}
+
+    def dispatch_first_link_reconciliation(self, **kwargs: Any) -> dict[str, int]:
+        """Stage only an exact durable reconciling binding before ordinary Sync opens."""
+
+        return self.dispatch_pending(**kwargs, _reconciling=True)
 
     @staticmethod
     def _after_destination_enqueue(_entry: Any, _envelope: Any) -> None:

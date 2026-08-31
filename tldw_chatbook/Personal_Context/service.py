@@ -588,10 +588,64 @@ class PersonalContextService:
 
         return self._repo().apply_reviewed_link(**kwargs)
 
+    def acquire_first_link_freeze(
+        self, *, plan_id: str, snapshot_token: str
+    ) -> None:
+        """Block normal mutations for one exact first-link review snapshot."""
+
+        self._repo().acquire_first_link_freeze(
+            plan_id=plan_id,
+            snapshot_token=snapshot_token,
+        )
+
+    def release_first_link_freeze(self, *, plan_id: str) -> bool:
+        """Release the exact review freeze after cancel or convergence."""
+
+        return self._repo().release_first_link_freeze(plan_id=plan_id)
+
+    def first_link_reconciliation_writes(self, *, plan_id: str):
+        """Authorize the private confirming pull to update canonical heads."""
+
+        return self._repo().first_link_reconciliation_writes(plan_id=plan_id)
+
     def first_link_rebaseline_version(self) -> int:
         """Return the authenticated key generation after interrupted-link recovery."""
 
         return self._repo().current_key_version()
+
+    def first_link_sync_heads(self) -> dict[str, dict[str, str]]:
+        """Return content-free eligible canonical heads for link confirmation."""
+
+        return self._repo().first_link_sync_heads()
+
+    def build_personal_context_sync_adapter(self, integrity_key_id: str):
+        """Build an adapter from active protected keys without exposing key bytes."""
+
+        from tldw_chatbook.Sync_Interop.personal_context_adapter import (
+            PersonalContextSyncAdapter,
+        )
+
+        return PersonalContextSyncAdapter(
+            integrity_key=self._repo()._require_keys().integrity_key,
+            integrity_key_id=integrity_key_id,
+        )
+
+    def build_personal_context_outbox_dispatcher(
+        self, *, state_repository: Any, integrity_key_id: str
+    ):
+        """Compose the exact canonical outbox owner with its active adapter."""
+
+        from tldw_chatbook.Sync_Interop.personal_context_dispatcher import (
+            PersonalContextOutboxDispatcher,
+        )
+
+        from .sync_outbox import ProfileSyncOutbox
+
+        return PersonalContextOutboxDispatcher(
+            profile_outbox=ProfileSyncOutbox(self._repo()),
+            state_repository=state_repository,
+            adapter=self.build_personal_context_sync_adapter(integrity_key_id),
+        )
 
     def list_scopes(self) -> tuple[ProfileScope, ...]:
         return tuple(self._repo().list_scopes())

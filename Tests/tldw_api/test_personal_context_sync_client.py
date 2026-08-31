@@ -91,4 +91,3 @@ async def test_client_uses_exact_personal_context_bootstrap_and_complete_paths(
         "dataset_id": "dataset-personal",
         "bootstrap_cursor": BOOTSTRAP["cursor"],
     }
-

@@ -9291,6 +9291,9 @@ class TldwCli(
             state_repository=self.sync_state_repository,
             local_store=getattr(self, "sync_v2_local_store", None),
             dataset_keys=self.sync_v2_dataset_keys,
+            personal_context_runtime_loader=(
+                self._load_personal_context_sync_runtime
+            ),
         )
         self.manual_sync_control_service = ManualSyncControlService(
             state_repository=self.sync_state_repository,
@@ -10562,6 +10565,38 @@ class TldwCli(
             exit_on_error=False,
         )
 
+    def _load_personal_context_sync_runtime(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+    ) -> None:
+        """Restore exact protected Personal Context Sync collaborators after restart."""
+
+        from .Personal_Context.link_key_custody import (
+            KeyringPersonalContextLinkKeyCustodian,
+        )
+        from .Personal_Context.link_service import PersonalContextLinkService
+
+        link = self.sync_state_repository.get_personal_context_link_state(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+        )
+        if link is None or link["state"] != "complete":
+            raise ValueError("personal_context_link_incomplete")
+        custodian = KeyringPersonalContextLinkKeyCustodian()
+        storage_key = custodian.load_storage_key(
+            **PersonalContextLinkService._key_binding(link)
+        )
+        service = self.get_personal_context_service(retry_locked=True)
+        dispatcher = service.build_personal_context_outbox_dispatcher(
+            state_repository=self.sync_state_repository,
+            integrity_key_id=str(link["integrity_key_id"]),
+        )
+        self.sync_v2_dataset_keys[str(link["dataset_id"])] = storage_key
+        self.local_first_sync_service.personal_context_outbox_dispatcher = dispatcher
+        self.local_first_sync_service.personal_context_service = service
+
     async def _run_personal_context_link(self) -> None:
         """Plan, review, and apply one content-safe first-link attempt."""
 
@@ -10614,10 +10649,22 @@ class TldwCli(
                 state_repository=self.sync_state_repository,
                 wrapping_key_provider=wrapping_provider,
                 key_custodian=key_custodian,
+                local_first_sync_service=self.local_first_sync_service,
                 server_profile_id=str(server_profile_id),
                 authenticated_principal_id=scope.get("authenticated_principal_id"),
                 display_name=platform.node() or "Chatbook",
             )
+            if existing is not None and existing["state"] == "complete":
+                await coordinator.resume()
+                self._load_personal_context_sync_runtime(
+                    server_profile_id=str(server_profile_id),
+                    authenticated_principal_id=scope.get(
+                        "authenticated_principal_id"
+                    ),
+                )
+                self.notify("Profile is already linked. Sync is ready.")
+                self._reload_personal_context_settings_panel()
+                return
             if recovered_apply:
                 await coordinator.resume_after_local_activation(
                     rebaseline_version=(
@@ -10630,25 +10677,30 @@ class TldwCli(
                 return
             if existing is not None and existing["state"] == "applying":
                 coordinator.abandon_uncommitted_apply()
-            if existing is not None and existing["state"] == "local_rebaseline_complete":
+            if existing is not None and existing["state"] in {
+                "local_rebaseline_complete",
+                "reconciling",
+            }:
                 await coordinator.resume()
                 self.notify("Profile link completed.")
                 self._reload_personal_context_settings_panel()
                 return
-            manifest = self.get_personal_context_service().get_manifest()
-            plan = await coordinator.plan(
-                expected_purge_generation=manifest.purge_generation
-            )
-            result = await self.push_screen_wait(
-                PersonalContextLinkModal(
-                    plan,
-                    retry_callback=self.launch_personal_context_link,
+            while True:
+                manifest = self.get_personal_context_service().get_manifest()
+                plan = await coordinator.plan(
+                    expected_purge_generation=manifest.purge_generation
                 )
-            )
-            if result is None:
-                coordinator.cancel(plan.plan_id)
-                return
-            await coordinator.apply(result.plan_id, result.decisions)
+                result = await self.push_screen_wait(
+                    PersonalContextLinkModal(plan, retry_callback=True)
+                )
+                if result is None:
+                    coordinator.cancel(plan.plan_id)
+                    return
+                if result.retry:
+                    coordinator.cancel(plan.plan_id)
+                    continue
+                await coordinator.apply(result.plan_id, result.decisions)
+                break
         except Exception:
             self.notify(
                 "Profile linking needs attention. No profile content was shown; retry from Settings.",

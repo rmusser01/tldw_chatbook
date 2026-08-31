@@ -25,7 +25,7 @@ _PERSONAL_CONTEXT_SERVER_BLOCKERS = frozenset(
         "personal_context_transport_unavailable",
     }
 )
-_PERSONAL_CONTEXT_MINIMUM_QUOTAS = {
+PERSONAL_CONTEXT_MINIMUM_QUOTAS = {
     "max_record_bytes": 16_384,
     "max_search_results": 20,
     "max_proposals_per_turn": 5,
@@ -118,7 +118,7 @@ def personal_context_sync_readiness(
         blockers.append("personal_context_cleanup_ack_incompatible")
     if contract.purge_generation != "personal-context-purge-v1":
         blockers.append("personal_context_purge_generation_incompatible")
-    for field_name, minimum in _PERSONAL_CONTEXT_MINIMUM_QUOTAS.items():
+    for field_name, minimum in PERSONAL_CONTEXT_MINIMUM_QUOTAS.items():
         if getattr(contract, field_name) < minimum:
             blockers.append(f"personal_context_quota_incompatible:{field_name}")
 

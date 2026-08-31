@@ -22,6 +22,7 @@ class PersonalContextLinkReviewResult:
     plan_id: str
     decisions: Mapping[str, str]
     unlinked_remote_scope_ids: tuple[str, ...]
+    retry: bool = False
 
     @property
     def collision_decisions(self) -> Mapping[str, str]:
@@ -69,12 +70,83 @@ class PersonalContextLinkModal(
                 )
             with VerticalScroll(id="personal-context-link-review-list"):
                 yield Static(
+                    "Adopt the server profile identity for this device: "
+                    f"{self.plan.profile_adoption[0]} → "
+                    f"{self.plan.profile_adoption[1]}",
+                    id="personal-context-link-profile-adoption",
+                    classes="settings-inline-guidance",
+                )
+                yield Static(
+                    "Map the global profile scope to the server global scope: "
+                    f"{self.plan.global_scope_mapping[0]} → "
+                    f"{self.plan.global_scope_mapping[1]}",
+                    id="personal-context-link-global-mapping",
+                    classes="settings-inline-guidance",
+                )
+                schema_outcome = str(self.plan.schema_outcome).replace(
+                    "compatible:", "compatible (version "
+                )
+                if schema_outcome.startswith("compatible (version "):
+                    schema_outcome += ")"
+                quota_outcome = (
+                    "Server quotas satisfy required minimums"
+                    if self.plan.quota_outcome == "minimums_satisfied"
+                    else "Server quotas need attention"
+                )
+                purge_outcome = str(self.plan.purge_outcome).replace(
+                    "generation_matches:", "matches ("
+                )
+                if purge_outcome.startswith("matches ("):
+                    purge_outcome += ")"
+                yield Static(
+                    f"Schema: {schema_outcome} · {quota_outcome} · "
+                    f"Purge generation: {purge_outcome}",
+                    id="personal-context-link-contract-outcomes",
+                    classes="profile-interview-state",
+                )
+                for quota, required, server, satisfied in getattr(
+                    self.plan, "quota_outcomes", ()
+                ):
+                    yield Static(
+                        f"{quota} · required {required} · server {server} · "
+                        f"{'satisfied' if satisfied else 'insufficient'}",
+                        classes="settings-inline-guidance",
+                    )
+                for record_id, outcome, local_version, server_version in getattr(
+                    self.plan, "record_outcomes", ()
+                ):
+                    yield Static(
+                        f"{record_id} · {outcome.replace('_', ' ')} · "
+                        f"local {local_version or 'none'} · "
+                        f"server {server_version or 'none'}",
+                        classes="settings-inline-guidance",
+                    )
+                for proposal_id, outcome in getattr(
+                    self.plan, "proposal_outcomes", ()
+                ):
+                    yield Static(
+                        f"{proposal_id} · {outcome.replace('_', ' ')}",
+                        classes="settings-inline-guidance",
+                    )
+                yield Static(
                     " · ".join(
                         (
                             _count_label(len(self.plan.exact_record_ids), "exact match"),
                             _count_label(len(self.plan.local_only_record_ids), "local addition"),
                             _count_label(len(self.plan.remote_only_record_ids), "server addition"),
                             _count_label(len(self.plan.key_collisions), "collision"),
+                            _count_label(
+                                len(getattr(self.plan, "exact_proposal_ids", ())),
+                                "exact proposal",
+                            ),
+                            _count_label(
+                                len(getattr(self.plan, "local_only_proposal_ids", ())),
+                                "local proposal",
+                            ),
+                            _count_label(
+                                len(getattr(self.plan, "remote_only_proposal_ids", ())),
+                                "server proposal",
+                            ),
                             _count_label(
                                 len(self.plan.unlinked_remote_scope_ids),
                                 "unlinked workspace",
@@ -93,6 +165,23 @@ class PersonalContextLinkModal(
                     yield Static(
                         "Incoming workspace context will stay unlinked and unavailable to agents until you map it in Settings.",
                         id="personal-context-link-unlinked-copy",
+                        classes="personal-context-review-warning",
+                    )
+                for local_scope_id, new_scope_id in getattr(
+                    self.plan, "workspace_new_scope_ids", ()
+                ):
+                    yield Static(
+                        f"{local_scope_id} → new scope {new_scope_id}",
+                        classes="settings-inline-guidance",
+                    )
+                for conflict in getattr(
+                    self.plan, "workspace_mapping_conflicts", ()
+                ):
+                    yield Static(
+                        f"{conflict.local_scope_id} → "
+                        f"{conflict.remote_scope_id} unavailable: "
+                        f"{conflict.record_ids[0]} conflicts with "
+                        f"{conflict.record_ids[1]}",
                         classes="personal-context-review-warning",
                     )
                 for index, collision in enumerate(self.plan.key_collisions):
@@ -138,6 +227,12 @@ class PersonalContextLinkModal(
                 for index, _scope_id in enumerate(
                     getattr(self.plan, "local_workspace_scope_ids", ())
                 ):
+                    blocked_mappings = {
+                        (item.local_scope_id, item.remote_scope_id)
+                        for item in getattr(
+                            self.plan, "workspace_mapping_conflicts", ()
+                        )
+                    }
                     with Vertical(classes="personal-context-link-decision-row"):
                         yield Static(
                             f"Local workspace {index + 1}: choose its canonical scope.",
@@ -148,6 +243,10 @@ class PersonalContextLinkModal(
                                 "Keep separate",
                                 id=f"personal-context-link-workspace-{index}-new",
                             )
+                            yield Button(
+                                "Leave unlinked",
+                                id=f"personal-context-link-workspace-{index}-unlinked",
+                            )
                             for remote_index, _remote_id in enumerate(
                                 self.plan.unlinked_remote_scope_ids
                             ):
@@ -156,6 +255,10 @@ class PersonalContextLinkModal(
                                     id=(
                                         f"personal-context-link-workspace-{index}-"
                                         f"map-{remote_index}"
+                                    ),
+                                    disabled=(
+                                        (_scope_id, _remote_id)
+                                        in blocked_mappings
                                     ),
                                 )
                         yield Static(
@@ -181,10 +284,30 @@ class PersonalContextLinkModal(
 
     def _can_approve(self) -> bool:
         required = set(self.plan.required_decision_ids)
+        workspace_decisions = {
+            decision_id.removeprefix("workspace:"): choice
+            for decision_id, choice in self._decisions.items()
+            if decision_id.startswith("workspace:")
+        }
+        remote_scope_ids = set(self.plan.unlinked_remote_scope_ids)
+        mapped_remote_ids = [
+            choice
+            for choice in workspace_decisions.values()
+            if choice in remote_scope_ids
+        ]
+        blocked_mappings = {
+            (item.local_scope_id, item.remote_scope_id)
+            for item in getattr(self.plan, "workspace_mapping_conflicts", ())
+        }
         return (
             not self._busy
             and not self.plan.attention_codes
             and required.issubset(self._decisions)
+            and len(mapped_remote_ids) == len(set(mapped_remote_ids))
+            and not any(
+                (scope_id, choice) in blocked_mappings
+                for scope_id, choice in workspace_decisions.items()
+            )
         )
 
     @on(Button.Pressed)
@@ -247,6 +370,8 @@ class PersonalContextLinkModal(
             decision_id = f"workspace:{scope_id}"
             if decision == "new":
                 decision = "new"
+            elif decision == "unlinked":
+                decision = "unlinked"
             elif decision.startswith("map-"):
                 try:
                     remote_index = int(decision.removeprefix("map-"))
@@ -269,8 +394,7 @@ class PersonalContextLinkModal(
         )
 
     def _retry(self) -> None:
-        callback = self._retry_callback
-        if not callable(callback):
+        if self._retry_callback is None:
             return
         self._busy = True
         self.query_one("#personal-context-link-status", Static).update(
@@ -278,10 +402,14 @@ class PersonalContextLinkModal(
         )
         for button in self.query(Button):
             button.disabled = True
-        try:
-            callback()
-        finally:
-            self.dismiss(None)
+        self.dismiss(
+            PersonalContextLinkReviewResult(
+                plan_id=str(self.plan.plan_id),
+                decisions={},
+                unlinked_remote_scope_ids=(),
+                retry=True,
+            )
+        )
 
     def action_request_safe_cancel(self) -> None:
         if not self._busy:

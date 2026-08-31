@@ -31,6 +31,7 @@ class LocalFirstSyncService:
         dataset_keys: dict[str, bytes] | None = None,
         personal_context_outbox_dispatcher: Any = None,
         personal_context_service: Any = None,
+        personal_context_runtime_loader: Any = None,
     ) -> None:
         self.server_service = server_service
         self.state_repository = state_repository
@@ -38,6 +39,7 @@ class LocalFirstSyncService:
         self.dataset_keys = dataset_keys if dataset_keys is not None else {}
         self.personal_context_outbox_dispatcher = personal_context_outbox_dispatcher
         self.personal_context_service = personal_context_service
+        self.personal_context_runtime_loader = personal_context_runtime_loader
 
     async def sync_once(
         self,
@@ -102,17 +104,39 @@ class LocalFirstSyncService:
         if uses_personal_context and (
             self.personal_context_outbox_dispatcher is None
             or self.personal_context_service is None
+        ) and callable(self.personal_context_runtime_loader):
+            self.personal_context_runtime_loader(
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+            )
+        if uses_personal_context and (
+            self.personal_context_outbox_dispatcher is None
+            or self.personal_context_service is None
         ):
             raise ValueError("personal_context_sync_transport_unavailable")
-        if uses_personal_context and not self.state_repository.personal_context_sync_enabled(
-            server_profile_id=server_profile_id,
-            authenticated_principal_id=authenticated_principal_id,
-        ):
-            raise ValueError("personal_context_link_incomplete")
+        personal_context_link = None
+        if uses_personal_context:
+            personal_context_link = self.state_repository.get_personal_context_link_state(
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+            )
+            if personal_context_link is None or not self.state_repository.personal_context_sync_enabled(
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+                dataset_id=str(dataset_id),
+                device_id=str(device_id),
+                profile_id=personal_context_link.get("profile_id"),
+                integrity_key_id=personal_context_link.get("integrity_key_id"),
+                key_record_id=personal_context_link.get("key_record_id"),
+                purge_generation=personal_context_link.get("purge_generation"),
+                confirmed_cursor=(profile.get("dataset_cursors") or {}).get("sync_v2"),
+            ):
+                raise ValueError("personal_context_link_incomplete")
 
         profile_outbox_result = {"dispatched": 0, "quarantined": 0}
         if uses_personal_context:
             assert self.personal_context_outbox_dispatcher is not None
+            assert personal_context_link is not None
             profile_outbox_result = (
                 self.personal_context_outbox_dispatcher.dispatch_pending(
                     server_profile_id=server_profile_id,
@@ -121,6 +145,11 @@ class LocalFirstSyncService:
                     dataset_id=str(dataset_id),
                     device_id=str(device_id),
                     storage_key=key,
+                    profile_id=str(personal_context_link["profile_id"]),
+                    integrity_key_id=str(personal_context_link["integrity_key_id"]),
+                    key_record_id=str(personal_context_link["key_record_id"]),
+                    purge_generation=int(personal_context_link["purge_generation"]),
+                    confirmed_cursor=str(personal_context_link["confirmed_cursor"]),
                 )
             )
 
@@ -196,8 +225,19 @@ class LocalFirstSyncService:
             ):
                 batch_payloads = [item["payload"] for item in batch_items]
                 try:
+                    push = self.server_service.push_v2_envelopes
+                    if uses_personal_context:
+                        push = getattr(
+                            self.server_service,
+                            "_push_v2_personal_context_complete",
+                            None,
+                        )
+                        if not callable(push):
+                            raise ValueError(
+                                "personal_context_sync_transport_unavailable"
+                            )
                     batch_record = self._dump(
-                        await self.server_service.push_v2_envelopes(
+                        await push(
                             dataset_id=str(dataset_id),
                             device_id=str(device_id),
                             envelopes=batch_payloads,
@@ -275,8 +315,17 @@ class LocalFirstSyncService:
                     )
 
         try:
+            pull = self.server_service.pull_v2_envelopes
+            if uses_personal_context:
+                pull = getattr(
+                    self.server_service,
+                    "_pull_v2_personal_context_complete",
+                    None,
+                )
+                if not callable(pull):
+                    raise ValueError("personal_context_sync_transport_unavailable")
             pulled = self._dump(
-                await self.server_service.pull_v2_envelopes(
+                await pull(
                     dataset_id=str(dataset_id),
                     device_id=str(device_id),
                     cursor=cursor_record.cursor,

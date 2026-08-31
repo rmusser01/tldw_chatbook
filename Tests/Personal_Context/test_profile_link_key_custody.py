@@ -53,8 +53,12 @@ def test_staged_key_is_exactly_bound_and_profile_bundle_can_be_replaced() -> Non
         "key_record_id": "record-1",
     }
     custodian.stage(**binding, integrity_key=b"n" * 32)
+    storage_key = custodian.load_or_create_storage_key(**binding)
 
     assert custodian.load(**binding) == b"n" * 32
+    assert storage_key == custodian.load_or_create_storage_key(**binding)
+    assert len(storage_key) == 32
+    assert storage_key != b"n" * 32
     with pytest.raises(ValueError, match="staged_integrity_key_binding_mismatch"):
         custodian.load(**{**binding, "device_id": "device-2"})
 
@@ -67,4 +71,3 @@ def test_staged_key_is_exactly_bound_and_profile_bundle_can_be_replaced() -> Non
     )
     protector.replace("profile-ref", replacement)
     assert protector.load("profile-ref") == replacement
-

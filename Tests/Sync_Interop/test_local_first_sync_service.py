@@ -24,6 +24,8 @@ class FakeLocalFirstServer:
         pull_error: Exception | None = None,
     ) -> None:
         self.calls: list[tuple] = []
+        self.personal_context_complete_pushes = 0
+        self.personal_context_complete_pulls = 0
         self.pull_envelopes = pull_envelopes or []
         self.push_response = push_response
         self.pull_response = pull_response
@@ -64,6 +66,10 @@ class FakeLocalFirstServer:
             "next_cursor": "8",
         }
 
+    async def _push_v2_personal_context_complete(self, **kwargs):
+        self.personal_context_complete_pushes += 1
+        return await self.push_v2_envelopes(**kwargs)
+
     async def pull_v2_envelopes(
         self,
         *,
@@ -95,6 +101,10 @@ class FakeLocalFirstServer:
             "next_cursor": "9",
             "has_more": False,
         }
+
+    async def _pull_v2_personal_context_complete(self, **kwargs):
+        self.personal_context_complete_pulls += 1
+        return await self.pull_v2_envelopes(**kwargs)
 
 
 class RecordingLocalStore:
@@ -1990,6 +2000,93 @@ async def test_local_first_personal_context_sync_fails_closed_without_compositio
         )
 
     assert server.calls == []
+
+
+async def test_local_first_complete_binding_uses_private_personal_context_transport(
+    tmp_path,
+):
+    dataset_key = generate_dataset_key()
+    repo = _repo_with_profile(
+        tmp_path,
+        capabilities={"supported_domains": ["personal_context.record"]},
+    )
+    repo.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope=None,
+        profile_mode="local_first_sync",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        dataset_cursors={"sync_v2": "7"},
+        capabilities={"supported_domains": ["personal_context.record"]},
+    )
+    repo.set_personal_context_link_state(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        state="complete",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        authority_id="authority-1",
+        profile_id="profile-1",
+        integrity_key_id="integrity-1",
+        key_record_id="key-record-1",
+        purge_generation=0,
+        bootstrap_cursor="cursor-bootstrap",
+        confirmed_cursor="7",
+        bootstrap_heads={},
+        expected_heads={},
+        plan_id="plan-1",
+        rebaseline_version=2,
+        attention_code=None,
+    )
+
+    class _Adapter:
+        @staticmethod
+        def restore_from_storage(envelope, *, storage_key):
+            return envelope
+
+    class _Dispatcher:
+        adapter = _Adapter()
+
+        @staticmethod
+        def dispatch_pending(**kwargs):
+            return {"dispatched": 0, "quarantined": 0}
+
+    envelope = SyncV2Envelope(
+        client_envelope_id="pc:record-1:v1",
+        dataset_id="dataset-1",
+        domain="personal_context.record",
+        object_id="record-1",
+        parent_id="scope-global",
+        operation="upsert",
+        device_id="device-1",
+        base_version=None,
+        entity_version="version-1",
+        payload={"schema_version": 1},
+        payload_hash="hmac-sha256-v1:" + "a" * 64,
+        encryption_policy="server_trusted_v1",
+    )
+    server = FakeLocalFirstServer()
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": dataset_key},
+        personal_context_outbox_dispatcher=_Dispatcher(),
+        personal_context_service=object(),
+    )
+
+    result = await service.sync_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domains=["personal_context.record"],
+        outgoing_envelopes=[envelope],
+    )
+
+    assert result["pushed_envelopes"] == 1
+    assert server.personal_context_complete_pushes == 1
+    assert server.personal_context_complete_pulls == 1
 
 
 async def test_local_first_sync_once_requires_profile_device_dataset_and_dataset_key(

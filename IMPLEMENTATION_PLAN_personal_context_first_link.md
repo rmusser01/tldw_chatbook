@@ -17,12 +17,15 @@ because the link service and review surface do not exist.
 ## Stage 2: Durable reconciliation and canonical rebind
 
 **Goal:** Build encrypted reference/hash plans, persist explicit workspace
-scope mappings, journal provisional-to-canonical identity adoption, and replay
-concurrent local edits after convergence.
+scope mappings, acquire a durable exact-snapshot write freeze, and journal
+provisional-to-canonical identity adoption.
 
-**Success criteria:** No upload occurs before approval; accepted decisions
-preserve canonical IDs/versions; cancel leaves both replicas unchanged; retry
-is idempotent and interrupted rebind resumes safely.
+**Success criteria:** No canonical Personal Context content upload occurs before
+approval; accepted decisions preserve canonical IDs/versions; cancel leaves both
+content replicas unchanged; retry is idempotent and interrupted rebind resumes
+safely. Conservative v1 blocks ordinary user/agent profile mutations with the
+stable `personal_context_link_in_progress` reason while allowing reads; it does
+not claim to journal and replay concurrent writes.
 
 **Tests:** Reconciliation repository/service and concurrent mutation cases.
 
@@ -52,9 +55,52 @@ and independent review.
 Ruff, compilation, Bandit, diff hygiene, and review pass; TASK-24727 is
 complete.
 
-**Status:** In Progress — Chatbook targeted tests, Ruff, compilation, CSS bundle
-reproduction, and diff hygiene pass. Controller-owned Bandit and independent
-cross-repository review remain before task closure.
+**Status:** In Progress — Chatbook targeted tests pass (285 tests); Ruff,
+compilation, CSS reproduction, both diff-hygiene checks, and the Bandit
+high-severity gate pass. Controller-owned independent cross-repository review
+remains before task closure.
+
+### Independent-review remediation (2026-08-30)
+
+- Added durable `reconciling` state, immutable bootstrap receipt data, a separate
+  confirmed cursor, exact canonical head sets, and a dedicated complete-gated
+  push/pull cycle with `include_own_changes=True`.
+- Normal dispatch and pull now require the complete exact device/dataset/profile/
+  key/purge/cursor binding. Sync-profile bootstrap merges existing generic Sync
+  metadata and rejects dataset/device replacement.
+- Rebuilt the reviewed outbox as an exact canonical materialization journal,
+  including local-only history, explicit same-ID merge lineage, and remote-loser
+  tombstones. Arbitrary user strings are no longer identity-rewritten.
+- Added explicit `unlinked` workspace handling, random identities for `new`,
+  one-to-one mapping enforcement, post-map collision fail-closed validation, and
+  in-transaction authenticated snapshot/binding revalidation.
+- Added secure persistent dataset-staging-key custody distinct from profile keys,
+  restart loading without silent regeneration, and lazy production runtime wiring.
+- Acquires a durable repository freeze before review and releases it on cancel,
+  terminal attention, successful convergence, and expired-review recovery. The
+  authenticated snapshot covers scope bindings and proposal hashes and is
+  revalidated inside the apply write transaction.
+- The dedicated first-link cycle drains the exact reviewed journal in negotiated
+  bounded batches, calls server completion only for the immutable bootstrap
+  receipt, confirms with `include_own_changes=True`, and opens ordinary Sync only
+  after exact canonical heads and the final cursor match.
+- Public Personal Context push and pull are fail closed. Only the exact reviewed
+  reconciliation path and exact-complete LocalFirst path can reach private
+  Personal Context transport wrappers.
+- Exact preallocated `new` workspace scope IDs, device-only identity collisions,
+  and mapping-created semantic collisions are shown or disabled before approval.
+  Stale destination outbox copies are removed only for the exact pending Personal
+  Context binding, including apply-crash recovery.
+
+Bootstrap necessarily reserves content-free server control-plane scaffolding
+(device, dataset, canonical authority/profile/key binding). "Planning is
+read-only" and "cancel leaves both replicas unchanged" mean that no canonical
+Personal Context record/proposal/scope/manifest content is uploaded or mutated;
+cancel also releases the local freeze/staging state. This does not claim that the
+approved bootstrap contract performs zero remote control-plane writes.
+
+**Remediation status:** In Progress — targeted implementation is green; controller
+review remains required before closure.
 
 ## ADR check
 

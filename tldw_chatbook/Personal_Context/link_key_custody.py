@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import secrets
 from typing import Any, Protocol
 
 from cryptography.hazmat.primitives import hashes, serialization
@@ -19,6 +20,7 @@ _KEYRING_SERVICE = "tldw_chatbook.personal_context.link"
 _WRAPPING_KEY_NAME = "device-wrapping-rsa-v1"
 _WRAPPING_PREFIX = "rsa-private-pkcs8-v1:"
 _STAGED_PREFIX = "staged-integrity-v1:"
+_STORAGE_PREFIX = "dataset-staging-v1:"
 
 
 class PersonalContextWrappingKeyProvider(Protocol):
@@ -40,6 +42,10 @@ class PersonalContextLinkKeyCustodian(Protocol):
     def load(self, **binding: str) -> bytes: ...
 
     def delete(self, **binding: str) -> None: ...
+
+    def load_or_create_storage_key(self, **binding: str) -> bytes: ...
+
+    def load_storage_key(self, **binding: str) -> bytes: ...
 
 
 def _validate_integrity_key(value: bytes) -> bytes:
@@ -162,11 +168,25 @@ def _binding_name(binding: dict[str, str]) -> str:
     return "staged:" + hashlib.sha256(payload).hexdigest()
 
 
+def _storage_name(binding: dict[str, str]) -> str:
+    _binding_name(binding)
+    payload = json.dumps(
+        {
+            key: binding[key]
+            for key in ("server_profile_id", "dataset_id", "device_id")
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return "storage:" + hashlib.sha256(payload).hexdigest()
+
+
 class InMemoryPersonalContextLinkKeyCustodian:
     """Volatile staged custody used only by explicit tests."""
 
     def __init__(self) -> None:
         self._staged: dict[str, bytes] = {}
+        self._storage: dict[str, bytes] = {}
 
     def stage(self, *, integrity_key: bytes, **binding: str) -> None:
         self._staged[_binding_name(binding)] = _validate_integrity_key(integrity_key)
@@ -179,6 +199,16 @@ class InMemoryPersonalContextLinkKeyCustodian:
 
     def delete(self, **binding: str) -> None:
         self._staged.pop(_binding_name(binding), None)
+
+    def load_or_create_storage_key(self, **binding: str) -> bytes:
+        name = _storage_name(binding)
+        return self._storage.setdefault(name, secrets.token_bytes(32))
+
+    def load_storage_key(self, **binding: str) -> bytes:
+        try:
+            return self._storage[_storage_name(binding)]
+        except KeyError:
+            raise ValueError("personal_context_staging_key_unavailable") from None
 
 
 class KeyringPersonalContextLinkKeyCustodian:
@@ -224,5 +254,47 @@ class KeyringPersonalContextLinkKeyCustodian:
         try:
             if self._keyring.get_password(_KEYRING_SERVICE, name) is not None:
                 self._keyring.delete_password(_KEYRING_SERVICE, name)
+        except Exception as exc:
+            raise ProfileLockedError("The secure link keyring is unavailable.") from exc
+
+    def load_or_create_storage_key(self, **binding: str) -> bytes:
+        name = _storage_name(binding)
+        try:
+            stored = self._keyring.get_password(_KEYRING_SERVICE, name)
+            if stored is None:
+                key = secrets.token_bytes(32)
+                self._keyring.set_password(
+                    _KEYRING_SERVICE,
+                    name,
+                    _STORAGE_PREFIX + base64.b64encode(key).decode("ascii"),
+                )
+                return key
+            if not isinstance(stored, str) or not stored.startswith(_STORAGE_PREFIX):
+                raise ValueError("personal_context_staging_key_invalid")
+            key = base64.b64decode(
+                stored.removeprefix(_STORAGE_PREFIX), validate=True
+            )
+            if len(key) != 32:
+                raise ValueError("personal_context_staging_key_invalid")
+            return key
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ProfileLockedError("The secure link keyring is unavailable.") from exc
+
+    def load_storage_key(self, **binding: str) -> bytes:
+        name = _storage_name(binding)
+        try:
+            stored = self._keyring.get_password(_KEYRING_SERVICE, name)
+            if not isinstance(stored, str) or not stored.startswith(_STORAGE_PREFIX):
+                raise ValueError("personal_context_staging_key_unavailable")
+            key = base64.b64decode(
+                stored.removeprefix(_STORAGE_PREFIX), validate=True
+            )
+            if len(key) != 32:
+                raise ValueError("personal_context_staging_key_unavailable")
+            return key
+        except ValueError:
+            raise
         except Exception as exc:
             raise ProfileLockedError("The secure link keyring is unavailable.") from exc

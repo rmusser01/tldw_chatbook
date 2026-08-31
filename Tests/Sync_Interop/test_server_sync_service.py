@@ -78,7 +78,9 @@ def _sync_v2_envelope(
     )
 
 
-def _personal_context_capabilities(*, available: bool = True) -> dict:
+def _personal_context_capabilities(
+    *, available: bool = True, max_batch_size: int = 100
+) -> dict:
     blockers = [] if available else ["personal_context_profile_key_unavailable"]
     domains = [
         "personal_context.manifest",
@@ -89,6 +91,7 @@ def _personal_context_capabilities(*, available: bool = True) -> dict:
     ]
     return {
         "protocol_version": "sync-v2-m1",
+        "max_batch_size": max_batch_size,
         "domains": domains,
         "operations": {domain: ["upsert", "tombstone"] for domain in domains},
         "supported_adapter_versions": {domain: [1] for domain in domains},
@@ -573,7 +576,9 @@ async def test_personal_context_bootstrap_registers_wrapping_key_without_generic
     tmp_path,
 ) -> None:
     client = FakeSyncClient(
-        capabilities_response=_personal_context_capabilities(available=True)
+        capabilities_response=_personal_context_capabilities(
+            available=True, max_batch_size=17
+        )
     )
     repo = SyncStateRepository(tmp_path / "sync_state.db")
     service = ServerSyncService(client=client, state_repository=repo)
@@ -591,6 +596,7 @@ async def test_personal_context_bootstrap_registers_wrapping_key_without_generic
     assert response == {
         "device_id": "device-1",
         "dataset_id": "dataset-personal-context",
+        "_sync_capabilities": {"max_batch_size": 17},
     }
     register = next(call for call in client.calls if call[0] == "register_sync_v2_device")
     assert register[1]["capabilities"]["personal_context_wrapping_public_key"].startswith(
@@ -1119,6 +1125,62 @@ async def test_server_sync_service_rejects_mismatched_v2_pull_response_dataset_a
         )
 
     assert [call[0] for call in client.calls] == ["pull_sync_v2_envelopes"]
+
+
+@pytest.mark.asyncio
+async def test_public_pull_rejects_personal_context_before_transport_dispatch():
+    client = FakeSyncClient()
+    service = ServerSyncService(client=client)
+
+    with pytest.raises(ValueError, match="reviewed_first_link"):
+        await service.pull_v2_envelopes(
+            dataset_id="dataset-1",
+            device_id="device-1",
+            domains=["personal_context.record"],
+        )
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_public_push_rejects_personal_context_before_transport_dispatch():
+    client = FakeSyncClient()
+    service = ServerSyncService(client=client)
+
+    with pytest.raises(ValueError, match="reviewed_first_link"):
+        await service.push_v2_envelopes(
+            dataset_id="dataset-1",
+            device_id="device-1",
+            domains=["personal_context.record"],
+            envelopes=[_sync_v2_envelope(domain="personal_context.record")],
+        )
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_private_first_link_push_uses_reviewed_transport_path():
+    envelope = _sync_v2_envelope(domain="personal_context.record")
+    client = FakeSyncClient(
+        push_response={
+            "dataset_id": "dataset-1",
+            "accepted": [{"client_envelope_id": envelope.client_envelope_id}],
+            "rejected": [],
+            "conflicts": [],
+            "next_cursor": "cursor-2",
+        }
+    )
+    service = ServerSyncService(client=client)
+
+    result = await service._push_v2_personal_context_first_link(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        domains=["personal_context.record"],
+        envelopes=[envelope],
+    )
+
+    assert result["next_cursor"] == "cursor-2"
+    assert [call[0] for call in client.calls] == ["push_sync_v2_envelopes"]
 
 
 @pytest.mark.asyncio
