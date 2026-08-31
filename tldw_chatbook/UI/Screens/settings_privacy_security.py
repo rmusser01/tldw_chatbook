@@ -6,8 +6,10 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
-from tldw_chatbook.Utils.trace_privacy_config import validate_trace_privacy_config
+from tldw_chatbook.Utils.sensitive_config_keys import (
+    is_sensitive_config_key,
+    validate_trace_privacy_config,
+)
 
 
 SAFE_SKILL_TRUST_STATUSES = frozenset(

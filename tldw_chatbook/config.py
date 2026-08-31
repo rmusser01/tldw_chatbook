@@ -68,8 +68,10 @@ from tldw_chatbook.Utils.private_paths import (
     secure_private_directory,
     verify_trusted_directory,
 )
-from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
-from tldw_chatbook.Utils.trace_privacy_config import validate_trace_privacy_config
+from tldw_chatbook.Utils.sensitive_config_keys import (
+    is_sensitive_config_key,
+    validate_trace_privacy_config,
+)
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
