@@ -838,19 +838,6 @@ async def _open_all_production_context_sections(host, pilot) -> ConsoleLeftRail:
     return rail
 
 
-@pytest.mark.xfail(
-    reason=(
-        "TASK-25708: partially re-derived, not finished. The press-and-reflow "
-        "half now works against the post-TASK-23199 rail -- the press target "
-        "is chosen from the visible band instead of a fixed line, and the "
-        "pressed-key/active-section/scroll assertions all pass. What remains "
-        "is the TRAILING double-click phase: after the reveal the pressed row "
-        "sits exactly on the outer clip's bottom edge, and centring it in the "
-        "tree viewport does not move it off that boundary. Finishing it needs "
-        "the clip interaction understood, not another coordinate guess."
-    ),
-    strict=False,
-)
 @pytest.mark.asyncio
 async def test_production_workspace_pointer_keeps_pressed_key_across_outer_reflow(
     monkeypatch: pytest.MonkeyPatch,
@@ -917,8 +904,12 @@ async def test_production_workspace_pointer_keeps_pressed_key_across_outer_reflo
         assert bounded.native_scroll_owner is tree
         assert tree.max_scroll_y > 0
         rail.activate_section("details", deliberate_reveal=False)
-        workspace_line = int(workspace._line)
-        tree.scroll_to(y=max(0, workspace_line - 1), animate=False, immediate=True)
+        # Keep the tree at its own top. This used to pre-scroll to
+        # `workspace_line - 1` to bring a HARDCODED target into view; the
+        # search below now picks whichever workspace row satisfies the
+        # visibility bounds, and pre-scrolling only shifts the line-to-row
+        # mapping out from under it.
+        tree.scroll_to(y=0, animate=False, immediate=True)
         outer = rail.query_one("#console-left-rail-body", VerticalScroll)
 
         # TASK-25708: this used to scroll to `workspace_header_y - 3`, which
@@ -933,12 +924,21 @@ async def test_production_workspace_pointer_keeps_pressed_key_across_outer_reflo
         # band that is actually visible rather than from a fixed line -- the
         # test now reads the layout instead of assuming one.
         outer.scroll_to(
-            y=max(1, min(4, outer.max_scroll_y)), animate=False, immediate=True
+            # Two rows is enough for the reveal to be a real reflow, and
+            # keeps the usable press window wide: each workspace row is
+            # followed by four conversation rows, so a large shift can leave
+            # no workspace row satisfying both bounds below.
+            y=max(1, min(2, outer.max_scroll_y)), animate=False, immediate=True
         )
         await _settle(pilot, passes=4)
         assert rail._active_section_id == "details"
         assert outer.scroll_y > 0, "outer did not scroll; the reveal cannot move it"
 
+        # Revealing Workspaces scrolls the outer back to the top, which moves
+        # everything DOWN by exactly the current offset. Both the press and
+        # the later click must survive that shift, so budget for it here
+        # rather than discovering it as a click that silently misses.
+        reveal_shift = int(outer.scroll_y)
         visible_top = max(tree.content_region.y, outer.content_region.y)
         visible_bottom = min(tree.content_region.bottom, outer.content_region.bottom)
         assert visible_bottom - visible_top >= 2, (
@@ -953,17 +953,24 @@ async def test_production_workspace_pointer_keeps_pressed_key_across_outer_reflo
         # double-click asserts a workspace activation, so a conversation row
         # would not exercise it. Scanning from the middle outward keeps the
         # press away from the band's edges, which the reveal shifts.
-        midpoint = (visible_bottom - visible_top) // 2
-        offsets = sorted(range(visible_bottom - visible_top), key=lambda o: abs(o - midpoint))
+        # The pointer deliberately stays still through the reflow, so the
+        # chosen row must be on the tree BOTH before and after the shift:
+        #   lower bound -- at least `reveal_shift` rows into the tree, or the
+        #     stationary pointer ends up above it once content moves down;
+        #   upper bound -- `reveal_shift` rows clear of the clip's bottom, or
+        #     it moves out the other side.
         pressed_node = None
-        for offset in offsets:
-            candidate_y = visible_top + offset
+        for candidate_y in range(visible_top + reveal_shift, visible_bottom):
+            if candidate_y + reveal_shift >= outer.content_region.bottom:
+                continue
             line = int(tree.scroll_y) + (candidate_y - tree.content_region.y)
             node = tree.get_node_at_line(line)
             if node is not None and str(node.data.key).startswith("workspace:"):
                 pressed_node, press_screen_y = node, candidate_y
                 break
-        assert pressed_node is not None, "no workspace row visible to press"
+        assert pressed_node is not None, (
+            "no workspace row is visible both before and after the reveal"
+        )
         pressed_key = pressed_node.data.key
         pressed_workspace_id = pressed_key.split(":", 1)[1]
 
