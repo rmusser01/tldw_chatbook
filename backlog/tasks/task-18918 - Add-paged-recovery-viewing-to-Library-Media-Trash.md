@@ -4,7 +4,7 @@ title: Add paged recovery viewing to Library Media Trash
 status: Done
 assignee: []
 created_date: '2026-08-15 02:51'
-updated_date: '2026-08-31 15:11'
+updated_date: '2026-08-31 15:41'
 labels:
   - library
   - pagination
@@ -97,8 +97,9 @@ and action-gated afterward.
 Quality review found five false-proof seams in that first closeout. Permanent-
 delete start/success/failure logs now emit fixed operation/status/count metadata
 and exception category only; they omit backing IDs, database paths, raw
-exceptions, and tracebacks. A real file-backed success test and a trigger-
-injected SQLite failure test cover both Loguru and stdlib logging. The live gate
+exceptions, and tracebacks. A real file-backed success test, a trigger-injected
+pre-FTS SQLite failure test, and a deterministic post-Media-delete FTS sink
+failure test cover both Loguru and stdlib logging. The live gate
 now proves every SQLite target against explicit pytest/HOME/app-scratch roots
 before open instead of reading real-profile bytes, asserts exact pane/content/
 scrollbar/row geometry rather than positive widths, starts viewer evidence from
@@ -114,6 +115,13 @@ asserts **120×35**, **100×30**, and **80×24** are compact before running thei
 Items-priority/exclusive-optional-pane branch. Branch selection, labels, and the
 final ordered `(size, layout_contract)` aggregate all come from that fixed
 oracle, so a posture regression cannot relabel itself and pass.
+
+The final privacy review pins both identifier-bearing historical FTS message
+forms (`Media ID 45` and `Media ID: 45`) as forbidden, positively requires the
+fixed committed/failed FTS metadata, and mutation-checks the former success line
+plus raw failure detail. The mounted walkthrough also proves a seeded first-page
+Trash row is present in Textual's public exported SVG, so painted-row evidence
+cannot be satisfied by a detached DOM node.
 
 Production and focused owners modified across the original work and ADR-104
 amendment:
@@ -156,6 +164,20 @@ amendment:
   **5 with 2 warnings in 1.93s**. Its path mutation proves rejection before the
   fake opener runs; its geometry mutation changes one allocated column; and its
   viewer mutation clears the row-produced selection.
+- Final Media FTS privacy proofs:
+
+  ```bash
+  PYTHONPATH=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/task-18918-media-trash-paging /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/Media_DB/test_media_db_v2.py::test_permanent_delete_privacy_guard_rejects_former_fts_success_line Tests/Media_DB/test_media_db_v2.py::test_permanent_delete_success_logs_only_fixed_metadata Tests/Media_DB/test_media_db_v2.py::test_permanent_delete_sqlite_failure_logs_category_without_private_values Tests/Media_DB/test_media_db_v2.py::test_permanent_delete_fts_failure_logs_categories_without_private_values Tests/Media_DB/test_media_db_v2.py::test_permanent_delete_privacy_guard_rejects_raw_fts_failure_detail --disable-warnings --basetemp=/private/tmp/task18918-fts-privacy-final
+  ```
+
+  The former-line mutation first failed **1 with 1 warning in 0.53s** because
+  `Deleted FTS entry for Media ID 7` was not rejected. GREEN passed **5 with 1
+  warning in 0.59s** after the privacy guard pinned the no-colon form; the
+  success node requires the exact committed FTS metadata, and the injected FTS
+  node proves Media deletion has begun before the real `_delete_fts_media` sink
+  emits category-only failure metadata and the transaction rolls back. The
+  relevant `-k 'permanent_delete'` suite passed **5**, deselected **56**, and
+  reported **1 warning in 0.52s**.
 - Fixed layout-posture oracle mutation:
 
   ```bash
@@ -192,13 +214,15 @@ amendment:
   ```
 
   The exact command exited successfully; a concise same-file recording passed
-  **5 with 6 warnings in 73.98s** (the walkthrough plus four mutation proofs).
+  **5 with 6 warnings in 73.02s** (the walkthrough plus four mutation proofs).
   At **160×50, 120×35, 100×30, and
   80×24**, every observation reported `pages=47/3`, `query=5`, `clamp=32`,
   `delete=46`, `restore=45`, exact Trash Back, viewer row return, privacy
   sentinels absent from the live-delete segment, all effective paths inside an
   explicit allowed root, and zero process handles for the target DB/WAL/SHM
-  after each size. The **160×50** layout proved both optional panes plus equal
+  after each size. Textual's public SVG export also contained the visible
+  first-page `Trash 46` query sentinel at every size. The **160×50** layout
+  proved both optional panes plus equal
   Items/row expansion after Library collapse
   (`split-then-library-collapse-delta`); the three compact layouts proved the
   Items-priority allocation and independently hidden Library pane

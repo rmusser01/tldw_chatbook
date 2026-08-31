@@ -783,7 +783,10 @@ async def _walk_size(
                 total=47,
                 expected_ids=first_ids,
             )
-            await _assert_fixed_controls_painted(screen, pilot, width=width)
+            initial_painted = await _assert_fixed_controls_painted(
+                screen, pilot, width=width
+            )
+            assert f"Trash 46 {QUERY_SENTINEL}" in initial_painted
 
             # Every ordinary action is a real current focus target. Pager keys
             # are exercised on page 2 where both directions are enabled.
@@ -1210,6 +1213,7 @@ async def _walk_size(
                 str(db_path),
                 str(Path(f"{db_path}-wal")),
                 str(Path(f"{db_path}-shm")),
+                "Media ID 45",
                 "Media ID: 45",
                 "Media 45",
                 "media 45",
