@@ -23,7 +23,7 @@ The Console exposes workspaces and their agent activity but does not provide a d
 - Prevent stale reads, stale writes, path escapes, and silent overwrites.
 - Keep manual edits outside Agent Change Review attribution for an overlapping agent turn.
 - Show useful Git state without letting Git availability or failure affect file authority.
-- Remain usable in narrow terminals and dismiss through Back/Close, Escape, or backdrop click.
+- Remain usable in narrow terminals and dismiss through Back to Console, Escape, or backdrop click.
 
 ## Non-goals
 
@@ -54,24 +54,26 @@ The Console exposes workspaces and their agent activity but does not provide a d
 
 Two entry points open the same modal:
 
-- The active Workspace context exposes **Show Files**.
-- Each named workspace in the all-workspaces list exposes a compact **Files** action with the tooltip `Show files for <workspace>`.
+- The active `ConsoleWorkspaceContext` card exposes **Show Files** on its own compact action row immediately after the existing **RAG Scope** row. It is not added to the width-sensitive **Switch** / **New** row.
+- Each named workspace header in the grouped all-workspaces conversation browser exposes a permanently rendered, seven-cell **Files** control, including its padding, immediately before the existing three-cell collapse toggle. The flexible workspace label truncates before either fixed control does.
 
-The crowded workspace switcher does not gain a fourth persistent button. Both entry points emit a typed `WorkspaceFilesRequested(workspace_id)` intent. Names, list positions, labels, and widget IDs are display data and are never parsed to resolve the workspace.
+The separate workspace switcher remains unchanged and does not gain a fourth persistent button. The two entry actions are text-labeled, keyboard reachable, present at rest, and never hover-only. In the active card, **Show Files** follows **RAG Scope** in focus order. In a grouped-browser header, the order is workspace header, **Files**, then collapse toggle. Both entry points emit a typed `WorkspaceFilesRequested(workspace_id)` intent. Names, list positions, labels, and widget IDs are display data and are never parsed to resolve the workspace.
 
-The default workspace and workspaces with no local-folder bindings show a disabled action with a short reason. If a stale event reaches the modal after bindings disappear, the modal opens an empty recovery state rather than switching context or selecting another workspace.
+The default workspace and workspaces with no local-folder bindings keep the action visible as a focusable, pressable-but-blocked control rather than an unfocusable disabled button. Its tooltip and activation response both say `No local folders are attached. Add one in Settings.` A stale event that reaches the modal after bindings disappear opens the same empty recovery state rather than switching context or selecting another workspace.
 
 ### Modal shell
 
-The modal covers most of the Console while leaving a visible backdrop. Its header contains:
+The modal covers most of the Console while leaving a visible backdrop whenever the terminal has enough room. Its header contains:
 
-- **Back** / **Close inspector** in the upper-left area;
+- **← Back to Console** in the upper-left area; this is the always-visible dismissal action;
 - `Workspace files — <inspected workspace>`; and
 - a pinned identity notice: `Inspector only · Console remains <active workspace>`.
 
-The active-workspace notice remains visible while navigating, editing, resolving conflicts, and saving. The modal records its opener and restores focus to it when possible, falling back to a stable Console control if the opener was recomposed or removed.
+Directly below the identity notice, a pinned contract row names the current mode, selected folder access, draft/save state, and root-reservation state. Examples are `Viewing · read/write`, `Unsaved · local draft only`, and `Editing <folder> · overlapping agent writes paused`. It shows **Done editing** at the far edge whenever a manual edit lease is held. The active-workspace notice and contract row remain visible while navigating, editing, resolving conflicts, and saving.
 
-The modal uses the Console safe-dismiss contract by overriding `SafeModalDismissMixin._perform_safe_cancel`. Back/Close, Escape, and backdrop click therefore enter the same dirty/save-aware dismissal path.
+The modal records its opener and restores focus to it when possible, falling back to the Console composer if the opener was recomposed or removed.
+
+The modal uses the Console safe-dismiss contract by overriding `SafeModalDismissMixin._perform_safe_cancel`. Back to Console, Escape, and backdrop click therefore enter the same dirty/save-aware dismissal path.
 
 ### Wide layout
 
@@ -89,47 +91,91 @@ The same modal becomes a staged single-pane flow:
 1. roots and file tree;
 2. viewer/editor for the selected file;
 3. **Back to files** returns to the tree;
-4. **Close inspector** remains a separate action.
+4. **← Back to Console** remains a separate dismissal action.
 
-Resizing preserves the inspected workspace, selected binding, selected file, draft, baseline, dirty state, undo history where the editor permits, and logical focus. It must not dismiss or recreate the modal.
+Resizing preserves the inspected workspace, selected binding, selected file, draft, baseline, dirty state, undo history, and logical focus. It must not dismiss or recreate the modal.
+
+### Responsive geometry
+
+The implementation uses independent compact-width and short-height states rather than one vague “narrow” flag:
+
+- **Wide:** at least 112 columns and 30 rows. The modal uses 96% of the terminal up to 152 columns by 52 rows, keeps a backdrop, and displays two panes. The tree pane is at least 34 cells wide; the editor pane is at least 64 cells wide; remaining width goes to the editor.
+- **Compact:** fewer than 112 columns. The modal uses the staged single-pane flow. At fewer than 100 columns it becomes truly full-screen so a decorative backdrop cannot consume editor cells; backdrop dismissal is consequently unavailable, while Back to Console and Escape remain.
+- **Short:** fewer than 30 rows. Header copy compresses to title, identity, and contract rows; secondary help moves behind **Help**; the body scrolls beneath a pinned one-row action region, and a one-row fold indicator announces hidden body content.
+- **Supported minimum:** 80 columns by 24 rows. Below that, the modal refuses to open and reports `Workspace Files needs at least 80 × 24 terminal cells.` without changing Console context.
+
+The initial verification matrix is:
+
+| Terminal | Presentation | Required behavior |
+|---|---|---|
+| 80 × 24 | full-screen, compact + short | one pane, one-line paths, pinned contract/action rows, fold indicator |
+| 100 × 30 | near-full-screen, compact | staged tree/viewer, normal header, no clipped controls |
+| 120 × 40 | wide | two panes at their minimums, visible backdrop, pinned status/actions |
+| 160 × 50 | wide | tree remains bounded; additional width belongs to the editor |
+
+Paths use middle ellipsis while reserving cells for status marks. Full root-relative and canonical paths are available in the selected-file identity region. At each layout transition, logical focus is remapped to the equivalent control: selected tree row, editor, current recovery action, or contract-row action. Resize during dirty guard, Conflict, or either Saving state preserves that state and never changes the focused logical action.
 
 ### Viewer and editor
 
-Opening a file begins in viewing mode. A normal writable file exposes **Edit**. Entering Edit acquires the canonical-root manual edit lease. If an overlapping agent run owns that root, viewing remains available but Edit is disabled with `Agent is working in this root. Try editing when the run finishes.`
+Opening a file begins in viewing mode. A normal writable file exposes **Edit**. Entering Edit acquires the canonical-root manual edit lease and changes the contract row to `Editing <folder> · overlapping agent writes paused`. If an overlapping agent run owns that root, viewing remains available and the blocked Edit action has adjacent copy: `An agent is working in this folder. Editing will be available when that run finishes.` The reason is never tooltip-only.
 
 Editing provides:
 
-- explicit **Save**;
-- editor-native undo and redo;
-- **Revert**, which restores the exact loaded baseline and clears undo/redo;
-- dirty-state indication; and
-- **Copy draft**, which copies only the current draft.
+- a primary **Save** action;
+- visible **Undo** and **Redo** actions plus editor-native undo/redo behavior;
+- **More…**, containing **Revert** and **Copy draft**; and
+- **Done editing** in the pinned contract row.
+
+**Revert** asks once `Discard this draft and return to the loaded file?`; confirming restores the exact loaded baseline and clears undo/redo. **Copy draft** copies only the current draft. The ordinary editor action row is `[Save] [Undo] [Redo] [More…]`; Conflict and uncertain-publication states replace it rather than append more peer actions.
+
+In `EditingClean`, Save is unavailable with adjacent text `No changes to save`; the contract row remains the primary carrier of the clean state. Disabled styling alone never communicates this restriction.
 
 Returning exactly to the baseline through Undo makes the buffer clean. Redo may make it dirty again.
 
+Save and Revert leave the editor in `EditingClean` and retain the lease because the user is still explicitly editing. **Done editing** is the normal release path. When clean, it returns to Viewing, releases the lease, and restores focus to the selected tree row in wide mode or the viewer’s **Edit** action in compact mode. When dirty, it enters the same guard as navigation. Selecting another file, selecting another binding, **Back to files**, or dismissing the modal ends the edit session after any dirty state is resolved and releases the lease before the destination is entered.
+
 ### Navigation and dismissal guard
 
-When a draft is dirty, any action that would replace or discard it—selecting another file or root, Back to files, Close, Escape, or backdrop click—shows the same guard:
+When a draft is dirty, any action that would replace or discard it—**Done editing**, selecting another file or folder binding, Back to files, Back to Console, Escape, or backdrop click—replaces the ordinary action bar with one inline guard owned by the existing modal:
 
 - **Save and continue**;
 - **Discard**; or
 - **Keep editing**.
 
-The requested navigation is stored as a typed pending intent and runs only after the guard resolves. A second navigation cannot replace the pending intent while Save is publishing.
+The guard names the pending destination, for example `Save before opening src/app.py?` or `Save before closing Workspace Files?`. **Keep editing** receives initial focus. Escape or backdrop click while the guard is visible means Keep editing: it clears the pending intent and returns focus to the editor. **Discard** is the guard’s single explicit confirmation and does not open a second modal.
+
+The requested navigation is stored as a typed pending intent and runs only after the guard resolves. A second navigation cannot replace the pending intent while Save is publishing. The inline guard never mounts a nested modal, so `SafeModalDismissMixin` continues to have one dismissal owner.
 
 ### Saving
 
-Save briefly freezes editor input, file/root navigation, dismissal, and competing actions. The modal remains mounted and displays `Finishing save…` once publication becomes non-cancellable. It waits for the final result rather than closing optimistically.
+Save briefly freezes editor input, file/root navigation, dismissal, and competing actions. During `SavingPrePublication`, the action bar contains a visible **Cancel save** action and status `Preparing save…`. Once pressed, the action disables and status becomes `Cancelling save…` until the single race outcome is known. A cancellation acknowledged before the publication linearization point returns to `Unsaved`, preserves the draft and baseline, clears any pending navigation, and restores editor focus. If publication wins the race, **Cancel save** disappears and the non-interactive status becomes `Finishing save…`; cancellation, dismissal, and navigation are then suppressed. The modal remains mounted and waits for the terminal result rather than closing optimistically. A Conflict, folder-access change, Save failure, or uncertain-publication outcome also clears pending navigation and requires the user to resolve the visible state before navigating again.
 
 Save can produce these user-visible outcomes:
 
-- **Saved:** publication and the supported durability steps succeeded; the exact final bytes are re-read and become the new clean baseline.
+- **Saved:** publication and the supported durability steps succeeded; the exact final bytes are re-read and become the new clean baseline. `Saved · disk verified` remains visible for at least 1.5 seconds or until the user’s next action and is announced without moving focus.
 - **Conflict:** the disk identity differs from the loaded baseline; no publication occurred.
-- **Binding changed:** workspace or binding identity/authority changed; no publication occurred and the draft remains available.
+- **Folder access changed:** workspace or folder identity/authority changed; no publication occurred. Copy says `Folder access changed — this draft is safe here, but Chatbook will not write until you reopen Workspace Files.` The draft remains available, and the now-invalid manual lease is released.
 - **Save failed:** publication did not occur; the draft remains dirty.
-- **Published; durability unknown:** replacement occurred but final durability could not be confirmed. The app does not retry automatically. The modal stays open with Compare/Refresh/Copy recovery actions and reports any final on-disk identity it could verify. If a final read verifies the draft bytes, they become the clean baseline while the durability warning remains visible. If final bytes cannot be verified, the app pins the draft and prior baseline, disables another Save, and requires Refresh or Compare before further publication.
+- **Saved, confirmation incomplete:** replacement occurred but final durability could not be confirmed. Copy leads with `The file was replaced, but Chatbook could not confirm that it was safely committed to disk. Your draft is still available. Refresh is the safest next step.` The app does not retry automatically. The modal stays open with primary **Refresh**, then **Compare** and **More… → Copy draft**, and reports any final on-disk identity it could verify. If a final read verifies the draft bytes, they become the clean baseline while the warning remains visible. If final bytes cannot be verified, the app pins the draft and prior baseline, disables another Save, and requires Refresh or Compare before further publication.
 
 The UI never implies that a reported failure guarantees unchanged disk state if replacement already occurred.
+
+### Plain-language status copy
+
+`Binding`, `fingerprint`, `canonical root`, `publication`, and `durability` are internal design/service terms. The user-facing modal uses folder, file, draft, access, and Save language:
+
+| Internal state | Required leading copy | Primary recovery |
+|---|---|---|
+| No binding | `No local folders are attached. Add one in Settings.` | **Open Settings** |
+| Agent lease conflict | `An agent is working in this folder. Editing will be available when that run finishes.` | continue viewing |
+| Manual lease blocks agent | `Workspace Files is editing <folder>. Choose Done editing before starting this agent.` | **Return to inspector** |
+| Binding changed | `Folder access changed — this draft is safe here, but Chatbook will not write until you reopen Workspace Files.` | **Copy draft**, then **Reopen** |
+| Unsupported edit | `Chatbook can show this file but cannot save it safely: <specific reason>.` | continue viewing |
+| Published durability unknown | `The file was replaced, but Chatbook could not confirm that it was safely committed to disk. Your draft is still available.` | **Refresh** |
+| Git unavailable | `Git status is unavailable. File access and Save are unaffected.` | optional **Refresh Git** |
+| Filter truncated | `Showing 500 results; narrow the filter.` | focus Filter |
+
+Specific reasons and paths are rendered locally and safely truncated; raw exception text and service enum names never appear in UI copy.
 
 ### Conflict resolution
 
@@ -139,7 +185,7 @@ A conflict view pins three exact identities:
 - **Draft** — the current editor buffer; and
 - **Disk** — bytes read for the conflicting disk identity.
 
-Compare is read-only. **Reload from disk** performs a fresh identity validation rather than trusting the displayed snapshot, replaces the editor baseline and draft only after success, and clears undo/redo. **Keep draft** returns to the editor without changing the baseline. A later Save must pass the full conflict check again.
+Compare is read-only. In wide mode it shows Base/Draft/Disk columns only when each meets its minimum width; otherwise it uses the compact comparison flow. Compact comparison presents a Base/Draft/Disk selector above one read-only viewport, so the three identities have a deterministic linear reading order. **Reload from disk** performs a fresh identity validation rather than trusting the displayed snapshot, replaces the editor baseline and draft only after success, and clears undo/redo. **Keep draft** returns to the editor without changing the baseline. A later Save must pass the full conflict check again. **Compare** receives initial focus because it is non-destructive.
 
 ### Copy draft
 
@@ -155,6 +201,10 @@ Decorations are independent signals and must not be communicated by color alone:
 - **Edited this visit**, a memory-only set of root-qualified paths added after a known successful publication.
 
 `Edited this visit` is not an agent-attribution signal and is cleared when the modal visit ends.
+
+Each tree row reserves cells in this order: indentation/caret, type glyph, middle-elided name, one primary state mark, and at most one secondary mark. State precedence is **Conflict > Unsaved > Git > Edited this visit**. Conflict uses `[!]`, Unsaved uses `[*]`, common Git states use `[M]`, `[U]`, `[A]`, `[D]`, or `[R]`, and Edited this visit uses `[V]`. When more states exist than fit, the selected-file identity region spells all of them out. Root-level Git unavailable/truncated state appears on the binding header rather than impersonating a file state.
+
+Selection and keyboard focus use structural row/background treatment plus a leading focus indicator; neither relies on filename color. A visible **Help** action opens a compact legend containing the full text for every mark. The filename truncates before reserved state cells do.
 
 ## State model
 
@@ -176,6 +226,17 @@ The modal also owns the selected `FileRef`, exact baseline `FileRevision`, curre
 
 Transitions that replace the buffer must resolve dirty state first. Filesystem and Git results carry an operation token containing at least the modal visit, workspace/binding fingerprint, root-qualified path, relevant baseline, and buffer revision. Results whose token no longer matches current modal state are discarded without changing the UI.
 
+### Loading, empty, and changing-data states
+
+The modal shell and binding identities mount immediately. Each asynchronous region owns an explicit local state instead of blank space:
+
+- tree: `Loading folder…`, `This folder is empty.`, `Folder unavailable — <safe reason>.`, or page position;
+- viewer: `Reading file…`, the bounded content, or `File no longer exists. Refresh the folder.`;
+- filter: the defined progress/partial/zero/excluded/truncated states; and
+- Git: `Checking Git…` or a fail-soft unavailable/truncated label that never blocks file work.
+
+Directory pages carry a directory identity. If the directory changes between pages, the modal discards the mixed snapshot and offers **Refresh folder** rather than merging incompatible pages. File disappearance, permission loss, and type change move only that region to `MissingOrUnsupported`, preserve any existing draft, and expose the relevant safe recovery. Operation tokens prevent a late tree, file, filter, or Git result from reviving an earlier selection.
+
 ## Architecture
 
 ### Source map
@@ -189,7 +250,7 @@ New Console UI modules:
 Console integration remains thin:
 
 - `tldw_chatbook/UI/Console_Modules/wiring.py` routes typed entry intents.
-- Existing workspace tray/context widgets emit `WorkspaceFilesRequested`.
+- `tldw_chatbook/Widgets/Console/console_workspace_context.py` owns the exact active-card and grouped-browser entry placement and emits `WorkspaceFilesRequested`.
 - `tldw_chatbook/UI/Screens/chat_screen.py` installs/dismisses the modal and supplies the active workspace identity; it does not perform filesystem work.
 
 New workspace services:
@@ -206,7 +267,7 @@ Leaf widgets emit typed intents upward. The modal is the sole UI owner that call
 
 Directory listing, file reading, filter walking, Git querying, and saving run in separate worker lanes. Operations expected to exceed 100 ms never block the Textual event loop.
 
-List/read/filter/Git work is logically cancellable. A thread-level filesystem operation may finish after cancellation, but its stale token prevents UI publication. Save is cancellable only before its publication linearization point. After replacement begins, the modal remains mounted and awaits a terminal publication outcome.
+List/read/filter/Git work is logically cancellable. A thread-level filesystem operation may finish after cancellation, but its stale token prevents UI publication. Save is cancellable only before its publication linearization point through the visible **Cancel save** action. Cancellation and publication race through one typed terminal outcome: an acknowledged cancellation returns `not_published`; once publication wins, the operation becomes non-cancellable. After replacement begins, the modal remains mounted and awaits a terminal publication outcome.
 
 ## Authority and scope
 
@@ -238,9 +299,11 @@ Before an agent run establishes its baseline or dispatches a mutating tool, it r
 
 ### Inspector editing
 
-Entering Edit requests a manual lease for the selected canonical root. A conflicting agent lease leaves the file viewable but not editable. While held, the manual lease blocks admission of a new overlapping agent-write run. The lease is released when the edit session ends or the modal closes. Switching roots first resolves any dirty draft, releases the old lease, and acquires the new root before enabling Edit.
+Entering Edit requests a manual lease for the selected canonical root. A conflicting agent lease leaves the file viewable but not editable. While held, the manual lease blocks admission of a new overlapping agent-write run, and the pinned contract row says so. Save and Revert retain the lease in `EditingClean`; the explicit **Done editing** action releases it and returns to Viewing. File navigation, binding navigation, Back to files, and modal dismissal also end the edit session after dirty state is resolved, release the lease, and open the destination in Viewing. The inspector never carries an edit lease into another file implicitly.
 
-If a binding is retargeted while leased, Save fails revalidation and the old canonical-root lease is released when the edit session exits. A rendered binding label never changes the lease key.
+Conflict and `SaveFailed` retain the lease while the recoverable draft remains in the edit session. `BindingChanged` releases the invalid lease immediately while preserving the draft for Copy. `PublishedDurabilityUnknown` retains the lease until Refresh/Compare resolves current disk identity or the user explicitly chooses Done editing and confirms that later agent activity may change the folder. If a binding is retargeted while leased, Save fails revalidation and the coordinator releases the old canonical-root key; a rendered binding label never changes the lease key.
+
+When agent admission is denied by a manual lease, the recovery message says `Workspace Files is editing <folder>. Choose Done editing before starting this agent.` and focuses or reopens the existing inspector when the user invokes its recovery action.
 
 This coordination guarantees that a publication made through Workspace Files does not occur inside Agent Change Review’s baseline-to-terminal snapshot window. It does not claim to attribute or block changes from external programs.
 
@@ -279,10 +342,14 @@ There is no “try anyway” write option.
 
 - A directory renders 200 entries per page and scans at most 10,000 immediate entries.
 - Opening the modal does not recursively scan all roots.
-- Filter matches root-relative path/name only and starts a cancellable bounded walk.
-- A filter request visits at most 50,000 entries across the inspected workspace and returns at most 500 results.
+- The binding selector is an explicit authority boundary. With one binding, it is selected automatically. With multiple bindings, the first readable binding in stable registry order is selected and focus starts on the selector so the choice is immediately visible. If none is readable, the first listed binding opens as an unavailable recovery state. No selection silently falls forward if that binding later becomes unavailable.
+- Filter operates only inside the selected binding, matches a case-insensitive literal substring of the root-relative path/name, and starts a cancellable bounded walk after a 150 ms typing debounce; Enter starts immediately, and an empty field clears filtering. Special characters are literal rather than glob syntax.
+- A filter request visits at most 50,000 entries inside the selected binding and returns at most 500 results. Results are therefore unambiguous without cross-root path qualification.
 - Version-control internals, hidden generated caches, and symlinked directories are not traversed.
-- Truncation and exclusions are visible, with an option to narrow the query or explicitly reveal supported hidden cache entries.
+- Directories sort before files; each group sorts by Unicode casefold, then the exact name for deterministic ties.
+- Filter state is explicit: `idle`, `searching`, `partial`, `complete`, `truncated`, `cancelled`, or `failed`. Searching shows visited/result counts plus **Cancel** and **Clear**. Partial results may be opened because each open revalidates authority and identity. Cancel retains the labeled partial results; Clear restores the pre-filter tree expansion and selection when those identities remain valid. Truncation says `Showing 500 results; narrow the filter.` Zero results distinguish no matches from only-excluded matches.
+- **Reveal generated caches** is a modal-visit setting. Changing it invalidates the active filter generation and reruns only after explicit confirmation; it never silently changes the visible result set.
+- Selecting another binding is a typed navigation intent. It resolves dirty state, ends any edit session, releases the old lease, clears the filter, and then lists only the newly selected binding. Unavailable bindings remain selectable as recovery states but never cause fallback to another root.
 
 ## Save publication contract
 
@@ -339,12 +406,30 @@ Clipboard use is an explicit user-requested transfer to shared external state an
 
 ## Accessibility and input
 
-- Every decoration has text/icon semantics in addition to color.
-- The focus order follows header, roots/filter/tree, file identity, editor, then actions.
-- The backdrop is not focusable while the modal is open.
-- Escape uses safe dismissal and is suppressed while publication is non-cancellable.
-- The screen does not bind terminal-convention control keys or shadow Console globals. Editor-native undo/redo is exposed through the editor’s supported interaction and visible actions rather than new screen bindings.
-- Status changes are announced concisely without moving focus unexpectedly.
+- Every decoration has a visible text/glyph meaning in addition to color, and the selected-file region expands compact marks into full words.
+- The backdrop is not focusable while the modal is open. Pressable-but-blocked and unavailable actions expose their reason through focused adjacent text and activation feedback, never only through hover or dimming.
+- The screen does not bind terminal-convention control keys or shadow Console globals. Editor-native undo/redo remains owned by the editor, while visible Undo/Redo buttons make the actions discoverable.
+- Loading, tree expansion/collapse, page position, filter progress/truncation, Save transitions, conflicts, and errors are announced concisely without moving focus unexpectedly.
+
+The input/focus contract is:
+
+| State/location | Initial or retained focus | Keys/actions | Resulting focus |
+|---|---|---|---|
+| Modal open, one binding | selected tree root | Up/Down select; Left collapse/parent; Right expand; Enter open; `f` focuses Filter when no text editor has focus | wide keeps tree focus after open; compact moves to viewer |
+| Modal open, multiple bindings | binding selector | Up/Down choose; Enter list selected binding | selected root in tree |
+| Filter | filter field | typing updates bounded filter; Escape clears an active query first; Tab reaches Cancel/Clear/results | first result only on explicit navigation |
+| Wide tree file open | selected tree row | continued arrows preview other files; Tab enters viewer/actions | exact selected row is remembered |
+| Compact viewer | viewer or first safe action | **Back to files** returns to tree; **Back to Console** dismisses | exact selected tree row |
+| Viewing editable file | **Edit** when entered from compact viewer; tree remains focused in wide preview | Edit requests lease | editor after lease success; blocked reason after denial |
+| Editing | editor | text input stays with editor; Tab reaches Save/Undo/Redo/More and contract-row Done editing | editor after Save/Undo/Redo |
+| Dirty guard | **Keep editing** | Escape/backdrop = Keep editing; Save/Discard run pending intent | editor when kept; destination after resolution |
+| Saving pre-publication | **Cancel save** | Cancel requests typed cancellation | editor if `not_published`; status if publication won |
+| Saving after publication | non-interactive `Finishing save…` status | input, Escape, and dismissal suppressed | prior logical focus restored after outcome |
+| Conflict | **Compare** | Base/Draft/Disk selector in compact; Reload or Keep draft | editor after Keep draft; selected file identity after Reload |
+| Saved | editor | no forced focus movement | current logical focus |
+| Done editing | contract-row action | dirty state invokes guard; clean state releases lease | selected tree row in wide; Edit in compact viewer |
+
+Escape has ordered meaning: during non-cancellable publication it does nothing; inside the dirty guard it means Keep editing; while focus is in a non-empty filter it clears that filter; otherwise it requests normal safe dismissal. **Back to files** exists only in the compact viewer/editor; **← Back to Console** is always the dismissal action. The exact modal opener is restored through `SafeModalDismissMixin`, including its click-chain shield and widget-ID fallback after recomposition.
 
 ## Verification strategy
 
@@ -355,11 +440,17 @@ Verification uses real temporary filesystems and repositories for authority/publ
 | Precondition | Action or interleaving | Service outcome | Required visible result | Prohibited side effect / evidence |
 |---|---|---|---|---|
 | Workspace B is not active | Open B from either entry | Inspection for B | Header names B; notice says Console remains A | Active workspace, task, conversation, composer, and approval state fingerprints remain unchanged |
+| Active rail is 24–30 cells or grouped header label is long | Focus both entry actions | UI-only | Complete text action remains visible and focusable; workspace label truncates first | No clipped or invisible clickable region; switcher remains unchanged |
+| Workspace has no local folders | Focus/press Files | Blocked intent | Inline/activation guidance points to Settings | No modal, activation, or unfocusable disabled mystery control |
 | Read A is slow, then user selects B | B read finishes before A | B snapshot accepted; A token stale | Viewer shows only B | A bytes never flash or replace B |
+| Workspace has bindings A and B with the same relative path | Filter while A is selected | Results scoped to A | Contract/filter status names A; only A results appear | No B traversal, ambiguity, or silent binding change |
 | Binding is read-only | Select file and attempt Edit/Save | Editability denied | File is viewable with read-only reason | No temp file, write, approval prompt, or permission mutation |
 | Binding is revoked or retargeted while open | Read or Save | `binding_changed` | Cached content/draft retained; reopen guidance | No access to old or new target through stale row |
 | Agent owns overlapping root | Enter Edit | Lease denied | Viewing works; Edit explains agent conflict | No manual publication |
 | Inspector owns overlapping root | Start agent-write run | Admission conflict | Recoverable run-start message | No agent baseline or mutating dispatch begins |
+| Clean editor owns root | Choose Done editing, then start agent | Lease released | Viewing state; agent admission can proceed | No stale inspector lease |
+| Dirty editor owns root | Choose Done editing | Pending dirty guard | Keep editing focused; destination named | Lease not released until Save/Discard resolves |
+| Save is preparing | Choose Cancel before/at publication race | Typed terminal outcome | Unsaved editor if cancellation wins; Finishing save if publication wins | No ambiguous cancelled message and no cancellation after publication |
 | External editor changes disk after load | Save draft | `conflict` / `not_published` | Base/Draft/Disk conflict view | External bytes are not silently overwritten |
 | Replace succeeds, directory flush fails | Finish Save | `published_durability_unknown` | Modal stays open with warning and recovery | No automatic retry; UI does not claim disk unchanged |
 | Clipboard adapter fails | Copy draft | Clipboard failure | Error; draft remains available | No disk, persistence, or dirty-state change |
@@ -367,6 +458,7 @@ Verification uses real temporary filesystems and repositories for authority/publ
 | Huge directory/filter corpus | Page or filter | Bounded/truncated result | Counts and truncation disclosed | Event-loop heartbeat remains responsive; caps are not exceeded |
 | Unique secret in path/content/draft/filter/error | Exercise read/edit/error paths | Sanitized operational result | Secret may appear only in intended local view | Secret absent from captured logs, notifications, conversation, DB, and review metadata |
 | Dirty narrow modal is resized | Wide → narrow → wide | UI-only transition | Draft, baseline, pending guard, and logical focus preserved | Modal is not dismissed or recreated |
+| Modal is exercised at 80×24, 100×30, 120×40, and 160×50 | Resize/open in every primary state | UI-only | Required compact/wide/short contract and focus mapping hold | No clipped controls, offscreen actions, lost undo, or hidden status |
 | Workspace is archived while open | Read/Git/Save | Scope invalid | Cached view/draft and Copy remain; operations disabled | No new filesystem or Git access |
 | File is binary, unsafe-linked, mixed-newline, or publisher-unsupported | Open file | View/metadata-only | Specific plain-language reason | No “try anyway” or best-effort write |
 
@@ -375,7 +467,7 @@ Verification uses real temporary filesystems and repositories for authority/publ
 1. **Pure service tests**
    - containment, canonical binding identity, link and special-file rejection;
    - encoding/newline/size classification;
-   - directory/filter bounds and truncation;
+   - selected-binding-only filter scope, stable ordering, filter states, bounds, and truncation;
    - operation token and typed outcome construction.
 
 2. **Publication and race tests on real temporary filesystems**
@@ -388,7 +480,7 @@ Verification uses real temporary filesystems and repositories for authority/publ
 3. **Root coordinator tests**
    - ancestor/descendant overlap;
    - atomic multi-root agent admission and deterministic ordering;
-   - manual-versus-agent exclusion, release on all terminal paths, and no baseline on denied admission.
+   - manual-versus-agent exclusion, explicit Done-editing release, release on all terminal paths, uncertain-publication retention, and no baseline on denied admission.
 
 4. **Git adapter tests with real repositories**
    - tracked/untracked/conflicted/ignored parsing, rename paths, nested repositories, timeout/output caps;
@@ -396,7 +488,9 @@ Verification uses real temporary filesystems and repositories for authority/publ
 
 5. **Production-shaped Textual tests**
    - mount `TldwCli` using its exact `CSS_PATH` stack;
-   - exercise both entry points, safe dismiss paths, dirty guard, save freeze, stale-result suppression, focus restoration, and narrow transitions;
+   - exercise both exact entry surfaces at the incumbent rail widths, including blocked entry guidance and unchanged switcher geometry;
+   - exercise safe dismiss paths, inline dirty guard defaults, pre-publication Cancel race, explicit Done editing, stale-result suppression, and focus restoration;
+   - exercise 80×24, 100×30, 120×40, and 160×50 in Viewing, Unsaved, Saving, Conflict, and uncertain-publication states;
    - re-query widgets after recomposition;
    - inspect compositor frames and geometric containment, not only widget existence.
 
@@ -438,14 +532,18 @@ The overall v1 consists of three dependency-ordered, independently reviewable sl
 ### Overall v1
 
 - [ ] Either entry point opens the selected named workspace without changing any Console context.
+- [ ] Entry actions remain visible, focusable, and unclipped in incumbent rail/group geometry; the separate workspace switcher remains unchanged.
 - [ ] Every visible local-folder binding is explicitly represented with identity, access mode, and availability.
-- [ ] Tree, viewer, filter, and Git work are bounded, cancellable where safe, and stale-result resistant.
+- [ ] Filtering is bounded to the explicitly selected binding, exposes complete progress/truncation states, and never traverses another binding.
+- [ ] Tree, viewer, filter, and Git work are cancellable where safe and stale-result resistant.
 - [ ] Ordinary writable UTF-8 files can be deliberately edited and atomically published; unsupported files are read-only with a reason.
 - [ ] Dirty navigation/dismissal, conflicts, binding changes, and uncertain publication preserve recoverable user work.
 - [ ] Inspector publication and overlapping agent change-capture windows are mutually excluded by canonical root.
+- [ ] The edit lease is continuously visible and **Done editing** releases it without closing the inspector; every other terminal path has a tested lease outcome.
+- [ ] Pre-publication Save can be cancelled visibly, while post-publication Save remains mounted and non-cancellable until its terminal outcome.
 - [ ] Git decoration is isolated, read-only, accessible, and non-authoritative.
 - [ ] No file data or sensitive path/filter/error material enters persistence, logs, agent context, conversation, or Agent Change Review.
-- [ ] Wide and narrow layouts meet the same safety model and preserve modal state across resize.
+- [ ] The specified wide/compact/short layouts meet the same safety model at 80×24, 100×30, 120×40, and 160×50 and preserve modal state across resize.
 - [ ] Targeted automated and live evidence covers successful behavior and prohibited side effects.
 
 ### Slice completion gates
