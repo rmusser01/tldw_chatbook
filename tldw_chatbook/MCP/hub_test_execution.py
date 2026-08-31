@@ -170,7 +170,7 @@ class ToolTestPreviewRegistry:
             raise ValueError("ttl_seconds must be finite and positive")
         self._max_entries = max_entries
         self._ttl_seconds = ttl_seconds
-        self._clock = clock if clock is not None else time.monotonic
+        self._clock = clock if clock is not None else lambda: time.monotonic()
         self._lock = threading.Lock()
         self._entries: OrderedDict[str, RegisteredToolTestPreview] = OrderedDict()
 

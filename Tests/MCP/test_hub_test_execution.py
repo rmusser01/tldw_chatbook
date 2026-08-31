@@ -225,6 +225,17 @@ def test_expired_preview_is_removed_and_unavailable(monkeypatch):
     assert registry.consume(preview.nonce) is None
 
 
+def test_default_clock_remains_late_bound_after_registry_construction(monkeypatch):
+    registry = ToolTestPreviewRegistry(max_entries=4, ttl_seconds=5)
+    now = 100.0
+    monkeypatch.setattr(hub_test_execution.time, "monotonic", lambda: now)
+    preview = _issue(registry)
+
+    now = 105.0
+
+    assert registry.consume(preview.nonce) is None
+
+
 def test_consume_checks_expiry_after_entering_its_lock(monkeypatch):
     now = 100.0
     monkeypatch.setattr(hub_test_execution.time, "monotonic", lambda: now)
