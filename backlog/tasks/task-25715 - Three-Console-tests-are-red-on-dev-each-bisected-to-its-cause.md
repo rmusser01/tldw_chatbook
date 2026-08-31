@@ -118,16 +118,33 @@ with concurrent test runs.
 
 CPU saturation does not reproduce it, so the trigger is not simple load.
 
-**What the test is actually racing.** It calls `await rail.remove()` and then
-fires the queued reveal callback, which resolves `#console-left-rail-body`.
-Textual's `remove()` only schedules the prune, so whether that id still resolves
-depends on when the Prune message is processed -- the same deferred-detach
-behaviour already documented for the conversation action menu, where a same-id
-remount over a not-yet-pruned widget raises `DuplicateIds`. Either the test
-should await the detachment it depends on, or the reveal callback should guard
-the lookup and no-op when its rail is gone. The second is probably the real fix:
-production has the same race, and the test was written to pin that it degrades
-quietly.
+**Mechanism: unidentified. My first guess was wrong.** I wrote here that "the
+reveal callback should guard the lookup and no-op when its rail is gone."
+Reading the code, **it already does** -- at both layers.
+`_active_reveal_is_current` returns False on `not self.is_attached`, and
+`_reveal_active_section` wraps all three `query_one` calls in
+`except (NoMatches, QueryError): return`. So the proposed fix was for a defect
+that is not there, and the escape path is still unexplained.
+
+Ruled out, so nobody repeats them (all at `d81bd7a23`, quiet machine):
+
+| Hypothesis | Test | Result |
+|---|---|---|
+| Plain rarity | 30 consecutive runs | 30 passed |
+| CPU contention | 10 runs under 8-way saturation | 10 passed |
+| Cold bytecode cache | 6 runs, `__pycache__` purged before each | 6 passed |
+
+Observed rate is roughly **1 in 60** at the tip and **1 in 12** at
+`46c2b0e5f0fb`, on samples too small to separate those two numbers. Every
+failure so far has appeared while other pytest processes were running, but
+deliberate CPU saturation does not reproduce it, so "load" is not the mechanism
+either -- possibly disk or scheduler contention rather than CPU.
+
+The `await rail.remove()` / deferred-prune interaction remains the most
+plausible area to look, since `remove()` only schedules the prune and
+`is_attached` flips only when it runs -- but that is a place to start, **not a
+diagnosis**, and it should not be written up as one until someone has a
+traceback with `--tb=long` from an actual failure.
 
 **Findings 1 and 3 are unaffected** -- both re-measured 0 passed / 5 failed of
 5, deterministic, and their bisects to `c2f64f690` (#2220) stand.
