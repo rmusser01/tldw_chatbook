@@ -2369,11 +2369,14 @@ class MediaDatabase:
         try:
             # Delete based on rowid, ignore if not found
             conn.execute("DELETE FROM media_fts WHERE rowid = ?", (media_id,))
-            logging.debug(f"Deleted FTS entry for Media ID {media_id}")
+            logging.debug(
+                "Media FTS mutation operation=delete status=committed count=1"
+            )
         except sqlite3.Error as e:
             logging.error(
-                f"Failed to delete from media_fts for Media ID {media_id}: {e}",
-                exc_info=True,
+                "Media FTS mutation operation=delete status=failed count=0 "
+                "category=%s",
+                type(e).__name__,
             )
             raise DatabaseError(
                 f"Failed to delete FTS for Media ID {media_id}: {e}"
@@ -9907,14 +9910,17 @@ def permanently_delete_item(db_instance: MediaDatabase, media_id: int) -> bool:
     if not isinstance(db_instance, MediaDatabase):
         raise TypeError("db_instance required.")
     logger.warning(
-        f"!!! PERMANENT DELETE initiated Media ID: {media_id} DB {db_instance.db_path_str}. NOT SYNCED !!!"
+        "Media mutation operation=permanent_delete status=started count=1"
     )
     try:
         with db_instance.transaction() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT 1 FROM Media WHERE id = ?", (media_id,))
             if not cursor.fetchone():
-                logger.warning(f"Permanent delete failed: Media {media_id} not found.")
+                logger.warning(
+                    "Media mutation operation=permanent_delete "
+                    "status=not_found count=0"
+                )
                 return False
             # Hard delete - Cascades should handle children via FKs
             cursor.execute("DELETE FROM Media WHERE id = ?", (media_id,))
@@ -9923,22 +9929,28 @@ def permanently_delete_item(db_instance: MediaDatabase, media_id: int) -> bool:
             db_instance._delete_fts_media(conn, media_id)
         if deleted_count > 0:
             logger.info(
-                f"Permanently deleted Media ID: {media_id}. NO sync log generated."
+                "Media mutation operation=permanent_delete "
+                "status=committed count=1"
             )
             return True
         else:
-            logger.error(f"Permanent delete failed unexpectedly Media {media_id}.")
+            logger.error(
+                "Media mutation operation=permanent_delete "
+                "status=no_rows count=0"
+            )
             return False
     except sqlite3.Error as e:
-        logger.opt(exception=True).error(
-            f"Error permanently deleting Media {media_id}: {e}"
+        logger.error(
+            "Media mutation operation=permanent_delete status=failed count=0 "
+            "category={}",
+            type(e).__name__,
         )
         raise DatabaseError(f"Failed permanently delete item: {e}") from e
     except Exception as e:
-        (
-            logger.opt(exception=True).error(
-                f"Unexpected error permanently deleting Media {media_id}: {e}"
-            )
+        logger.error(
+            "Media mutation operation=permanent_delete status=failed count=0 "
+            "category={}",
+            type(e).__name__,
         )
         raise DatabaseError(f"Unexpected permanent delete error: {e}") from e
 

@@ -4,7 +4,7 @@ title: Add paged recovery viewing to Library Media Trash
 status: Done
 assignee: []
 created_date: '2026-08-15 02:51'
-updated_date: '2026-08-31 05:44'
+updated_date: '2026-08-31 14:47'
 labels:
   - library
   - pagination
@@ -89,12 +89,23 @@ Closeout preserved the original one-line Task 7 fake compatibility repair
 (`_library_notes_focus_intent_generation=0`). The mounted gate then revealed two
 additional stale test-fake seams, so the fake now supplies the production route-
 change disarm callback and binds the return-candidate method. The live harness
-was reviewed rather than recreated, then tightened to assert independent
-Library/Items collapse width, viewer row return, and per-size privacy/profile
-integrity. Two harness corrections were necessary: use the receipt's shipped
-`final_focus_identity` field, and exercise viewer return before Restore because
-the retained page is intentionally stale and action-gated afterward. No
-production code changed during closeout.
+was reviewed rather than recreated. Two initial harness corrections were
+necessary: use the receipt's shipped `final_focus_identity` field, and exercise
+viewer return before Restore because the retained page is intentionally stale
+and action-gated afterward.
+
+Quality review found five false-proof seams in that first closeout. Permanent-
+delete start/success/failure logs now emit fixed operation/status/count metadata
+and exception category only; they omit backing IDs, database paths, raw
+exceptions, and tracebacks. A real file-backed success test and a trigger-
+injected SQLite failure test cover both Loguru and stdlib logging. The live gate
+now proves every SQLite target against explicit pytest/HOME/app-scratch roots
+before open instead of reading real-profile bytes, asserts exact pane/content/
+scrollbar/row geometry rather than positive widths, starts viewer evidence from
+a distinct auto-selected row with no private pre-seed, and gives every size a
+fresh event loop with a one-worker connection owner followed by zero-handle
+DB/WAL/SHM verification. Painted-copy evidence uses Textual's public SVG
+screenshot exporter rather than the private compositor.
 
 Production and focused owners modified across the original work and ADR-104
 amendment:
@@ -109,7 +120,8 @@ amendment:
 - `tldw_chatbook/Widgets/Library/library_media_trash_canvas.py`
 - `tldw_chatbook/Widgets/Library/library_media_canvas.py`
 - `Tests/DB/test_client_media_trash_pagination.py`, the focused Media/Library
-  state and controller suites, `Tests/UI/test_library_media_trash.py`,
+  state and controller suites, `Tests/Media_DB/test_media_db_v2.py`,
+  `Tests/UI/test_library_media_trash.py`,
   `Tests/UI/test_library_media_return_settlement.py`, the existing cross-reader
   suites, and `Tests/Live/test_library_media_trash_paging_closeout.py`
 - `Docs/User_Guide/library.md` and
@@ -123,15 +135,26 @@ amendment:
   PYTHONPATH=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/task-18918-media-trash-paging /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/DB/test_client_media_trash_pagination.py Tests/Media/test_local_media_reading_service.py Tests/Media/test_media_reading_scope_service.py Tests/Library/test_library_media_trash_state.py Tests/UI/test_library_media_trash_browse_controller.py Tests/UI/test_library_media_browse_controller.py -k 'media_trash or library_media_trash or permanently_delete_media_item or mark_stale_after_trash_restore'
   ```
 
-  Passed **108**, deselected **191**, and reported **1 warning in 4.81s**;
+  Passed **108**, deselected **191**, and reported **1 warning in 4.84s**;
   the historical count is unchanged.
+- Focused privacy and live-evidence mutations:
+
+  ```bash
+  PYTHONPATH=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/task-18918-media-trash-paging /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/Live/test_library_media_trash_paging_closeout.py::test_sqlite_path_authority_rejects_escape_before_open Tests/Live/test_library_media_trash_paging_closeout.py::test_reader_width_contract_rejects_one_column_mutation Tests/Live/test_library_media_trash_paging_closeout.py::test_viewer_target_contract_rejects_cleared_row_selection Tests/Media_DB/test_media_db_v2.py::test_permanent_delete_success_logs_only_fixed_metadata Tests/Media_DB/test_media_db_v2.py::test_permanent_delete_sqlite_failure_logs_category_without_private_values --disable-warnings --basetemp=/private/tmp/task18918-fast-green
+  ```
+
+  The two privacy nodes first failed against identifier/path/raw-exception
+  logging, then passed after the production fix. The combined final gate passed
+  **5 with 2 warnings in 1.93s**. Its path mutation proves rejection before the
+  fake opener runs; its geometry mutation changes one allocated column; and its
+  viewer mutation clears the row-produced selection.
 - Mounted cross-reader gate:
 
   ```bash
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_library_media_return_settlement.py Tests/UI/test_library_media_side_by_side.py Tests/UI/test_library_media_trash.py Tests/UI/test_library_adaptive_reader_shell.py Tests/UI/test_library_adaptive_reader_closeout.py --disable-warnings
   ```
 
-  Passed **171 with 2 warnings in 233.24s**. The first run was **169 passed,
+  Passed **171 with 2 warnings in 236.73s**. The first run was **169 passed,
   2 failed, 3 warnings in 239.71s** and identified only the two stale test-fake
   seams documented above; the focused repair check passed **2 with 1 warning in
   1.46s** before the full green rerun.
@@ -139,23 +162,28 @@ amendment:
   `test_compact_media_viewer_back_survives_authoritative_recompose`:
 
   ```bash
-  for run in 1 2 3 4 5; do PYTHONPATH=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/task-18918-media-trash-paging /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_library_media_side_by_side.py -k 'compact_media_viewer_back_survives_authoritative_recompose' --basetemp="/tmp/task18918-media-return-${run}"; done
+  for run in 1 2 3 4 5; do PYTHONPATH=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/task-18918-media-trash-paging /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_library_media_side_by_side.py -k 'compact_media_viewer_back_survives_authoritative_recompose' --basetemp="/private/tmp/task18918-media-return-final-${run}"; done
   ```
 
-  Each passed **1 / deselected 28 / 2 warnings** in **3.57s, 3.62s, 3.59s,
-  3.53s, and 3.34s**.
+  Each passed **1 / deselected 28 / 2 warnings** in **3.52s, 3.57s, 3.56s,
+  3.53s, and 3.43s**.
 - Live four-size command:
 
   ```bash
   PYTHONPATH=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/task-18918-media-trash-paging /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/Live/test_library_media_trash_paging_closeout.py -s --disable-warnings
   ```
 
-  Passed **1 with 6 warnings in 71.48s**. At **160×50, 120×35, 100×30, and
+  The exact command exited successfully; a concise same-file recording passed
+  **4 with 6 warnings in 71.85s** (the walkthrough plus three mutation proofs).
+  At **160×50, 120×35, 100×30, and
   80×24**, every observation reported `pages=47/3`, `query=5`, `clamp=32`,
   `delete=46`, `restore=45`, exact Trash Back, viewer row return, privacy
-  sentinels absent, and real profile/config/database bytes unchanged. The
-  160×50 layout reported expanded title/detail width after Library collapse;
-  the three compact layouts reported exclusive full width.
+  sentinels absent from the live-delete segment, all effective paths inside an
+  explicit allowed root, and zero process handles for the target DB/WAL/SHM
+  after each size. The **160×50** layout proved both optional panes plus equal
+  Items/row expansion after Library collapse (`exclusive-optional-pane`); the
+  three compact layouts proved the Items-priority allocation and independently
+  hidden Library pane (`items-priority`).
 - Static/inverse gate: the mounted suite included the inverse matrix. `ruff
   check tldw_chatbook/Widgets/Library/library_media_canvas.py
   tldw_chatbook/UI/Screens/library_screen.py

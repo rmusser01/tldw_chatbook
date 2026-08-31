@@ -3,13 +3,17 @@
 # This version is self-contained and does not require a conftest.py file.
 #
 # Standard Library Imports:
+import io
 import json
+import logging
 import os
 import pytest
 import sys
 import time
 import sqlite3
 from pathlib import Path
+
+from loguru import logger
 
 #
 # --- Path Setup (Replaces conftest.py logic) ---
@@ -28,6 +32,7 @@ except (NameError, IndexError):
 from tldw_chatbook.DB.Client_Media_DB_v2 import (
     DatabaseError,
     MediaDatabase as Database,
+    permanently_delete_item,
 )
 from Tests.DB.historical_bootstrap_v6 import media_db_at_version
 #
@@ -70,6 +75,42 @@ def get_document_version_count(db: Database, media_id: int) -> int:
         "SELECT COUNT(*) FROM DocumentVersions WHERE media_id = ?", (media_id,)
     )
     return cursor.fetchone()[0]
+
+
+def _capture_permanent_delete_logs(caplog, operation):
+    """Capture both logging stacks for one already-initialized DB operation."""
+    caplog.clear()
+    caplog.set_level(logging.DEBUG)
+    loguru_output = io.StringIO()
+    sink_id = logger.add(loguru_output, format="{message}", level="DEBUG")
+    try:
+        operation()
+    finally:
+        logger.remove(sink_id)
+    return f"{loguru_output.getvalue()}\n{caplog.text}"
+
+
+def _assert_permanent_delete_log_privacy(
+    rendered_logs: str,
+    *,
+    target_id: int,
+    db_path: Path,
+    private_values: tuple[str, ...],
+) -> None:
+    identifier_fragments = (
+        f"Media ID: {target_id}",
+        f"Media {target_id}",
+        f"media {target_id}",
+        f"media_id={target_id}",
+        f"media_id: {target_id}",
+    )
+    path_fragments = (
+        str(db_path.resolve()),
+        str(Path(f"{db_path.resolve()}-wal")),
+        str(Path(f"{db_path.resolve()}-shm")),
+    )
+    for private_value in (*identifier_fragments, *path_fragments, *private_values):
+        assert private_value not in rendered_logs
 
 
 def get_schema_version(db: Database) -> int:
@@ -156,6 +197,102 @@ def search_db(tmp_path_factory):
 
     yield db
     db.close_connection()
+
+
+def test_permanent_delete_success_logs_only_fixed_metadata(tmp_path, caplog):
+    db_path = tmp_path / "private-media-success.sqlite"
+    private_title = "PRIVATE PERMANENT DELETE TITLE"
+    private_url = "private-delete://success-url"
+    private_client = "private-delete-success-client"
+    db = Database(db_path, private_client)
+    try:
+        target_id, _uuid, _message = db.add_media_with_keywords(
+            url=private_url,
+            title=private_title,
+            media_type="article",
+            content="private delete content",
+            keywords=[],
+        )
+
+        rendered_logs = _capture_permanent_delete_logs(
+            caplog,
+            lambda: permanently_delete_item(db, target_id),
+        )
+
+        assert db.get_media_by_id(target_id, include_trash=True) is None
+        _assert_permanent_delete_log_privacy(
+            rendered_logs,
+            target_id=target_id,
+            db_path=db_path,
+            private_values=(private_title, private_url, private_client),
+        )
+        permanent_lines = tuple(
+            line
+            for line in rendered_logs.splitlines()
+            if "operation=permanent_delete" in line
+        )
+        assert permanent_lines == (
+            "Media mutation operation=permanent_delete status=started count=1",
+            "Media mutation operation=permanent_delete status=committed count=1",
+        )
+    finally:
+        db.close_connection()
+
+
+def test_permanent_delete_sqlite_failure_logs_category_without_private_values(
+    tmp_path, caplog
+):
+    db_path = tmp_path / "private-media-failure.sqlite"
+    private_title = "PRIVATE FAILED DELETE TITLE"
+    private_url = "private-delete://failure-url"
+    private_client = "private-delete-failure-client"
+    private_exception = "PRIVATE SQLITE DELETE FAILURE"
+    db = Database(db_path, private_client)
+    try:
+        target_id, _uuid, _message = db.add_media_with_keywords(
+            url=private_url,
+            title=private_title,
+            media_type="article",
+            content="private failed delete content",
+            keywords=[],
+        )
+        with db.transaction() as conn:
+            conn.execute(
+                "CREATE TRIGGER block_private_media_delete "
+                "BEFORE DELETE ON Media BEGIN "
+                f"SELECT RAISE(ABORT, '{private_exception}'); END"
+            )
+
+        def fail_delete() -> None:
+            with pytest.raises(DatabaseError):
+                permanently_delete_item(db, target_id)
+
+        rendered_logs = _capture_permanent_delete_logs(caplog, fail_delete)
+
+        assert db.get_media_by_id(target_id, include_trash=True) is not None
+        _assert_permanent_delete_log_privacy(
+            rendered_logs,
+            target_id=target_id,
+            db_path=db_path,
+            private_values=(
+                private_title,
+                private_url,
+                private_client,
+                private_exception,
+            ),
+        )
+        permanent_lines = tuple(
+            line
+            for line in rendered_logs.splitlines()
+            if "operation=permanent_delete" in line
+        )
+        assert permanent_lines == (
+            "Media mutation operation=permanent_delete status=started count=1",
+            "Media mutation operation=permanent_delete status=failed count=0 "
+            "category=IntegrityError",
+        )
+    finally:
+        db.close_connection()
 
 
 #######################################################################################################################
