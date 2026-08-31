@@ -1716,8 +1716,9 @@ class MCPWorkbench(Container):
         (`service.local_service.get_inventory()`, guarded by getattr since
         test fakes and a still-initializing service may not expose it),
         and the workspace, web, and Watchlists agent tool set
-        (`_local_agent_hub_tools()`,
-        task-2838 -- keyed `local:__local__`, non-executable hub-side).
+        (`_local_agent_hub_tools()`, task-2838 -- keyed `local:__local__`):
+        exact shared descriptor identities are executable, while Console-only
+        rows remain visible but non-executable.
 
         Server source: each external-server record's own embedded `tools`
         list (when the backend includes one -- `ReadinessSnapshot.detail
@@ -1805,10 +1806,7 @@ class MCPWorkbench(Container):
             )
 
             provider = VirtualCliProvider(workspace_root=root)
-            tools.extend(
-                replace(hub, executable=False)
-                for hub in provider.hub_tools()
-            )
+            tools.extend(replace(hub, executable=False) for hub in provider.hub_tools())
         except Exception as exc:  # noqa: BLE001 -- catalog view must never break the hub
             logger.warning(
                 "MCP Virtual CLI catalog unavailable "

@@ -175,9 +175,9 @@ def test_hub_local_factory_filters_shared_descriptors_and_wires_runtime_seams(
         names = {entry.name for entry in provider.list_catalog()}
         expected = {
             spec.name
-            for spec in LocalToolProvider(
-                workspace_root=workspace
-            ).specs_for_exposure(LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP)
+            for spec in LocalToolProvider(workspace_root=workspace).specs_for_exposure(
+                LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP
+            )
         }
 
         assert names == expected
@@ -228,9 +228,7 @@ def test_hub_local_handle_closes_opened_lazy_database_once_on_exception(
 
     handle = local_server_tools.build_hub_local_provider(
         workspace,
-        resolve_state=lambda _hub: EffectiveToolState(
-            state="allow", origin="tool"
-        ),
+        resolve_state=lambda _hub: EffectiveToolState(state="allow", origin="tool"),
         approval_callback=None,
     )
     with pytest.raises(RuntimeError, match="body failed"):

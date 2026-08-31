@@ -2600,8 +2600,7 @@ class UnifiedMCPControlPlaneService:
                 ]
             except Exception as exc:  # noqa: BLE001 -- catalog is fail-soft
                 logger.warning(
-                    "MCP local inspection catalog unavailable "
-                    "(exception_type={})",
+                    "MCP local inspection catalog unavailable (exception_type={})",
                     type(exc).__name__,
                 )
                 return []
@@ -2630,8 +2629,7 @@ class UnifiedMCPControlPlaneService:
                 }
             except Exception as exc:  # noqa: BLE001 -- inspection remains useful
                 logger.warning(
-                    "MCP local executable projection unavailable "
-                    "(exception_type={})",
+                    "MCP local executable projection unavailable (exception_type={})",
                     type(exc).__name__,
                 )
                 return inspection

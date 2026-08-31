@@ -1,7 +1,7 @@
-"""Server-side composition of the local agent tool provider for external MCP clients.
+"""Local-tool provider compositions for external MCP and operator Hub use.
 
-Non-Console MCP serving has no approval card and no session scope, so this
-composition differs from the Console's ``_compose_local_provider``
+External, non-Console MCP serving has no approval card and no session scope, so
+that composition differs from the Console's ``_compose_local_provider``
 (``Chat/console_chat_controller.py``) in exactly those seams:
 
 - ``resolve_state`` loads the ``MCPPermissionStore`` payload FRESH per call
@@ -26,6 +26,12 @@ Deferred: ``record_decision`` is deliberately NOT wired. The server's audit
 path for external local-tool refusals is a separate design question
 (where the execution log lives for a headless server process), so refusals
 here record nothing for now.
+
+The operator Hub diagnostic uses dedicated per-refresh handles instead. Its
+ordinary full composition remains the inspection source, while a separate
+descriptor-filtered composition establishes exact executable identities. Each
+handle owns and closes its lazy Watchlists database resolver, including failure
+cleanup; neither composition uses the external-publication configuration gate.
 
 ``_local_agent_tool_registrations`` turns a composed provider's catalog
 into binding-ready ``LocalToolRegistration`` entries (name, description,
