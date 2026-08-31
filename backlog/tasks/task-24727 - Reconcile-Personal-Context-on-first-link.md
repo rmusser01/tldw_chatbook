@@ -197,6 +197,29 @@ projection, mirror, or second authority was introduced.
   skipped, while executable PostgreSQL locking/SQL contract coverage passed.
 - ADR required: no new ADR. ADR-102 remains the governing authority, encryption,
   reconciliation, and Sync decision.
+
+Post-PR derived-artifact correction (2026-08-31): GitHub Actions run
+`33413706013` proved that the whole-tree production diagnostic inventory was
+stale. The canonical statement scanner was run from the inventory commit through
+the PR head before regeneration. This PR contributes only two new `app.py`
+warnings, both fixed messages for first-run interview preparation/notification
+failure with no user content, secret, path, URL, or exception text. Inherited
+drift was also reviewed rather than blindly absorbed: Personal Context interview
+warnings are fixed messages; Console additions are fixed messages or bounded
+error-type metadata; the Library row is re-indentation only; and the new Personal
+Context export sink entries are the expected owner-private atomic write boundary.
+The inherited config-path diagnostics remain ordinary console/UI records rejected
+by the persistent metadata-only log filter, consistent with ADR-029 and the
+TASK-19572 review. `Docs/security/production-diagnostic-inventory.json` was then
+regenerated with the canonical writer; verification evidence follows in the CI
+fix commit. The full derived-artifact preflight now passes and reproduces 538
+owners, 1,244 TASK-492 calls, 7,354 TASK-494 calls, and 9 sink files. The focused
+guard bundle passed 164 tests; its two failures were reproduced unchanged on the
+clean `codex/personal-context-profile` base (`CHECKERS` still lists five of six
+workflow checkers, and the TASK-15743 test still requires a diagnostic already
+removed from `config.py`), so they are recorded as pre-existing follow-up debt
+rather than expanded into this artifact-only PR correction. Ruff and Bandit on
+the canonical checker plus diff hygiene passed; no production Python changed.
 <!-- SECTION:NOTES:END -->
 
 ## Definition of Done
