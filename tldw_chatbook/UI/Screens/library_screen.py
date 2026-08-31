@@ -1071,6 +1071,7 @@ class _LibraryMediaReturnSettlement:
     items_host_identity: int | None
     owner_identity: int | None
     exclusive_geometry_floor: int
+    focus_anchor: Widget | None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -4597,6 +4598,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_pending_list_entry_media_return: (
             _LibraryMediaReturnReceipt | None
         ) = None
+        self._library_pending_list_entry_focus_anchor: Widget | None = None
         self._library_media_viewer_return: _LibraryMediaReturnReceipt | None = None
         self._library_media_trash_return: _LibraryMediaReturnReceipt | None = None
         # task-2856 review (PR #1410, Qodo): the settle-window timer
@@ -6816,10 +6818,35 @@ class LibraryScreen(BaseAppScreen):
             and request.shell_identity == id(shell)
             and request.items_host_identity == id(items_host)
             and request.owner_identity == id(owner)
+            and request.focus_anchor
+            is self._library_pending_list_entry_focus_anchor
+            and self._library_media_live_focus_is_allowed(
+                request.focus_anchor,
+                receipt.stable_id,
+            )
             and self._library_media_current_owner is owner
             and self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
             and self._library_media_reader_layout.items_open
             and items_host.display
+        )
+
+    def _library_media_live_focus_is_allowed(
+        self,
+        focus_anchor: Widget | None,
+        stable_id: str,
+        target: Widget | None = None,
+    ) -> bool:
+        """Return whether live focus still belongs to one exact return."""
+        focused = self.focused
+        if focused is None or focused is focus_anchor:
+            return True
+        guarded_target = target or self._library_notes_programmatic_focus_target
+        return bool(
+            guarded_target is not None
+            and focused is guarded_target
+            and self._library_notes_programmatic_focus_target is guarded_target
+            and focused.has_class("library-media-row")
+            and str(getattr(focused, "media_id", "") or "") == stable_id
         )
 
     def _arm_library_media_return_settlement(
@@ -6833,6 +6860,10 @@ class LibraryScreen(BaseAppScreen):
             or not self._library_media_exact_return_candidate(receipt)
             or self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
             or self._library_media_view != "list"
+            or not self._library_media_live_focus_is_allowed(
+                self._library_pending_list_entry_focus_anchor,
+                receipt.stable_id,
+            )
         ):
             self._library_media_return_settlement = None
             return None
@@ -6890,6 +6921,7 @@ class LibraryScreen(BaseAppScreen):
             items_host_identity=id(items_host),
             owner_identity=owner_identity,
             exclusive_geometry_floor=floor,
+            focus_anchor=self._library_pending_list_entry_focus_anchor,
         )
         self._library_media_return_settlement = request
         latest = owner.latest_geometry
@@ -6958,6 +6990,12 @@ class LibraryScreen(BaseAppScreen):
         )
         if target is None:
             return False
+        if not self._library_media_live_focus_is_allowed(
+            request.focus_anchor,
+            request.receipt.stable_id,
+            target,
+        ):
+            return False
 
         owner.scroll_to(
             x=desired[0],
@@ -6967,6 +7005,12 @@ class LibraryScreen(BaseAppScreen):
             immediate=True,
         )
         if (int(owner.scroll_x), int(owner.scroll_y)) != desired:
+            return False
+        if not self._library_media_live_focus_is_allowed(
+            request.focus_anchor,
+            request.receipt.stable_id,
+            target,
+        ):
             return False
         self._library_notes_programmatic_focus_target = target
         self.set_focus(target, scroll_visible=False)
@@ -10153,6 +10197,7 @@ class LibraryScreen(BaseAppScreen):
         ``False`` after removal) -- so this call is what actually closes
         the window, not the guard.
         """
+        self._disarm_library_list_entry_focus()
         self._invalidate_library_notes_tree_for_unmount()
         self._library_conversation_reader_mounted_authority = False
         self._invalidate_library_conversation_reader_authority()
@@ -11100,6 +11145,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_list_entry_focus_generation += 1
         self._library_pending_list_entry_focus = True
         self._library_pending_list_entry_media_return = media_return
+        self._library_pending_list_entry_focus_anchor = self.focused
         exact_media_return = self._library_media_exact_return_candidate(media_return)
         if exact_media_return:
             self._arm_library_media_return_settlement(media_return)
@@ -11141,6 +11187,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_list_entry_focus_generation += 1
         self._library_pending_list_entry_focus = False
         self._library_pending_list_entry_media_return = None
+        self._library_pending_list_entry_focus_anchor = None
         self._library_media_return_settlement = None
         if self._library_list_entry_focus_timer is not None:
             self._library_list_entry_focus_timer.stop()
