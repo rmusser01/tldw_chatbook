@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 from datetime import datetime, timedelta, timezone
+import errno
 import hashlib
 import os
 from pathlib import Path
@@ -9,6 +10,7 @@ import stat
 
 import pytest
 
+from tldw_chatbook.Tool_Packs import receipt_store as receipt_store_module
 from tldw_chatbook.Tool_Packs.contracts import ToolPackError, canonical_json_bytes
 from tldw_chatbook.Tool_Packs.receipt_store import (
     ToolPackReceipt,
@@ -210,13 +212,13 @@ def test_read_rejects_receipt_with_relaxed_file_mode(tmp_path: Path) -> None:
         store.read(handle.receipt_id, expected_digest=handle.digest)
 
 
-def test_capacity_counts_live_reservations_across_store_instances(tmp_path: Path) -> None:
+def test_capacity_uses_strictest_limit_across_store_instances(tmp_path: Path) -> None:
     root = tmp_path / "receipts"
     first = _store(root, max_receipt_bytes=500, max_total_bytes=700)
     second = _store(
         root,
         max_receipt_bytes=500,
-        max_total_bytes=700,
+        max_total_bytes=900,
         ids=[bytes.fromhex("cd" * 16)],
     )
 
@@ -226,6 +228,22 @@ def test_capacity_counts_live_reservations_across_store_instances(tmp_path: Path
     reservation.release()
     reservation.release()
     second.reserve(301).release()
+
+
+def test_root_creation_directory_sync_failure_is_activation_failed(
+    tmp_path: Path,
+) -> None:
+    def fail(stage: str) -> None:
+        if stage == "before_root_parent_fsync":
+            raise OSError("injected")
+
+    root = tmp_path / "receipts"
+
+    with pytest.raises(ToolPackError, match=r"activation_failed$"):
+        _store(root, fault=fail)
+
+    assert root.is_dir()
+    assert stat.S_IMODE(root.stat().st_mode) == 0o700
 
 
 def test_capacity_enforces_projection_actual_and_committed_files(tmp_path: Path) -> None:
@@ -330,6 +348,31 @@ def test_failure_after_replace_reports_uncertain_and_keeps_visible_receipt(
     receipt_id = entries[0].name
     assert store.read(receipt_id, expected_digest=digest).digest == digest
     store.reserve(len(_receipt_bytes())).release()
+
+
+def test_unsupported_receipt_directory_sync_is_uncertain_and_visible(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "receipts"
+    store = _store(root)
+    digest = hashlib.sha256(_receipt_bytes()).hexdigest()
+    real_fsync = receipt_store_module.os.fsync
+
+    def fail_directory_sync(descriptor: int) -> None:
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            raise OSError(errno.EINVAL, "directory fsync unsupported")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(receipt_store_module.os, "fsync", fail_directory_sync)
+
+    with store.reserve(len(_receipt_bytes())) as reservation:
+        with pytest.raises(ToolPackError, match=r"activation_uncertain$"):
+            reservation.commit(_receipt_bytes())
+
+    entries = list(root.iterdir())
+    assert len(entries) == 1
+    receipt_id = entries[0].name
+    assert store.read(receipt_id, expected_digest=digest).digest == digest
 
 
 @pytest.mark.parametrize(

@@ -6,7 +6,6 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-import errno
 import hashlib
 import os
 from pathlib import Path
@@ -63,16 +62,6 @@ _TOMBSTONE_KEYS = frozenset(
 _PRODUCER_KEYS = frozenset({"name", "version"})
 _MAPPING_KEYS = frozenset({"source_server_key", "destination_server_key"})
 _IDENTITY_KEYS = frozenset({"authority", "server_key", "tool_name"})
-_UNSUPPORTED_DIRECTORY_FSYNC = frozenset(
-    value
-    for value in (
-        errno.EINVAL,
-        errno.ENOSYS,
-        getattr(errno, "ENOTSUP", None),
-        getattr(errno, "EOPNOTSUPP", None),
-    )
-    if value is not None
-)
 
 
 def _fail(category: str) -> ToolPackError:
@@ -383,6 +372,7 @@ class VerifiedToolPackReceipt:
 @dataclass(slots=True)
 class _RootState:
     lock: threading.RLock
+    max_total_bytes: int
     reserved_bytes: int = 0
 
 
@@ -390,11 +380,17 @@ _ROOT_STATES_LOCK = threading.Lock()
 _ROOT_STATES: dict[Path, _RootState] = {}
 
 
-def _root_state(root: Path) -> _RootState:
+def _root_state(root: Path, max_total_bytes: int) -> _RootState:
     with _ROOT_STATES_LOCK:
         # ponytail: process-lifetime registry; weak cleanup only matters for apps
         # constructing unbounded distinct receipt roots in one process.
-        return _ROOT_STATES.setdefault(root, _RootState(threading.RLock()))
+        state = _ROOT_STATES.setdefault(
+            root,
+            _RootState(threading.RLock(), max_total_bytes),
+        )
+        with state.lock:
+            state.max_total_bytes = min(state.max_total_bytes, max_total_bytes)
+        return state
 
 
 class ReceiptReservation(AbstractContextManager["ReceiptReservation"]):
@@ -455,9 +451,13 @@ class ToolPackReceiptStore:
         self._fault = _fault
         self._id_source = _id_source or (lambda: secrets.token_bytes(16))
         self._ensure_root()
-        self._state = _root_state(self.root.resolve(strict=True))
+        self._state = _root_state(
+            self.root.resolve(strict=True),
+            max_total_bytes,
+        )
 
     def _ensure_root(self) -> None:
+        created = False
         try:
             if self.root.exists() or self.root.is_symlink():
                 info = self.root.lstat()
@@ -465,7 +465,12 @@ class ToolPackReceiptStore:
                     raise _fail("activation_failed")
             else:
                 self.root.mkdir(parents=True, mode=0o700)
+                created = True
             self.root.chmod(0o700)
+            self._fsync_directory(self.root)
+            if created and self._fault is not None:
+                self._fault("before_root_parent_fsync")
+            self._fsync_directory(self.root.parent)
         except ToolPackError:
             raise
         except OSError:
@@ -480,7 +485,10 @@ class ToolPackReceiptStore:
             raise _fail("capacity_exceeded")
         with self._state.lock:
             committed = self._committed_bytes_locked()
-            if committed + self._state.reserved_bytes + projected_bytes > self.max_total_bytes:
+            if (
+                committed + self._state.reserved_bytes + projected_bytes
+                > self._state.max_total_bytes
+            ):
                 raise _fail("capacity_exceeded")
             self._state.reserved_bytes += projected_bytes
             return ReceiptReservation(self, projected_bytes)
@@ -666,7 +674,7 @@ class ToolPackReceiptStore:
                 temporary = None
                 if self._fault is not None:
                     self._fault("after_replace")
-                self._fsync_root()
+                self._fsync_directory(self.root)
             except Exception as error:
                 if temporary is not None:
                     try:
@@ -695,17 +703,15 @@ class ToolPackReceiptStore:
                 return receipt_id
         raise _fail("activation_failed")
 
-    def _fsync_root(self) -> None:
+    @staticmethod
+    def _fsync_directory(path: Path) -> None:
         descriptor = -1
         try:
             descriptor = os.open(
-                self.root,
+                path,
                 os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
             )
             os.fsync(descriptor)
-        except OSError as error:
-            if error.errno not in _UNSUPPORTED_DIRECTORY_FSYNC:
-                raise
         finally:
             if descriptor >= 0:
                 os.close(descriptor)
