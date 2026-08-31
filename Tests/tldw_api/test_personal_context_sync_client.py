@@ -186,6 +186,37 @@ def test_personal_context_bootstrap_response_rejects_malformed_quota_contract(
         SyncPersonalContextBootstrapResponse.model_validate(payload)
 
 
+@pytest.mark.parametrize("quotas", (None, {}), ids=("omitted", "empty"))
+def test_personal_context_bootstrap_response_requires_nonempty_quotas(quotas) -> None:
+    payload = copy.deepcopy(BOOTSTRAP)
+    if quotas is None:
+        payload.pop("quotas")
+    else:
+        payload["quotas"] = quotas
+
+    with pytest.raises(ValidationError):
+        SyncPersonalContextBootstrapResponse.model_validate(payload)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("quotas", (None, {}), ids=("omitted", "empty"))
+async def test_client_rejects_bootstrap_success_without_nonempty_quotas(quotas) -> None:
+    payload = copy.deepcopy(BOOTSTRAP)
+    if quotas is None:
+        payload.pop("quotas")
+    else:
+        payload["quotas"] = quotas
+    client = _client_with_response(200, payload)
+
+    try:
+        with pytest.raises(ValidationError):
+            await client.bootstrap_sync_v2_personal_context(
+                SyncPersonalContextBootstrapRequest(device_id="device-1")
+            )
+    finally:
+        await client.close()
+
+
 @pytest.mark.parametrize(
     "value",
     (None, "", "x" * 32_769),

@@ -753,6 +753,43 @@ async def test_personal_context_bootstrap_rejects_success_missing_requested_quot
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("quotas", (None, {}), ids=("omitted", "empty"))
+async def test_personal_context_bootstrap_rejects_missing_or_empty_success_quotas(
+    tmp_path,
+    quotas,
+) -> None:
+    class InvalidQuotaMapClient(FakeSyncClient):
+        async def bootstrap_sync_v2_personal_context(self, request_data):
+            self.calls.append(
+                (
+                    "bootstrap_sync_v2_personal_context",
+                    request_data.model_dump(mode="json"),
+                )
+            )
+            response = {"dataset_id": "dataset-personal-context"}
+            if quotas is not None:
+                response["quotas"] = quotas
+            return response
+
+    service = ServerSyncService(
+        client=InvalidQuotaMapClient(
+            capabilities_response=_personal_context_capabilities(available=True)
+        ),
+        state_repository=SyncStateRepository(tmp_path / "sync_state.db"),
+    )
+
+    with pytest.raises(
+        ValueError, match="personal_context_bootstrap_quota_map_incomplete"
+    ):
+        await service.bootstrap_personal_context_link(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            display_name="Laptop",
+            wrapping_key_provider=FakeWrappingProvider(),
+        )
+
+
+@pytest.mark.asyncio
 async def test_personal_context_complete_uses_exact_reviewed_binding() -> None:
     client = FakeSyncClient()
     service = ServerSyncService(client=client)

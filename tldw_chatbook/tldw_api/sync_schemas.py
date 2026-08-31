@@ -650,7 +650,7 @@ class SyncPersonalContextBootstrapResponse(BaseModel):
     purge_generation: int = Field(..., ge=0)
     schema_version: int = Field(..., ge=1)
     quotas: dict[StrictStr, _PersonalContextQuotaInteger] = Field(
-        default_factory=dict, max_length=32
+        ..., min_length=1, max_length=32
     )
     cursor: str = Field(..., min_length=1, max_length=256)
     sync_transport_cursor: str = Field(..., min_length=1, max_length=32_768)

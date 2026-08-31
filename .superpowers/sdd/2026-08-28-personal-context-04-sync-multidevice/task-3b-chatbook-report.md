@@ -4,8 +4,7 @@
 
 The final recovery-binding and transport-watermark correction is implemented,
 targeted-test clean, and through scoped static/security verification against
-tldw_server `e3a2e9ea8836ca750336447ced318d7c722cfcc3` (temporary pin; a
-controller follow-up may supersede it). Controller
+the final reviewed tldw_server contract `0ad1c078c8`. Controller
 cross-repository review and final backlog closure remain. This report does not
 mark TASK-24727 Done.
 
@@ -427,8 +426,7 @@ Known limitations/skips:
 
 Status: implemented and scoped-verification clean; controller re-review pending.
 TASK-24727 remains In Progress. Final server contract pin:
-`e3a2e9ea8836ca750336447ced318d7c722cfcc3` (temporary pin pending any final
-controller-issued server correction).
+`0ad1c078c8`.
 
 ### RED evidence
 
@@ -590,10 +588,9 @@ This section supersedes the legacy-cleanup authentication description above.
 - Bootstrap quota request and success schemas now require at most 32 ASCII-safe
   names, strict built-in integer values in `0..2**63-1`, and a success map that
   includes every requested quota before planning proceeds.
-- Cross-repository documentation is temporarily pinned to reviewed server
-  `e3a2e9ea8836ca750336447ced318d7c722cfcc3`; a controller follow-up may
-  supersede that pin. The bootstrap semantic cursor and `sync_transport_cursor`
-  remain distinct.
+- Cross-repository documentation is pinned to the final reviewed server
+  `0ad1c078c8`. The bootstrap semantic cursor and `sync_transport_cursor` remain
+  distinct.
 
 ### GREEN evidence
 
