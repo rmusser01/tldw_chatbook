@@ -884,7 +884,7 @@ class SyncV2Envelope(BaseModel):
     server_cursor: int | None = Field(None, ge=0)
     client_sequence: int | None = Field(None, ge=0)
     base_version: str | int | None = None
-    entity_version: str | int | None = None
+    entity_version: StrictStr | StrictInt | None = None
     object_revision: int | None = Field(None, ge=0)
     base_server_cursor: int | None = Field(None, ge=0)
     base_object_revision: int | None = Field(None, ge=0)

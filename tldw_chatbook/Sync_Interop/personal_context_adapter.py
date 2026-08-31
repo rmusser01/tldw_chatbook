@@ -83,7 +83,7 @@ class PersonalContextSyncAdapter:
             operation=operation,
             device_id=device_id,
             base_version=identity["base_version"],
-            entity_version=entry.version_id,
+            entity_version=identity["entity_version"],
             object_revision=identity["object_revision"],
             base_server_cursor=(
                 None if sync_head is None else sync_head.get("server_cursor")
@@ -201,6 +201,10 @@ class PersonalContextSyncAdapter:
             envelope.object_id != identity["object_id"]
             or envelope.parent_id != identity["parent_id"]
             or envelope.operation != identity["operation"]
+            or not _same_wire_version(
+                envelope.entity_version,
+                identity["entity_version"],
+            )
         ):
             raise PersonalContextSyncValidationError(
                 "personal_context_identity_conflict"
@@ -280,6 +284,7 @@ def _identity(object_type: str, payload: Mapping[str, Any]) -> dict[str, Any]:
             "parent_id": None,
             "profile_id": value.profile_id,
             "base_version": None,
+            "entity_version": value.current_version_id,
             "object_revision": value.revision,
             "operation": "upsert",
             "purge_generation": value.purge_generation,
@@ -290,6 +295,7 @@ def _identity(object_type: str, payload: Mapping[str, Any]) -> dict[str, Any]:
             "parent_id": value.profile_id,
             "profile_id": value.profile_id,
             "base_version": None,
+            "entity_version": value.version_id,
             "object_revision": None,
             "operation": "upsert",
             "purge_generation": None,
@@ -300,6 +306,7 @@ def _identity(object_type: str, payload: Mapping[str, Any]) -> dict[str, Any]:
             "parent_id": value.scope_id,
             "profile_id": value.profile_id,
             "base_version": value.parent_version_id,
+            "entity_version": value.version_id,
             "object_revision": None,
             "operation": (
                 "tombstone" if value.state is RecordState.DELETED else "upsert"
@@ -307,11 +314,15 @@ def _identity(object_type: str, payload: Mapping[str, Any]) -> dict[str, Any]:
             "purge_generation": None,
         }
     if object_type == "proposal":
+        proposal_version = "sync-proposal-sha256:" + hashlib.sha256(
+            canonical_json_bytes(value.model_dump(mode="json"))
+        ).hexdigest()
         return {
             "object_id": value.proposal_id,
             "parent_id": value.scope_id,
             "profile_id": value.profile_id,
             "base_version": value.base_version_id,
+            "entity_version": proposal_version,
             "object_revision": None,
             "operation": "upsert",
             "purge_generation": None,
@@ -321,10 +332,15 @@ def _identity(object_type: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         "parent_id": None,
         "profile_id": value["profile_id"],
         "base_version": None,
+        "entity_version": value["purge_generation"],
         "object_revision": value["purge_generation"],
         "operation": "tombstone",
         "purge_generation": value["purge_generation"],
     }
+
+
+def _same_wire_version(left: Any, right: Any) -> bool:
+    return type(left) is type(right) and left == right
 
 
 __all__ = ["PersonalContextSyncAdapter", "PersonalContextSyncValidationError"]

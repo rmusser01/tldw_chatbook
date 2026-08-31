@@ -126,6 +126,17 @@ def _proposal(*, profile_id: str = "profile-1", scope_id: str = "scope-global"):
     )
 
 
+def _wire_version(object_type: str, payload: dict[str, object]) -> str | int:
+    if object_type == "manifest":
+        return str(payload["current_version_id"])
+    if object_type in {"scope", "record"}:
+        return str(payload["version_id"])
+    if object_type == "proposal":
+        digest = hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
+        return f"sync-proposal-sha256:{digest}"
+    return int(payload["purge_generation"])
+
+
 def _whole_object_cases():
     manifest = ProfileManifest(
         profile_id="profile-1",
@@ -188,11 +199,16 @@ def test_outbound_adapter_supports_all_canonical_domains(
     object_type, object_id, parent_id, operation, value
 ) -> None:
     payload = value.model_dump(mode="json") if hasattr(value, "model_dump") else value
+    expected_version = _wire_version(object_type, payload)
     envelope = _adapter().build_envelope(
         entry=_Entry(
             object_type=object_type,
             object_id=object_id,
-            version_id=f"{object_type}-version-1",
+            version_id=(
+                "local-proposal-version"
+                if object_type == "proposal"
+                else str(expected_version)
+            ),
         ),
         body={"version": 1, object_type: payload},
         dataset_id="dataset-1",
@@ -204,6 +220,37 @@ def test_outbound_adapter_supports_all_canonical_domains(
     assert envelope.parent_id == parent_id
     assert envelope.operation == operation
     assert envelope.payload == payload
+    assert envelope.entity_version == expected_version
+
+
+@pytest.mark.parametrize(
+    ("object_type", "object_id", "_parent_id", "_operation", "value"),
+    _whole_object_cases(),
+)
+def test_inbound_adapter_rejects_entity_version_outside_canonical_payload(
+    object_type, object_id, _parent_id, _operation, value
+) -> None:
+    payload = value.model_dump(mode="json") if hasattr(value, "model_dump") else value
+    expected_version = _wire_version(object_type, payload)
+    envelope = _adapter().build_envelope(
+        entry=_Entry(
+            object_type=object_type,
+            object_id=object_id,
+            version_id=str(expected_version),
+        ),
+        body={"version": 1, object_type: payload},
+        dataset_id="dataset-1",
+        device_id="remote-device",
+    ).model_copy(update={"entity_version": "mismatched-version"})
+    service = _RecordingService()
+
+    with pytest.raises(
+        PersonalContextSyncValidationError,
+        match="personal_context_identity_conflict",
+    ):
+        _adapter().apply_inbound(envelope, service=service)
+
+    assert service.calls == []
 
 
 def test_inbound_adapter_rejects_integrity_before_calling_service() -> None:
