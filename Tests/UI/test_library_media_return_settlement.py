@@ -509,6 +509,255 @@ async def test_authoritative_recompose_rearms_before_replacement_geometry(
         assert getattr(screen.focused, "media_id", None) == media_id
 
 
+async def _open_pending_viewer_return(
+    host,
+    pilot,
+    monkeypatch: pytest.MonkeyPatch,
+    row_scroll_type,
+):
+    """Return a viewer Back request whose replacement owner has no geometry."""
+    screen, media_id, scroll_offset = await _open_scrolled_compact_media_viewer(
+        host,
+        pilot,
+    )
+    real_on_resize = row_scroll_type.on_resize
+    monkeypatch.setattr(row_scroll_type, "on_resize", lambda _owner, _event: None)
+    screen.query_one("#library-media-back", Button).press()
+    await _wait_for_selector(screen, pilot, "#library-media-row-scroll")
+    await _wait_for_condition(
+        pilot,
+        lambda: screen._library_media_return_settlement is not None,
+        message="Viewer return never armed without geometry.",
+    )
+    owner = screen.query_one("#library-media-row-scroll", row_scroll_type)
+    assert owner.latest_geometry is None
+    return screen, owner, media_id, scroll_offset, real_on_resize
+
+
+def _hold_next_owner_geometry(
+    monkeypatch: pytest.MonkeyPatch,
+    owner,
+    row_scroll_type,
+    geometry_message_type,
+    real_on_resize,
+):
+    """Produce concrete owner geometry without delivering its custom message."""
+    held: list[object] = []
+    real_post_message = owner.post_message
+
+    def hold_geometry(message) -> bool:
+        if type(message) is geometry_message_type:
+            held.append(message)
+            return True
+        return real_post_message(message)
+
+    monkeypatch.setattr(owner, "post_message", hold_geometry)
+    monkeypatch.setattr(row_scroll_type, "on_resize", real_on_resize)
+    real_on_resize(
+        owner,
+        events.Resize(owner.size, owner.virtual_size, owner.container_size),
+    )
+    assert len(held) == 1
+    assert owner.latest_geometry is held[0].geometry
+    return held[0]
+
+
+@pytest.mark.asyncio
+async def test_real_compact_transition_floors_prechange_owner_geometry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, row_scroll_type, _, geometry_message_type = _require_return_protocol()
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, owner, _, _, real_on_resize = await _open_pending_viewer_return(
+            host,
+            pilot,
+            monkeypatch,
+            row_scroll_type,
+        )
+        queued = _hold_next_owner_geometry(
+            monkeypatch,
+            owner,
+            row_scroll_type,
+            geometry_message_type,
+            real_on_resize,
+        )
+        before_epoch = screen._library_media_presentation_epoch
+        assert screen._library_notes_compact is True
+        identity = screen._capture_library_notes_focus_identity(stage_from_focus=True)
+
+        screen._transition_library_notes_presentation(False, identity)
+
+        stage = screen.query_one("#library-shell-grid", Horizontal)
+        assert not stage.has_class("library-adaptive-compact")
+        assert screen._library_media_presentation_epoch == before_epoch + 1
+        assert screen._library_media_geometry_floor_owner_identity == id(owner)
+        assert screen._library_media_geometry_floor == queued.geometry.revision
+        equality_epoch = screen._library_media_presentation_epoch
+        real_settlement_tree = screen._library_media_settlement_tree
+        monkeypatch.setattr(
+            screen,
+            "_library_media_settlement_tree",
+            lambda: pytest.fail("Equality projection queried settlement authority."),
+        )
+        screen._apply_library_notes_stage_visibility()
+        assert screen._library_media_presentation_epoch == equality_epoch
+        assert screen._reconcile_library_media_stage_presentation() is False
+        assert screen._library_media_presentation_epoch == equality_epoch
+        monkeypatch.setattr(
+            screen,
+            "_library_media_settlement_tree",
+            real_settlement_tree,
+        )
+
+        assert screen.post_message(queued)
+        await pilot.pause()
+        assert screen._library_media_last_exact_settlement is None
+
+
+@pytest.mark.asyncio
+async def test_current_user_media_row_focus_cancels_pending_return(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, row_scroll_type, _, _ = _require_return_protocol()
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, owner, media_id, _, real_on_resize = (
+            await _open_pending_viewer_return(
+                host,
+                pilot,
+                monkeypatch,
+                row_scroll_type,
+            )
+        )
+        other = next(
+            row
+            for row in screen.query(".library-media-row")
+            if str(getattr(row, "media_id", "")) != media_id
+        )
+        screen.set_focus(other, scroll_visible=False)
+        screen.on_descendant_focus(events.DescendantFocus(other))
+
+        assert screen._library_pending_list_entry_focus is False
+        assert screen._library_pending_list_entry_media_return is None
+        assert screen._library_media_return_settlement is None
+
+        monkeypatch.setattr(row_scroll_type, "on_resize", real_on_resize)
+        owner.on_resize(
+            events.Resize(owner.size, owner.virtual_size, owner.container_size)
+        )
+        await pilot.pause()
+        assert screen._library_media_last_exact_settlement is None
+        assert screen.focused is other
+
+
+@pytest.mark.asyncio
+async def test_foreign_control_focus_cancels_pending_return(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, row_scroll_type, _, _ = _require_return_protocol()
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, owner, _, _, real_on_resize = await _open_pending_viewer_return(
+            host,
+            pilot,
+            monkeypatch,
+            row_scroll_type,
+        )
+        control = screen.query_one("#library-media-type-filter", Button)
+        screen.set_focus(control, scroll_visible=False)
+        screen.on_descendant_focus(events.DescendantFocus(control))
+
+        assert screen._library_pending_list_entry_focus is False
+        assert screen._library_pending_list_entry_media_return is None
+        assert screen._library_media_return_settlement is None
+
+        monkeypatch.setattr(row_scroll_type, "on_resize", real_on_resize)
+        owner.on_resize(
+            events.Resize(owner.size, owner.virtual_size, owner.container_size)
+        )
+        await pilot.pause()
+        assert screen._library_media_last_exact_settlement is None
+        assert screen.focused is control
+
+
+@pytest.mark.asyncio
+async def test_route_change_rejects_later_geometry_settlement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, row_scroll_type, _, geometry_message_type = _require_return_protocol()
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, owner, _, _, real_on_resize = await _open_pending_viewer_return(
+            host,
+            pilot,
+            monkeypatch,
+            row_scroll_type,
+        )
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_selected_row_id != "library-row-browse-media",
+            message="Route did not leave Media.",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: not owner.is_attached,
+            message="Departed route did not detach its Media owner.",
+        )
+        monkeypatch.setattr(row_scroll_type, "on_resize", real_on_resize)
+        owner.on_resize(
+            events.Resize(owner.size, owner.virtual_size, owner.container_size)
+        )
+        queued = geometry_message_type(owner, owner.latest_geometry)
+
+        assert screen.post_message(queued)
+        await pilot.pause()
+        assert screen._library_media_last_exact_settlement is None
+        assert getattr(screen.focused, "media_id", None) is None
+
+
+@pytest.mark.asyncio
+async def test_detached_current_owner_rejects_later_geometry_settlement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, row_scroll_type, _, geometry_message_type = _require_return_protocol()
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, owner, _, _, real_on_resize = await _open_pending_viewer_return(
+            host,
+            pilot,
+            monkeypatch,
+            row_scroll_type,
+        )
+        await owner.remove()
+        assert owner.is_attached is False
+        monkeypatch.setattr(row_scroll_type, "on_resize", real_on_resize)
+        owner.on_resize(
+            events.Resize(owner.size, owner.virtual_size, owner.container_size)
+        )
+        queued = geometry_message_type(owner, owner.latest_geometry)
+
+        assert screen.post_message(queued)
+        await pilot.pause()
+        assert screen._library_media_last_exact_settlement is None
+
+
 @pytest.mark.asyncio
 async def test_old_owner_and_below_floor_geometry_cannot_settle(
     monkeypatch: pytest.MonkeyPatch,

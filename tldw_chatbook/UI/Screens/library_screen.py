@@ -6697,11 +6697,6 @@ class LibraryScreen(BaseAppScreen):
 
     def _project_library_media_stage_classes(self, shell_grid: Widget) -> bool:
         """Project effective Media stage classes; return whether they changed."""
-        current_owner: LibraryMediaRowScroll | None = None
-        if shell_grid.is_attached:
-            tree = self._library_media_settlement_tree()
-            if tree is not None and shell_grid in tree[0].ancestors:
-                current_owner = tree[2]
         changed = False
         if shell_grid.has_class("library-notes-compact"):
             shell_grid.remove_class("library-notes-compact")
@@ -6713,6 +6708,11 @@ class LibraryScreen(BaseAppScreen):
             )
             changed = True
         if changed:
+            current_owner: LibraryMediaRowScroll | None = None
+            if shell_grid.is_attached:
+                tree = self._library_media_settlement_tree()
+                if tree is not None and shell_grid in tree[0].ancestors:
+                    current_owner = tree[2]
             self._advance_library_media_presentation_epoch(current_owner)
         return changed
 
@@ -7035,6 +7035,7 @@ class LibraryScreen(BaseAppScreen):
             )
         )
         adaptive_notes = bool(self.query("#library-notes-reader-shell"))
+        adaptive_media = bool(self.query("#library-media-reader-shell"))
         # Only the grid and canvas host participate in compact CSS selectors;
         # tagging the rail and inner Notes canvas forced two needless global
         # stylesheet matches on every breakpoint crossing. Apply these before
@@ -7045,11 +7046,16 @@ class LibraryScreen(BaseAppScreen):
         legacy_compact = self._library_notes_compact and (
             not adaptive_reader or adaptive_notes
         )
-        for widget in (shell, canvas):
+        compact_widgets = (canvas,) if adaptive_media else (shell, canvas)
+        for widget in compact_widgets:
             if widget.has_class("library-notes-compact") != legacy_compact:
                 widget.set_class(legacy_compact, "library-notes-compact")
         adaptive_compact = self._library_notes_compact and adaptive_reader
-        if shell.has_class("library-adaptive-compact") != adaptive_compact:
+        if adaptive_media:
+            # Media's Task 1 projection is the single class writer and the
+            # presentation-epoch/floor producer for its adaptive shell.
+            self._project_library_media_stage_classes(shell)
+        elif shell.has_class("library-adaptive-compact") != adaptive_compact:
             shell.set_class(adaptive_compact, "library-adaptive-compact")
         if self._apply_library_emergency_geometry(
             shell=shell,
@@ -11097,6 +11103,13 @@ class LibraryScreen(BaseAppScreen):
         exact_media_return = self._library_media_exact_return_candidate(media_return)
         if exact_media_return:
             self._arm_library_media_return_settlement(media_return)
+            # Preserve the bounded outer-arm continuation. It may construct
+            # fresh authority after composition, but `_arm` still requires a
+            # current owner's public geometry before exact settlement.
+            self.call_after_refresh(
+                self._focus_library_list_entry_if_current,
+                self._library_list_entry_focus_generation,
+            )
         elif media_return is None:
             self.call_after_refresh(self._focus_library_list_entry)
         else:
@@ -11161,6 +11174,23 @@ class LibraryScreen(BaseAppScreen):
             or self._library_notes_restoring_focus
             or self._library_notes_resize_settling
         )
+        pending_receipt = self._library_pending_list_entry_media_return
+        if (
+            self._library_pending_list_entry_focus
+            and pending_receipt is not None
+            and pending_receipt.final_focus_policy == "row"
+        ):
+            guarded_return_focus = bool(
+                target_restore
+                and focused is not None
+                and focused.has_class("library-media-row")
+                and str(getattr(focused, "media_id", "") or "")
+                == pending_receipt.stable_id
+            )
+            if not guarded_return_focus:
+                # Revoke the retained receipt before a genuine row selection
+                # can recompose Media and expose any newer owner geometry.
+                self._disarm_library_list_entry_focus()
         if (
             focused is not None
             and focused.has_class("library-media-row")
