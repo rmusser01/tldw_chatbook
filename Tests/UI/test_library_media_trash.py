@@ -2773,6 +2773,7 @@ def _trash_view_fake(
         _library_media_trash_input_error="",
         _library_media_trash_type_choices_visible=False,
         _library_media_trash_focus_identity="#library-media-trash-row-0",
+        _library_notes_focus_intent_generation=0,
         _library_media_trash_return=None,
         _trash_controller_calls=trash_controller_calls,
         app_instance=SimpleNamespace(notify=lambda msg, **k: notified.append((msg, k))),
@@ -2787,6 +2788,7 @@ def _trash_view_fake(
         _focus_library_media_trash_entry=lambda: None,
         _arm_library_list_entry_focus=lambda: None,
         _capture_library_media_trash_return=lambda: None,
+        _disarm_library_media_return_for_route_change=lambda: None,
     )
     fake._exit_library_media_select_mode = types.MethodType(
         LibraryScreen._exit_library_media_select_mode, fake
@@ -3010,6 +3012,9 @@ def test_trash_back_returns_to_list_and_drops_session_state():
     )
     fake._exit_library_media_trash = types.MethodType(
         LibraryScreen._exit_library_media_trash, fake
+    )
+    fake._library_media_return_candidate = types.MethodType(
+        LibraryScreen._library_media_return_candidate, fake
     )
     event = SimpleNamespace(stop=lambda: None)
 
