@@ -2878,7 +2878,10 @@ def test_historical_rows_are_append_only_and_mutable_state_is_bounded(
                     f"UPDATE {table} SET {column} = ? WHERE {key_column} = ?",
                     (value, key_value),
                 )
-            with pytest.raises(sqlite3.IntegrityError, match="deletion prohibited"):
+            with pytest.raises(
+                sqlite3.IntegrityError,
+                match="trace GC deletion authorization required",
+            ):
                 connection.execute(
                     f"DELETE FROM {table} WHERE {key_column} = ?", (key_value,)
                 )

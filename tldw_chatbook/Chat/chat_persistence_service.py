@@ -2,7 +2,7 @@ import base64
 import json
 import time
 from dataclasses import asdict, dataclass, replace
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 
 from loguru import logger as _logger
 
@@ -85,6 +85,9 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
 )
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_trace_maintenance import TraceGCResult
+
 logger = _logger.bind(module="ChatPersistenceService")
 _ASSISTANT_AUTHORITY_UNSET = cast(Optional[str], object())
 _CONTEXT_POLICY_EXPECTED_REVISION_UNSET = object()
@@ -136,6 +139,23 @@ class ChatPersistenceService:
         """Return the shared caller-transaction semantic mutation coordinator."""
 
         return self._semantic_revision_coordinator
+
+    def purge_console_trace(
+        self,
+        *,
+        conversation_id: str,
+        request_id: str,
+        detached_at: str,
+    ) -> "TraceGCResult":
+        """Detach and logically reclaim one conversation's unreachable trace."""
+
+        from tldw_chatbook.Chat.console_trace_maintenance import TraceGarbageCollector
+
+        return TraceGarbageCollector(self.db).purge_conversation(
+            conversation_id=conversation_id,
+            request_id=request_id,
+            detached_at=detached_at,
+        )
 
     def get_console_trace_fork_boundary(
         self,

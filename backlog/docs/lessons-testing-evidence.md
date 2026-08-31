@@ -9,6 +9,24 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Current-version repair hooks must gate on the schema that introduced their columns
+
+**TASK-23113.8, 2026-08-31.** The trace-GC migration matrix reopened a genuine
+v56 fixture while temporarily pinning the code's target version to v56. Schema
+initialization took the "already current" branch and ran the Notes organization
+sync-ID repair under a `version >= 56` guard, even though the repaired `sync_id`
+columns and lookup tables do not exist until v58. Ordinary current-schema tests
+never exposed the mismatch because those columns were present by then. Raising
+both repair-hook gates to v58 made the genuine v53→v56 reopen pass again.
+
+**What to do.** Gate every current-version repair or index-restoration hook on
+the first schema version that contains every column and table it touches, not on
+the task or migration version that first motivated the repair. Include pinned
+historical-current reopen fixtures; testing only migration all the way to the
+latest version cannot exercise these intermediate "already current" branches.
+
+---
+
 ## Rebase before measuring a startup import closure
 
 **PR #2250 follow-up, 2026-08-30.** The Agent Lessons branch passed its focused
