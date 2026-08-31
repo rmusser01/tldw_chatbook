@@ -181,7 +181,7 @@ class ConsoleLibraryAccessModal(SafeModalDismissMixin, ModalScreen[None]):
                         disabled=not self._state.editing_enabled,
                     )
                 yield Static(
-                    "Assistant Library access",
+                    "Agent Library access",
                 )
                 yield Static(
                     "Choose whether the assistant may use the built-in Library "
