@@ -53,11 +53,15 @@ from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceControlle
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 from tldw_chatbook.Workspaces import (
+    CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
     CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
+    CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES,
     DEFAULT_WORKSPACE_ID,
     ConsoleConversationBrowserInputRow,
     ConsoleConversationBrowserRow,
     WorkspaceRecord,
+    console_conversation_browser_group_row_limit,
+    console_rail_section_height_budget,
 )
 from tldw_chatbook.Workspaces.display_state import (
     ConsoleWorkspaceContextState,
@@ -502,6 +506,56 @@ async def test_workspace_search_failure_settles_loading_and_exposes_retry_state(
     assert state.workspace_loading is False
     assert state.workspace_error == "Workspace search is unavailable."
     assert state.workspace_retry_available is True
+
+
+def test_browser_row_cap_expands_to_fill_measured_rail_height():
+    """The browser's visible-row cap follows the measured rail body height.
+
+    The Chats list's budget is half the rail (its peer share alongside the
+    Workspaces section), minus the tray's fixed chrome converted to rows:
+    with 200 terminal lines available the cap is (100 - 8) // 3 = 30 rows
+    instead of the historical 12-row default.
+    """
+    controller = _workspace_controller(
+        rail_body_height_accessor=lambda: 200,
+    )
+    # Pin the workspace so the section builder's workspace-change reset does
+    # not clear the seeded rows before the browser state is built.
+    controller._console_workspace_conversation_workspace_id = str(
+        controller._current_console_workspace_context().active_workspace_id or ""
+    )
+    controller._console_conversation_browser_rows = tuple(
+        _browser_row(f"chat-{i}", f"Chat {i}", workspace_id=None)
+        for i in range(40)
+    )
+
+    state = controller._with_console_conversation_browser_state(_workspace_state())
+
+    browser = state.conversation_browser
+    assert browser is not None
+    (chats,) = browser.sections
+    assert chats.section_id == "chats"
+    assert len(chats.rows) == 30
+    assert chats.hidden_count == 10
+
+
+def test_browser_row_cap_falls_back_to_default_without_a_measurement():
+    """Unmeasured rails keep the 12-row default cap."""
+    controller = _workspace_controller()
+    controller._console_workspace_conversation_workspace_id = str(
+        controller._current_console_workspace_context().active_workspace_id or ""
+    )
+    controller._console_conversation_browser_rows = tuple(
+        _browser_row(f"chat-{i}", f"Chat {i}", workspace_id=None)
+        for i in range(CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3)
+    )
+
+    state = controller._with_console_conversation_browser_state(_workspace_state())
+
+    browser = state.conversation_browser
+    assert browser is not None
+    (chats,) = browser.sections
+    assert len(chats.rows) == CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT
 
 
 @pytest.mark.asyncio
@@ -3839,3 +3893,138 @@ async def test_fresh_console_runtime_starts_in_registry_active_workspace():
         active_session = store.ensure_session()
         assert active_session.workspace_id == workspace.workspace_id
         assert len(store.sessions()) == 1
+
+
+async def _wait_until(pilot, predicate, *, timeout: float = 5.0, detail: str):
+    """Poll ``predicate`` between pilot pauses until true or timeout."""
+    import time as _time
+
+    deadline = _time.monotonic() + timeout
+    last = None
+    while _time.monotonic() < deadline:
+        last = predicate()
+        if last:
+            return
+        await pilot.pause(0.05)
+    raise AssertionError(f"Timed out waiting for {detail}; last value: {last!r}")
+
+
+def _mounted_section_budgets(console):
+    """Return (workspace, conversations) bounded-section ceilings as a dict."""
+    from tldw_chatbook.Widgets.Console.console_bounded_section import (
+        ConsoleBoundedSection,
+    )
+
+    budgets = {}
+    for section_id in ("workspace", "conversations"):
+        bounded = console.query_one(
+            f"#console-bounded-section-{section_id}", ConsoleBoundedSection
+        )
+        budgets[section_id] = bounded.max_content_lines
+    return budgets
+
+
+@pytest.mark.asyncio
+async def test_rail_height_drives_adaptive_cap_through_the_mounted_ui(tmp_path):
+    """Mounted integration: measure -> accessor wiring -> caps -> resize.
+
+    The pure budget/row-limit math and the controller seam are unit-tested
+    elsewhere; this test exercises the real boundary end to end -- ChatScreen
+    measuring the rail body, the late-bound ``rail_body_height_accessor``
+    feeding the DOM-free controller, both peer bounded sections' ceilings
+    following the shared budget, the mounted Chats list showing more rows
+    than the 12-row historical default on a tall terminal, and the whole
+    chain re-syncing after a terminal resize.
+    """
+    from tldw_chatbook.Chat.chat_conversation_scope_service import (
+        ChatConversationScopeService,
+    )
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    chat_db = CharactersRAGDB(tmp_path / "adaptive_cap_chats.db", "test-client")
+    chat_service = ChatConversationService(chat_db)
+    for index in range(40):
+        chat_service.create_conversation(
+            id=f"global-chat-{index}",
+            title=f"Global chat {index}",
+            scope_type="global",
+        )
+    app = _build_test_app()
+    # Same injection seam `test_console_native_chat_flow.py` uses: replace
+    # the scope service so the controller's persisted-rows path reads the
+    # tmp DB backed conversations above.
+    app.chat_conversation_scope_service = ChatConversationScopeService(
+        local_service=chat_service,
+        server_service=None,
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 160)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(
+            console, pilot, "#console-workspace-context"
+        )
+
+        # The screen measures the mounted rail body and the budget grows
+        # past the historical 20-line ceiling on this tall terminal.
+        measured = console._console_rail_body_height()
+        assert measured is not None and measured > 0
+        expected_budget = console_rail_section_height_budget(measured)
+        assert expected_budget > CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES
+
+        # Both peer list sections' ceilings follow the shared budget.
+        await _wait_until(
+            pilot,
+            lambda: _mounted_section_budgets(console)
+            == {"workspace": expected_budget, "conversations": expected_budget},
+            detail=f"adaptive section ceilings == {expected_budget}",
+        )
+
+        # The real wiring reaches the Chats row cap: the mounted browser
+        # carries more visible rows than the 12-row historical default
+        # (the first state build kicks the persisted-rows cache worker, so
+        # poll until the seeded conversations land).
+        def _mounted_chats_row_count():
+            state = console._workspace._build_console_workspace_context_state()
+            browser = state.conversation_browser
+            if browser is None:
+                return 0
+            (chats,) = browser.sections
+            return len(chats.rows)
+
+        await _wait_until(
+            pilot,
+            lambda: _mounted_chats_row_count()
+            > CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
+            detail="mounted Chats rows exceed the 12-row default",
+        )
+        assert _mounted_chats_row_count() == console_conversation_browser_group_row_limit(
+            measured
+        )
+
+        # Shrinking the terminal re-syncs the whole chain: the measured
+        # rail body shrinks and the section ceilings follow it back down.
+        await pilot.resize_terminal(140, 30)
+        await _wait_until(
+            pilot,
+            lambda: (
+                console._console_rail_body_height() is not None
+                and console._console_rail_body_height() < measured
+            ),
+            detail="measured rail height shrinks after resize",
+        )
+        small_measured = console._console_rail_body_height()
+        expected_small_budget = console_rail_section_height_budget(small_measured)
+        await _wait_until(
+            pilot,
+            lambda: _mounted_section_budgets(console)
+            == {
+                "workspace": expected_small_budget,
+                "conversations": expected_small_budget,
+            },
+            detail=f"section ceilings shrink to {expected_small_budget}",
+        )
+        # A 30-line terminal is below every growth step: the historical
+        # ceiling is back.
+        assert expected_small_budget == CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES
