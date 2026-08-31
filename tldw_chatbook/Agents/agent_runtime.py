@@ -33,6 +33,7 @@ from .agent_models import (
     FENCE_TOOL_RESULT_PREFIX,
     FIND_TOOLS_NAME,
     INSTALL_SKILL_TOOL_NAME,
+    PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
     LOAD_TOOLS_NAME,
     LOOP_DETECTION_N,
     MAX_LOOP_PERIOD,
@@ -96,6 +97,7 @@ from .project_instruction_runtime import (
     InstructionDeliveryReceipt,
     build_project_instruction_deferral_rows,
 )
+from .run_context import use_tool_call_id
 
 
 def _utc_now() -> datetime:
@@ -418,6 +420,9 @@ class LoopDeps:
     # means the run is not wired for install_skill and a call by that name
     # falls through to the generic deps.invoke_tool path.
     install_skill: Callable[[str], ToolResult] | None = None
+    # Read-only Agent Lesson promotion proposal for one Chatbook-managed
+    # local skill. Primary-only and separately approval-gated by its owner.
+    prepare_managed_skill_promotion: Callable[[dict], ToolResult] | None = None
     # run_skill_script: the sixth runtime tool (trust-gated script execution).
     # Unlike install_skill this is NOT agent_kind-gated -- the user chose an
     # all-agents caller scope, because the per-run confirm card and the
@@ -1589,6 +1594,10 @@ def run_agent_loop(
                     (RUN_LOG_SLICE_TOOL_NAME, deps.run_log_slice),
                     (WAIT_AGENTS_TOOL_NAME, deps.wait_agents),
                     (CHECK_AGENTS_TOOL_NAME, deps.check_agents),
+                    (
+                        PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
+                        deps.prepare_managed_skill_promotion,
+                    ),
                 ):
                     if handler is not None:
                         pure_runtime_tools.add(name)
@@ -1949,6 +1958,17 @@ def run_agent_loop(
                 ):
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     result = deps.install_skill(str(call.args.get("url", "")))
+                elif call.name == PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME:
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    if deps.prepare_managed_skill_promotion is None:
+                        result = ToolResult.blocked(
+                            "Managed-skill promotion proposals are unavailable."
+                        )
+                    else:
+                        with use_tool_call_id(current_call_correlation):
+                            result = deps.prepare_managed_skill_promotion(
+                                dict(call.args)
+                            )
                 elif (
                     call.name == RUN_SKILL_SCRIPT_TOOL_NAME
                     and deps.run_skill_script is not None

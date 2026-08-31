@@ -8,6 +8,7 @@ from collections import deque
 from tldw_chatbook.Agents.agent_models import (
     LOOP_DETECTION_N,
     MAX_LOOP_PERIOD,
+    PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
     RUN_CANCELLED,
     RUN_DONE,
     RUN_STUCK,
@@ -26,6 +27,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolSchema,
 )
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, _detect_cycle, run_agent_loop
+from tldw_chatbook.Agents.run_context import current_tool_call_id
 
 CALC = ToolSchema(
     id="builtin:calculator",
@@ -137,6 +139,78 @@ def test_ordinary_tool_steps_share_the_native_call_id() -> None:
         if step.kind in {STEP_TOOL_CALL, STEP_TOOL_RESULT}
     ]
     assert [step.call_id for step in pair] == ["native-call-1", "native-call-1"]
+
+
+def test_managed_skill_proposal_runtime_binds_call_id_and_is_pure() -> None:
+    call_ids = []
+    pure_sets = []
+    deps = make_deps(
+        [
+            ModelTurn(
+                text="",
+                tool_calls=(
+                    ToolCall(
+                        name=PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
+                        args={"request": "exact"},
+                        call_id="skill-proposal-1",
+                    ),
+                ),
+            ),
+            ModelTurn(text="done"),
+        ]
+    )
+    deps.prepare_managed_skill_promotion = lambda _args: (
+        call_ids.append(current_tool_call_id())
+        or ToolResult(ok=True, content="proposal")
+    )
+    deps.before_tool_dispatch = lambda _calls, pure: pure_sets.append(pure)
+
+    outcome = run_agent_loop(
+        CFG,
+        [{"role": "user", "content": "prepare it"}],
+        [CALC],
+        deps,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert call_ids == ["skill-proposal-1"]
+    assert PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME in pure_sets[0]
+
+
+def test_managed_skill_proposal_runtime_refuses_without_callback() -> None:
+    generic_calls = []
+    deps = make_deps(
+        [
+            ModelTurn(
+                text="",
+                tool_calls=(
+                    ToolCall(
+                        name=PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
+                        args={"request": "hallucinated"},
+                        call_id="skill-proposal-unavailable",
+                    ),
+                ),
+            ),
+            ModelTurn(text="done"),
+        ],
+        invoke=lambda call: (
+            generic_calls.append(call)
+            or ToolResult(ok=True, content="must not execute")
+        ),
+    )
+
+    outcome = run_agent_loop(
+        CFG,
+        [{"role": "user", "content": "prepare it"}],
+        [CALC],
+        deps,
+    )
+
+    assert outcome.status == RUN_DONE
+    assert generic_calls == []
+    results = [step for step in outcome.steps if step.kind == STEP_TOOL_RESULT]
+    assert results[-1].tool_outcome == "blocked"
+    assert "unavailable" in results[-1].result.lower()
 
 
 def test_idless_fence_tool_steps_share_one_deterministic_call_id() -> None:

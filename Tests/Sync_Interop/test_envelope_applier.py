@@ -564,7 +564,11 @@ def test_workspace_and_source_cache_appliers_route_to_local_store() -> None:
         dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
     )
     store = RecordingLocalStore()
-    applier = SyncEnvelopeApplier(dataset_key=dataset_key, local_store=store)
+    applier = SyncEnvelopeApplier(
+        dataset_key=dataset_key,
+        local_store=store,
+        notes_organization_repository=None,
+    )
 
     link = builder.build_workspace_source_ref(
         workspace_id="workspace-1",

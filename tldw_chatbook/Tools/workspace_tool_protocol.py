@@ -104,6 +104,9 @@ _ARGUMENT_SCHEMAS: dict[str, tuple[frozenset[str], dict[str, str]]] = {
         {
             "path": "path",
             "content": "text",
+            "dry_run": "bool",
+            "expected_sha256": "sha256",
+            "expected_absent": "bool",
             "sensitive_exclusions": "sensitive_exclusions",
         },
     ),
@@ -532,6 +535,13 @@ def _require_argument_value(value: Any, *, kind: str) -> None:
     if kind == "bool":
         if type(value) is not bool:
             raise WorkspaceProtocolError("argument must be a bool")
+        return
+    if kind == "sha256":
+        digest = _require_string(value, "SHA-256 digest", cap=64)
+        if len(digest) != 64 or any(
+            character not in "0123456789abcdef" for character in digest
+        ):
+            raise WorkspaceProtocolError("invalid SHA-256 digest")
         return
     if kind == "positive_int":
         _require_positive_int(value, "argument")

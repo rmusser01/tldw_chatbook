@@ -98,6 +98,7 @@ class NotesScopeService:
         sync_scope_service: Any = None,
         sync_v2_notes_producer: Any = None,
         folder_repository: Any | None = None,
+        organization_sync_service: Any | None = None,
     ):
         self.local_notes_service = local_notes_service
         self.server_service = server_service
@@ -105,6 +106,7 @@ class NotesScopeService:
         self.sync_scope_service = sync_scope_service
         self.sync_v2_notes_producer = sync_v2_notes_producer
         self.folder_repository = folder_repository
+        self.organization_sync_service = organization_sync_service
 
     def _normalize_scope(self, scope: ScopeType | str) -> ScopeType:
         if isinstance(scope, ScopeType):
@@ -125,6 +127,16 @@ class NotesScopeService:
         if self.sync_scope_service is None:
             raise ValueError("Sync scope service is unavailable.")
         return self.sync_scope_service
+
+    def _organization_profile_scope(
+        self, explicit: Optional[Mapping[str, Any]]
+    ) -> dict[str, Any] | None:
+        if self.organization_sync_service is None:
+            return self._sync_v2_profile_scope(explicit)
+        normalized = self._sync_v2_profile_scope(explicit) if explicit is not None else None
+        if explicit is not None and normalized is None:
+            raise ValueError("Invalid Sync v2 profile scope.")
+        return self.organization_sync_service.resolve_profile_scope(normalized)
 
     def _enforce_policy(self, action_id: str) -> None:
         if self.policy_enforcer is None:
@@ -542,14 +554,23 @@ class NotesScopeService:
         name: str,
         parent_id: str | None,
         user_id: str | None = None,
+        sync_v2_profile: Mapping[str, Any] | None = None,
     ) -> NoteFolder:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="create", operation="create"
         )
+        if self.organization_sync_service is not None:
+            profile_scope = self._organization_profile_scope(sync_v2_profile)
+            if profile_scope is not None:
+                return await self._run_folder_repository(
+                    self.organization_sync_service.create_folder,
+                    folder_repository=repository,
+                    name=name,
+                    parent_id=parent_id,
+                    **profile_scope,
+                )
         return await self._run_folder_repository(
-            repository.create_folder,
-            name=name,
-            parent_id=parent_id,
+            repository.create_folder, name=name, parent_id=parent_id
         )
 
     async def get_note_folder_by_path_for_sync(
@@ -712,13 +733,16 @@ class NotesScopeService:
         name: str,
         expected_version: int,
         user_id: str | None = None,
+        sync_v2_profile: Mapping[str, Any] | None = None,
     ) -> FolderMutationResult:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="update", operation="rename"
         )
-        return await self._run_folder_repository(
-            repository.rename_folder,
-            folder_id,
+        return await self._run_organization_folder_mutation(
+            repository=repository,
+            service_method="rename_folder",
+            sync_v2_profile=sync_v2_profile,
+            folder_id=folder_id,
             name=name,
             expected_version=expected_version,
         )
@@ -731,13 +755,16 @@ class NotesScopeService:
         parent_id: str | None,
         expected_version: int,
         user_id: str | None = None,
+        sync_v2_profile: Mapping[str, Any] | None = None,
     ) -> FolderMutationResult:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="update", operation="move"
         )
-        return await self._run_folder_repository(
-            repository.move_folder,
-            folder_id,
+        return await self._run_organization_folder_mutation(
+            repository=repository,
+            service_method="move_folder",
+            sync_v2_profile=sync_v2_profile,
+            folder_id=folder_id,
             parent_id=parent_id,
             expected_version=expected_version,
         )
@@ -749,13 +776,16 @@ class NotesScopeService:
         folder_id: str,
         expected_version: int,
         user_id: str | None = None,
+        sync_v2_profile: Mapping[str, Any] | None = None,
     ) -> FolderMutationResult:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="delete", operation="delete"
         )
-        return await self._run_folder_repository(
-            repository.soft_delete_folder,
-            folder_id,
+        return await self._run_organization_folder_mutation(
+            repository=repository,
+            service_method="delete_folder",
+            sync_v2_profile=sync_v2_profile,
+            folder_id=folder_id,
             expected_version=expected_version,
         )
 
@@ -766,14 +796,53 @@ class NotesScopeService:
         folder_id: str,
         expected_version: int,
         user_id: str | None = None,
+        sync_v2_profile: Mapping[str, Any] | None = None,
     ) -> FolderMutationResult:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="update", operation="restore"
         )
-        return await self._run_folder_repository(
-            repository.restore_folder,
-            folder_id,
+        return await self._run_organization_folder_mutation(
+            repository=repository,
+            service_method="restore_folder",
+            sync_v2_profile=sync_v2_profile,
+            folder_id=folder_id,
             expected_version=expected_version,
+        )
+
+    async def _run_organization_folder_mutation(
+        self,
+        *,
+        repository: Any,
+        service_method: str,
+        sync_v2_profile: Mapping[str, Any] | None,
+        **arguments: Any,
+    ) -> Any:
+        if self.organization_sync_service is None:
+            repository_method = {
+                "rename_folder": "rename_folder",
+                "move_folder": "move_folder",
+                "delete_folder": "soft_delete_folder",
+                "restore_folder": "restore_folder",
+            }[service_method]
+            return await self._run_folder_repository(
+                getattr(repository, repository_method), **arguments
+            )
+        profile_scope = self._organization_profile_scope(sync_v2_profile)
+        if profile_scope is None:
+            repository_method = {
+                "rename_folder": "rename_folder",
+                "move_folder": "move_folder",
+                "delete_folder": "soft_delete_folder",
+                "restore_folder": "restore_folder",
+            }[service_method]
+            return await self._run_folder_repository(
+                getattr(repository, repository_method), **arguments
+            )
+        return await self._run_folder_repository(
+            getattr(self.organization_sync_service, service_method),
+            folder_repository=repository,
+            **profile_scope,
+            **arguments,
         )
 
     async def attach_note_to_folder(
@@ -783,15 +852,21 @@ class NotesScopeService:
         folder_id: str,
         note_id: str,
         user_id: str | None = None,
+        sync_v2_profile: Optional[Mapping[str, Any]] = None,
     ) -> NoteFolderMembership:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="update", operation="membership"
         )
-        return await self._run_folder_repository(
-            repository.attach_manual,
-            folder_id=folder_id,
-            note_id=note_id,
-        )
+        profile_scope = self._organization_profile_scope(sync_v2_profile)
+        if self.organization_sync_service is not None and profile_scope is not None:
+            return await self._run_folder_repository(
+                self.organization_sync_service.attach_folder_link,
+                folder_repository=repository,
+                folder_id=folder_id,
+                note_id=note_id,
+                **profile_scope,
+            )
+        return await self._run_folder_repository(repository.attach_manual, folder_id=folder_id, note_id=note_id)
 
     async def detach_note_from_folder(
         self,
@@ -801,16 +876,22 @@ class NotesScopeService:
         note_id: str,
         expected_version: int,
         user_id: str | None = None,
+        sync_v2_profile: Optional[Mapping[str, Any]] = None,
     ) -> bool:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="update", operation="membership"
         )
-        return await self._run_folder_repository(
-            repository.detach_manual,
-            folder_id=folder_id,
-            note_id=note_id,
-            expected_version=expected_version,
-        )
+        profile_scope = self._organization_profile_scope(sync_v2_profile)
+        if self.organization_sync_service is not None and profile_scope is not None:
+            return await self._run_folder_repository(
+                self.organization_sync_service.detach_folder_link,
+                folder_repository=repository,
+                folder_id=folder_id,
+                note_id=note_id,
+                expected_version=expected_version,
+                **profile_scope,
+            )
+        return await self._run_folder_repository(repository.detach_manual, folder_id=folder_id, note_id=note_id, expected_version=expected_version)
 
     async def convert_note_folder_owner_to_manual(
         self,
@@ -818,14 +899,21 @@ class NotesScopeService:
         scope: ScopeType | str,
         owner_id: str,
         user_id: str | None = None,
+        sync_v2_profile: Optional[Mapping[str, Any]] = None,
     ) -> int:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="update", operation="membership"
         )
-        return await self._run_folder_repository(
-            repository.convert_owner_to_manual,
-            owner_id=owner_id,
-        )
+        profile_scope = self._organization_profile_scope(sync_v2_profile)
+        if self.organization_sync_service is not None and profile_scope is not None:
+            return await self._run_folder_repository(
+                self.organization_sync_service.mutate_managed_folder_links,
+                folder_repository=repository,
+                mutation_method="convert_owner_to_manual",
+                owner_id=owner_id,
+                **profile_scope,
+            )
+        return await self._run_folder_repository(repository.convert_owner_to_manual, owner_id=owner_id)
 
     async def remove_note_folder_owner_memberships(
         self,
@@ -833,14 +921,21 @@ class NotesScopeService:
         scope: ScopeType | str,
         owner_id: str,
         user_id: str | None = None,
+        sync_v2_profile: Optional[Mapping[str, Any]] = None,
     ) -> int:
         repository = self._folder_repository_for_action(
             scope=scope, user_id=user_id, action="update", operation="membership"
         )
-        return await self._run_folder_repository(
-            repository.remove_owner_memberships,
-            owner_id=owner_id,
-        )
+        profile_scope = self._organization_profile_scope(sync_v2_profile)
+        if self.organization_sync_service is not None and profile_scope is not None:
+            return await self._run_folder_repository(
+                self.organization_sync_service.mutate_managed_folder_links,
+                folder_repository=repository,
+                mutation_method="remove_owner_memberships",
+                owner_id=owner_id,
+                **profile_scope,
+            )
+        return await self._run_folder_repository(repository.remove_owner_memberships, owner_id=owner_id)
 
     async def list_note_folder_restore_reviews(
         self,
@@ -860,6 +955,7 @@ class NotesScopeService:
         owner_id: str,
         desired: Sequence[tuple[str, str]],
         user_id: str | None = None,
+        sync_v2_profile: Optional[Mapping[str, Any]] = None,
     ) -> tuple[NoteFolderMembership, ...]:
         """Converge one lasting-sync owner's managed memberships."""
 
@@ -869,11 +965,17 @@ class NotesScopeService:
             action="update",
             operation="membership",
         )
-        return await self._run_folder_repository(
-            repository.reconcile_managed,
-            owner_id=owner_id,
-            desired=tuple(desired),
-        )
+        profile_scope = self._organization_profile_scope(sync_v2_profile)
+        if self.organization_sync_service is not None and profile_scope is not None:
+            return await self._run_folder_repository(
+                self.organization_sync_service.mutate_managed_folder_links,
+                folder_repository=repository,
+                mutation_method="reconcile_managed",
+                owner_id=owner_id,
+                desired=tuple(desired),
+                **profile_scope,
+            )
+        return await self._run_folder_repository(repository.reconcile_managed, owner_id=owner_id, desired=tuple(desired))
 
     def record_sync_mirror_report(
         self,
@@ -933,8 +1035,24 @@ class NotesScopeService:
         user_id: str,
         note_id: Any,
         keywords: Optional[Sequence[str]],
+        sync_v2_profile: Optional[Mapping[str, Any]] = None,
+        cursor: Any = None,
     ) -> list[str]:
         normalized_keywords = self._normalize_keywords(keywords)
+        profile_scope = self._organization_profile_scope(sync_v2_profile)
+        if self.organization_sync_service is not None and profile_scope is not None:
+            notes_db_getter = getattr(self.local_notes_service, "notes_db", None)
+            notes_db = notes_db_getter(user_id) if callable(notes_db_getter) else None
+            result = self.organization_sync_service.sync_subject_keywords(
+                subject_type="note",
+                subject_id=str(note_id),
+                keywords=normalized_keywords,
+                notes_db=notes_db,
+                cursor=cursor,
+                **profile_scope,
+            )
+            if result is not None:
+                return result
         service = self.local_notes_service
         required_methods = (
             "get_keywords_for_note",
@@ -1243,7 +1361,7 @@ class NotesScopeService:
             )
             if note_id:
                 keyword_result: list[str] | None = None
-                with owner_transaction:
+                with owner_transaction as owner_cursor:
                     updated = self.local_notes_service.update_note(
                         local_user_id,
                         note_id,
@@ -1255,6 +1373,8 @@ class NotesScopeService:
                             user_id=local_user_id,
                             note_id=note_id,
                             keywords=keywords,
+                            sync_v2_profile=sync_v2_profile,
+                            cursor=owner_cursor,
                         )
                 if updated:
                     self._enqueue_local_note_upsert(
@@ -1279,7 +1399,7 @@ class NotesScopeService:
                     "keywords": keyword_result or [],
                 }
             keyword_result = None
-            with owner_transaction:
+            with owner_transaction as owner_cursor:
                 created_note_id = self.local_notes_service.add_note(
                     local_user_id,
                     title,
@@ -1291,6 +1411,8 @@ class NotesScopeService:
                         user_id=local_user_id,
                         note_id=created_note_id,
                         keywords=keywords,
+                        sync_v2_profile=sync_v2_profile,
+                        cursor=owner_cursor,
                     )
                 if created_note_id and internal_research_owner_proof is not None:
                     add_private_proof = getattr(

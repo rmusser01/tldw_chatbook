@@ -104,6 +104,153 @@ folder and a managed Library Notes folder. Unlike Folder files, both sides
 remain distinct authorities and every reconciliation is reviewed or recovered
 through the lasting-sync runtime.
 
+### Portable organization with Sync v2
+
+For an eligible local-first server profile, Manual Sync can also carry the
+logical organization of Library notes: keywords, keyword collections, Database
+Notes folders, and their memberships. These six organization types enroll as
+one capability; Chatbook will not synchronize only part of the group.
+
+The first run may pause for an adoption review when a local and server object
+have the same visible name or path but different identities. Open **Settings**,
+find Manual Sync, and choose whether to merge, rename the local object, or keep
+it local. Until review and initial inventory finish, organization stays local
+and publication is blocked. Interrupted enrollment and sync can be retried from
+the same Manual Sync surface; committed checkpoints and pending changes are
+resumed rather than rebuilt.
+
+Deleting a Database Notes folder synchronizes only that explicit deletion. Its
+descendants and memberships stay dormant and become effective again after the
+folder is restored. If a note belongs to a folder through both manual and
+source-managed placement, removing one placement does not remove the portable
+membership while the other remains effective.
+
+This does not synchronize filesystem paths or grant filesystem access. Folder
+Files and lasting folder sync remain device-private authorities. For the
+identity, dependency, suppression, conflict, and recovery contract, see the
+[Sync-v2 client runtime](../../Development/Sync-v2-client.md).
+
+### Let a permitted agent find and organize notes
+
+Console agents and local in-app MCP clients use the same bounded Notes tools.
+`library_search_notes` can combine a normal literal text query with an exact
+folder or whole-keyword filter. At least one of these is required:
+
+- `query` searches note title, body, and keywords case-insensitively;
+- `keyword` matches the trimmed spelling exactly, so `agent-lesson` does not
+  match `Agent-Lesson`;
+- `folder_id` uses the stable opaque folder identity returned by an earlier
+  read; and
+- `folder` resolves an exact relative Database Notes path. It is not a local
+  filesystem path. Ambiguous, deleted, or conflicting folder selections are
+  refused instead of guessed.
+
+Search and read results include bounded folder and keyword metadata, exact
+totals, and an opaque `organization_version`. Folder/keyword changes advance
+that token independently of note-body versions. Returned note content and
+organization names are explicitly untrusted reference data: they cannot grant
+an agent permission, authorize an action, or override your instructions.
+
+With the **`library.notes.save.local`** permission, `library_save_note` can
+create a note or update the exact `note_id` plus `expected_version` returned by
+a prior read. `ensure_keywords` only adds missing whole keywords; it never
+removes your existing keywords. A `folder_id` attaches the note to that exact
+portable folder, while `folder` can ensure one root-level folder by name. Both
+forms are additive: they do not move the note out of its other folders.
+Organization-changing updates must also supply the latest
+`expected_organization_version`. If either content or organization changed,
+the agent must re-read, show the new state, and retry rather than overwrite it.
+
+If Notes organization is offline or still enrolling, a permitted save can
+remain locally visible as **pending organization**. Chatbook keeps it out of
+normal sync dispatch until readiness finalization commits the note and its
+organization publication together. A folder-name collision becomes
+**placement review** once note and keyword publication are safe; the note stays
+usable while you resolve its folder. These states survive restart. Policy
+denial creates no note, folder, keyword, receipt, or hidden write.
+
+Because note titles are not unique, an agent should search before creating and
+update a confirmed match instead of blindly retrying a create. The canonical
+Agent Lessons marker is the spelling-exact `agent-lesson` keyword; the
+`Agent_Lessons` folder is visible organization, not the discovery authority.
+
+### Reuse solutions with Agent Lessons
+
+Chatbook creates one conventional root folder named `Agent_Lessons` after the
+applicable Notes organization readiness boundary. It remains an ordinary,
+user-owned Database Notes folder: you may rename, move, or delete it, and
+Chatbook does not recreate a folder you deliberately changed. On synchronized
+profiles, only a provably untouched empty seed race converges automatically;
+edited, acknowledged, used, differently spelled, or colliding candidates wait
+for your existing organization review.
+
+The folder is for browsing. Agents discover lessons by searching the
+spelling-exact whole keyword `agent-lesson`, so a marked lesson remains
+discoverable after folder changes. A lesson uses one note for one reusable
+solution and records:
+
+- applicability and symptoms;
+- feedback or the trigger that exposed the issue;
+- privacy-preserving provenance and the independently observed root cause;
+- the verified solution;
+- real failed attempts and why they failed, or an honest statement that the
+  first tested approach succeeded;
+- verification evidence;
+- one generalizable principle and its rationale;
+- caveats and related public `note:` IDs; and
+- optionally, a promotion candidate for later human review.
+
+When troubleshooting, a capable foreground agent is guided to search first,
+read likely matches, verify their versions and applicability, and update an
+existing lesson with the same root cause instead of creating a duplicate. A
+subagent may search and return evidence or a structured draft to the foreground
+agent, but it cannot save an Agent Lesson.
+
+Before any classified lesson save, the foreground primary must show the exact
+proposed title, complete content, organization, target note identity, and
+expected versions. The approval card offers only **Approve once** or **Deny**.
+Approval applies to that exact call and observed Note/organization state; a
+changed note, marker, pending placement receipt, payload, role, or replay is
+refused without a partial write. This extra review still applies when ordinary
+Notes saves are broadly allowed. A denied or abandoned preview creates no Note,
+folder, keyword, receipt, or hidden draft.
+
+Lesson content that resembles a high-confidence live credential is refused and
+is not echoed in the error. Redacted values, clearly fake examples, long hashes,
+UUIDs, stack traces, and error IDs remain recordable. Every retrieved lesson is
+still **untrusted reference data**: it can suggest a solution to verify, but it
+cannot grant permission, authorize a command, expand filesystem/network scope,
+or override your current instructions.
+
+### Promote a verified lesson into reusable instructions
+
+When a lesson contains independently verified, procedural, reusable evidence,
+the foreground agent may nominate one small instruction improvement. One strong
+signal can be enough; repetition alone does not make weak or contradictory
+evidence authoritative. The proposal should preserve the general principle and
+why it works, state unknowns, and avoid accumulating incident-specific rules.
+
+Repository instruction promotion is limited to `AGENTS.md` or
+`AGENTS.override.md` inside the selected writable folder binding. Console first
+asks whether it may prepare an exact read-only proposal. The result identifies
+the binding, current applicable instruction chain, target digest or absent
+state, complete replacement, bounded diff, evidence, and verification. Applying
+that exact result is a second **Approve once** / **Deny** decision. If the file,
+binding, or applicable instruction chain changed, the application writes
+nothing and requires a fresh proposal; intervening user edits are never reset.
+
+For a Chatbook-managed local skill, Console can prepare and show exact replacement
+text but cannot apply it. Use **Library ▸ Skills**, open the named skill, paste the
+accepted text, and save against the current version. The edited skill remains
+blocked until you review and approve its new trust baseline. The agent may
+re-read it afterward to verify the result. Raw workspace tools never gain access
+to Chatbook's managed skill store.
+
+A rejected, stale, failed, or applied outcome is durable only if you separately
+approve updating an ordinary Agent Lesson Note. That outcome is historical
+evidence for later searches; it never authorizes a later write or another
+device.
+
 ## Features & controls
 
 ### Notes list
@@ -461,3 +608,9 @@ the version-checked service seam.)*
 rail; database editing and Files use one focused workbench with a guarded
 `‹ Library / Notes` return; exact browse identity and independent scroll
 positions survive return and compact/wide breakpoint crossings.*
+
+*Agent Lessons folder ownership, exact marker discovery, evidence template,
+foreground approval, subagent draft boundary, credential refusal, and
+untrusted-retrieval contract added for TASK-24309 — 2026-08-30. See
+[ADR-105](../../../backlog/decisions/105-portable-notes-organization-and-agent-lessons.md)
+and [ADR-106](../../../backlog/decisions/106-human-reviewed-agent-lesson-promotion.md).*

@@ -2615,6 +2615,7 @@ class SettingsScreen(BaseAppScreen):
         # worker lands; on_screen_resume skips its sync-rows refresh while
         # this is True so it cannot overwrite the "running" rows.
         self._manual_sync_run_in_flight = False
+        self._manual_sync_adoption_review_id: str | None = None
         # task-1369 (review): monotonic token so a cancelled/stale run
         # worker's finally cannot clear the flag of a newer confirmed run.
         self._manual_sync_run_token = 0
@@ -8403,14 +8404,41 @@ class SettingsScreen(BaseAppScreen):
             ("Manual sync result", result.user_message),
             ("Pending outgoing", self._pending_copy(result.preview.pending_by_domain)),
         ]
+        actionable_review = next(
+            (
+                review
+                for review in result.conflict_reviews
+                if review.conflict_review_id
+                and review.domain.startswith("notes.")
+                and all(
+                    review.recovery_options.get(action) == "available"
+                    for action in ("merge", "rename_local", "keep_local")
+                )
+            ),
+            None,
+        )
+        self._manual_sync_adoption_review_id = (
+            actionable_review.conflict_review_id if actionable_review else None
+        )
+        if actionable_review is not None:
+            self._overview_sync_details_collapsed = False
+            if getattr(self, "is_mounted", False):
+                try:
+                    self.query_one(
+                        "#settings-overview-sync-details", Collapsible
+                    ).collapsed = False
+                except QueryError:
+                    pass
         if result.conflict_reviews:
-            first_review = result.conflict_reviews[0]
+            displayed_review = actionable_review or result.conflict_reviews[0]
             rows.append(
                 (
                     "Conflict review",
                     (
-                        f"{first_review.domain} | {first_review.item_label} | {first_review.cause} | "
-                        f"local: {first_review.local_summary} | remote: {first_review.remote_summary}"
+                        f"{displayed_review.domain} | {displayed_review.item_label} | "
+                        f"{displayed_review.cause} | local: "
+                        f"{displayed_review.local_summary} | remote: "
+                        f"{displayed_review.remote_summary}"
                     ),
                 )
             )
@@ -8419,7 +8447,7 @@ class SettingsScreen(BaseAppScreen):
                     "Recovery options",
                     "; ".join(
                         f"{action}: {state}"
-                        for action, state in first_review.recovery_options.items()
+                        for action, state in displayed_review.recovery_options.items()
                     ),
                 )
             )
@@ -12856,6 +12884,29 @@ class SettingsScreen(BaseAppScreen):
         """Yield the manual-sync detail rows (task-15475's own region)."""
         for label, value in self.manual_sync_rows:
             yield self._detail_row(label, value)
+        if self._manual_sync_adoption_review_id is None:
+            return
+        yield Input(
+            placeholder="New local display name (required for Rename local)",
+            id="settings-notes-adoption-new-name",
+            max_length=256,
+        )
+        with Horizontal(classes="settings-action-row"):
+            yield Button(
+                "Merge",
+                id="settings-notes-adoption-merge",
+                classes="settings-notes-adoption-action",
+            )
+            yield Button(
+                "Rename local",
+                id="settings-notes-adoption-rename-local",
+                classes="settings-notes-adoption-action",
+            )
+            yield Button(
+                "Keep local",
+                id="settings-notes-adoption-keep-local",
+                classes="settings-notes-adoption-action",
+            )
 
     def _compose_server_sync_handoff_rows(self) -> ComposeResult:
         """Yield the server/sync/workspace/handoff detail rows."""
@@ -20030,6 +20081,108 @@ class SettingsScreen(BaseAppScreen):
                 confirm_callback=_confirmed_run,
             )
         )
+
+    @on(Button.Pressed, ".settings-notes-adoption-action")
+    def handle_notes_adoption_action(self, event: Button.Pressed) -> None:
+        """Resolve a content-free Notes adoption review and resume enrollment."""
+
+        event.stop()
+        actions = {
+            "settings-notes-adoption-merge": "merge",
+            "settings-notes-adoption-rename-local": "rename_local",
+            "settings-notes-adoption-keep-local": "keep_local",
+        }
+        action = actions.get(event.button.id or "")
+        review_id = self._manual_sync_adoption_review_id
+        if action is None or review_id is None:
+            return
+        new_name: str | None = None
+        if action == "rename_local":
+            new_name = self.query_one(
+                "#settings-notes-adoption-new-name", Input
+            ).value.strip()
+            if not new_name:
+                self._apply_manual_sync_rows(
+                    (
+                        ("Manual sync status", "conflict"),
+                        (
+                            "Manual sync result",
+                            "Enter a new local display name before renaming.",
+                        ),
+                        ("Pending outgoing", "blocked by adoption review"),
+                    )
+                )
+                return
+        control = getattr(self.app_instance, "manual_sync_control_service", None)
+        sync_scope = self._active_sync_scope(self._active_workspace_record())
+        server_profile_id = sync_scope["server_profile_id"]
+        if control is None or not server_profile_id:
+            self._apply_manual_sync_rows(
+                (
+                    ("Manual sync status", "blocked"),
+                    (
+                        "Manual sync result",
+                        "Manual Sync requires an active server profile.",
+                    ),
+                    ("Pending outgoing", "none"),
+                )
+            )
+            return
+        try:
+            resolved = control.resolve_notes_organization_adoption(
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=sync_scope["authenticated_principal_id"],
+                workspace_scope=sync_scope["workspace_scope"],
+                review_id=review_id,
+                action=action,
+                new_name=new_name,
+            )
+        except Exception as exc:
+            logger.warning("Failed to resolve Notes adoption review.", exc_info=True)
+            self._apply_manual_sync_rows(
+                (
+                    ("Manual sync status", "failed"),
+                    (
+                        "Manual sync result",
+                        f"Adoption review failed: {type(exc).__name__}",
+                    ),
+                    ("Pending outgoing", "blocked by adoption review"),
+                )
+            )
+            return
+        if not resolved:
+            self._apply_manual_sync_rows(
+                (
+                    ("Manual sync status", "conflict"),
+                    ("Manual sync result", "Adoption review remains unresolved."),
+                    ("Pending outgoing", "blocked by adoption review"),
+                )
+            )
+            return
+        self._manual_sync_adoption_review_id = None
+        self._manual_sync_run_token += 1
+        run_token = self._manual_sync_run_token
+        self._manual_sync_run_in_flight = True
+        self.manual_sync_rows = (
+            ("Manual sync status", "running"),
+            ("Manual sync result", "Resuming Notes organization enrollment."),
+            ("Pending outgoing", "Refreshing"),
+        )
+        try:
+            self._manual_sync_run_worker(run_token)
+        except Exception:
+            self._manual_sync_run_in_flight = False
+            logger.warning(
+                "Failed to resume Notes organization enrollment.",
+                exc_info=True,
+            )
+            self._apply_manual_sync_rows(
+                (
+                    ("Manual sync status", "failed"),
+                    ("Manual sync result", "Enrollment could not be resumed."),
+                    ("Pending outgoing", "unknown"),
+                )
+            )
 
     @on(Collapsible.Toggled, "#settings-overview-sync-details")
     def handle_overview_sync_details_toggled(self, event: Collapsible.Toggled) -> None:

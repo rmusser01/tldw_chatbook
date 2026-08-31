@@ -17,6 +17,18 @@ from tldw_chatbook.runtime_policy.server_parity_models import (
 
 _SOURCE_AUTHORITIES = {"local", "server"}
 
+# Keep the domain census in this lightweight, already-resident state module so
+# startup orchestration can recognize Notes organization traffic without
+# importing the full wire-contract validator before the UI is ready (ADR-097).
+NOTES_ORGANIZATION_DOMAINS = (
+    "notes.keyword",
+    "notes.keyword_link",
+    "notes.keyword_collection",
+    "notes.keyword_collection_link",
+    "notes.folder",
+    "notes.folder_link",
+)
+
 
 class ConflictStrategy(str, Enum):
     """Conflict strategies available to future sync execution paths."""

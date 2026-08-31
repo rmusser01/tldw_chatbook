@@ -4,11 +4,15 @@ from pathlib import Path
 
 import pytest
 
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Notes.notes_organization_repository import (
+    NotesOrganizationRepository,
+)
 from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
 from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
 from tldw_chatbook.Sync_Interop.local_first_sync_service import LocalFirstSyncService
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
-from tldw_chatbook.tldw_api import SyncV2Envelope
+from tldw_chatbook.tldw_api import SyncV2Envelope, SyncV2PushResponse
 
 pytestmark = pytest.mark.asyncio
 
@@ -184,6 +188,196 @@ async def test_local_first_sync_service_observes_key_added_to_empty_shared_cache
 
     assert result["pulled_envelopes"] == 0
     assert server.calls[0][0] == "pull"
+
+
+async def test_local_first_sync_service_injects_notes_organization_repository(
+    tmp_path: Path,
+) -> None:
+    dataset_key = generate_dataset_key()
+    object_id = "00000000-0000-4000-8000-000000000101"
+    envelope = SyncV2Envelope(
+        client_envelope_id="remote:notes.keyword:101:1",
+        dataset_id="dataset-1",
+        device_id="remote-device",
+        domain="notes.keyword",
+        object_id=object_id,
+        operation="upsert",
+        schema_version=1,
+        object_revision=1,
+        server_cursor=8,
+        payload={"keyword": "Research"},
+        payload_hash="a" * 64,
+        encryption_policy="server_trusted_v1",
+    )
+    state = _repo_with_profile(
+        tmp_path, capabilities={"supported_domains": ["notes.keyword"]}
+    )
+    notes_db = CharactersRAGDB(
+        tmp_path / "notes.sqlite", client_id="local-first-tests"
+    )
+    try:
+        service = LocalFirstSyncService(
+            server_service=FakeLocalFirstServer(
+                pull_envelopes=[envelope.model_dump(mode="json")]
+            ),
+            state_repository=state,
+            local_store=None,
+            dataset_keys={"dataset-1": dataset_key},
+            notes_organization_repository=NotesOrganizationRepository(
+                notes_db, server_profile_id="server-a"
+            ),
+        )
+
+        result = await service.sync_once(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["notes.keyword"],
+        )
+
+        assert result["applied_envelopes"] == 1
+        row = notes_db.get_connection().execute(
+            "SELECT keyword FROM keywords WHERE sync_id = ?", (object_id,)
+        ).fetchone()
+        assert row["keyword"] == "Research"
+    finally:
+        notes_db.close_connection()
+
+
+async def test_organization_only_sync_does_not_require_dataset_key(
+    tmp_path: Path,
+) -> None:
+    object_id = "00000000-0000-4000-8000-000000000102"
+    envelope = SyncV2Envelope(
+        client_envelope_id="remote:notes.keyword:102:1",
+        dataset_id="dataset-1",
+        device_id="remote-device",
+        domain="notes.keyword",
+        object_id=object_id,
+        operation="upsert",
+        schema_version=1,
+        object_revision=1,
+        server_cursor=8,
+        payload={"keyword": "No key required"},
+        payload_hash="b" * 64,
+        encryption_policy="server_trusted_v1",
+    )
+    state = _repo_with_profile(tmp_path)
+    notes_db = CharactersRAGDB(tmp_path / "notes-no-key.sqlite", client_id="tests")
+    try:
+        service = LocalFirstSyncService(
+            server_service=FakeLocalFirstServer(
+                pull_envelopes=[envelope.model_dump(mode="json")]
+            ),
+            state_repository=state,
+            local_store=None,
+            dataset_keys={},
+            notes_organization_repository=NotesOrganizationRepository(notes_db),
+        )
+
+        result = await service.sync_once(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["notes.keyword"],
+        )
+
+        assert result["applied_envelopes"] == 1
+    finally:
+        notes_db.close_connection()
+
+
+async def test_organization_sync_scopes_heads_and_reviews_by_runtime_profile(
+    tmp_path: Path,
+) -> None:
+    state = _repo_with_profile(tmp_path)
+    state.set_sync_v2_profile_state(
+        server_profile_id="server-b",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        profile_mode="local_first",
+        device_id="device-2",
+        dataset_id="dataset-1",
+        dataset_cursors={"sync_v2": "7"},
+        capabilities={"supported_domains": ["notes.keyword"]},
+    )
+    state.set_remote_pull_cursor(
+        source_authority="server",
+        server_profile_id="server-b",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domain="sync_v2",
+        remote_collection="dataset-1",
+        cursor="7",
+    )
+    first_id = "00000000-0000-4000-8000-000000000103"
+    second_id = "00000000-0000-4000-8000-000000000104"
+
+    def envelope(
+        object_id: str, device_id: str, *, revision: int = 1, cursor: int = 8
+    ) -> SyncV2Envelope:
+        return SyncV2Envelope(
+            client_envelope_id=f"remote:notes.keyword:{object_id}:1",
+            dataset_id="dataset-1",
+            device_id=device_id,
+            domain="notes.keyword",
+            object_id=object_id,
+            operation="upsert",
+            schema_version=1,
+            object_revision=revision,
+            server_cursor=cursor,
+            payload={"keyword": "Profile collision"},
+            payload_hash=(object_id.replace("-", "") + f"{revision:032x}"),
+            encryption_policy="server_trusted_v1",
+        )
+
+    server = FakeLocalFirstServer(
+        pull_envelopes=[envelope(first_id, "remote-a").model_dump(mode="json")]
+    )
+    notes_db = CharactersRAGDB(tmp_path / "notes-profiles.sqlite", client_id="tests")
+    try:
+        service = LocalFirstSyncService(
+            server_service=server,
+            state_repository=state,
+            local_store=None,
+            dataset_keys={"dataset-1": generate_dataset_key()},
+            notes_organization_repository=NotesOrganizationRepository(notes_db),
+        )
+        await service.sync_once(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["notes.keyword"],
+        )
+        server.pull_envelopes = [
+            envelope(first_id, "remote-b", revision=2, cursor=9).model_dump(
+                mode="json"
+            ),
+            envelope(second_id, "remote-b", cursor=10).model_dump(mode="json"),
+        ]
+        result = await service.sync_once(
+            server_profile_id="server-b",
+            authenticated_principal_id="user-a",
+            workspace_scope="workspace-1",
+            domains=["notes.keyword"],
+        )
+
+        assert result["conflicts"][0]["conflict_type"] == "local_representation_collision"
+        heads = notes_db.get_connection().execute(
+            "SELECT server_profile_id, object_id FROM notes_organization_heads "
+            "ORDER BY server_profile_id"
+        ).fetchall()
+        assert [tuple(row) for row in heads] == [
+            ("server-a", first_id),
+            ("server-b", first_id),
+        ]
+        reviews = notes_db.get_connection().execute(
+            "SELECT server_profile_id, remote_object_id "
+            "FROM notes_organization_adoption_reviews"
+        ).fetchall()
+        assert [tuple(row) for row in reviews] == [("server-b", second_id)]
+    finally:
+        notes_db.close_connection()
 
 
 async def test_local_first_sync_once_pushes_pulls_applies_and_persists_cursor(tmp_path):
@@ -446,6 +640,83 @@ async def test_local_first_sync_once_drains_persisted_outbox_and_records_push_fa
         )["last_error"]
         == "push_partial_failure: stale_base,conflict"
     )
+
+
+async def test_local_first_sync_preserves_accepted_materialization_failure(
+    tmp_path,
+) -> None:
+    dataset_key = generate_dataset_key()
+    pending = SyncV2Envelope(
+        client_envelope_id="organization-intent-1",
+        dataset_id="dataset-1",
+        domain="notes.keyword",
+        object_id="00000000-0000-4000-8000-000000000001",
+        operation="upsert",
+        device_id="device-1",
+        payload={"keyword": "Agent lesson"},
+        payload_hash="a" * 64,
+        encryption_policy="server_trusted_v1",
+    )
+    repo = _repo_with_profile(
+        tmp_path,
+        capabilities={"supported_domains": ["notes.keyword"]},
+    )
+    repo.enqueue_sync_v2_outbox_envelope(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        envelope=pending,
+    )
+    server = FakeLocalFirstServer(
+        push_response=SyncV2PushResponse.model_validate(
+            {
+                "dataset_id": "dataset-1",
+                "accepted": [
+                    {
+                        "client_envelope_id": pending.client_envelope_id,
+                        "server_cursor": 17,
+                        "object_revision": 1,
+                        "apply_status": "failed",
+                        "apply_error_code": "projection_failed",
+                        "apply_error_message": "folder parent is missing",
+                    }
+                ],
+                "next_cursor": "17",
+            }
+        )
+    )
+    service = LocalFirstSyncService(
+        server_service=server,
+        state_repository=repo,
+        local_store=RecordingLocalStore(),
+        dataset_keys={"dataset-1": dataset_key},
+    )
+
+    result = await service.sync_once(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        domains=["notes.keyword"],
+    )
+
+    row = repo.list_sync_v2_outbox_entries(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        status="pending",
+    )[0]
+    assert result["outbox_dispatched"] == 0
+    assert result["outbox_retained"] == 1
+    assert row["accepted_result"] == {
+        "client_envelope_id": pending.client_envelope_id,
+        "server_cursor": 17,
+        "object_revision": 1,
+        "apply_status": "failed",
+        "apply_error_code": "projection_failed",
+        "apply_error_message": "folder parent is missing",
+    }
 
 
 async def test_local_first_sync_once_rejects_duplicate_outgoing_ids_before_push(

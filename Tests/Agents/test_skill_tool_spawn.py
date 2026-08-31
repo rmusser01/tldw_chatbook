@@ -1,6 +1,7 @@
 import json
 from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
+    AgentDefinition,
     LOAD_TOOLS_NAME,
     RUN_DONE,
     RunBudget,
@@ -92,6 +93,80 @@ def test_skill_tool_routes_through_spawn(tmp_path):
     assert outcome.status == RUN_DONE
     assert runner.spawned_with == "the diff"
     assert db.count_subagent_runs("c1") == 1  # skill ran as a budget-counted sub-agent
+
+
+def test_named_child_recomputes_lesson_guidance_after_tool_narrowing(
+    tmp_path, inline_spawns
+):
+    db = AgentRunsDB(tmp_path / "narrowed-guidance.db", client_id="guidance")
+    db.create_agent_definition(
+        AgentDefinition(
+            name="lesson-reader",
+            description="Reads lessons without changing Notes.",
+            instructions="Return evidence to the foreground primary.",
+            tool_allowlist=("library_search_notes", "library_get_note"),
+        )
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    registry.register_provider(
+        _NCatalogProvider(
+            (
+                "library_search_notes",
+                "library_get_note",
+                "library_save_note",
+            )
+        )
+    )
+    script = [
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": _fence(
+                            SPAWN_TOOL_NAME,
+                            {"task": "inspect lessons", "agent": "lesson-reader"},
+                        )
+                    }
+                }
+            ]
+        },
+        {"choices": [{"message": {"content": "draft returned"}}]},
+        {"choices": [{"message": {"content": "done"}}]},
+    ]
+    calls: list[dict] = []
+
+    def chat(**kwargs):
+        calls.append(kwargs)
+        return script.pop(0)
+
+    service = AgentService(db, registry, chat_call=chat)
+    _run_id, outcome = service.run_turn(
+        conversation_id="lesson-guidance",
+        messages=[{"role": "user", "content": "help"}],
+        config=AgentConfig(
+            model="m",
+            system_prompt="primary",
+            allowed_tools=(
+                "library_search_notes",
+                "library_get_note",
+                "library_save_note",
+                SPAWN_TOOL_NAME,
+            ),
+            budget=RunBudget(max_subagents=1),
+        ),
+        api_endpoint="llama_cpp",
+    )
+
+    assert outcome.status == RUN_DONE
+    parent_system = calls[0]["messages_payload"][0]["content"]
+    child_system = calls[1]["messages_payload"][0]["content"]
+    assert "exact preview" in parent_system
+    assert "library_save_note" in parent_system
+    assert "Agent Lessons protocol" in child_system
+    assert "library_get_note" in child_system
+    assert "library_save_note" not in child_system
+    db.close()
 
 
 def test_skill_spawn_capture_failure_uses_the_parent_diagnostic(tmp_path, monkeypatch):

@@ -123,3 +123,51 @@ def test_is_subagent_stable_across_mid_run_override_change(scratch_config):
     # Turn 2: same sub-agent, same (unchanged) spawn-time system content --
     # must still be classified as a sub-agent turn.
     assert bridge._StreamingModelAdapter._is_subagent(payload) is True
+
+
+def test_agent_lessons_suffix_follows_configured_protocol_and_precedes_environment(
+    tmp_path,
+):
+    from tldw_chatbook.Agents.agent_models import AgentConfig, ToolSchema
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    db = AgentRunsDB(tmp_path / "prompt-order.db", client_id="prompt-order")
+    service = AgentService(
+        db,
+        ToolCatalogRegistry(),
+        chat_call=lambda **_kwargs: {"choices": [{"message": {"content": ""}}]},
+    )
+    schemas = tuple(
+        ToolSchema(f"library:{name}", name, name, {"type": "object"})
+        for name in (
+            "library_search_notes",
+            "library_get_note",
+            "library_save_note",
+        )
+    )
+    request = service._build_model_request(
+        AgentConfig(
+            model="m",
+            system_prompt="CONFIGURED SYSTEM",
+            allowed_tools=(),
+            workspace_context_note="WORKSPACE ENVIRONMENT",
+        ),
+        "llama_cpp",
+        [],
+        [{"role": "user", "content": "UNTRUSTED NOTE BODY"}],
+        schemas,
+        trusted_role="primary",
+    )
+
+    system = request.messages[0]["content"]
+    assert system.startswith("CONFIGURED SYSTEM")
+    assert system.index('"name": "library_search_notes"') < system.index(
+        "Agent Lessons protocol"
+    )
+    assert system.index("Agent Lessons protocol") < system.index(
+        "WORKSPACE ENVIRONMENT"
+    )
+    assert "UNTRUSTED NOTE BODY" not in system
+    db.close()

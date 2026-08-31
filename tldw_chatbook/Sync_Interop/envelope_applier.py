@@ -27,8 +27,14 @@ from tldw_chatbook.Sync_Interop.hashing import (
     canonical_payload_hash,
     canonical_thinking_blocks_json,
 )
+from tldw_chatbook.Sync_Interop.sync_state import (
+    NOTES_ORGANIZATION_DOMAINS,
+)
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Notes.notes_organization_repository import (
+        NotesOrganizationRepository,
+    )
     from tldw_chatbook.tldw_api import SyncV2Envelope
 
 
@@ -42,11 +48,26 @@ class SyncEnvelopeApplier:
         dataset_key: bytes | None = None,
         notes_mirror: Any = None,
         dataset_id: str | None = None,
+        notes_organization_repository: NotesOrganizationRepository | None = None,
+        notes_organization_server_profile_id: str | None = None,
     ) -> None:
         self.dataset_key = dataset_key
         self.local_store = local_store
         self.notes_mirror = notes_mirror
         self.dataset_id = dataset_id
+        if (
+            notes_organization_repository is not None
+            and notes_organization_server_profile_id is not None
+        ):
+            from tldw_chatbook.Notes.notes_organization_repository import (
+                NotesOrganizationRepository,
+            )
+
+            notes_organization_repository = NotesOrganizationRepository(
+                notes_organization_repository.db,
+                server_profile_id=notes_organization_server_profile_id,
+            )
+        self.notes_organization_repository = notes_organization_repository
         self.conflicts: list[dict[str, Any]] = []
         self._adapters: dict[str, Any] = {
             "notes": NotesSyncAdapter(),
@@ -56,8 +77,24 @@ class SyncEnvelopeApplier:
             "media": MediaSyncAdapter(),
             "notes.note": NotesM1SyncAdapter(),
         }
+        self._notes_organization_adapter: Any | None = None
 
     def apply(self, envelope: SyncV2Envelope) -> dict[str, Any]:
+        if envelope.domain in NOTES_ORGANIZATION_DOMAINS:
+            if self._notes_organization_adapter is None:
+                from tldw_chatbook.Sync_Interop.domain_adapters.notes_organization import (
+                    NotesOrganizationSyncAdapter,
+                )
+
+                self._notes_organization_adapter = NotesOrganizationSyncAdapter()
+            return self._notes_organization_adapter.apply(
+                envelope,
+                repository=self.notes_organization_repository,
+                restore_intent=(
+                    envelope.routing_metadata.get("restore_intent") is True
+                ),
+                record_conflict=self._record_conflict,
+            )
         adapter = self._adapters.get(envelope.domain)
         if adapter is None:
             return self._record_conflict(

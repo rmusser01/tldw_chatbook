@@ -93,7 +93,9 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-100](100-console-active-path-before-first-cursor.md) | Accepted | Represent a deliberately empty Console active path with a local before-message pointer, reconstruct its original prompt on restart, and preserve legacy unset fallback. |
 | [ADR-101](101-one-shot-pinned-workspace-tool-execution.md) | Proposed | Execute local workspace filesystem, patch, read-only Git, and equivalent Virtual CLI operations in one-shot workers pinned to the run-admitted root identity. |
 | [ADR-103](103-fast-pr-lane-and-required-gate-aggregation.md) | Proposed | Require a serial minimal-dependency PR fast lane through the existing stable derived-artifacts context while moving comprehensive coverage to main, nightly, and manual events. |
+| [ADR-105](105-portable-notes-organization-and-agent-lessons.md) | Accepted | Consume the server's complete Notes organization group, preserve device-private filesystem ownership, and layer conflict-safe Agent Lessons on ordinary untrusted Notes. |
 | [ADR-104](104-token-budgeted-agent-tool-disclosure.md) | Accepted | Replace fixed tool-count disclosure and lifetime activation caps with model-relative schema-token budgets, ranked search, and replaceable working sets. |
+| [ADR-106](106-human-reviewed-agent-lesson-promotion.md) | Accepted | Force foreground approval for Agent Lesson mutations and permit only exact, human-reviewed promotion through existing instruction and trust authorities. |
 
 ## Historical Decision Material
 

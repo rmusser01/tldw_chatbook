@@ -87,11 +87,11 @@ _THIS_FILE = "Tests/ChaChaNotesDB/test_index_census.py"
 
 
 class IndexPin(NamedTuple):
-    """The pinned shape of one named index."""
+    """The pinned shape; expression key slots are reported as ``None``."""
 
     table: str
     unique: bool
-    columns: tuple[str, ...]
+    columns: tuple[str | None, ...]
 
 
 #: The full expected set of named (non-autoindex) indexes on a fully-migrated
@@ -124,6 +124,24 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
         "console_conversation_memories",
         False,
         ("conversation_id", "active", "created_at"),
+    ),
+    "idx_console_memories_id_conversation": IndexPin(
+        "console_conversation_memories", True, ("id", "conversation_id")
+    ),
+    "idx_console_memory_scopes_conversation_origin": IndexPin(
+        "console_conversation_memory_scopes",
+        False,
+        ("conversation_id", "origin_kind", "coverage_kind"),
+    ),
+    "idx_console_memory_selections_activation": IndexPin(
+        "console_conversation_memory_selections",
+        False,
+        ("conversation_id", "activation_message_id"),
+    ),
+    "idx_console_memory_selections_conversation_active_sequence": IndexPin(
+        "console_conversation_memory_selections",
+        False,
+        ("conversation_id", "active", "sequence"),
     ),
     "idx_console_trace_artifacts_identity": IndexPin(
         "console_trace_artifacts",
@@ -310,6 +328,49 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
     "idx_note_folders_active_parent": IndexPin(
         "note_folders", False, ("parent_id", "normalized_name")
     ),
+    "idx_note_sync_publication_intents_pending": IndexPin(
+        "note_sync_publication_intents",
+        False,
+        (
+            "server_profile_id",
+            "dataset_id",
+            "note_id",
+            "entity_version",
+            "intent_id",
+        ),
+    ),
+    "idx_notes_organization_adoption_reviews_open": IndexPin(
+        "notes_organization_adoption_reviews",
+        False,
+        ("server_profile_id", "dataset_id", "domain", "created_at"),
+    ),
+    "idx_notes_organization_heads_cursor": IndexPin(
+        "notes_organization_heads",
+        False,
+        ("server_profile_id", "dataset_id", "server_cursor"),
+    ),
+    "idx_notes_organization_heads_note_subject": IndexPin(
+        "notes_organization_heads",
+        False,
+        (None, "domain", "server_profile_id", "dataset_id", "object_id"),
+    ),
+    "idx_notes_organization_intents_note_subject_latest": IndexPin(
+        "notes_organization_sync_intents",
+        False,
+        (
+            None,
+            "server_profile_id",
+            "dataset_id",
+            "domain",
+            "object_id",
+            "intent_sequence",
+        ),
+    ),
+    "idx_notes_organization_intents_pending": IndexPin(
+        "notes_organization_sync_intents",
+        False,
+        ("server_profile_id", "dataset_id", "intent_sequence"),
+    ),
     "idx_notekw_kw": IndexPin("note_keywords", False, ("keyword_id",)),
     "idx_notes_file_path": IndexPin("notes", False, ("file_path_on_disk",)),
     "idx_notes_file_path_unique": IndexPin("notes", True, ("file_path_on_disk",)),
@@ -404,6 +465,10 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
         True,
         ("profile_id", "message_id", "message_revision"),
     ),
+    "uq_keyword_collections_sync_id": IndexPin(
+        "keyword_collections", True, ("sync_id",)
+    ),
+    "uq_keywords_sync_id": IndexPin("keywords", True, ("sync_id",)),
     "uq_console_trace_calls_idempotency": IndexPin(
         "console_trace_calls", True, ("idempotency_key",)
     ),
@@ -422,6 +487,10 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
     ),
     "uq_note_folders_active_normalized_path": IndexPin(
         "note_folders", True, ("normalized_path",)
+    ),
+    "uq_note_folders_sync_id": IndexPin("note_folders", True, ("sync_id",)),
+    "uq_note_organization_receipts_unresolved_note": IndexPin(
+        "note_organization_receipts", True, ("note_id",)
     ),
 }
 

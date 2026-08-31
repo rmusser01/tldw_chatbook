@@ -641,6 +641,34 @@ async def test_local_skills_service_unapproved_update_remains_trust_blocked(tmp_
 
 
 @pytest.mark.asyncio
+async def test_manual_promoted_edit_keeps_version_and_retrust_boundaries(tmp_path):
+    service, trust = _trusted_local_service(tmp_path)
+    await service.create_skill(name="demo-skill", content="# Demo\nInitial")
+    trust.bootstrap_trust()
+    before = await service.get_skill("demo-skill")
+
+    updated = await service.update_skill(
+        "demo-skill",
+        content="# Demo\nReviewed proposal text",
+        expected_version=before["version"],
+        trust_approved=False,
+    )
+
+    assert updated["version"] == before["version"] + 1
+    assert updated["trust_status"] == "quarantined_modified"
+    assert updated["trust_blocked"] is True
+    with pytest.raises(ValueError, match="local_skill_version_conflict:demo-skill"):
+        await service.update_skill(
+            "demo-skill",
+            content="# Demo\nStale proposal text",
+            expected_version=before["version"],
+            trust_approved=False,
+        )
+    current = await service.get_skill("demo-skill")
+    assert current["content"] == "# Demo\nReviewed proposal text"
+
+
+@pytest.mark.asyncio
 async def test_local_skills_service_create_requires_explicit_trust_approval_after_bootstrap(
     tmp_path,
 ):

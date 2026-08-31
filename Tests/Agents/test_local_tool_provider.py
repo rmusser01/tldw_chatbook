@@ -1292,6 +1292,10 @@ def test_fs_write_spec_carries_mutates_tag(tmp_path):
     p = make_provider(root=tmp_path)
     schema = p.load_schema("local:fs_write")
     assert sorted(schema.parameters["required"]) == ["content", "path"]
+    props = schema.parameters["properties"]
+    assert props["dry_run"]["type"] == "boolean"
+    assert props["expected_sha256"]["type"] == "string"
+    assert props["expected_absent"]["type"] == "boolean"
     assert p.hub_tool_for("fs_write").tags == ("mutates",)
 
 

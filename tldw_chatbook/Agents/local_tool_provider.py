@@ -10,10 +10,11 @@ methods are sync and worker-thread safe; no Textual/event-loop imports.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import threading
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import (
@@ -41,7 +42,13 @@ from tldw_chatbook.Tools.workspace_tool_executor import (
 from ..config import coerce_bool_setting, get_cli_setting
 from .agent_models import ToolCatalogEntry, ToolResult, ToolSchema
 from .mcp_tool_provider import MCPPendingCall
-from .run_context import current_run_id
+from .project_instruction_resolver import InstructionPromotionSnapshot
+from .project_instruction_runtime import PromotionSnapshotRevalidation
+from .run_context import (
+    current_run_actor,
+    current_run_id,
+    current_tool_call_id,
+)
 from .session_todo_store import (
     MAX_TODO_CONTENT_CHARS,
     MAX_TODO_ITEMS,
@@ -57,6 +64,10 @@ from .session_todo_store import (
 )
 
 if TYPE_CHECKING:
+    from .agent_lesson_promotion import (
+        PromotionEvidence,
+        RepositoryInstructionProposal,
+    )
     from tldw_chatbook.Tools.watchlists_command_service import WatchlistsCommandService
     from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
 from .tool_catalog import ToolExecutionPolicy, ToolPathTarget, redact_root_locator
@@ -116,6 +127,16 @@ LOCAL_ROOT_CHANGED_REFUSAL = (
 LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL = (
     "Private scratch space is unavailable; the tool was not run."
 )
+PROMOTION_APPROVAL_REQUIRED = (
+    "A fresh exact Agent Lesson promotion approval is required; the file was not changed."
+)
+PROMOTION_FOREGROUND_REQUIRED = (
+    "Agent Lesson promotion requires the foreground primary; the file was not changed."
+)
+PROMOTION_STALE_REFUSAL = (
+    "The reviewed Agent Lesson promotion is stale; the file was not changed."
+)
+_MAX_PROMOTION_PROPOSALS_PER_RUN = 8
 
 _PATH_AUTHORITY_LOCAL_NAMES = frozenset(
     {
@@ -391,6 +412,12 @@ class LocalToolProvider:
         authority_scope: Callable[[], ContextManager[Path]] | None = None,
         result_redaction_root: Path | None = None,
         workspace_executor: WorkspaceToolExecutor | None = None,
+        promotion_snapshotter: Callable[[str], InstructionPromotionSnapshot]
+        | None = None,
+        promotion_revalidator: Callable[
+            [InstructionPromotionSnapshot], PromotionSnapshotRevalidation
+        ]
+        | None = None,
         admitted_roots: Sequence[RunAdmittedWorkspaceRoot] | None = None,
     ) -> None:
         self._root = workspace_root
@@ -534,6 +561,13 @@ class LocalToolProvider:
             if result_redaction_root is not None
             else None
         )
+        self._promotion_snapshotter = promotion_snapshotter
+        self._promotion_revalidator = promotion_revalidator
+        self._promotion_stamps: dict[tuple[str, str, str], str] = {}
+        self._promotion_proposals: dict[
+            tuple[str, str], tuple[RepositoryInstructionProposal, InstructionPromotionSnapshot]
+        ] = {}
+        self._promotion_lock = threading.RLock()
         # PR2a Task 5: keyed (run_id, tool_name), not tool_name -- one
         # provider instance is shared by a parent run and every sub-agent
         # it spawns, so a name-keyed dict let any run's turn clear or
@@ -906,7 +940,12 @@ class LocalToolProvider:
                 self._stamps.update(saved)
 
     def pending_gate_for(
-        self, name: str, args: dict, call_id: str = ""
+        self,
+        name: str,
+        args: dict,
+        call_id: str = "",
+        *,
+        run_id: str = "",
     ) -> MCPPendingCall | None:
         """The approval payload when this call needs human gating, else None.
 
@@ -923,6 +962,41 @@ class LocalToolProvider:
             failure -- fail closed, ``invoke()`` decides the copy --
             state no longer "ask", or a live session approval).
         """
+        promotion_kind = _promotion_call_kind(name, args)
+        promotion_args = args
+        promotion_authority: RunAdmittedWorkspaceRoot | None = None
+        if promotion_kind is not None:
+            bare_name = name.split(":", 1)[1] if ":" in name else name
+            promotion_spec = self._specs.get(bare_name)
+            if promotion_spec is None:
+                return None
+            try:
+                promotion_authority, promotion_args = self._select_admitted_root(
+                    bare_name, args
+                )
+            except ValueError:
+                return None
+            if not self._authority_is_valid(promotion_authority, write=True):
+                return None
+        promotion_gate = self._pending_promotion_gate(
+            name,
+            args,
+            promotion_args=promotion_args,
+            selected_root_alias=(
+                promotion_authority.alias
+                if promotion_authority is not None
+                else None
+            ),
+            call_id=call_id,
+            run_id=run_id,
+        )
+        if promotion_gate is not None:
+            return promotion_gate
+        if promotion_kind is not None:
+            # Promotion-shaped calls must never degrade into ordinary write
+            # approval.  The promotion path either presents its exact card or
+            # fails closed when invoked.
+            return None
         # Same `local:`-prefix tolerance as invoke()/load_schema(): the
         # registry invokes by catalog id ("local:fs_list") while the review
         # hook resolves by LLM-facing name ("fs_list").
@@ -942,6 +1016,151 @@ class LocalToolProvider:
             name, args, self.hub_tool_for(name), call_id=call_id
         )
         return gate
+
+    def _pending_promotion_gate(
+        self,
+        name: str,
+        args: dict,
+        *,
+        promotion_args: Mapping[str, Any],
+        selected_root_alias: str | None,
+        call_id: str,
+        run_id: str,
+    ) -> MCPPendingCall | None:
+        kind = _promotion_call_kind(name, args)
+        if kind is None:
+            return None
+        actor = current_run_actor()
+        if (
+            actor is None
+            or actor.kind != "primary"
+            or not run_id
+            or actor.run_id != run_id
+            or not call_id
+        ):
+            return None
+        if self._promotion_snapshotter is None or self._promotion_revalidator is None:
+            return None
+        arguments: dict[str, Any]
+        if kind == "apply":
+            digest = args.get("proposal_digest")
+            if type(digest) is not str:
+                return None
+            with self._promotion_lock:
+                retained = self._promotion_proposals.get((run_id, digest))
+            if retained is None or not _application_matches(
+                retained[0], args, selected_root_alias=selected_root_alias
+            ):
+                return None
+            arguments = {
+                "action": "apply_agent_lesson_promotion",
+                "proposal": _proposal_payload(retained[0]),
+            }
+        else:
+            try:
+                evidence, _verification_command, _verification_text = (
+                    _parse_promotion_request(dict(promotion_args))
+                )
+            except ValueError:
+                return None
+            from .agent_lesson_promotion import assess_promotion_evidence
+
+            eligibility = assess_promotion_evidence(evidence)
+            if not eligibility.eligible:
+                return None
+            try:
+                replacement_digest = hashlib.sha256(
+                    promotion_args["content"].encode("utf-8")
+                ).hexdigest()
+            except (KeyError, AttributeError, UnicodeEncodeError):
+                return None
+            arguments = {
+                "action": "prepare_agent_lesson_promotion",
+                "target": promotion_args.get("path"),
+                "replacement_sha256": replacement_digest,
+                "evidence_note_ids": evidence.lesson_note_ids,
+                "rationale": evidence.rationale,
+            }
+        return MCPPendingCall(
+            llm_name=name.split(":", 1)[-1],
+            server_key=LOCAL_SERVER_KEY,
+            tool_name="fs_write",
+            server_label=LOCAL_SERVER_LABEL,
+            arguments=arguments,
+            reason="agent_lesson_promotion",
+            options=("approve_once", "deny"),
+            call_id=call_id,
+        )
+
+    def apply_promotion_decisions(
+        self,
+        run_id: str,
+        calls: list[Any],
+        decisions: Mapping[str, str],
+    ) -> None:
+        """Replace this run's single-use promotion preparation/apply stamps."""
+        with self._promotion_lock:
+            self._promotion_stamps = {
+                key: value
+                for key, value in self._promotion_stamps.items()
+                if key[0] != run_id
+            }
+            for call in calls:
+                if _promotion_call_kind(call.name, call.args) is None:
+                    continue
+                decision = decisions.get(call.call_id, decisions.get(call.name, "deny"))
+                if decision == "approve_once":
+                    digest = _promotion_call_digest(call.name, call.args)
+                    self._promotion_stamps[(run_id, call.call_id, digest)] = decision
+                elif _promotion_call_kind(call.name, call.args) == "apply":
+                    proposal_digest = call.args.get("proposal_digest")
+                    if type(proposal_digest) is str:
+                        self._promotion_proposals.pop((run_id, proposal_digest), None)
+
+    def clear_promotion_state(self, run_id: str) -> None:
+        """Discard every ephemeral promotion record owned by one run."""
+        with self._promotion_lock:
+            self._promotion_stamps = {
+                key: value
+                for key, value in self._promotion_stamps.items()
+                if key[0] != run_id
+            }
+            self._promotion_proposals = {
+                key: value
+                for key, value in self._promotion_proposals.items()
+                if key[0] != run_id
+            }
+
+    def bind_instruction_promotion_context(
+        self,
+        *,
+        snapshotter: Callable[[str], InstructionPromotionSnapshot],
+        revalidator: Callable[
+            [InstructionPromotionSnapshot], PromotionSnapshotRevalidation
+        ],
+    ) -> None:
+        """Late-bind this run's accepted project-instruction ledger.
+
+        The bridge creates the authoritative ledger only after the user accepts
+        the startup instruction snapshot, while this provider is composed
+        earlier on the UI loop. Binding is therefore explicit and one-way;
+        replacing a live context clears every prepared proposal and stamp.
+        """
+        if not callable(snapshotter) or not callable(revalidator):
+            raise TypeError("promotion context callbacks must be callable")
+        with self._promotion_lock:
+            self._promotion_snapshotter = snapshotter
+            self._promotion_revalidator = revalidator
+            self._promotion_stamps.clear()
+            self._promotion_proposals.clear()
+
+    def unbind_instruction_promotion_context(self) -> None:
+        """Remove ledger authority and clear all ephemeral promotion state."""
+        with self._promotion_lock:
+            self._promotion_snapshotter = None
+            self._promotion_revalidator = None
+            self._promotion_stamps.clear()
+            self._promotion_proposals.clear()
 
     def _resolve_pending_gate(
         self, name: str, args: dict, hub: HubTool, *, call_id: str = ""
@@ -1052,6 +1271,20 @@ class LocalToolProvider:
         if self._kill_switch_engaged():
             self._record_decision_safe(self.hub_tool_for(name), "denied")
             return ToolResult.blocked(LOCAL_KILL_SWITCH_REFUSAL)
+        selected_spec = (
+            self._path_specs_by_alias[authority.alias][name]
+            if authority is not None and name in _PATH_AUTHORITY_LOCAL_NAMES
+            else spec
+        )
+        promotion_result = self._invoke_promotion(
+            name,
+            args,
+            clean_args=dict(clean_args),
+            spec=selected_spec,
+            authority=authority,
+        )
+        if promotion_result is not None:
+            return promotion_result
         # PR2a Task 5: only the DISPATCHING run's own stamp may resolve
         # this call. `ToolProvider.invoke` has no run parameter, so the run
         # id rides `run_context` (bound by `AgentService` around each
@@ -1135,6 +1368,173 @@ class LocalToolProvider:
         # "deny" and any unrecognized verdict fail closed the same way.
         self._record_decision_safe(self.hub_tool_for(name), "denied")
         return ToolResult.blocked(LOCAL_DENY_REFUSAL)
+
+    def _invoke_promotion(
+        self,
+        name: str,
+        args: dict,
+        *,
+        clean_args: dict,
+        spec: LocalToolSpec,
+        authority: RunAdmittedWorkspaceRoot | None,
+    ) -> ToolResult | None:
+        kind = _promotion_call_kind(name, args)
+        if kind is None:
+            return None
+        actor = current_run_actor()
+        run_id = current_run_id()
+        call_id = current_tool_call_id()
+        if actor is None or actor.kind != "primary" or not run_id:
+            return ToolResult.blocked(PROMOTION_FOREGROUND_REQUIRED)
+        if not call_id:
+            return ToolResult.blocked(PROMOTION_APPROVAL_REQUIRED)
+        call_digest = _promotion_call_digest(name, args)
+        stamp_key = (run_id, call_id, call_digest)
+        with self._promotion_lock:
+            if self._promotion_stamps.pop(stamp_key, None) != "approve_once":
+                return ToolResult.blocked(PROMOTION_APPROVAL_REQUIRED)
+        if self._promotion_snapshotter is None or self._promotion_revalidator is None:
+            return ToolResult.blocked(PROMOTION_APPROVAL_REQUIRED)
+
+        def invoke_selected() -> ToolResult:
+            if not self._authority_is_valid(authority, write=True):
+                return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
+            if kind == "prepare":
+                return self._prepare_repository_promotion(
+                    run_id, clean_args, spec, authority
+                )
+            return self._apply_repository_promotion(
+                run_id, args, clean_args, spec, authority
+            )
+
+        scope = authority.authority_scope if authority is not None else None
+        if scope is not None:
+            try:
+                with scope():
+                    return invoke_selected()
+            except Exception:  # noqa: BLE001 - lease failure is fail-closed
+                return ToolResult.blocked(LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL)
+        return invoke_selected()
+
+    def _prepare_repository_promotion(
+        self,
+        run_id: str,
+        args: dict,
+        spec: LocalToolSpec,
+        authority: RunAdmittedWorkspaceRoot | None,
+    ) -> ToolResult:
+        try:
+            from .agent_lesson_promotion import (
+                RepositoryInstructionProposal,
+                assess_promotion_evidence,
+            )
+
+            evidence, verification_command, verification_text = (
+                _parse_promotion_request(args)
+            )
+            if not assess_promotion_evidence(evidence).eligible:
+                return ToolResult.blocked(PROMOTION_APPROVAL_REQUIRED)
+            path = args["path"]
+            snapshot = self._promotion_snapshotter(path)
+            if authority is not None and (
+                snapshot.binding_id != authority.binding_id
+                or snapshot.locator_fingerprint != authority.locator_fingerprint
+            ):
+                return ToolResult.blocked(PROMOTION_STALE_REFUSAL)
+            preview_args = {
+                key: value
+                for key, value in args.items()
+                if key != "promotion"
+            }
+            preview_args["dry_run"] = True
+            preview_args.pop("expected_sha256", None)
+            preview_args.pop("expected_absent", None)
+            preview_text = spec.handler(preview_args)
+            preview = json.loads(preview_text)
+            proposal = RepositoryInstructionProposal.build(
+                evidence=evidence,
+                binding_id=snapshot.binding_id,
+                locator_fingerprint=snapshot.locator_fingerprint,
+                root_identity=snapshot.root_identity_digest,
+                target_path=snapshot.target_relative_path,
+                effective_chain=snapshot.effective_chain,
+                effective_chain_digest=snapshot.effective_chain_digest,
+                expected_sha256=snapshot.expected_sha256,
+                expected_absent=snapshot.expected_absent,
+                replacement_content=args["content"],
+                bounded_diff=str(preview.get("diff", "")),
+                verification_command=verification_command,
+                verification_text=verification_text,
+            )
+        except Exception:  # noqa: BLE001 - content-free promotion refusal
+            return ToolResult.blocked(PROMOTION_STALE_REFUSAL)
+        with self._promotion_lock:
+            self._promotion_proposals[(run_id, proposal.proposal_digest)] = (
+                proposal,
+                snapshot,
+            )
+            while len(
+                [key for key in self._promotion_proposals if key[0] == run_id]
+            ) > _MAX_PROMOTION_PROPOSALS_PER_RUN:
+                first = next(
+                    key for key in self._promotion_proposals if key[0] == run_id
+                )
+                self._promotion_proposals.pop(first, None)
+        return ToolResult(
+            ok=True,
+            content=_fit_result(
+                json.dumps(
+                    _proposal_payload(proposal),
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            ),
+        )
+
+    def _apply_repository_promotion(
+        self,
+        run_id: str,
+        args: dict,
+        clean_args: dict,
+        spec: LocalToolSpec,
+        authority: RunAdmittedWorkspaceRoot | None,
+    ) -> ToolResult:
+        proposal_digest = args.get("proposal_digest")
+        if type(proposal_digest) is not str:
+            return ToolResult.blocked(PROMOTION_APPROVAL_REQUIRED)
+        with self._promotion_lock:
+            retained = self._promotion_proposals.pop(
+                (run_id, proposal_digest), None
+            )
+        if retained is None or not _application_matches(
+            retained[0],
+            args,
+            selected_root_alias=authority.alias if authority is not None else None,
+        ):
+            return ToolResult.blocked(PROMOTION_APPROVAL_REQUIRED)
+        proposal, snapshot = retained
+        if authority is not None and authority.binding_id != proposal.binding_id:
+            return ToolResult.blocked(PROMOTION_STALE_REFUSAL)
+        try:
+            revalidation = self._promotion_revalidator(snapshot)
+        except Exception:  # noqa: BLE001 - authority callback fails closed
+            return ToolResult.blocked(PROMOTION_STALE_REFUSAL)
+        if not revalidation.eligible:
+            return ToolResult.blocked(
+                f"{PROMOTION_STALE_REFUSAL} ({revalidation.reason_code})"
+            )
+        invoke_args = {
+            key: value
+            for key, value in clean_args.items()
+            if key != "proposal_digest"
+        }
+        try:
+            content = spec.handler(invoke_args)
+        except Exception as error:  # noqa: BLE001 - provider protocol boundary
+            return ToolResult(ok=False, error=str(error)[:_MAX_ERROR_CHARS])
+        return ToolResult(ok=True, content=_fit_result(content))
 
     def _root_is_valid(self) -> bool:
         """Never raise while revalidating an optional selected-root guard."""
@@ -1276,6 +1676,141 @@ class LocalToolProvider:
             logger.warning(
                 f"LocalToolProvider: record_decision ({decision}) failed for {hub.name}: {exc}"
             )
+
+
+def _promotion_call_kind(name: str, args: object) -> str | None:
+    bare = name.split(":", 1)[1] if ":" in name else name
+    if bare != "fs_write" or type(args) is not dict:
+        return None
+    if "proposal_digest" in args:
+        return "apply"
+    if "promotion" in args:
+        return "prepare"
+    return None
+
+
+def _proposal_payload(proposal: RepositoryInstructionProposal) -> dict[str, Any]:
+    """Return the one JSON-shaped representation used by result and card."""
+    return json.loads(
+        json.dumps(
+            asdict(proposal),
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+
+
+def _promotion_call_digest(name: str, args: dict) -> str:
+    try:
+        raw = json.dumps(
+            {"name": name.split(":", 1)[-1], "arguments": args},
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeEncodeError):
+        return ""
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _parse_promotion_request(
+    args: dict,
+) -> tuple[PromotionEvidence, str, str]:
+    if set(args) - {"path", "content", "dry_run", "promotion"}:
+        raise ValueError("invalid promotion preparation")
+    if args.get("dry_run") is not True:
+        raise ValueError("promotion preparation must be a dry run")
+    if type(args.get("path")) is not str or type(args.get("content")) is not str:
+        raise ValueError("invalid promotion target")
+    raw = args.get("promotion")
+    if type(raw) is not dict:
+        raise ValueError("promotion evidence must be an object")
+    required = {
+        "lesson_note_ids",
+        "summary",
+        "provenance",
+        "verification",
+        "principle",
+        "rationale",
+        "procedural",
+        "reusable",
+        "independently_verified",
+        "verification_command",
+        "verification_text",
+    }
+    optional = {"contradictory", "interaction_specific"}
+    if required - set(raw) or set(raw) - required - optional:
+        raise ValueError("invalid promotion evidence")
+    note_ids = raw["lesson_note_ids"]
+    if type(note_ids) is not list or not note_ids:
+        raise ValueError("invalid promotion evidence")
+    for field_name in ("procedural", "reusable", "independently_verified"):
+        if type(raw[field_name]) is not bool:
+            raise ValueError("invalid promotion evidence")
+    for field_name in optional:
+        if field_name in raw and type(raw[field_name]) is not bool:
+            raise ValueError("invalid promotion evidence")
+    from .agent_lesson_promotion import PromotionEvidence
+
+    evidence = PromotionEvidence(
+        lesson_note_ids=tuple(note_ids),
+        summary=raw["summary"],
+        provenance=raw["provenance"],
+        verification=raw["verification"],
+        principle=raw["principle"],
+        rationale=raw["rationale"],
+        procedural=raw["procedural"],
+        reusable=raw["reusable"],
+        independently_verified=raw["independently_verified"],
+        contradictory=raw.get("contradictory", False),
+        interaction_specific=raw.get("interaction_specific", False),
+    )
+    command = raw["verification_command"]
+    text = raw["verification_text"]
+    if type(command) is not str or type(text) is not str or not text.strip():
+        raise ValueError("invalid promotion verification")
+    return evidence, command, text
+
+
+def _application_matches(
+    proposal: RepositoryInstructionProposal,
+    args: object,
+    *,
+    selected_root_alias: str | None,
+) -> bool:
+    if type(args) is not dict:
+        return False
+    allowed = {
+        "root_alias",
+        "path",
+        "content",
+        "dry_run",
+        "expected_sha256",
+        "expected_absent",
+        "proposal_digest",
+    }
+    if set(args) - allowed:
+        return False
+    if "root_alias" in args:
+        if selected_root_alias is None or args.get("root_alias") != selected_root_alias:
+            return False
+    if args.get("path") != proposal.target_path:
+        return False
+    if args.get("content") != proposal.replacement_content:
+        return False
+    if args.get("proposal_digest") != proposal.proposal_digest:
+        return False
+    if args.get("dry_run", False) is not False:
+        return False
+    if proposal.expected_absent:
+        return args.get("expected_absent") is True and "expected_sha256" not in args
+    return (
+        args.get("expected_sha256") == proposal.expected_sha256
+        and args.get("expected_absent", False) is False
+    )
 
 
 _TODO_ID_PATTERN = (
@@ -1569,7 +2104,12 @@ def _default_specs(
         ),
         LocalToolSpec(
             name="fs_write",
-            description="Create or overwrite a file with the given content (full-file write), relative to the workspace root.",
+            description=(
+                "Create or overwrite a file with full content, relative to the "
+                "workspace root. dry_run previews exact state and a bounded diff. "
+                "expected_sha256 or expected_absent provides an atomic precondition; "
+                "one is required when applying a reviewed instruction promotion."
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -1580,6 +2120,70 @@ def _default_specs(
                     "content": {
                         "type": "string",
                         "description": "Full file content to write.",
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Preview target state and a bounded unified diff without writing.",
+                    },
+                    "expected_sha256": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$",
+                        "description": "Require the current file to have this SHA-256 digest.",
+                    },
+                    "expected_absent": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Require the target not to exist.",
+                    },
+                    "promotion": {
+                        "type": "object",
+                        "description": (
+                            "Verified Agent Lesson evidence for a proposal-only "
+                            "dry run. This never grants file authority."
+                        ),
+                        "additionalProperties": False,
+                        "properties": {
+                            "lesson_note_ids": {
+                                "type": "array",
+                                "items": {"type": "string", "minLength": 1},
+                                "minItems": 1,
+                                "uniqueItems": True,
+                            },
+                            "summary": {"type": "string", "minLength": 1},
+                            "provenance": {"type": "string", "minLength": 1},
+                            "verification": {"type": "string", "minLength": 1},
+                            "principle": {"type": "string", "minLength": 1},
+                            "rationale": {"type": "string", "minLength": 1},
+                            "procedural": {"type": "boolean"},
+                            "reusable": {"type": "boolean"},
+                            "independently_verified": {"type": "boolean"},
+                            "contradictory": {"type": "boolean"},
+                            "interaction_specific": {"type": "boolean"},
+                            "verification_command": {"type": "string"},
+                            "verification_text": {"type": "string", "minLength": 1},
+                        },
+                        "required": [
+                            "lesson_note_ids",
+                            "summary",
+                            "provenance",
+                            "verification",
+                            "principle",
+                            "rationale",
+                            "procedural",
+                            "reusable",
+                            "independently_verified",
+                            "verification_command",
+                            "verification_text",
+                        ],
+                    },
+                    "proposal_digest": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$",
+                        "description": (
+                            "Exact run-bound proposal digest returned by an "
+                            "approved promotion dry run."
+                        ),
                     },
                 },
                 "required": ["path", "content"],

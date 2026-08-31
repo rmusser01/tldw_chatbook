@@ -129,6 +129,16 @@ ABSENT_AT_READY_MODULES = (
     "tldw_chatbook.Research_Workspace.layout_state",
     "tldw_chatbook.Research_Workspace.overlay_store",
     "tldw_chatbook.tldw_api.notes_workspace_schemas",
+    # TASK-24613 / ADR-097: lesson proposal and portable-organization owners
+    # are interaction/sync work, not first-paint dependencies.  Keep their
+    # implementation modules behind the post-ready or first-use seams.
+    "tldw_chatbook.Agents.agent_lesson_promotion",
+    "tldw_chatbook.Notes.agent_lessons",
+    "tldw_chatbook.Notes.notes_organization_repository",
+    "tldw_chatbook.Sync_Interop.domain_adapters.notes_organization",
+    "tldw_chatbook.Sync_Interop.notes_organization",
+    "tldw_chatbook.Sync_Interop.notes_organization_sync_service",
+    "tldw_chatbook.Sync_Interop.notes_outbox_producer",
 )
 
 #: Anti-vacuity: if these are not resident, the boot did not actually mount

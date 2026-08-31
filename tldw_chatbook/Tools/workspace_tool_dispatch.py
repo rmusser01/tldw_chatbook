@@ -63,6 +63,9 @@ def execute_pinned_operation(
             request.arguments["content"],
             workspace=Path("."),
             display_path=request.arguments["path"],
+            dry_run=request.arguments.get("dry_run", False),
+            expected_sha256=request.arguments.get("expected_sha256"),
+            expected_absent=request.arguments.get("expected_absent", False),
         )
     if request.operation == "fs_edit":
         return _edit_relative_file(

@@ -1,4 +1,4 @@
-"""ChaChaNotes v54 -> v57 fail-closed semantic mutation guard."""
+"""ChaChaNotes v57 fail-closed semantic mutation guard across later schemas."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def _seed_referenced_message(db: CharactersRAGDB) -> tuple[str, str]:
     return conversation_id, message_id
 
 
-def test_genuine_v54_upgrades_to_v57_without_rewriting_existing_messages(
+def test_genuine_v54_upgrades_through_v57_without_rewriting_existing_messages(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "genuine-v54.sqlite"
@@ -68,7 +68,8 @@ def test_genuine_v54_upgrades_to_v57_without_rewriting_existing_messages(
     migrated = CharactersRAGDB(path, client_id="v57-upgrade")
     try:
         connection = migrated.get_connection()
-        assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION == 57
+        assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        assert CharactersRAGDB._CURRENT_SCHEMA_VERSION >= 57
         after = tuple(
             connection.execute(
                 "SELECT id, conversation_id, sender, content FROM messages LIMIT 1"
@@ -79,7 +80,9 @@ def test_genuine_v54_upgrades_to_v57_without_rewriting_existing_messages(
         migrated.close_connection()
 
 
-def test_fresh_v57_registers_guard_function_and_triggers(tmp_path: Path) -> None:
+def test_fresh_current_schema_registers_v57_guard_function_and_triggers(
+    tmp_path: Path,
+) -> None:
     db = CharactersRAGDB(tmp_path / "fresh.sqlite", client_id="fresh-v57")
     try:
         connection = db.get_connection()

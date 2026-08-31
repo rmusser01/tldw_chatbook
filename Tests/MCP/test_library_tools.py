@@ -98,6 +98,33 @@ def test_manifest_library_entries_match_descriptors_exactly():
         assert entry["inputSchema"] == descriptor.input_schema
 
 
+def test_manifest_note_organization_schemas_are_the_shared_contract():
+    by_name = {
+        entry["name"]: entry for entry in describe_local_mcp_capabilities()["tools"]
+    }
+    search = by_name["library_search_notes"]
+    save = by_name["library_save_note"]
+
+    assert search["inputSchema"]["anyOf"] == [
+        {"required": ["query"]},
+        {"required": ["keyword"]},
+        {"required": ["folder_id"]},
+        {"required": ["folder"]},
+    ]
+    assert {
+        "folder_id",
+        "folder",
+        "ensure_keywords",
+        "expected_organization_version",
+    } <= set(save["inputSchema"]["properties"])
+    assert search["inputSchema"] == LIBRARY_TOOL_DESCRIPTORS[
+        "library_search_notes"
+    ].input_schema
+    assert save["inputSchema"] == LIBRARY_TOOL_DESCRIPTORS[
+        "library_save_note"
+    ].input_schema
+
+
 def test_manifest_library_entries_do_not_alias_descriptor_schemas():
     """Mutating a manifest entry must never corrupt the shared descriptor table."""
     manifest = describe_local_mcp_capabilities()

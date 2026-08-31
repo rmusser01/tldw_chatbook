@@ -4,6 +4,7 @@ from unittest.mock import Mock
 import pytest
 
 from tldw_chatbook.Sync_Interop import ServerSyncService
+from tldw_chatbook.Sync_Interop.notes_organization import NOTES_ORGANIZATION_DOMAINS
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
 from tldw_chatbook.runtime_policy.types import (
@@ -1155,3 +1156,18 @@ async def test_server_sync_service_routes_restore_manifest_pull_and_conflicts_wi
         "sync.v2.conflicts.observe.server",
         "sync.v2.conflicts.resolve.server",
     ]
+
+
+def test_notes_organization_capability_rejects_partial_adapter_version_support():
+    required = ["notes.note", "chat.conversation", *NOTES_ORGANIZATION_DOMAINS]
+    response = {
+        "capabilities": {
+            "domains": required,
+            "supported_adapter_versions": {
+                domain: [1] for domain in required if domain != "notes.folder_link"
+            },
+        }
+    }
+
+    with pytest.raises(ValueError, match="adapter version 1"):
+        ServerSyncService._validate_notes_organization_capability(response)

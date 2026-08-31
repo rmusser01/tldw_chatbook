@@ -6,7 +6,7 @@ import sqlite3
 import unicodedata
 import uuid
 from collections.abc import Iterable, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime, timedelta
 from typing import NoReturn
 
@@ -88,6 +88,7 @@ class LocalNoteFolderRepository:
         name: str,
         parent_id: str | None,
         folder_id: str | None = None,
+        cursor: sqlite3.Cursor | None = None,
     ) -> NoteFolder:
         """Create an active folder beneath an active parent.
 
@@ -108,12 +109,14 @@ class LocalNoteFolderRepository:
             selected_folder_id = str(uuid.uuid4())
         else:
             selected_folder_id = validate_deterministic_folder_id(folder_id)
+        portable_sync_id = str(uuid.uuid4())
         normalized = normalize_folder_name(name)
         now = _utc_timestamp()
         normalized_path: str | None = None
 
         try:
-            with self.db.transaction() as cursor:
+            transaction = nullcontext(cursor) if cursor is not None else self.db.transaction()
+            with transaction as cursor:
                 parent_path = ""
                 parent_normalized_path = ""
                 if parent_id is not None:
@@ -138,8 +141,9 @@ class LocalNoteFolderRepository:
                     """
                     INSERT INTO note_folders(
                         id, parent_id, name, normalized_name, path,
-                        normalized_path, version, deleted, created_at, modified_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?)
+                        normalized_path, version, deleted, created_at, modified_at,
+                        sync_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?)
                     """,
                     (
                         selected_folder_id,
@@ -150,6 +154,7 @@ class LocalNoteFolderRepository:
                         normalized_path,
                         now,
                         now,
+                        portable_sync_id,
                     ),
                 )
                 inserted = cursor.execute(
@@ -1182,6 +1187,7 @@ class LocalNoteFolderRepository:
         folder_id: str,
         note_id: str,
         expected_note_version: int | None = None,
+        cursor: sqlite3.Cursor | None = None,
     ) -> NoteFolderMembership:
         """Attach one user-owned placement, reviving its latest history."""
         _validate_folder_id(folder_id, field="folder_id")
@@ -1189,24 +1195,43 @@ class LocalNoteFolderRepository:
         if expected_note_version is not None:
             _validate_expected_version(expected_note_version)
         try:
-            with self.db.transaction() as cursor, _mutation_savepoint(cursor):
-                _require_active_membership_targets(
-                    cursor, folder_ids=(folder_id,), note_ids=(note_id,)
-                )
-                row = _ensure_manual_membership(
-                    cursor,
+            transaction = nullcontext(cursor) if cursor is not None else self.db.transaction()
+            with transaction as owner_cursor:
+                return self._attach_manual_with_cursor(
+                    owner_cursor,
                     folder_id=folder_id,
                     note_id=note_id,
-                    now=_utc_timestamp(),
                     expected_note_version=expected_note_version,
                 )
-                return _membership_from_row(row)
         except sqlite3.IntegrityError as exc:
             _raise_membership_integrity_error(exc)
         except sqlite3.OperationalError as exc:
             _raise_mutation_operational_error(exc)
         except CharactersRAGDBError as exc:
             _raise_wrapped_repository_error(exc)
+
+    def _attach_manual_with_cursor(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        folder_id: str,
+        note_id: str,
+        expected_note_version: int | None = None,
+    ) -> NoteFolderMembership:
+        """Attach one manual membership through a caller-owned cursor."""
+
+        with _mutation_savepoint(cursor):
+            _require_active_membership_targets(
+                cursor, folder_ids=(folder_id,), note_ids=(note_id,)
+            )
+            row = _ensure_manual_membership(
+                cursor,
+                folder_id=folder_id,
+                note_id=note_id,
+                now=_utc_timestamp(),
+                expected_note_version=expected_note_version,
+            )
+            return _membership_from_row(row)
 
     def load_tree_search(
         self, *, note_ids: Iterable[str], folder_query: str = ""
@@ -1367,14 +1392,20 @@ class LocalNoteFolderRepository:
         )
 
     def detach_manual(
-        self, *, folder_id: str, note_id: str, expected_version: int
+        self,
+        *,
+        folder_id: str,
+        note_id: str,
+        expected_version: int,
+        cursor: sqlite3.Cursor | None = None,
     ) -> bool:
         """Soft-delete one exact active manual placement optimistically."""
         _validate_folder_id(folder_id, field="folder_id")
         _validate_folder_id(note_id, field="note_id")
         _validate_expected_version(expected_version)
         try:
-            with self.db.transaction() as cursor, _mutation_savepoint(cursor):
+            transaction = nullcontext(cursor) if cursor is not None else self.db.transaction()
+            with transaction as cursor, _mutation_savepoint(cursor):
                 row = cursor.execute(
                     "SELECT id, version FROM note_folder_memberships "
                     "WHERE folder_id = ? AND note_id = ? AND ownership = 'manual' "
@@ -1500,14 +1531,19 @@ class LocalNoteFolderRepository:
             return bool(rows and rows[0]["owner_active"] is not None)
 
     def reconcile_managed(
-        self, *, owner_id: str, desired: Iterable[tuple[str, str]]
+        self,
+        *,
+        owner_id: str,
+        desired: Iterable[tuple[str, str]],
+        cursor: sqlite3.Cursor | None = None,
     ) -> tuple[NoteFolderMembership, ...]:
         """Converge only one sync owner's managed placements."""
         _validate_owner_id(owner_id)
         desired_pairs = _normalize_desired_memberships(desired)
         desired_set = set(desired_pairs)
         try:
-            with self.db.transaction() as cursor, _mutation_savepoint(cursor):
+            transaction = nullcontext(cursor) if cursor is not None else self.db.transaction()
+            with transaction as cursor, _mutation_savepoint(cursor):
                 _require_active_membership_targets(
                     cursor,
                     folder_ids=tuple(pair[0] for pair in desired_pairs),
@@ -1596,11 +1632,14 @@ class LocalNoteFolderRepository:
         except CharactersRAGDBError as exc:
             _raise_wrapped_repository_error(exc)
 
-    def convert_owner_to_manual(self, *, owner_id: str) -> int:
+    def convert_owner_to_manual(
+        self, *, owner_id: str, cursor: sqlite3.Cursor | None = None
+    ) -> int:
         """Convert one owner's active managed placements to manual placements."""
         _validate_owner_id(owner_id)
         try:
-            with self.db.transaction() as cursor, _mutation_savepoint(cursor):
+            transaction = nullcontext(cursor) if cursor is not None else self.db.transaction()
+            with transaction as cursor, _mutation_savepoint(cursor):
                 managed_rows = cursor.execute(
                     "SELECT id, folder_id, note_id, version "
                     "FROM note_folder_memberships WHERE ownership = 'managed' "
@@ -1635,11 +1674,14 @@ class LocalNoteFolderRepository:
         except CharactersRAGDBError as exc:
             _raise_wrapped_repository_error(exc)
 
-    def remove_owner_memberships(self, *, owner_id: str) -> int:
+    def remove_owner_memberships(
+        self, *, owner_id: str, cursor: sqlite3.Cursor | None = None
+    ) -> int:
         """Soft-delete only one owner's active managed placements."""
         _validate_owner_id(owner_id)
         try:
-            with self.db.transaction() as cursor, _mutation_savepoint(cursor):
+            transaction = nullcontext(cursor) if cursor is not None else self.db.transaction()
+            with transaction as cursor, _mutation_savepoint(cursor):
                 rows = cursor.execute(
                     "SELECT id, version FROM note_folder_memberships "
                     "WHERE ownership = 'managed' AND owner_id = ? AND deleted = 0 "
@@ -1741,14 +1783,20 @@ class LocalNoteFolderRepository:
         )
 
     def rename_folder(
-        self, folder_id: str, *, name: str, expected_version: int
+        self,
+        folder_id: str,
+        *,
+        name: str,
+        expected_version: int,
+        cursor: sqlite3.Cursor | None = None,
     ) -> FolderMutationResult:
         """Rename an active folder and rewrite every active descendant path."""
         _validate_folder_id(folder_id, field="folder_id")
         _validate_expected_version(expected_version)
         normalized = normalize_folder_name(name)
         try:
-            with self.db.transaction() as cursor, _mutation_savepoint(cursor):
+            transaction = nullcontext(cursor) if cursor is not None else self.db.transaction()
+            with transaction as cursor, _mutation_savepoint(cursor):
                 target = _require_target(
                     cursor,
                     folder_id=folder_id,
@@ -1816,6 +1864,7 @@ class LocalNoteFolderRepository:
         *,
         parent_id: str | None,
         expected_version: int,
+        cursor: sqlite3.Cursor | None = None,
     ) -> FolderMutationResult:
         """Move an active folder and its active subtree beneath a new parent."""
         _validate_folder_id(folder_id, field="folder_id")
@@ -1823,7 +1872,8 @@ class LocalNoteFolderRepository:
             _validate_folder_id(parent_id, field="parent_id")
         _validate_expected_version(expected_version)
         try:
-            with self.db.transaction() as cursor, _mutation_savepoint(cursor):
+            transaction = nullcontext(cursor) if cursor is not None else self.db.transaction()
+            with transaction as cursor, _mutation_savepoint(cursor):
                 target = _require_target(
                     cursor,
                     folder_id=folder_id,
@@ -1891,13 +1941,18 @@ class LocalNoteFolderRepository:
             _raise_wrapped_repository_error(exc)
 
     def soft_delete_folder(
-        self, folder_id: str, *, expected_version: int
+        self,
+        folder_id: str,
+        *,
+        expected_version: int,
+        cursor: sqlite3.Cursor | None = None,
     ) -> FolderMutationResult:
         """Soft-delete an active folder and its complete active subtree."""
         _validate_folder_id(folder_id, field="folder_id")
         _validate_expected_version(expected_version)
         try:
-            with self.db.transaction() as cursor, _mutation_savepoint(cursor):
+            transaction = nullcontext(cursor) if cursor is not None else self.db.transaction()
+            with transaction as cursor, _mutation_savepoint(cursor):
                 target = _require_target(
                     cursor,
                     folder_id=folder_id,
@@ -1924,13 +1979,18 @@ class LocalNoteFolderRepository:
             _raise_wrapped_repository_error(exc)
 
     def restore_folder(
-        self, folder_id: str, *, expected_version: int
+        self,
+        folder_id: str,
+        *,
+        expected_version: int,
+        cursor: sqlite3.Cursor | None = None,
     ) -> FolderMutationResult:
         """Restore a deleted stored-path subtree after atomic validation."""
         _validate_folder_id(folder_id, field="folder_id")
         _validate_expected_version(expected_version)
         try:
-            with self.db.transaction() as cursor, _mutation_savepoint(cursor):
+            transaction = nullcontext(cursor) if cursor is not None else self.db.transaction()
+            with transaction as cursor, _mutation_savepoint(cursor):
                 target = _require_target(
                     cursor,
                     folder_id=folder_id,
@@ -2008,13 +2068,16 @@ class LocalNoteFolderRepository:
                 _preflight_active_paths(cursor, rewritten)
                 now = _utc_timestamp()
                 for row, path, normalized_path in rewritten:
+                    portable_sync_id = str(uuid.uuid4())
                     cursor.execute(
                         "UPDATE note_folders SET path = ?, normalized_path = ?, "
-                        "deleted = 0, version = version + 1, modified_at = ? "
+                        "deleted = 0, sync_id = COALESCE(sync_id, ?), "
+                        "version = version + 1, modified_at = ? "
                         "WHERE id = ? AND version = ? AND deleted = 1",
                         (
                             path,
                             normalized_path,
+                            portable_sync_id,
                             now,
                             row["id"],
                             row["version"],
@@ -2322,6 +2385,7 @@ def _mutation_result(
     return FolderMutationResult(
         folder=_folder_from_row(target),
         affected_folder_ids=tuple(str(row["id"]) for row in subtree),
+        explicit_folder_id=folder_id,
     )
 
 

@@ -111,7 +111,7 @@ def test_fresh_database_creates_local_scope_and_selection_schema(
             row[0]
             for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
-        assert _version(db) == CharactersRAGDB._CURRENT_SCHEMA_VERSION == 55
+        assert _version(db) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         assert {SCOPE_TABLE, SELECTION_TABLE} <= tables
 
         memory_indexes = conn.execute(

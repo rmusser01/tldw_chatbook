@@ -557,6 +557,12 @@ def test_sync_v2_schema_migration_updates_v3_without_losing_existing_rows(tmp_pa
         outbox = conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sync_v2_local_outbox'"
         ).fetchone()
+        outbox_columns = {
+            row["name"]
+            for row in conn.execute(
+                "PRAGMA table_info(sync_v2_local_outbox)"
+            ).fetchall()
+        }
         conflict_reviews = conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sync_v2_conflict_reviews'"
         ).fetchone()
@@ -595,14 +601,15 @@ def test_sync_v2_schema_migration_updates_v3_without_losing_existing_rows(tmp_pa
         "dry_run_metadata",
     }.issubset(columns)
     assert outbox is not None
+    assert "accepted_result" in outbox_columns
     assert conflict_reviews is not None
     assert receipts is not None
     assert preserved_outbox == "device-1:chat:message-1:sha256:old"
     assert preserved_profile == "preserved-profile"
     assert preserved_cursor == "preserved-cursor"
     assert preserved_conflict == "preserved-conflict"
-    assert schema_version == 4
-    assert schema_versions == [4]
+    assert schema_version == 5
+    assert schema_versions == [5]
 
 
 def test_sync_state_repository_exposes_explicit_durability(tmp_path):
@@ -1034,7 +1041,13 @@ def test_sync_v2_outbox_persists_pending_entries_and_push_results(tmp_path):
         authenticated_principal_id="user-a",
         workspace_scope="workspace-1",
         dataset_id="dataset-1",
-        accepted=[{"client_envelope_id": accepted.client_envelope_id}],
+        accepted=[
+            {
+                "client_envelope_id": accepted.client_envelope_id,
+                "server_cursor": 23,
+                "object_revision": 4,
+            }
+        ],
         rejected=[
             {
                 "client_envelope_id": rejected.client_envelope_id,
@@ -1070,6 +1083,22 @@ def test_sync_v2_outbox_persists_pending_entries_and_push_results(tmp_path):
         accepted.client_envelope_id
     ]
     assert dispatched[0]["attempt_count"] == 1
+    assert dispatched[0]["accepted_result"] == {
+        "client_envelope_id": accepted.client_envelope_id,
+        "object_revision": 4,
+        "server_cursor": 23,
+    }
+    reopened.close()
+    durable_repository = SyncStateRepository(db_path)
+    durable_result = durable_repository.list_sync_v2_outbox_entries(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        dataset_id="dataset-1",
+        status="dispatched",
+    )[0]["accepted_result"]
+    durable_repository.close()
+    assert durable_result == dispatched[0]["accepted_result"]
     assert [entry["client_envelope_id"] for entry in pending_after] == [
         rejected.client_envelope_id,
         conflicted.client_envelope_id,
@@ -1202,6 +1231,50 @@ def test_sync_v2_identical_reenqueue_preserves_dispatched_outbox_state(tmp_path)
         entry["client_envelope_id"]
         for entry in repo.list_pending_sync_v2_outbox_envelopes(**scope)
     ] == [changed_envelope.client_envelope_id]
+
+
+def test_server_trusted_outbox_same_id_confirms_exact_envelope_and_rejects_change(
+    tmp_path,
+):
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    scope = {
+        "server_profile_id": "server-a",
+        "authenticated_principal_id": None,
+        "workspace_scope": None,
+        "dataset_id": "dataset-1",
+    }
+    envelope = {
+        "client_envelope_id": "00000000-0000-5000-8000-000000000001",
+        "dataset_id": "dataset-1",
+        "device_id": "device-1",
+        "domain": "notes.keyword",
+        "object_id": "00000000-0000-4000-8000-000000000001",
+        "operation": "upsert",
+        "adapter_version": 1,
+        "schema_version": 1,
+        "object_revision": 1,
+        "base_object_revision": None,
+        "base_object_hash": None,
+        "dependencies": [],
+        "deleted": False,
+        "payload": {"keyword": "Stable"},
+        "payload_clear": {"keyword": "Stable"},
+        "payload_hash": "a" * 64,
+        "encryption_policy": "server_trusted_v1",
+        "encryption_metadata": {"policy": "server_trusted_v1"},
+    }
+
+    first = repo.enqueue_sync_v2_outbox_envelope(**scope, envelope=envelope)
+    identical = repo.enqueue_sync_v2_outbox_envelope(**scope, envelope=dict(envelope))
+    changed = dict(envelope)
+    changed["payload"] = {"keyword": "Changed"}
+    changed["payload_clear"] = {"keyword": "Changed"}
+    changed["payload_hash"] = "b" * 64
+
+    assert identical["outbox_id"] == first["outbox_id"]
+    with pytest.raises(ValueError, match="different envelope"):
+        repo.enqueue_sync_v2_outbox_envelope(**scope, envelope=changed)
+    assert repo.list_sync_v2_outbox_entries(**scope)[0]["envelope"] == first["envelope"]
 
 
 def test_sync_v2_profile_summary_aggregates_state_counts_and_status(tmp_path):

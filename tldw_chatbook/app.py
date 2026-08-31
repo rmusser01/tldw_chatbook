@@ -671,6 +671,7 @@ from tldw_chatbook.Sync_Interop import (  # noqa: E402
     LocalFirstSyncService,
     ManualSyncControlService,
     ServerSyncService,
+    SyncRestoreService,
     SyncScopeService,
     SyncStateRepository,
 )
@@ -773,6 +774,10 @@ if TYPE_CHECKING:
 API_IMPORTS_SUCCESSFUL = True
 
 DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
+#: Notes organization composition is not needed for the first interactive
+#: frame. Keep its repository, validator, and agent-lesson seed imports beyond
+#: the ADR-097 UI-ready module census.
+DEFERRED_NOTES_ORGANIZATION_WIRING_DELAY_SECONDS = 0.1
 #: Workspace agent provisioning (task-8) deferral: after `_ui_ready` so
 #: `Workspaces.agent_provisioning` stays out of the UI-ready census
 #: (ADR-097); same 0.1-0.2 s non-essential-startup window as audio.
@@ -6843,6 +6848,130 @@ def _build_notes_scope_service(
     )
 
 
+def _wire_notes_sync_services(app: Any) -> None:
+    """Finish Notes Sync composition after both SQLite owners exist."""
+
+    from tldw_chatbook.Notes.agent_lessons import initialize_agent_lessons_folder
+    from tldw_chatbook.Notes.notes_organization_repository import (
+        NotesOrganizationRepository,
+    )
+    from tldw_chatbook.Sync_Interop.notes_organization_sync_service import (
+        NotesOrganizationSyncService,
+    )
+    from tldw_chatbook.Sync_Interop.notes_outbox_producer import (
+        NotesSyncV2OutboxProducer,
+    )
+
+    notes_db = getattr(app, "chachanotes_db", None)
+    state_repository = getattr(app, "sync_state_repository", None)
+    notes_scope_service = getattr(app, "notes_scope_service", None)
+    runtime_state = getattr(getattr(app, "runtime_policy", None), "state", None)
+    server_is_authoritative = runtime_state is None or (
+        getattr(runtime_state, "active_source", None) == "server"
+    )
+    active_server_profile_id = (
+        str(
+            getattr(app, "active_server_id", None)
+            or getattr(runtime_state, "active_server_id", None)
+            or ""
+        ).strip()
+        if server_is_authoritative
+        else ""
+    )
+    if not active_server_profile_id:
+        app.notes_organization_repository = None
+        app.notes_organization_sync_service = None
+        if notes_scope_service is not None:
+            notes_scope_service.organization_sync_service = None
+        local_notes = getattr(notes_scope_service, "local_notes_service", None)
+        if local_notes is not None:
+            local_notes.organization_sync_service = None
+        local_chat = getattr(app, "local_chat_conversation_service", None)
+        if local_chat is not None:
+            local_chat.organization_sync_service = None
+        local_first = getattr(app, "local_first_sync_service", None)
+        if local_first is not None:
+            local_first.notes_organization_repository = None
+            local_first.notes_organization_sync_service = None
+        restore = getattr(app, "sync_restore_service", None)
+        if restore is not None:
+            restore.notes_organization_repository = None
+        manual = getattr(app, "manual_sync_control_service", None)
+        if manual is not None:
+            manual.notes_organization_sync_service = None
+            manual.notes_repository = None
+        if notes_db is not None:
+            initialize_agent_lessons_folder(
+                notes_db,
+                scope_mode="local_only",
+                profile_id="local",
+                dataset_id="local",
+            )
+        return
+    if notes_db is None or state_repository is None or notes_scope_service is None:
+        return
+    repository = getattr(app, "notes_organization_repository", None)
+    if (
+        repository is None
+        or getattr(repository, "db", None) is not notes_db
+        or getattr(repository, "server_profile_id", None) != active_server_profile_id
+    ):
+        repository = NotesOrganizationRepository(
+            notes_db,
+            server_profile_id=active_server_profile_id,
+        )
+    producer = NotesSyncV2OutboxProducer(
+        state_repository=state_repository,
+        dataset_keys=getattr(app, "sync_v2_dataset_keys", {}),
+        notes_db=notes_db,
+    )
+    organization_service = NotesOrganizationSyncService(
+        notes_repository=repository,
+        state_repository=state_repository,
+        notes_producer=producer,
+    )
+    app.notes_organization_repository = repository
+    app.notes_organization_sync_service = organization_service
+    notes_scope_service.sync_v2_notes_producer = producer
+    notes_scope_service.organization_sync_service = organization_service
+    local_notes = getattr(notes_scope_service, "local_notes_service", None)
+    if local_notes is not None:
+        local_notes.organization_sync_service = organization_service
+    local_chat = getattr(app, "local_chat_conversation_service", None)
+    if local_chat is not None:
+        local_chat.organization_sync_service = organization_service
+    local_first = getattr(app, "local_first_sync_service", None)
+    if local_first is not None:
+        local_first.notes_organization_repository = repository
+        local_first.notes_organization_sync_service = organization_service
+    restore = getattr(app, "sync_restore_service", None)
+    if restore is not None:
+        restore.notes_organization_repository = repository
+    manual = getattr(app, "manual_sync_control_service", None)
+    if manual is not None:
+        manual.notes_organization_sync_service = organization_service
+        manual.notes_repository = repository
+
+    for profile in state_repository.list_sync_v2_profile_states():
+        dataset_id = str(profile.get("dataset_id") or "")
+        if (
+            profile.get("server_profile_id") != active_server_profile_id
+            or profile.get("profile_mode") != "local_first"
+            or not dataset_id
+        ):
+            continue
+        seed = notes_db.get_connection().execute(
+            "SELECT state FROM agent_lessons_seed_state WHERE profile_id = ? "
+            "AND dataset_id = ?",
+            (active_server_profile_id, dataset_id),
+        ).fetchone()
+        if seed is not None and seed["state"] != "unknown":
+            organization_service.initialize_agent_lessons_seed(
+                server_profile_id=active_server_profile_id,
+                dataset_id=dataset_id,
+            )
+
+
 _SETUP_STARTUP_NETWORKING_ACTIONS = frozenset({"offer", "prompt", "home"})
 
 
@@ -7485,6 +7614,11 @@ class TldwCli(
                     "ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__."
                 )
                 self.chachanotes_db = None  # Explicitly set to None
+
+        if self.chachanotes_db is not None:
+            self.notes_organization_repository = None
+            self.local_first_sync_service.notes_organization_repository = None
+            self.sync_restore_service.notes_organization_repository = None
 
         self._wire_chat_conversation_services()
 
@@ -8744,6 +8878,17 @@ class TldwCli(
                 type(exc).__name__,
             )
 
+    def _deferred_wire_notes_sync_services(self) -> None:
+        """Compose Notes organization Sync after the first interactive frame."""
+
+        try:
+            _wire_notes_sync_services(self)
+        except Exception as exc:
+            self.loguru_logger.warning(
+                "Deferred Notes organization Sync wiring failed; error_type={}",
+                type(exc).__name__,
+            )
+
     def _wire_workspace_agent_provisioning(self) -> None:
         """Attach the workspace agent provisioner and run the startup backfill.
 
@@ -8862,6 +9007,10 @@ class TldwCli(
             policy_enforcer=self.service_policy_enforcer,
             sync_scope_service=self.sync_scope_service,
         )
+        if self.local_chat_conversation_service is not None:
+            self.local_chat_conversation_service.organization_sync_service = getattr(
+                self, "notes_organization_sync_service", None
+            )
         self._wire_citation_artifact_ownership()
 
     def _wire_writing_services(self) -> None:
@@ -9818,11 +9967,19 @@ class TldwCli(
             state_repository=self.sync_state_repository,
         )
         self.sync_v2_dataset_keys: dict[str, bytes] = {}
+        self.notes_organization_repository = None
         self.local_first_sync_service = LocalFirstSyncService(
             server_service=self.server_sync_service,
             state_repository=self.sync_state_repository,
             local_store=getattr(self, "sync_v2_local_store", None),
             dataset_keys=self.sync_v2_dataset_keys,
+            notes_organization_repository=self.notes_organization_repository,
+        )
+        self.sync_restore_service = SyncRestoreService(
+            server_service=self.server_sync_service,
+            local_store=getattr(self, "sync_v2_local_store", None),
+            dataset_keys=self.sync_v2_dataset_keys,
+            notes_organization_repository=self.notes_organization_repository,
         )
         self.manual_sync_control_service = ManualSyncControlService(
             state_repository=self.sync_state_repository,
@@ -10296,6 +10453,7 @@ class TldwCli(
                 previous_server_id,
                 updated_state.active_server_id,
             )
+        _wire_notes_sync_services(self)
 
         resolved_backend = (
             str(self.runtime_policy.state.active_source or normalized_backend)
@@ -13680,7 +13838,9 @@ class TldwCli(
                 )
                 if callable(apply_chrome):
                     apply_chrome()
-            self._schedule_startup_model_catalog_refresh(after_setup_completion=True)
+            self._schedule_startup_model_catalog_refresh(
+                after_setup_completion=True
+            )
             return
 
         from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -13701,9 +13861,7 @@ class TldwCli(
                     after_setup_completion=True
                 )
                 raise
-            self._schedule_startup_model_catalog_refresh(
-                after_setup_completion=True
-            )
+            self._schedule_startup_model_catalog_refresh(after_setup_completion=True)
 
         self.run_worker(
             navigate_then_schedule_catalog_consent(),
@@ -14125,6 +14283,10 @@ class TldwCli(
         self.set_timer(
             DEFERRED_AUDIO_SERVICE_DELAY_SECONDS,
             self._start_deferred_audio_service_initialization,
+        )
+        self.set_timer(
+            DEFERRED_NOTES_ORGANIZATION_WIRING_DELAY_SECONDS,
+            self._deferred_wire_notes_sync_services,
         )
         # Workspace agent provisioning (task-8): best-effort hook attach +
         # startup backfill, deferred past `_ui_ready` so the provisioning

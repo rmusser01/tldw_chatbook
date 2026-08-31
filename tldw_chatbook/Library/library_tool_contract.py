@@ -75,12 +75,18 @@ SAVE_NOTE_CONTENT_MAX_CHARS = 100_000
 #: segment longer than 255 characters, so this bound must equal the model's
 #: own limit -- a schema-passing 256-char name would die at the model.
 SAVE_NOTE_FOLDER_MAX_CHARS = 255
+SEARCH_NOTE_FOLDER_MAX_CHARS = 500
+ORGANIZATION_VERSION_CHARS = 64
 
 # -- Structured errors (spec §9) -------------------------------------------------
 
 ERROR_INVALID_ARGUMENT = "invalid_argument"
 ERROR_NOT_FOUND = "not_found"
 ERROR_CONTENT_CHANGED = "content_changed"
+ERROR_ORGANIZATION_CHANGED = "organization_changed"
+ERROR_APPROVAL_REQUIRED = "approval_required"
+ERROR_FOREGROUND_REQUIRED = "foreground_required"
+ERROR_CREDENTIAL_MATERIAL_DETECTED = "credential_material_detected"
 ERROR_INDEX_UNAVAILABLE = "index_unavailable"
 ERROR_FEATURE_UNAVAILABLE = "feature_unavailable"
 ERROR_STORAGE_ERROR = "storage_error"
@@ -89,6 +95,10 @@ ERROR_CODES = frozenset(
         ERROR_INVALID_ARGUMENT,
         ERROR_NOT_FOUND,
         ERROR_CONTENT_CHANGED,
+        ERROR_ORGANIZATION_CHANGED,
+        ERROR_APPROVAL_REQUIRED,
+        ERROR_FOREGROUND_REQUIRED,
+        ERROR_CREDENTIAL_MATERIAL_DETECTED,
         ERROR_INDEX_UNAVAILABLE,
         ERROR_FEATURE_UNAVAILABLE,
         ERROR_STORAGE_ERROR,
@@ -209,6 +219,49 @@ def _search_schema() -> dict:
         "maxLength": MAX_SEARCH_QUERY_CHARS,
     }
     schema["required"] = ["query"]
+    return schema
+
+
+def _note_search_schema() -> dict:
+    """The Notes search schema with one-or-more exact selectors."""
+
+    schema = _search_schema()
+    schema["properties"].update(
+        {
+            "keyword": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": KEYWORD_VALUE_MAX_CHARS,
+                "description": "spelling-exact whole-keyword filter after trimming.",
+            },
+            "folder_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": MAX_PUBLIC_ID_BYTES,
+                "description": (
+                    "Exact stable public folder ID returned in note organization"
+                    " metadata. May accompany folder only when both identify the"
+                    " same folder."
+                ),
+            },
+            "folder": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": SEARCH_NOTE_FOLDER_MAX_CHARS,
+                "description": (
+                    "Exact relative portable folder path. May accompany folder_id"
+                    " only when both identify the same folder."
+                ),
+            },
+        }
+    )
+    schema["required"] = []
+    schema["anyOf"] = [
+        {"required": ["query"]},
+        {"required": ["keyword"]},
+        {"required": ["folder_id"]},
+        {"required": ["folder"]},
+    ]
     return schema
 
 
@@ -392,6 +445,30 @@ def _save_note_schema() -> dict:
                     " Omit to leave the note unfiled."
                 ),
             },
+            "folder_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": MAX_PUBLIC_ID_BYTES,
+                "description": (
+                    "Optional stable public folder ID. This identity is"
+                    " authoritative when supplied; do not supply both folder_id"
+                    " and folder."
+                ),
+            },
+            "ensure_keywords": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": KEYWORD_VALUE_MAX_CHARS,
+                },
+                "maxItems": KEYWORDS_PER_ITEM_MAX,
+                "uniqueItems": True,
+                "description": (
+                    "Whole keywords to ensure are attached. Additive only: existing"
+                    " user keywords are never removed."
+                ),
+            },
             "note_id": {
                 "type": "string",
                 "minLength": 1,
@@ -411,8 +488,19 @@ def _save_note_schema() -> dict:
                     " together with note_id."
                 ),
             },
+            "expected_organization_version": {
+                "type": "string",
+                "minLength": ORGANIZATION_VERSION_CHARS,
+                "maxLength": ORGANIZATION_VERSION_CHARS,
+                "pattern": "^[0-9a-f]{64}$",
+                "description": (
+                    "Current opaque organization version from the latest note"
+                    " search/read; required for organization-changing updates."
+                ),
+            },
         },
         "required": ["title", "content"],
+        "not": {"required": ["folder_id", "folder"]},
         "additionalProperties": False,
     }
 
@@ -534,12 +622,12 @@ LIBRARY_TOOL_DESCRIPTORS: dict[str, LibraryToolDescriptor] = {
         ),
         _descriptor(
             "library_search_notes", "note", "search",
-            "Lexically search note titles, content, and keywords (literal, case-insensitive; no semantic/embedding search).",
-            _search_schema(),
+            "Lexically search note titles, content, and keywords, with optional spelling-exact whole-keyword and exact portable-folder filters (literal lexical query, case-insensitive; no semantic/embedding search).",
+            _note_search_schema(),
         ),
         _descriptor(
             "library_save_note", "note", "save",
-            "Save one note: create by default, or update an existing note when note_id and expected_version are supplied together (exactly one without the other is refused; a stale version returns content_changed). Notes have no unique title, so a re-run should search by title (library_search_notes) and update by id rather than create a duplicate. For notes derived from Library media, begin the content with this provenance header so staleness is detectable: 'source: <media id>\\nrevision: <media revision>\\nchapter: <chapter title>\\nchunks: <first>-<last>' (revision is load-bearing: a chunk span is meaningless without the media version it was derived from). The optional folder is one level and is created when missing, so concurrent savers converge on one folder.",
+            "Save one note: create by default, or update an existing note when note_id and expected_version are supplied together (exactly one without the other is refused; a stale version returns content_changed). Organization changes use additive ensure_keywords, an authoritative stable folder_id or a one-level folder (never both), and expected_organization_version on updates; existing user keywords and folder memberships are preserved. Notes have no unique title, so a re-run should search by title (library_search_notes) and update by id rather than create a duplicate. For notes derived from Library media, begin the content with this provenance header so staleness is detectable: 'source: <media id>\\nrevision: <media revision>\\nchapter: <chapter title>\\nchunks: <first>-<last>' (revision is load-bearing: a chunk span is meaningless without the media version it was derived from).",
             _save_note_schema(),
             writing=True,
         ),
@@ -645,13 +733,14 @@ LIBRARY_TOOL_DESCRIPTORS: dict[str, LibraryToolDescriptor] = {
 # -- Stable opaque IDs (spec §3) --------------------------------------------------
 
 _PATH_LIKE_CHARS = ("/", "\\", "\x00")
+_PUBLIC_ID_TYPES = (*LIBRARY_ITEM_TYPES, "folder", "keyword")
 
 
 def make_public_id(item_type: str, raw_identity: Any) -> str:
     """Encode a backing store identity as an opaque `type:<base64url>` public ID.
 
     Args:
-        item_type: One of ``LIBRARY_ITEM_TYPES``.
+        item_type: A routed Library item type or Notes organization metadata type.
         raw_identity: The backing identity (UUID, collection_id, skill record
             identity). Converted with ``str()``.
 
@@ -664,7 +753,7 @@ def make_public_id(item_type: str, raw_identity: Any) -> str:
             (programming) errors; user-supplied IDs fail closed in
             :func:`parse_public_id` instead.
     """
-    if item_type not in LIBRARY_ITEM_TYPES:
+    if item_type not in _PUBLIC_ID_TYPES:
         raise ValueError(f"unknown Library item type: {item_type!r}")
     raw = str(raw_identity or "")
     if not raw or any(c in raw for c in _PATH_LIKE_CHARS):
@@ -695,7 +784,7 @@ def parse_public_id(value: Any, *, expected_type: str | None = None) -> tuple[st
     if not value.isascii() or len(value) > MAX_PUBLIC_ID_BYTES:
         raise _invalid("id is not a valid Library item ID")
     prefix, sep, body = value.partition(":")
-    if not sep or prefix not in LIBRARY_ITEM_TYPES or not body:
+    if not sep or prefix not in _PUBLIC_ID_TYPES or not body:
         raise _invalid("id is not a valid Library item ID")
     if expected_type is not None and prefix != expected_type:
         raise _invalid(f"id names a {prefix} item; this tool reads {expected_type} items")
@@ -1070,11 +1159,15 @@ __all__ = [
     "DISPLAY_NAME_FLOOR_BYTES",
     "DISPLAY_NAME_MAX_BYTES",
     "ERROR_CODES",
+    "ERROR_APPROVAL_REQUIRED",
     "ERROR_CONTENT_CHANGED",
+    "ERROR_CREDENTIAL_MATERIAL_DETECTED",
     "ERROR_FEATURE_UNAVAILABLE",
+    "ERROR_FOREGROUND_REQUIRED",
     "ERROR_INDEX_UNAVAILABLE",
     "ERROR_INVALID_ARGUMENT",
     "ERROR_NOT_FOUND",
+    "ERROR_ORGANIZATION_CHANGED",
     "ERROR_STORAGE_ERROR",
     "KEYWORDS_PER_ITEM_MAX",
     "KEYWORD_VALUE_MAX_CHARS",

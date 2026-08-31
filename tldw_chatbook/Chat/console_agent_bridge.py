@@ -82,6 +82,7 @@ from tldw_chatbook.Agents.agent_service import (
     build_run_log_request_plan,
 )
 from tldw_chatbook.Agents.project_instruction_resolver import (
+    InstructionPromotionSnapshot,
     InstructionSnapshot,
     StartupInstructionCandidate,
 )
@@ -89,6 +90,7 @@ from tldw_chatbook.Agents.project_instruction_runtime import (
     InstructionActivationLedger,
     InstructionDeliveryReceipt,
     InstructionPreparation,
+    PromotionSnapshotRevalidation,
 )
 from tldw_chatbook.Agents.native_tools import provider_supports_native_tools
 from tldw_chatbook.Agents.agent_stream import StreamGate
@@ -2306,6 +2308,32 @@ class _ProjectInstructionDispatchContext:
     def discard_primary_snapshot(self) -> None:
         self._ledger = None
 
+    def snapshot_promotion_target(
+        self, target_relative_path: str
+    ) -> InstructionPromotionSnapshot:
+        """Snapshot one eligible promotion target from the accepted ledger.
+
+        Args:
+            target_relative_path: Workspace-relative instruction target.
+
+        Returns:
+            The immutable target and effective-chain snapshot.
+        """
+        return self._require_ledger().snapshot_promotion_target(target_relative_path)
+
+    def revalidate_promotion_target(
+        self, prepared: InstructionPromotionSnapshot
+    ) -> PromotionSnapshotRevalidation:
+        """Revalidate a prepared target against the accepted live ledger.
+
+        Args:
+            prepared: Previously captured promotion snapshot.
+
+        Returns:
+            Eligibility and a content-free reason code.
+        """
+        return self._require_ledger().revalidate_promotion_target(prepared)
+
     def initial_context_for_chain(self, chain_id, payload_state):
         return self._require_ledger().initial_context_for_chain(chain_id, payload_state)
 
@@ -3769,6 +3797,7 @@ def build_console_first_request_plan(
         messages,
         skill_file_enabled=bool(skills_present and turn_skill_bindings),
         install_skill_enabled=install_skill_enabled,
+        managed_skill_promotion_enabled=library_provider is not None,
         run_skill_script_enabled=run_skill_script_enabled,
         run_log_active=run_log.requested,
         agent_definitions=agent_definitions,
@@ -4310,6 +4339,7 @@ class ConsoleAgentBridge:
         raw_shell_provider: Any | None = None,
         library_provider: Any | None = None,
         library_authority: Any | None = None,
+        managed_skill_promotion_gate: Any | None = None,
         # PR2a Task 7: called with the run id of every sub-agent this turn
         # cancels or abandons, so its still-armed approval cards are failed
         # closed and taken off screen instead of staying pressable for a
@@ -4574,6 +4604,14 @@ class ConsoleAgentBridge:
 
             def service_confirm_project_instruction_dispatch(snapshot):
                 project_instruction_context.accept_primary_snapshot(snapshot)
+                bind_promotion_context = getattr(
+                    local_provider, "bind_instruction_promotion_context", None
+                )
+                if callable(bind_promotion_context):
+                    bind_promotion_context(
+                        snapshotter=project_instruction_context.snapshot_promotion_target,
+                        revalidator=project_instruction_context.revalidate_promotion_target,
+                    )
                 decision = "cancel"
                 try:
                     decision = (
@@ -4585,6 +4623,11 @@ class ConsoleAgentBridge:
                 finally:
                     if decision != "proceed":
                         project_instruction_context.discard_primary_snapshot()
+                        unbind_promotion_context = getattr(
+                            local_provider, "unbind_instruction_promotion_context", None
+                        )
+                        if callable(unbind_promotion_context):
+                            unbind_promotion_context()
 
         if self._skills_service is not None:
             skill_file_bindings = SkillFileBindings(
@@ -4599,6 +4642,19 @@ class ConsoleAgentBridge:
                 builtin_names=first_request_plan.builtin_names,
                 local_names=first_request_plan.local_names,
                 skill_file_bindings=skill_file_bindings,
+            )
+        prepare_managed_skill_promotion_tool = None
+        if (
+            self._skills_service is not None
+            and managed_skill_promotion_gate is not None
+        ):
+            managed_skill_promotion_gate.bind_reader(
+                lambda skill_name: asyncio.run(
+                    self._skills_service.get_skill(skill_name, mode="local")
+                )
+            )
+            prepare_managed_skill_promotion_tool = (
+                managed_skill_promotion_gate.invoke
             )
         # task-5 (skills-fork-reachability): seed this run's own bindings
         # with the names the CONTROLLER already resolved/spliced for the
@@ -5444,6 +5500,9 @@ class ConsoleAgentBridge:
             before_tool_dispatch=before_tool_dispatch,
             review_state_scope=review_state_scope,
             install_skill_tool=install_skill_tool,
+            prepare_managed_skill_promotion_tool=(
+                prepare_managed_skill_promotion_tool
+            ),
             run_skill_script_tool=run_skill_script_tool,
             run_log_writer=run_log_writer,
             run_log_request_plan=first_request_plan.run_log,
@@ -5583,6 +5642,13 @@ class ConsoleAgentBridge:
             # `run_turn` raised, before any teardown below can block.
             with self._change_window_lock:
                 self._inflight_turn_message_ids.discard(assistant_message_id)
+            if managed_skill_promotion_gate is not None:
+                managed_skill_promotion_gate.unbind_reader()
+            unbind_promotion_context = getattr(
+                local_provider, "unbind_instruction_promotion_context", None
+            )
+            if callable(unbind_promotion_context):
+                unbind_promotion_context()
             self._clear_raw_shell_progress(raw_shell_progress_run_ids)
             if self._buddy_sink is not None:
                 for buddy_run_id in primary_buddy_run_ids:

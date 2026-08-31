@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import json
 import inspect
 import threading
 from collections.abc import Iterable
 
 import pytest
 
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
+from tldw_chatbook.Notes.notes_organization_repository import NotesOrganizationRepository
 from tldw_chatbook.Notes.note_folder_models import (
     FolderPlacementId,
     FolderCapabilityError,
@@ -20,6 +24,10 @@ from tldw_chatbook.Notes.note_folder_models import (
     NoteTreePathStep,
 )
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService, ScopeType
+from tldw_chatbook.Sync_Interop.notes_organization_sync_service import (
+    NotesOrganizationSyncService,
+)
+from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 from tldw_chatbook.runtime_policy import PolicyDeniedError
 
 FOLDER_OPERATIONS = [
@@ -1037,3 +1045,182 @@ async def test_local_folder_mutations_do_not_enter_sync_v2_note_outbox() -> None
 
     assert producer.upserts == []
     assert producer.deletes == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "local_state", ["initializing", "pulling", "adoption_review", "failed"]
+)
+async def test_synchronized_folder_create_rejects_until_group_ready(
+    tmp_path, local_state: str
+) -> None:
+    notes = CharactersRAGDB(tmp_path / f"{local_state}.sqlite", client_id="folders")
+    state = SyncStateRepository(tmp_path / f"{local_state}-sync.sqlite")
+    state.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id=None,
+        workspace_scope=None,
+        profile_mode="local_first",
+        device_id="device-a",
+        dataset_id="dataset-a",
+    )
+    with notes.transaction() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO notes_organization_sync_checkpoints(
+                server_profile_id, dataset_id, local_state, server_state,
+                inventory_phase, updated_at
+            ) VALUES ('server-a', 'dataset-a', ?, 'ready', 'complete',
+                      '2026-08-29T00:00:00+00:00')
+            """,
+            (local_state,),
+        )
+    repository = LocalNoteFolderRepository(notes)
+    organization = NotesOrganizationSyncService(
+        notes_repository=NotesOrganizationRepository(notes, server_profile_id="server-a"),
+        state_repository=state,
+    )
+    service = NotesScopeService(
+        local_notes_service=object(),
+        server_service=object(),
+        folder_repository=repository,
+        organization_sync_service=organization,
+    )
+
+    with pytest.raises(ValueError, match="organization group is not ready"):
+        await service.create_note_folder(
+            scope=ScopeType.LOCAL_NOTE,
+            name="Blocked",
+            parent_id=None,
+            user_id="local-user",
+            sync_v2_profile={"server_profile_id": "server-a"},
+        )
+
+    assert repository.list_children(parent_id=None, limit=10, offset=0).folders == ()
+    assert notes.get_connection().execute(
+        "SELECT COUNT(*) FROM notes_organization_sync_intents"
+    ).fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_ready_folder_create_commits_mutation_and_one_explicit_intent(
+    tmp_path,
+) -> None:
+    notes = CharactersRAGDB(tmp_path / "ready.sqlite", client_id="folders")
+    state = SyncStateRepository(tmp_path / "ready-sync.sqlite")
+    state.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id=None,
+        workspace_scope=None,
+        profile_mode="local_first",
+        device_id="device-a",
+        dataset_id="dataset-a",
+    )
+    with notes.transaction() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO notes_organization_sync_checkpoints(
+                server_profile_id, dataset_id, local_state, server_state,
+                inventory_phase, updated_at
+            ) VALUES ('server-a', 'dataset-a', 'ready', 'ready', 'complete',
+                      '2026-08-29T00:00:00+00:00')
+            """
+        )
+    repository = LocalNoteFolderRepository(notes)
+    service = NotesScopeService(
+        local_notes_service=object(),
+        server_service=object(),
+        folder_repository=repository,
+        organization_sync_service=NotesOrganizationSyncService(
+            notes_repository=NotesOrganizationRepository(
+                notes, server_profile_id="server-a"
+            ),
+            state_repository=state,
+        ),
+    )
+
+    folder = await service.create_note_folder(
+        scope=ScopeType.LOCAL_NOTE,
+        name="Portable",
+        parent_id=None,
+        user_id="local-user",
+        sync_v2_profile={"server_profile_id": "server-a"},
+    )
+
+    row = notes.get_connection().execute(
+        "SELECT domain, object_id, operation, payload_json, source_version "
+        "FROM notes_organization_sync_intents"
+    ).fetchone()
+    sync_id = notes.get_connection().execute(
+        "SELECT sync_id FROM note_folders WHERE id = ?", (folder.folder_id,)
+    ).fetchone()[0]
+    assert tuple(row) == (
+        "notes.folder",
+        sync_id,
+        "upsert",
+        '{"name":"Portable","parent_sync_id":null}',
+        1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_ready_scope_managed_membership_routes_through_organization_owner(
+    tmp_path,
+) -> None:
+    notes = CharactersRAGDB(tmp_path / "membership.sqlite", client_id="folders")
+    state = SyncStateRepository(tmp_path / "membership-sync.sqlite")
+    state.set_sync_v2_profile_state(
+        server_profile_id="server-a",
+        authenticated_principal_id=None,
+        workspace_scope=None,
+        profile_mode="local_first",
+        device_id="device-a",
+        dataset_id="dataset-a",
+    )
+    with notes.transaction() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO notes_organization_sync_checkpoints(
+                server_profile_id, dataset_id, local_state, server_state,
+                inventory_phase, updated_at
+            ) VALUES ('server-a', 'dataset-a', 'ready', 'ready', 'complete',
+                      '2026-08-29T00:00:00+00:00')
+            """
+        )
+    repository = LocalNoteFolderRepository(notes)
+    service = NotesScopeService(
+        local_notes_service=object(),
+        server_service=object(),
+        folder_repository=repository,
+        organization_sync_service=NotesOrganizationSyncService(
+            notes_repository=NotesOrganizationRepository(
+                notes, server_profile_id="server-a"
+            ),
+            state_repository=state,
+        ),
+    )
+    sync_profile = {"server_profile_id": "server-a"}
+    folder = await service.create_note_folder(
+        scope=ScopeType.LOCAL_NOTE,
+        name="Managed",
+        parent_id=None,
+        user_id="local-user",
+        sync_v2_profile=sync_profile,
+    )
+    note_id = notes.add_note("Note", "Body")
+
+    memberships = await service.reconcile_note_folder_owner_memberships(
+        scope=ScopeType.LOCAL_NOTE,
+        owner_id="source-a",
+        desired=((folder.folder_id, note_id),),
+        user_id="local-user",
+        sync_v2_profile=sync_profile,
+    )
+
+    assert len(memberships) == 1
+    row = notes.get_connection().execute(
+        "SELECT operation, payload_json FROM notes_organization_sync_intents "
+        "WHERE domain = 'notes.folder_link'"
+    ).fetchone()
+    assert row["operation"] == "upsert"
+    assert json.loads(row["payload_json"])["note_id"] == note_id

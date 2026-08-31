@@ -14,6 +14,7 @@ from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_models import (
     FIND_TOOLS_NAME,
     LOAD_TOOLS_NAME,
+    PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
     RUN_DONE,
     RUN_ERROR,
     RUN_STUCK,
@@ -1318,6 +1319,51 @@ def test_native_subagent_turns_also_carry_tools(db):
         SUBAGENT_SYSTEM_PROMPT
     )
     assert "tools" in child_call  # native_tools propagated to the child
+
+
+def test_managed_skill_proposal_schema_and_callback_are_primary_only(db):
+    chat = FleetChat(
+        [
+            {
+                "content": None,
+                "tool_calls": [
+                    native_call(SPAWN_TOOL_NAME, {"task": "inspect only"}, "s1")
+                ],
+            },
+            "done",
+        ],
+        {"inspect only": ["child done"]},
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=chat,
+        prepare_managed_skill_promotion_tool=lambda _args: ToolResult(
+            ok=True, content="proposal"
+        ),
+    )
+
+    _run_id, outcome = service.run_turn(
+        conversation_id="managed-promotion-schema",
+        messages=[{"role": "user", "content": "delegate"}],
+        config=CFG,
+        api_endpoint="groq",
+        should_cancel=lambda: False,
+    )
+    join_fleet_children(service)
+
+    assert outcome.status == RUN_DONE
+    primary_names = {
+        row["function"]["name"] for row in chat.parent_calls[0]["tools"]
+    }
+    child_names = {
+        row["function"]["name"]
+        for row in chat.child_calls["inspect only"][0]["tools"]
+    }
+    assert PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME in primary_names
+    assert PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME not in child_names
 
 
 def test_malformed_native_arguments_error_is_echoed_and_recoverable(db):
@@ -3341,6 +3387,110 @@ def test_make_invoke_tool_binds_exact_subagent_actor_on_timeout_thread(
 
     assert invoke_tool(ToolCall(name="calculator", args={})).ok is True
     assert seen == [actor]
+    assert current_run_actor() is None
+
+
+def test_primary_and_threaded_child_keep_exact_actor_at_review_and_tool_boundaries(
+    db, monkeypatch
+):
+    """A fleet child stays a subagent on both loop and tool daemon threads."""
+    from tldw_chatbook.Agents.run_context import current_run_actor
+
+    child_task = "calculate as a child"
+    chat = FleetChat(
+        [
+            {
+                "content": None,
+                "tool_calls": [
+                    native_call(SPAWN_TOOL_NAME, {"task": child_task}, "spawn-1"),
+                    native_call("calculator", {"expression": "2+2"}, "parent-calc"),
+                ],
+            },
+            "parent done",
+        ],
+        {
+            child_task: [
+                {
+                    "content": None,
+                    "tool_calls": [
+                        native_call(
+                            "calculator", {"expression": "6*7"}, "child-calc"
+                        )
+                    ],
+                },
+                "child done",
+            ]
+        },
+    )
+    review_seen = []
+    tool_seen = []
+
+    def review(_calls, run_id):
+        review_seen.append(
+            (current_run_actor(), run_id, threading.current_thread().name)
+        )
+        return {}
+
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    original_invoke = registry.invoke_by_name
+
+    def invoke_by_name(name, args):
+        tool_seen.append(
+            (current_run_actor(), name, threading.current_thread().name)
+        )
+        return original_invoke(name, args)
+
+    monkeypatch.setattr(registry, "invoke_by_name", invoke_by_name)
+    service = AgentService(
+        db=db,
+        registry=registry,
+        chat_call=chat,
+        review_tool_calls=review,
+    )
+
+    parent_run_id, outcome = service.run_turn(
+        conversation_id="run-actor-fleet",
+        messages=[{"role": "user", "content": "delegate and calculate"}],
+        config=dataclasses.replace(CFG, model="gpt-4o"),
+        api_endpoint="openai",
+    )
+    join_fleet_children(service)
+
+    assert outcome.status == RUN_DONE
+    child = next(
+        row
+        for row in db.list_runs("run-actor-fleet")
+        if row["agent_kind"] == "subagent"
+    )
+    assert all(actor is not None for actor, _run_id, _thread in review_seen)
+    assert all(actor is not None for actor, _name, _thread in tool_seen)
+    review_by_kind = {
+        actor.kind: (actor, run_id, thread)
+        for actor, run_id, thread in review_seen
+    }
+    tool_by_kind = {
+        actor.kind: (actor, name, thread) for actor, name, thread in tool_seen
+    }
+    primary_actor = review_by_kind["primary"][0]
+    assert review_by_kind["primary"][1] == parent_run_id
+    assert primary_actor.run_id == parent_run_id
+    assert primary_actor.parent_run_id is None
+    assert review_by_kind["subagent"][0].run_id == child["id"]
+    assert review_by_kind["subagent"][0].parent_run_id == parent_run_id
+    assert review_by_kind["subagent"][1] == child["id"]
+    assert tool_by_kind["primary"][0] == primary_actor
+    assert tool_by_kind["subagent"][0] == review_by_kind["subagent"][0]
+    assert {entry[1] for entry in tool_seen} == {"calculator"}
+    assert all(thread == "tool-calculator" for _actor, _name, thread in tool_seen)
+    assert {actor.kind for actor, _run_id, _thread in review_seen} == {
+        "primary",
+        "subagent",
+    }
+    assert {actor.kind for actor, _name, _thread in tool_seen} == {
+        "primary",
+        "subagent",
+    }
     assert current_run_actor() is None
 
 
