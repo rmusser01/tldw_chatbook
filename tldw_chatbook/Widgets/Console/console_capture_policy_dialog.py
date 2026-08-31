@@ -57,6 +57,15 @@ class CapturePolicyBindings:
     purge_full: Callable[[int], Awaitable[CapturePurgeResult]]
     capture_revision: Callable[[], int]
     purge_availability: Callable[[], CapturePurgeAvailability]
+    apply_next_privacy: Callable[
+        [bool | None, bool | None, int], CapturePolicyMutationResult
+    ] | None = None
+    apply_conversation_privacy: Callable[
+        [bool | None, bool | None, int], Awaitable[CapturePolicyMutationResult]
+    ] | None = None
+    apply_global_privacy: Callable[
+        [bool, bool, int, int], CapturePolicyMutationResult
+    ] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +206,7 @@ __all__ = [
     "CapturePolicyPreview",
     "CaptureScope",
     "ConsoleCapturePolicyDialog",
+    "ConsoleTracePrivacyDialog",
     "FULL_CAPTURE_WARNING",
     "GLOBAL_FULL_CAPTURE_WARNING",
     "GlobalFullCaptureConfirmation",
@@ -793,3 +803,229 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
             self._set_status("Applying")
             return
         self.dismiss_safe_once(None)
+
+
+class ConsoleTracePrivacyDialog(SafeModalDismissMixin, ModalScreen[None]):
+    """Edit future Capture and PII policy without changing viewer disclosure."""
+
+    SAFE_MODAL_CONTENT = "#trace-privacy-dialog"
+    BINDINGS = [Binding("escape", "request_safe_cancel", "Cancel", show=False)]
+    BUNDLED_CSS = """
+    ConsoleTracePrivacyDialog { align: center middle; }
+    #trace-privacy-dialog {
+        width: 76; max-width: 96%; height: 24; max-height: 96%;
+        border: tall $primary; background: $surface; padding: 1 2;
+    }
+    #trace-privacy-title { height: 1; text-style: bold; }
+    #trace-privacy-help, #trace-privacy-effective, #trace-privacy-status {
+        height: auto;
+    }
+    #trace-privacy-body { height: 1fr; scrollbar-gutter: stable; }
+    #trace-privacy-actions { height: 3; min-height: 3; align-horizontal: right; }
+    #trace-privacy-actions Button { min-width: 10; margin-left: 1; }
+    #trace-privacy-status.-error { color: $error; }
+    """
+
+    def __init__(self, bindings: CapturePolicyBindings) -> None:
+        super().__init__()
+        self.bindings = bindings
+        self.snapshot = bindings.read()
+        self.selected_scope = CaptureScope.CONVERSATION
+        self.selected_capture = self.snapshot.conversation_capture_enabled
+        self.selected_pii = self.snapshot.conversation_pii_redaction_enabled
+        self.status_text = "Ready"
+        self._applying = False
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="trace-privacy-dialog"):
+            yield Static("Trace Privacy", id="trace-privacy-title", markup=False)
+            yield Static(self._effective_text(), id="trace-privacy-effective", markup=False)
+            with VerticalScroll(id="trace-privacy-body"):
+                yield Static(
+                    "Capture and PII masking are independent. PII masking is "
+                    "irreversible for provider traces and does not alter the saved "
+                    "conversation. Safe/Full is chosen in the trace viewer.",
+                    id="trace-privacy-help",
+                    markup=False,
+                )
+                with RadioSet(id="trace-privacy-scopes"):
+                    yield RadioButton("Next send", id="trace-privacy-scope-next")
+                    yield RadioButton(
+                        "This conversation",
+                        id="trace-privacy-scope-conversation",
+                        value=True,
+                    )
+                    yield RadioButton("Global default", id="trace-privacy-scope-global")
+                yield Static("Capture", markup=False)
+                with RadioSet(id="trace-privacy-capture"):
+                    yield RadioButton("Inherit", id="trace-privacy-capture-inherit")
+                    yield RadioButton("On", id="trace-privacy-capture-on")
+                    yield RadioButton("Off", id="trace-privacy-capture-off")
+                yield Static("PII masking", markup=False)
+                with RadioSet(id="trace-privacy-pii"):
+                    yield RadioButton("Inherit", id="trace-privacy-pii-inherit")
+                    yield RadioButton("On", id="trace-privacy-pii-on")
+                    yield RadioButton("Off", id="trace-privacy-pii-off")
+            yield Static(self.status_text, id="trace-privacy-status", markup=False)
+            with Horizontal(id="trace-privacy-actions"):
+                yield Button("Cancel", id="trace-privacy-cancel")
+                yield Button("Apply", id="trace-privacy-apply", variant="primary")
+
+    def on_mount(self) -> None:
+        self._sync_choices()
+        self.query_one("#trace-privacy-apply", Button).focus()
+
+    @on(RadioSet.Changed, "#trace-privacy-scopes")
+    def _privacy_scope_changed(self, event: RadioSet.Changed) -> None:
+        self.selected_scope = {
+            "trace-privacy-scope-next": CaptureScope.NEXT_SEND,
+            "trace-privacy-scope-conversation": CaptureScope.CONVERSATION,
+            "trace-privacy-scope-global": CaptureScope.GLOBAL,
+        }.get(event.pressed.id or "", self.selected_scope)
+        if self.selected_scope is CaptureScope.NEXT_SEND:
+            self.selected_capture = self.snapshot.next_capture_enabled
+            self.selected_pii = self.snapshot.next_pii_redaction_enabled
+        elif self.selected_scope is CaptureScope.CONVERSATION:
+            self.selected_capture = self.snapshot.conversation_capture_enabled
+            self.selected_pii = self.snapshot.conversation_pii_redaction_enabled
+        else:
+            self.selected_capture = self.snapshot.enabled
+            self.selected_pii = self.snapshot.global_pii_redaction_enabled
+        self._sync_choices()
+
+    @on(RadioSet.Changed, "#trace-privacy-capture")
+    def _capture_changed(self, event: RadioSet.Changed) -> None:
+        selected = {
+            "trace-privacy-capture-inherit": None,
+            "trace-privacy-capture-on": True,
+            "trace-privacy-capture-off": False,
+        }
+        self.selected_capture = selected.get(
+            event.pressed.id or "", self.selected_capture
+        )
+
+    @on(RadioSet.Changed, "#trace-privacy-pii")
+    def _pii_changed(self, event: RadioSet.Changed) -> None:
+        selected = {
+            "trace-privacy-pii-inherit": None,
+            "trace-privacy-pii-on": True,
+            "trace-privacy-pii-off": False,
+        }
+        self.selected_pii = selected.get(event.pressed.id or "", self.selected_pii)
+
+    def _sync_choices(self) -> None:
+        global_scope = self.selected_scope is CaptureScope.GLOBAL
+        for prefix, value in (
+            ("#trace-privacy-capture", self.selected_capture),
+            ("#trace-privacy-pii", self.selected_pii),
+        ):
+            inherit = self.query_one(f"{prefix}-inherit", RadioButton)
+            inherit.disabled = global_scope
+            inherit.value = value is None and not global_scope
+            self.query_one(f"{prefix}-on", RadioButton).value = value is True
+            self.query_one(f"{prefix}-off", RadioButton).value = value is False
+
+    async def apply_privacy(self) -> CapturePolicyMutationResult | None:
+        """Apply exactly one sparse scope through frozen production bindings."""
+
+        if self._applying:
+            return None
+        fresh = self.bindings.read()
+        if fresh.session_id != self.bindings.target_session_id:
+            self._set_privacy_status("Failed — target chat is unavailable", error=True)
+            return None
+        capture = self.selected_capture
+        pii = self.selected_pii
+        if self.selected_scope is CaptureScope.GLOBAL and (
+            capture is None or pii is None
+        ):
+            self._set_privacy_status(
+                "Failed — global defaults require explicit On or Off", error=True
+            )
+            return None
+        self._applying = True
+        self._set_privacy_disabled(True)
+        try:
+            if self.selected_scope is CaptureScope.NEXT_SEND:
+                callback = self.bindings.apply_next_privacy
+                if callback is None:
+                    raise RuntimeError("next-send privacy unavailable")
+                result = callback(capture, pii, fresh.policy_revision)
+            elif self.selected_scope is CaptureScope.CONVERSATION:
+                callback = self.bindings.apply_conversation_privacy
+                if callback is None:
+                    raise RuntimeError("conversation privacy unavailable")
+                result = await callback(capture, pii, fresh.policy_revision)
+            else:
+                callback = self.bindings.apply_global_privacy
+                if callback is None:
+                    raise RuntimeError("global privacy unavailable")
+                assert capture is not None and pii is not None
+                result = callback(
+                    capture,
+                    pii,
+                    fresh.config_generation,
+                    fresh.policy_revision,
+                )
+            self.snapshot = result.snapshot
+            if result.status is CapturePolicyMutationStatus.APPLIED:
+                self._set_privacy_status("Saved and active")
+            elif result.status is CapturePolicyMutationStatus.SAFE_SESSION_ONLY:
+                self._set_privacy_status(
+                    "Save failed — safer session policy remains active", error=True
+                )
+            else:
+                self._set_privacy_status("Failed — policy changed", error=True)
+            if self.is_mounted:
+                self.query_one("#trace-privacy-effective", Static).update(
+                    self._effective_text()
+                )
+            return result
+        except Exception:
+            self._set_privacy_status("Failed — trace privacy could not be saved", error=True)
+            return None
+        finally:
+            self._applying = False
+            self._set_privacy_disabled(False)
+
+    @on(Button.Pressed, "#trace-privacy-apply")
+    def _privacy_apply_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.run_worker(self.apply_privacy(), group="trace-privacy", exclusive=True)
+
+    @on(Button.Pressed, "#trace-privacy-cancel")
+    async def _privacy_cancel_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self.request_safe_cancel(source="button")
+
+    def _effective_text(self) -> str:
+        effective_capture = self.snapshot.effective_capture_enabled
+        if effective_capture is None:
+            effective_capture = self.snapshot.enabled
+        capture = "On" if effective_capture else "Off"
+        pii = "On" if self.snapshot.pii_redaction_enabled else "Off"
+        return f"Future trace: Capture {capture} · PII masking {pii}"
+
+    def _set_privacy_disabled(self, disabled: bool) -> None:
+        if not self.is_mounted:
+            return
+        for selector in (
+            "#trace-privacy-scopes",
+            "#trace-privacy-capture",
+            "#trace-privacy-pii",
+            "#trace-privacy-apply",
+            "#trace-privacy-cancel",
+        ):
+            self.query_one(selector).disabled = disabled
+
+    def _set_privacy_status(self, message: str, *, error: bool = False) -> None:
+        self.status_text = message
+        if self.is_mounted:
+            status = self.query_one("#trace-privacy-status", Static)
+            status.set_class(error, "-error")
+            status.update(message)
+
+    async def _perform_safe_cancel(self, *, source: str) -> None:
+        del source
+        if not self._applying:
+            self.dismiss_safe_once(None)

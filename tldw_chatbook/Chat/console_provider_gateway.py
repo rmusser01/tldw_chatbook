@@ -79,7 +79,11 @@ from tldw_chatbook.Chat.console_trace_final_values import (
     reconstruct_provider_gateway_kwargs,
     verify_provider_request_shadow,
 )
-from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
+from tldw_chatbook.Chat.console_trace_redaction import (
+    CredentialSanitizer,
+    PII_DETECTOR_UNAVAILABLE,
+    redact_pii_value,
+)
 from tldw_chatbook.Chat.console_trace_models import TraceCallState
 from tldw_chatbook.Chat.console_trace_service import TraceCallPersistenceError
 from tldw_chatbook.Chat.console_trace_settlement import (
@@ -654,6 +658,7 @@ class ConsoleProviderStreamSignals:
     # and capture unconditionally, for output nobody ever reads).
     exchange_capture_enabled: bool = False
     capture_detail: CaptureDetail = field(default=CaptureDetail.SAFE, repr=False)
+    pii_redaction_enabled: bool = field(default=False, repr=False)
     completed_exchanges: list["ExchangeCapture"] = field(
         default_factory=list, repr=False
     )
@@ -944,6 +949,7 @@ class ConsoleProviderCallSignals:
                 "credential_omission_inventory": [],
                 "known_credentials": known_credentials,
                 "capture_detail": self.capture_detail,
+                "pii_redaction_enabled": self._aggregate.pii_redaction_enabled,
                 "capture_budget": capture_budget or CaptureBudget(),
                 "created_at": datetime.now(timezone.utc).isoformat(),
             },
@@ -1066,6 +1072,33 @@ def _flight_capture(
         credential_omissions.append("response.content")
     if tools_omitted:
         credential_omissions.append("response.tool_calls")
+    request = flight["request"]
+    if flight.get("pii_redaction_enabled") is True:
+        request_redaction = redact_pii_value(request)
+        content_redaction = redact_pii_value(content)
+        tool_redaction = redact_pii_value(tool_calls)
+        request = (
+            request_redaction.value
+            if request_redaction.available
+            else {"omitted": PII_DETECTOR_UNAVAILABLE}
+        )
+        content = (
+            content_redaction.value
+            if content_redaction.available
+            else f"[omitted: {PII_DETECTOR_UNAVAILABLE}]"
+        )
+        tool_calls = (
+            tool_redaction.value
+            if tool_redaction.available
+            else [{"omitted": PII_DETECTOR_UNAVAILABLE}]
+        )
+        for path, result in (
+            ("request", request_redaction),
+            ("response.content", content_redaction),
+            ("response.tool_calls", tool_redaction),
+        ):
+            if not result.available:
+                credential_omissions.append(path + ".pii_unavailable")
     return ExchangeCapture(
         run_tag=run_tag,
         seq=seq,
@@ -1073,7 +1106,7 @@ def _flight_capture(
         provider=flight["provider"],
         model=flight["model"],
         endpoint=flight["endpoint"],
-        request=flight["request"],
+        request=request,
         response={
             # Sanitize once more after aggregation: individually harmless
             # sub-threshold chunks can form one data URI/base64 body.

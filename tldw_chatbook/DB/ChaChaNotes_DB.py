@@ -579,7 +579,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 61  # Semantic trace + portable Notes organization.
+    _CURRENT_SCHEMA_VERSION = 62  # Trace privacy controls and portable Notes state.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -7418,6 +7418,41 @@ UPDATE db_schema_version
                 f"Migration from V60 to V61 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _migrate_from_v61_to_v62(self, conn: sqlite3.Connection) -> None:
+        """Separate future Capture and PII overrides from legacy detail."""
+
+        self._require_migration_entry_version(conn, 61, "V61→V62")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v61_to_v62_console_trace_privacy_policy.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V61→V62",
+                )
+                version_cursor = cursor.execute(
+                    "UPDATE db_schema_version SET version = 62 "
+                    "WHERE schema_name = ? AND version = 61",
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V61→V62] Migration version update was not applied"
+                    )
+            if self._get_db_version(conn) != 62:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V61→V62] Migration version check failed"
+                )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V61 to V62 failed for '{self._SCHEMA_NAME}': "
+                f"{type(exc).__name__}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -7631,6 +7666,7 @@ UPDATE db_schema_version
                     58: self._migrate_from_v58_to_v59,
                     59: self._migrate_from_v59_to_v60,
                     60: self._migrate_from_v60_to_v61,
+                    61: self._migrate_from_v61_to_v62,
                 }
 
                 if current_db_version == 0:

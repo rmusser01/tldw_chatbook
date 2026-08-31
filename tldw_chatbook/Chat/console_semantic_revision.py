@@ -12,9 +12,15 @@ from typing import Protocol, cast
 
 from tldw_chatbook.Chat.console_trace_models import new_opaque_id
 from tldw_chatbook.Chat.console_trace_redaction import (
+    BUILTIN_PII_RULESET_REVISION_ID,
     CREDENTIAL_FILTER_VERSION,
+    CREDENTIAL_SANITIZER_UNAVAILABLE,
+    PII_DETECTOR_UNAVAILABLE,
+    PIIRedactionSpan,
     CredentialSanitizer,
     CredentialSanitizationResult,
+    apply_frozen_pii_masks,
+    redact_pii_value,
 )
 from tldw_chatbook.Chat.console_trace_repository import (
     ConsoleTraceRepository,
@@ -183,6 +189,81 @@ def project_semantic_revision_provider_messages(
             raise ValueError("semantic_revision_locator_mismatch")
         result[revision_id] = _project_revision_envelope(revision, envelope)
     return result
+
+
+def project_semantic_revision_trace_message(
+    cursor: sqlite3.Cursor,
+    *,
+    revision_id: str,
+    expected_conversation_id: str,
+    policy_id: str,
+) -> dict[str, object]:
+    """Project one canonical revision through its immutable trace masks.
+
+    This trace-only reader never changes the canonical message row. Safe and
+    Full viewers call the same function because disclosure profile cannot
+    bypass a capture-time credential or PII mask.
+    """
+
+    repository = ConsoleTraceRepository()
+    policy = repository.get_policy(cursor, policy_id)
+    revision = repository.get_semantic_revision(cursor, revision_id)
+    if (
+        policy is None
+        or revision is None
+        or revision.source_conversation_id != expected_conversation_id
+    ):
+        raise ValueError("revision_owner_mismatch")
+    binding = repository.get_revision_policy_binding(
+        cursor,
+        revision_id=revision_id,
+        policy_id=policy_id,
+    )
+    if binding is not None and binding.omission_reason_code is not None:
+        return {
+            "role": revision.normalized_role,
+            "content": f"[{binding.omission_reason_code}]",
+        }
+    projected = project_semantic_revision_provider_message(
+        cursor,
+        revision_id=revision_id,
+        expected_conversation_id=expected_conversation_id,
+        policy_id=policy_id,
+    )
+    credential_projection = CredentialSanitizer().sanitize(projected)
+    if not credential_projection.available or not isinstance(
+        credential_projection.value, dict
+    ):
+        return {
+            "role": revision.normalized_role,
+            "content": f"[{CREDENTIAL_SANITIZER_UNAVAILABLE}]",
+        }
+    projected = credential_projection.value
+    if not policy.pii_redaction_enabled or revision.live_message_id is None:
+        return projected
+    rows = repository.read_source_redaction_spans(
+        cursor,
+        policy_id=policy_id,
+        semantic_revision_id=revision_id,
+        artifact_id=None,
+    )
+    by_path: dict[str, list[PIIRedactionSpan]] = {}
+    for row in rows:
+        if row.outcome != "applied":
+            raise ValueError("redaction_span_unavailable")
+        by_path.setdefault(row.field_path, []).append(
+            PIIRedactionSpan(
+                row.start_codepoint,
+                row.end_codepoint,
+                row.category,
+                row.rule_id,
+                row.detector_version,
+            )
+        )
+    masked = apply_frozen_pii_masks(projected, by_path)
+    if not isinstance(masked, dict):
+        raise ValueError("semantic_revision_materialization_unavailable")
+    return masked
 
 
 def project_semantic_revision_provider_continuations(
@@ -664,8 +745,17 @@ class SemanticRevisionCoordinator:
             policy
             for policy in pending
             if policy.credential_filter_version == CREDENTIAL_FILTER_VERSION
-            and not policy.pii_redaction_enabled
-            and policy.pii_ruleset_revision_id is None
+            and (
+                (
+                    not policy.pii_redaction_enabled
+                    and policy.pii_ruleset_revision_id is None
+                )
+                or (
+                    policy.pii_redaction_enabled
+                    and policy.pii_ruleset_revision_id
+                    == BUILTIN_PII_RULESET_REVISION_ID
+                )
+            )
         )
         for policy in pending:
             if policy in supported:
@@ -691,11 +781,46 @@ class SemanticRevisionCoordinator:
             if key not in _INTERNAL_ENVELOPE_KEYS
         }
         result = self._sanitizer.sanitize(provider_envelope)
-        artifact_id: str | None = None
         detector_matches = result.detector_version == CREDENTIAL_FILTER_VERSION
-        if result.available and detector_matches:
+        for policy in supported:
+            if not result.available or not detector_matches:
+                omission_reason = (
+                    result.omission_reason_code
+                    if detector_matches
+                    else _TRACE_REDACTION_POLICY_UNSUPPORTED
+                )
+                cursor.execute(
+                    """INSERT INTO console_trace_revision_bindings(
+                           revision_id, policy_id, binding_outcome,
+                           omission_reason_code)
+                         VALUES (?, ?, 'omission', ?)""",
+                    (
+                        revision_id,
+                        policy.policy_id,
+                        omission_reason or _TRACE_REDACTION_POLICY_UNSUPPORTED,
+                    ),
+                )
+                continue
+            projected = result.value
+            pii_redaction = None
+            if policy.pii_redaction_enabled:
+                pii_redaction = redact_pii_value(projected)
+                if not pii_redaction.available:
+                    cursor.execute(
+                        """INSERT INTO console_trace_revision_bindings(
+                               revision_id, policy_id, binding_outcome,
+                               omission_reason_code)
+                             VALUES (?, ?, 'omission', ?)""",
+                        (
+                            revision_id,
+                            policy.policy_id,
+                            PII_DETECTOR_UNAVAILABLE,
+                        ),
+                    )
+                    continue
+                projected = pii_redaction.value
             sanitized_bytes = json.dumps(
-                result.value,
+                projected,
                 allow_nan=False,
                 ensure_ascii=False,
                 separators=(",", ":"),
@@ -707,34 +832,25 @@ class SemanticRevisionCoordinator:
                 media_type="application/vnd.tldw.semantic-message+json",
                 normalization_version="semantic-envelope-v1",
             )
-            artifact_id = artifact.artifact_id
-        for policy in supported:
-            if artifact_id is not None:
-                cursor.execute(
-                    """
-                    INSERT INTO console_trace_revision_bindings(
-                      revision_id, policy_id, binding_outcome, artifact_id
-                    ) VALUES (?, ?, 'artifact', ?)
-                    """,
-                    (revision_id, policy.policy_id, artifact_id),
-                )
-            else:
-                omission_reason = (
-                    result.omission_reason_code
-                    if detector_matches
-                    else _TRACE_REDACTION_POLICY_UNSUPPORTED
-                )
-                if omission_reason is None:
-                    omission_reason = _TRACE_REDACTION_POLICY_UNSUPPORTED
-                cursor.execute(
-                    """
-                    INSERT INTO console_trace_revision_bindings(
-                      revision_id, policy_id, binding_outcome,
-                      omission_reason_code
-                    ) VALUES (?, ?, 'omission', ?)
-                    """,
-                    (revision_id, policy.policy_id, omission_reason),
-                )
+            if pii_redaction is not None:
+                by_path: dict[str, list[PIIRedactionSpan]] = {}
+                for item in pii_redaction.field_redactions:
+                    by_path.setdefault(item.field_path, []).append(item.span)
+                for field_path, spans in sorted(by_path.items()):
+                    self.repository.ensure_redaction_spans(
+                        cursor,
+                        policy_id=policy.policy_id,
+                        semantic_revision_id=None,
+                        artifact_id=artifact.artifact_id,
+                        field_path=field_path,
+                        spans=spans,
+                    )
+            cursor.execute(
+                """INSERT INTO console_trace_revision_bindings(
+                       revision_id, policy_id, binding_outcome, artifact_id)
+                     VALUES (?, ?, 'artifact', ?)""",
+                (revision_id, policy.policy_id, artifact.artifact_id),
+            )
 
     @staticmethod
     def _retire_live_locator(cursor: sqlite3.Cursor, revision_id: str) -> str:

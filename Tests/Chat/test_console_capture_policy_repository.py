@@ -46,6 +46,50 @@ def test_inherit_deletes_the_local_row(db) -> None:
     assert repository.replace(conversation_id, None).status is CapturePolicyWriteStatus.UNCHANGED
 
 
+def test_sparse_capture_and_pii_overrides_preserve_legacy_provenance(db) -> None:
+    conversation_id = _conversation(db)
+    repository = ConsoleCapturePolicyRepository(db)
+    repository.replace(conversation_id, CaptureDetail.FULL)
+
+    stored = repository.replace_privacy(
+        conversation_id,
+        capture_enabled=False,
+        pii_redaction_enabled=True,
+    )
+
+    assert stored.status is CapturePolicyWriteStatus.STORED
+    assert stored.policy is not None
+    assert stored.policy.detail is CaptureDetail.FULL
+    assert stored.policy.capture_enabled is False
+    assert stored.policy.pii_redaction_enabled is True
+
+    inherited = repository.replace_privacy(
+        conversation_id,
+        capture_enabled=None,
+        pii_redaction_enabled=None,
+    )
+    assert inherited.policy is not None
+    assert inherited.policy.detail is CaptureDetail.FULL
+    assert inherited.policy.capture_enabled is None
+    assert inherited.policy.pii_redaction_enabled is None
+
+
+def test_new_privacy_only_row_does_not_invent_capture_detail(db) -> None:
+    conversation_id = _conversation(db)
+    repository = ConsoleCapturePolicyRepository(db)
+
+    stored = repository.replace_privacy(
+        conversation_id,
+        capture_enabled=True,
+        pii_redaction_enabled=None,
+    )
+
+    assert stored.policy is not None
+    assert stored.policy.detail is None
+    assert stored.policy.capture_enabled is True
+    assert stored.policy.pii_redaction_enabled is None
+
+
 def test_missing_or_deleted_conversation_refuses_writes(db) -> None:
     repository = ConsoleCapturePolicyRepository(db)
     assert repository.replace("missing", CaptureDetail.SAFE).status is CapturePolicyWriteStatus.MISSING_CONVERSATION

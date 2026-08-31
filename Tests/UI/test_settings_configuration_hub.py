@@ -165,7 +165,7 @@ async def test_console_capture_settings_reports_structured_mutation_outcomes(
 
 
 @pytest.mark.asyncio
-async def test_console_capture_settings_full_uses_shared_confirmation(monkeypatch):
+async def test_console_trace_viewer_full_uses_explicit_confirmation(monkeypatch):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
     async with host.run_test(size=(80, 24)) as pilot:
@@ -177,7 +177,10 @@ async def test_console_capture_settings_full_uses_shared_confirmation(monkeypatc
         ).value = True
         screen.query_one(
             "#settings-console-exchange-capture-detail", Select
-        ).value = CaptureDetail.FULL.value
+        ).value = CaptureDetail.SAFE.value
+        screen.query_one(
+            "#settings-console-trace-viewer-profile", Select
+        ).value = "full"
         confirmation = AsyncMock(return_value=True)
         monkeypatch.setattr(host, "push_screen_wait", confirmation)
         calls: list[dict[str, object]] = []
@@ -193,7 +196,11 @@ async def test_console_capture_settings_full_uses_shared_confirmation(monkeypatc
             settings_screen_module,
             "runtime_capture_policy",
             lambda: SimpleNamespace(
-                enabled=True, detail=CaptureDetail.FULL, generation=8
+                enabled=True,
+                detail=CaptureDetail.SAFE,
+                generation=8,
+                pii_redaction_enabled=False,
+                viewer_profile="safe",
             ),
         )
         button = screen.query_one(
@@ -204,12 +211,13 @@ async def test_console_capture_settings_full_uses_shared_confirmation(monkeypatc
         )
 
         modal = confirmation.await_args.args[0]
-        assert "ordinary text may still contain secrets" in modal.message
-        assert calls and calls[0]["detail"] is CaptureDetail.FULL
+        assert "PII detectors missed" in modal.message
+        assert calls and calls[0]["detail"] is CaptureDetail.SAFE
+        assert calls[0]["viewer_profile"] == "full"
 
 
 @pytest.mark.asyncio
-async def test_console_capture_settings_uses_live_coordinator_and_dormant_override_warning(
+async def test_console_capture_settings_ignores_retired_detail_for_disclosure(
     monkeypatch,
 ):
     app = _build_test_app()
@@ -272,12 +280,14 @@ async def test_console_capture_settings_uses_live_coordinator_and_dormant_overri
             SimpleNamespace(stop=lambda: None, button=button)
         )
 
-        assert "dormant Full" in confirmation.await_args.args[0].message
+        confirmation.assert_not_awaited()
         coordinator.assert_called_once_with(
             enabled=True,
             detail=CaptureDetail.SAFE,
             expected_config_generation=8,
             expected_policy_revision=11,
+            pii_redaction_enabled=False,
+            viewer_profile="safe",
         )
 
 
@@ -1052,6 +1062,9 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
         "console.stack_collapsed_rail_labels",
         "console.exchange_capture",
         "console.exchange_capture_detail",
+        "console.exchange_capture_pii_redaction",
+        "console.trace_viewer_profile",
+        "console.trace_viewer_profile_version",
         "console.show_model_thinking",
         "console.thinking_history_policy_default",
         "console.collapse_large_pastes",

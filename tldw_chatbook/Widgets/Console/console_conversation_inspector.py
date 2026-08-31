@@ -102,11 +102,14 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     history_elision_marker,
 )
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+from tldw_chatbook.Chat.console_trace_projection import project_capture_for_viewer
+from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
 from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Widgets.pausable_progress import PausableLoadingIndicator
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Utils.token_counter import estimate_tokens
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.Widgets.Console.console_project_instructions import (
@@ -114,11 +117,12 @@ from tldw_chatbook.Widgets.Console.console_project_instructions import (
 )
 from tldw_chatbook.Widgets.Console.console_capture_policy_dialog import (
     CapturePolicyBindings,
-    ConsoleCapturePolicyDialog,
+    ConsoleTracePrivacyDialog,
 )
 
 MODAL_ID = "console-inspector-modal"
 CLOSE_BUTTON_ID = "console-inspector-close"
+VIEWER_PROFILE_BUTTON_ID = "console-inspector-viewer-profile"
 TAB_COSTS = "inspector-costs"
 TAB_EXCHANGE = "inspector-exchange"
 TAB_NEXT_SEND = "inspector-next-send"
@@ -295,6 +299,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         ("escape", "request_safe_cancel", "Close"),
         ("r", "refresh", "Refresh"),
         ("c", "capture_policy", "Capture"),
+        ("v", "viewer_profile", "Trace view"),
     ]
     SAFE_MODAL_CONTENT = f"#{MODAL_ID}"
 
@@ -465,6 +470,21 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         self._target_conversation_id = target_conversation_id
         self._capture_revision_provider = capture_revision_provider
         self._capture_policy_bindings = capture_policy_bindings
+        # Production wiring always supplies capture-policy bindings. The Full
+        # fallback preserves the isolated presentation harness contract only;
+        # an unbound Inspector is not reachable from the app.
+        self._viewer_profile = (
+            TraceViewerProfile.FULL
+            if capture_policy_bindings is None
+            else TraceViewerProfile.SAFE
+        )
+        if capture_policy_bindings is not None:
+            try:
+                self._viewer_profile = TraceViewerProfile(
+                    getattr(capture_policy_bindings.read(), "viewer_profile", "safe")
+                )
+            except Exception:
+                self._viewer_profile = TraceViewerProfile.SAFE
         try:
             self._capture_revision_at_open = (
                 capture_revision_provider()
@@ -647,6 +667,10 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                                 )
                             yield next_send_save_button
             with Horizontal(id="console-inspector-actions"):
+                yield Button(
+                    f"View: {self._viewer_profile.value.title()}",
+                    id=VIEWER_PROFILE_BUTTON_ID,
+                )
                 yield Button("Close", id=CLOSE_BUTTON_ID, variant="primary")
 
     def on_mount(self) -> None:
@@ -677,13 +701,22 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             snapshot = bindings.read()
         except Exception:
             return "Future exchange capture: unavailable"
-        future = (
-            "Off" if not snapshot.enabled else snapshot.effective.detail.value.title()
-        )
+        effective_capture = getattr(snapshot, "effective_capture_enabled", None)
+        if effective_capture is None:
+            effective_capture = snapshot.enabled
+        future = "On" if effective_capture else "Off"
+        fidelity = snapshot.effective.detail.value.title()
+        pii = "On" if getattr(snapshot, "pii_redaction_enabled", False) else "Off"
+        viewer = self._viewer_profile.value.title()
         if snapshot.active_run_detail is not None:
             run_state = (
                 f"Active run frozen at {snapshot.active_run_detail.value.title()}"
             )
+        elif (
+            getattr(snapshot, "next_capture_enabled", None) is not None
+            or getattr(snapshot, "next_pii_redaction_enabled", None) is not None
+        ):
+            run_state = "Next eligible send has a Capture/PII override"
         elif snapshot.next_detail is not None:
             run_state = (
                 f"Next eligible send: {snapshot.next_detail.value.title()} (armed)"
@@ -691,9 +724,74 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         else:
             run_state = "No active run is frozen"
         return (
-            f"“{snapshot.conversation_title}” · Future capture: {future} · c Change…\n"
-            f"{run_state}"
+            f"“{snapshot.conversation_title}” · Capture {future} · "
+            f"Fidelity {fidelity} · Creds filtered\n"
+            f"PII {pii} · Viewer {viewer} · {run_state}"
         )
+
+    @property
+    def viewer_profile(self) -> TraceViewerProfile:
+        """Return the current explicit local disclosure profile."""
+
+        return self._viewer_profile
+
+    async def action_viewer_profile(self) -> None:
+        """Switch disclosure profile, confirming every Safe-to-Full change."""
+
+        if self._viewer_profile is TraceViewerProfile.FULL:
+            self._viewer_profile = TraceViewerProfile.SAFE
+        else:
+            confirmed = await self.app.push_screen_wait(
+                ConfirmationDialog(
+                    title="View Full trace content?",
+                    message=(
+                        "Full may reveal persisted prompts, tool arguments/results, "
+                        "automatic instructions, local paths, and sensitive prose "
+                        "that PII detectors missed. Credentials and frozen masks "
+                        "remain blocked."
+                    ),
+                    confirm_label="View Full",
+                    cancel_label="Keep Safe",
+                )
+            )
+            if not confirmed:
+                return
+            self._viewer_profile = TraceViewerProfile.FULL
+        await self._reset_view_projection()
+
+    async def _reset_view_projection(self) -> None:
+        """Discard cached disclosure bodies before a profile change is shown."""
+
+        self._loaded_exchange_turn_indices.clear()
+        self._loaded_exchange_call_keys.clear()
+        self._loaded_exchange_section_ids.clear()
+        self._loaded_exchange_message_ids.clear()
+        self._exchange_capture_by_call_key.clear()
+        self._exchange_message_by_id.clear()
+        for call in list(self.query(".console-inspector-exchange-call")):
+            await call.remove()
+        for turn_index, turn in self._turns_by_index.items():
+            try:
+                widget = self.query_one(
+                    f"#{_EXCHANGE_TURN_ID_PREFIX}{turn_index}",
+                    Collapsible,
+                )
+            except NoMatches:
+                continue
+            widget.collapsed = True
+            widget.title = Content.from_text(
+                self._exchange_turn_title(turn, call_count=None),
+                markup=False,
+            )
+        try:
+            self.query_one("#console-inspector-policy-status", Static).update(
+                self._capture_policy_text()
+            )
+            self.query_one(f"#{VIEWER_PROFILE_BUTTON_ID}", Button).label = (
+                f"View: {self._viewer_profile.value.title()}"
+            )
+        except NoMatches:
+            pass
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Hide the contextual capture binding when no live target exists."""
@@ -705,7 +803,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         """Open policy controls for the immutable Inspector target."""
         if self._capture_policy_bindings is None:
             return
-        self.app.push_screen(ConsoleCapturePolicyDialog(self._capture_policy_bindings))
+        self.app.push_screen(ConsoleTracePrivacyDialog(self._capture_policy_bindings))
 
     def _focus_initial_control(self) -> None:
         """Focus the most relevant available Next Send action (task-18300,
@@ -1320,6 +1418,8 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 self._loaded_exchange_turn_indices.discard(turn.index)
                 return
             call_key = f"{turn.index}-{call_ordinal}"
+            if self._capture_policy_bindings is not None:
+                capture = project_capture_for_viewer(capture, self._viewer_profile)
             self._exchange_capture_by_call_key[call_key] = capture
             await contents.mount(
                 Collapsible(
@@ -1484,6 +1584,14 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     @on(Button.Pressed)
     def _on_exchange_call_button(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
+        if button_id == VIEWER_PROFILE_BUTTON_ID:
+            event.stop()
+            self.run_worker(
+                self.action_viewer_profile(),
+                group="trace-viewer-profile",
+                exclusive=True,
+            )
+            return
         if button_id.startswith(_EXCHANGE_EXPORT_BUTTON_PREFIX):
             event.stop()
             call_key = button_id[len(_EXCHANGE_EXPORT_BUTTON_PREFIX) :]

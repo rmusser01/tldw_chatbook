@@ -9251,6 +9251,34 @@ class TestSignalsExchangeCapture:
         assert recorded["function"]["name"] == "get_time"
         assert recorded["function"]["arguments"] == "{}"
 
+    def test_pii_enabled_masks_legacy_request_response_and_tool_payloads(self):
+        aggregate = ConsoleProviderStreamSignals(
+            exchange_capture_enabled=True,
+            capture_detail=CaptureDetail.FULL,
+            pii_redaction_enabled=True,
+        )
+        call = aggregate.new_usage_call()
+        call.begin_exchange(
+            provider="openai",
+            model="model",
+            endpoint=None,
+            request={
+                "messages_payload": [
+                    {"role": "user", "content": "person@example.test"}
+                ]
+            },
+            omitted_keys=(),
+        )
+        call.record_exchange_content("reply to person@example.test")
+        call.record_exchange_tool_calls(
+            [{"function": {"arguments": "person@example.test"}}]
+        )
+        call.close_exchange()
+
+        capture = aggregate.exchange_captures()[0]
+        assert "person@example.test" not in repr(capture)
+        assert "[PII omitted]" in repr(capture)
+
     def test_close_attaches_this_calls_normalized_usage(self):
         aggregate = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
         call = aggregate.new_usage_call()

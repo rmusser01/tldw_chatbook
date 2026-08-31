@@ -3245,8 +3245,13 @@ sidechat_prompt_template = "Give me more details about: {selection}"  # {selecti
 # Conversation Inspector: capture each provider exchange (request/response)
 # locally per turn. Local-only; never synced. Set false to disable.
 exchange_capture = true
-# Safe is the application default; no UI exposes Full activation.
+# Retired future-write detail retained only for legacy provenance/migration.
 exchange_capture_detail = "safe"
+# Optional capture-time PII masking is independent of capture and defaults Off.
+exchange_capture_pii_redaction = false
+# Safe/Full is a viewer disclosure choice over one trace, never storage detail.
+trace_viewer_profile = "safe"
+trace_viewer_profile_version = 1
 
 [console.background_effects]
 enabled = false  # Optional Console ambience. Off by default for readability.
@@ -6645,6 +6650,8 @@ class RuntimeCapturePolicy:
     enabled: bool
     detail: CaptureDetail
     generation: int
+    pii_redaction_enabled: bool = False
+    viewer_profile: str = "safe"
 
 
 _RUNTIME_CAPTURE_POLICY_LOCK = _threading.RLock()
@@ -6655,13 +6662,23 @@ def _publish_runtime_capture_policy(
     enabled: bool,
     detail: CaptureDetail,
     generation: int,
+    pii_redaction_enabled: bool = False,
+    viewer_profile: str = "safe",
 ) -> RuntimeCapturePolicy:
     """Publish one validated capture policy without touching general caches."""
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
 
     if not isinstance(detail, CaptureDetail):
         raise TypeError("detail must be CaptureDetail")
-    policy = RuntimeCapturePolicy(bool(enabled), detail, generation)
+    if viewer_profile not in {"safe", "full"}:
+        raise ValueError("viewer_profile")
+    policy = RuntimeCapturePolicy(
+        bool(enabled),
+        detail,
+        generation,
+        bool(pii_redaction_enabled),
+        viewer_profile,
+    )
     global _RUNTIME_CAPTURE_POLICY
     with _RUNTIME_CAPTURE_POLICY_LOCK:
         _RUNTIME_CAPTURE_POLICY = policy
@@ -6693,10 +6710,21 @@ def runtime_capture_policy() -> RuntimeCapturePolicy:
             detail = CaptureDetail(console.get("exchange_capture_detail", "safe"))
         except (TypeError, ValueError):
             detail = CaptureDetail.SAFE
+        pii_redaction_enabled = coerce_bool_setting(
+            console.get("exchange_capture_pii_redaction", False),
+            False,
+        )
+        viewer_profile = "safe"
+        if console.get("trace_viewer_profile_version") == 1:
+            candidate = console.get("trace_viewer_profile", "safe")
+            if candidate in {"safe", "full"}:
+                viewer_profile = candidate
         current = RuntimeCapturePolicy(
             coerce_bool_setting(console.get("exchange_capture", True), True),
             detail,
             snapshot.generation,
+            pii_redaction_enabled,
+            viewer_profile,
         )
         _RUNTIME_CAPTURE_POLICY = current
         return current
@@ -6707,6 +6735,8 @@ def apply_console_capture_settings(
     enabled: bool,
     detail: CaptureDetail,
     expected_generation: int,
+    pii_redaction_enabled: bool | None = None,
+    viewer_profile: str | None = None,
 ) -> ConfigMutationResult:
     """Apply the kill switch/detail with privacy-safe publication ordering.
 
@@ -6721,14 +6751,35 @@ def apply_console_capture_settings(
     """
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
 
-    if type(enabled) is not bool or not isinstance(detail, CaptureDetail):
+    if (
+        type(enabled) is not bool
+        or not isinstance(detail, CaptureDetail)
+        or (
+            pii_redaction_enabled is not None
+            and type(pii_redaction_enabled) is not bool
+        )
+        or (viewer_profile is not None and viewer_profile not in {"safe", "full"})
+    ):
         return ConfigMutationResult(False, False, "before_replace")
+    current = runtime_capture_policy()
+    resolved_pii = (
+        current.pii_redaction_enabled
+        if pii_redaction_enabled is None
+        else pii_redaction_enabled
+    )
+    resolved_viewer = current.viewer_profile if viewer_profile is None else viewer_profile
 
     def generation_is_current(snapshot: AtomicConfigSnapshot) -> bool:
         return snapshot.generation == expected_generation
 
     def publish_before_replace() -> None:
-        _publish_runtime_capture_policy(enabled, detail, expected_generation)
+        _publish_runtime_capture_policy(
+            enabled,
+            detail,
+            expected_generation,
+            resolved_pii,
+            resolved_viewer,
+        )
 
     def publish_after_replace() -> None:
         # The general config generation advances only after cache publication
@@ -6737,14 +6788,32 @@ def apply_console_capture_settings(
         # success, the generation bump makes the next read rebuild from the new
         # canonical snapshot. This callback runs while the config write lock is
         # still held, so a newer writer cannot be overwritten afterward.
-        _publish_runtime_capture_policy(enabled, detail, expected_generation)
+        _publish_runtime_capture_policy(
+            enabled,
+            detail,
+            expected_generation,
+            resolved_pii,
+            resolved_viewer,
+        )
 
-    privacy_safe = not enabled or detail is CaptureDetail.SAFE
+    more_revealing = (
+        (enabled and not current.enabled)
+        or (
+            detail is CaptureDetail.FULL
+            and current.detail is CaptureDetail.SAFE
+        )
+        or (not resolved_pii and current.pii_redaction_enabled)
+        or (resolved_viewer == "full" and current.viewer_profile == "safe")
+    )
+    privacy_safe = not more_revealing
     result = apply_settings_mutation_to_cli_config(
         {
             "console": {
                 "exchange_capture": enabled,
                 "exchange_capture_detail": detail.value,
+                "exchange_capture_pii_redaction": resolved_pii,
+                "trace_viewer_profile": resolved_viewer,
+                "trace_viewer_profile_version": 1,
             }
         },
         locked_snapshot_precondition=generation_is_current,

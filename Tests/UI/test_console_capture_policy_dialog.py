@@ -25,6 +25,7 @@ from tldw_chatbook.Widgets.Console.console_capture_policy_dialog import (
     CapturePolicyBindings,
     CaptureScope,
     ConsoleCapturePolicyDialog,
+    ConsoleTracePrivacyDialog,
     GlobalFullCaptureConfirmation,
 )
 from tldw_chatbook.UI.Console_Modules.capture_policy_bindings import (
@@ -53,6 +54,76 @@ def _snapshot(**changes: object) -> CapturePolicySnapshot:
         error_code=None,
     )
     return replace(base, **changes)
+
+
+@pytest.mark.asyncio
+async def test_trace_privacy_dialog_separates_capture_pii_and_viewer() -> None:
+    snapshot = _snapshot(
+        effective_capture_enabled=True,
+        pii_redaction_enabled=False,
+        conversation_capture_enabled=None,
+        conversation_pii_redaction_enabled=True,
+    )
+    host = _PolicyHost(snapshot)
+    calls: list[tuple[bool | None, bool | None, int]] = []
+
+    async def conversation_privacy(
+        capture: bool | None, pii: bool | None, revision: int
+    ) -> CapturePolicyMutationResult:
+        calls.append((capture, pii, revision))
+        updated = replace(
+            snapshot,
+            conversation_capture_enabled=capture,
+            conversation_pii_redaction_enabled=pii,
+            effective_capture_enabled=bool(capture),
+            pii_redaction_enabled=bool(pii),
+            policy_revision=revision + 1,
+        )
+        return CapturePolicyMutationResult(
+            CapturePolicyMutationStatus.APPLIED, updated, False, None
+        )
+
+    bindings = replace(
+        host.bindings(),
+        apply_conversation_privacy=conversation_privacy,
+    )
+    app = _Harness()
+    async with app.run_test() as pilot:
+        dialog = ConsoleTracePrivacyDialog(bindings)
+        await app.push_screen(dialog)
+        await pilot.pause()
+
+        help_text = str(dialog.query_one("#trace-privacy-help", Static).render())
+        assert "independent" in help_text
+        assert "does not alter the saved conversation" in help_text
+        assert "Safe/Full" in help_text
+        assert dialog.query_one("#trace-privacy-capture-inherit", RadioButton).value
+        assert dialog.query_one("#trace-privacy-pii-on", RadioButton).value
+
+        dialog.selected_capture = False
+        dialog.selected_pii = True
+        result = await dialog.apply_privacy()
+
+        assert result is not None
+        assert calls == [(False, True, snapshot.policy_revision)]
+
+
+@pytest.mark.asyncio
+async def test_trace_privacy_global_scope_requires_explicit_values() -> None:
+    host = _PolicyHost(_snapshot())
+    app = _Harness()
+    async with app.run_test() as pilot:
+        dialog = ConsoleTracePrivacyDialog(host.bindings())
+        await app.push_screen(dialog)
+        await pilot.pause()
+
+        await pilot.click("#trace-privacy-scope-global")
+        await pilot.pause()
+
+        assert dialog.query_one(
+            "#trace-privacy-capture-inherit", RadioButton
+        ).disabled
+        assert dialog.query_one("#trace-privacy-pii-inherit", RadioButton).disabled
 
 
 class _Harness(ConsolidatedCSSApp):

@@ -116,6 +116,8 @@ class ConsoleTurnPreparation:
     ephemeral: bool
     one_shot_capture_off: bool = False
     capture_mode: ConsoleTraceCaptureMode = ConsoleTraceCaptureMode.CAPTURE_ON
+    pii_redaction_enabled: bool = False
+    pii_ruleset_revision_id: str | None = None
 
     def __post_init__(self) -> None:
         """Reject malformed, mutable, or internally inconsistent state."""
@@ -735,6 +737,15 @@ def _validate_preparation(preparation: ConsoleTurnPreparation) -> None:
         _invalid("one-shot Capture Off flag")
     if type(preparation.capture_mode) is not ConsoleTraceCaptureMode:
         _invalid("capture mode")
+    if type(preparation.pii_redaction_enabled) is not bool:
+        _invalid("PII redaction flag")
+    if preparation.pii_redaction_enabled:
+        _validate_identifier(
+            preparation.pii_ruleset_revision_id,
+            "PII ruleset revision ID",
+        )
+    elif preparation.pii_ruleset_revision_id is not None:
+        _invalid("PII ruleset revision ID")
     if preparation.one_shot_capture_off and (
         preparation.capture_mode is not ConsoleTraceCaptureMode.CAPTURE_OFF
     ):

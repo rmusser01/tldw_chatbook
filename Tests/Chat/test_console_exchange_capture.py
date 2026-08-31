@@ -498,8 +498,9 @@ def test_oversize_blob_truncates_with_marker():
             "messages_payload": [
                 {
                     "role": "user",
-                    "content": __import__("os").urandom(15 * 1024 * 1024).hex(),
+                    "content": __import__("os").urandom(450 * 1024).hex(),
                 }
+                for _ in range(36)
             ]
         },
         response={},

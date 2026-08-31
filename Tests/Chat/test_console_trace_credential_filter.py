@@ -280,3 +280,30 @@ def test_sanitized_mapping_key_collision_fails_content_free() -> None:
     assert result.available is False
     assert result.value is None
     assert result.omission_reason_code == CREDENTIAL_SANITIZER_UNAVAILABLE
+
+
+def test_sanitizer_bounds_dense_structural_work_without_partial_fallback() -> None:
+    sanitizer = CredentialSanitizer(max_nodes=8, max_depth=3, max_text_codepoints=32)
+
+    too_many_nodes = sanitizer.sanitize(list(range(9)))
+    too_deep = sanitizer.sanitize([[[["safe"]]]])
+    too_much_text = sanitizer.sanitize("x" * 33)
+
+    for result in (too_many_nodes, too_deep, too_much_text):
+        assert result.available is False
+        assert result.value is None
+        assert result.omission_reason_code == CREDENTIAL_SANITIZER_UNAVAILABLE
+
+
+def test_sanitizer_bounds_are_validated_without_retaining_input() -> None:
+    for kwargs in (
+        {"max_nodes": 0},
+        {"max_depth": 0},
+        {"max_text_codepoints": 0},
+    ):
+        try:
+            CredentialSanitizer(**kwargs)
+        except ValueError as exc:
+            assert "secret-canary" not in str(exc)
+        else:  # pragma: no cover - the constructor must reject every case
+            raise AssertionError("invalid sanitizer limit accepted")

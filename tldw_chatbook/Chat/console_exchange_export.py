@@ -15,6 +15,10 @@ from tldw_chatbook.Chat.console_exchange_capture import (
 from tldw_chatbook.Chat.console_project_instructions import (
     canonical_provider_endpoint_identity,
 )
+from tldw_chatbook.Chat.console_trace_redaction import (
+    CREDENTIAL_SANITIZER_UNAVAILABLE,
+    CredentialSanitizer,
+)
 # The profile vocabulary comes from the stdlib-only leaf, NEVER from
 # `Chat.trajectory_export`: this module is on the Chat first-paint leg at
 # module scope (console_exchange_export_dialog -> console_conversation_
@@ -149,6 +153,11 @@ def project_exchange_export(
         )
 
     payload = sanitize_capture_value(payload)
+    credential_result = CredentialSanitizer().sanitize(payload)
+    if credential_result.available and isinstance(credential_result.value, Mapping):
+        payload = dict(credential_result.value)
+    else:
+        payload = {"omitted": CREDENTIAL_SANITIZER_UNAVAILABLE}
     json_text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
     return ExchangeExportProjection(
         profile=profile,

@@ -34,6 +34,11 @@ from tldw_chatbook.Chat.console_trace_models import (
     TraceContentRef,
     TraceOmission,
 )
+from tldw_chatbook.Chat.console_trace_redaction import (
+    PII_DETECTOR_UNAVAILABLE,
+    PIIRedactionSpan,
+    redact_pii_value,
+)
 from tldw_chatbook.Chat.console_trace_provenance import (
     DerivedTraceProvenance,
     OmittedTraceProvenance,
@@ -3419,12 +3424,18 @@ class ConsoleTraceService:
             )
         if type(descriptor) is ProviderArtifactTraceProvenance:
             artifact = cast(ProviderArtifactTraceProvenance, descriptor)
-            return artifact.source.value, self._store_artifact(cursor, value)
+            return artifact.source.value, self._store_artifact(
+                cursor,
+                value,
+                policy=artifact.policy,
+            )
         if type(descriptor) is DerivedTraceProvenance:
             derived = cast(DerivedTraceProvenance, descriptor)
             if derived.artifact is not None:
                 return derived.artifact.source.value, self._store_artifact(
-                    cursor, value
+                    cursor,
+                    value,
+                    policy=derived.artifact.policy,
                 )
             saved_inputs = _saved_inputs(derived)
             if len(saved_inputs) == 1:
@@ -3475,6 +3486,7 @@ class ConsoleTraceService:
                 node,
                 component_kind=artifact.source.value,
                 value=value,
+                policy=artifact.policy,
             )
         if type(descriptor) is not DerivedTraceProvenance:
             return False
@@ -3485,6 +3497,7 @@ class ConsoleTraceService:
                 node,
                 component_kind=derived.artifact.source.value,
                 value=value,
+                policy=derived.artifact.policy,
             )
         saved_inputs = _saved_inputs(derived)
         if len(saved_inputs) == 1:
@@ -3514,6 +3527,7 @@ class ConsoleTraceService:
         *,
         component_kind: str,
         value: object,
+        policy: FrozenTracePolicy | None,
     ) -> bool:
         if (
             node.component_kind != component_kind
@@ -3521,13 +3535,14 @@ class ConsoleTraceService:
             or node.artifact_id is None
         ):
             return False
-        artifact = self.repository.get_artifact(cursor, node.artifact_id)
-        return (
-            artifact is not None
-            and artifact.media_type == TRACE_VALUE_MEDIA_TYPE
-            and artifact.normalization_version == TRACE_VALUE_NORMALIZATION_VERSION
-            and artifact.sanitized_bytes == _artifact_bytes(value)
+        projected = self._pii_projected_value(value, policy=policy)
+        artifact = self.repository.find_sanitized_artifact(
+            cursor,
+            sanitized_bytes=_artifact_bytes(projected),
+            media_type=TRACE_VALUE_MEDIA_TYPE,
+            normalization_version=TRACE_VALUE_NORMALIZATION_VERSION,
         )
+        return artifact is not None and artifact.artifact_id == node.artifact_id
 
     def _validate_revision_owner(
         self,
@@ -3549,15 +3564,46 @@ class ConsoleTraceService:
         self,
         cursor: sqlite3.Cursor,
         value: object,
+        *,
+        policy: FrozenTracePolicy | None = None,
     ) -> TraceContentRef:
-        body = _artifact_bytes(value)
+        projected = self._pii_projected_value(value, policy=policy)
+        body = _artifact_bytes(projected)
         artifact = self.repository.store_sanitized_artifact(
             cursor,
             sanitized_bytes=body,
             media_type=TRACE_VALUE_MEDIA_TYPE,
             normalization_version=TRACE_VALUE_NORMALIZATION_VERSION,
         )
+        if policy is not None and policy.pii_redaction_enabled:
+            redaction = redact_pii_value(value)
+            if redaction.available:
+                by_path: dict[str, list[PIIRedactionSpan]] = {}
+                for item in redaction.field_redactions:
+                    by_path.setdefault(item.field_path, []).append(item.span)
+                for field_path, spans in sorted(by_path.items()):
+                    self.repository.ensure_redaction_spans(
+                        cursor,
+                        policy_id=policy.policy_id,
+                        semantic_revision_id=None,
+                        artifact_id=artifact.artifact_id,
+                        field_path=field_path,
+                        spans=spans,
+                    )
         return TraceContentRef(artifact.artifact_id, "trace_artifact")
+
+    @staticmethod
+    def _pii_projected_value(
+        value: object,
+        *,
+        policy: FrozenTracePolicy | None,
+    ) -> object:
+        if policy is None or not policy.pii_redaction_enabled:
+            return value
+        result = redact_pii_value(value)
+        if not result.available:
+            return {"omitted": PII_DETECTOR_UNAVAILABLE}
+        return result.value
 
     def _append_omission(
         self,
@@ -3784,7 +3830,15 @@ class ConsoleTraceService:
                 if "messages" in literal:
                     adapter_defaults["literal_surface_field"] = "messages"
                 if literal_envelope:
-                    artifact = self._store_artifact(cursor, literal_envelope)
+                    artifact = self._store_artifact(
+                        cursor,
+                        literal_envelope,
+                        policy=(
+                            None
+                            if artifact_policy_id is None
+                            else self.repository.get_policy(cursor, artifact_policy_id)
+                        ),
+                    )
                     components.append(
                         HeaderComponentRef(
                             "provider_literal_envelope",
@@ -3823,7 +3877,11 @@ class ConsoleTraceService:
                 OmittedTraceProvenance, descriptor
             ).reason.value
             return
-        artifact = self._store_artifact(cursor, value)
+        artifact = self._store_artifact(
+            cursor,
+            value,
+            policy=_artifact_policy(descriptor),
+        )
         components.append(HeaderComponentRef(kind, ordinal, artifact.content_id))
 
     def _persist_system_composition(
@@ -3862,7 +3920,9 @@ class ConsoleTraceService:
                 if provider_ordinal >= len(provider_values):
                     raise ValueError("system_component_alignment")
                 artifact = self._store_artifact(
-                    cursor, provider_values[provider_ordinal]
+                    cursor,
+                    provider_values[provider_ordinal],
+                    policy=cast(ProviderArtifactTraceProvenance, item).policy,
                 )
                 components.append(
                     HeaderComponentRef(
@@ -4327,6 +4387,17 @@ def _policies(
     ):
         visit(descriptor)
     return tuple(policies[key] for key in sorted(policies))
+
+
+def _artifact_policy(descriptor: TraceProvenance) -> FrozenTracePolicy | None:
+    """Return the frozen policy that owns one provider-only artifact."""
+
+    if type(descriptor) is ProviderArtifactTraceProvenance:
+        return cast(ProviderArtifactTraceProvenance, descriptor).policy
+    if type(descriptor) is DerivedTraceProvenance:
+        artifact = cast(DerivedTraceProvenance, descriptor).artifact
+        return None if artifact is None else artifact.policy
+    return None
 
 
 def _thaw(value: object) -> object:
