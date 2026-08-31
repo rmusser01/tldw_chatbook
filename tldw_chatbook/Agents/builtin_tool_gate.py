@@ -95,8 +95,9 @@ class BuiltinToolGate:
     concurrent children safe.
     """
 
-    def __init__(self, service: Any | None) -> None:
+    def __init__(self, service: Any | None, *, profile_id: str = "default") -> None:
         self._service = service
+        self._profile_id = profile_id
         # CONFIG, not per-run state: the permission-store payload is the
         # same for every run in the tree (one file, one profile), so it
         # stays a single shared cache rather than being keyed by run id.
@@ -238,7 +239,11 @@ class BuiltinToolGate:
             approve = getattr(self._service, "approve_for_session", None)
             if approve is not None:
                 try:
-                    approve(BUILTIN_TOOL_SERVER_KEY, tool_name)
+                    approve(
+                        BUILTIN_TOOL_SERVER_KEY,
+                        tool_name,
+                        profile_id=self._profile_id,
+                    )
                 except Exception as exc:  # noqa: BLE001 — best effort
                     logger.warning(f"builtin session approval failed: {exc}")
 
@@ -277,16 +282,12 @@ class BuiltinToolGate:
     def resolve(self, tool: Tool) -> EffectiveToolState:
         """Resolve ``tool``'s effective state (no stamps, no kill switch).
 
-        Workspace assistant defaults (Task 6) -- deliberate V1 NON-GOAL:
-        this gate always resolves against the ``default`` permission
-        profile. ``resolve_builtin_state`` itself accepts a ``profile_id``
-        (Task 5), but this gate serves the global built-in-tool surface
-        OUTSIDE the Console's per-workspace run path (settings permission
-        rows, non-Console agent runs), so threading a workspace profile
-        through here is out of scope for V1; only the Console's MCP
-        provider seams (``Agents/mcp_tool_provider.py``) are profile-aware.
+        The gate captures one permission profile at construction and uses
+        that exact id for every resolution and session-approval path.
         """
-        return resolve_builtin_state(self._load_payload(), tool_ref(tool))
+        return resolve_builtin_state(
+            self._load_payload(), tool_ref(tool), profile_id=self._profile_id
+        )
 
     def _kill_switch(self) -> bool:
         if self._service is None:
@@ -308,7 +309,13 @@ class BuiltinToolGate:
         if checker is None:
             return False
         try:
-            return bool(checker(BUILTIN_TOOL_SERVER_KEY, tool_name))
+            return bool(
+                checker(
+                    BUILTIN_TOOL_SERVER_KEY,
+                    tool_name,
+                    profile_id=self._profile_id,
+                )
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"session approval read failed: {exc}")
             return False
@@ -391,7 +398,9 @@ class BuiltinToolGate:
         return f"tool requires approval and none was granted: {tool.name}"
 
 
-def build_builtin_gate(service: Any | None = None) -> BuiltinToolGate:
+def build_builtin_gate(
+    service: Any | None = None, *, profile_id: str = "default"
+) -> BuiltinToolGate:
     """Construct the real gate.
 
     No app-discovery sketch here: `self.app.unified_mcp_service` (the
@@ -413,11 +422,12 @@ def build_builtin_gate(service: Any | None = None) -> BuiltinToolGate:
             `approve_for_session` the gate reads and calls. `None` builds
             a service-less gate that still gates (fail-closed), not an
             ungated one.
+        profile_id: Exact permission profile captured by the gate.
 
     Returns:
         A `BuiltinToolGate` wired to `service`.
     """
-    return BuiltinToolGate(service)
+    return BuiltinToolGate(service, profile_id=profile_id)
 
 
 # --- task-627 (P2 Task 2): settings-time enumeration ------------------------

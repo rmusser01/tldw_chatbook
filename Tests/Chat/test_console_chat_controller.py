@@ -3740,16 +3740,28 @@ class _FakeSessionApprovalService:
     double's own bookkeeping."""
 
     def __init__(self) -> None:
-        self._approved: set[tuple[str, str]] = set()
+        self._approved: set[tuple[str, str, str]] = set()
 
     def get_kill_switch(self) -> bool:
         return False
 
-    def approve_for_session(self, server_key: str, tool_name: str) -> None:
-        self._approved.add((server_key, tool_name))
+    def approve_for_session(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        profile_id: str = "default",
+    ) -> None:
+        self._approved.add((profile_id, server_key, tool_name))
 
-    def is_session_approved(self, server_key: str, tool_name: str) -> bool:
-        return (server_key, tool_name) in self._approved
+    def is_session_approved(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        profile_id: str = "default",
+    ) -> bool:
+        return (profile_id, server_key, tool_name) in self._approved
 
 
 class _FakeMutatingRiskyTool:
@@ -7142,6 +7154,111 @@ async def test_compose_mcp_provider_excludes_console_shadowed_builtin_names():
         "mcp__tldw_chatbook__chat_with_llm",
         "mcp__docs__library_list_media",
     }
+
+
+def test_mcp_provider_session_and_persistent_paths_use_named_profile():
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+    class RecordingService:
+        def __init__(self):
+            self.calls = []
+
+        def is_session_approved(
+            self, server_key, tool_name, *, profile_id="default"
+        ):
+            self.calls.append(("read", server_key, tool_name, profile_id))
+            return False
+
+        def approve_for_session(
+            self, server_key, tool_name, *, profile_id="default"
+        ):
+            self.calls.append(("session", server_key, tool_name, profile_id))
+
+        def set_tool_state(
+            self,
+            server_key,
+            tool_name,
+            state,
+            *,
+            tool,
+            profile_id="default",
+        ):
+            self.calls.append(
+                ("persistent", server_key, tool_name, state, profile_id)
+            )
+
+    loop = asyncio.new_event_loop()
+    try:
+        service = RecordingService()
+        provider = controller_module.MCPToolProvider(
+            service=service,
+            main_loop=loop,
+            profile_id_provider=lambda: "research",
+        )
+        tool = HubTool(
+            server_key="local:docs",
+            server_label="Docs",
+            source="local",
+            name="search",
+            description="Search docs",
+            input_schema={"type": "object"},
+            tags=(),
+            stale=False,
+            executable=True,
+        )
+        provider._execute = lambda *_args, **_kwargs: SimpleNamespace(ok=True)
+
+        provider._is_session_approved_safe(tool)
+        provider._apply_verdict("approve_session", tool, {})
+        provider._apply_verdict("always_allow", tool, {})
+
+        assert service.calls == [
+            ("read", "local:docs", "search", "research"),
+            ("read", "local:docs", "search", "research"),
+            ("session", "local:docs", "search", "research"),
+            ("persistent", "local:docs", "search", "allow", "research"),
+        ]
+    finally:
+        loop.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_provider_composition_captures_one_named_profile_for_mcp_and_builtin(
+    monkeypatch,
+):
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    controller.app = SimpleNamespace(unified_mcp_service=object())
+    captured = {}
+
+    async def compose_mcp(*_args, **kwargs):
+        captured["mcp"] = kwargs["profile_id_provider"]()
+        return None
+
+    def compose_local(*_args, **_kwargs):
+        return None, None
+
+    def build_gate(_service, *, profile_id="default"):
+        captured["builtin"] = profile_id
+        return SimpleNamespace()
+
+    monkeypatch.setattr(controller, "_compose_mcp_provider", compose_mcp)
+    monkeypatch.setattr(controller, "_compose_local_provider", compose_local)
+    monkeypatch.setattr(controller_module, "build_builtin_gate", build_gate)
+    context = SimpleNamespace(
+        tool_policy_profile_id="research",
+        persona_policy_rules=None,
+    )
+
+    await controller._compose_agent_request_providers(
+        session_id="session-1",
+        project_selection=None,
+        project_authority_guard=None,
+        turn_context=context,
+        admitted_roots=(),
+    )
+
+    assert captured == {"mcp": "research", "builtin": "research"}
 
 
 # -----------------------------------------------------------------------------

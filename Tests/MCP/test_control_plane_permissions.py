@@ -136,6 +136,53 @@ def test_permission_store_is_none_when_local_service_has_no_store():
     assert service.permission_store is None
 
 
+# -- profile-scoped session approvals ---------------------------------------
+
+
+def test_session_approvals_are_isolated_by_exact_profile_id(tmp_path):
+    service, _store = _service(tmp_path)
+
+    service.approve_for_session("local:docs", "search", profile_id="research")
+
+    assert service.is_session_approved(
+        "local:docs", "search", profile_id="research"
+    )
+    assert not service.is_session_approved(
+        "local:docs", "search", profile_id="default"
+    )
+    assert not service.is_session_approved(
+        "local:docs", "search", profile_id="other"
+    )
+
+
+def test_profile_scoped_session_clear_preserves_other_profiles(tmp_path):
+    service, _store = _service(tmp_path)
+    service.approve_for_session("local:docs", "search", profile_id="research")
+    service.approve_for_session("local:docs", "search", profile_id="other")
+
+    service.clear_session_approvals(profile_id="research")
+
+    assert not service.is_session_approved(
+        "local:docs", "search", profile_id="research"
+    )
+    assert service.is_session_approved(
+        "local:docs", "search", profile_id="other"
+    )
+
+
+def test_no_argument_session_clear_remains_clear_all(tmp_path):
+    service, _store = _service(tmp_path)
+    service.approve_for_session("local:docs", "search")
+    service.approve_for_session("local:docs", "search", profile_id="research")
+
+    service.clear_session_approvals()
+
+    assert not service.is_session_approved("local:docs", "search")
+    assert not service.is_session_approved(
+        "local:docs", "search", profile_id="research"
+    )
+
+
 # -- effective_tool_states: no-store fallback --------------------------------
 
 
@@ -517,6 +564,22 @@ def test_gate_tool_test_by_key_ask_passes_through(tmp_path):
     result = service.gate_tool_test_by_key("local:demo", "search")
 
     assert result.state == "ask"
+
+
+def test_gate_tool_test_by_key_resolves_only_the_selected_profile(tmp_path):
+    service, _store = _service(tmp_path)
+    store = service.permission_store
+    store.ensure_profile("research")
+    store.set_tool_state("local:demo", "search", "deny", profile_id="research")
+    store.set_tool_state("local:demo", "search", "ask")
+
+    named = service.gate_tool_test_by_key(
+        "local:demo", "search", profile_id="research"
+    )
+    default = service.gate_tool_test_by_key("local:demo", "search")
+
+    assert named.state == "deny"
+    assert default.state == "ask"
 
 
 def test_gate_tool_test_by_key_allow_downgrades_to_ask_without_live_tool(tmp_path):

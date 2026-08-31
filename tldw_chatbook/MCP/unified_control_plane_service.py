@@ -251,7 +251,7 @@ class UnifiedMCPControlPlaneService:
         # approvals. Never persisted -- a fresh process/instance starts
         # empty, and `clear_session_approvals()` is the only other way
         # entries leave this set.
-        self._session_approvals: set[tuple[str, str]] = set()
+        self._session_approvals: set[tuple[str, str, str]] = set()
 
     def _ensure_hub_test_state(
         self,
@@ -4515,8 +4515,14 @@ class UnifiedMCPControlPlaneService:
         except (TypeError, ValueError):
             return 120.0
 
-    def approve_for_session(self, server_key: str, tool_name: str) -> None:
-        """Grant a session-scoped approval for one server/tool pair.
+    def approve_for_session(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        profile_id: str = "default",
+    ) -> None:
+        """Grant a session-scoped approval for one profile/server/tool triple.
 
         Session approvals are held in memory only, for the lifetime of
         this service instance (an app-run singleton) -- they are never
@@ -4526,28 +4532,44 @@ class UnifiedMCPControlPlaneService:
         Args:
             server_key: Prefixed server key the tool belongs to.
             tool_name: Name of the tool being approved.
+            profile_id: Exact permission profile receiving the approval.
         """
-        self._session_approvals.add((server_key, tool_name))
+        self._session_approvals.add((profile_id, server_key, tool_name))
 
-    def is_session_approved(self, server_key: str, tool_name: str) -> bool:
-        """Check whether a server/tool pair has a session-scoped approval.
+    def is_session_approved(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        profile_id: str = "default",
+    ) -> bool:
+        """Check one profile/server/tool session-approval triple.
 
         Args:
             server_key: Prefixed server key the tool belongs to.
             tool_name: Name of the tool to check.
+            profile_id: Exact permission profile whose approval is checked.
 
         Returns:
             ``True`` if :meth:`approve_for_session` was called for this
-            exact pair since the last :meth:`clear_session_approvals`
+            exact triple since the last applicable
+            :meth:`clear_session_approvals`
             call (or since this service instance was constructed);
             ``False`` otherwise. Always ``False`` on a fresh instance or
             after an app restart -- the grant is not persisted.
         """
-        return (server_key, tool_name) in self._session_approvals
+        return (profile_id, server_key, tool_name) in self._session_approvals
 
-    def clear_session_approvals(self) -> None:
-        """Discard every in-memory session approval on this instance."""
-        self._session_approvals.clear()
+    def clear_session_approvals(self, *, profile_id: str | None = None) -> None:
+        """Discard approvals for one profile, or all approvals when omitted."""
+        if profile_id is None:
+            self._session_approvals.clear()
+            return
+        self._session_approvals = {
+            approval
+            for approval in self._session_approvals
+            if approval[0] != profile_id
+        }
 
     def record_tool_decision(
         self,
@@ -4914,7 +4936,11 @@ class UnifiedMCPControlPlaneService:
         return self.gate_tool_test(tool, profile_id=profile_id)
 
     def gate_tool_test_by_key(
-        self, server_key: str, tool_name: str
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        profile_id: str = "default",
     ) -> EffectiveToolState:
         """Resolve one tool's Test Tool gate from the store alone, with no
         live ``HubTool`` to fingerprint.
@@ -4942,4 +4968,6 @@ class UnifiedMCPControlPlaneService:
         if store is None:
             return EffectiveToolState(state="ask", origin="global_default")
         payload = store.load()
-        return resolve_effective_state_by_key(payload, server_key, tool_name)
+        return resolve_effective_state_by_key(
+            payload, server_key, tool_name, profile_id=profile_id
+        )

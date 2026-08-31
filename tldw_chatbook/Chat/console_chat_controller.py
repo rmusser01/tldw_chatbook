@@ -12132,13 +12132,14 @@ class ConsoleChatController:
         # profile seam. A None/absent context, or the "default" profile,
         # omits the keyword entirely -- the call shape (and behavior) stays
         # byte-identical for every legacy caller and signature-exact double.
+        profile_id = (
+            turn_context.tool_policy_profile_id
+            if turn_context is not None
+            else "default"
+        )
         mcp_profile_kwargs: dict[str, Any] = {}
-        if (
-            turn_context is not None
-            and turn_context.tool_policy_profile_id != "default"
-        ):
-            named_profile_id = turn_context.tool_policy_profile_id
-            mcp_profile_kwargs["profile_id_provider"] = lambda: named_profile_id
+        if profile_id != "default":
+            mcp_profile_kwargs["profile_id_provider"] = lambda: profile_id
         # Persona require_confirmation floor (final review): thread THIS
         # run's parsed persona policy into the MCP provider's invoke-time
         # gates, mirroring the local provider's `_resolve_state` layering.
@@ -12164,7 +12165,7 @@ class ConsoleChatController:
             **mcp_profile_kwargs,
         )
         builtin_gate = build_builtin_gate(
-            getattr(self.app, "unified_mcp_service", None)
+            getattr(self.app, "unified_mcp_service", None), profile_id=profile_id
         )
         if admitted_roots is None:
             session = next(
@@ -12287,6 +12288,15 @@ class ConsoleChatController:
         if kill_switch:
             return None, None
 
+        profile_id = (
+            turn_context.tool_policy_profile_id
+            if turn_context is not None
+            else "default"
+        )
+        profile_kwargs = (
+            {} if profile_id == "default" else {"profile_id": profile_id}
+        )
+
         bound_request_approvals = functools.partial(
             self.request_mcp_approvals, session_id=session_id
         )
@@ -12305,11 +12315,19 @@ class ConsoleChatController:
 
         def _persist_approval(hub: "HubTool", decision: str) -> None:
             if decision == "approve_session":
-                service.approve_for_session(hub.server_key, hub.name)
+                service.approve_for_session(
+                    hub.server_key, hub.name, **profile_kwargs
+                )
             elif decision == "always_allow":
                 # set_tool_state computes definition_hash(hub.description,
                 # hub.input_schema) itself -- required for the rug-pull guard.
-                service.set_tool_state(hub.server_key, hub.name, "allow", tool=hub)
+                service.set_tool_state(
+                    hub.server_key,
+                    hub.name,
+                    "allow",
+                    tool=hub,
+                    **profile_kwargs,
+                )
 
         def _record_decision(hub: "HubTool", decision: str) -> None:
             # Same audit path MCPToolProvider._record_decision_safe uses;
@@ -12396,11 +12414,6 @@ class ConsoleChatController:
         # exactly as before, so signature-exact service doubles stay valid);
         # (2) the persona floor then lowers allow->ask for tools whose rules
         # demand confirmation. No path here can raise a state or add a tool.
-        profile_id = (
-            turn_context.tool_policy_profile_id
-            if turn_context is not None
-            else "default"
-        )
         # Lazy import (boot budget, ADR-097): per-run provider gate only.
         from tldw_chatbook.Agents.persona_policy import (
             parse_persona_policy_from_rules,
@@ -12438,7 +12451,7 @@ class ConsoleChatController:
             kill_switch=_kill_switch,
             approval_callback=bound_request_approvals,
             is_session_approved=lambda hub: service.is_session_approved(
-                hub.server_key, hub.name
+                hub.server_key, hub.name, **profile_kwargs
             ),
             persist_approval=_persist_approval,
             record_decision=_record_decision,
@@ -12485,6 +12498,20 @@ class ConsoleChatController:
         except Exception:  # noqa: BLE001 -- unreadable security state fails closed
             return None, None
 
+        profile_id = (
+            turn_context.tool_policy_profile_id
+            if turn_context is not None
+            else "default"
+        )
+        profile_kwargs = (
+            {} if profile_id == "default" else {"profile_id": profile_id}
+        )
+
+        def resolve_state(hub: "HubTool") -> Any:
+            if profile_id == "default":
+                return service.gate_tool_test(hub)
+            return service.gate_tool_test_for_profile(hub, profile_id)
+
         if project_root is None:
             snapshot = turn_context.scratch_space if turn_context is not None else None
             if snapshot is None:
@@ -12510,9 +12537,17 @@ class ConsoleChatController:
 
         def persist(hub: "HubTool", decision: str) -> None:
             if decision == "approve_session":
-                service.approve_for_session(hub.server_key, hub.name)
+                service.approve_for_session(
+                    hub.server_key, hub.name, **profile_kwargs
+                )
             elif decision == "always_allow":
-                service.set_tool_state(hub.server_key, hub.name, "allow", tool=hub)
+                service.set_tool_state(
+                    hub.server_key,
+                    hub.name,
+                    "allow",
+                    tool=hub,
+                    **profile_kwargs,
+                )
 
         def record(hub: "HubTool", decision: str) -> None:
             service.record_tool_decision(
@@ -12526,14 +12561,14 @@ class ConsoleChatController:
 
         provider = VirtualCliProvider(
             workspace_root=root,
-            resolve_state=service.gate_tool_test,
+            resolve_state=resolve_state,
             local_tools_enabled=lambda: coerce_bool_setting(
                 configured, LOCAL_TOOLS_DEFAULT_ENABLED
             ),
             kill_switch=lambda: bool(service.get_kill_switch()),
             approval_callback=bound_request,
             is_session_approved=lambda hub: service.is_session_approved(
-                hub.server_key, hub.name
+                hub.server_key, hub.name, **profile_kwargs
             ),
             persist_approval=persist,
             record_decision=record,
@@ -12581,6 +12616,17 @@ class ConsoleChatController:
         except Exception:
             return None, None
 
+        profile_id = (
+            turn_context.tool_policy_profile_id
+            if turn_context is not None
+            else "default"
+        )
+
+        def resolve_state(hub: "HubTool") -> Any:
+            if profile_id == "default":
+                return service.gate_tool_test(hub)
+            return service.gate_tool_test_for_profile(hub, profile_id)
+
         if project_root is not None:
             initial_directory = project_root
         else:
@@ -12607,7 +12653,7 @@ class ConsoleChatController:
             runtime=runtime,
             console_session_id=session_id,
             initial_directory=lambda: initial_directory,
-            resolve_state=service.gate_tool_test,
+            resolve_state=resolve_state,
             local_tools_enabled=lambda: local_enabled,
             kill_switch=kill_switch,
             progress_sink=(
