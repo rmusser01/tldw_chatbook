@@ -19,6 +19,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Resize
+from textual.geometry import Size
 from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widgets import Button, Input, Static
@@ -292,12 +293,13 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         else:
             self.query_one("#console-workspace-files-back", Button).focus()
 
-    def on_resize(self, _event: Resize) -> None:
-        self._sync_layout()
+    def on_resize(self, event: Resize) -> None:
+        self._sync_layout(event.size)
 
-    def _sync_layout(self) -> None:
-        compact = self.size.width <= 100
-        short = self.size.height < 30
+    def _sync_layout(self, size: Size | None = None) -> None:
+        size = size or self.size
+        compact = size.width <= 100
+        short = size.height < 30
         self._state = replace(self._state, compact=compact, short=short)
         self.set_class(compact, "-compact")
         self.set_class(short, "-short")
@@ -619,9 +621,8 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
     async def _perform_safe_cancel(self, *, source: str) -> None:
         del source
         await self.run_cancel_effect_once(self._teardown)
-        if self._on_back_to_console is not None:
+        if self.dismiss_safe_once(None) and self._on_back_to_console is not None:
             self._on_back_to_console()
-        self.dismiss_safe_once(None)
 
     def on_unmount(self) -> None:
         super().on_unmount()

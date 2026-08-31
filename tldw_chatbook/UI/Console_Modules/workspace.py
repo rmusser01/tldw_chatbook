@@ -17,7 +17,7 @@ DOM or reach through sibling controllers.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -57,6 +57,12 @@ from ...Widgets.Console import (
     ConsoleWorkspaceSwitcherModal,
 )
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
+from ...Widgets.Console.console_workspace_files_modal import (
+    ConsoleWorkspaceFilesModal,
+    WorkspaceFilesAttention,
+    WorkspaceFilesBinding,
+    WorkspaceFilesService,
+)
 from ...Widgets.project_skills_import_modal import maybe_offer_project_skills_import
 from ...Workspaces import (
     CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
@@ -731,6 +737,36 @@ class ConsoleWorkspaceController:
     def push_screen(self) -> Any:
         """`Screen.app.push_screen`, bound. See `__init__`'s docstring."""
         return self._screen.app.push_screen
+
+    def open_workspace_files_modal(
+        self,
+        *,
+        inspector: WorkspaceFilesService,
+        inspected_workspace_id: str,
+        inspected_workspace_name: str,
+        active_workspace_id: str | None,
+        active_workspace_name: str,
+        bindings: Sequence[WorkspaceFilesBinding],
+        attention: WorkspaceFilesAttention | None = None,
+    ) -> Any:
+        """Push one already-resolved, read-only Workspace Files visit.
+
+        This deliberately accepts only presentation-safe identities and the
+        narrow read-only inspector supplied by its future entry owner.  It
+        neither reads the registry nor updates Console workspace/session/
+        context state; Task 3 owns admission and resolution from its controls.
+        """
+        return self.push_screen(
+            ConsoleWorkspaceFilesModal(
+                inspector=inspector,
+                inspected_workspace_id=inspected_workspace_id,
+                inspected_workspace_name=inspected_workspace_name,
+                active_workspace_id=active_workspace_id,
+                active_workspace_name=active_workspace_name,
+                bindings=bindings,
+                attention=attention,
+            )
+        )
 
     @property
     def call_after_refresh(self) -> Any:

@@ -10,6 +10,8 @@ from threading import Event
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
+from textual.events import Resize
+from textual.geometry import Size
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Widgets.Console.console_workspace_files_modal import (
@@ -126,6 +128,64 @@ async def test_unavailable_binding_is_selected_without_falling_back_to_another_s
         assert modal.state.selected_binding_id == "binding-b"
         assert modal.state.status_copy == "Selected binding is unavailable."
         assert [name for name, _call in inspector.calls] == ["list"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["back", "escape", "backdrop"])
+async def test_safe_dismissal_sources_are_one_shot_and_restore_the_opener(
+    source: str,
+) -> None:
+    """All visible/keyboard/backdrop exits share the same terminal callback."""
+    callbacks: list[str] = []
+    results: list[None] = []
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=_Inspector([]), inspected_workspace_id="ws-a", inspected_workspace_name="A",
+        active_workspace_id="ws-a", active_workspace_name="A",
+        bindings=(WorkspaceFilesBinding("binding-a", "Unavailable", None, available=False),),
+        on_back_to_console=lambda: callbacks.append("back"),
+    )
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        opener = app.query_one("#files-opener", Button)
+        opener.focus()
+        await app.push_screen(modal, callback=results.append)
+        await pilot.pause()
+        if source == "back":
+            await pilot.click("#console-workspace-files-back")
+        elif source == "escape":
+            await pilot.press("escape")
+        else:
+            await pilot.click(offset=(0, 0))
+        await pilot.pause()
+        await pilot.pause()
+        assert app.screen is not modal
+        assert app.focused is opener
+
+        await modal.action_request_safe_cancel()
+        assert callbacks == ["back"]
+        assert results == [None]
+
+
+@pytest.mark.asyncio
+async def test_inside_click_does_not_dismiss_and_resize_keeps_modal_state() -> None:
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=_Inspector([]), inspected_workspace_id="ws-a", inspected_workspace_name="A",
+        active_workspace_id="ws-a", active_workspace_name="A",
+        bindings=(WorkspaceFilesBinding("binding-a", "Unavailable", None, available=False),),
+    )
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        original_state = modal.state
+        await pilot.click("#console-workspace-files-pinned")
+        await pilot.pause()
+        assert app.screen is modal
+
+        modal.on_resize(Resize(Size(80, 24), Size(120, 40)))
+        assert app.screen is modal
+        assert modal.state.selected_binding_id == original_state.selected_binding_id
+        assert modal.has_class("-compact") and modal.has_class("-short")
 
 
 def test_modal_declares_the_shared_safe_dismissal_boundary() -> None:

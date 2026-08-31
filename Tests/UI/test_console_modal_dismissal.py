@@ -977,14 +977,8 @@ _CONSOLE_ROOT_SOURCE_PATHS = (
 _CONSOLE_DIRECT_MODAL_TYPES = tuple(
     contract.modal_type
     for contract in (*TASK2_MODAL_CONTRACTS, *TASK3_MODAL_CONTRACTS)
-    if contract.modal_type
-    not in {ConsoleWorkspaceFilesModal, ConsoleWorkspaceRenameModal}
+    if contract.modal_type is not ConsoleWorkspaceRenameModal
 ) + tuple(contract.modal_type for contract in TASK567_MODAL_CONTRACTS)
-# Task 2 ships the read-only modal and its full safe-dismissal contract before
-# Task 3 wires a Console owner action.  It remains in the exact inventory above
-# (rather than in an inventory exemption); it is intentionally absent from the
-# launch graph until there is an honest source-level constructor to declare.
-_CONSOLE_UNWIRED_CONTRACT_TYPES = frozenset({ConsoleWorkspaceFilesModal})
 _DIRECT_SHARED_MODAL_TYPES = tuple(
     contract.modal_type
     for contract in TASK4_MODAL_CONTRACTS
@@ -1370,14 +1364,13 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         for node in reachable
         if inspect.isclass(node) and issubclass(node, ModalScreen)
     }
-    # dev baseline 44 plus the four inventory-only modal types declared
-    # above and reached through their actual runtime launch edges.
-    assert len(reachable_modal_types) == 48
+    # The current dev baseline grows to 49 when TASK-26042's Workspace Files
+    # owner seam joins the explicit Console launch graph.
+    assert len(reachable_modal_types) == 49
     all_contract_types = console_contract_types | {
         contract.modal_type for contract in TASK4_MODAL_CONTRACTS
     } | inventory_only_types | {TrajectoryScreen}
-    assert reachable_modal_types == all_contract_types - _CONSOLE_UNWIRED_CONTRACT_TYPES
-    assert ConsoleWorkspaceFilesModal not in reachable_modal_types
+    assert reachable_modal_types == all_contract_types
     assert {EnhancedFileOpen, EnhancedFileSave} <= reachable_modal_types
     assert CancelConfirmationDialog in reachable_modal_types
     assert ChangeRevertConfirmModal in reachable_modal_types

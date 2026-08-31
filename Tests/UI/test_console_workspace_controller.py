@@ -52,6 +52,11 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
+from tldw_chatbook.Widgets.Console.console_workspace_files_modal import (
+    ConsoleWorkspaceFilesModal,
+    WorkspaceFilesAttention,
+    WorkspaceFilesBinding,
+)
 from tldw_chatbook.Workspaces import (
     CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
     CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
@@ -2240,6 +2245,46 @@ def test_active_flat_search_overlays_current_star_selection_and_run_marker() -> 
         True,
     )
     assert controller._flat_conversation_search.rows == (stale,)
+def test_workspace_files_owner_seam_only_constructs_and_pushes_the_pinned_modal():
+    """Task 2's truthful launch seam cannot activate or retarget Console state."""
+    pushed: list[ConsoleWorkspaceFilesModal] = []
+    screen = _NoMountScreen()
+    screen.app = SimpleNamespace(push_screen=lambda modal: pushed.append(modal))
+    controller = _workspace_controller(screen=screen)
+    inspector = object()
+    bindings = (
+        WorkspaceFilesBinding("binding-1", "Folder", None, available=False),
+    )
+    attention = WorkspaceFilesAttention("One generic attention flag.")
+    before = (
+        controller._console_conversation_browser_query,
+        controller._console_conversation_browser_rows,
+        controller._console_workspace_conversation_workspace_id,
+    )
+
+    controller.open_workspace_files_modal(
+        inspector=inspector,
+        inspected_workspace_id="inspected-id",
+        inspected_workspace_name="Inspected",
+        active_workspace_id="active-id",
+        active_workspace_name="Active",
+        bindings=bindings,
+        attention=attention,
+    )
+
+    assert len(pushed) == 1
+    modal = pushed[0]
+    assert modal.inspected_workspace_id == "inspected-id"
+    assert modal.inspected_workspace_name == "Inspected"
+    assert modal.active_workspace_id == "active-id"
+    assert modal.active_workspace_name == "Active"
+    assert modal._workspace_bindings == bindings
+    assert modal._attention is attention
+    assert before == (
+        controller._console_conversation_browser_query,
+        controller._console_conversation_browser_rows,
+        controller._console_workspace_conversation_workspace_id,
+    )
 
 
 def test_workspace_controller_constructor_documents_every_dependency():
