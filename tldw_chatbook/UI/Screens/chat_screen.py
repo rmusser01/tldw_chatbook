@@ -336,6 +336,7 @@ from ...Chat.console_display_state import (
     console_prompted_evidence_text,
     console_prompted_source_count,
     console_staged_source_count,
+    estimate_console_next_send_tokens,
 )
 from ...Chat.console_onboarding_state import (
     ConsoleSetupCardState,
@@ -4452,6 +4453,11 @@ class ChatScreen(BaseAppScreen):
             estimate_factory=estimate_factory,
             token_estimate=token_estimate,
             in_progress=in_progress,
+            # task-21513: once the snapshot loads, the Next Send header
+            # count switches from the draft-only pre-load value to the whole
+            # next-send request (system + messages + tools + staged
+            # evidence) this estimate computes from the payload.
+            payload_estimate=self._console_next_send_token_estimate,
             **project_instruction_ui.project_instruction_context_kwargs(
                 self, controller, session_id
             ),
@@ -4529,6 +4535,39 @@ class ChatScreen(BaseAppScreen):
         if not text:
             return None
         return estimate_tokens(text, "", "")
+
+    def _console_next_send_token_estimate(
+        self, snapshot: Any
+    ) -> Optional[int]:
+        """Estimate the tokens the snapshot's next-send payload will ship.
+
+        task-21513: the Next Send header's count must answer "what is this
+        message about to send", which on a first message is dominated by the
+        system prompt, project-instruction bodies, tool schemas, and staged
+        evidence -- none of which the draft-only estimate sees. Counted via
+        the shared pure estimator (:func:`estimate_console_next_send_tokens`)
+        over the assembled payload, plus the staged evidence text the
+        preview payload carries only as label-only metadata (the same
+        zero-I/O seam ``console_prompted_evidence_text`` the settings
+        estimate and cost chip already read). Degrades to ``None`` on an
+        assembly-error payload -- no count is better than a wrong one.
+        """
+        payload = getattr(snapshot, "next_send_payload", None)
+        if not isinstance(payload, dict) or payload.get("error"):
+            return None
+        provider, model, _settings = self._active_console_provider_model_display()
+        return estimate_console_next_send_tokens(
+            payload_messages=payload.get("messages") or [],
+            payload_system=payload.get("system"),
+            tools_info=payload.get("tools"),
+            extra_texts=(
+                console_prompted_evidence_text(
+                    self._pending_console_launch_context
+                ),
+            ),
+            model=model or "",
+            provider=provider or "",
+        )
 
     async def action_jump_console_tab(self, number: int) -> None:
         """Jump directly to the Nth native Console session tab (Alt+1..9).
@@ -8238,6 +8277,68 @@ class ChatScreen(BaseAppScreen):
             system_prompt_set=bool(getattr(settings, "system_prompt", None)),
         )
 
+    def _console_first_send_pseudo_rows(self) -> list[Any]:
+        """Return estimated rows for the context a FIRST send will ship.
+
+        task-21513: while a conversation has no answered/billed turns, the
+        next request carries the session system prompt, the native tool
+        schemas, and the composer draft -- none of which are transcript
+        rows, so the cost chip under-reported a first send as "0 tok".
+        Returns duck-typed rows (``.role``/``.content``/``.usage=None``,
+        the same contract as the staged-evidence pseudo-row) that
+        ``build_cost_snapshot`` prices through its ESTIMATED-row branch,
+        flipping `has_estimated_entries` so the chip's ``~`` honesty marker
+        shows.
+
+        Empty when no send is pending: a blank draft short-circuits before
+        any state is read (the steady-state cost of this on the sync tick
+        is one composer read), and the fold-in stops the moment the session
+        has ANY assistant row or recorded usage -- after that the chip is a
+        running total of what was actually sent, and re-adding
+        system/tools per tick would corrupt it.
+        """
+        composer = self._console_composer_or_none()
+        draft = composer.draft_text() if composer is not None else ""
+        if not str(draft).strip():
+            return []
+        store = self._console_chat_store
+        session_id = store.active_session_id if store is not None else None
+        if session_id is None:
+            return []
+        try:
+            messages = store.messages_for_session(session_id)
+        except KeyError:
+            return []
+        for message in messages:
+            if getattr(message, "usage", None) is not None:
+                return []
+            if str(getattr(message.role, "value", message.role)) == "assistant":
+                return []
+        rows: list[Any] = []
+        settings = self._session._active_console_session_settings()
+        system_prompt = str(getattr(settings, "system_prompt", "") or "")
+        if system_prompt.strip():
+            rows.append(
+                SimpleNamespace(role="system", content=system_prompt, usage=None)
+            )
+        try:
+            bridge = self._ensure_console_agent_bridge()
+            schemas = (
+                bridge.native_tool_schemas()
+                if bridge is not None and hasattr(bridge, "native_tool_schemas")
+                else []
+            )
+        except Exception:
+            schemas = []
+        if schemas:
+            rows.append(
+                SimpleNamespace(
+                    role="system", content=json.dumps(schemas, default=str), usage=None
+                )
+            )
+        rows.append(SimpleNamespace(role="user", content=draft, usage=None))
+        return rows
+
     def _build_console_cost_state(self) -> ConsoleCostState | None:
         """Build the cost chip's display state for the active session (task-5).
 
@@ -8286,6 +8387,17 @@ class ChatScreen(BaseAppScreen):
                 snapshot_messages = snapshot_messages + [
                     SimpleNamespace(role="user", content=staged_text, usage=None)
                 ]
+            # task-21513: a FIRST send ships the session system prompt, tool
+            # schemas, and the draft itself on top of the staged evidence
+            # above -- none of which existed as transcript rows, so a
+            # brand-new conversation with a typed draft still read "0 tok".
+            # Same pseudo-row treatment as the staged evidence: folded in
+            # only while the session has nothing answered/billed yet (see
+            # `_console_first_send_pseudo_rows`), so the running-total
+            # semantics after a reply are untouched.
+            first_send_rows = self._console_first_send_pseudo_rows()
+            if first_send_rows:
+                snapshot_messages = snapshot_messages + first_send_rows
             provider, model, _settings = self._active_console_provider_model_display()
             # PR2b Task 5 (cost rollup): the active conversation's LIVE
             # sub-agent fleet spend, folded into the snapshot's token total
@@ -8785,6 +8897,7 @@ class ChatScreen(BaseAppScreen):
         snapshot_factory: Callable[[], Awaitable[ConsoleContextSnapshot]],
         estimate_factory: Callable[[], int | None] | None = None,
         token_estimate: int | None = None,
+        payload_estimate: Callable[[ConsoleContextSnapshot], int | None] | None = None,
         in_progress: bool = False,
         project_instruction_state: ConsoleProjectInstructionState | None = None,
         project_instruction_state_factory: Callable[
@@ -8828,6 +8941,7 @@ class ChatScreen(BaseAppScreen):
             snapshot_factory=snapshot_factory,
             token_estimate=token_estimate,
             estimate_factory=estimate_factory,
+            payload_estimate=payload_estimate,
             in_progress=in_progress,
             ephemeral=self._console_active_session_is_ephemeral(),
             initial_tab=initial_tab,

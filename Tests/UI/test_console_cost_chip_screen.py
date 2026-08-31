@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import replace
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -863,3 +864,179 @@ async def test_build_console_cost_state_includes_a_survivors_post_turn_spend():
         state = console._build_console_cost_state()
         assert state is not None
         assert "Sub-agents: 1.3k tok (not priced)" in state.tooltip
+
+
+# --- task-21513: first-send context/tool/draft rows -------------------------
+#
+# The chip's running total ignored everything a FIRST send actually ships
+# (session system prompt, tool schemas, the draft itself), so a brand-new
+# conversation with a typed draft still read "0 tok" until the first reply
+# landed. The fold-in is first-send-only: once a reply (or any usage row)
+# exists, the chip reverts to the running-total semantics.
+
+
+_DEMO_TOOL_SCHEMA = {
+    "name": "demo_tool",
+    "description": "does demo things",
+    "parameters": {"type": "object", "properties": {}},
+}
+
+
+def _first_send_tool_bridge():
+    return SimpleNamespace(
+        native_tool_schemas=lambda: [_DEMO_TOOL_SCHEMA],
+    )
+
+
+def _row_roles(rows) -> list[str]:
+    return [str(getattr(row.role, "value", row.role)) for row in rows]
+
+
+@pytest.mark.asyncio
+async def test_first_send_pseudo_rows_absent_while_draft_is_blank():
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        assert console._console_first_send_pseudo_rows() == []
+        state = console._build_console_cost_state()
+        assert state is not None
+        assert "Tokens: 0" in state.tooltip
+
+
+@pytest.mark.asyncio
+async def test_first_send_pseudo_rows_carry_system_tools_and_draft():
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        console._session._apply_console_session_system_prompt(
+            "You are a thorough assistant. " * 5
+        )
+        console._ensure_console_agent_bridge = _first_send_tool_bridge
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello, this is my first message")
+
+        rows = console._console_first_send_pseudo_rows()
+        roles = _row_roles(rows)
+        contents = [row.content for row in rows]
+        assert all(getattr(row, "usage", "missing") is None for row in rows)
+        system_contents = [
+            content for role, content in zip(roles, contents) if role == "system"
+        ]
+        assert any("thorough assistant" in content for content in system_contents)
+        assert any('"demo_tool"' in content for content in system_contents)
+        assert any(
+            role == "user" and "first message" in content
+            for role, content in zip(roles, contents)
+        )
+
+        state = console._build_console_cost_state()
+        assert state is not None
+        assert "Tokens: 0" not in state.tooltip
+        assert state.label.startswith("~")
+
+
+@pytest.mark.asyncio
+async def test_first_send_pseudo_rows_draft_only_without_prompt_or_tools():
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("just a draft")
+
+        rows = console._console_first_send_pseudo_rows()
+        assert _row_roles(rows) == ["user"]
+        assert "just a draft" in rows[0].content
+
+
+@pytest.mark.asyncio
+async def test_first_send_pseudo_rows_stop_once_a_reply_exists():
+    gateway = _AnthropicCostGateway(PRICED_USAGE, reply="the priced answer")
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _send_and_settle(console, pilot, "hello", "the priced answer")
+
+        before = console._build_console_cost_state()
+        assert before is not None
+
+        # Everything the fold-in would count, queued behind a finished reply:
+        # none of it may leak into the conversation's running total.
+        console._session._apply_console_session_system_prompt(
+            "You are a thorough assistant. " * 20
+        )
+        console._ensure_console_agent_bridge = _first_send_tool_bridge
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("a queued follow-up message " * 100)
+
+        assert console._console_first_send_pseudo_rows() == []
+
+        after = console._build_console_cost_state()
+        assert after is not None
+
+        def _tokens_line(state):
+            return next(
+                line
+                for line in state.tooltip.splitlines()
+                if line.startswith("Tokens:")
+            )
+
+        assert _tokens_line(after) == _tokens_line(before)
+
+
+@pytest.mark.asyncio
+async def test_console_next_send_token_estimate_counts_context_not_just_draft():
+    """task-21513: the estimate wired into the inspector's Next Send header
+    must count the assembled payload (system prompt + draft turn), not the
+    draft text alone -- the first-message case where the gap is largest."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
+    from tldw_chatbook.Utils.token_counter import estimate_tokens
+
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        session_id = store.active_session_id or store.ensure_session(
+            title="First message"
+        ).id
+        console._session._apply_console_session_system_prompt(
+            "You are a thorough assistant. " * 5
+        )
+        await pilot.pause()
+
+        snapshot = await controller.build_context_snapshot(
+            draft="hello there", session_id=session_id
+        )
+        estimate = console._console_next_send_token_estimate(snapshot)
+
+        draft_only = estimate_tokens("hello there", "", "")
+        assert estimate is not None
+        assert estimate > draft_only
+
+        degraded = ConsoleContextSnapshot(
+            current_messages=[], next_send_payload={"error": "boom"}
+        )
+        assert console._console_next_send_token_estimate(degraded) is None

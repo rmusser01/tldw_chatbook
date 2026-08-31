@@ -14,6 +14,7 @@ from tldw_chatbook.Chat.console_display_state import (
     ConsoleInspectorState,
     ConsoleLibraryPolicyDisplayState,
     ConsoleStagedContextState,
+    estimate_console_next_send_tokens,
 )
 from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAssistantLibraryAccess,
@@ -548,3 +549,143 @@ def test_permanently_dead_review_tool_call_action_is_gone():
     assert not any("Review tool call" in lbl for lbl in labels), (
         f"the dead action is still advertised: {labels}"
     )
+
+
+# --- Next-send token estimate (task-21513) ---------------------------------
+#
+# The Next Send tab's "~N tokens" header and the cost chip's first-send
+# readout both need "what will the next request actually carry": system
+# prompt + messages (draft included) + tool schemas + staged evidence.
+# These tests pin the shared pure estimator's counting and its guards.
+
+
+_FIRST_SEND_MESSAGES = [
+    {"role": "system", "content": "You are a thorough assistant. " * 5},
+    {"role": "user", "content": "hello, this is my first message"},
+]
+
+
+@pytest.mark.unit
+def test_next_send_estimate_counts_tools_on_top_of_messages():
+    without_tools = estimate_console_next_send_tokens(
+        payload_messages=_FIRST_SEND_MESSAGES
+    )
+    with_tools = estimate_console_next_send_tokens(
+        payload_messages=_FIRST_SEND_MESSAGES,
+        tools_info={
+            "native_schemas": [
+                {
+                    "name": "demo_tool",
+                    "description": "does demo things",
+                    "parameters": {"type": "object", "properties": {}},
+                }
+            ]
+        },
+    )
+
+    assert without_tools is not None
+    assert with_tools is not None
+    assert with_tools > without_tools
+
+
+@pytest.mark.unit
+def test_next_send_estimate_does_not_double_count_duplicated_system_row():
+    """The payload's `system` field duplicates the leading system row in
+    `messages` (by design, so the viewer can show it at a glance) -- the
+    estimate must not count it twice."""
+    system_rows = [
+        {"role": "system", "content": _FIRST_SEND_MESSAGES[0]["content"]}
+    ]
+    plain = estimate_console_next_send_tokens(
+        payload_messages=_FIRST_SEND_MESSAGES
+    )
+    duplicated = estimate_console_next_send_tokens(
+        payload_messages=_FIRST_SEND_MESSAGES,
+        payload_system=system_rows,
+    )
+
+    assert duplicated == plain
+
+
+@pytest.mark.unit
+def test_next_send_estimate_counts_fallback_system_when_messages_have_none():
+    """`build_context_snapshot` can hand a `system` field whose rows are NOT
+    in `messages` (its fallback branch) -- that content still ships."""
+    user_only = [{"role": "user", "content": "hello"}]
+    without = estimate_console_next_send_tokens(payload_messages=user_only)
+    with_system = estimate_console_next_send_tokens(
+        payload_messages=user_only,
+        payload_system=[
+            {"role": "system", "content": "You are a thorough assistant." * 20}
+        ],
+    )
+
+    assert without is not None
+    assert with_system is not None
+    assert with_system > without
+
+
+@pytest.mark.unit
+def test_next_send_estimate_folds_extra_texts_and_skips_blank_ones():
+    """Staged evidence text rides along as an extra text (the preview payload
+    lists staged sources as label-only metadata); blank texts add nothing."""
+    base = estimate_console_next_send_tokens(
+        payload_messages=_FIRST_SEND_MESSAGES
+    )
+    with_staged = estimate_console_next_send_tokens(
+        payload_messages=_FIRST_SEND_MESSAGES,
+        extra_texts=["", "   ", "staged evidence snippet " * 10],
+    )
+
+    assert base is not None
+    assert with_staged is not None
+    assert with_staged > base
+
+
+@pytest.mark.unit
+def test_next_send_estimate_ignores_tools_info_without_schemas():
+    """`tools_info` carries prose notes (`mcp_note`/`preview_note`) that are
+    not request content; an empty `native_schemas` contributes nothing."""
+    with_notes = estimate_console_next_send_tokens(
+        payload_messages=_FIRST_SEND_MESSAGES,
+        tools_info={
+            "native_schemas": [],
+            "preview_note": "No native tools are configured for preview.",
+        },
+    )
+    without = estimate_console_next_send_tokens(
+        payload_messages=_FIRST_SEND_MESSAGES
+    )
+
+    assert with_notes == without
+
+
+@pytest.mark.unit
+def test_next_send_estimate_returns_none_when_nothing_to_send():
+    assert estimate_console_next_send_tokens() is None
+    assert (
+        estimate_console_next_send_tokens(
+            payload_messages=[],
+            payload_system=[],
+            tools_info={"native_schemas": []},
+            extra_texts=["   "],
+        )
+        is None
+    )
+
+
+@pytest.mark.unit
+def test_next_send_estimate_accepts_multimodal_part_list_content():
+    """Message content may be a provider part-list (text + image) -- the
+    estimator must not crash and must count the text part (plus the
+    non-text part allowance)."""
+    parts = [
+        {"type": "text", "text": "describe this image"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+    ]
+    total = estimate_console_next_send_tokens(
+        payload_messages=[{"role": "user", "content": parts}]
+    )
+
+    assert total is not None
+    assert total > 0

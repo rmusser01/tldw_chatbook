@@ -1864,3 +1864,58 @@ def test_messages_section_title_states_original_and_elided_counts() -> None:
     )
     plain_title = str(inspector._build_messages_section(plain_capture, "k").title)
     assert plain_title == "Messages (3)"
+
+
+# --- task-21513: payload-based Next Send header token estimate --------------
+
+
+async def _payload_snapshot() -> ConsoleContextSnapshot:
+    return ConsoleContextSnapshot(
+        current_messages=[],
+        next_send_payload={
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_next_send_payload_estimate_replaces_header_count_once_loaded():
+    """task-21513: after the snapshot loads, the Next Send header's "~N
+    tokens" count must reflect the assembled next-send payload (system +
+    tools + staged evidence included), not the draft-only factory value."""
+    app = InspectorHarness(
+        **_default_kwargs(
+            snapshot_factory=_payload_snapshot,
+            estimate_factory=lambda: 7,
+            token_estimate=7,
+            payload_estimate=lambda snapshot: 4242,
+            initial_tab=TAB_NEXT_SEND,
+        )
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        modal = app.screen
+        header = modal.query_one("#console-inspector-next-send-header", Static)
+        await _wait_until(pilot, lambda: "~4242 tokens" in str(header.renderable))
+
+
+@pytest.mark.asyncio
+async def test_next_send_payload_estimate_none_falls_back_to_factory():
+    """A payload estimate of ``None`` (nothing estimable, e.g. an
+    assembly-error payload) falls back to the draft-only factory rather
+    than dropping the count."""
+    app = InspectorHarness(
+        **_default_kwargs(
+            snapshot_factory=_payload_snapshot,
+            estimate_factory=lambda: 9,
+            token_estimate=7,
+            payload_estimate=lambda snapshot: None,
+            initial_tab=TAB_NEXT_SEND,
+        )
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        modal = app.screen
+        header = modal.query_one("#console-inspector-next-send-header", Static)
+        await _wait_until(pilot, lambda: "~9 tokens" in str(header.renderable))
