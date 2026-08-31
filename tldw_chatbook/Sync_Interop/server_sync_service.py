@@ -483,9 +483,11 @@ class ServerSyncService:
         if not isinstance(record, dict):
             raise ValueError("personal_context_bootstrap_response_invalid")
         response_quotas = record.get("quotas")
-        if not isinstance(response_quotas, dict) or not set(
-            bootstrap_request.required_quotas
-        ).issubset(response_quotas):
+        if (
+            not isinstance(response_quotas, dict)
+            or not response_quotas
+            or not set(bootstrap_request.required_quotas).issubset(response_quotas)
+        ):
             raise ValueError("personal_context_bootstrap_quota_map_incomplete")
         return {
             "device_id": device_id,
