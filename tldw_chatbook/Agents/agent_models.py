@@ -226,6 +226,41 @@ class ToolSchema:
     parameters: dict
 
 
+#: ADR-080: cap for rationale text captured at parse time (tail-biased).
+RATIONALE_CAPTURE_CAP = 500
+
+_RATIONALE_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_RATIONALE_WHITESPACE = re.compile(r"\s+")
+
+
+def normalize_rationale(text: object, cap: int = RATIONALE_CAPTURE_CAP) -> str:
+    """Normalize model-authored advisory text for display-surface transit.
+
+    Untrusted-content hygiene (ADR-080 §Security): strip control characters,
+    collapse all whitespace to single spaces, and cap length keeping the
+    TAIL (the end of a preamble is the part adjacent to the tool call; the
+    head is often an unrelated answer to the user), prefixing an ellipsis
+    when truncated.
+
+    Args:
+        text: Raw model-authored text of any type; non-strings degrade to "".
+        cap: Maximum length of the returned string, including the ellipsis.
+
+    Returns:
+        The normalized string, at most ``cap`` characters, or "".
+    """
+    if not isinstance(text, str):
+        return ""
+    cleaned = _RATIONALE_WHITESPACE.sub(
+        " ", _RATIONALE_CONTROL_CHARS.sub(" ", text)
+    ).strip()
+    if not cleaned:
+        return ""
+    if len(cleaned) > cap:
+        return "\N{HORIZONTAL ELLIPSIS}" + cleaned[-(cap - 1) :]
+    return cleaned
+
+
 @dataclass(frozen=True)
 class ToolLoadSelection:
     """Side-effect-free outcome of resolving one catalog working-set request."""
@@ -242,6 +277,11 @@ class ToolCall:
     args: dict
     call_id: str = ""
     raw_arguments: str = ""
+    #: ADR-080: the model's own stated reason for this call (explicit fence
+    #: ``rationale`` key, else the turn's preamble text). Advisory display
+    #: data for the approval card ONLY -- never persisted, never serialized
+    #: into durable captures, never an input to any security verdict.
+    rationale: str = ""
 
 
 @dataclass(frozen=True)
