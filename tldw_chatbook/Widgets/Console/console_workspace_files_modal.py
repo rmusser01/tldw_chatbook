@@ -324,7 +324,12 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
             return False
         self._attention_generation = generation
         self._attention = attention
-        if self.is_mounted:
+        # A ModalScreen remains attached to its app while it is the active
+        # screen, but Textual's widget ``is_mounted`` can already be false
+        # during the screen-stack handoff.  Attention belongs to this visit,
+        # so update the attached screen's static rather than dropping a real
+        # Console sync tick in that window.
+        if self.is_attached:
             self.query_one("#console-workspace-files-attention", Static).update(
                 attention.status_copy
             )
@@ -589,8 +594,12 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         self._sync_status()
 
     async def _render_tree(self) -> None:
+        if self._workspace_files_closing or not self.is_mounted:
+            return
         tree = self.query_one("#console-workspace-files-tree", VerticalScroll)
         await tree.remove_children()
+        if self._workspace_files_closing or not self.is_mounted:
+            return
         result = self._state.filter_result
         if result is not None:
             if not result.matches:
@@ -651,8 +660,12 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         await tree.mount_all(rows)
 
     async def _render_viewer(self) -> None:
+        if self._workspace_files_closing or not self.is_mounted:
+            return
         viewer = self.query_one("#console-workspace-files-viewer", VerticalScroll)
         await viewer.remove_children()
+        if self._workspace_files_closing or not self.is_mounted:
+            return
         result = self._state.file_result
         selected = self._state.selected_file
         if result is None or selected is None:
