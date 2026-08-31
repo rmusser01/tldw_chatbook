@@ -9,6 +9,27 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## A turn deadline cannot preempt one oversized synchronous callback
+
+**TASK-22512 Task 6, 2026-08-30.** The persistent-terminal actor passed its
+functional parser-budget tests because the injected clock advanced only between
+backend chunks. The required ten-second ANSI flood report then measured about
+6,127 ms p95 lateness for a 100 ms event-loop sentinel. A single 64 KiB call into
+the real screen parser took roughly 275–285 ms, so checking the eight-millisecond
+deadline only after that call could neither enforce the budget nor let the
+sentinel catch up. Delivering admitted output to the parser in bounded 1 KiB
+slices made the time check observable between calls; the same qualification path
+then passed at about 34.1 ms p95.
+
+**What to do.** A deadline checked between synchronous callbacks bounds a turn
+only when each callback is independently small enough. Pair byte and time budgets
+with a bounded delivery slice, add a deterministic clock test whose cost scales
+with callback size, and run the real parser/event-loop flood with its latency
+threshold enabled. A test that advances the clock by a fixed amount per callback
+can stay green while one callback monopolizes the loop far beyond the deadline.
+
+---
+
 ## Pilot clicks can bind a widget that recomposition removes before hit-testing
 
 **TASK-24403, 2026-08-29.** The clean fast-PR lane passed all 670 selected tests,
