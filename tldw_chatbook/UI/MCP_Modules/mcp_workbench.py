@@ -80,6 +80,8 @@ from tldw_chatbook.MCP.unified_control_plane_service import (
 )
 from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
+    _safe_diagnostic_message,
+    _safe_exception_text,
     _safe_tool_test_text,
     MCPInspector,
 )
@@ -214,35 +216,6 @@ def _project_raw_shell_store_state(state: str | None) -> str | None:
     if state is None:
         return None
     return "deny" if state == "deny" else "ask"
-
-
-def _safe_exception_text(exc: BaseException) -> str:
-    """`str(exc)`, but redacted when the exception's own args embed a dict.
-
-    I1 (ledger #5): some client/server errors carry a raw dict payload in
-    `exc.args` (e.g. an echoed request or arguments dict) -- Python's
-    default `BaseException.__str__` renders that as `str(args[0])` (single
-    arg) or `str(args)` (multiple), either way dumping the dict's raw repr,
-    key/value pairs and all. Redact any Mapping-shaped args the same way
-    every other error payload here is redacted before it reaches this
-    result panel; non-Mapping args (the overwhelming common case: a plain
-    message string) fall through to plain `str(exc)` unchanged -- this must
-    never invent a NEW leak path, only close the dict-arg one.
-    """
-    args = getattr(exc, "args", ())
-    if not any(isinstance(arg, Mapping) for arg in args):
-        return _safe_tool_test_text(exc)
-    try:
-        safe_args = tuple(
-            redact_mapping(arg) if isinstance(arg, Mapping) else arg for arg in args
-        )
-        rendered = str(safe_args[0]) if len(safe_args) == 1 else str(safe_args)
-        return _safe_tool_test_text(rendered)
-    except Exception:
-        # Redaction itself failed on some pathological arg -- fall back to
-        # a generic marker rather than risk falling through to the raw
-        # str(exc) this whole helper exists to avoid.
-        return "<error redacted>"
 
 
 def _is_permission_refusal(exc: BaseException) -> bool:
@@ -486,11 +459,16 @@ class _AdvancedSectionShim:
         try:
             payload = await self._service.load_section(section)
         except Exception as exc:
-            logger.warning(f"MCP workbench advanced section load failed: {exc}")
+            logger.warning(
+                "{}",
+                _safe_diagnostic_message(
+                    "MCP workbench advanced section load failed", exc
+                ),
+            )
             return {
                 "source": "local",
                 "section": section or "overview",
-                "error": str(exc),
+                "error": _safe_exception_text(exc),
             }
         if isinstance(payload, dict):
             if isinstance(payload.get("external_servers"), list):
@@ -972,7 +950,9 @@ class MCPWorkbench(Container):
             # nothing is.
             self.is_loading = False
             self._reloading = False
-            logger.opt(exception=True).error(
+            # Do not attach Loguru's implicit traceback here: exception text can
+            # contain credentials or local paths before our diagnostic boundary.
+            logger.error(
                 "MCP workbench initial load failed "
                 "(source={}, scope={}, scope_ref={}, server_key={}, mode={}, "
                 "exception_category={}).",
@@ -1028,7 +1008,12 @@ class MCPWorkbench(Container):
                     if context.selected_scope_ref is not None:
                         self._scope_ref = context.selected_scope_ref
                 except Exception as exc:
-                    logger.warning(f"MCP workbench context load failed: {exc}")
+                    logger.warning(
+                        "{}",
+                        _safe_diagnostic_message(
+                            "MCP workbench context load failed", exc
+                        ),
+                    )
             self._snapshots = await self._collect_snapshots()
             self._preselect_single_problem_on_load()
             await self._sync_children()
@@ -1130,7 +1115,10 @@ class MCPWorkbench(Container):
                         label = getattr(target, "label", None)
                         return str(label) if label else target_id
             except Exception as exc:
-                logger.warning(f"MCP target label lookup failed: {exc}")
+                logger.warning(
+                    "{}",
+                    _safe_diagnostic_message("MCP target label lookup failed", exc),
+                )
         return target_id
 
     def _rebind_inspector_advanced_context(self, service: Any) -> None:
@@ -1214,7 +1202,10 @@ class MCPWorkbench(Container):
         try:
             actions = loader() or []
         except Exception as exc:
-            logger.warning(f"MCP available_actions check failed: {exc}")
+            logger.warning(
+                "{}",
+                _safe_diagnostic_message("MCP available_actions check failed", exc),
+            )
             return False
         return any(
             isinstance(a, Mapping) and a.get("name") == "external_server.create"
@@ -1250,7 +1241,12 @@ class MCPWorkbench(Container):
                     else:
                         records = await service.load_section("external_servers")
                 except Exception as exc:
-                    logger.warning(f"MCP local profile listing failed: {exc}")
+                    logger.warning(
+                        "{}",
+                        _safe_diagnostic_message(
+                            "MCP local profile listing failed", exc
+                        ),
+                    )
                     records = []
                 if isinstance(records, list):  # local source returns a bare list
                     snapshots.extend(local_profile_readiness(r) for r in records)
@@ -1279,7 +1275,12 @@ class MCPWorkbench(Container):
                 try:
                     payload = await service.load_section("external_servers")
                 except Exception as exc:
-                    logger.warning(f"MCP external server listing failed: {exc}")
+                    logger.warning(
+                        "{}",
+                        _safe_diagnostic_message(
+                            "MCP external server listing failed", exc
+                        ),
+                    )
                     payload = None
                 records = (
                     payload.get("external_servers")
@@ -1462,13 +1463,18 @@ class MCPWorkbench(Container):
             try:
                 log = service.execution_log
             except Exception as exc:
-                logger.warning(f"MCP execution log access failed: {exc}")
+                logger.warning(
+                    "{}",
+                    _safe_diagnostic_message("MCP execution log access failed", exc),
+                )
                 log = None
         if log is not None:
             try:
                 entries = log.read_recent(200)
             except Exception as exc:
-                logger.warning(f"MCP execution log read failed: {exc}")
+                logger.warning(
+                    "{}", _safe_diagnostic_message("MCP execution log read failed", exc)
+                )
                 entries = []
         self._last_audit_entries = entries
         await self.query_one(MCPAuditMode).update_entries(entries)
@@ -1519,7 +1525,10 @@ class MCPWorkbench(Container):
         try:
             advanced_payload = await loader("advanced")
         except Exception as exc:
-            logger.warning(f"MCP audit findings fetch failed: {exc}")
+            logger.warning(
+                "{}",
+                _safe_diagnostic_message("MCP audit findings fetch failed", exc),
+            )
             return None
         if not isinstance(advanced_payload, Mapping):
             return []
@@ -1624,7 +1633,12 @@ class MCPWorkbench(Container):
                 try:
                     inventory = get_inventory()
                 except Exception as exc:
-                    logger.warning(f"MCP built-in inventory read failed: {exc}")
+                    logger.warning(
+                        "{}",
+                        _safe_diagnostic_message(
+                            "MCP built-in inventory read failed", exc
+                        ),
+                    )
                     inventory = None
                 if isinstance(inventory, Mapping):
                     tools.extend(builtin_tools_from_inventory(inventory))
@@ -1842,7 +1856,12 @@ class MCPWorkbench(Container):
             try:
                 states = dict(loader(tools))
             except Exception as exc:
-                logger.warning(f"MCP effective tool state resolution failed: {exc}")
+                logger.warning(
+                    "{}",
+                    _safe_diagnostic_message(
+                        "MCP effective tool state resolution failed", exc
+                    ),
+                )
 
         for tool in tools:
             if not _is_raw_shell_tool(tool.server_key, tool.name):
@@ -1894,7 +1913,12 @@ class MCPWorkbench(Container):
         try:
             return builtin_permission_rows(payload)
         except Exception as exc:
-            logger.warning(f"builtin permission row enumeration failed: {exc}")
+            logger.warning(
+                "{}",
+                _safe_diagnostic_message(
+                    "builtin permission row enumeration failed", exc
+                ),
+            )
             return []
 
     def _builtin_permission_matrix_rows(
@@ -2085,7 +2109,9 @@ class MCPWorkbench(Container):
                 # built-in tool via `BuiltinToolGate._kill_switch()` -- so
                 # the log line no longer says "MCP" (matches that method's
                 # own "kill switch read failed" wording).
-                logger.warning(f"kill switch read failed: {exc}")
+                logger.warning(
+                    "{}", _safe_diagnostic_message("kill switch read failed", exc)
+                )
 
         standalone_resync = effective is None
         if effective is None:
@@ -2114,7 +2140,10 @@ class MCPWorkbench(Container):
             try:
                 payload = store.load()
             except Exception as exc:
-                logger.warning(f"MCP permission store read failed: {exc}")
+                logger.warning(
+                    "{}",
+                    _safe_diagnostic_message("MCP permission store read failed", exc),
+                )
                 payload = {}
 
         profile = (payload.get("profiles") or {}).get("default") or {}
@@ -2242,7 +2271,10 @@ class MCPWorkbench(Container):
         try:
             governance_payload = await loader("governance")
         except Exception as exc:
-            logger.warning(f"MCP governance section fetch failed: {exc}")
+            logger.warning(
+                "{}",
+                _safe_diagnostic_message("MCP governance section fetch failed", exc),
+            )
             return None
         if not isinstance(governance_payload, Mapping):
             # Malformed-but-present, per this method's own docstring above --
@@ -2597,7 +2629,10 @@ class MCPWorkbench(Container):
                         tool=cycled_tool,
                     )
         except Exception as exc:
-            logger.warning(f"MCP permission cycle failed: {exc}")
+            logger.warning(
+                "{}",
+                _safe_diagnostic_message("MCP permission cycle failed", exc),
+            )
             self.app.notify(
                 _toast(f"Permission update failed: {exc}"), severity="error"
             )
@@ -2650,7 +2685,9 @@ class MCPWorkbench(Container):
         except Exception as exc:
             # task-545/T6: global switch (MCP + built-in tools) -- see the
             # matching read-path comment in `_sync_permissions_mode` above.
-            logger.warning(f"kill switch save failed: {exc}")
+            logger.warning(
+                "{}", _safe_diagnostic_message("kill switch save failed", exc)
+            )
             self.app.notify(
                 _toast(f"Failed to save kill switch: {exc}"), severity="error"
             )
@@ -2695,7 +2732,10 @@ class MCPWorkbench(Container):
                 "external_server.slots.list", {"server_id": server_id}
             )
         except Exception as exc:
-            logger.warning(f"MCP credential slot listing failed: {exc}")
+            logger.warning(
+                "{}",
+                _safe_diagnostic_message("MCP credential slot listing failed", exc),
+            )
             return []
         slots = result.get("credential_slots") if isinstance(result, Mapping) else None
         return (
@@ -2847,7 +2887,9 @@ class MCPWorkbench(Container):
             try:
                 await service.select_source(source)
             except Exception as exc:
-                logger.warning(f"MCP source switch failed: {exc}")
+                logger.warning(
+                    "{}", _safe_diagnostic_message("MCP source switch failed", exc)
+                )
         self._source = source
         self._selected_server_key = None
         # T6: switching source invalidates any Tools-mode selection the
@@ -2904,7 +2946,10 @@ class MCPWorkbench(Container):
             try:
                 await service.select_server_target(server_key.split(":", 1)[1])
             except Exception as exc:
-                logger.warning(f"MCP server target selection failed: {exc}")
+                logger.warning(
+                    "{}",
+                    _safe_diagnostic_message("MCP server target selection failed", exc),
+                )
         if self._source == "server":
             self._snapshots = await self._collect_snapshots()
         await self._sync_children()
@@ -2928,7 +2973,9 @@ class MCPWorkbench(Container):
             try:
                 await service.select_scope(event.scope, event.scope_ref)
             except Exception as exc:
-                logger.warning(f"MCP scope selection failed: {exc}")
+                logger.warning(
+                    "{}", _safe_diagnostic_message("MCP scope selection failed", exc)
+                )
         self._scope = event.scope
         self._scope_ref = event.scope_ref
         # No `_sync_children()` here: nothing scope-dependent renders in
@@ -3090,7 +3137,12 @@ class MCPWorkbench(Container):
                 try:
                     await service.select_server_target(target_id)
                 except Exception as exc:
-                    logger.warning(f"MCP server target selection failed: {exc}")
+                    logger.warning(
+                        "{}",
+                        _safe_diagnostic_message(
+                            "MCP server target selection failed", exc
+                        ),
+                    )
             self._selected_server_key = server_key
             self._rebind_inspector_advanced_context(service)
         self._findings_cache = None
@@ -3343,8 +3395,10 @@ class MCPWorkbench(Container):
                 return gate_check(tool)
             except Exception as exc:
                 logger.warning(
-                    f"MCP permission resolution failed for {tool.server_key}::{tool.name}; "
-                    f"failing closed: {exc}"
+                    "{}",
+                    _safe_diagnostic_message(
+                        "MCP permission resolution failed; failing closed", exc
+                    ),
                 )
                 return EffectiveToolState(state="deny", origin="gate_error")
         return EffectiveToolState(state="ask", origin="global_default")
@@ -3698,9 +3752,7 @@ class MCPWorkbench(Container):
         try:
             set_tool_state(event.server_key, event.tool_name, "allow", tool=tool)
         except Exception as exc:
-            logger.warning(
-                f"MCP re-allow failed for {event.server_key}::{event.tool_name}: {exc}"
-            )
+            logger.warning("{}", _safe_diagnostic_message("MCP re-allow failed", exc))
             self.app.notify(_toast(f"Re-allow failed: {exc}"), severity="error")
             return
         # Task 3: re-allow always sets "allow" -- reuses the tool-cycle
@@ -4029,9 +4081,8 @@ class MCPWorkbench(Container):
         try:
             await self._sync_audit_log_entries()
         except Exception as exc:
-            message = _safe_tool_test_text(
-                f"MCP audit entries resync after tool test failed: "
-                f"{_safe_exception_text(exc)}"
+            message = _safe_diagnostic_message(
+                "MCP audit entries resync after tool test failed", exc
             )
             logger.warning("{}", message)
 
@@ -4089,9 +4140,7 @@ class MCPWorkbench(Container):
             safe_error = _safe_exception_text(exc)
             logger.warning(
                 "{}",
-                _safe_tool_test_text(
-                    f"MCP tool test result render failed: {safe_error}"
-                ),
+                _safe_diagnostic_message("MCP tool test result render failed", exc),
             )
             self.app.notify(
                 _toast(
@@ -4221,7 +4270,10 @@ class MCPWorkbench(Container):
                 save_setting_to_cli_config, "mcp", key, value
             )
         except Exception as exc:
-            logger.warning(f"MCP built-in flag save failed: {exc}")
+            logger.warning(
+                "{}",
+                _safe_diagnostic_message("MCP built-in flag save failed", exc),
+            )
             self.app.notify(_toast(f"Failed to save {key}: {exc}"), severity="error")
             return
         if not saved:
@@ -4266,7 +4318,9 @@ class MCPWorkbench(Container):
                 save_setting_to_cli_config, section, key, value
             )
         except Exception as exc:
-            logger.warning(f"MCP tool gate save failed: {exc}")
+            logger.warning(
+                "{}", _safe_diagnostic_message("MCP tool gate save failed", exc)
+            )
             self.app.notify(_toast(f"Failed to save {key}: {exc}"), severity="error")
             return
         if not saved:
@@ -4313,7 +4367,9 @@ class MCPWorkbench(Container):
             try:
                 await service.delete_local_profile(profile_id)
             except Exception as exc:
-                logger.warning(f"MCP profile delete failed: {exc}")
+                logger.warning(
+                    "{}", _safe_diagnostic_message("MCP profile delete failed", exc)
+                )
                 self.app.notify(_toast(f"Delete failed: {exc}"), severity="error")
                 return
             self.app.notify(_toast(f"Deleted {profile_id}."))
@@ -4383,7 +4439,9 @@ class MCPWorkbench(Container):
                     self.app.notify(_toast(str(exc)), severity="error")
                 return
             except Exception as exc:
-                logger.warning(f"MCP profile save failed: {exc}")
+                logger.warning(
+                    "{}", _safe_diagnostic_message("MCP profile save failed", exc)
+                )
                 # Route through show_error when possible: it also re-enables
                 # the form's Save button (disabled at submit) for a retry.
                 form = self._form_or_none()
@@ -4446,7 +4504,12 @@ class MCPWorkbench(Container):
             try:
                 await service.run_action(action, payload)
             except Exception as exc:
-                logger.warning(f"MCP server mutation failed ({action}): {exc}")
+                logger.warning(
+                    "{}",
+                    _safe_diagnostic_message(
+                        f"MCP server mutation failed ({action})", exc
+                    ),
+                )
                 panel = self._mutations_panel_or_none()
                 if panel is not None:
                     panel.show_error(str(exc))
@@ -4619,9 +4682,9 @@ class MCPWorkbench(Container):
                     await service.save_local_profile(candidate.to_payload())
                 except Exception as exc:
                     logger.warning(
-                        f"MCP import failed for {candidate.profile_id}: {exc}"
+                        "{}", _safe_diagnostic_message("MCP import failed", exc)
                     )
-                    failed.append((candidate.profile_id, str(exc)))
+                    failed.append((candidate.profile_id, _safe_exception_text(exc)))
                 else:
                     succeeded.append(candidate.profile_id)
             self.app.notify(

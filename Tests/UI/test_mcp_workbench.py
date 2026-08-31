@@ -4514,39 +4514,54 @@ async def test_test_tool_execution_failure_redacts_secrets_paths_and_bounds_text
 
 
 @pytest.mark.asyncio
-async def test_test_tool_audit_refresh_log_redacts_paths_secrets_and_long_exception(
-    monkeypatch,
+@pytest.mark.parametrize("failure_branch", ["access", "read"])
+async def test_test_tool_audit_sync_log_redacts_real_service_failure_branches(
+    failure_branch: str,
+    caplog: pytest.LogCaptureFixture,
 ):
     app = ToolTestApp()
     secret = "sk-live-audit-log-secret"
     private_path = "/Users/alice/private/audit.json"
+    failure = RuntimeError(
+        f"api_key={secret} failed at {private_path} " + ("x" * 4_000)
+    )
+
+    class AccessFailureService:
+        @property
+        def execution_log(self):
+            raise failure
+
+    class ReadFailureLog:
+        def read_recent(self, _limit: int):
+            raise failure
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         workbench = app.query_one(MCPWorkbench)
-
-        async def fail_refresh() -> None:
-            raise RuntimeError(
-                f"api_key={secret} failed at {private_path} " + ("x" * 4_000)
-            )
-
-        monkeypatch.setattr(workbench, "_sync_audit_log_entries", fail_refresh)
-        messages: list[object] = []
+        app.unified_mcp_service = (
+            AccessFailureService()
+            if failure_branch == "access"
+            else SimpleNamespace(execution_log=ReadFailureLog())
+        )
+        caplog.clear()
         sink = mcp_workbench_module.logger.add(
-            messages.append, level="WARNING", format="{message}"
+            caplog.handler, level="WARNING", format="{message}"
         )
         try:
-            await workbench._refresh_test_audit()
+            await workbench._sync_audit_log_entries()
         finally:
             mcp_workbench_module.logger.remove(sink)
 
-        rendered = "".join(str(message) for message in messages)
+        prefix = f"MCP execution log {failure_branch} failed"
+        rendered = "".join(message for message in caplog.messages if prefix in message)
+        assert rendered, f"expected {prefix!r} in {caplog.messages!r}"
         assert secret not in rendered
         assert private_path not in rendered
         assert "[redacted]" in rendered
         assert "[redacted]]" not in rendered
         assert "[path]" in rendered
         assert len(rendered) <= 560
+        assert workbench._last_audit_entries == []
 
 
 @pytest.mark.asyncio
@@ -4669,10 +4684,15 @@ async def test_test_tool_preview_unmount_and_remount_revokes_old_nonce():
     async with app.run_test(size=(120, 40)) as pilot:
         nonce = await _open_fetch_test_preview(app, pilot)
         old = app.query_one(MCPWorkbench)
+        app.set_focus(None)
+        await pilot.pause()
         await old.remove()
+        await pilot.pause()
+        assert not old.is_attached
         app.unified_mcp_service._active_tests.add(("local:docs", "fetch"))
         preview_count = app.unified_mcp_service._preview_count
         await app.mount(MCPWorkbench(app_instance=app, id="mcp-workbench-remounted"))
+        await pilot.pause()
         remounted = app.query_one("#mcp-workbench-remounted", MCPWorkbench)
         await _wait_for_tools_rows(remounted, pilot)
         remounted.set_mode("tools")

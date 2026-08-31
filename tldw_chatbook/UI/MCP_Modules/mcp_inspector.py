@@ -87,6 +87,26 @@ def _safe_tool_test_text(value: object, *, limit: int = _TOOL_TEST_TEXT_LIMIT) -
     return text
 
 
+def _safe_exception_text(exc: BaseException) -> str:
+    """Return bounded exception text without exposing mapping-shaped arguments."""
+    args = getattr(exc, "args", ())
+    if not any(isinstance(arg, Mapping) for arg in args):
+        return _safe_tool_test_text(exc)
+    try:
+        safe_args = tuple(
+            redact_mapping(arg) if isinstance(arg, Mapping) else arg for arg in args
+        )
+        rendered = str(safe_args[0]) if len(safe_args) == 1 else str(safe_args)
+        return _safe_tool_test_text(rendered)
+    except Exception:
+        return "<error redacted>"
+
+
+def _safe_diagnostic_message(prefix: str, exc: BaseException) -> str:
+    """Build one bounded, redacted MCP diagnostic from an exception."""
+    return _safe_tool_test_text(f"{prefix}: {_safe_exception_text(exc)}")
+
+
 # Actions that have first-class UI in every source. Everything else renders
 # disabled and points at the Advanced runner below (capability preserved).
 _BASE_WIRED_ACTIONS = {
@@ -1318,7 +1338,12 @@ class MCPInspector(Vertical):
                 save_setting_to_cli_config, "mcp.hub_state", "advanced_visible", True
             )
         except Exception as exc:
-            logger.warning(f"MCP advanced-visible preference save failed: {exc}")
+            logger.warning(
+                "{}",
+                _safe_diagnostic_message(
+                    "MCP advanced-visible preference save failed", exc
+                ),
+            )
         await self._persist_advanced_open(True)
         await self.mount(self._build_advanced_collapsible(force_open=True))
         toggle = self.query_one("#mcp-inspector-advanced-reveal", Button)
@@ -1375,7 +1400,12 @@ class MCPInspector(Vertical):
                 save_setting_to_cli_config, "mcp.hub_state", "advanced_visible", False
             )
         except Exception as exc:
-            logger.warning(f"MCP advanced-visible preference save failed: {exc}")
+            logger.warning(
+                "{}",
+                _safe_diagnostic_message(
+                    "MCP advanced-visible preference save failed", exc
+                ),
+            )
         try:
             collapsible = self.query_one("#mcp-adv-collapsible", Collapsible)
         except NoMatches:
@@ -1459,7 +1489,12 @@ class MCPInspector(Vertical):
                 save_setting_to_cli_config, "mcp.hub_state", "advanced_open", open_state
             )
         except Exception as exc:
-            logger.warning(f"MCP advanced-open preference save failed: {exc}")
+            logger.warning(
+                "{}",
+                _safe_diagnostic_message(
+                    "MCP advanced-open preference save failed", exc
+                ),
+            )
 
     # -- readiness block -----------------------------------------------------
 
@@ -2833,8 +2868,10 @@ class MCPInspector(Vertical):
             decision = gate(action_id=action_id, runtime_state_override=override())
         except Exception as exc:
             logger.warning(
-                f"MCPInspector: policy gate raised for action_id={action_id!r}; "
-                f"failing closed: {exc}"
+                "{}",
+                _safe_diagnostic_message(
+                    "MCPInspector policy gate raised; failing closed", exc
+                ),
             )
             return False
         return bool(getattr(decision, "allowed", True))
