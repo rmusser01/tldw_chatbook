@@ -32,6 +32,27 @@ from tldw_chatbook.Tools.tool_executor import Tool
 _PERMITTING = {"approve_once", "approve_session", "always_allow"}
 
 
+#: What the MODEL is told after a user denies a call. Stating the denial alone
+#: left the obvious next move open, so a model would rephrase the same call and
+#: re-ask -- costing turns and putting a second approval card in front of a user
+#: who already decided. All three refusal sites share this one constant: the
+#: wording is deliberately kept in sync across the MCP provider, this gate and
+#: the console review hook, and three copies would drift.
+#:
+#: Kept separate from the refusal text itself so a user-authored denial reason
+#: (TASK-18920) can be shown alongside it without the model reading the user's
+#: words as system policy, or vice versa.
+DENIAL_POLICY = (
+    "Do not retry this call, do not rephrase it, and do not pursue the same "
+    "outcome by another route. Ask the user what to do instead."
+)
+
+
+def user_denial_refusal(tool_name: str) -> str:
+    """The model-facing result for an explicit user denial of ``tool_name``."""
+    return f"tool call denied by the user: {tool_name}. {DENIAL_POLICY}"
+
+
 def tool_ref(tool: Tool) -> GatedToolRef:
     """Adapt a built-in ``Tool`` into the resolver's reference type.
 
@@ -356,7 +377,7 @@ class BuiltinToolGate:
 
         stamp = self.stamped(run_id, tool.name)
         if stamp == "deny":
-            return f"tool call denied by the user: {tool.name}"
+            return user_denial_refusal(tool.name)
         if stamp in _PERMITTING:
             return None
 

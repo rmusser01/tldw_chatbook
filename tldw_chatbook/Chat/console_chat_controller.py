@@ -327,6 +327,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 
 from tldw_chatbook.Agents.builtin_tool_gate import (
+    DENIAL_POLICY,
     LOCAL_TOOLS_DEFAULT_ENABLED,
     build_builtin_gate,
 )
@@ -1190,7 +1191,7 @@ def commit_project_instruction_dispatch_decision(
 #: and must say who refused and which tool -- matching the wording
 #: `BuiltinToolGate.check` already uses for a denied tool, so a refusal reads
 #: the same whether it was stopped here or at the gate.
-USER_DENIED_REFUSAL = "tool call denied by the user: {name}"
+USER_DENIED_REFUSAL = "tool call denied by the user: {name}. " + DENIAL_POLICY
 
 AGENT_LESSON_APPROVAL_REQUIRED = "approval_required"
 AGENT_LESSON_FOREGROUND_REQUIRED = "foreground_required"

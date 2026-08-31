@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from tldw_chatbook.Agents.agent_models import ToolCall
+from tldw_chatbook.Agents.builtin_tool_gate import user_denial_refusal
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
@@ -217,9 +218,9 @@ def test_disarm_denies_only_pending_raw_shell_approval_rounds(
 
     assert raw_released_by_disarm is True
     assert other_preserved_by_disarm is True
-    assert decisions["raw"] == {
-        "raw-call": "tool call denied by the user: shell_exec"
-    }
+    # Derived from the shared constant, not hardcoded: three modules keep this
+    # wording in sync (TASK-26011) and a literal here would silently drift.
+    assert decisions["raw"] == {"raw-call": user_denial_refusal("shell_exec")}
     assert decisions["other"] == {"other-call": "deny"}
     assert executor.calls == 0
 

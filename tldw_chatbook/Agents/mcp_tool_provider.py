@@ -54,6 +54,7 @@ from loguru import logger
 # so the module stays off the UI-ready census path.
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
+from tldw_chatbook.Agents.builtin_tool_gate import DENIAL_POLICY
 from tldw_chatbook.MCP.execution_log import APPROVED_SESSION_DECISION
 from tldw_chatbook.MCP.hub_tool_catalog import (
     HubTool,
@@ -83,7 +84,7 @@ DENY_REFUSAL = "blocked by MCP permissions (set to Off)"
 #: provenance (a model reading it retries never; a user reading the
 #: transcript goes hunting for a setting they never flipped). Wording
 #: matches the builtin gate's and the review hook's user-denial copy.
-USER_DENY_REFUSAL = "tool call denied by the user"
+USER_DENY_REFUSAL = f"tool call denied by the user. {DENIAL_POLICY}"
 
 #: TASK-294: a verdict that is MISSING or unrecognized after the approval
 #: round trip. Fails closed like a deny, but blames nobody: the user never
