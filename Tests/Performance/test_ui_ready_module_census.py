@@ -177,9 +177,16 @@ async def main() -> None:
     async with app.run_test(size=(120, 40)):
         while not getattr(app, "_ui_ready", False):
             await asyncio.sleep(0.005)
+        # Snapshot BEFORE iterating: background threads (tick syncs, catalog
+        # refresh) keep importing after _ui_ready, and iterating the live
+        # dict raised "dictionary changed size during iteration" -- an
+        # intermittent guardrails failure on PR #2255 and a sibling branch,
+        # 2026-08-31. A point-in-time copy is also the honest census: every
+        # module in it existed at the same instant.
+        modules_now = list(sys.modules)
         mods = sorted(
             m
-            for m in sys.modules
+            for m in modules_now
             if m.startswith("tldw_chatbook") and sys.modules[m] is not None
         )
         for m in mods:
