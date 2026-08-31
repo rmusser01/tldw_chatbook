@@ -74,3 +74,35 @@ finding came from. The Inspector body renders 60 rows into 28. Deciding which
 rows earn the visible band -- or whether a blocked run should scroll its
 guidance into view -- is an Inspect rail design call, not a mechanical fix, so
 this is filed rather than patched.
+
+## The obvious fix does not work — checked before proposing it
+
+`ROW_GROUPS` order drives display order (`console_inspector_ownership.py`, the
+`for owner, _heading_id, labels in ROW_GROUPS: for label in labels:` pass), and
+it lists the Run group as:
+
+```
+"Run recipe", "Live work", "Setup", "Send blocked",
+"Recovery action", "Blocked impact", "Next action", "Provider"
+```
+
+Two things make "just move the blocked rows to the front" look right:
+
+- `chat_screen.py` already expresses that intent -- it builds the blocked rows
+  and does `rows=setup_rows + inspector_state.rows`, i.e. **prepend**. The
+  ownership pass then re-sorts by the tuple above and silently discards it.
+- The tuple order is NOT a #2220 decision. `git show c2f64f690` touches only the
+  Source Readiness group (`Sources` -> `Retrieval`); the Run order dates from
+  `e472110e8` (2026-08-21) and carries no comment defending it.
+
+**It still does not fix this.** Measured from the probe, the Run group gets
+**6 visible rows** (y=28..33): one heading plus five. The blocked-state content
+needs nine — `Setup` wraps to 2, `Blocked impact` to 5, plus `Next action` and
+`Provider`. Reordering would surface `Setup` and part of `Blocked impact` and
+push `Next action: Set up provider` -- the only row that tells the user what to
+DO -- from y=41 to roughly y=36. Still clipped.
+
+So no permutation of these rows fits. The fix has to reduce what the blocked
+state renders (shorter copy, or one combined row), or scroll the guidance into
+view, or give the blocked state a compact summary that collapses the detail.
+That is why this stays a design call rather than a patch.
