@@ -118,6 +118,7 @@ class _LaneRequest:
     generation: int
     operation: Callable[[], Any]
     publish: Callable[[Any], Awaitable[None]]
+    can_publish: Callable[[], bool] | None = None
 
 
 class _OperationLane:
@@ -157,7 +158,10 @@ class _OperationLane:
                 raise
             except Exception:
                 outcome = None
-            if self._owner._can_publish(request.generation) and outcome is not None:
+            can_publish = request.can_publish or (
+                lambda: self._owner._can_publish(request.generation)
+            )
+            if can_publish() and outcome is not None:
                 await request.publish(outcome)
         finally:
             next_request = self._latest
@@ -229,6 +233,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         self._pre_filter_tree_state: WorkspaceFilesViewState | None = None
         self._tree_entries: dict[str, Any] = {}
         self._tree_more: dict[str, tuple[tuple[str, ...], DirectoryContinuation]] = {}
+        self._directory_request_tokens: dict[tuple[str, ...], int] = {}
         self._list_lane = _OperationLane(self, "list")
         self._read_lane = _OperationLane(self, "read")
         self._filter_lane = _OperationLane(self, "filter")
@@ -360,6 +365,27 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
             pages.append(_DirectoryTreePage(directory_parts, page))
         return tuple(pages)
 
+    def _directory_request_token(self, directory_parts: tuple[str, ...]) -> int:
+        token = self._directory_request_tokens.get(directory_parts, 0) + 1
+        self._directory_request_tokens[directory_parts] = token
+        return token
+
+    def _invalidate_directory_subtree(self, directory_parts: tuple[str, ...]) -> None:
+        for parts in tuple(self._directory_request_tokens):
+            if parts[: len(directory_parts)] == directory_parts:
+                del self._directory_request_tokens[parts]
+
+    def _can_publish_directory(
+        self, binding_id: str, directory_parts: tuple[str, ...], token: int
+    ) -> bool:
+        if self._workspace_files_closing or not self.is_mounted:
+            return False
+        if self._state.selected_binding_id != binding_id:
+            return False
+        if self._directory_request_tokens.get(directory_parts) != token:
+            return False
+        return directory_parts == () or directory_parts in self._state.expanded_directory_parts
+
     def _request_directory(
         self,
         continuation: DirectoryContinuation | None = None,
@@ -386,6 +412,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
             filter_result=None,
         )
         self._sync_status()
+        token = self._directory_request_token(directory_parts)
         self._list_lane.submit(
             _LaneRequest(
                 generation,
@@ -393,6 +420,9 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
                     binding.scope, directory_parts, continuation=continuation
                 ),
                 lambda page: self._publish_directory(page, directory_parts=directory_parts),
+                lambda: self._can_publish_directory(
+                    binding.binding_id, directory_parts, token
+                ),
             )
         )
 
@@ -583,6 +613,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
 
     def _collapse_directory(self, directory_parts: tuple[str, ...]) -> None:
         """Remove one expanded directory and all raw-identity descendants."""
+        self._invalidate_directory_subtree(directory_parts)
         expanded = tuple(
             item
             for item in self._state.expanded_directory_parts
@@ -653,7 +684,17 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
             return
         self._cancel_filter_timer()
         self._next_generation()
-        self._state = WorkspaceFilesViewState(selected_binding_id=binding.binding_id, status_copy=("Loading folder…" if binding.available else "Selected binding is unavailable."), compact=self._state.compact, short=self._state.short)
+        self._directory_request_tokens.clear()
+        self._pre_filter_tree_state = None
+        self.query_one("#console-workspace-files-filter", Input).value = ""
+        self._state = WorkspaceFilesViewState(
+            selected_binding_id=binding.binding_id,
+            status_copy=(
+                "Loading folder…" if binding.available else "Selected binding is unavailable."
+            ),
+            compact=self._state.compact,
+            short=self._state.short,
+        )
         self._sync_binding_buttons()
         if binding.available:
             self._request_directory()
@@ -715,7 +756,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         self._sync_status()
 
     @on(Button.Pressed, ".console-workspace-files-entry")
-    def _entry_pressed(self, event: Button.Pressed) -> None:
+    async def _entry_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         entry = self._tree_entries.get(event.button.id or "")
         if entry is None:
@@ -723,8 +764,10 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         if entry.is_directory:
             if entry.raw_parts in self._state.expanded_directory_parts:
                 self._collapse_directory(entry.raw_parts)
+                await self._render_tree()
             else:
                 self._expand_directory(entry)
+                await self._render_tree()
             return
         self._state = replace(self._state, selected_tree_parts=entry.raw_parts)
         self._request_file(FileRef(entry.raw_parts, entry.display_name))

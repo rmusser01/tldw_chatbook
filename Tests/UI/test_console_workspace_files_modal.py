@@ -12,7 +12,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.events import Resize
 from textual.geometry import Size
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Widgets.Console.console_workspace_files_modal import (
     ConsoleWorkspaceFilesModal,
@@ -502,6 +502,121 @@ async def test_tree_expands_nested_directories_and_left_collapses_raw_subtree() 
         await modal.action_collapse_or_parent()
         assert modal.state.expanded_directory_parts == ()
         assert modal.state.selected_tree_parts is None
+
+
+@pytest.mark.asyncio
+async def test_clicking_an_expanded_directory_removes_descendant_rows_immediately() -> None:
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=_Inspector([]), inspected_workspace_id="ws-a", inspected_workspace_name="A",
+        active_workspace_id="ws-a", active_workspace_name="A",
+        bindings=(WorkspaceFilesBinding("binding-a", "Project", _scope()),),
+    )
+    root = DirectoryEntry(("folder",), "folder", True)
+    child = DirectoryEntry(("folder", "child.txt"), "child.txt", False)
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal._next_generation()
+        await modal._publish_directory(DirectoryPage(DirectoryStatus.COMPLETE, (root,)))
+        modal._expand_directory(root)
+        await modal._publish_directory(
+            DirectoryPage(DirectoryStatus.COMPLETE, (child,)), directory_parts=("folder",)
+        )
+        await pilot.pause()
+        assert len(modal.query(".console-workspace-files-entry")) == 2
+
+        await pilot.click("#console-workspace-files-entry-0")
+        await pilot.pause()
+        assert len(modal.query(".console-workspace-files-entry")) == 1
+        assert modal.state.expanded_directory_parts == ()
+
+
+@pytest.mark.asyncio
+async def test_late_collapsed_child_list_result_cannot_reinsert_its_subtree() -> None:
+    """A released worker result must prove its raw directory is still expanded."""
+    entered = Event()
+    release = Event()
+
+    class _BarrierInspector(_Inspector):
+        def list_directory(self, scope, directory_parts=(), *, continuation=None):
+            self.calls.append(("list", (scope, directory_parts, continuation)))
+            if directory_parts == ("folder",):
+                entered.set()
+                release.wait()
+                return DirectoryPage(
+                    DirectoryStatus.COMPLETE,
+                    (DirectoryEntry(("folder", "late.txt"), "late.txt", False),),
+                )
+            return DirectoryPage(
+                DirectoryStatus.COMPLETE,
+                (DirectoryEntry(("folder",), "folder", True),),
+            )
+
+    inspector = _BarrierInspector([])
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=inspector, inspected_workspace_id="ws-a", inspected_workspace_name="A",
+        active_workspace_id="ws-a", active_workspace_name="A",
+        bindings=(WorkspaceFilesBinding("binding-a", "Project", _scope()),),
+    )
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.pause()
+        root = modal.state.directory_page.entries[0]
+        modal._expand_directory(root)
+        while not entered.is_set():
+            await asyncio.sleep(0)
+
+        await pilot.click("#console-workspace-files-entry-0")
+        assert modal.state.expanded_directory_parts == ()
+        release.set()
+        await pilot.pause()
+        await pilot.pause()
+        assert modal._page_for(("folder",)) is None
+        assert "late.txt" not in str(modal.query_one("#console-workspace-files-tree").render())
+        assert modal.state.selected_tree_parts is None
+
+
+@pytest.mark.asyncio
+async def test_binding_change_discards_filter_snapshot_and_old_tree_before_clear() -> None:
+    inspector = _Inspector([])
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=inspector, inspected_workspace_id="ws-a", inspected_workspace_name="A",
+        active_workspace_id="ws-a", active_workspace_name="A",
+        bindings=(
+            WorkspaceFilesBinding("binding-a", "Old", _scope()),
+            WorkspaceFilesBinding("binding-b", "New", _scope()),
+        ),
+    )
+    old_folder = DirectoryEntry(("old-folder",), "old-folder", True)
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal._next_generation()
+        await modal._publish_directory(DirectoryPage(DirectoryStatus.COMPLETE, (old_folder,)))
+        modal._state = replace(
+            modal.state,
+            expanded_directory_parts=(("old-folder",),),
+            selected_tree_parts=("old-folder",),
+            filter_query="old",
+            filter_result=FilterResult(FilterStatus.PARTIAL, status_copy="Partial old."),
+        )
+        modal._pre_filter_tree_state = modal.state
+        modal.query_one("#console-workspace-files-filter", Input).value = "old"
+
+        await pilot.click("#console-workspace-files-binding-1")
+        await pilot.pause()
+        await pilot.click("#console-workspace-files-filter-clear")
+        await pilot.pause()
+        assert modal.state.selected_binding_id == "binding-b"
+        assert modal.state.filter_query == "" and modal.state.filter_result is None
+        assert modal.state.expanded_directory_parts == ()
+        assert modal.state.selected_tree_parts is None
+        assert modal._pre_filter_tree_state is None
+        assert modal.query_one("#console-workspace-files-filter", Input).value == ""
 
 
 @pytest.mark.asyncio
