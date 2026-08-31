@@ -4701,12 +4701,17 @@ class ChatScreen(BaseAppScreen):
         conversation_id = (
             str(getattr(opener, "conversation_id", "") or "").strip() or None
         )
+        native_session_id = str(getattr(opener, "native_session_id", "") or "")
         target = ConversationMenuTarget(
             conversation_id=conversation_id,
             title=str(getattr(opener, "conversation_title", "") or ""),
             state=self._console_conversation_state(conversation_id),
             starred=bool(getattr(opener, "starred", False)),
             favorites_available=bool(getattr(opener, "marks_available", True)),
+            native_session_id=native_session_id,
+            has_messages=self._console_target_has_messages(
+                native_session_id, conversation_id
+            ),
         )
         # Clamp into the screen the same way the transcript's overflow menu
         # does: an asterisk near the bottom of a short terminal would
@@ -4882,6 +4887,7 @@ class ChatScreen(BaseAppScreen):
         *,
         conversation_id: str | None,
         title: str,
+        native_session_id: str = "",
         screen_x: int,
         screen_y: int,
     ) -> None:
@@ -4917,6 +4923,10 @@ class ChatScreen(BaseAppScreen):
             state=self._console_conversation_state(conversation_id),
             starred=starred,
             favorites_available=marks_service is not None,
+            native_session_id=native_session_id,
+            has_messages=self._console_target_has_messages(
+                native_session_id, conversation_id
+            ),
         )
         menu_width = ConsoleConversationActionMenu.MENU_WIDTH
         menu_height = ConsoleConversationActionMenu.ROOT_PAGE_HEIGHT
@@ -4991,8 +5001,9 @@ class ChatScreen(BaseAppScreen):
             return
         self.run_worker(
             self._open_console_tree_conversation_action_menu(
-                conversation_id=event.conversation_id,
+                    conversation_id=event.conversation_id,
                 title=event.title,
+                native_session_id=str(getattr(event, "native_session_id", "") or ""),
                 screen_x=event.screen_x,
                 screen_y=event.screen_y,
             ),
@@ -5097,6 +5108,163 @@ class ChatScreen(BaseAppScreen):
             return
         self._restore_console_menu_opener_focus(event.opener_id)
 
+    def _console_target_has_messages(
+        self, native_session_id: str, conversation_id: str | None
+    ) -> bool:
+        """Cheap open-time probe: does this row have any messages?
+
+        TASK-25714: gates the copy entries. A native session asks the live
+        store; a persisted conversation asks the database for a single row.
+        """
+        if native_session_id:
+            try:
+                store = self._ensure_console_chat_store()
+                return bool(store.read_only_messages_for_session(native_session_id))
+            except Exception:
+                return False
+        if not conversation_id:
+            return False
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return False
+        try:
+            return bool(
+                db.get_messages_for_conversation(conversation_id, limit=1)
+            )
+        except Exception:
+            return False
+
+    def _console_markdown_source_messages(self, target) -> list:
+        """Return normalized messages for a copy target, or [].
+
+        Source pick (TASK-25714): an open native session reads the LIVE
+        chat store (richest fidelity -- in-flight tool structure never
+        needed serializing); a persisted conversation reads the database,
+        paginated so long chats are not silently truncated at the default
+        page size.
+        """
+        from tldw_chatbook.Chat.console_conversation_markdown import (
+            markdown_messages_from_db_rows,
+            markdown_messages_from_store,
+        )
+
+        native_session_id = str(getattr(target, "native_session_id", "") or "")
+        if native_session_id:
+            try:
+                store = self._ensure_console_chat_store()
+                live = store.read_only_messages_for_session(native_session_id)
+            except Exception:
+                logger.opt(exception=True).debug(
+                    "copy-markdown live read failed"
+                )
+                live = []
+            if live:
+                return markdown_messages_from_store(live)
+        conversation_id = (target.conversation_id or "").strip()
+        if not conversation_id:
+            return []
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        if db is None:
+            return []
+        rows: list[dict] = []
+        page_size = 200
+        offset = 0
+        while True:
+            page = db.get_messages_for_conversation(
+                conversation_id, limit=page_size, offset=offset
+            )
+            rows.extend(page)
+            if len(page) < page_size:
+                break
+            offset += page_size
+        return markdown_messages_from_db_rows(rows)
+
+    def _render_console_conversation_markdown(self, target, fidelity: str):
+        """Render the target chat as markdown, or None when empty."""
+        from tldw_chatbook.Chat.console_conversation_markdown import (
+            render_conversation_markdown,
+        )
+        from datetime import date
+
+        messages = self._console_markdown_source_messages(target)
+        if not messages:
+            return None
+        return render_conversation_markdown(
+            title=str(getattr(target, "title", "") or ""),
+            rendered_at=date.today().isoformat(),
+            messages=messages,
+            fidelity=fidelity,
+        )
+
+    async def _copy_console_conversation_markdown(self, target, fidelity: str) -> None:
+        """Copy one conversation to the clipboard as markdown."""
+        markdown = self._render_console_conversation_markdown(target, fidelity)
+        if markdown is None:
+            self.app.notify("This chat has no messages to copy.", severity="warning")
+            return
+        copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
+        if not callable(copy_to_clipboard):
+            self.app.notify("Clipboard is unavailable.", severity="warning")
+            return
+        copy_to_clipboard(markdown)
+        size_kb = max(1, round(len(markdown.encode("utf-8")) / 1024))
+        label = "Clean markdown" if fidelity == "clean" else "Full transcript"
+        self.app.notify(f"Copied {label} ({size_kb} KB).")
+
+    async def _save_console_conversation_markdown(self, target) -> None:
+        """Prompt for a path and write the Clean markdown rendering."""
+        from pathlib import Path
+
+        from tldw_chatbook.Widgets.Console.console_save_markdown_modal import (
+            ConsoleSaveMarkdownModal,
+            markdown_filename_slug,
+        )
+
+        markdown = self._render_console_conversation_markdown(target, "clean")
+        if markdown is None:
+            self.app.notify("This chat has no messages to save.", severity="warning")
+            return
+        title = str(getattr(target, "title", "") or "")
+        default_path = str(
+            Path.home() / "Downloads" / f"{markdown_filename_slug(title)}.md"
+        )
+
+        def _write(chosen: "str | None") -> None:
+            if not chosen:
+                return
+            self.run_worker(
+                self._write_console_markdown_file(chosen, markdown),
+                exclusive=True,
+                group="console-copy-markdown",
+            )
+
+        self.push_screen(ConsoleSaveMarkdownModal(default_path=default_path), callback=_write)
+
+    async def _write_console_markdown_file(self, path_text: str, markdown: str) -> None:
+        """Validate and write one markdown export off the loop."""
+        from pathlib import Path
+
+        import aiofiles
+
+        from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+        # expanduser FIRST: validate_path_simple rejects unresolved '~'
+        # components, and the expansion is exactly what a user means by it.
+        candidate = Path(path_text).expanduser()
+        try:
+            target_path = validate_path_simple(candidate, require_exists=False)
+        except Exception as exc:
+            self.app.notify(f"Invalid path: {exc}", severity="error")
+            return
+        try:
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            async with aiofiles.open(target_path, "w", encoding="utf-8") as fh:
+                await fh.write(markdown)
+        except Exception as exc:
+            self.app.notify(f"Could not write file: {exc}", severity="error")
+            return
+        self.app.notify(f"Saved {target_path.name}.")
+
     def on_conversation_action_chosen(self, event: Message) -> None:
         """Run the chosen row command against the captured conversation.
 
@@ -5119,6 +5287,25 @@ class ChatScreen(BaseAppScreen):
         target = event.target
         action_id = event.action_id
         conversation_id = (target.conversation_id or "").strip()
+        # TASK-25714: copy/save work for open native sessions too (their
+        # messages come from the live store), so they route BEFORE the
+        # persisted-id guard below.
+        if action_id in ("copy-markdown:clean", "copy-markdown:full"):
+            self.run_worker(
+                self._copy_console_conversation_markdown(
+                    target, "clean" if action_id.endswith("clean") else "full"
+                ),
+                exclusive=True,
+                group="console-copy-markdown",
+            )
+            return
+        if action_id == "save-markdown":
+            self.run_worker(
+                self._save_console_conversation_markdown(target),
+                exclusive=True,
+                group="console-copy-markdown",
+            )
+            return
         if not conversation_id:
             self.app.notify(
                 "Send or save this chat before managing it.", severity="warning"
