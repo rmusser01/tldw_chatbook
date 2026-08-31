@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from dataclasses import replace
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
@@ -85,6 +86,8 @@ class _NoMountScreen:
         self.workers: list[tuple[object, dict[str, object]]] = []
         self._pending_console_launch_context = None
         self._console_agent_drilldown_run_id = None
+        self.size = SimpleNamespace(width=120, height=40)
+        self.app = SimpleNamespace(push_screen=lambda _modal: None)
 
     def call_after_refresh(self, callback) -> None:
         self.after_refresh.append(callback)
@@ -147,6 +150,35 @@ def _workspace_controller(
     )
     dependencies.update(overrides)
     return ConsoleWorkspaceController(screen or _NoMountScreen(), **dependencies)
+
+
+@pytest.mark.asyncio
+async def test_workspace_files_cancelled_resolution_releases_its_admission_claim():
+    """Textual worker cancellation cannot permanently lock later Files visits."""
+    entered = Event()
+    release = Event()
+    notices: list[str] = []
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=object(),
+            notify=lambda message, **_kwargs: notices.append(message),
+        )
+    )
+
+    def resolve(_workspace_id: str):
+        entered.set()
+        release.wait()
+        return None
+
+    controller._resolve_workspace_files_visit = resolve  # type: ignore[method-assign]
+    pending = asyncio.create_task(controller.request_workspace_files("ws-a"))
+    while not entered.is_set():
+        await asyncio.sleep(0)
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    assert controller._workspace_files_admission_claim is None
+    release.set()
 
 
 def _rich_row() -> ConsoleConversationBrowserInputRow:
