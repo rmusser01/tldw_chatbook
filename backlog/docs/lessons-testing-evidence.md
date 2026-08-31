@@ -10296,3 +10296,32 @@ this repository, which is why the polling loop is necessary here.
 jobs` shows whether the job ran and what it was waiting on, and it is the
 difference between "the queue is slow" and "I keep invalidating my own green
 check".
+
+---
+
+## Sweep the files that ASSERT on your change, not the files you edited
+
+**Incident.** TASK-25715, 2026-08-31. Across seven batches of Console Context
+rail work I ran the test files I had touched, plus the ones whose names matched
+the widgets I had touched. `Tests/UI/test_workbench_visual_snapshots.py` matched
+neither: it edits nothing, is named after no widget I opened, and asserts on
+whole-screen SVG renders of the Console. It is therefore precisely the file a
+Console UI change breaks.
+
+It went unswept twice. The first time it was holding four failures I had caused,
+undetected across all seven batches. The second time — a post-merge sweep of the
+whole `Tests/UI/` directory, run only because I was closing out the DoD — it
+returned **five** failures where I was tracking two. Bisecting all five showed
+none of the three new ones were mine, but I could not have known that without
+running the file, and the first incident proves the coin lands the other way too.
+
+**What to do.** Build the sweep list from what *asserts on* your change, not from
+what you edited. For UI work that means the snapshot/visual-render files by
+default, whatever they are named. When a change is broad enough to have batches,
+run the whole containing test directory once before opening the PR — it is
+minutes, and it is the only step that catches the file you did not think to name.
+
+**Corollary.** When a sweep returns more failures than you were tracking, bisect
+every one of them before writing any of them off. Three of the five here were
+new since the branch point and two of those three traced to a single commit
+(#2220) — a pattern invisible if you check only the failure you recognise.
