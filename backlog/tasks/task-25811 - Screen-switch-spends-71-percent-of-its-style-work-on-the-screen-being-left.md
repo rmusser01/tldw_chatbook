@@ -1,7 +1,7 @@
 ---
 id: task-25811
 title: Screen switch spends 71% of its style work on the screen being left
-status: To Do
+status: Won't Do
 assignee: []
 created_date: '2026-08-30'
 labels:
@@ -11,7 +11,44 @@ labels:
 priority: high
 ---
 
-## Description (the why)
+## RETRACTED 2026-08-31 — the premise was a measurement artifact
+
+**Do not implement this task.** The finding it was filed on is wrong.
+
+`switch_screen` posts `ScreenResume` to the NEW screen, and
+`post_message` is asynchronous. The probe's navigation helper returned
+as soon as `app.screen` changed -- before that message drained -- so the
+next measurement window opened with the PREVIOUS navigation's resume
+still queued, and attributed it to the switch under test. The screen it
+named as "being left" was the screen that had just become current.
+
+Re-measured with a full message drain before each window:
+
+| navigation | nodes | applies | apply ms | wall ms | on outgoing |
+|---|---:|---:|---:|---:|---:|
+| -> Library #1 | 97 | 286 | 50.4 | 252.1 | **0** |
+| -> Console #1 | 265 | 485 | 78.6 | 232.8 | **0** |
+| -> Library #2 | 97 | 286 | 45.5 | 116.9 | **0** |
+| -> Console #2 | 265 | 485 | 75.5 | 248.8 | **0** |
+
+**Zero** style work lands on the outgoing screen, and there is no 4.7x
+revisit asymmetry -- applies are proportional to node count.
+
+The reproducibility that made the original convincing (three runs,
+identical counts) proved only that the artifact was deterministic.
+Changing the window, not repeating it, was what exposed it.
+
+**What survives, and needs no new task:** CSS apply is 20-39% of
+screen-switch wall time (45-79 ms). That is real, smaller than claimed,
+and already addressed by TASK-25810's ancestor filter. Screen instances
+accumulating across visits is TASK-24452, filed separately and
+unaffected.
+
+Full correction: `Docs/Design/2026-08-30-holistic-perf-review.md` section 6.
+
+---
+
+## Original description (WRONG -- kept so the error stays legible)
 
 Navigating away from a screen restyles the screen you are leaving, and on
 a large screen that dominates the switch.

@@ -171,7 +171,12 @@ whose subject is a bare common type.
 
 ---
 
-## 3. Leaving a screen costs more than building the one you asked for
+## 3. RETRACTED — "leaving a screen costs more than building it"
+
+> **This finding is wrong. It was a measurement-window artifact.** The
+> numbers below are preserved so the error is legible; see §6 for the
+> correction and the replacement measurements. Do not act on this
+> section.
 
 Instrumented `Stylesheet.apply` across an ordinary Console → Library →
 Console → Library navigation. Reproducible to the call across three runs
@@ -208,7 +213,7 @@ applies.
 Findings 2 and 3 compound: the outgoing-screen restyle is itself paying the
 93% candidate overhead from finding 2.
 
-### 3a. Root cause: the outgoing screen is resumed, then suspended
+### 3a. RETRACTED — "root cause: the outgoing screen is resumed"
 
 Tracing `Screen._on_screen_resume` / `_on_screen_suspend` with instance
 identity across one Console → Library navigation:
@@ -373,3 +378,69 @@ identically without the change.
 *A list of failures in a suite you have never run clean says nothing about
 your change. Two earlier long sweeps in this cycle produced exactly that and
 had to be discarded; only the paired arms answered the question.*
+
+---
+
+## 6. Correction: §3 and §3a were a measurement-window artifact
+
+**§3 claimed a screen switch spends 71% of its style work on the screen
+being left, and §3a claimed a root cause. Both are wrong.** The work was
+real, but it belonged to the *previous* navigation.
+
+### What went wrong
+
+`switch_screen` posts `ScreenResume` to the **new** screen, and
+`post_message` is asynchronous. The navigation helper returned as soon as
+`app.screen` changed — before that message drained. The next measurement
+window therefore opened while the previous navigation's resume was still
+queued, and attributed it to the switch under test. The screen it named as
+"being left" was simply the screen that had just become current.
+
+Two windows over the identical navigation:
+
+| window | resume events seen | applies | on "outgoing" |
+|---|---|---:|---:|
+| not settled (§3's method) | ChatScreen **and** LibraryScreen | 1,274 | 913 (72%) |
+| **settled** | LibraryScreen only | 289 | **1 (0%)** |
+
+### The corrected measurements
+
+Each window preceded by a full message drain:
+
+| navigation | nodes | applies | apply ms | wall ms | on outgoing |
+|---|---:|---:|---:|---:|---:|
+| → Library #1 | 97 | 286 | 50.4 | 252.1 | **0** |
+| → Console #1 | 265 | 485 | 78.6 | 232.8 | **0** |
+| → Library #2 | 97 | 286 | 45.5 | 116.9 | **0** |
+| → Console #2 | 265 | 485 | 75.5 | 248.8 | **0** |
+
+* **No style work lands on the outgoing screen** — zero in all four.
+* **There is no 4.7× revisit asymmetry.** Applies are stable and simply
+  proportional to node count (286 for 97 nodes, 485 for 265). The earlier
+  "1,577 vs 332" was the artifact, and it reproduced perfectly across three
+  runs *because the artifact was deterministic* — reproducibility confirmed
+  the measurement, not the phenomenon.
+* Node counts also rose (207 → 265) once windows were settled: the earlier
+  runs were measuring screens mid-construction.
+
+### What survives
+
+CSS apply remains a real share of screen-switch wall time — **20–39%**
+(45–79 ms per switch) — which is smaller than §3's claim but still the
+largest single lever on switch cost, and it is exactly what §5's ancestor
+filter reduces. Screen instances do still accumulate across visits, which
+is TASK-24452's pre-existing finding and unaffected by this correction.
+
+§1, §2 and §5 are unaffected: they were measured through direct
+`stylesheet.update` and cold-subprocess parses, with no navigation window
+involved.
+
+### The lesson, which I had already written down
+
+The 2026-08-29 review recorded: *"A measurement window containing two
+activities cannot attribute cost to either."* I quoted that trap in this
+very document's §0 method note and then committed it. Reproducibility was
+what made it convincing — three runs, identical counts — and that is the
+part worth remembering: **a deterministic artifact is indistinguishable
+from a real effect by repetition alone. Only changing the window exposed
+it.**
