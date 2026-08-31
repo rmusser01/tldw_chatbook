@@ -1,10 +1,10 @@
 ---
 id: TASK-3605
 title: Enable fail-closed MCP Hub execution for local agent tools
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-08 19:02'
-updated_date: '2026-08-30 17:24'
+updated_date: '2026-08-31 00:39'
 labels:
   - mcp
   - agents
@@ -26,7 +26,6 @@ The MCP Hub lists local workspace tools and manages their shared permission stat
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
 - [ ] #1 Hub Test Tool is available only for catalogued `local:__local__` tools whose code-owned descriptor permits shared Console/external-MCP exposure; catalogued Console-only tools remain visible but non-executable, and session-owned tools remain absent
 - [ ] #2 Every Hub Test Tool Ask verdict uses the explicit one-click "Approve & run once" action without a separate armed-confirm state; click intent is bound to an immutable rendered preview, so a fresh Ask reached from rendered Allow or any definition/root change blocks and refreshes instead of executing
@@ -47,4 +46,19 @@ Reason: ADR-032 already owns the synthetic `local:__local__` principal, descript
 
 ## Design
 
-See `Docs/superpowers/specs/2026-08-30-mcp-hub-local-tool-execution-design.md`. The implementation plan will be added after the design is approved and the task is moved to In Progress.
+See `Docs/superpowers/specs/2026-08-30-mcp-hub-local-tool-execution-design.md`.
+
+## Implementation Plan
+
+ADR required: yes, by amendment of ADR-032.
+
+Detailed plan: `Docs/superpowers/plans/2026-08-30-mcp-hub-local-tool-execution.md`.
+
+1. Add a structured `LocalToolProvider.invoke_detailed()` seam while preserving ordinary `invoke()` behavior.
+2. Build a closable descriptor-filtered Hub-local provider and project only shared descriptors as executable.
+3. Add exact argument canonicalization, `DirectoryChain` authority binding, and a service-owned single-use preview registry.
+4. Put every Hub Test Tool click behind immutable prepared admission and explicit click intent.
+5. Execute local tests under service-owned timeout, cancellation, definitive-after-start, cleanup, redaction, and audit ownership.
+6. Replace the Workbench's armed-confirm state with preview-backed one-click Ask behavior.
+7. Run the focused Agent/MCP/UI security and lifecycle matrix, static analysis, compilation, diagnostics, diff hygiene, and independent review.
+8. Check every acceptance criterion from evidence, add implementation notes, mark the task Done, and re-run exact-head gates before PR/merge.
