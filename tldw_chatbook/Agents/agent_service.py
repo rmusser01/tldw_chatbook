@@ -1519,12 +1519,55 @@ def _usage_total_tokens(resp) -> int | None:
 _CANCEL_POLL_SECONDS = 0.5
 
 
+#: Floor for a clamped timeout. The dispatch site treats a falsy timeout as
+#: "run unbounded", so an already-exhausted wall budget must still yield a small
+#: POSITIVE bound rather than zero.
+_EXHAUSTED_BUDGET_TIMEOUT_SECONDS = 0.05
+
+
+def _effective_tool_timeout(
+    configured: float,
+    run_started: float,
+    wall_budget: float | None,
+    clock: Callable[[], float],
+) -> tuple[float, bool]:
+    """Bound a tool call by the lesser of its ceiling and the run's remainder.
+
+    `max_wall_seconds` is only checked at the top of the loop, so without this
+    a single long call runs to its own ceiling -- 3600s under Console's config --
+    regardless of how little of the run's budget is left (TASK-25913).
+
+    Computed once, at dispatch: a human approval wait that happens afterwards
+    must not shrink a call that is already running, which is what ADR-067's
+    refcounted marks protect inside `_call_with_timeout`.
+
+    Args:
+        configured: The per-call ceiling.
+        run_started: Clock reading from when this run's dispatch was built.
+        wall_budget: The run's `max_wall_seconds`, or falsy for unbounded.
+        clock: Monotonic clock, injectable for tests.
+
+    Returns:
+        ``(seconds, clamped_by_wall_budget)``.
+    """
+    if not wall_budget or wall_budget <= 0:
+        return configured, False
+    remaining = wall_budget - (clock() - run_started)
+    if remaining <= 0:
+        return _EXHAUSTED_BUDGET_TIMEOUT_SECONDS, True
+    if remaining < configured:
+        return remaining, True
+    return configured, False
+
+
 def _call_with_timeout(
     fn: Callable[[], ToolResult],
     seconds: float,
     tool_name: str,
     should_cancel: Callable[[], bool] = lambda: False,
     pauses_deadline: Callable[[], bool] = lambda: False,
+    *,
+    clamped_by_wall_budget: bool = False,
 ) -> ToolResult:
     """Run ``fn`` on a daemon thread, bounded by ``seconds`` of EXECUTION time.
 
@@ -1593,7 +1636,14 @@ def _call_with_timeout(
     if worker.is_alive():
         return ToolResult(
             ok=False,
-            error=f"tool call timed out after {seconds:g}s: {tool_name}",
+            error=(
+                # Distinct causes read differently: one means the tool is slow,
+                # the other means the RUN is nearly over (TASK-25913 AC#2).
+                f"tool call stopped after {seconds:g}s: {tool_name} "
+                "(the run's wall-clock budget was about to expire)"
+                if clamped_by_wall_budget
+                else f"tool call timed out after {seconds:g}s: {tool_name}"
+            ),
             outcome=TOOL_OUTCOME_TIMEOUT,
         )
     if "error" in box:
@@ -2556,6 +2606,10 @@ class AgentService:
                 for want of a stamp it can no longer find -- instead of
                 a loud ``TypeError`` at the call site.
         """
+        # Captured as the deps are built, which is immediately before the
+        # loop records its own `started`. Being marginally early makes the
+        # remaining-budget clamp conservative, which is the safe direction.
+        run_started = self.clock()
 
         actor = run_actor or CurrentRunActor("primary", run_id, None)
 
@@ -2613,6 +2667,17 @@ class AgentService:
                 config.budget.max_tool_call_seconds
             )
             if timeout and timeout > 0:
+                # TASK-25913: the loop only checks max_wall_seconds between
+                # iterations, so a call left on its own ceiling could outlive
+                # the run's budget by nearly an hour under Console's config.
+                # Resolved once here, at dispatch -- an approval wait that
+                # happens afterwards must not shrink a running call.
+                timeout, clamped_by_wall_budget = _effective_tool_timeout(
+                    timeout,
+                    run_started,
+                    getattr(config.budget, "max_wall_seconds", 0),
+                    self.clock,
+                )
                 return _call_with_timeout(
                     _invoke,
                     timeout,
@@ -2622,6 +2687,7 @@ class AgentService:
                     # decision is pending for THIS run, so an approval/
                     # confirm wait inside the invoke outlives the ceiling.
                     pauses_deadline=lambda: human_input_wait_active(run_id),
+                    clamped_by_wall_budget=clamped_by_wall_budget,
                 )
             return _invoke()
 
