@@ -355,6 +355,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         snapshot_factory: SnapshotFactory,
         token_estimate: int | None = None,
         estimate_factory: Callable[[], int | None] | None = None,
+        payload_estimate: Callable[[ConsoleContextSnapshot], int | None] | None = None,
         in_progress: bool = False,
         ephemeral: bool = False,
         project_instruction_state: ConsoleProjectInstructionState | None = None,
@@ -394,6 +395,13 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 tab's header, or ``None``.
             estimate_factory: Re-estimate callback for a Next Send refresh,
                 or ``None``.
+            payload_estimate: task-25836 -- optional callback computing the
+                header count from a LOADED snapshot (the whole next-send
+                request: system row, messages incl. the draft turn, tool
+                schemas, staged evidence), preferred over
+                ``estimate_factory`` once the snapshot arrives; ``None``
+                keeps the draft-only ``estimate_factory`` contract exactly
+                as before.
             in_progress: Whether a response is currently in flight (shows
                 the Next Send tab's in-progress warning line and disables
                 its Refresh button).
@@ -460,6 +468,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         self._snapshot_factory = snapshot_factory
         self._token_estimate = token_estimate
         self._estimate_factory = estimate_factory
+        self._payload_estimate = payload_estimate
         self._in_progress = in_progress
         self._ephemeral = ephemeral
         self._project_instruction_state = project_instruction_state
@@ -1958,7 +1967,20 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             # header text -- assigning the snapshot first would render
             # with the PRIOR estimate, one refresh stale (a real bug in
             # the retired standalone context modal this was ported from).
-            if self._estimate_factory is not None:
+            # task-25836: prefer the payload-based estimate (the whole
+            # next-send request -- system row, messages incl. the draft
+            # turn, tool schemas, staged evidence) over the draft-only
+            # factory; fall back to the factory when the payload yields
+            # nothing estimable (e.g. an assembly-error payload).
+            if self._payload_estimate is not None:
+                payload_tokens = self._payload_estimate(new_snapshot)
+                if payload_tokens is not None:
+                    self._token_estimate = payload_tokens
+                elif self._estimate_factory is not None:
+                    self._token_estimate = self._estimate_factory()
+                else:
+                    self._token_estimate = None
+            elif self._estimate_factory is not None:
                 self._token_estimate = self._estimate_factory()
             self.snapshot = new_snapshot
             self.call_after_refresh(self._focus_initial_control)
