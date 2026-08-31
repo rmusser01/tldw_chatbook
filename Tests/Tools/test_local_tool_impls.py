@@ -1,3 +1,6 @@
+import hashlib
+import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -237,6 +240,126 @@ def test_fs_write_overwrites(tmp_path):
     (ws / "f.txt").write_text("old")
     write_file("f.txt", "new", workspace_root=ws)
     assert (ws / "f.txt").read_text() == "new"
+
+
+def test_fs_write_preserves_existing_file_mode(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    target = ws / "script.sh"
+    target.write_text("old")
+    target.chmod(0o751)
+
+    write_file("script.sh", "new", workspace_root=ws)
+
+    assert target.read_text() == "new"
+    assert target.stat().st_mode & 0o7777 == 0o751
+
+
+def test_fs_write_dry_run_returns_bounded_exact_state_without_mutation(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    target = ws / "AGENTS.md"
+    target.write_text("old\n")
+
+    result = json.loads(
+        write_file(
+            "AGENTS.md",
+            "new\n",
+            workspace_root=ws,
+            dry_run=True,
+        )
+    )
+
+    assert result["target_state"] == "present"
+    assert result["current_sha256"] == hashlib.sha256(b"old\n").hexdigest()
+    assert result["replacement_sha256"] == hashlib.sha256(b"new\n").hexdigest()
+    assert result["replacement_bytes"] == 4
+    assert "-old" in result["diff"] and "+new" in result["diff"]
+    assert target.read_text() == "old\n"
+
+
+def test_fs_write_expected_digest_refuses_stale_state_without_mutation(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    target = ws / "AGENTS.md"
+    target.write_text("user edit")
+
+    with pytest.raises(LocalToolError, match="precondition"):
+        write_file(
+            "AGENTS.md",
+            "replacement",
+            workspace_root=ws,
+            expected_sha256="0" * 64,
+        )
+
+    assert target.read_text() == "user edit"
+
+
+def test_fs_write_expected_absent_refuses_file_created_after_preview(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    target = ws / "AGENTS.md"
+    target.write_text("intervening")
+
+    with pytest.raises(LocalToolError, match="precondition"):
+        write_file(
+            "AGENTS.md",
+            "replacement",
+            workspace_root=ws,
+            expected_absent=True,
+        )
+
+    assert target.read_text() == "intervening"
+
+
+def test_fs_write_preconditions_are_mutually_exclusive(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    with pytest.raises(LocalToolError, match="mutually exclusive"):
+        write_file(
+            "AGENTS.md",
+            "replacement",
+            workspace_root=ws,
+            expected_sha256="0" * 64,
+            expected_absent=True,
+        )
+
+
+def test_two_same_expectation_writers_allow_exactly_one(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    target = ws / "AGENTS.md"
+    target.write_text("before")
+    expected = hashlib.sha256(b"before").hexdigest()
+    barrier = threading.Barrier(3)
+    outcomes: list[str] = []
+
+    def writer(content: str) -> None:
+        barrier.wait()
+        try:
+            write_file(
+                "AGENTS.md",
+                content,
+                workspace_root=ws,
+                expected_sha256=expected,
+            )
+        except LocalToolError:
+            outcomes.append("stale")
+        else:
+            outcomes.append("written")
+
+    threads = [
+        threading.Thread(target=writer, args=("first",)),
+        threading.Thread(target=writer, args=("second",)),
+    ]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join()
+
+    assert sorted(outcomes) == ["stale", "written"]
+    assert target.read_text() in {"first", "second"}
 
 
 def test_fs_write_requires_existing_parent(tmp_path):

@@ -16,6 +16,8 @@ from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 
 from .agent_models import ToolCall
 from .project_instruction_resolver import (
+    InstructionPromotionSnapshot,
+    InstructionPromotionSnapshotError,
     InstructionOutcome,
     InstructionSnapshot,
     InstructionSource,
@@ -124,6 +126,14 @@ class InstructionPreparation:
     def delivery_receipt(self) -> InstructionDeliveryReceipt | None:
         """Alias consumed by Task 10's typed runtime preparation wrapper."""
         return self.receipt
+
+
+@dataclass(frozen=True, slots=True)
+class PromotionSnapshotRevalidation:
+    """Content-free result of rechecking a prepared instruction proposal."""
+
+    eligible: bool
+    reason_code: str
 
 
 def build_project_instruction_deferral_rows(
@@ -308,6 +318,59 @@ class InstructionActivationLedger:
         """Return content-free warning categories observed during this run."""
         with self._lock:
             return tuple(sorted(self._warning_keys))
+
+    def snapshot_promotion_target(
+        self, target_relative_path: str
+    ) -> InstructionPromotionSnapshot:
+        """Capture current target and chain state under this run's authority."""
+        target = self._snapshot.binding_root / target_relative_path
+        with self._lock:
+            revision = self._activation_revision
+        return self._resolver.snapshot_promotion_target(
+            binding_id=self._snapshot.binding_id,
+            binding_root=self._snapshot.binding_root,
+            locator_fingerprint=self._snapshot.locator_fingerprint,
+            target_path=target,
+            activation_revision=revision,
+        )
+
+    def revalidate_promotion_target(
+        self, prepared: InstructionPromotionSnapshot
+    ) -> PromotionSnapshotRevalidation:
+        """Recompute and compare every authority-bearing snapshot field."""
+        if (
+            prepared.binding_id != self._snapshot.binding_id
+            or prepared.locator_fingerprint != self._snapshot.locator_fingerprint
+            or prepared.binding_root != self._snapshot.binding_root
+        ):
+            return PromotionSnapshotRevalidation(False, "binding_changed")
+        with self._lock:
+            revision = self._activation_revision
+        if prepared.activation_revision != revision:
+            return PromotionSnapshotRevalidation(False, "activation_changed")
+        try:
+            current = self._resolver.snapshot_promotion_target(
+                binding_id=self._snapshot.binding_id,
+                binding_root=self._snapshot.binding_root,
+                locator_fingerprint=self._snapshot.locator_fingerprint,
+                target_path=self._snapshot.binding_root / prepared.target_relative_path,
+                activation_revision=revision,
+            )
+        except InstructionPromotionSnapshotError as error:
+            return PromotionSnapshotRevalidation(False, error.code)
+        if current.root_identity_digest != prepared.root_identity_digest:
+            return PromotionSnapshotRevalidation(False, "binding_changed")
+        if (
+            current.expected_absent != prepared.expected_absent
+            or current.expected_sha256 != prepared.expected_sha256
+        ):
+            return PromotionSnapshotRevalidation(False, "target_state_changed")
+        if (
+            current.effective_chain_digest != prepared.effective_chain_digest
+            or current.effective_chain != prepared.effective_chain
+        ):
+            return PromotionSnapshotRevalidation(False, "effective_chain_changed")
+        return PromotionSnapshotRevalidation(True, "eligible")
 
     def initial_context_for_chain(
         self, chain_id: str, payload_state: InstructionChainPayloadState

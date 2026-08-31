@@ -282,6 +282,7 @@ class ChatConversationService:
         *,
         rag_context_store_path: str | Path | None = None,
         citation_legacy_migration: "CitationLegacyMigrationService | None" = None,
+        organization_sync_service: Any = None,
     ):
         self.db = db
         self.rag_context_store_path = (
@@ -289,6 +290,7 @@ class ChatConversationService:
         )
         self._rag_context_store: dict[str, Any] | None = None
         self.citation_legacy_migration = citation_legacy_migration
+        self.organization_sync_service = organization_sync_service
 
     def set_citation_legacy_migration(
         self,
@@ -519,6 +521,18 @@ class ChatConversationService:
         self, conversation_id: str, keywords: Iterable[Any]
     ) -> list[str]:
         normalized_keywords = _normalize_keywords(keywords)
+        if self.organization_sync_service is not None:
+            scope = self.organization_sync_service.resolve_profile_scope()
+            if scope is not None:
+                result = self.organization_sync_service.sync_subject_keywords(
+                    subject_type="conversation",
+                    subject_id=conversation_id,
+                    keywords=normalized_keywords,
+                    notes_db=self.db,
+                    **scope,
+                )
+                if result is not None:
+                    return result
         keyword_ids: list[int] = []
         for keyword_text in normalized_keywords:
             keyword_row = None

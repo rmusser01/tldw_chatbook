@@ -9,6 +9,7 @@ from tldw_chatbook.Sync_Interop.conflict_review import (
     SyncV2ConflictReviewItem,
     SyncV2ConflictReviewService,
 )
+from tldw_chatbook.Sync_Interop.notes_organization import NOTES_ORGANIZATION_DOMAINS
 from tldw_chatbook.Sync_Interop.sync_state import is_local_first_sync_profile_mode
 
 ManualSyncStatus = Literal[
@@ -57,6 +58,8 @@ class ManualSyncControlService:
         local_first_sync_service: Any,
         dataset_keys: MutableMapping[str, bytes] | None = None,
         default_domains: Sequence[str] = DEFAULT_MANUAL_SYNC_DOMAINS,
+        notes_organization_sync_service: Any | None = None,
+        notes_repository: Any | None = None,
     ) -> None:
         """Initialize the manual sync control service.
 
@@ -78,6 +81,8 @@ class ManualSyncControlService:
         self.local_first_sync_service = local_first_sync_service
         self.dataset_keys = dataset_keys if dataset_keys is not None else {}
         self.default_domains = tuple(default_domains)
+        self.notes_organization_sync_service = notes_organization_sync_service
+        self.notes_repository = notes_repository
 
     def preview(
         self,
@@ -181,6 +186,9 @@ class ManualSyncControlService:
         authenticated_principal_id: str | None = None,
         workspace_scope: str | None = None,
         domains: Sequence[str] | None = None,
+        display_name: str = "Chatbook",
+        enrolled_note_ids: set[str] | None = None,
+        enrolled_conversation_ids: set[str] | None = None,
     ) -> ManualSyncRunResult:
         """Execute one manual Sync v2 cycle after preflight allows it.
 
@@ -200,6 +208,48 @@ class ManualSyncControlService:
         """
 
         selected_domains = self._domains(domains)
+        if self.notes_organization_sync_service is not None:
+            durable_note_ids, durable_conversation_ids = self._durable_dependency_ids()
+            organization = self.notes_organization_sync_service.for_server_profile(
+                server_profile_id
+            )
+            enrollment = await organization.advance_enrollment(
+                server_service=self.local_first_sync_service.server_service,
+                local_first_service=self.local_first_sync_service,
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+                workspace_scope=workspace_scope,
+                display_name=display_name,
+                enrolled_note_ids=set(
+                    durable_note_ids if enrolled_note_ids is None else enrolled_note_ids
+                ),
+                enrolled_conversation_ids=set(
+                    durable_conversation_ids
+                    if enrolled_conversation_ids is None
+                    else enrolled_conversation_ids
+                ),
+            )
+            if enrollment.get("status") != "ready":
+                profile = self.state_repository.get_sync_v2_profile_state(
+                    server_profile_id=server_profile_id,
+                    authenticated_principal_id=authenticated_principal_id,
+                    workspace_scope=workspace_scope,
+                )
+                reviews = self._conflict_review_items(
+                    profile=profile,
+                    domains=selected_domains,
+                )
+                preview = self._blocked(
+                    "Manual Sync is waiting for Notes organization enrollment.",
+                    profile,
+                )
+                return ManualSyncRunResult(
+                    status="conflict" if reviews else "blocked",
+                    user_message=preview.user_message,
+                    summary={"notes_organization_enrollment": dict(enrollment)},
+                    preview=preview,
+                    conflict_reviews=reviews,
+                )
         preview = self.preview(
             server_profile_id=server_profile_id,
             authenticated_principal_id=authenticated_principal_id,
@@ -249,6 +299,58 @@ class ManualSyncControlService:
             ),
         )
 
+    def list_conflict_reviews(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None = None,
+        workspace_scope: str | None = None,
+        domains: Sequence[str] | None = None,
+    ) -> tuple[SyncV2ConflictReviewItem, ...]:
+        """Expose generic and Notes-owned reviews for the active profile."""
+
+        profile = self.state_repository.get_sync_v2_profile_state(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+        return self._conflict_review_items(
+            profile=profile,
+            domains=self._domains(domains),
+        )
+
+    def resolve_notes_organization_adoption(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None = None,
+        workspace_scope: str | None = None,
+        review_id: str,
+        action: str,
+        new_name: str | None = None,
+    ) -> bool:
+        """Resolve one Notes-owned review through the active-profile seam."""
+
+        profile = self.state_repository.get_sync_v2_profile_state(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+        if profile is None or not profile.get("dataset_id"):
+            raise ValueError("persisted Notes organization profile is required")
+        repository = self._notes_repository_for_profile(server_profile_id)
+        if repository is None:
+            raise ValueError("Notes organization repository is required")
+        return SyncV2ConflictReviewService(
+            state_repository=self.state_repository,
+            notes_repository=repository,
+            notes_organization_sync_service=self.notes_organization_sync_service,
+        ).resolve_notes_organization_adoption(
+            review_id=review_id,
+            action=action,
+            new_name=new_name,
+        )
+
     def _blocked(
         self,
         message: str,
@@ -267,7 +369,40 @@ class ManualSyncControlService:
         selected = tuple(
             str(domain).strip() for domain in (domains or self.default_domains)
         )
-        return tuple(domain for domain in selected if domain)
+        filtered = tuple(domain for domain in selected if domain)
+        if self.notes_organization_sync_service is None:
+            return filtered
+        return tuple(dict.fromkeys((*filtered, *NOTES_ORGANIZATION_DOMAINS)))
+
+    def _durable_dependency_ids(self) -> tuple[set[str], set[str]]:
+        """Return current note/conversation identities from durable sync heads."""
+
+        repository = self.notes_repository
+        if repository is None:
+            return set(), set()
+        rows = (
+            repository.db.get_connection()
+            .execute(
+                "SELECT head.entity, head.entity_id FROM sync_log AS head "
+                "JOIN ("
+                "SELECT entity, entity_id, MAX(change_id) AS change_id "
+                "FROM sync_log WHERE entity IN ('notes', 'conversations') "
+                "GROUP BY entity, entity_id"
+                ") AS latest ON latest.change_id = head.change_id "
+                "WHERE head.operation <> 'delete' "
+                "ORDER BY head.entity, head.entity_id"
+            )
+            .fetchall()
+        )
+        note_ids = {
+            str(row[1]) for row in rows if str(row[0]) == "notes" and str(row[1])
+        }
+        conversation_ids = {
+            str(row[1])
+            for row in rows
+            if str(row[0]) == "conversations" and str(row[1])
+        }
+        return note_ids, conversation_ids
 
     def _conflict_review_items(
         self,
@@ -280,13 +415,34 @@ class ManualSyncControlService:
         dataset_id = str(profile.get("dataset_id") or "").strip()
         if not dataset_id:
             return ()
-        service = SyncV2ConflictReviewService(state_repository=self.state_repository)
-        return service.build_review_items(
+        repository = self._notes_repository_for_profile(
+            str(profile["server_profile_id"])
+        )
+        service = SyncV2ConflictReviewService(
+            state_repository=self.state_repository,
+            notes_repository=repository,
+            notes_organization_sync_service=self.notes_organization_sync_service,
+        )
+        generic = service.build_review_items(
             server_profile_id=str(profile["server_profile_id"]),
             authenticated_principal_id=profile.get("authenticated_principal_id"),
             workspace_scope=profile.get("workspace_scope"),
             dataset_id=dataset_id,
             domains=domains,
+        )
+        return generic + service.build_notes_organization_adoption_items(
+            dataset_id=dataset_id
+        )
+
+    def _notes_repository_for_profile(self, server_profile_id: str) -> Any | None:
+        repository = self.notes_repository
+        if repository is None:
+            return None
+        if repository.server_profile_id == server_profile_id:
+            return repository
+        return type(repository)(
+            repository.db,
+            server_profile_id=server_profile_id,
         )
 
     @staticmethod

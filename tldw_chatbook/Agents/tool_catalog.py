@@ -52,6 +52,7 @@ from .agent_models import (
     RUN_LOG_STATS_TOOL_NAME,
     RUN_SKILL_SCRIPT_TOOL_NAME,
     SEARCH_RUN_LOG_TOOL_NAME,
+    PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
     SEND_TO_AGENT_TOOL_NAME,
     SKILL_FILE_TOOL_NAME,
     SPAWN_TOOL_NAME,
@@ -302,6 +303,74 @@ INSTALL_SKILL_TOOL_SCHEMA = ToolSchema(
             }
         },
         "required": ["url"],
+    },
+)
+
+PREPARE_MANAGED_SKILL_PROMOTION_TOOL_SCHEMA = ToolSchema(
+    id="runtime:prepare_managed_skill_promotion",
+    name=PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
+    description=(
+        "Prepare an exact proposal to update one Chatbook-managed local skill "
+        "from independently verified Agent Lesson evidence. This action is "
+        "read-only: after review it returns replacement text for the user to "
+        "apply manually in Library > Skills; it never updates or re-trusts a skill."
+    ),
+    parameters={
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "skill_name": {"type": "string", "minLength": 1},
+            "skill_public_id": {"type": "string", "minLength": 1},
+            "expected_version": {"type": "integer", "minimum": 0},
+            "expected_trust_state": {"type": "string", "minLength": 1},
+            "current_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$",
+            },
+            "replacement_content": {"type": "string"},
+            "evidence": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "lesson_note_ids": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1},
+                        "minItems": 1,
+                        "uniqueItems": True,
+                    },
+                    "summary": {"type": "string", "minLength": 1},
+                    "provenance": {"type": "string", "minLength": 1},
+                    "verification": {"type": "string", "minLength": 1},
+                    "principle": {"type": "string", "minLength": 1},
+                    "rationale": {"type": "string", "minLength": 1},
+                    "procedural": {"type": "boolean"},
+                    "reusable": {"type": "boolean"},
+                    "independently_verified": {"type": "boolean"},
+                    "contradictory": {"type": "boolean"},
+                    "interaction_specific": {"type": "boolean"},
+                },
+                "required": [
+                    "lesson_note_ids",
+                    "summary",
+                    "provenance",
+                    "verification",
+                    "principle",
+                    "rationale",
+                    "procedural",
+                    "reusable",
+                    "independently_verified",
+                ],
+            },
+        },
+        "required": [
+            "skill_name",
+            "skill_public_id",
+            "expected_version",
+            "expected_trust_state",
+            "current_sha256",
+            "replacement_content",
+            "evidence",
+        ],
     },
 )
 

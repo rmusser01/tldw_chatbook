@@ -16,6 +16,7 @@ from tldw_chatbook.DB.base_db import BaseDB
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.DB.sql_validation import validate_column_name
 from tldw_chatbook.runtime_policy.server_parity_models import SourceAuthority
+from tldw_chatbook.Sync_Interop.notes_organization import NOTES_ORGANIZATION_DOMAINS
 
 if TYPE_CHECKING:
     from tldw_chatbook.tldw_api import SyncV2Envelope
@@ -49,7 +50,7 @@ _SYNC_V2_CONFLICT_RESOLUTION_STATUSES = {
     "defer-later",
 }
 SYNC_V2_CONFLICT_REVIEW_DEFAULT_LIMIT = 100
-SYNC_STATE_SCHEMA_VERSION = 4
+SYNC_STATE_SCHEMA_VERSION = 5
 _FILTER_UNSET = object()
 
 
@@ -316,6 +317,7 @@ class SyncStateRepository(BaseDB):
                     status TEXT NOT NULL,
                     attempt_count INTEGER NOT NULL DEFAULT 0,
                     last_error TEXT,
+                    accepted_result TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     dispatched_at TEXT,
@@ -380,6 +382,7 @@ class SyncStateRepository(BaseDB):
                 """
                 )
                 self._ensure_sync_v2_profile_columns(conn)
+                self._ensure_sync_v2_outbox_columns(conn)
                 self._record_schema_version(conn)
         finally:
             if not getattr(self, "is_memory_db", False):
@@ -1212,11 +1215,27 @@ class SyncStateRepository(BaseDB):
             authenticated_principal_id=authenticated_principal_id,
             workspace_scope=workspace_scope,
         )
-        accepted_ids = {
-            str(item["client_envelope_id"])
-            for item in accepted
-            if item.get("client_envelope_id")
-        }
+        accepted_by_id: dict[str, dict[str, Any]] = {}
+        for item in accepted:
+            client_envelope_id = item.get("client_envelope_id")
+            if not client_envelope_id:
+                continue
+            result: dict[str, Any] = {"client_envelope_id": str(client_envelope_id)}
+            server_cursor = item.get("server_cursor")
+            if server_cursor is None:
+                server_cursor = item.get("server_sequence")
+            if server_cursor is not None:
+                result["server_cursor"] = server_cursor
+            if item.get("object_revision") is not None:
+                result["object_revision"] = item["object_revision"]
+            for field in (
+                "apply_status",
+                "apply_error_code",
+                "apply_error_message",
+            ):
+                if item.get(field) is not None:
+                    result[field] = item[field]
+            accepted_by_id[str(client_envelope_id)] = result
         failure_by_id: dict[str, dict[str, Any]] = {}
         for item in rejected:
             client_envelope_id = item.get("client_envelope_id")
@@ -1232,13 +1251,91 @@ class SyncStateRepository(BaseDB):
         dispatched = 0
         retained = 0
         with self._get_connection() as conn:
-            for client_envelope_id in sorted(accepted_ids):
+            for client_envelope_id, accepted_result in sorted(accepted_by_id.items()):
+                existing = conn.execute(
+                    "SELECT domain FROM sync_v2_local_outbox "
+                    "WHERE source_scope_key = ? AND dataset_id = ? "
+                    "AND client_envelope_id = ? AND status = 'pending'",
+                    (source_scope_key, dataset_id, client_envelope_id),
+                ).fetchone()
+                organization_result = (
+                    existing is not None
+                    and str(existing["domain"]) in NOTES_ORGANIZATION_DOMAINS
+                )
+                if (
+                    organization_result
+                    and accepted_result.get("apply_status") == "superseded"
+                ):
+                    terminal_error = {
+                        "error_code": "notes_organization_superseded",
+                        "message": (
+                            "server superseded the intent without proving object state"
+                        ),
+                        "retryable": False,
+                        "review_required": True,
+                    }
+                    cursor = conn.execute(
+                        """
+                        UPDATE sync_v2_local_outbox
+                        SET status = 'dispatched',
+                            attempt_count = attempt_count + 1,
+                            last_error = ?,
+                            accepted_result = ?,
+                            updated_at = ?,
+                            dispatched_at = ?
+                        WHERE source_scope_key = ?
+                          AND dataset_id = ?
+                          AND client_envelope_id = ?
+                          AND status = 'pending'
+                        """,
+                        (
+                            _json_dumps(terminal_error),
+                            _json_dumps(accepted_result),
+                            now,
+                            now,
+                            source_scope_key,
+                            dataset_id,
+                            client_envelope_id,
+                        ),
+                    )
+                    dispatched += cursor.rowcount
+                    continue
+                organization_retry = (
+                    organization_result
+                    and accepted_result.get("apply_status") != "applied"
+                )
+                if organization_retry:
+                    cursor = conn.execute(
+                        """
+                        UPDATE sync_v2_local_outbox
+                        SET status = 'pending',
+                            attempt_count = attempt_count + 1,
+                            last_error = ?,
+                            accepted_result = ?,
+                            updated_at = ?
+                        WHERE source_scope_key = ?
+                          AND dataset_id = ?
+                          AND client_envelope_id = ?
+                          AND status = 'pending'
+                        """,
+                        (
+                            _json_dumps(accepted_result),
+                            _json_dumps(accepted_result),
+                            now,
+                            source_scope_key,
+                            dataset_id,
+                            client_envelope_id,
+                        ),
+                    )
+                    retained += cursor.rowcount
+                    continue
                 cursor = conn.execute(
                     """
                     UPDATE sync_v2_local_outbox
                     SET status = 'dispatched',
                         attempt_count = attempt_count + 1,
                         last_error = NULL,
+                        accepted_result = ?,
                         updated_at = ?,
                         dispatched_at = ?
                     WHERE source_scope_key = ?
@@ -1246,7 +1343,14 @@ class SyncStateRepository(BaseDB):
                       AND client_envelope_id = ?
                       AND status = 'pending'
                     """,
-                    (now, now, source_scope_key, dataset_id, client_envelope_id),
+                    (
+                        _json_dumps(accepted_result),
+                        now,
+                        now,
+                        source_scope_key,
+                        dataset_id,
+                        client_envelope_id,
+                    ),
                 )
                 dispatched += cursor.rowcount
             for client_envelope_id, failure in sorted(failure_by_id.items()):
@@ -1674,6 +1778,28 @@ class SyncStateRepository(BaseDB):
             "updated_at": row["updated_at"],
         }
 
+    def list_sync_v2_profile_states(self) -> list[dict[str, Any]]:
+        """Return persisted server-profile scopes for durable owner routing."""
+
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT server_profile_id, authenticated_principal_id, workspace_scope "
+                "FROM sync_profile_state WHERE source_authority = 'server' "
+                "ORDER BY server_profile_id, authenticated_principal_id, workspace_scope"
+            ).fetchall()
+        profiles: list[dict[str, Any]] = []
+        for row in rows:
+            profile = self.get_sync_v2_profile_state(
+                server_profile_id=str(row["server_profile_id"]),
+                authenticated_principal_id=_restore_scope_value(
+                    row["authenticated_principal_id"]
+                ),
+                workspace_scope=_restore_scope_value(row["workspace_scope"]),
+            )
+            if profile is not None:
+                profiles.append(profile)
+        return profiles
+
     def get_sync_v2_profile_summary(
         self,
         *,
@@ -2072,6 +2198,41 @@ class SyncStateRepository(BaseDB):
         parsed: SyncV2Envelope,
     ) -> dict[str, Any]:
         now = _utc_now()
+        encoded = parsed.model_dump_json()
+        existing = conn.execute(
+            """
+            SELECT * FROM sync_v2_local_outbox
+             WHERE source_scope_key = ? AND dataset_id = ?
+               AND client_envelope_id = ?
+            """,
+            (source_scope_key, dataset_id, parsed.client_envelope_id),
+        ).fetchone()
+        if existing is not None:
+            existing_envelope = self._parse_outbox_envelope(
+                json.loads(str(existing["envelope"]))
+            )
+            exact_required = (
+                parsed.encryption_policy == "server_trusted_v1"
+                or existing_envelope.encryption_policy == "server_trusted_v1"
+            )
+            parsed_private_identity = parsed.model_dump(
+                exclude={"payload_ciphertext", "encryption_metadata"}
+            )
+            existing_private_identity = existing_envelope.model_dump(
+                exclude={"payload_ciphertext", "encryption_metadata"}
+            )
+            same_logical_private_envelope = (
+                parsed.encryption_policy == "client_private_v1"
+                and existing_envelope.encryption_policy == "client_private_v1"
+                and parsed_private_identity == existing_private_identity
+            )
+            if (exact_required and str(existing["envelope"]) != encoded) or (
+                not exact_required and not same_logical_private_envelope
+            ):
+                raise ValueError(
+                    "client_envelope_id is already bound to a different envelope"
+                )
+            return self._outbox_from_row(existing)
         conn.execute(
             """
             INSERT INTO sync_v2_local_outbox (
@@ -2080,26 +2241,6 @@ class SyncStateRepository(BaseDB):
                 domain, client_envelope_id, envelope, status, attempt_count,
                 last_error, created_at, updated_at, dispatched_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, NULL, ?, ?, NULL)
-            ON CONFLICT(source_scope_key, dataset_id, client_envelope_id)
-            DO UPDATE SET
-                envelope = excluded.envelope,
-                domain = excluded.domain,
-                status = CASE
-                    WHEN sync_v2_local_outbox.status = 'dispatched'
-                     AND json_extract(sync_v2_local_outbox.envelope, '$.payload_hash')
-                         = json_extract(excluded.envelope, '$.payload_hash')
-                    THEN 'dispatched'
-                    ELSE 'pending'
-                END,
-                last_error = NULL,
-                updated_at = excluded.updated_at,
-                dispatched_at = CASE
-                    WHEN sync_v2_local_outbox.status = 'dispatched'
-                     AND json_extract(sync_v2_local_outbox.envelope, '$.payload_hash')
-                         = json_extract(excluded.envelope, '$.payload_hash')
-                    THEN sync_v2_local_outbox.dispatched_at
-                    ELSE NULL
-                END
             """,
             (
                 source_scope_key,
@@ -2109,7 +2250,7 @@ class SyncStateRepository(BaseDB):
                 dataset_id,
                 parsed.domain,
                 parsed.client_envelope_id,
-                parsed.model_dump_json(),
+                encoded,
                 now,
                 now,
             ),
@@ -2129,6 +2270,7 @@ class SyncStateRepository(BaseDB):
     @staticmethod
     def _outbox_from_row(row: sqlite3.Row) -> dict[str, Any]:
         last_error = row["last_error"]
+        accepted_result = row["accepted_result"]
         return {
             "outbox_id": int(row["outbox_id"]),
             "source_scope_key": row["source_scope_key"],
@@ -2144,6 +2286,9 @@ class SyncStateRepository(BaseDB):
             "status": row["status"],
             "attempt_count": int(row["attempt_count"]),
             "last_error": json.loads(last_error) if last_error else None,
+            "accepted_result": (
+                json.loads(accepted_result) if accepted_result else None
+            ),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
             "dispatched_at": row["dispatched_at"],
@@ -2218,6 +2363,19 @@ class SyncStateRepository(BaseDB):
                 conn.execute(
                     f"ALTER TABLE sync_profile_state ADD COLUMN {column_name} {definition}"
                 )
+
+    @staticmethod
+    def _ensure_sync_v2_outbox_columns(conn: sqlite3.Connection) -> None:
+        existing_columns = {
+            row["name"]
+            for row in conn.execute(
+                "PRAGMA table_info(sync_v2_local_outbox)"
+            ).fetchall()
+        }
+        if "accepted_result" not in existing_columns:
+            conn.execute(
+                "ALTER TABLE sync_v2_local_outbox ADD COLUMN accepted_result TEXT"
+            )
 
     @staticmethod
     def _record_schema_version(conn: sqlite3.Connection) -> None:

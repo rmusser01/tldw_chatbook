@@ -6,12 +6,16 @@ from typing import Any, TYPE_CHECKING
 
 from tldw_chatbook.Sync_Interop.crypto import unwrap_recovery_bundle
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
+from tldw_chatbook.Sync_Interop.notes_organization import NOTES_ORGANIZATION_DOMAINS
 from tldw_chatbook.Sync_Interop.validation import (
     validate_pull_pagination_state,
     validate_pulled_response_scope,
 )
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Notes.notes_organization_repository import (
+        NotesOrganizationRepository,
+    )
     from tldw_chatbook.tldw_api import SyncV2Envelope
 
 
@@ -24,10 +28,12 @@ class SyncRestoreService:
         server_service: Any,
         local_store: Any,
         dataset_keys: dict[str, bytes] | None = None,
+        notes_organization_repository: NotesOrganizationRepository | None = None,
     ) -> None:
         self.server_service = server_service
         self.local_store = local_store
-        self.dataset_keys = dataset_keys or {}
+        self.dataset_keys = dataset_keys if dataset_keys is not None else {}
+        self.notes_organization_repository = notes_organization_repository
 
     async def fetch_manifest(
         self,
@@ -62,6 +68,7 @@ class SyncRestoreService:
     async def restore_selection(
         self,
         *,
+        server_profile_id: str | None = None,
         dataset_id: str,
         device_id: str,
         domains: list[str],
@@ -76,14 +83,27 @@ class SyncRestoreService:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from tldw_chatbook.tldw_api import SyncV2Envelope
 
-        key = await self._resolve_dataset_key(
-            dataset_id=dataset_id,
-            dataset_key=dataset_key,
-            recovery_secret=recovery_secret,
-            recovery_key_purpose=recovery_key_purpose,
-            recovery_device_id=recovery_device_id,
-            key_record_id=key_record_id,
+        organization_only = bool(domains) and all(
+            domain in NOTES_ORGANIZATION_DOMAINS for domain in domains
         )
+        if (
+            self.notes_organization_repository is not None
+            and any(domain in NOTES_ORGANIZATION_DOMAINS for domain in domains)
+            and server_profile_id is None
+        ):
+            raise ValueError(
+                "server_profile_id is required to restore Notes organization domains"
+            )
+        key = None
+        if not organization_only:
+            key = await self._resolve_dataset_key(
+                dataset_id=dataset_id,
+                dataset_key=dataset_key,
+                recovery_secret=recovery_secret,
+                recovery_key_purpose=recovery_key_purpose,
+                recovery_device_id=recovery_device_id,
+                key_record_id=key_record_id,
+            )
         pulled = self._dump(
             await self.server_service.pull_v2_envelopes(
                 dataset_id=dataset_id,
@@ -94,7 +114,12 @@ class SyncRestoreService:
                 include_own_changes=True,
             )
         )
-        applier = SyncEnvelopeApplier(dataset_key=key, local_store=self.local_store)
+        applier = SyncEnvelopeApplier(
+            dataset_key=key,
+            local_store=self.local_store,
+            notes_organization_repository=self.notes_organization_repository,
+            notes_organization_server_profile_id=server_profile_id,
+        )
         envelopes = [
             SyncV2Envelope.model_validate(envelope)
             for envelope in pulled.get("envelopes", [])

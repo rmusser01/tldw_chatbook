@@ -938,6 +938,30 @@ class TestGetAllConversationIds:
 
 
 class TestNotesAndKeywords:
+    def test_keyword_and_link_cursor_follow_caller_transaction(
+        self, db_instance: CharactersRAGDB
+    ):
+        note_id = db_instance.add_note("Cursor note", "content")
+        with pytest.raises(RuntimeError, match="rollback"):
+            with db_instance.transaction() as cursor:
+                keyword_id = db_instance.add_keyword("Cursor keyword", cursor=cursor)
+                db_instance.link_note_to_keyword(note_id, keyword_id, cursor=cursor)
+                raise RuntimeError("rollback")
+
+        assert db_instance.get_keyword_by_text("Cursor keyword") is None
+        assert db_instance.get_keywords_for_note(note_id) == []
+
+        with db_instance.transaction() as cursor:
+            keyword_id = db_instance.add_keyword("Cursor keyword", cursor=cursor)
+            assert db_instance.link_note_to_keyword(
+                note_id, keyword_id, cursor=cursor
+            )
+
+        assert db_instance.get_keyword_by_id(keyword_id)["keyword"] == "Cursor keyword"
+        assert [row["id"] for row in db_instance.get_keywords_for_note(note_id)] == [
+            keyword_id
+        ]
+
     def test_add_and_update_note(self, db_instance: CharactersRAGDB):
         note_id = db_instance.add_note("Original Title", "Original Content")
         assert isinstance(note_id, str)
@@ -1027,6 +1051,28 @@ class TestKeywordCollections:
 
         names = {c["name"] for c in db_instance.list_keyword_collections()}
         assert "Coll To Delete" not in names
+
+    def test_collection_cursor_follows_caller_transaction_and_default_still_commits(
+        self, db_instance: CharactersRAGDB
+    ):
+        keyword_id = db_instance.add_keyword("Collection keyword")
+        with pytest.raises(RuntimeError, match="rollback"):
+            with db_instance.transaction() as cursor:
+                collection_id = db_instance.add_keyword_collection(
+                    "Rolled back collection", cursor=cursor
+                )
+                db_instance.link_collection_to_keyword(
+                    collection_id, keyword_id, cursor=cursor
+                )
+                raise RuntimeError("rollback")
+
+        assert db_instance.get_keyword_collection_by_name("Rolled back collection") is None
+
+        collection_id = db_instance.add_keyword_collection("Committed collection")
+        assert db_instance.link_collection_to_keyword(collection_id, keyword_id)
+        assert [row["id"] for row in db_instance.get_keywords_for_collection(collection_id)] == [
+            keyword_id
+        ]
 
 
 class TestGetAllNoteIds:

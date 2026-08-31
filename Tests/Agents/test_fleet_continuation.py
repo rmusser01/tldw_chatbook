@@ -70,7 +70,9 @@ from tldw_chatbook.Agents.agent_models import (
     ModelTurn,
     RunBudget,
     ToolCall,
+    ToolCatalogEntry,
     ToolResult,
+    ToolSchema,
     definition_fingerprint,
     format_steering_message,
 )
@@ -878,6 +880,79 @@ def test_send_to_agent_to_a_finished_child_starts_a_resumed_seeded_run(db):
     )
     assert new_handle.handle_id not in sends[0]
     assert f"run:{resumed_row['id']}" in sends[0]
+
+
+class _AgentLessonsCatalogProvider:
+    def list_catalog(self):
+        return [
+            ToolCatalogEntry(
+                id=f"lesson:{name}",
+                name=name,
+                one_line_description=name,
+                source="lesson-test",
+            )
+            for name in (
+                "library_search_notes",
+                "library_get_note",
+                "library_save_note",
+            )
+        ]
+
+    def load_schema(self, tool_id):
+        name = str(tool_id).split(":", 1)[1]
+        return ToolSchema(tool_id, name, name, {"type": "object"})
+
+    def invoke(self, tool_id, args):
+        return ToolResult(ok=True, content=f"unused:{tool_id}")
+
+
+def test_resumed_fleet_child_recomputes_non_mutating_lesson_guidance(db):
+    holder: dict[str, str] = {}
+
+    def resume():
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": holder["handle_id"], "message": "check newer evidence"},
+        )
+
+    service, chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "inspect lessons"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn one done",
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn two done",
+        ],
+        {"inspect lessons": ["draft one", "draft two"]},
+        providers=(_AgentLessonsCatalogProvider(),),
+    )
+    config = AgentConfig(
+        model="test-model",
+        system_prompt="primary",
+        allowed_tools=(
+            "library_search_notes",
+            "library_get_note",
+            "library_save_note",
+            SPAWN_TOOL_NAME,
+        ),
+        budget=RunBudget(max_steps=60, max_model_turns=60, max_subagents=4),
+    )
+
+    _run(service, config=config)
+    finished = _finished_child(coordinator)
+    holder["handle_id"] = finished.handle_id
+    _await_retained(coordinator, finished.handle_id)
+    _run(service, config=config)
+
+    child_calls = chat.child_calls["inspect lessons"]
+    assert len(child_calls) == 2
+    for call in child_calls:
+        system = call["messages_payload"][0]["content"]
+        assert "Agent Lessons protocol" in system
+        assert "Do not call library_save_note" in system
+        assert "Do not mutate Notes" in system
 
 
 def test_resumed_lifecycle_capture_failure_starts_from_actual_diagnostic_after_reload(

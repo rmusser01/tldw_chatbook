@@ -9,7 +9,7 @@ import threading
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from uuid import UUID, uuid5
+from uuid import UUID, uuid4, uuid5
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.Notes.note_folder_models import (
@@ -580,11 +580,12 @@ class LocalNoteImportTarget:
             result = cursor.execute(
                 """
                 INSERT INTO keywords (
-                    keyword, created_at, last_modified, deleted, client_id, version
+                    keyword, created_at, last_modified, deleted, client_id, version,
+                    sync_id
                 )
-                VALUES (?, ?, ?, 0, ?, 1)
+                VALUES (?, ?, ?, 0, ?, 1, ?)
                 """,
-                (keyword_text, timestamp, timestamp, self._user_id),
+                (keyword_text, timestamp, timestamp, self._user_id, str(uuid4())),
             )
             keyword_id = result.lastrowid
             if isinstance(keyword_id, bool) or not isinstance(keyword_id, int):
@@ -613,7 +614,7 @@ class LocalNoteImportTarget:
             """
             UPDATE keywords
             SET keyword = ?, last_modified = ?, deleted = 0,
-                client_id = ?, version = ?
+                client_id = ?, version = ?, sync_id = COALESCE(sync_id, ?)
             WHERE id = ? AND version = ? AND deleted = 1
             """,
             (
@@ -621,6 +622,7 @@ class LocalNoteImportTarget:
                 _utc_timestamp(),
                 self._user_id,
                 version + 1,
+                str(uuid4()),
                 keyword_id,
                 version,
             ),

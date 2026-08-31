@@ -302,6 +302,11 @@ def test_target_ensure_folder_is_deterministic_and_replay_safe(
 
     assert first.folder_id == _FOLDER_ID
     assert retry == first
+    folder_sync_id = _db.get_connection().execute(
+        "SELECT sync_id FROM note_folders WHERE id = ?", (_FOLDER_ID,)
+    ).fetchone()[0]
+    assert str(UUID(folder_sync_id)) == folder_sync_id
+    assert UUID(folder_sync_id).version == 4
 
 
 def test_target_folder_projection_is_frozen_usable_and_private_safe(
@@ -887,6 +892,18 @@ def test_target_keyword_sync_is_exact_canonical_and_idempotent(target_harness) -
     assert target.keywords_match(note_id=_NOTE_ID, keywords=("KEEP", "new"))
     assert first_links == second_links
     assert len(second_links) == 2
+    portable_ids = [
+        row[0]
+        for row in db.get_connection().execute(
+            "SELECT k.sync_id FROM keywords AS k "
+            "JOIN note_keywords AS nk ON nk.keyword_id = k.id "
+            "WHERE nk.note_id = ? ORDER BY k.id",
+            (_NOTE_ID,),
+        )
+    ]
+    assert len(portable_ids) == 2
+    assert all(str(UUID(sync_id)) == sync_id for sync_id in portable_ids)
+    assert all(UUID(sync_id).version == 4 for sync_id in portable_ids)
     stale = (
         db.get_connection()
         .execute("SELECT keyword, deleted FROM keywords WHERE id = ?", (stale_id,))

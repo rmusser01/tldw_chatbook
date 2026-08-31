@@ -313,6 +313,7 @@ from tldw_chatbook.Chat.console_skill_resolver import (
 from tldw_chatbook.Chat.prompt_history import PromptHistory
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.agent_lesson_promotion import ManagedSkillProposalGate
     from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 
@@ -331,12 +332,12 @@ from tldw_chatbook.Agents.project_instruction_resolver import (
     StartupInstructionCandidate,
 )
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall, MCPToolProvider
+from tldw_chatbook.Agents.run_context import current_run_actor, current_run_id
 
 # NOTE (boot budget, ADR-097): `Agents.persona_policy` is imported lazily
 # (annotation-only `PersonaToolPolicy` under TYPE_CHECKING; the parsing and
 # floor helpers are imported inside their per-run use sites) so the module
 # stays out of the UI-ready module census.
-from tldw_chatbook.Agents.run_context import current_run_id
 from tldw_chatbook.Agents.session_todo_store import (
     SessionTodoStore,
     TodoChangeCallback,
@@ -1182,6 +1183,10 @@ def commit_project_instruction_dispatch_decision(
 #: the same whether it was stopped here or at the gate.
 USER_DENIED_REFUSAL = "tool call denied by the user: {name}"
 
+AGENT_LESSON_APPROVAL_REQUIRED = "approval_required"
+AGENT_LESSON_FOREGROUND_REQUIRED = "foreground_required"
+AGENT_LESSON_DENIED = "foreground approval denied for Agent Lesson save"
+
 #: TASK-631: the result every tool call gets while the kill switch is on.
 #: Enforced at the review hook -- the one place EVERY parsed call passes,
 #: including the families neither provider claims (skills, spawn_subagent,
@@ -1496,6 +1501,7 @@ def build_tool_review_hook(
     *,
     workspace_id: str | None = None,
     kill_switch: Callable[[], bool] | None = None,
+    library_provider: Any | None = None,
 ) -> Callable[[list["ToolCall"]], dict[str, str]]:
     """Build THIS run's run-level `review_tool_calls` hook (P5-T6/task-545).
 
@@ -1650,6 +1656,15 @@ def build_tool_review_hook(
         # gate and provider instances are shared by a parent and every
         # sub-agent it spawns, so an unscoped clear/stamp here reaches
         # verdicts a concurrent sibling has not yet consumed.
+        lesson_clear_failed = False
+        clear_lesson_approvals = getattr(
+            library_provider, "clear_agent_lesson_approvals", None
+        )
+        if callable(clear_lesson_approvals):
+            try:
+                clear_lesson_approvals(run_id)
+            except Exception:  # noqa: BLE001 - fail closed without payload logging
+                lesson_clear_failed = True
         builtin_gate.begin_turn(run_id)
         # TASK-631: the kill switch outranks everything -- no prompting, no
         # stamps, every call refused. Per-call keys where the runtime can
@@ -1683,6 +1698,68 @@ def build_tool_review_hook(
             else []
         )
         mcp_claimed_names = {row.llm_name for row in mcp_pending}
+
+        lesson_pending: list["MCPPendingCall"] = []
+        lesson_preflights: list[tuple["MCPPendingCall", Any]] = []
+        lesson_refusals: dict[str, str] = {}
+        actor = current_run_actor()
+        preflight_lesson = getattr(
+            library_provider, "preflight_agent_lesson_save", None
+        )
+        if callable(preflight_lesson):
+            batch_call_ids = [
+                str(getattr(call, "call_id", "") or "")
+                for call in calls
+            ]
+            duplicate_batch_call_ids = {
+                call_id
+                for call_id in batch_call_ids
+                if call_id and batch_call_ids.count(call_id) > 1
+            }
+            for call in calls:
+                if call.name != "library_save_note":
+                    continue
+                refusal_key = str(getattr(call, "call_id", "") or "") or call.name
+                if lesson_clear_failed:
+                    lesson_refusals[refusal_key] = AGENT_LESSON_APPROVAL_REQUIRED
+                    continue
+                try:
+                    preflight = preflight_lesson(
+                        call.name,
+                        dict(call.args or {}),
+                        str(getattr(call, "call_id", "") or ""),
+                    )
+                except Exception:  # noqa: BLE001 - classification is content-free
+                    lesson_refusals[refusal_key] = AGENT_LESSON_APPROVAL_REQUIRED
+                    continue
+                if preflight is None:
+                    continue
+                if preflight.call_id in duplicate_batch_call_ids:
+                    lesson_refusals[refusal_key] = AGENT_LESSON_APPROVAL_REQUIRED
+                    continue
+                if actor is None or actor.run_id != run_id:
+                    lesson_refusals[refusal_key] = AGENT_LESSON_APPROVAL_REQUIRED
+                    continue
+                if actor.kind != "primary":
+                    lesson_refusals[refusal_key] = AGENT_LESSON_FOREGROUND_REQUIRED
+                    continue
+                row = MCPPendingCall(
+                    llm_name=call.name,
+                    server_key="agent:library",
+                    tool_name=call.name,
+                    server_label="Agent Lessons",
+                    arguments={
+                        "operation": preflight.operation,
+                        "title": preflight.title,
+                        "classification": preflight.classification.reason,
+                        "call_digest": preflight.call_digest,
+                    },
+                    call_id=preflight.call_id,
+                    reason="ask",
+                    options=("approve_once", "deny"),
+                )
+                lesson_pending.append(row)
+                lesson_preflights.append((row, preflight))
 
         # Minor (round 1 review): memoize `allowed_file_roots` across every
         # builtin file-tool row THIS batch checks -- `workspace_id` is fixed
@@ -1753,10 +1830,18 @@ def build_tool_review_hook(
                 )
             )
 
-        all_pending = mcp_pending + builtin_pending
+        all_pending = mcp_pending + builtin_pending + lesson_pending
         if not all_pending:
-            return {}
-        decisions = request_approvals(all_pending)
+            return lesson_refusals
+        try:
+            decisions = request_approvals(all_pending)
+        except BaseException:
+            if callable(clear_lesson_approvals):
+                try:
+                    clear_lesson_approvals(run_id)
+                except Exception:  # noqa: BLE001 - cleanup remains best effort
+                    pass
+            raise
 
         def _decision_for(row: "MCPPendingCall") -> str | None:
             """Resolve one row's verdict, per-call id first then name.
@@ -1834,8 +1919,10 @@ def build_tool_review_hook(
         # non-"proceed" verdict string into that call's result without
         # dispatching it, so this is the only layer that can refuse one
         # target while running another.
-        verdicts: dict[str, str] = {row.llm_name: "proceed" for row in all_pending}
-        for row in all_pending:
+        verdicts: dict[str, str] = {
+            row.llm_name: "proceed" for row in mcp_pending + builtin_pending
+        }
+        for row in mcp_pending + builtin_pending:
             if _decision_for(row) != "deny":
                 continue
             # Prefer the per-call key. A row with no `call_id` -- the fence
@@ -1845,6 +1932,33 @@ def build_tool_review_hook(
             # runtime cannot tell those calls apart.
             key = str(getattr(row, "call_id", "") or "") or row.llm_name
             verdicts[key] = USER_DENIED_REFUSAL.format(name=row.llm_name)
+        verdicts.update(lesson_refusals)
+        issue_lesson_approval = getattr(
+            library_provider, "issue_agent_lesson_approval", None
+        )
+        lesson_issue_failed = False
+        for row, preflight in lesson_preflights:
+            decision = decisions.get(row.call_id)
+            if decision == "approve_once" and callable(issue_lesson_approval):
+                try:
+                    issue_lesson_approval(run_id, preflight)
+                except Exception:  # noqa: BLE001 - no call data crosses refusal
+                    verdicts[row.call_id] = AGENT_LESSON_APPROVAL_REQUIRED
+                    lesson_issue_failed = True
+                else:
+                    verdicts[row.call_id] = "proceed"
+            elif decision == "deny":
+                verdicts[row.call_id] = AGENT_LESSON_DENIED
+            else:
+                verdicts[row.call_id] = AGENT_LESSON_APPROVAL_REQUIRED
+        if lesson_issue_failed:
+            if callable(clear_lesson_approvals):
+                try:
+                    clear_lesson_approvals(run_id)
+                except Exception:  # noqa: BLE001 - already failing closed
+                    pass
+            for row, _preflight in lesson_preflights:
+                verdicts[row.call_id] = AGENT_LESSON_APPROVAL_REQUIRED
         return verdicts
 
     return review_tool_calls
@@ -1891,6 +2005,7 @@ def build_local_review_hook(
                 call.name,
                 call.args,
                 str(getattr(call, "call_id", "") or ""),
+                run_id=run_id,
             )
             if gate is not None:
                 pending.append(gate)
@@ -1922,6 +2037,12 @@ def build_local_review_hook(
         for name in denied:
             stamps.setdefault(name, "deny")
         provider.apply_batch_decisions(run_id, stamps)
+        reviewed_call_ids = {row.call_id for row in pending if row.call_id}
+        provider.apply_promotion_decisions(
+            run_id,
+            [call for call in calls if call.call_id in reviewed_call_ids],
+            decisions,
+        )
 
         verdicts: dict[str, str] = {row.llm_name: "proceed" for row in pending}
         for row in pending:
@@ -1929,6 +2050,49 @@ def build_local_review_hook(
                 continue
             key = str(getattr(row, "call_id", "") or "") or row.llm_name
             verdicts[key] = USER_DENIED_REFUSAL.format(name=row.llm_name)
+        return verdicts
+
+    return review_tool_calls
+
+
+def build_managed_skill_promotion_review_hook(
+    gate: "ManagedSkillProposalGate",
+    request_approvals: Callable[[list["MCPPendingCall"]], dict[str, str]],
+) -> Callable[[list["ToolCall"], str], dict[str, str]]:
+    """Build the primary-only approval hook for read-only skill proposals."""
+
+    def review_tool_calls(calls: list["ToolCall"], run_id: str) -> dict[str, str]:
+        gate.clear(run_id)
+        pending = [
+            row
+            for call in calls
+            if (
+                row := gate.pending_gate_for(
+                    call.name,
+                    call.args,
+                    run_id=run_id,
+                    call_id=call.call_id,
+                )
+            )
+            is not None
+        ]
+        if not pending:
+            return {}
+        decisions = request_approvals(pending)
+        reviewed_call_ids = {row.call_id for row in pending if row.call_id}
+        gate.apply_decisions(
+            run_id,
+            [call for call in calls if call.call_id in reviewed_call_ids],
+            decisions,
+        )
+        verdicts: dict[str, str] = {}
+        for row in pending:
+            key = row.call_id or row.llm_name
+            verdicts[key] = (
+                "proceed"
+                if decisions.get(key) == "approve_once"
+                else USER_DENIED_REFUSAL.format(name=row.llm_name)
+            )
         return verdicts
 
     return review_tool_calls
@@ -19982,6 +20146,22 @@ class ConsoleChatController:
         )
         self._mcp_provider = mcp_provider
 
+        # Resolve the direct Library provider before building the shared
+        # review hook: Agent Lesson saves are classified by that exact
+        # provider instance and its approve-once authority must be visible
+        # to the same instance later registered for dispatch.
+        library_provider: Any | None = None
+        library_provider_authority: Any | None = None
+        if self._library_provider_factory is not None:
+            try:
+                library_selection = self._library_provider_for_context(turn_context)
+                if library_selection is not None:
+                    library_provider, library_provider_authority = library_selection
+            except Exception:  # noqa: BLE001 -- never block a send
+                logger.opt(exception=True).warning(
+                    "library_provider_factory failed; running without Library tools"
+                )
+
         # task-545/T6: build THIS run's built-in permission gate and hand
         # the SAME instance to both the review hook (below) and
         # `ConsoleAgentBridge.run_reply` (which threads it into the
@@ -20033,6 +20213,7 @@ class ConsoleChatController:
             # mid-run flip takes effect on the next batch. Absent service ->
             # no switch to honor (None), matching `_compose_mcp_provider`.
             kill_switch=self._console_tool_kill_switch_reader(),
+            library_provider=library_provider,
         )
 
         # Local tools (ADR-032): same per-run composition point. Both
@@ -20048,22 +20229,20 @@ class ConsoleChatController:
             review_hook = build_combined_review_hook(
                 [review_hook, raw_shell_review_hook]
             )
+        managed_skill_promotion_gate = None
+        if library_provider is not None:
+            from tldw_chatbook.Agents.agent_lesson_promotion import (
+                ManagedSkillProposalGate,
+            )
 
-        # task-1337: THIS run's Library retrieval provider (direct tools or
-        # the bounded RAG fallback), resolved ONCE here on the main loop via
-        # the injected factory -- a raising factory degrades to None (no
-        # Library tools this run) rather than breaking the send.
-        library_provider: Any | None = None
-        library_provider_authority: Any | None = None
-        if self._library_provider_factory is not None:
-            try:
-                library_selection = self._library_provider_for_context(turn_context)
-                if library_selection is not None:
-                    library_provider, library_provider_authority = library_selection
-            except Exception:  # noqa: BLE001 -- never block a send
-                logger.opt(exception=True).warning(
-                    "library_provider_factory failed; running without Library tools"
-                )
+            managed_skill_promotion_gate = ManagedSkillProposalGate()
+            managed_skill_review_hook = build_managed_skill_promotion_review_hook(
+                managed_skill_promotion_gate,
+                functools.partial(self.request_mcp_approvals, session_id=session_id),
+            )
+            review_hook = build_combined_review_hook(
+                [review_hook, managed_skill_review_hook]
+            )
 
         # TASK-1971 (Agent Change Review): THIS run's tracked roots -- the
         # same workspace folder bindings the file tools resolve against.
@@ -20134,6 +20313,7 @@ class ConsoleChatController:
                 raw_shell_provider=raw_shell_provider,
                 library_provider=library_provider,
                 library_authority=library_provider_authority,
+                managed_skill_promotion_gate=managed_skill_promotion_gate,
                 # Workspace assistant defaults (Task 7): this turn's persona
                 # policy rules, from the same captured turn context the
                 # providers above were composed under -- the bridge applies

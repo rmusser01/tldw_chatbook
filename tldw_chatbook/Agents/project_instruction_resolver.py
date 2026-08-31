@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import stat
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -115,6 +117,32 @@ class BindingRootIdentity:
 
 
 @dataclass(frozen=True, slots=True)
+class InstructionPromotionSnapshot:
+    """Content-bounded current state for one repository-instruction proposal."""
+
+    binding_id: str
+    binding_root: Path = field(repr=False)
+    locator_fingerprint: str = field(repr=False)
+    root_identity_digest: str = field(repr=False)
+    target_relative_path: str
+    expected_sha256: str | None = field(default=None, repr=False)
+    expected_absent: bool = False
+    effective_chain: tuple[tuple[str, InstructionKind, str], ...] = field(
+        default=(), repr=False
+    )
+    effective_chain_digest: str = field(default="", repr=False)
+    activation_revision: int = 0
+
+
+class InstructionPromotionSnapshotError(RuntimeError):
+    """Stable content-free refusal while reading a promotion target."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+@dataclass(frozen=True, slots=True)
 class _FallbackCondition:
     kind: Literal["absent", "empty"]
     file_identity: tuple[int, int, int, int, int] | None = None
@@ -134,6 +162,82 @@ class _UnsafeMetadata(Exception):
 
 class ProjectInstructionResolver:
     """Resolve only the selected binding root's effective instruction file."""
+
+    def snapshot_promotion_target(
+        self,
+        *,
+        binding_id: str,
+        binding_root: Path,
+        locator_fingerprint: str,
+        target_path: Path,
+        activation_revision: int,
+        max_bytes: int = 1024 * 1024,
+    ) -> InstructionPromotionSnapshot:
+        """Capture one eligible target and its currently applicable chain.
+
+        The snapshot contains only paths and digests for the instruction chain;
+        unrelated instruction bodies are never returned.
+        """
+        if not binding_id or not locator_fingerprint or activation_revision < 0:
+            raise InstructionPromotionSnapshotError("authority_unavailable")
+        if max_bytes <= 0:
+            raise ValueError("max_bytes must be positive")
+        root, expected_ancestors = _canonical_binding_root(binding_root)
+        target = _safe_absolute(target_path)
+        if expected_ancestors is None:
+            raise InstructionPromotionSnapshotError("binding_changed")
+        if (
+            target is None
+            or not target.is_relative_to(root)
+            or target.name not in {"AGENTS.md", "AGENTS.override.md"}
+        ):
+            raise InstructionPromotionSnapshotError("ineligible_target")
+        relative = target.relative_to(root)
+        if not relative.parts or ".." in relative.parts:
+            raise InstructionPromotionSnapshotError("ineligible_target")
+
+        target_before = _read_promotion_target_state(
+            root=root,
+            target=target,
+            expected_ancestors=expected_ancestors,
+            max_bytes=max_bytes,
+        )
+        chain = _read_current_instruction_chain(
+            root=root,
+            target_directory=target.parent,
+            expected_ancestors=expected_ancestors,
+            max_bytes=max_bytes,
+        )
+        target_after = _read_promotion_target_state(
+            root=root,
+            target=target,
+            expected_ancestors=expected_ancestors,
+            max_bytes=max_bytes,
+        )
+        if target_before != target_after:
+            raise InstructionPromotionSnapshotError("target_state_changed")
+        try:
+            if _capture_ancestor_identities(root) != expected_ancestors:
+                raise InstructionPromotionSnapshotError("binding_changed")
+        except OSError:
+            raise InstructionPromotionSnapshotError("binding_changed") from None
+
+        expected_sha256, expected_absent = target_before
+        chain_metadata = tuple(
+            (source.relative_path, source.kind, source.digest) for source in chain
+        )
+        return InstructionPromotionSnapshot(
+            binding_id=binding_id,
+            binding_root=root,
+            locator_fingerprint=locator_fingerprint,
+            root_identity_digest=_canonical_metadata_digest(expected_ancestors),
+            target_relative_path=relative.as_posix(),
+            expected_sha256=expected_sha256,
+            expected_absent=expected_absent,
+            effective_chain=chain_metadata,
+            effective_chain_digest=_canonical_metadata_digest(chain_metadata),
+            activation_revision=activation_revision,
+        )
 
     def resolve_startup(
         self,
@@ -409,6 +513,158 @@ def admit_sources(
         ),
         outcomes=outcomes,
     )
+
+
+def _canonical_metadata_digest(value: object) -> str:
+    try:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError) as error:
+        raise InstructionPromotionSnapshotError("snapshot_invalid") from error
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _read_promotion_target_state(
+    *,
+    root: Path,
+    target: Path,
+    expected_ancestors: tuple[tuple[int, int, int], ...],
+    max_bytes: int,
+) -> tuple[str | None, bool]:
+    """Read one target through no-follow identity checks."""
+    try:
+        if _capture_ancestor_identities(root) != expected_ancestors:
+            raise InstructionPromotionSnapshotError("binding_changed")
+        before = os.lstat(target)
+    except FileNotFoundError:
+        try:
+            if _capture_ancestor_identities(root) != expected_ancestors:
+                raise InstructionPromotionSnapshotError("binding_changed")
+        except OSError:
+            raise InstructionPromotionSnapshotError("binding_changed") from None
+        return None, True
+    except InstructionPromotionSnapshotError:
+        raise
+    except OSError:
+        raise InstructionPromotionSnapshotError("target_unavailable") from None
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or stat.S_ISLNK(before.st_mode)
+        or _is_reparse(before)
+    ):
+        raise InstructionPromotionSnapshotError("invalid_target")
+    if before.st_size > max_bytes:
+        raise InstructionPromotionSnapshotError("target_too_large")
+    identity = _verified_state(before)
+    flags = os.O_RDONLY | _CLOEXEC | _BINARY | _NONBLOCK
+    if _NOFOLLOW is not None:
+        flags |= _NOFOLLOW
+    try:
+        descriptor = os.open(target, flags)
+        try:
+            opened = os.fstat(descriptor)
+            if _is_reparse(opened) or _verified_state(opened) != identity:
+                raise _UnsafeMetadata
+            raw = _bounded_read(descriptor, max_bytes + 1)
+            finished = os.fstat(descriptor)
+        finally:
+            os.close(descriptor)
+        after = os.lstat(target)
+        if (
+            len(raw) > max_bytes
+            or _is_reparse(after)
+            or _verified_state(finished) != identity
+            or _verified_state(after) != identity
+            or _capture_ancestor_identities(root) != expected_ancestors
+        ):
+            raise _UnsafeMetadata
+    except (OSError, _UnsafeMetadata):
+        raise InstructionPromotionSnapshotError("target_state_changed") from None
+    return hashlib.sha256(raw).hexdigest(), False
+
+
+def _read_current_instruction_chain(
+    *,
+    root: Path,
+    target_directory: Path,
+    expected_ancestors: tuple[tuple[int, int, int], ...],
+    max_bytes: int,
+) -> tuple[InstructionSource, ...]:
+    """Read the effective broad-to-specific chain for one target directory."""
+    if not target_directory.is_relative_to(root):
+        raise InstructionPromotionSnapshotError("outside_binding")
+    directories = [root]
+    current = root
+    for part in target_directory.relative_to(root).parts:
+        current /= part
+        try:
+            value = os.lstat(current)
+        except OSError:
+            raise InstructionPromotionSnapshotError("target_unavailable") from None
+        if (
+            not stat.S_ISDIR(value.st_mode)
+            or stat.S_ISLNK(value.st_mode)
+            or _is_reparse(value)
+        ):
+            raise InstructionPromotionSnapshotError("invalid_target")
+        directories.append(current)
+
+    cutoff = time.time_ns()
+    sources: list[InstructionSource] = []
+    for directory in directories:
+        try:
+            directory_ancestors = _capture_ancestor_identities(directory)
+            depth = len(directory.relative_to(root).parts)
+            if directory_ancestors[depth:] != expected_ancestors:
+                raise _UnsafeMetadata
+        except (OSError, RuntimeError, ValueError, _UnsafeMetadata):
+            raise InstructionPromotionSnapshotError("binding_changed") from None
+        scope = "." if directory == root else directory.relative_to(root).as_posix()
+        prefix = "" if scope == "." else f"{scope}/"
+        override = _read_candidate(
+            root=directory,
+            filename="AGENTS.override.md",
+            kind="override",
+            max_bytes=max_bytes,
+            dispatch_started_wall_ns=cutoff,
+            expected_ancestors=directory_ancestors,
+            relative_path=f"{prefix}AGENTS.override.md",
+            scope=scope,
+        )
+        result = override
+        if override.fallback_condition is not None:
+            result = _read_candidate(
+                root=directory,
+                filename="AGENTS.md",
+                kind="standard",
+                max_bytes=max_bytes,
+                dispatch_started_wall_ns=cutoff,
+                expected_ancestors=directory_ancestors,
+                relative_path=f"{prefix}AGENTS.md",
+                scope=scope,
+            )
+            rechecked = _read_candidate(
+                root=directory,
+                filename="AGENTS.override.md",
+                kind="override",
+                max_bytes=max_bytes,
+                dispatch_started_wall_ns=cutoff,
+                expected_ancestors=directory_ancestors,
+                relative_path=f"{prefix}AGENTS.override.md",
+                scope=scope,
+            )
+            if rechecked.fallback_condition != override.fallback_condition:
+                raise InstructionPromotionSnapshotError("effective_chain_changed")
+        if result.outcome is not None:
+            raise InstructionPromotionSnapshotError(result.outcome.code)
+        if result.source is not None:
+            sources.append(result.source)
+    return tuple(sources)
 
 
 def _canonical_binding_root(

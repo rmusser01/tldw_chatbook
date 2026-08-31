@@ -48,9 +48,14 @@ needs one.
 
 from __future__ import annotations
 
-import os
+import difflib
+import hashlib
 import heapq
+import json
+import os
 import stat as stat_module
+import threading
+import uuid
 from pathlib import Path
 from typing import Literal
 
@@ -75,6 +80,9 @@ MAX_READ_CHARS = 32 * 1024  # provider byte-fits too; core caps content meaningf
 MAX_GLOB_RESULTS = 100
 MAX_GREP_RESULTS = 100
 _MAX_GREP_FILE_BYTES = 2 * 1024 * 1024  # skip huge files
+_MAX_WRITE_DIFF_CHARS = 12 * 1024
+_WRITE_LOCKS_GUARD = threading.Lock()
+_WRITE_LOCKS: dict[str, threading.Lock] = {}
 
 
 class LocalToolError(ValueError):
@@ -395,7 +403,15 @@ def _format_stat_result(relative: Path, info: os.stat_result) -> str:
     )
 
 
-def write_file(path: str, content: str, *, workspace_root: Path) -> str:
+def write_file(
+    path: str,
+    content: str,
+    *,
+    workspace_root: Path,
+    dry_run: bool = False,
+    expected_sha256: str | None = None,
+    expected_absent: bool = False,
+) -> str:
     """Create or overwrite ``path`` with ``content`` (full-file write).
 
     The parent directory must already exist (deliberate divergence from
@@ -408,6 +424,9 @@ def write_file(path: str, content: str, *, workspace_root: Path) -> str:
         content,
         workspace=workspace,
         display_path=path,
+        dry_run=dry_run,
+        expected_sha256=expected_sha256,
+        expected_absent=expected_absent,
     )
 
 
@@ -417,22 +436,248 @@ def _write_relative_file(
     *,
     workspace: Path,
     display_path: str | None = None,
+    dry_run: bool = False,
+    expected_sha256: str | None = None,
+    expected_absent: bool = False,
 ) -> str:
-    """Write one already-admitted path relative to an I/O root."""
+    """Preview or atomically write one admitted path with optional CAS."""
     target = workspace / relative
     shown = display_path or str(relative)
     if not target.parent.is_dir():
         raise LocalToolError(f"parent directory does not exist for: {shown}")
+    if expected_sha256 is not None and expected_absent:
+        raise LocalToolError(
+            "expected_sha256 and expected_absent are mutually exclusive"
+        )
+    if expected_sha256 is not None and (
+        not isinstance(expected_sha256, str)
+        or len(expected_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in expected_sha256)
+    ):
+        raise LocalToolError("expected_sha256 must be a lowercase SHA-256 digest")
+    if type(expected_absent) is not bool or type(dry_run) is not bool:
+        raise LocalToolError("write flags must be boolean")
     try:
         data = content.encode("utf-8")
     except UnicodeEncodeError as exc:
         raise LocalToolError(
             f"content is not UTF-8 encodable (lone surrogate?): {exc}"
         ) from exc
-    # encode BEFORE opening for write — a failed encode must never
-    # truncate an existing file
-    target.write_bytes(data)
+    canonical_key = os.path.normcase(str(target.absolute()))
+    lock = _write_lock_for(canonical_key)
+    with lock:
+        current = _read_write_target(target, shown)
+        current_digest = (
+            None if current is None else hashlib.sha256(current).hexdigest()
+        )
+        if expected_absent and current is not None:
+            raise LocalToolError("write precondition failed: target is present")
+        if expected_sha256 is not None and current_digest != expected_sha256:
+            raise LocalToolError("write precondition failed: target digest changed")
+        if dry_run:
+            return _write_preview_json(
+                shown=shown,
+                current=current,
+                current_digest=current_digest,
+                replacement=data,
+            )
+        _atomic_write_target(
+            target,
+            data,
+            shown=shown,
+            expected_sha256=expected_sha256,
+            expected_absent=expected_absent,
+        )
     return f"wrote {len(content)} characters to {shown}"
+
+
+def _write_lock_for(key: str) -> threading.Lock:
+    with _WRITE_LOCKS_GUARD:
+        return _WRITE_LOCKS.setdefault(key, threading.Lock())
+
+
+def _read_write_target(target: Path, shown: str) -> bytes | None:
+    try:
+        before = os.lstat(target)
+    except FileNotFoundError:
+        return None
+    if (
+        not stat_module.S_ISREG(before.st_mode)
+        or stat_module.S_ISLNK(before.st_mode)
+    ):
+        raise LocalToolError(f"write target is not a regular file: {shown}")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(target, flags)
+        try:
+            opened = os.fstat(descriptor)
+            chunks: list[bytes] = []
+            while True:
+                chunk = os.read(descriptor, 1024 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            finished = os.fstat(descriptor)
+        finally:
+            os.close(descriptor)
+        after = os.lstat(target)
+    except OSError:
+        raise LocalToolError(f"write target changed while reading: {shown}") from None
+    identities = tuple(
+        (
+            value.st_dev,
+            value.st_ino,
+            value.st_mode,
+            value.st_size,
+            value.st_mtime_ns,
+        )
+        for value in (before, opened, finished, after)
+    )
+    if len(set(identities)) != 1:
+        raise LocalToolError(f"write target changed while reading: {shown}")
+    return b"".join(chunks)
+
+
+def _write_preview_json(
+    *,
+    shown: str,
+    current: bytes | None,
+    current_digest: str | None,
+    replacement: bytes,
+) -> str:
+    before_text = "" if current is None else current.decode("utf-8", errors="replace")
+    after_text = replacement.decode("utf-8")
+    diff = "".join(
+        difflib.unified_diff(
+            before_text.splitlines(keepends=True),
+            after_text.splitlines(keepends=True),
+            fromfile=shown if current is not None else "/dev/null",
+            tofile=shown,
+        )
+    )
+    if len(diff) > _MAX_WRITE_DIFF_CHARS:
+        diff = diff[:_MAX_WRITE_DIFF_CHARS] + "\n… [truncated]"
+    return json.dumps(
+        {
+            "target_state": "absent" if current is None else "present",
+            "current_sha256": current_digest or "absent",
+            "replacement_sha256": hashlib.sha256(replacement).hexdigest(),
+            "replacement_bytes": len(replacement),
+            "diff": diff,
+        },
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _atomic_write_target(
+    target: Path,
+    data: bytes,
+    *,
+    shown: str,
+    expected_sha256: str | None,
+    expected_absent: bool,
+) -> None:
+    """Write through one pinned parent descriptor and same-directory temp."""
+    directory_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    if hasattr(os, "O_DIRECTORY"):
+        directory_flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        directory_flags |= os.O_NOFOLLOW
+    try:
+        parent_fd = os.open(target.parent, directory_flags)
+    except OSError:
+        raise LocalToolError(f"write parent changed: {shown}") from None
+    temp_name = f".chatbook-write-{uuid.uuid4().hex}.tmp"
+    temp_created = False
+    try:
+        # Recheck after acquiring the retained directory descriptor.  This is
+        # the mutation boundary; no later path traversal is used.
+        live, live_mode = _read_relative_descriptor(parent_fd, target.name, shown)
+        live_digest = None if live is None else hashlib.sha256(live).hexdigest()
+        if expected_absent and live is not None:
+            raise LocalToolError("write precondition failed: target is present")
+        if expected_sha256 is not None and live_digest != expected_sha256:
+            raise LocalToolError("write precondition failed: target digest changed")
+
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        temp_fd = os.open(temp_name, flags, 0o666, dir_fd=parent_fd)
+        temp_created = True
+        try:
+            if live_mode is not None:
+                os.fchmod(temp_fd, live_mode)
+            view = memoryview(data)
+            while view:
+                written = os.write(temp_fd, view)
+                view = view[written:]
+            os.fsync(temp_fd)
+        finally:
+            os.close(temp_fd)
+        if expected_absent:
+            os.link(
+                temp_name,
+                target.name,
+                src_dir_fd=parent_fd,
+                dst_dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+            os.unlink(temp_name, dir_fd=parent_fd)
+            temp_created = False
+        else:
+            os.replace(
+                temp_name,
+                target.name,
+                src_dir_fd=parent_fd,
+                dst_dir_fd=parent_fd,
+            )
+            temp_created = False
+        os.fsync(parent_fd)
+    except FileExistsError:
+        raise LocalToolError("write precondition failed: target is present") from None
+    except LocalToolError:
+        raise
+    except OSError:
+        raise LocalToolError(f"atomic write failed for: {shown}") from None
+    finally:
+        if temp_created:
+            try:
+                os.unlink(temp_name, dir_fd=parent_fd)
+            except OSError:
+                pass
+        os.close(parent_fd)
+
+
+def _read_relative_descriptor(
+    parent_fd: int, filename: str, shown: str
+) -> tuple[bytes | None, int | None]:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(filename, flags, dir_fd=parent_fd)
+    except FileNotFoundError:
+        return None, None
+    except OSError:
+        raise LocalToolError(f"write target changed: {shown}") from None
+    try:
+        info = os.fstat(descriptor)
+        if not stat_module.S_ISREG(info.st_mode):
+            raise LocalToolError(f"write target is not a regular file: {shown}")
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        return b"".join(chunks), info.st_mode & 0o7777
+    finally:
+        os.close(descriptor)
 
 
 def edit_file(

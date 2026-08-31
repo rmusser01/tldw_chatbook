@@ -9,6 +9,97 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Shipped migration and ADR numbers are allocation records, not merge labels
+
+**TASK-24613, 2026-08-30.** The Agent Lessons worktree and a newer `dev`
+history had each advanced independently from the same ChaChaNotes v55 schema
+and had each allocated ADR-104. A textual conflict resolution could have kept
+both branches' filenames while silently making two different v55→v56 and
+v56→v57 transitions compete for the same durable version, and could have left
+two accepted architectural decisions with one identifier. The latest-dev merge
+instead treated the already-shipped `dev` allocations as immutable: it kept the
+semantic-trace v55→v57 chain and token-disclosure ADR-104, appended the Notes
+organization transitions monotonically at v57→v61, and renumbered the later
+promotion decision to ADR-106. Real migration fixtures, the index census, and a
+repository-wide stale-reference search then verified the reconciliation.
+
+**What to do.** Before resolving a long-lived branch merge, compare durable
+schema and ADR allocation tables rather than only conflicted text. Preserve
+numbers that already shipped on the integration branch, append new migrations
+after its current version, renumber only the unshipped decision, update every
+reference, and test from each immediately preceding real schema boundary.
+
+## A new table needs a migration from every already-shipped current version
+
+**TASK-24308, 2026-08-30.** The first pending-note finalizer added its
+Notes-owned publication-intent table to the v58→v59 receipt SQL and to fresh
+schema creation. Fresh databases and v58 migrations were green, but a real
+database already reopened and stamped as v59 had no transition left to run, so
+the production code could query a table that did not exist. A genuine-v57
+fixture made that omission deterministic. Moving the table into a guarded
+v59→v60 migration, then testing real-v59 reopen, rollback, fresh-schema parity,
+SQL allowlisting, and the index census closed the gap.
+
+**What to do.** Once a schema version can exist outside the current worktree,
+treat its migration as immutable. New durable owners require a new monotonic
+version and a real fixture at the immediately preceding shipped boundary.
+Fresh-schema success and replay from an older version do not prove that a
+current-version database can reopen safely.
+
+## Authorization must read the owner snapshot, not a normalized projection
+
+**TASK-24309, 2026-08-30.** Agent Lesson preflight initially reused the public
+Library organization projection. That projection intentionally normalizes the
+durable receipt state `pending_organization` to the user-facing value `pending`.
+The mutation policy classifies the durable receipt state as an Agent Lesson, so
+the lossy public value made an authorization-relevant pending lesson look like
+an ordinary Note before review. Real-database preflight coverage exposed the
+gap. A private Notes-owner snapshot now supplies the exact raw receipt state,
+versions, requested keywords, and note/organization versions while the public
+API remains normalized.
+
+**What to do.** Do not reuse display or compatibility projections for
+authorization merely because they describe the same object. Inventory every
+normalization, omission, alias, and redaction between the durable owner and the
+consumer. If policy depends on one of those distinctions, add a narrow private
+snapshot from the owner and test the real stored value against the public
+projection that erased it.
+
+## Historical evidence and current identity selection are different decisions
+
+**TASK-24309, 2026-08-30.** The first Agent Lessons seed-race implementation
+observed an exact-root upsert from synchronized history and could use it both to
+advance monotonic "seed seen" evidence and to select/adopt the remote folder
+identity. A stale upsert followed by a rename or tombstone is valid historical
+evidence that a conventional seed once existed, but it is not the current head
+and cannot prove which identity should win or that a local candidate is safe to
+retire. Stale-history regressions forced the split: validated history may mark
+the profile seeded, while adoption and candidate retirement require the current
+applicable head plus untouched/unused intent evidence.
+
+**What to do.** When replay reconstructs monotonic history, separate "this ever
+happened" from "this object is current and authoritative." Let stale records
+advance only the former. Identity selection, deletion, adoption, suppression,
+and cleanup need an explicit current-head/applicability check and their own race
+tests.
+
+## Queue causality must not depend on wall-clock ordering
+
+**TASK-24308, 2026-08-30.** The first v58 Notes publication-intent drain ordered
+pending rows by `created_at` and `intent_id`. A deterministic test inserted one
+note's version 2 with an earlier clock than version 1; the successor drained
+first even though both immutable intents were otherwise valid. Ordering and the
+supporting partial index were changed to the note's durable lineage
+`(note_id, entity_version, intent_id)`. The reversed-clock restart test then
+proved v1 and v2 each drained once in causal order, while a separate test kept
+ordering deterministic across notes and isolated by server profile/dataset.
+
+**What to do.** For multiple versions of one entity, order dispatch by durable
+entity identity and monotonic entity version. Use timestamps only as display or
+diagnostic data unless the contract explicitly establishes a trusted monotonic
+clock; UUID and wall-clock tie-breakers cannot encode causal ancestry.
+---
+
 ## A turn deadline cannot preempt one oversized synchronous callback
 
 **TASK-22512 Task 6, 2026-08-30.** The persistent-terminal actor passed its
@@ -193,6 +284,18 @@ whole batch before generating replacements, then reject/skip both reserved and
 already-generated candidates. Cover adversarial pre-suffixed IDs, processing-order
 permutations, provider-generated fallbacks, and genuinely missing IDs; testing only
 two identical values does not prove namespace separation.
+
+**Recurred, TASK-24309, 2026-08-30.** The first per-call Agent Lesson approval
+check rejected duplicate lesson call IDs only among Library lesson rows. A
+builtin or MCP call in the same batch could carry the same ID, so the approval
+decision map could alias the forced lesson decision even though the Library
+subset itself was unique. The mixed-provider collision regression failed until
+call IDs were required to be unique across the complete review batch before any
+provider-specific classification or stamping.
+
+For per-call authorization, the collision namespace is the whole batch and all
+providers that consume the decision map—not the subset owned by the policy
+being added.
 
 ## Persist test configuration through the same durable seam production reloads
 
@@ -9848,6 +9951,44 @@ Two things this cost, worth knowing before writing the same probe:
   removing one row from the mapping reds the derivation naming the controller
   and where it is built. A guard nobody has watched fail is not evidence.
 
+## A server contract is the API schema, adapter, and materializer together (TASK-24307, 2026-08-30)
+
+**What happened.** The first Notes-organization two-device harness used a fake
+transport that accepted an envelope as long as the domain adapter accepted it.
+That made the causal retry path green with an optional cursor. Rechecking the
+current server exposed a split contract: the adapter's comparison path tolerated
+the optional cursor, while the API envelope and materializer required a stored
+server cursor and an exact complete base before the same change could be applied.
+The fake had modeled one permissive layer and therefore accepted a request the
+real write pipeline would reject. The client was corrected to retain pending
+successors until the predecessor supplies the complete cursor/revision/hash base,
+and the test transport was tightened to exercise that rule.
+
+**What to do.** For a server-backed mutation, do not derive the client contract
+from the domain adapter alone. Read and pin all three executable boundaries: the
+request/API schema, the domain adapter, and the materializer that commits state.
+A fake transport must enforce their intersection, especially required cursors,
+optimistic-base triples, restore metadata, and terminal acknowledgement states.
+Before calling the fake evidence, send at least one deliberately incomplete
+envelope and prove it fails for the same reason as the real pipeline.
+
+**TASK-24309 addendum (2026-08-30).** The real two-device enrollment gate found
+a second intersection the fake transport did not model: server idempotency is
+dataset-wide on `client_envelope_id`, not private to one simulated device. Device
+B pulled Device A's seeded `Agent_Lessons` folder correctly, then legacy inventory
+mistook that materialized remote head for pre-enrollment local state and emitted
+it again. The deterministic intent ID was identical, but its device-specific base
+metadata differed, so the real server rejected it as `idempotency_conflict` while
+the fake stayed green. The fix makes inventory skip a local row only when its
+domain, object ID, operation, and canonical payload exactly match an already
+applied remote head; a changed local row still publishes normally.
+
+When a deterministic envelope ID can be produced on more than one device, make
+the test transport index idempotency at the server's real ownership scope and
+vary device identity plus base metadata in at least one convergence test. Also
+assert that bootstrap inventory distinguishes pulled materializations from local
+legacy state; checking final rows alone will miss a false retained outbox and a
+profile-level partial failure.
 ---
 
 ## Process-local absence is not durable orphan evidence (TASK-22863, 2026-08-27)

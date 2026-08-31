@@ -136,6 +136,23 @@ def test_create_and_list_nested_folders(repository: LocalNoteFolderRepository) -
     assert plans.normalized_path == "/work/plans"
 
 
+def test_subtree_mutation_identifies_only_the_explicit_portable_folder(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    parent = repository.create_folder(name="Parent", parent_id=None)
+    child = repository.create_folder(name="Child", parent_id=parent.folder_id)
+
+    result = repository.soft_delete_folder(parent.folder_id, expected_version=1)
+
+    assert set(result.affected_folder_ids) == {parent.folder_id, child.folder_id}
+    assert result.explicit_folder_id == parent.folder_id
+
+    restored = repository.restore_folder(parent.folder_id, expected_version=2)
+
+    assert set(restored.affected_folder_ids) == {parent.folder_id, child.folder_id}
+    assert restored.explicit_folder_id == parent.folder_id
+
+
 @pytest.mark.parametrize(
     "folder_id",
     [

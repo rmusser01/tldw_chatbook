@@ -3107,6 +3107,190 @@ def test_settings_apply_manual_sync_result_includes_conflict_review_summary():
     )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("button_id", "action", "new_name"),
+    (
+        ("#settings-notes-adoption-merge", "merge", None),
+        ("#settings-notes-adoption-rename-local", "rename_local", "Local renamed"),
+        ("#settings-notes-adoption-keep-local", "keep_local", None),
+    ),
+)
+async def test_settings_notes_adoption_controls_resolve_and_resume_enrollment(
+    button_id, action, new_name
+):
+    resolve_calls = []
+    run_calls = []
+
+    class FakeManualSyncControl:
+        def preview(self, **kwargs):
+            return ManualSyncPreview(
+                status="ready",
+                can_run=True,
+                pending_total=0,
+                pending_by_domain={},
+                user_message="Manual Sync is ready.",
+            )
+
+        def resolve_notes_organization_adoption(self, **kwargs):
+            resolve_calls.append(kwargs)
+            return True
+
+        async def run_once(self, **kwargs):
+            run_calls.append(kwargs)
+            return ManualSyncRunResult(
+                status="success",
+                user_message="Enrollment resumed.",
+                summary={},
+                preview=self.preview(),
+            )
+
+    app = _build_test_app()
+    app.runtime_policy.state = RuntimeSourceState(
+        active_source="server",
+        active_server_id="server-main",
+        server_configured=True,
+    )
+    app.manual_sync_control_service = FakeManualSyncControl()
+    host = DestinationHarness(app, "settings")
+    review = SyncV2ConflictReviewItem(
+        conflict_review_id="review-1",
+        domain="notes.keyword",
+        item_label="Agent lesson",
+        cause="A local organization item collides with a server identity.",
+        local_summary="Local organization item requires a decision.",
+        remote_summary="Server identity remains separate until review.",
+        recovery_options={
+            "merge": "available",
+            "rename_local": "available",
+            "keep_local": "available",
+        },
+    )
+    result = ManualSyncRunResult(
+        status="conflict",
+        user_message="Adoption review required.",
+        summary={},
+        preview=FakeManualSyncControl().preview(),
+        conflict_reviews=(review,),
+    )
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen._apply_manual_sync_result(result)
+        await pilot.pause()
+        assert (
+            screen.query_one("#settings-overview-sync-details", Collapsible).collapsed
+            is False
+        )
+        assert "private body" not in _visible_text(screen)
+        if new_name is not None:
+            name_input = screen.query_one("#settings-notes-adoption-new-name", Input)
+            name_input.scroll_visible()
+            await pilot.pause()
+            name_input.focus()
+            await pilot.press(*new_name)
+        action_button = screen.query_one(button_id, Button)
+        action_button.scroll_visible()
+        await pilot.pause()
+        action_button.focus()
+        await pilot.press("enter")
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    assert len(resolve_calls) == 1
+    assert resolve_calls[0]["review_id"] == "review-1"
+    assert resolve_calls[0]["action"] == action
+    assert resolve_calls[0]["new_name"] == new_name
+    assert len(run_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_settings_mixed_conflicts_display_and_resolve_same_adoption_review():
+    resolve_calls = []
+
+    class FakeManualSyncControl:
+        def preview(self, **kwargs):
+            return ManualSyncPreview(
+                status="ready",
+                can_run=True,
+                pending_total=0,
+                pending_by_domain={},
+                user_message="Manual Sync is ready.",
+            )
+
+        def resolve_notes_organization_adoption(self, **kwargs):
+            resolve_calls.append(kwargs)
+            return True
+
+        async def run_once(self, **kwargs):
+            return ManualSyncRunResult(
+                status="success",
+                user_message="Enrollment resumed.",
+                summary={},
+                preview=self.preview(),
+            )
+
+    app = _build_test_app()
+    app.runtime_policy.state = RuntimeSourceState(
+        active_source="server",
+        active_server_id="server-main",
+        server_configured=True,
+    )
+    app.manual_sync_control_service = FakeManualSyncControl()
+    host = DestinationHarness(app, "settings")
+    generic = SyncV2ConflictReviewItem(
+        conflict_review_id="generic-review",
+        domain="chat.message",
+        item_label="Generic message conflict",
+        cause="A generic conflict happened first.",
+        local_summary="Generic local summary.",
+        remote_summary="Generic remote summary.",
+        recovery_options={"retry": "available"},
+    )
+    adoption = SyncV2ConflictReviewItem(
+        conflict_review_id="adoption-review",
+        domain="notes.folder",
+        item_label="Agent_Lessons",
+        cause="The local folder collides with the server identity.",
+        local_summary="Local folder is named Agent_Lessons.",
+        remote_summary="Server folder is named Agent_Lessons.",
+        recovery_options={
+            "merge": "available",
+            "rename_local": "available",
+            "keep_local": "available",
+        },
+    )
+    result = ManualSyncRunResult(
+        status="conflict",
+        user_message="Review required.",
+        summary={},
+        preview=FakeManualSyncControl().preview(),
+        conflict_reviews=(generic, adoption),
+    )
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        screen._apply_manual_sync_result(result)
+        await pilot.pause()
+        rows = dict(screen.manual_sync_rows)
+        assert "notes.folder | Agent_Lessons" in rows["Conflict review"]
+        assert "Local folder is named Agent_Lessons." in rows["Conflict review"]
+        assert "Server folder is named Agent_Lessons." in rows["Conflict review"]
+        assert "generic" not in rows["Conflict review"].lower()
+        button = screen.query_one("#settings-notes-adoption-keep-local", Button)
+        button.scroll_visible()
+        await pilot.pause()
+        button.focus()
+        await pilot.press("enter")
+        await pilot.app.workers.wait_for_complete()
+
+    assert len(resolve_calls) == 1
+    assert resolve_calls[0]["review_id"] == "adoption-review"
+    assert resolve_calls[0]["action"] == "keep_local"
+
+
 def test_settings_manual_sync_run_worker_uses_main_event_loop_async_worker():
     worker = SettingsScreen.__dict__["_manual_sync_run_worker"]
     wrapped = getattr(worker, "__wrapped__", worker)

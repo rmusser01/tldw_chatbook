@@ -34,6 +34,7 @@ from tldw_chatbook.Chat.console_history_budget import (
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.trajectory import contains_local_path, redact_local_paths
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Notes.agent_lessons import build_agent_lessons_runtime_guidance
 from tldw_chatbook.Utils.token_counter import (
     count_tokens_messages,
     estimate_tokens,
@@ -43,6 +44,7 @@ from tldw_chatbook.Utils.log_sanitizer import REDACTION_MARKER, redact_log_line
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_history_budget import count_console_messages_tokens
 
+from .agent_lesson_promotion import build_agent_lesson_promotion_guidance
 from .agent_models import (
     AGENT_LIFECYCLE_INDEX_BASE,
     AGENT_KIND_PRIMARY,
@@ -151,6 +153,7 @@ from .tool_catalog import (
     CHECK_AGENTS_SCHEMA,
     FIND_TOOLS_SCHEMA,
     INSTALL_SKILL_TOOL_SCHEMA,
+    PREPARE_MANAGED_SKILL_PROMOTION_TOOL_SCHEMA,
     LOAD_TOOLS_SCHEMA,
     RUN_LOG_SLICE_TOOL_SCHEMA,
     RUN_LOG_STATS_TOOL_SCHEMA,
@@ -622,6 +625,7 @@ def build_first_request_schema_plan(
     *,
     skill_file_enabled: bool,
     install_skill_enabled: bool,
+    managed_skill_promotion_enabled: bool = False,
     run_skill_script_enabled: bool,
     run_log_active: bool,
     agent_definitions: tuple[AgentDefinition, ...] | None = None,
@@ -641,6 +645,8 @@ def build_first_request_schema_plan(
         messages: Exact provider-visible non-system messages for the request.
         skill_file_enabled: Whether to disclose the skill-file runtime tool.
         install_skill_enabled: Whether to disclose the skill installer.
+        managed_skill_promotion_enabled: Whether the primary may prepare an
+            exact, read-only managed-skill promotion proposal.
         run_skill_script_enabled: Whether to disclose the skill script runner.
         run_log_active: Whether run-log tools may be enabled for this run.
         agent_definitions: Named sub-agent definitions available to spawning.
@@ -673,6 +679,8 @@ def build_first_request_schema_plan(
             runtime.append(SKILL_FILE_TOOL_SCHEMA)
         if install_skill_enabled and agent_kind == AGENT_KIND_PRIMARY:
             runtime.append(INSTALL_SKILL_TOOL_SCHEMA)
+        if managed_skill_promotion_enabled and agent_kind == AGENT_KIND_PRIMARY:
+            runtime.append(PREPARE_MANAGED_SKILL_PROMOTION_TOOL_SCHEMA)
         if run_skill_script_enabled:
             runtime.append(RUN_SKILL_SCRIPT_TOOL_SCHEMA)
         log_active = bool(
@@ -1638,6 +1646,8 @@ class AgentService:
         review_state_scope: Callable[[str], "contextlib.AbstractContextManager"]
         | None = None,
         install_skill_tool: Callable[[str], ToolResult] | None = None,
+        prepare_managed_skill_promotion_tool: Callable[[dict], ToolResult]
+        | None = None,
         run_skill_script_tool: Callable[[str, str, list[str]], ToolResult]
         | None = None,
         run_log_writer: "RunLogWriter | None" = None,
@@ -1741,6 +1751,9 @@ class AgentService:
         # (agent_kind == primary) in _run_one; a spawned subagent never gets
         # it. `None` (the default) means the run is not wired for install.
         self._install_skill_tool = install_skill_tool
+        self._prepare_managed_skill_promotion_tool = (
+            prepare_managed_skill_promotion_tool
+        )
         # Agent-callable skill script execution (6th runtime tool). All-agents
         # scope (spec §4.3): NO agent_kind gate, unlike install_skill above --
         # see the schema-pin comment in _run_one for the rationale. `None`
@@ -1910,6 +1923,8 @@ class AgentService:
         messages: list[dict],
         active_schemas: tuple,
         log_active: bool = False,
+        *,
+        trusted_role: Literal["primary", "subagent"] = "primary",
     ) -> ModelRequest:
         """Build the exact bounded messages and native tools sent on a turn."""
         native = config.native_tools and provider_supports_native_tools(api_endpoint)
@@ -1931,6 +1946,18 @@ class AgentService:
                 system_content = f"{system_content}\n\n{protocol_text}"
         if log_active:
             system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
+        guidance = build_agent_lessons_runtime_guidance(
+            schemas, trusted_role=trusted_role
+        )
+        if guidance:
+            system_content = f"{system_content}\n\n{guidance}"
+        promotion_guidance = build_agent_lesson_promotion_guidance(
+            schemas,
+            trusted_role=trusted_role,
+            repository_target_enabled=self.project_instruction_context is not None,
+        )
+        if promotion_guidance:
+            system_content = f"{system_content}\n\n{promotion_guidance}"
         system_content = _append_workspace_context_note(
             system_content, config.workspace_context_note
         )
@@ -2106,6 +2133,7 @@ class AgentService:
         messages: list[dict],
         active_schemas: tuple,
         log_active: bool = False,
+        trusted_role: Literal["primary", "subagent"] = "primary",
     ) -> tuple[ModelRequest, InstructionSnapshot]:
         """Build the admitted exact request on disposable service state."""
         base_request = self._build_model_request(
@@ -2115,6 +2143,7 @@ class AgentService:
             messages,
             active_schemas,
             log_active,
+            trusted_role=trusted_role,
         )
         snapshot = self._freeze_startup_snapshot(
             candidate,
@@ -2138,6 +2167,7 @@ class AgentService:
             request_messages,
             active_schemas,
             log_active,
+            trusted_role=trusted_role,
         )
         return request, snapshot
 
@@ -2151,6 +2181,7 @@ class AgentService:
         continuation_owner_key: str | None = None,
         continuation_owner_message_id: str | None = None,
         *,
+        trusted_role: Literal["primary", "subagent"] = "primary",
         project_instruction_context: InstructionActivationLedger | None = None,
         chain_id: str = "primary",
         payload_state: InstructionChainPayloadState | None = None,
@@ -2245,6 +2276,20 @@ class AgentService:
                     system_content = f"{config.system_prompt}\n\n{protocol_text}"
             if effective_log_active:
                 system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
+            guidance = build_agent_lessons_runtime_guidance(
+                schemas, trusted_role=trusted_role
+            )
+            if guidance:
+                system_content = f"{system_content}\n\n{guidance}"
+            promotion_guidance = build_agent_lesson_promotion_guidance(
+                schemas,
+                trusted_role=trusted_role,
+                repository_target_enabled=(
+                    self.project_instruction_context is not None
+                ),
+            )
+            if promotion_guidance:
+                system_content = f"{system_content}\n\n{promotion_guidance}"
             # Non-default workspace: append the environment note LAST, as a
             # stable per-turn suffix (cache-friendly, like the sections
             # above). ``_is_subagent`` prefix-matches the SENT system content;
@@ -2446,6 +2491,8 @@ class AgentService:
         messages: list[dict],
         active_schemas: tuple,
         log_active: bool,
+        *,
+        trusted_role: Literal["primary", "subagent"] = "primary",
     ) -> ModelRequest:
         """Build one request after applying the writer's live fail-closed gate."""
         effective_log_active = bool(log_active and self.run_log_writer.is_active)
@@ -2466,6 +2513,7 @@ class AgentService:
             messages,
             active_schemas,
             effective_log_active,
+            trusted_role=trusted_role,
         )
 
     def _make_invoke_tool(
@@ -3484,6 +3532,9 @@ class AgentService:
         # parent's writer, which is its own tree's writer, exactly as
         # before.
         writer = run_log_writer if run_log_writer is not None else self.run_log_writer
+        trusted_guidance_role: Literal["primary", "subagent"] = (
+            "subagent" if agent_kind == AGENT_KIND_SUBAGENT else "primary"
+        )
         if precreated_run_id is None:
             run_id = self.db.create_run(
                 conversation_id=conversation_id,
@@ -3565,6 +3616,10 @@ class AgentService:
                 install_skill_enabled=bool(
                     agent_kind == AGENT_KIND_PRIMARY
                     and self._install_skill_tool is not None
+                ),
+                managed_skill_promotion_enabled=bool(
+                    agent_kind == AGENT_KIND_PRIMARY
+                    and self._prepare_managed_skill_promotion_tool is not None
                 ),
                 run_skill_script_enabled=self._run_skill_script_tool is not None,
                 run_log_active=bool(
@@ -3660,6 +3715,7 @@ class AgentService:
                         rows,
                         schemas,
                         log_active,
+                        trusted_role=trusted_guidance_role,
                     )
                 ),
                 safe_token_allowance=lambda request, rows: (
@@ -3687,6 +3743,7 @@ class AgentService:
                 messages=messages,
                 active_schemas=tuple(active),
                 log_active=log_active,
+                trusted_role=trusted_guidance_role,
             )
             try:
                 decision = (
@@ -3722,6 +3779,7 @@ class AgentService:
                 messages,
                 tuple(active),
                 log_active,
+                trusted_role=trusted_guidance_role,
             )
             chain_delivery = self._startup_delivery_for_request(
                 self.startup_instruction_candidate,
@@ -5689,6 +5747,7 @@ class AgentService:
             continuation_groups,
             continuation_owner_key,
             continuation_owner_message_id,
+            trusted_role=trusted_guidance_role,
             project_instruction_context=project_context,
             chain_id=chain_id,
             payload_state=payload_state,
@@ -5892,6 +5951,11 @@ class AgentService:
                 self._install_skill_tool
                 if agent_kind == AGENT_KIND_PRIMARY
                 and self._install_skill_tool is not None
+                else None
+            ),
+            prepare_managed_skill_promotion=(
+                self._prepare_managed_skill_promotion_tool
+                if agent_kind == AGENT_KIND_PRIMARY
                 else None
             ),
             run_skill_script=self._run_skill_script_tool,

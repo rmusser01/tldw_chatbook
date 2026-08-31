@@ -16024,7 +16024,8 @@ class TLDWAPIClient:
         returned device_id/dataset_id before pushing (persisted in P2).
 
         Args:
-            request_data: Bootstrap request (mode, device name, requested domains).
+            request_data: Bootstrap request including the requested domains and
+                their supported adapter versions.
 
         Returns:
             Parsed bootstrap response including assigned device_id and dataset_id.

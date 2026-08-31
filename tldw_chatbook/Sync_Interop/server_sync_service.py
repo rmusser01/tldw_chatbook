@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING, Any, Mapping, Optional
 
+from tldw_chatbook.Sync_Interop.notes_organization import NOTES_ORGANIZATION_DOMAINS
 from tldw_chatbook.Sync_Interop.sync_state import SyncV2ProfileMode
 from tldw_chatbook.Sync_Interop.validation import (
     validate_outgoing_envelope_scope,
@@ -171,6 +173,221 @@ class ServerSyncService:
                 client_id=client_id,
                 since_change_id=since_change_id,
             )
+        )
+
+    async def bootstrap_notes_organization_profile(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        display_name: str,
+        client_profile_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Enroll the complete Notes organization capability in one profile call."""
+
+        from ..tldw_api import SyncV2ProfileBootstrapRequest
+
+        if self.state_repository is None:
+            raise ValueError("Sync state repository is required")
+        if not server_profile_id or not display_name:
+            raise ValueError("server_profile_id and display_name are required")
+        self._enforce("sync.v2.profile.bootstrap.server")
+        persisted = self.state_repository.get_sync_v2_profile_state(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+        persisted, device_id, bootstrap_identity = self._ensure_bootstrap_identity(
+            persisted,
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            client_profile_id=client_profile_id,
+        )
+        client = self._require_client()
+        response = self._dump(await client.get_sync_v2_profile(device_id=device_id))
+        self._validate_notes_organization_capability(response)
+        dataset = response.get("dataset")
+        if isinstance(dataset, Mapping):
+            enrolled = set(str(domain) for domain in dataset.get("domains") or ())
+            organization = set(NOTES_ORGANIZATION_DOMAINS)
+            present = enrolled.intersection(organization)
+            if present and present != organization:
+                raise ValueError(
+                    "Server must enroll the complete Notes organization group."
+                )
+            if present == organization and self._response_device_matches(
+                response,
+                device_id=device_id,
+                client_profile_id=bootstrap_identity,
+            ):
+                self._validate_notes_organization_dataset(dataset)
+                self._persist_notes_organization_profile(
+                    response,
+                    server_profile_id=server_profile_id,
+                    authenticated_principal_id=authenticated_principal_id,
+                    workspace_scope=workspace_scope,
+                    bootstrap_identity=bootstrap_identity,
+                )
+                return response
+
+        requested = ["notes.note", "chat.conversation", *NOTES_ORGANIZATION_DOMAINS]
+        request = SyncV2ProfileBootstrapRequest(
+            mode="offline_sync",
+            device_id=device_id,
+            device_name=display_name,
+            client_profile_id=bootstrap_identity,
+            requested_domains=requested,
+            supported_adapter_versions={domain: [1] for domain in requested},
+        )
+        response = self._dump(await client.bootstrap_sync_v2_profile(request))
+        self._validate_notes_organization_capability(response)
+        dataset = response.get("dataset")
+        if not isinstance(dataset, Mapping):
+            raise ValueError("Notes organization bootstrap did not return a dataset")
+        if not self._response_device_matches(
+            response,
+            device_id=device_id,
+            client_profile_id=bootstrap_identity,
+        ):
+            raise ValueError("Notes organization bootstrap returned another device")
+        self._validate_notes_organization_dataset(dataset)
+        self._persist_notes_organization_profile(
+            response,
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            bootstrap_identity=bootstrap_identity,
+        )
+        return response
+
+    @staticmethod
+    def _validate_notes_organization_capability(response: Mapping[str, Any]) -> None:
+        capabilities = response.get("capabilities")
+        if not isinstance(capabilities, Mapping):
+            raise ValueError(
+                "Server must advertise the complete Notes organization group."
+            )
+        advertised = set(str(domain) for domain in capabilities.get("domains") or ())
+        required = {"notes.note", "chat.conversation", *NOTES_ORGANIZATION_DOMAINS}
+        if not required.issubset(advertised):
+            raise ValueError(
+                "Server must advertise the complete Notes organization group."
+            )
+        versions = capabilities.get("supported_adapter_versions")
+        if not isinstance(versions, Mapping) or any(
+            not isinstance(versions.get(domain), (list, tuple))
+            or 1 not in versions[domain]
+            for domain in required
+        ):
+            raise ValueError(
+                "Server must advertise adapter version 1 for the complete Notes organization group."
+            )
+
+    @staticmethod
+    def _validate_notes_organization_dataset(dataset: Mapping[str, Any]) -> None:
+        enrolled = set(str(domain) for domain in dataset.get("domains") or ())
+        organization = set(NOTES_ORGANIZATION_DOMAINS)
+        if enrolled.intersection(organization) != organization:
+            raise ValueError(
+                "Server must enroll the complete Notes organization group."
+            )
+        if not {"notes.note", "chat.conversation"}.issubset(enrolled):
+            raise ValueError("Notes organization dependencies are not enrolled.")
+        if dataset.get("encryption_policy") != "server_trusted_v1":
+            raise ValueError(
+                "Notes organization requires server_trusted_v1 encryption."
+            )
+        if not isinstance(dataset.get("notes_organization"), Mapping):
+            raise ValueError(
+                "Server did not return Notes organization bootstrap status."
+            )
+
+    def _ensure_bootstrap_identity(
+        self,
+        persisted: Mapping[str, Any] | None,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        client_profile_id: str | None,
+    ) -> tuple[Mapping[str, Any], str, str]:
+        metadata = persisted.get("dry_run_metadata") if persisted else None
+        existing_identity = None
+        if isinstance(metadata, Mapping):
+            existing = metadata.get("notes_organization_bootstrap_identity")
+            if isinstance(existing, str) and existing:
+                existing_identity = existing
+        bootstrap_identity = existing_identity or client_profile_id or str(uuid.uuid4())
+        device_id = str((persisted or {}).get("device_id") or uuid.uuid4())
+        durable_metadata = dict(metadata or {})
+        durable_metadata["notes_organization_bootstrap_identity"] = bootstrap_identity
+        state_repository = self.state_repository
+        if state_repository is None:
+            raise ValueError("Sync state repository is required")
+        state = state_repository.set_sync_v2_profile_state(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            profile_mode=SyncV2ProfileMode.LOCAL_FIRST_SYNC.value,
+            device_id=device_id,
+            dataset_id=(persisted or {}).get("dataset_id"),
+            dataset_cursors=(persisted or {}).get("dataset_cursors"),
+            capabilities=(persisted or {}).get("capabilities"),
+            dry_run_metadata=durable_metadata,
+            last_error=(persisted or {}).get("last_error"),
+        )
+        return state, device_id, bootstrap_identity
+
+    @staticmethod
+    def _response_device_matches(
+        response: Mapping[str, Any],
+        *,
+        device_id: str,
+        client_profile_id: str,
+    ) -> bool:
+        device = response.get("device")
+        if not isinstance(device, Mapping):
+            return False
+        if device.get("registered") is not True or device.get("device_id") != device_id:
+            return False
+        returned_profile_id = device.get("client_profile_id")
+        return returned_profile_id in (None, client_profile_id)
+
+    def _persist_notes_organization_profile(
+        self,
+        response: Mapping[str, Any],
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        bootstrap_identity: str | None,
+    ) -> None:
+        if self.state_repository is None:  # pragma: no cover - guarded by caller
+            raise ValueError("Sync state repository is required")
+        state_repository = self.state_repository
+        dataset = response["dataset"]
+        device = response.get("device") or {}
+        existing = state_repository.get_sync_v2_profile_state(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+        metadata = dict(existing.get("dry_run_metadata") or {}) if existing else {}
+        if bootstrap_identity:
+            metadata["notes_organization_bootstrap_identity"] = bootstrap_identity
+        state_repository.set_sync_v2_profile_state(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+            profile_mode=SyncV2ProfileMode.LOCAL_FIRST_SYNC.value,
+            device_id=device.get("device_id"),
+            dataset_id=dataset.get("dataset_id"),
+            dataset_cursors=(existing.get("dataset_cursors") if existing else {}),
+            capabilities=dict(response.get("capabilities") or {}),
+            dry_run_metadata=metadata,
+            last_error=None,
         )
 
     async def run_v2_dry_run(

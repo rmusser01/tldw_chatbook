@@ -21,7 +21,11 @@ from tldw_chatbook.Agents.library_rag_tool_provider import (
     RAG_TOOL_NAME,
     SUPPORTED_RAG_SOURCE_TYPES,
 )
-from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+from tldw_chatbook.Agents.library_tool_provider import (
+    AgentLessonPreflightError,
+    LibraryToolProvider,
+)
+from tldw_chatbook.Agents.run_context import CurrentRunActor, use_run_actor
 from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAssistantLibraryAccess,
 )
@@ -48,6 +52,80 @@ class FakeLibraryService:
         if self._error is not None:
             raise self._error
         return self._result
+
+
+class AgentLessonLibraryService(FakeLibraryService):
+    """Return an exact saved-note snapshot for lesson preflight reads."""
+
+    def __init__(self, note_payload=None, *, error=None):
+        super().__init__(error=error)
+        self.note_payload = note_payload
+
+    def invoke(self, tool_name, arguments):
+        self.calls.append((tool_name, dict(arguments)))
+        if self._error is not None:
+            raise self._error
+        if tool_name == "library_get_note":
+            if self.note_payload is None:
+                return {
+                    "error": {
+                        "code": "not_found",
+                        "message": "not found",
+                        "retryable": False,
+                        "details": {},
+                    }
+                }
+            return self.note_payload
+        return {"items": [], "total": 0}
+
+    def agent_lesson_preflight_snapshot(self, note_id):
+        if self._error is not None:
+            raise self._error
+        if self.note_payload is None:
+            return None
+        item = self.note_payload["item"]
+        public_state = item.get("organization_state")
+        receipt_state = (
+            "pending_organization" if public_state == "pending" else public_state
+        )
+        if receipt_state == "ready":
+            receipt_state = None
+        return {
+            "public_note_id": note_id,
+            "note_id": note_id,
+            "note_version": int(self.note_payload["revision"]),
+            "keywords": tuple(
+                row["name"] for row in item.get("keyword_metadata", ())
+            ),
+            "organization_version": item["organization_version"],
+            "receipt_state": receipt_state,
+            "receipt_note_version": (
+                int(self.note_payload["revision"]) if receipt_state else None
+            ),
+            "receipt_organization_version": (
+                item["organization_version"] if receipt_state else None
+            ),
+        }
+
+
+def _saved_note_payload(*, keywords=(), state="ready", version=3):
+    return {
+        "item": {
+            "id": "note:bm90ZS0x",
+            "type": "note",
+            "title": "Existing",
+            "keyword_metadata": [
+                {"id": f"keyword:{index}", "name": keyword}
+                for index, keyword in enumerate(keywords)
+            ],
+            "keyword_metadata_total": len(keywords),
+            "keyword_metadata_truncated": False,
+            "organization_state": state,
+            "organization_version": "a" * 64,
+        },
+        "revision": str(version),
+        "text": "x",
+    }
 
 
 def _error_payload(tool_result: ToolResult) -> dict:
@@ -86,6 +164,52 @@ def test_direct_load_schema_round_trips_every_descriptor():
         assert schema.name == name
         assert schema.description == descriptor.description
         assert schema.parameters == descriptor.input_schema
+
+
+def test_direct_load_schema_does_not_alias_shared_descriptor_parameters():
+    provider = LibraryToolProvider(FakeLibraryService())
+    loaded = provider.load_schema("library:library_search_notes")
+
+    loaded.parameters["properties"]["query"]["type"] = "MUTATED"
+
+    canonical = LIBRARY_TOOL_DESCRIPTORS["library_search_notes"].input_schema
+    assert canonical["properties"]["query"]["type"] == "string"
+    assert provider.load_schema(
+        "library:library_search_notes"
+    ).parameters["properties"]["query"]["type"] == "string"
+
+
+def test_direct_note_tool_schemas_come_from_the_shared_organization_contract():
+    provider = LibraryToolProvider(FakeLibraryService())
+    search = provider.load_schema("library:library_search_notes")
+    save = provider.load_schema("library:library_save_note")
+
+    assert search.parameters["anyOf"] == [
+        {"required": ["query"]},
+        {"required": ["keyword"]},
+        {"required": ["folder_id"]},
+        {"required": ["folder"]},
+    ]
+    assert set(search.parameters["properties"]) == {
+        "query",
+        "keyword",
+        "folder_id",
+        "folder",
+        "limit",
+        "offset",
+    }
+    assert {
+        "folder_id",
+        "folder",
+        "ensure_keywords",
+        "expected_organization_version",
+    } <= set(save.parameters["properties"])
+    assert search.parameters == LIBRARY_TOOL_DESCRIPTORS[
+        "library_search_notes"
+    ].input_schema
+    assert save.parameters == LIBRARY_TOOL_DESCRIPTORS[
+        "library_save_note"
+    ].input_schema
 
 
 def test_direct_provider_methods_are_synchronous():
@@ -249,6 +373,151 @@ def test_direct_invoke_defaults_missing_args_to_empty_mapping():
 
     assert result.ok is True
     assert service.calls == [("library_list_notes", {})]
+
+
+# --------------------------------------------------------------------------
+# LibraryToolProvider: Agent Lesson immutable preflight and stamps
+# --------------------------------------------------------------------------
+
+
+def test_lesson_preflight_binds_create_identity_and_immutable_preconditions():
+    provider = LibraryToolProvider(AgentLessonLibraryService())
+    arguments = {
+        "title": "One reusable lesson",
+        "content": "# Verified evidence",
+        "ensure_keywords": ["agent-lesson", "existing-user-keyword"],
+    }
+
+    preflight = provider.preflight_agent_lesson_save(
+        "library_save_note", arguments, "call-1"
+    )
+
+    assert preflight is not None
+    assert preflight.call_id == "call-1"
+    assert preflight.note_id is None
+    assert preflight.operation == "create"
+    assert preflight.classification.reason == "requested_marker"
+    assert preflight.expected_version is None
+    assert preflight.expected_organization_version is None
+    assert preflight.receipt_state is None
+    assert len(preflight.call_digest) == 64
+    assert len(preflight.content_digest) == 64
+    assert "Verified evidence" not in repr(preflight)
+
+
+def test_lesson_preflight_reads_current_exact_marker_and_receipt_snapshot():
+    service = AgentLessonLibraryService(
+        _saved_note_payload(keywords=("agent-lesson",), state="placement_review")
+    )
+    provider = LibraryToolProvider(service)
+    arguments = {
+        "title": "Updated",
+        "content": "updated evidence",
+        "note_id": "note:bm90ZS0x",
+        "expected_version": 3,
+        "expected_organization_version": "a" * 64,
+        "ensure_keywords": [],
+    }
+
+    preflight = provider.preflight_agent_lesson_save(
+        "library_save_note", arguments, "call-2"
+    )
+
+    assert preflight is not None
+    assert preflight.operation == "update"
+    assert preflight.note_id == "note:bm90ZS0x"
+    assert preflight.classification.reason == "current_marker"
+    assert preflight.receipt_state == "placement_review"
+    assert preflight.receipt_version == "3:" + "a" * 64
+    assert service.calls == []
+
+
+def test_production_library_service_preserves_actual_pending_receipt_state():
+    from tldw_chatbook.Library.local_library_tool_service import LocalLibraryToolService
+
+    class NotesBackend:
+        def get_agent_lesson_preflight_snapshot(self, user_id, note_id):
+            assert user_id == "local_library"
+            assert note_id == "note-1"
+            return {
+                "public_note_id": "note:bm90ZS0x",
+                "note_id": note_id,
+                "note_version": 5,
+                "keywords": (),
+                "organization_version": "c" * 64,
+                "receipt_state": "pending_organization",
+                "receipt_note_version": 5,
+                "receipt_organization_version": "c" * 64,
+            }
+
+    service = LocalLibraryToolService(notes_service=NotesBackend())
+    provider = LibraryToolProvider(service)
+    preflight = provider.preflight_agent_lesson_save(
+        "library_save_note",
+        {
+            "title": "Pending lesson",
+            "content": "verified evidence",
+            "note_id": "note:bm90ZS0x",
+            "expected_version": 5,
+            "expected_organization_version": "c" * 64,
+        },
+        "call-pending",
+    )
+
+    assert preflight is not None
+    assert preflight.classification.reason == "pending_organization"
+    assert preflight.receipt_state == "pending_organization"
+    assert preflight.receipt_version == "5:" + "c" * 64
+
+
+def test_lesson_preflight_rejects_missing_private_snapshot_seam_content_free():
+    provider = LibraryToolProvider(FakeLibraryService())
+
+    with pytest.raises(AgentLessonPreflightError) as raised:
+        provider.preflight_agent_lesson_save(
+            "library_save_note",
+            {
+                "title": "Private title",
+                "content": "PRIVATE BODY",
+                "note_id": "note:bm90ZS0x",
+                "expected_version": 3,
+                "expected_organization_version": "a" * 64,
+            },
+            "call-3",
+        )
+
+    assert str(raised.value) == "agent_lesson_classification_failed"
+    assert "PRIVATE" not in repr(raised.value)
+
+
+def test_lesson_approval_stamp_is_exact_call_bound_and_cleared_per_run():
+    provider = LibraryToolProvider(AgentLessonLibraryService())
+    arguments = {
+        "title": "Lesson",
+        "content": "Evidence",
+        "ensure_keywords": ["agent-lesson"],
+    }
+    preflight = provider.preflight_agent_lesson_save(
+        "library_save_note", arguments, "call-a"
+    )
+    assert preflight is not None
+
+    with use_run_actor(CurrentRunActor("primary", "run-a", None)):
+        authority = provider.issue_agent_lesson_approval("run-a", preflight)
+
+    assert provider.peek_agent_lesson_approval(
+        "run-a", "call-a", preflight.call_digest
+    ) is authority
+    assert provider.peek_agent_lesson_approval(
+        "run-a", "call-b", preflight.call_digest
+    ) is None
+    assert provider.peek_agent_lesson_approval(
+        "run-b", "call-a", preflight.call_digest
+    ) is None
+    assert provider.peek_agent_lesson_approval("run-a", "call-a", "0" * 64) is None
+
+    provider.clear_agent_lesson_approvals("run-a")
+    assert provider.agent_lesson_approval_count("run-a") == 0
 
 
 # --------------------------------------------------------------------------

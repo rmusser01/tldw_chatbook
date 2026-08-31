@@ -25,15 +25,189 @@ class SyncV2ConflictReviewItem:
     local_summary: str
     remote_summary: str
     recovery_options: dict[str, str]
-    conflict_review_id: int | None = None
+    conflict_review_id: int | str | None = None
     resolution_status: str = "open"
 
 
 class SyncV2ConflictReviewService:
     """Build actionable conflict and retained-failure rows for Sync v2 users."""
 
-    def __init__(self, *, state_repository: Any) -> None:
+    def __init__(
+        self,
+        *,
+        state_repository: Any,
+        notes_repository: Any | None = None,
+        notes_organization_sync_service: Any | None = None,
+    ) -> None:
         self.state_repository = state_repository
+        self.notes_repository = notes_repository
+        self.notes_organization_sync_service = notes_organization_sync_service
+
+    def build_notes_organization_adoption_items(
+        self, *, dataset_id: str
+    ) -> tuple[SyncV2ConflictReviewItem, ...]:
+        """Return content-free Notes-owned adoption rows through this review seam."""
+
+        if self.notes_repository is None:
+            return ()
+        rows = (
+            self.notes_repository.db.get_connection()
+            .execute(
+                "SELECT review_id, domain, display_name, portable_path, state "
+                "FROM notes_organization_adoption_reviews WHERE server_profile_id = ? "
+                "AND dataset_id = ? AND state = 'open' ORDER BY created_at, review_id",
+                (self.notes_repository.server_profile_id, dataset_id),
+            )
+            .fetchall()
+        )
+        return tuple(
+            SyncV2ConflictReviewItem(
+                conflict_review_id=str(row["review_id"]),
+                domain=str(row["domain"]),
+                item_label=str(row["display_name"]),
+                cause="A local organization item collides with a different server identity.",
+                local_summary=(
+                    f"Local path: {row['portable_path']}"
+                    if row["portable_path"]
+                    else "Local organization item requires an adoption decision."
+                ),
+                remote_summary="Server identity remains separate until review.",
+                recovery_options={
+                    "merge": "available",
+                    "rename_local": "available",
+                    "keep_local": "available",
+                },
+                resolution_status=str(row["state"]),
+            )
+            for row in rows
+        )
+
+    def resolve_notes_organization_adoption(
+        self, *, review_id: str, action: str, new_name: str | None = None
+    ) -> bool:
+        """Resolve one Notes-owned adoption row once without content exposure."""
+
+        if self.notes_repository is None:
+            raise ValueError("Notes organization repository is required")
+        if action not in {"merge", "rename_local", "keep_local"}:
+            raise ValueError("Unsupported Notes organization adoption action")
+        linked_receipt = (
+            self.notes_repository.db.get_connection()
+            .execute(
+                "SELECT 1 FROM note_organization_receipts WHERE review_id = ? "
+                "AND state = 'placement_review'",
+                (review_id,),
+            )
+            .fetchone()
+        )
+        if linked_receipt is not None:
+            if self.notes_organization_sync_service is None:
+                raise ValueError("Notes organization finalizer is required")
+            return bool(
+                self.notes_organization_sync_service.resolve_placement_review(
+                    review_id=review_id,
+                    action=action,
+                    new_name=new_name,
+                )
+            )
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC).isoformat()
+        with self.notes_repository.db.transaction() as cursor:
+            row = cursor.execute(
+                "SELECT domain, local_object_id, remote_object_id "
+                "FROM notes_organization_adoption_reviews WHERE review_id = ? "
+                "AND server_profile_id = ? AND state = 'open'",
+                (review_id, self.notes_repository.server_profile_id),
+            ).fetchone()
+            if row is None:
+                return False
+            if action == "merge":
+                self._merge_notes_organization_identity(cursor, row)
+            elif action == "rename_local":
+                self._rename_notes_organization_resource(cursor, row, new_name)
+            result = cursor.execute(
+                "UPDATE notes_organization_adoption_reviews SET state = 'resolved', "
+                "resolution = ?, resolved_at = ?, updated_at = ? WHERE review_id = ? "
+                "AND server_profile_id = ? AND state = 'open'",
+                (
+                    action,
+                    now,
+                    now,
+                    review_id,
+                    self.notes_repository.server_profile_id,
+                ),
+            )
+        return result.rowcount == 1
+
+    def _merge_notes_organization_identity(self, cursor: Any, review: Any) -> None:
+        table = {
+            "notes.keyword": "keywords",
+            "notes.keyword_collection": "keyword_collections",
+            "notes.folder": "note_folders",
+        }.get(str(review["domain"]))
+        if table is None:
+            raise ValueError("Unsupported Notes organization resource domain")
+        cursor.execute(
+            f"UPDATE {table} SET sync_id = ? WHERE id = ?",
+            (str(review["remote_object_id"]), review["local_object_id"]),
+        )
+
+    def _rename_notes_organization_resource(
+        self, cursor: Any, review: Any, new_name: str | None
+    ) -> None:
+        from tldw_chatbook.Notes.notes_organization_repository import (
+            portable_collision_key,
+        )
+
+        domain = str(review["domain"])
+        maximum = {
+            "notes.keyword": 100,
+            "notes.keyword_collection": 255,
+            "notes.folder": 500,
+        }.get(domain)
+        if maximum is None:
+            raise ValueError("Unsupported Notes organization resource domain")
+        if new_name is None:
+            raise ValueError("rename_local requires a new_name")
+        portable_collision_key(new_name, maximum=maximum)
+        if self.notes_repository is None:  # pragma: no cover - guarded by caller
+            raise ValueError("Notes organization repository is required")
+        notes_repository = self.notes_repository
+        local_id = review["local_object_id"]
+        if domain == "notes.keyword":
+            row = cursor.execute(
+                "SELECT version FROM keywords WHERE id = ?", (local_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("Notes organization local resource is missing")
+            notes_repository.db.update_keyword(
+                int(local_id), new_name, int(row["version"]), cursor=cursor
+            )
+            return
+        if domain == "notes.keyword_collection":
+            row = cursor.execute(
+                "SELECT version FROM keyword_collections WHERE id = ?", (local_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("Notes organization local resource is missing")
+            notes_repository.db.update_keyword_collection(
+                int(local_id), {"name": new_name}, int(row["version"]), cursor=cursor
+            )
+            return
+        from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
+
+        row = cursor.execute(
+            "SELECT version FROM note_folders WHERE id = ?", (local_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError("Notes organization local resource is missing")
+        LocalNoteFolderRepository(notes_repository.db).rename_folder(
+            str(local_id),
+            name=new_name,
+            expected_version=int(row["version"]),
+            cursor=cursor,
+        )
 
     def build_review_items(
         self,

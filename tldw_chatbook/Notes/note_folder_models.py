@@ -291,10 +291,11 @@ class NoteFolderPage:
 
 @dataclass(frozen=True)
 class FolderMutationResult:
-    """The folder returned by a mutation and every affected folder identifier."""
+    """A mutation result separating its explicit target from derived effects."""
 
     folder: NoteFolder
     affected_folder_ids: tuple[str, ...]
+    explicit_folder_id: str | None = None
 
 
 @dataclass(frozen=True)

@@ -249,6 +249,28 @@ Reload discards your edit and refetches it." with a **Reload** button.
 Leaving with unsaved edits is refused: "Unsaved skill changes — Save or
 Discard changes first."
 
+### Applying an Agent Lesson proposal
+
+Console may prepare an exact improvement proposal for a Chatbook-managed local
+skill after a foreground **Approve once** review. It cannot save the proposal or
+change trust itself. The returned proposal names the skill and records the
+public ID, current version, current trust state, current content digest, exact
+replacement text, verification, and evidence Note IDs.
+
+To apply it, open that same skill here and confirm that its current content and
+version still match the proposal. Paste the exact replacement into
+**Instructions**, then choose **Save changes**. A stale version is refused rather
+than overwriting a newer edit. A successful save increments the version and
+marks the skill as needing review; scroll to **Trust**, choose **Review changes**,
+inspect the content, then **Approve** and enter the trust passphrase. Only after
+that re-trust may the skill run again. You can then ask the foreground agent to
+re-read the skill and verify the result.
+
+Subagents can return evidence and candidate wording, but cannot open a promotion
+approval or apply it. Raw workspace file tools do not reach this managed store.
+Rejected, stale, failed, and applied outcomes remain non-authorizing unless you
+separately approve recording them in an ordinary Agent Lesson Note.
+
 ### Trust panel
 
 Below the editor, the **Trust** section shows the skill's state on one
@@ -305,6 +327,10 @@ parentheses when something differs from the trusted baseline.
 5. **Revoke script access.** Open the skill, scroll to Trust, check the
    "Scripts:" line, and press **Revoke script access** — Console goes back
    to asking on every script run.
+6. **Apply a reviewed Agent Lesson proposal.** Re-check the proposal's skill,
+   version, trust state, and current digest; paste its exact Instructions;
+   **Save changes**; then **Review changes** and **Approve** the new trust
+   baseline. If anything is stale, stop and request a fresh proposal.
 
 ## Keyboard & commands
 

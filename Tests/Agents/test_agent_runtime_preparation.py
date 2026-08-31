@@ -17,11 +17,14 @@ from tldw_chatbook.Agents.agent_runtime import (
     ToolBatchPreparation,
     run_agent_loop,
 )
+from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.project_instruction_runtime import (
     PROJECT_INSTRUCTION_ROW_KEY,
     InstructionDeliveryReceipt,
 )
+from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 SCHEMA = ToolSchema(
@@ -329,3 +332,38 @@ def test_raised_review_hook_still_runs_dispatch_gate_before_fail_open_dispatch()
 
     assert out.status == RUN_DONE
     assert events == ["review", ("gate", [call]), ("invoke", "one")]
+
+
+def test_agent_lessons_guidance_recomputes_from_each_effective_schema_set(
+    tmp_path,
+):
+    db = AgentRunsDB(tmp_path / "guidance-runs.db", client_id="guidance")
+    calls: list[dict] = []
+
+    def chat(**kwargs):
+        calls.append(kwargs)
+        return {"choices": [{"message": {"content": "done"}}]}
+
+    service = AgentService(db, ToolCatalogRegistry(), chat_call=chat)
+    config = AgentConfig(model="m", system_prompt="configured", allowed_tools=())
+    search = ToolSchema("library:search", "library_search_notes", "search", {})
+    get = ToolSchema("library:get", "library_get_note", "get", {})
+    save = ToolSchema("library:save", "library_save_note", "save", {})
+    call_model = service._make_call_model(
+        config,
+        "llama_cpp",
+        [],
+        trusted_role="primary",
+    )
+
+    call_model([], (search, get))
+    call_model([], (search, get, save))
+
+    first = calls[0]["messages_payload"][0]["content"]
+    second = calls[1]["messages_payload"][0]["content"]
+    assert "Agent Lessons protocol" in first
+    assert "library_save_note" not in first
+    assert "exact preview" not in first
+    assert "library_save_note" in second
+    assert "exact preview" in second
+    db.close()

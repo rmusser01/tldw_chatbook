@@ -16,9 +16,79 @@ from tldw_chatbook.Agents.project_instruction_resolver import (
     InstructionSnapshot,
     InstructionSource,
     ProjectInstructionResolver,
+    InstructionPromotionSnapshotError,
     StartupInstructionCandidate,
     admit_sources,
 )
+
+
+def test_promotion_snapshot_captures_target_state_and_effective_chain(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "AGENTS.md").write_text("root")
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    target = nested / "AGENTS.override.md"
+    target.write_text("nested")
+
+    snapshot = ProjectInstructionResolver().snapshot_promotion_target(
+        binding_id="binding-1",
+        binding_root=tmp_path,
+        locator_fingerprint="fingerprint",
+        target_path=target,
+        activation_revision=7,
+    )
+
+    assert snapshot.target_relative_path == "nested/AGENTS.override.md"
+    assert snapshot.expected_absent is False
+    assert snapshot.expected_sha256 == hashlib.sha256(b"nested").hexdigest()
+    assert snapshot.effective_chain == (
+        ("AGENTS.md", "standard", hashlib.sha256(b"root").hexdigest()),
+        (
+            "nested/AGENTS.override.md",
+            "override",
+            hashlib.sha256(b"nested").hexdigest(),
+        ),
+    )
+    assert snapshot.activation_revision == 7
+    assert len(snapshot.effective_chain_digest) == 64
+    assert len(snapshot.root_identity_digest) == 64
+    assert str(tmp_path) not in repr(snapshot)
+
+
+def test_promotion_snapshot_represents_missing_target_as_expected_absent(
+    tmp_path: Path,
+) -> None:
+    snapshot = ProjectInstructionResolver().snapshot_promotion_target(
+        binding_id="binding-1",
+        binding_root=tmp_path,
+        locator_fingerprint="fingerprint",
+        target_path=tmp_path / "AGENTS.md",
+        activation_revision=0,
+    )
+
+    assert snapshot.expected_absent is True
+    assert snapshot.expected_sha256 is None
+    assert snapshot.effective_chain == ()
+
+
+def test_promotion_snapshot_rejects_symlink_target(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.write_text("outside")
+    selected = tmp_path / "selected"
+    selected.mkdir()
+    (selected / "AGENTS.md").symlink_to(outside)
+
+    with pytest.raises(InstructionPromotionSnapshotError) as failure:
+        ProjectInstructionResolver().snapshot_promotion_target(
+            binding_id="binding-1",
+            binding_root=selected,
+            locator_fingerprint="fingerprint",
+            target_path=selected / "AGENTS.md",
+            activation_revision=0,
+        )
+
+    assert failure.value.code == "invalid_target"
 
 
 def _resolve(

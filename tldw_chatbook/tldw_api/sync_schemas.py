@@ -231,6 +231,7 @@ class SyncV2CapabilitiesResponse(BaseModel):
         default_factory=dict,
         validation_alias=AliasChoices("operations", "supported_operations"),
     )
+    supported_adapter_versions: dict[str, list[int]] = Field(default_factory=dict)
     encryption: dict[str, Any] = Field(default_factory=dict)
     encryption_policies: list[str] = Field(default_factory=list)
     blob_transfer: dict[str, Any] = Field(default_factory=dict)
@@ -293,6 +294,17 @@ class SyncV2ProfileDeviceStatus(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+class SyncV2NotesOrganizationStatus(BaseModel):
+    """Public-safe progress for the server Notes organization bootstrap."""
+
+    state: Literal["initializing", "ready", "failed"]
+    captured_count: int = Field(0, ge=0)
+    expected_count: int = Field(0, ge=0)
+    error_code: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class SyncV2ProfileDatasetStatus(BaseModel):
     """Default personal dataset metadata in a Sync v2 profile response."""
 
@@ -304,6 +316,7 @@ class SyncV2ProfileDatasetStatus(BaseModel):
     created_at: str | None = None
     updated_at: str | None = None
     encryption_policy: str = "server_trusted_v1"
+    notes_organization: SyncV2NotesOrganizationStatus | None = None
 
     model_config = ConfigDict(extra="ignore")
 
@@ -358,6 +371,54 @@ class SyncV2ProfileBootstrapRequest(BaseModel):
             "attachment.ref",
         ]
     )
+    supported_adapter_versions: dict[str, list[int]] | None = None
+
+    @model_validator(mode="after")
+    def _normalize_supported_adapter_versions(
+        self,
+    ) -> "SyncV2ProfileBootstrapRequest":
+        requested = list(
+            dict.fromkeys(str(domain) for domain in self.requested_domains)
+        )
+        if any(not domain.strip() for domain in requested):
+            raise ValueError("requested_domains must contain non-blank domain names")
+        supplied = self.supported_adapter_versions
+        if supplied is None:
+            supplied = self.client_instance.get("supported_adapter_versions")
+        if supplied is None:
+            supplied = {domain: [1] for domain in requested}
+        if not isinstance(supplied, dict):
+            raise ValueError("supported_adapter_versions must be an object")
+        extra = set(supplied) - set(requested)
+        if extra:
+            raise ValueError(
+                "supported_adapter_versions domains must also be requested"
+            )
+        normalized = {domain: [1] for domain in requested}
+        for domain, versions in supplied.items():
+            if (
+                not isinstance(versions, list)
+                or not versions
+                or any(
+                    isinstance(version, bool)
+                    or not isinstance(version, int)
+                    or version < 1
+                    for version in versions
+                )
+                or len(set(versions)) != len(versions)
+            ):
+                raise ValueError(
+                    "supported_adapter_versions must contain unique positive integers"
+                )
+            normalized[domain] = sorted(versions)
+        self.requested_domains = requested
+        self.supported_adapter_versions = normalized
+        self.client_instance = {
+            **self.client_instance,
+            "supported_adapter_versions": normalized,
+        }
+        return self
+
     model_config = ConfigDict(extra="ignore")
 
 
@@ -545,6 +606,8 @@ class SyncV2PushAcceptedEnvelope(BaseModel):
     )
     object_revision: int | None = Field(None, ge=0)
     apply_status: str | None = None
+    apply_error_code: str | None = None
+    apply_error_message: str | None = None
     server_cursor: int | None = Field(
         None, ge=0, validation_alias=AliasChoices("server_cursor", "server_sequence")
     )
