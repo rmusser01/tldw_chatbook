@@ -2362,7 +2362,9 @@ class UnifiedMCPControlPlaneService:
         execution-log record reflects who ran the tool and under what
         permission decision. Every attempt — success, failure, or
         timeout — is recorded to the execution log best-effort before the
-        result or error propagates.
+        result or error propagates. Test Tool cancellation is recorded here;
+        agent-bridge cancellation is re-raised for that bridge's outer owner
+        to record once.
 
         Args:
             server_key: Prefixed server key (``local:<profile_id>`` or
@@ -2446,22 +2448,23 @@ class UnifiedMCPControlPlaneService:
             )
             raise RuntimeError(message) from None
         except asyncio.CancelledError:
-            duration_ms = int((time.monotonic() - started) * 1000)
-            self._record_tool_execution(
-                normalized_key,
-                normalized_tool_name,
-                ok=False,
-                duration_ms=duration_ms,
-                status="cancelled",
-                error_category="cancelled",
-                exception_type="CancelledError",
-                status_code=None,
-                arguments=normalized_arguments,
-                registered_argument_names=registered_argument_names,
-                result=None,
-                initiator=initiator,
-                decision=decision,
-            )
+            if initiator == "test":
+                duration_ms = int((time.monotonic() - started) * 1000)
+                self._record_tool_execution(
+                    normalized_key,
+                    normalized_tool_name,
+                    ok=False,
+                    duration_ms=duration_ms,
+                    status="cancelled",
+                    error_category="cancelled",
+                    exception_type="CancelledError",
+                    status_code=None,
+                    arguments=normalized_arguments,
+                    registered_argument_names=registered_argument_names,
+                    result=None,
+                    initiator=initiator,
+                    decision=decision,
+                )
             raise
         except MCPGovernanceDenied as exc:
             # Item 1 (PR-T3 fix round D). Without this branch, a governance
@@ -2668,13 +2671,6 @@ class UnifiedMCPControlPlaneService:
                 reason="identity_changed",
                 refreshed=self._issue_hub_test_preview(resolved),
             )
-        if resolved.unavailable_reason is not None:
-            return self._hub_test_stale(
-                public,
-                reason=resolved.unavailable_reason,
-                refreshed=self._issue_hub_test_preview(resolved),
-            )
-
         rendered_gate = public.rendered_gate
         fresh_gate = fresh_preview.rendered_gate
         if rendered_gate not in {"allow", "ask"}:
@@ -2685,6 +2681,12 @@ class UnifiedMCPControlPlaneService:
                     if rendered_gate in {"unavailable", "unresolved"}
                     else "permission_denied"
                 ),
+                refreshed=self._issue_hub_test_preview(resolved),
+            )
+        if resolved.unavailable_reason is not None:
+            return self._hub_test_stale(
+                public,
+                reason=resolved.unavailable_reason,
                 refreshed=self._issue_hub_test_preview(resolved),
             )
 

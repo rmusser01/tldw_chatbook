@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
 from tldw_chatbook.MCP.execution_log import MCPExecutionLog
 from tldw_chatbook.MCP.hub_test_execution import (
     ToolTestAdmissionBlocked,
@@ -20,6 +21,7 @@ from tldw_chatbook.MCP.unified_control_plane_service import (
     UnifiedMCPControlPlaneService,
 )
 import tldw_chatbook.MCP.unified_control_plane_service as control_plane_module
+import tldw_chatbook.Agents.mcp_tool_provider as mcp_provider_module
 
 
 class FakeToolClient:
@@ -366,6 +368,53 @@ async def test_hub_tool_cancellation_reraises_and_records_one_terminal_row(tmp_p
     assert records[0]["unknown_argument_count"] == 0
     assert records[0]["result_type"] == "none"
     assert records[0]["result_size"] == 0
+
+
+@pytest.mark.asyncio
+async def test_agent_bridge_outer_timeout_has_one_bridge_owned_audit_row(
+    tmp_path, monkeypatch
+):
+    service, fake, _client, store = _service(tmp_path)
+    started = asyncio.Event()
+
+    async def _blocked_builtin(tool_name, arguments=None):
+        fake.execute_tool_calls.append((tool_name, dict(arguments or {})))
+        started.set()
+        await asyncio.Future()
+
+    fake.execute_tool = _blocked_builtin
+    monkeypatch.setattr(service, "_tool_call_timeout", lambda: 0.5)
+    monkeypatch.setattr(mcp_provider_module, "_RESULT_WAIT_SLACK_SECONDS", -0.45)
+    tool = HubTool(
+        server_key="builtin:tldw_chatbook",
+        server_label="tldw_chatbook",
+        source="builtin",
+        name="calculator",
+        description="Calculate",
+        input_schema={"type": "object", "properties": {"x": {"type": "number"}}},
+        tags=(),
+        stale=False,
+        executable=True,
+    )
+    provider = MCPToolProvider(
+        service=service,
+        main_loop=asyncio.get_running_loop(),
+    )
+    pending = asyncio.create_task(
+        asyncio.to_thread(provider._execute, tool, {"x": 1}, decision="allowed")
+    )
+    await started.wait()
+
+    result = await pending
+    await asyncio.sleep(0)
+
+    assert result.ok is False
+    records = _log_records(store)
+    assert len(records) == 1
+    assert records[0]["initiator"] == "agent"
+    assert records[0]["status"] == "blocked"
+    assert records[0]["error_category"] == "execution_bridge_failed"
+    assert records[0]["decision"] == "allowed"
 
 
 @pytest.mark.asyncio
@@ -1442,6 +1491,103 @@ async def test_prepared_local_click_time_configuration_failures_never_reach_hand
     assert records[0]["initiator"] == "test"
     assert records[0]["error_category"] == expected_reason
     assert result.refreshed_preview.safe_authority_label is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("rendered_state", "expected_reason"),
+    [
+        ("unavailable", "permission_unresolved"),
+        ("unresolved", "permission_unresolved"),
+        ("off", "permission_denied"),
+    ],
+)
+async def test_prepared_local_non_actionable_render_wins_over_fresh_unavailable(
+    tmp_path, monkeypatch, rendered_state, expected_reason
+):
+    import tldw_chatbook.MCP.local_server_tools as local_server_tools
+
+    service, _fake, _client, store = _service(tmp_path)
+    tool = HubTool(
+        server_key="local:__local__",
+        server_label="Local workspace",
+        source="local",
+        name="fs_read",
+        description="Read a file",
+        input_schema=None,
+        tags=("reads",),
+        stale=False,
+        executable=True,
+    )
+    from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+
+    authority = capture_directory_chain(tmp_path)
+    state = {"enabled": rendered_state != "unavailable"}
+
+    class _Provider:
+        def hub_tools(self):
+            return [tool]
+
+    class _Handle:
+        provider = _Provider()
+
+        def __init__(self):
+            self.authority = authority
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(
+        local_server_tools,
+        "build_hub_local_inspection_provider",
+        lambda *a, **k: _Handle(),
+    )
+    monkeypatch.setattr(
+        local_server_tools, "build_hub_local_provider", lambda *a, **k: _Handle()
+    )
+    monkeypatch.setattr(
+        local_server_tools, "resolve_server_workspace_root", lambda: tmp_path
+    )
+    monkeypatch.setattr(
+        control_plane_module,
+        "get_cli_setting",
+        lambda section, key, default=None: (
+            state["enabled"]
+            if (section, key) == ("console", "local_tools_enabled")
+            else default
+        ),
+    )
+    if rendered_state == "unresolved":
+        service.gate_tool_test = lambda _tool: EffectiveToolState(
+            state="ask", origin="gate_error"
+        )
+    elif rendered_state == "off":
+        service.gate_tool_test = lambda _tool: EffectiveToolState(
+            state="deny", origin="tool_override"
+        )
+    else:
+        service.gate_tool_test = lambda _tool: EffectiveToolState(
+            state="allow", origin="tool_override"
+        )
+    local_handler = AsyncMock(return_value={"should": "not run"})
+    nonlocal_handler = AsyncMock(return_value={"should": "not run"})
+    service._execute_prepared_local_hub_test = local_handler
+    service.test_hub_tool = nonlocal_handler
+    preview = service.prepare_hub_test(tool)
+    state["enabled"] = False
+
+    result = await service.execute_prepared_hub_test(preview.nonce, "run", {})
+
+    assert isinstance(result, ToolTestAdmissionBlocked)
+    assert result.reason == expected_reason
+    assert result.refreshed_preview is not None
+    assert result.refreshed_preview.rendered_gate == "unavailable"
+    local_handler.assert_not_awaited()
+    nonlocal_handler.assert_not_awaited()
+    records = _log_records(store)
+    assert len(records) == 1
+    assert records[0]["initiator"] == "test"
+    assert records[0]["error_category"] == expected_reason
 
 
 @pytest.mark.asyncio
