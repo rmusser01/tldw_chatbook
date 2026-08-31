@@ -8,6 +8,8 @@ from pathlib import Path
 import shutil
 import threading
 
+import pytest
+
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 from tldw_chatbook.Workspaces.file_inspector import (
@@ -15,7 +17,15 @@ from tldw_chatbook.Workspaces.file_inspector import (
     FileReadKind,
     FilterStatus,
     WorkspaceFileInspector,
+    ScopeCaptureError,
     safe_filesystem_text,
+)
+from tldw_chatbook.Workspaces.models import (
+    DEFAULT_WORKSPACE_ID,
+    RuntimeBindingKind,
+    RuntimeBindingStatus,
+    WorkspaceRecord,
+    WorkspaceRuntimeBinding,
 )
 import tldw_chatbook.Workspaces.file_inspector as file_inspector
 
@@ -478,3 +488,68 @@ def test_filter_closes_directory_descriptor_when_scandir_construction_fails(
 
     assert result.error_code == "directory_unavailable"
     assert len(closed) >= 2
+
+
+def test_capture_rejects_real_default_workspace_identity(tmp_path: Path) -> None:
+    """Catch Default workspace scopes being treated as filesystem authority."""
+    root = tmp_path / "root"
+    root.mkdir()
+    binding = WorkspaceRuntimeBinding(
+        workspace_id=DEFAULT_WORKSPACE_ID, binding_id="default-binding",
+        binding_kind=RuntimeBindingKind.LOCAL_FILESYSTEM, label="root",
+        locator=str(root), status=RuntimeBindingStatus.READY,
+    )
+
+    class Registry:
+        def get_workspace(self, workspace_id):
+            return WorkspaceRecord(workspace_id=DEFAULT_WORKSPACE_ID, name="Default")
+        def get_runtime_binding(self, binding_id):
+            return binding
+
+    with pytest.raises(ScopeCaptureError, match="workspace_unavailable"):
+        WorkspaceFileInspector(Registry()).capture_binding(DEFAULT_WORKSPACE_ID, "default-binding")
+
+
+def test_capture_rejects_nonlocal_runtime_binding(tmp_path: Path) -> None:
+    """Catch container/runtime bindings entering the local filesystem service."""
+    registry = _registry(tmp_path)
+    root = tmp_path / "root"
+    root.mkdir()
+    binding = WorkspaceRuntimeBinding(
+        workspace_id="ws-a", binding_id="container-binding",
+        binding_kind=RuntimeBindingKind.CONTAINER, label="container",
+        locator=str(root), status=RuntimeBindingStatus.READY,
+    )
+    registry.save_runtime_binding(binding)
+
+    with pytest.raises(ScopeCaptureError, match="binding_changed"):
+        WorkspaceFileInspector(registry).capture_binding("ws-a", binding.binding_id)
+
+
+def test_read_and_filter_revalidate_fresh_registry_mutations(tmp_path: Path) -> None:
+    """Catch stale read/filter scope use after independent registry revocation."""
+    inspector, registry, root, scope = _scope(tmp_path)
+    (root / "file.txt").write_text("secret")
+    registry.archive_workspace("ws-a")
+
+    read = inspector.read_file(scope, ("file.txt",))
+    filtered = inspector.filter_paths(scope, "file")
+
+    assert read.kind is FileReadKind.FAILED
+    assert read.text == ""
+    assert filtered.status is FilterStatus.FAILED
+    assert filtered.matches == ()
+
+
+def test_unconsumed_continuation_detects_directory_revision_change(tmp_path: Path) -> None:
+    """Catch a fresh page token mixing entries after its directory changed."""
+    inspector, _registry_service, root, scope = _scope(tmp_path)
+    for index in range(205):
+        (root / f"entry-{index}").write_text("x")
+    first = inspector.list_directory(scope)
+    assert first.continuation is not None
+    (root / "revision-change").write_text("x")
+
+    result = inspector.list_directory(scope, continuation=first.continuation)
+
+    assert result.error_code == "directory_changed"
