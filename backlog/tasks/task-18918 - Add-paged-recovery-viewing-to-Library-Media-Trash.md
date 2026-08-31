@@ -334,6 +334,16 @@ at **160×50**, **120×35**, **100×30**, and **80×24** with exact paging, clam
 restore/delete, return settlement, privacy, path-authority, and zero-handle
 evidence.
 
+The required derived-artifact workflow then correctly rejected the stale
+production-diagnostic inventory. Statement-level review confirmed the new Trash
+controller warning, the database paging error, the permanent-delete/FTS privacy
+repairs, and the screen deletion warning contain only fixed copy, bounded
+coordinates or booleans, counts/status, and exception categories. None include
+user text, secrets, filesystem paths, URLs, raw exception text, or tracebacks.
+`Docs/security/production-diagnostic-inventory.json` was regenerated only after
+that review; its path-privacy candidate count drops from **712** to **711**
+because the former permanent-delete database-path warning was removed.
+
 ### ADR check
 
 Existing ADR-067 governs the coherent exact-page and stale-recovery contract;

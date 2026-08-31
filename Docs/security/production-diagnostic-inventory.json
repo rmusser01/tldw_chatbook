@@ -663,8 +663,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 345,
-      "diagnostic_digest": "31ad45dcf6b2ad6eeee9",
+      "call_count": 346,
+      "diagnostic_digest": "7952556b38e4ae0d0022",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/Client_Media_DB_v2.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2505,6 +2505,13 @@
     },
     {
       "call_count": 1,
+      "diagnostic_digest": "5000857844237580bf71",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Library_Modules/library_media_trash_browse_controller.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
       "diagnostic_digest": "738ee5f3783f1528d3c2",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py",
@@ -2687,7 +2694,7 @@
     },
     {
       "call_count": 120,
-      "diagnostic_digest": "13a94b37b3c401c7e842",
+      "diagnostic_digest": "bf6d797a14fe17e73c33",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/library_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -5287,15 +5294,6 @@
             "db_instance.db_path_str"
           ],
           "scope": "mark_media_as_processed",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "e1d3cb2a299db7ff",
-          "method": "warning",
-          "path_expressions": [
-            "db_instance.db_path_str"
-          ],
-          "scope": "permanently_delete_item",
           "status": "legacy_unreviewed"
         }
       ],
@@ -11109,10 +11107,10 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 549,
-    "path_privacy_candidate_calls": 712,
+    "owner_files": 550,
+    "path_privacy_candidate_calls": 711,
     "persistent_sink_files": 8,
     "task_492_calls": 1295,
-    "task_494_calls": 7412
+    "task_494_calls": 7414
   }
 }
