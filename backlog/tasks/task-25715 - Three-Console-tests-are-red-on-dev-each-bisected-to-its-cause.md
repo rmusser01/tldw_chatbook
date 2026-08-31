@@ -1,6 +1,6 @@
 ---
 id: TASK-25715
-title: 'Two Console rail tests are red on dev, each bisected to its cause'
+title: 'Three Console tests are red on dev, each bisected to its cause'
 status: To Do
 assignee: []
 created_date: '2026-08-31 14:27'
@@ -21,7 +21,8 @@ Two Console rail tests pass at 4da99a884 and fail on origin/dev at 46c2b0e5f0fb.
 <!-- AC:BEGIN -->
 - [ ] #1 test_context_section_headers_match_inspector_title_band passes, or the contract it pins is deliberately retired with the Inspector/Context divergence recorded
 - [ ] #2 test_active_reveal_queue_retains_only_identity_across_target_and_rail_removal passes, or the reveal callback is documented as not surviving rail removal
-- [ ] #3 Neither test is left red on dev without an owner
+- [ ] #3 test_console_workbench_standard_width_inspector_snapshot passes, or its "Blocked impact" assertion is updated to the Inspector's current copy
+- [ ] #4 No test in this set is left red on dev without an owner
 <!-- AC:END -->
 
 ## Evidence
@@ -69,6 +70,28 @@ before it still pass -- so this is the lookup at the end, not the queue design.
 Bisect also cleared the neighbouring Console merges: `3c081c79e` (#2233),
 `4ae04314c` (#2242), `51d3fbdbf` (#2249) and `41176579f` (#2250) are all GOOD
 for the test each is adjacent to.
+
+### 3. Inspector snapshot — first bad `c2f64f690` (#2220), the same commit as (1)
+
+Found on a post-merge sweep of `Tests/UI/`, which is how it stayed hidden: this
+file was not in the per-batch sweeps run during the rail work.
+
+```
+Tests/UI/test_workbench_visual_snapshots.py::test_console_workbench_standard_width_inspector_snapshot
+E  assert 'Blocked impact' in '<svg class="rich-terminal" ...>'
+```
+
+Same bisect method, same first-bad commit as the header-padding failure. #2220
+renamed or removed the Inspector's "Blocked impact" copy without updating the
+snapshot asserting it. So #2220 owns **two** of the three findings here, which is
+worth knowing before anyone picks at them one at a time.
+
+**Not in scope, already owned.** The other two failures in that same file --
+`test_console_workbench_normal_and_compact_snapshots[normal]` and `[compact]`,
+both asserting `'Library search:'` -- fail at `4da99a884` as well, so they
+predate this work entirely. TASK-23147 already owns that label drift, and
+TASK-23148 owns the rail-handle arithmetic in the same file. Recorded here only
+so the next person to run this file sees five failures and knows which is which.
 
 ## Notes
 
