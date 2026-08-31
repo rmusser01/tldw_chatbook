@@ -7,10 +7,16 @@ import ipaddress
 from itertools import islice
 import time
 import unicodedata
-from typing import Literal, Optional, Union
+from typing import Literal, Optional, TypeVar, Union
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError as PydanticValidationError,
+    field_validator,
+)
 import regex
 
 from ..Metrics.metrics_logger import log_counter, log_histogram
@@ -125,6 +131,202 @@ class TerminalSessionNameInput(BaseModel):
         if "[" in normalized or "]" in normalized:
             raise ValueError("terminal session name must not contain markup")
         return normalized
+
+
+TerminalPasteViolation = Literal["too_large", "prohibited_control"]
+
+
+class TerminalPasteInput(BaseModel):
+    """Strict shared boundary for one terminal paste offer."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    text: str = Field(repr=False)
+    bracketed: bool
+
+    def classify(self) -> tuple[TerminalPasteViolation | None, bytes]:
+        """Classify paste content and return its replacement-encoded payload.
+
+        Returns:
+            A content-free violation category and payload bytes. The payload is
+            empty when a violation is present.
+        """
+        from ..Terminal.contracts import MAX_PASTE_BYTES
+
+        if len(self.text) > MAX_PASTE_BYTES:
+            return "too_large", b""
+        for character in self.text:
+            codepoint = ord(character)
+            if codepoint < 0x20 and character not in "\t\n\r":
+                return "prohibited_control", b""
+            if 0x7F <= codepoint <= 0x9F:
+                return "prohibited_control", b""
+        payload = self.text.encode("utf-8", "replace")
+        if len(payload) > MAX_PASTE_BYTES:
+            return "too_large", b""
+        return None, payload
+
+
+class TerminalKeyInput(BaseModel):
+    """Strict shared boundary for encoded terminal key bytes."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    data: bytes = Field(repr=False)
+
+
+class TerminalReplyInput(BaseModel):
+    """Strict shared boundary for code-owned terminal reply bytes."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    data: bytes = Field(repr=False)
+
+
+class TerminalOutputInput(BaseModel):
+    """Strict shared boundary for terminal backend output bytes."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    data: bytes = Field(repr=False)
+
+
+class TerminalResizeInput(BaseModel):
+    """Strict shared boundary for terminal resize dimensions."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    columns: int
+    rows: int
+
+    @field_validator("columns")
+    @classmethod
+    def _validate_columns(cls, value: int) -> int:
+        from ..Terminal.contracts import MAX_COLUMNS, MIN_COLUMNS
+
+        if not MIN_COLUMNS <= value <= MAX_COLUMNS:
+            raise ValueError("terminal columns are outside contract")
+        return value
+
+    @field_validator("rows")
+    @classmethod
+    def _validate_rows(cls, value: int) -> int:
+        from ..Terminal.contracts import MAX_ROWS, MIN_ROWS
+
+        if not MIN_ROWS <= value <= MAX_ROWS:
+            raise ValueError("terminal rows are outside contract")
+        return value
+
+
+_TerminalBytesInput = TypeVar(
+    "_TerminalBytesInput",
+    TerminalKeyInput,
+    TerminalReplyInput,
+    TerminalOutputInput,
+)
+
+
+def _validate_terminal_bytes_input(
+    model_type: type[_TerminalBytesInput],
+    data: object,
+    *,
+    label: str,
+) -> _TerminalBytesInput:
+    """Return one strict bytes model with a content-free type error."""
+    try:
+        return model_type.model_validate({"data": data})
+    except PydanticValidationError:
+        raise TypeError(f"terminal {label} data must be bytes") from None
+
+
+def validate_terminal_key_input(data: object) -> TerminalKeyInput:
+    """Validate encoded terminal key bytes through the shared model.
+
+    Args:
+        data: Candidate encoded key bytes.
+
+    Returns:
+        Strict validated key model.
+
+    Raises:
+        TypeError: If ``data`` is not immutable bytes.
+    """
+    return _validate_terminal_bytes_input(TerminalKeyInput, data, label="key")
+
+
+def validate_terminal_paste_input(
+    text: object, bracketed: object
+) -> TerminalPasteInput:
+    """Validate a terminal paste offer through the shared model.
+
+    Args:
+        text: Candidate paste text.
+        bracketed: Candidate bracketed-paste mode flag.
+
+    Returns:
+        Strict validated paste model.
+
+    Raises:
+        TypeError: If either value has the wrong type.
+    """
+    try:
+        return TerminalPasteInput.model_validate({"text": text, "bracketed": bracketed})
+    except PydanticValidationError:
+        raise TypeError("terminal paste values have invalid types") from None
+
+
+def validate_terminal_reply_input(data: object) -> TerminalReplyInput:
+    """Validate terminal reply bytes through the shared model.
+
+    Args:
+        data: Candidate terminal reply bytes.
+
+    Returns:
+        Strict validated reply model.
+
+    Raises:
+        TypeError: If ``data`` is not immutable bytes.
+    """
+    return _validate_terminal_bytes_input(TerminalReplyInput, data, label="reply")
+
+
+def validate_terminal_output_input(data: object) -> TerminalOutputInput:
+    """Validate terminal backend output through the shared model.
+
+    Args:
+        data: Candidate backend output bytes.
+
+    Returns:
+        Strict validated output model.
+
+    Raises:
+        TypeError: If ``data`` is not immutable bytes.
+    """
+    return _validate_terminal_bytes_input(TerminalOutputInput, data, label="output")
+
+
+def validate_terminal_resize_input(
+    columns: object, rows: object
+) -> TerminalResizeInput:
+    """Validate terminal dimensions through the shared model.
+
+    Args:
+        columns: Candidate terminal width.
+        rows: Candidate terminal height.
+
+    Returns:
+        Strict validated resize model.
+
+    Raises:
+        TypeError: If either dimension is not an integer.
+        ValueError: If either dimension is outside the terminal contract.
+    """
+    if type(columns) is not int or type(rows) is not int:
+        raise TypeError("terminal dimensions must be integers")
+    try:
+        return TerminalResizeInput.model_validate({"columns": columns, "rows": rows})
+    except PydanticValidationError:
+        raise ValueError("terminal dimensions are outside contract") from None
 
 
 class TerminalEnvironmentInput(BaseModel):
