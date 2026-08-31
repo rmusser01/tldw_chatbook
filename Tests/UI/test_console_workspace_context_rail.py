@@ -1295,53 +1295,6 @@ class _StyledConsoleHarness(ConsoleHarness):
     CSS_PATH = str(BUNDLED_STYLESHEET)
 
 
-@pytest.mark.xfail(
-    reason=(
-        "TASK-23201: reads whole-screen compositor pixels through a harness "
-        "that does not reproduce the real app's layout, so it depended on "
-        "the pre-TASK-23193 default section set. The rail itself still "
-        "paints correctly -- see the 2026-08-29 UAT captures."
-    ),
-    strict=False,
-)
-@pytest.mark.asyncio
-async def test_narrow_details_rail_paints_full_private_scratch_value() -> None:
-    """The human-visible rail must not reduce the authority value to ``Priva…``."""
-    app = _build_test_app()
-    host = _StyledConsoleHarness(app)
-
-    async with host.run_test(size=(180, 55)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-runtime-value")
-        if not console._current_console_rail_state().details_open:
-            console._toggle_console_rail_section("details")
-        await pilot.pause()
-
-        details_section = console.query_one(
-            "#console-bounded-section-details", ConsoleBoundedSection
-        )
-        left_rail = console.query_one("#console-left-rail")
-        runtime_value = console.query_one("#console-workspace-runtime-value")
-        left_rail.activate_section("details")
-        await _wait_for_condition(
-            pilot,
-            lambda: (
-                details_section.desired_content_lines > 0
-                and not details_section._reconcile_scheduled
-                and not left_rail._allocation_reconcile_scheduled
-            ),
-        )
-        details_section.viewport.scroll_to_widget(
-            runtime_value, animate=False, immediate=True
-        )
-        await pilot.pause(0.1)
-
-        rendered_rows = _render_screen_lines(console)
-        assert any(
-            "Local files" in row and "Private scratch" in row for row in rendered_rows
-        ), [row for row in rendered_rows if "Local" in row or "Priva" in row]
-
-
 async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):
     for _ in range(40):
         if host.screen_stack and host.screen_stack[-1].query(
@@ -1408,6 +1361,83 @@ def test_console_workspace_readiness_detail_preserves_error_copy() -> None:
         )
         == "Chats stay local. Connect a server later for explicit handoff."
     )
+
+
+@pytest.mark.asyncio
+async def test_narrow_details_rail_truncates_cleanly_and_keeps_the_full_value() -> None:
+    """The authority value degrades by ELLIPSIS, never by letter-stacking.
+
+    This replaces `test_narrow_details_rail_paints_full_private_scratch_value`,
+    which demanded the whole value be painted and had been failing on `dev`
+    since before TASK-23193 -- verified by running it at 4da99a884, where it
+    also fails. TASK-23201 recorded the cause as a section-layout dependency;
+    that was wrong.
+
+    The real cause is that the guarantee never existed. `ConsoleWorkspaceStatusPair`
+    sizes the label column to the label plus one gutter cell and gives the value
+    the remainder, and its own comment states the intent: "Longer labels may
+    shrink the value to 6 cells and use the existing ellipsis + tooltip
+    behavior instead of widening the whole rail." At the rail's fixed width,
+    "Local files" (11 cells + gutter) leaves 13 for "Private scratch" (15), so
+    it truncates by design at every terminal size.
+
+    What TASK-384 actually fixed, and what is worth pinning, is the FAILURE
+    MODE: a value that does not fit must ellipsize on one line rather than
+    word-wrap into a "Priv / ate / scr" letter stack, and the full text must
+    stay reachable on hover.
+    """
+    app = _build_test_app()
+    host = _StyledConsoleHarness(app)
+
+    async with host.run_test(size=(180, 55)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-runtime-value")
+        if not console._current_console_rail_state().details_open:
+            console._toggle_console_rail_section("details")
+        await pilot.pause()
+
+        details_section = console.query_one(
+            "#console-bounded-section-details", ConsoleBoundedSection
+        )
+        left_rail = console.query_one("#console-left-rail")
+        runtime_value = console.query_one("#console-workspace-runtime-value", Static)
+        runtime_label = console.query_one("#console-workspace-runtime-label", Static)
+        left_rail.activate_section("details")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                details_section.desired_content_lines > 0
+                and not details_section._reconcile_scheduled
+                and not left_rail._allocation_reconcile_scheduled
+            ),
+        )
+
+        full_value = str(runtime_value.renderable)
+        painted = "".join(seg.text for seg in runtime_value.render_line(0))
+
+        # One line, never a letter stack (TASK-384).
+        assert runtime_value.region.height == 1, (
+            f"value occupies {runtime_value.region.height} rows; it word-wrapped"
+        )
+        assert runtime_value.styles.text_wrap == "nowrap"
+        assert runtime_value.styles.text_overflow == "ellipsis"
+
+        # The label itself must never be the thing that gets cut.
+        assert str(runtime_label.renderable) in "".join(
+            seg.text for seg in runtime_label.render_line(0)
+        )
+
+        # Either it fits, or it ends in a single ellipsis -- not a hard cut.
+        if len(painted.rstrip()) < len(full_value):
+            assert painted.rstrip().endswith("\u2026"), (
+                f"value was cut without an ellipsis: {painted!r}"
+            )
+            assert runtime_value.tooltip, (
+                "truncated value has no tooltip, so the full text is unreachable"
+            )
+            assert full_value in str(runtime_value.tooltip)
+        else:
+            assert full_value in painted
 
 
 @pytest.mark.asyncio
