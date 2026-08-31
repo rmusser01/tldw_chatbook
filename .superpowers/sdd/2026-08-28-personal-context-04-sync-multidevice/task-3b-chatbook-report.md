@@ -507,3 +507,50 @@ Context, Sync, state, and canonical UI files.
   consistent with repository policy and the assigned scope. Production SQLite,
   real-httpx schema/client, Textual app-flow, and injected custody failures are
   covered. Independent controller review remains pending.
+
+## Legacy v7 terminal-cleanup compatibility correction (2026-08-31)
+
+### RED evidence
+
+- A real v7 Personal Context database with a durable legacy rebaseline marker,
+  durable `complete` Sync receipt, and authenticated active profile keys failed
+  lazy runtime startup because the v8 exact delete could not match the migrated
+  marker's `NULL target_key_record_id`.
+- The focused matrix initially failed with `AttributeError` for the absent
+  authenticated legacy-repair API. Eight exact/mismatch/absence cases failed
+  before the production change.
+
+### Implementation
+
+- Added a repository compare-and-set that fills only a legacy
+  `target_key_record_id IS NULL` marker whose plan/profile/integrity/purge/
+  rebaseline fields, current profile metadata, and canonical object key
+  generation match exactly.
+- Added a service boundary that decrypts and authenticates the active manifest
+  and requires exact profile, purge generation, and active key generation before
+  that CAS may run.
+- Completed-link cleanup authenticates the full storage-key binding, repairs and
+  clears the marker while its exact freeze remains held, then releases the
+  freeze and removes staged custody before ordinary Sync is installed.
+- Nonterminal migrated markers remain ambiguous. Foreign, corrupt,
+  stale-generation, empty-key-record, and absent evidence are never broadened
+  into successful repair; mismatch leaves recovery evidence untouched.
+
+### GREEN evidence
+
+- Exact compatibility matrix: `8 passed` across authenticated legacy binding,
+  all marker/active-state mismatches, applying ambiguity, idempotent absence,
+  and production-shaped v7 complete startup/retry.
+- Broad affected suites: `131 passed` across Personal Context, `116 passed`
+  across focused Sync (`57 deselected`), `29 passed` across Sync state, and
+  `69 passed` across canonical UI/Settings (345 distinct tests).
+- Ruff on all changed Python files, focused `compileall`, Bandit high-severity
+  (`-lll`), and `git diff --check` completed successfully.
+
+ADR required: no (existing)
+
+ADR path: `backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md`
+
+Reason: this bounded migration/restart correction preserves ADR-102's existing
+authority, encryption, and fail-closed recovery boundaries. TASK-24727 remains
+In Progress.

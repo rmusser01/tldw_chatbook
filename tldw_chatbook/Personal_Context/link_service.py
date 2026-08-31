@@ -42,18 +42,17 @@ def cleanup_completed_link_artifacts(
 ) -> None:
     """Remove only artifacts owned by one exact completed link plan."""
 
+    if state.get("state") != "complete":
+        raise ValueError("personal_context_link_cleanup_mismatch")
     plan_id = str(state["plan_id"])
-    freeze_owner_reader = getattr(profile, "first_link_freeze_plan_id", None)
-    freeze_owner = freeze_owner_reader() if callable(freeze_owner_reader) else None
-    if freeze_owner not in {None, plan_id}:
-        raise ValueError("personal_context_link_cleanup_mismatch")
-    release = getattr(profile, "release_first_link_freeze", None)
-    if freeze_owner == plan_id or not callable(freeze_owner_reader):
-        if callable(release):
-            release(plan_id=plan_id)
-    if callable(freeze_owner_reader) and freeze_owner_reader() is not None:
-        raise ValueError("personal_context_link_cleanup_mismatch")
-
+    marker_binding = {
+        "plan_id": plan_id,
+        "target_profile_id": str(state["profile_id"]),
+        "target_integrity_key_id": str(state["integrity_key_id"]),
+        "target_key_record_id": str(state["key_record_id"]),
+        "target_purge_generation": int(state["purge_generation"]),
+        "rebaseline_version": int(state["rebaseline_version"]),
+    }
     marker_owner_reader = getattr(
         profile, "first_link_rebaseline_commit_plan_id", None
     )
@@ -63,15 +62,25 @@ def cleanup_completed_link_artifacts(
     clear = getattr(profile, "clear_first_link_rebaseline_commit", None)
     if marker_owner == plan_id or not callable(marker_owner_reader):
         if callable(clear):
-            clear(
-                plan_id=plan_id,
-                target_profile_id=str(state["profile_id"]),
-                target_integrity_key_id=str(state["integrity_key_id"]),
-                target_key_record_id=str(state["key_record_id"]),
-                target_purge_generation=int(state["purge_generation"]),
-                rebaseline_version=int(state["rebaseline_version"]),
-            )
+            clear(**marker_binding)
+    if callable(marker_owner_reader) and marker_owner_reader() == plan_id:
+        repair = getattr(
+            profile, "authenticate_legacy_first_link_rebaseline_commit", None
+        )
+        if callable(repair) and repair(**marker_binding) and callable(clear):
+            clear(**marker_binding)
     if callable(marker_owner_reader) and marker_owner_reader() is not None:
+        raise ValueError("personal_context_link_cleanup_mismatch")
+
+    freeze_owner_reader = getattr(profile, "first_link_freeze_plan_id", None)
+    freeze_owner = freeze_owner_reader() if callable(freeze_owner_reader) else None
+    if freeze_owner not in {None, plan_id}:
+        raise ValueError("personal_context_link_cleanup_mismatch")
+    release = getattr(profile, "release_first_link_freeze", None)
+    if freeze_owner == plan_id or not callable(freeze_owner_reader):
+        if callable(release):
+            release(plan_id=plan_id)
+    if callable(freeze_owner_reader) and freeze_owner_reader() is not None:
         raise ValueError("personal_context_link_cleanup_mismatch")
 
 
@@ -867,6 +876,7 @@ class PersonalContextLinkService:
     ) -> PersonalContextLinkReceipt:
         """Retry exception-safe local cleanup after a durable complete receipt."""
 
+        self._custodian.load_storage_key(**self._key_binding(state))
         cleanup_completed_link_artifacts(self._profile, state)
         self._custodian.delete(**self._key_binding(state))
         self._plans.pop(str(state["plan_id"]), None)

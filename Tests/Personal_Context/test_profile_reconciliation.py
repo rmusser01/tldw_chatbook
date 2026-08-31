@@ -22,6 +22,9 @@ from tldw_chatbook.Personal_Context.reconciliation import (
     CanonicalBootstrapSnapshot,
     build_reconciliation_plan,
 )
+from tldw_chatbook.Personal_Context.link_service import (
+    cleanup_completed_link_artifacts,
+)
 from tldw_chatbook.Personal_Context.key_protector import (
     InMemoryProfileKeyProtector,
     ProfileLockedError,
@@ -1235,3 +1238,143 @@ def test_schema_v7_marker_migrates_to_ambiguous_key_record_binding(tmp_path) -> 
         target_key_record_id="key-record-1",
         target_purge_generation=0,
     ) == ("ambiguous", None)
+
+
+def test_authenticated_complete_cleanup_binds_only_exact_legacy_v7_marker(
+    tmp_path,
+) -> None:
+    protector = InMemoryProfileKeyProtector()
+    db_path = tmp_path / "profile-v7-complete.db"
+    repository = PersonalContextRepository(db_path, key_protector=protector)
+    repository.create_profile_with_global_scope(
+        _manifest("profile-server", "manifest-server"),
+        _scope("profile-server", "scope-server", ScopeKind.GLOBAL),
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("DROP TABLE first_link_rebaseline_commit")
+        connection.execute(
+            """
+            CREATE TABLE first_link_rebaseline_commit (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                plan_id TEXT NOT NULL,
+                target_profile_id TEXT NOT NULL,
+                target_integrity_key_id TEXT NOT NULL,
+                target_purge_generation INTEGER NOT NULL,
+                rebaseline_version INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO first_link_rebaseline_commit VALUES (1, ?, ?, ?, ?, ?, ?)",
+            ("plan-v7", "profile-server", "key-1", 0, 1, NOW),
+        )
+        connection.execute(
+            "UPDATE personal_context_schema SET version = 7 WHERE singleton = 1"
+        )
+
+    service = PersonalContextService(
+        PersonalContextRepository(db_path, key_protector=protector)
+    )
+
+    assert service.authenticate_legacy_first_link_rebaseline_commit(
+        plan_id="plan-v7",
+        target_profile_id="profile-server",
+        target_integrity_key_id="key-1",
+        target_key_record_id="key-record-1",
+        target_purge_generation=0,
+        rebaseline_version=1,
+    ) is True
+    assert service.clear_first_link_rebaseline_commit(
+        plan_id="plan-v7",
+        target_profile_id="profile-server",
+        target_integrity_key_id="key-1",
+        target_key_record_id="key-record-1",
+        target_purge_generation=0,
+        rebaseline_version=1,
+    ) is True
+    assert service.authenticate_legacy_first_link_rebaseline_commit(
+        plan_id="plan-v7",
+        target_profile_id="profile-server",
+        target_integrity_key_id="key-1",
+        target_key_record_id="key-record-1",
+        target_purge_generation=0,
+        rebaseline_version=1,
+    ) is False
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("plan_id", "other-plan"),
+        ("target_profile_id", "other-profile"),
+        ("target_integrity_key_id", "other-integrity"),
+        ("target_key_record_id", ""),
+        ("target_purge_generation", 1),
+        ("rebaseline_version", 2),
+    ),
+)
+def test_authenticated_complete_cleanup_rejects_ambiguous_legacy_marker(
+    tmp_path, field, value
+) -> None:
+    protector = InMemoryProfileKeyProtector()
+    db_path = tmp_path / f"profile-v7-mismatch-{field}.db"
+    repository = PersonalContextRepository(db_path, key_protector=protector)
+    repository.create_profile_with_global_scope(
+        _manifest("profile-server", "manifest-server"),
+        _scope("profile-server", "scope-server", ScopeKind.GLOBAL),
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("DROP TABLE first_link_rebaseline_commit")
+        connection.execute(
+            """
+            CREATE TABLE first_link_rebaseline_commit (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                plan_id TEXT NOT NULL,
+                target_profile_id TEXT NOT NULL,
+                target_integrity_key_id TEXT NOT NULL,
+                target_purge_generation INTEGER NOT NULL,
+                rebaseline_version INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO first_link_rebaseline_commit VALUES (1, ?, ?, ?, ?, ?, ?)",
+            ("plan-v7", "profile-server", "key-1", 0, 1, NOW),
+        )
+        connection.execute(
+            "UPDATE personal_context_schema SET version = 7 WHERE singleton = 1"
+        )
+    service = PersonalContextService(
+        PersonalContextRepository(db_path, key_protector=protector)
+    )
+    expected = {
+        "plan_id": "plan-v7",
+        "target_profile_id": "profile-server",
+        "target_integrity_key_id": "key-1",
+        "target_key_record_id": "key-record-1",
+        "target_purge_generation": 0,
+        "rebaseline_version": 1,
+    }
+    expected[field] = value
+
+    assert service.authenticate_legacy_first_link_rebaseline_commit(**expected) is False
+    with pytest.raises(ValueError, match="personal_context_link_cleanup_mismatch"):
+        cleanup_completed_link_artifacts(
+            service,
+            {
+                "state": "complete",
+                "plan_id": expected["plan_id"],
+                "profile_id": expected["target_profile_id"],
+                "integrity_key_id": expected["target_integrity_key_id"],
+                "key_record_id": expected["target_key_record_id"],
+                "purge_generation": expected["target_purge_generation"],
+                "rebaseline_version": expected["rebaseline_version"],
+            },
+        )
+    with sqlite3.connect(db_path) as connection:
+        marker = connection.execute(
+            "SELECT * FROM first_link_rebaseline_commit WHERE singleton = 1"
+        ).fetchone()
+    assert marker is not None

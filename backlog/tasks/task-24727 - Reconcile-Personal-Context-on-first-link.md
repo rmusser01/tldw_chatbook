@@ -162,3 +162,13 @@ only the private reviewed reconciliation path. Fresh targeted verification is
 passing (370 total), with Ruff, compileall, Bandit high-severity, and diff hygiene
 green. No TCSS changed, so CSS reproduction was not applicable. TASK-24727 stays
 In Progress for controller review; acceptance criteria and DoD remain unchecked.
+
+Legacy v7 marker cleanup is now terminal-state compatible without weakening
+recovery. Migrated markers with no key-record binding remain ambiguous for
+`applying` and other nonterminal states. Only an exact durable `complete`
+receipt, authenticated storage custody for the full server/dataset/device/key
+binding, an authenticated active canonical profile/purge generation, the exact
+active rebaseline generation, and otherwise identical marker fields can bind
+the missing key-record ID. The marker is then cleared before its exact freeze;
+all mismatch, corruption, locked-profile, and missing-evidence cases remain
+fail-closed and preserve recovery artifacts. TASK-24727 remains In Progress.

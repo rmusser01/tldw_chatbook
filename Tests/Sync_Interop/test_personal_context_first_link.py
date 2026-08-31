@@ -868,6 +868,7 @@ async def test_complete_cleanup_rejects_different_artifact_owner_before_key_dele
     )
     complete = state.get_personal_context_link_state(**SCOPE)
     custodian.stage(**service._key_binding(complete), integrity_key=b"s" * 32)
+    custodian.load_or_create_storage_key(**service._key_binding(complete))
 
     with pytest.raises(ValueError, match="personal_context_link_cleanup_mismatch"):
         await service.resume()
@@ -918,6 +919,7 @@ async def test_complete_cleanup_verifies_artifact_removal_before_key_delete(
     )
     complete = state.get_personal_context_link_state(**SCOPE)
     custodian.stage(**service._key_binding(complete), integrity_key=b"s" * 32)
+    custodian.load_or_create_storage_key(**service._key_binding(complete))
 
     with pytest.raises(ValueError, match="personal_context_link_cleanup_mismatch"):
         await service.resume()
