@@ -1617,3 +1617,34 @@ child overflows rather than protects. Same-class suspects here:
 **Incident.** The first tmux launch used `2>stderr.log` to keep diagnostics; the pane went visually blank while `capture-pane` returned empty lines, yet the app was alive and painting — into the log. The render stream is stderr, so redirecting it for "clean logs" removes the very surface the verification is supposed to observe.
 
 **What to do.** In tmux live runs, leave both stdout and stderr attached to the pane (the pane IS the capture artifact); take diagnostics from the app's own file log under the profile's data dir. Also note `tmux send-keys -H` can emit SGR mouse sequences (`ESC [ < 0 ; col ; row M/m`) to click Textual buttons that Tab/Enter cannot reliably reach, but the row/col must be recomputed from a fresh capture after every repaint.
+
+## Three scratch-profile traps that masquerade as app bugs (Home recents UAT, 2026-08-30)
+
+**What happened.** Live-UATing the Home recents PR against a copy of the real
+profile failed four consecutive times with the same symptom — Home empty, no
+errors — each for a DIFFERENT environmental reason that read like a product bug:
+
+1. **`[database]` absolute `*_db_path` pins override `[paths] data_dir`.** The
+   copied real config pins `chachanotes_db_path` etc. to absolute home paths;
+   a scratch `data_dir` does not relocate them. The app silently opened
+   nonexistent pinned paths (services wired as `None`, never re-wired) while
+   unrelated DBs (workspaces) resolved through the scratch — so Console's
+   workspace rail restored while every conversation/notes seam returned empty.
+   Redirect EVERY `*_db_path` (and `USER_DB_BASE_DIR`) in the scratch config.
+2. **`verify_trusted_directory` rejects `/tmp` scratch data dirs**
+   (`unsafe_parent: shared_sticky_directory_not_allowed`). A disposable HOME
+   nested under /tmp fails the same guard. Scratch profiles must live under
+   the real `$HOME` (a private subdir is fine).
+3. **`rsync`ing a live WAL-mode SQLite file produces a torn snapshot.** The
+   copied DB later failed its v51→v52 migration with "database disk image is
+   malformed" — while the app swallowed the error and booted with no
+   ChaChaNotes at all. Copy live DBs with the online-backup API
+   (`sqlite3.connect(src).backup(dst_con)`), and run `PRAGMA integrity_check`
+   on the RESULT before blaming the migration: here the source DB itself
+   carried a corrupt index (`idx_sync_log_entity` — wrong entry count), which
+   `REINDEX` on the copy repaired before the migration could complete.
+
+**What to do.** For a scratch-profile run against real data: build it under
+`$HOME`, redirect every `[database]` pin, copy DBs via the backup API, and
+integrity-check the copies. When a scratch boot shows "everything restored
+except one subsystem", suspect per-service path resolution before the code.
