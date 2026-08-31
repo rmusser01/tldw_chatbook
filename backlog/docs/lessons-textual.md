@@ -421,3 +421,21 @@ before a probe printed `button.display`.
 Re-query after **every** await that could trigger a recompose, and take the reference
 the caller will act on *after* the last one — scrolling counts, because
 `scroll_to_widget` can itself provoke another reconciliation pass.
+
+## Textual focuses the clicked widget BEFORE the press bubbles — a click-outside dismissal must not restore the popup's opener
+
+**TASK-25709, 2026-08-30.** Wiring click-outside dismissal for the Context rail's
+conversation action menu, the obvious implementation reused the menu's existing
+`Dismissed` handler, which returns focus to the opener asterisk. In Textual 8.2.8
+`Screen._forward_event` calls `set_focus(focusable_widget)` on every `MouseDown` and
+only then dispatches the event into the widget tree (`textual/screen.py:1607-1610`) —
+so by the time a screen-level `on_mouse_down` dismissal runs, focus has ALREADY moved
+to the clicked widget. Posting an opener-restore from there yanks focus back to the
+rail after the user clicked into the composer. The same applies to an Escape issued
+while focus sits outside the menu.
+
+Thread the restore through the dismissal cause: the popup's own in-menu Escape
+restores the opener (focus was inside the popup); outside-click and stranded-Escape
+paths skip it. The pinned test is
+`test_click_outside_closes_the_menu_without_dispatching`, which asserts focus is NOT
+the opener after the click.

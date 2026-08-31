@@ -158,6 +158,108 @@ async def test_menu_focuses_its_first_actionable_entry_on_open() -> None:
         assert not focused.disabled
 
 
+@pytest.mark.asyncio
+async def test_click_outside_closes_the_menu_without_dispatching(monkeypatch) -> None:
+    """ADR-068 dismiss contract: a click elsewhere folds the menu, no actions.
+
+    Clicking the composer is the canonical stranding path: Textual moves
+    focus to the clicked widget before the press bubbles to the screen, so
+    the dismissal must also leave focus exactly where the click put it.
+    """
+    async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
+        screen = pilot.app.screen
+        _opener(screen).press()
+        await pilot.pause(0.3)
+        assert screen.query(ConsoleConversationActionMenu)
+
+        dispatched: list[object] = []
+        monkeypatch.setattr(
+            screen,
+            "on_conversation_action_chosen",
+            lambda event: dispatched.append(event),
+        )
+
+        assert await pilot.click("#console-native-composer")
+        await pilot.pause(0.3)
+
+        assert not screen.query(ConsoleConversationActionMenu), (
+            "a click outside the menu left it open"
+        )
+        assert dispatched == [], "an outside click dispatched a menu action"
+        assert pilot.app.focused is not None
+        assert pilot.app.focused is not _opener(screen), (
+            "outside-click dismissal pulled focus back to the opener"
+        )
+
+
+@pytest.mark.asyncio
+async def test_click_on_menu_chrome_keeps_the_menu_open() -> None:
+    """A click on the menu's border must not fold it mid-inspection.
+
+    Targets the top border row (offset y=0) -- menu chrome, not a button --
+    through the same screen-level mouse path a real terminal press takes.
+    """
+    async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
+        screen = pilot.app.screen
+        _opener(screen).press()
+        await pilot.pause(0.3)
+        menu = screen.query_one(ConsoleConversationActionMenu)
+
+        await pilot.click(ConsoleConversationActionMenu, offset=(2, 0))
+        await pilot.pause(0.3)
+
+        assert screen.query_one(ConsoleConversationActionMenu), (
+            "a click on the menu itself dismissed it"
+        )
+        assert menu.page == "root"
+
+
+@pytest.mark.asyncio
+async def test_escape_with_focus_outside_the_menu_closes_it() -> None:
+    """Escape must reach a stranded menu even after focus moved elsewhere.
+
+    Focus is moved to the composer without a mouse press (the screen seam
+    directly), which is the state a user reaches via keyboard pane cycling
+    once click-outside dismissal exists.
+    """
+    async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
+        screen = pilot.app.screen
+        _opener(screen).press()
+        await pilot.pause(0.3)
+        assert screen.query(ConsoleConversationActionMenu)
+
+        composer = screen.query_one("#console-native-composer")
+        screen.set_focus(composer)
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await pilot.pause(0.3)
+
+        assert not screen.query(ConsoleConversationActionMenu), (
+            "escape from outside the menu left it stranded"
+        )
+        assert pilot.app.focused is composer, (
+            "escape-from-elsewhere moved focus instead of only closing the menu"
+        )
+
+
+@pytest.mark.asyncio
+async def test_pressing_the_asterisk_again_replaces_rather_than_stacks() -> None:
+    """The opener's press path still ends with exactly one menu mounted."""
+    async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
+        screen = pilot.app.screen
+        _opener(screen).press()
+        await pilot.pause(0.3)
+
+        await pilot.click("#console-conversation-actions-0")
+        await pilot.pause(0.3)
+
+        mounted = screen.query(ConsoleConversationActionMenu)
+        assert len(mounted) == 1, (
+            f"expected one replaced menu, found {len(mounted)}"
+        )
+
+
 @pytest.mark.unit
 def test_menu_width_constant_and_stylesheet_cannot_drift() -> None:
     """The two encodings of the menu's width must agree.

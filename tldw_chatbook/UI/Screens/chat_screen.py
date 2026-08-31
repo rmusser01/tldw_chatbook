@@ -1788,11 +1788,14 @@ class ChatScreen(BaseAppScreen):
         """Expand the hidden Console composer and return keyboard focus to it.
 
         An open slash-command popup swallows Escape first and is dismissed
-        instead, leaving the collapsed composer untouched.
+        instead, leaving the collapsed composer untouched; an open
+        conversation row menu does the same (TASK-25709).
         """
         if self._console_setup_modal_blocking():
             return
         if self._dismiss_console_command_popup():
+            return
+        if self._dismiss_console_conversation_action_menus():
             return
         self._set_console_composer_collapsed(False)
 
@@ -4288,6 +4291,8 @@ class ChatScreen(BaseAppScreen):
             return
         if self._dismiss_console_command_popup():
             return
+        if self._dismiss_console_conversation_action_menus():
+            return
         self._focus_console_composer_if_needed(force=True)
 
     def action_new_console_tab(self) -> None:
@@ -4536,7 +4541,27 @@ class ChatScreen(BaseAppScreen):
 
     # ---- Conversation action menu (TASK-23200) -------------------------
 
-    def _open_console_conversation_action_menu(self, opener: Button) -> None:
+    def _dismiss_console_conversation_action_menus(self) -> bool:
+        """Fold any open conversation row menu; True when one was open.
+
+        TASK-25709: the Escape consumers' guard, slotting in exactly where
+        ``_dismiss_console_command_popup`` already sits -- an open menu
+        swallows Escape before the action's own focus work runs. Focus is
+        NOT restored to the opener here: Escape arrived from outside the
+        menu (inside it, the menu's own ``on_key`` claims the key first),
+        so the user's focus stays where it is. Lazy import per ADR-097 --
+        this module must stay off the ``_ui_ready`` boot leg.
+
+        Returns:
+            True when a menu was open and has been dismissed.
+        """
+        from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
+            dismiss_conversation_action_menus,
+        )
+
+        return dismiss_conversation_action_menus(self, restore_focus=False) > 0
+
+    async def _open_console_conversation_action_menu(self, opener: Button) -> None:
         """Anchor the row action menu beneath the pressed asterisk.
 
         Args:
@@ -4547,12 +4572,17 @@ class ChatScreen(BaseAppScreen):
         )
         from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
             ConsoleConversationActionMenu,
-            dismiss_conversation_action_menus,
+            conversation_action_menus_on_screen,
         )
 
         # Only one menu at a time; a second asterisk replaces the first
         # rather than stacking two overlays the user must dismiss twice.
-        dismiss_conversation_action_menus(self)
+        # The awaits are load-bearing (TASK-25709): ``remove()`` only
+        # schedules the prune, so mounting the same DOM id over a
+        # still-attached menu raised Textual's app-fatal ``DuplicateIds``
+        # on consecutive opens.
+        for menu in conversation_action_menus_on_screen(self):
+            await menu.await_detachment()
 
         conversation_id = (
             str(getattr(opener, "conversation_id", "") or "").strip() or None
@@ -4640,8 +4670,15 @@ class ChatScreen(BaseAppScreen):
         breaching the module-count ratchet. Every other reference to those two
         modules is already lazy, so this keeps the whole feature off the boot
         leg until a user actually opens the menu.
+
+        TASK-25709: `restore_focus` is False for outside-click and
+        stranded-Escape dismissals -- Textual has already moved focus to the
+        clicked widget (it focuses before the press bubbles to the screen),
+        and restoring the opener there would yank focus back to the rail.
         """
         event.stop()
+        if not getattr(event, "restore_focus", True):
+            return
         if not event.opener_id:
             return
         try:
@@ -17074,7 +17111,13 @@ class ChatScreen(BaseAppScreen):
                 # before the loop exit ("make the overlay go away" must not
                 # cost the loop). The priority binding's action makes the
                 # same claim; this bubbling-order branch is the fallback.
+                # TASK-25709: an open conversation row menu claims it too,
+                # on the same overlay-before-loop rule.
                 if self._dismiss_console_command_popup():
+                    event.stop()
+                    event.prevent_default()
+                    return
+                if self._dismiss_console_conversation_action_menus():
                     event.stop()
                     event.prevent_default()
                     return
@@ -17101,15 +17144,17 @@ class ChatScreen(BaseAppScreen):
             hands_free.controller.on_composer_key()
         # TASK-24417: while a realtime loop is active, an open slash popup
         # claims Escape before the loop's key policy consumes it -- the same
-        # claim the hands-free branches make above.
-        if (
-            event.key == "escape"
-            and self._realtime.session is not None
-            and self._dismiss_console_command_popup()
-        ):
-            event.stop()
-            event.prevent_default()
-            return
+        # claim the hands-free branches make above. TASK-25709: the
+        # conversation row menu makes the same overlay-first claim.
+        if event.key == "escape" and self._realtime.session is not None:
+            if self._dismiss_console_command_popup():
+                event.stop()
+                event.prevent_default()
+                return
+            if self._dismiss_console_conversation_action_menus():
+                event.stop()
+                event.prevent_default()
+                return
         if self._realtime.handle_key(event.key):
             event.stop()
             event.prevent_default()
@@ -17785,6 +17830,9 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         """Fold selection menus when a click lands outside every transcript.
 
+        TASK-25709: conversation row action menus (Context rail asterisk)
+        fold here too, on the same contract.
+
         Console selection phase 1 (click-outside dismissal, screen half).
         Clicks that stay INSIDE a transcript are handled there (rows stop
         their own clicks; the transcript's ``on_click`` owns the in-area
@@ -17823,9 +17871,21 @@ class ChatScreen(BaseAppScreen):
                 return  # the transcript/menu own their in-area interaction
             if getattr(node, "id", None) == "console-message-more-menu":
                 return  # the transcript/menu own their in-area interaction
+            if getattr(node, "id", None) == "console-conversation-action-menu":
+                # TASK-25709: the row menu owns its in-area interaction --
+                # border and padding clicks must not fold it mid-press.
+                return
             node = getattr(node, "parent", None)
         menus = selection_menus_on_screen(self)
         more_menus = message_more_menus_on_screen(self)
+        # TASK-25709: the conversation row menu folds on the same contract.
+        # Lazy import per ADR-097; after first load this is a cached-module
+        # lookup, not a DOM walk, so the TASK-21119 per-press rule holds.
+        from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
+            conversation_action_menus_on_screen,
+        )
+
+        conversation_menus = conversation_action_menus_on_screen(self)
         # Only transcripts the cleanup would actually change; on the rest,
         # all three steps below are provable no-ops (see
         # ``ConsoleTranscript.has_pending_selection_ui``).
@@ -17834,7 +17894,7 @@ class ChatScreen(BaseAppScreen):
             for transcript in console_transcripts_on_screen(self)
             if transcript.has_pending_selection_ui
         ]
-        if not menus and not more_menus and not transcripts:
+        if not menus and not more_menus and not conversation_menus and not transcripts:
             return  # the common case: no selection UI anywhere on the screen
         # Menus mount on the screen now; route the dismissal through every
         # transcript's centralized selection-UI cleanup (clears highlight +
@@ -17848,6 +17908,11 @@ class ChatScreen(BaseAppScreen):
             if not getattr(menu, "_pruning", False):
                 menu.remove()
         dismiss_message_more_menus(more_menus)
+        # restore_focus=False: Textual has already moved focus to the clicked
+        # widget (it focuses before the press bubbles here), and the opener
+        # restore would pull focus back to the rail.
+        for menu in conversation_menus:
+            menu.dismiss_menu(restore_focus=False)
 
     def on_mouse_down(self, event: MouseDown) -> None:
         """Dismiss selection UI before descendants may consume the click."""
@@ -18671,7 +18736,7 @@ class ChatScreen(BaseAppScreen):
             # than silently toggling a favourite, so favouriting, status,
             # archive, rename and delete all reach the user from one place.
             event.stop()
-            self._open_console_conversation_action_menu(event.button)
+            await self._open_console_conversation_action_menu(event.button)
             return
         # NOTE: the `console-workspace-conversations-toggle` branch that stood
         # here was deleted in wave 4. Commit 3b0374479 removed the only button
