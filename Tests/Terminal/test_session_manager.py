@@ -683,6 +683,41 @@ def test_parser_failure_disables_input_and_raw_drains_only_after_death() -> None
     assert terminal.projection(session_id) is None
 
 
+def test_parser_failure_prefers_explicit_cleanup_with_original_attempt() -> None:
+    clock = ManualClock(705.0)
+
+    class ParserFailureAwareBackend(RecordingBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self.parser_failure_attempts: list[CleanupAttempt] = []
+
+        def cleanup(self, attempt: CleanupAttempt) -> CleanupProof:
+            self.cleanup_attempts.append(attempt)
+            raise AssertionError("generic cleanup consumed the parser-failure deadline")
+
+        def cleanup_parser_failure(self, attempt: CleanupAttempt) -> CleanupProof:
+            self.parser_failure_attempts.append(attempt)
+            return CleanupProof(True, True, False)
+
+    backend = ParserFailureAwareBackend()
+    terminal = TerminalSessionManager(
+        lambda: True,
+        lambda: backend,
+        monotonic_clock=clock,
+    )
+    terminal.arm(acknowledge_disclosure=True)
+    session_id = create_running_session(terminal, "explicit-parser-cleanup")
+
+    receipt = terminal.parser_failed(session_id)
+
+    assert receipt is not None
+    assert terminal.wait_for_cleanup(session_id, timeout_seconds=1)
+    assert backend.parser_failure_attempts == [receipt.attempt]
+    assert receipt.attempt == CleanupAttempt(705.0)
+    assert backend.cleanup_attempts == []
+    assert terminal.projection(session_id) is None
+
+
 def test_parser_failure_never_raw_drains_without_process_death_proof() -> None:
     backend = RecordingBackend(cleanup_proof=CleanupProof(False, False, False))
     terminal = TerminalSessionManager(lambda: True, lambda: backend)
@@ -1417,7 +1452,7 @@ def test_attempted_start_failure_runs_cleanup_before_releasing_ownership(
     assert terminal.projections() == ()
 
 
-def test_shell_exit_without_eof_retains_cleanup_unproven_not_exited() -> None:
+def test_process_only_proof_without_eof_retains_cleanup_unproven() -> None:
     backend = RecordingBackend(cleanup_proof=CleanupProof(True, False, False))
     terminal = TerminalSessionManager(lambda: True, lambda: backend)
     terminal.arm(acknowledge_disclosure=True)
