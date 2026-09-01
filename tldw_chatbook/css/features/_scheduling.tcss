@@ -265,7 +265,10 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
 }
 
 /* Compact mode (see SchedulesWorkbench.on_resize): the Queue tab label
- * already names the pane; the in-pane title's row goes to the table. */
-#scheduling-workbench.compact #scheduling-list-title {
+ * already names the pane; the in-pane title/New-button row goes to the
+ * table (80x24 has exactly one spare row -- the New button stays reachable
+ * via the `c` key, which the footer advertises). Hiding the header hides
+ * the title Static nested inside it too. */
+#scheduling-workbench.compact #scheduling-list-header {
     display: none;
 }
