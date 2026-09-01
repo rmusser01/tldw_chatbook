@@ -768,3 +768,40 @@ def test_split_demotion_sees_later_modules(tmp_path: Path) -> None:
     # Without a tree, only the intra-module pass applies.
     remainder_none, moved_none = css_builder.split_agentic_terminal(css)
     assert ".console-x" in moved_none["console"]
+
+
+def test_split_sheets_carry_only_their_own_owners_rules() -> None:
+    """No sheet holds another surface's tokens (Qodo #2281 finding 8).
+
+    The union harnesses deliberately model the steady-state app, so they
+    cannot catch a Console rule generated into the Library sheet -- a
+    misplacement that would strand the rule behind the wrong screen's
+    first-visit load. This checks ownership at the GENERATION level
+    instead: every ``{owner}-`` prefixed token in a sheet belongs to that
+    sheet's owner (the pinned cross-surface vocabulary lives in the bundle
+    and must not appear in any sheet at all).
+    """
+    owners = tuple(css_builder.AGENTIC_SPLIT_SHEETS)
+    for owner, filename in css_builder.AGENTIC_SPLIT_SHEETS.items():
+        text = re.sub(
+            r"/\*.*?\*/",
+            "",
+            (_CSS_ROOT / filename).read_text(encoding="utf-8"),
+            flags=re.DOTALL,
+        )
+        selector_text = " ".join(
+            match for match in re.findall(r"([^{}]+)\{", text)
+        )
+        tokens = set(re.findall(r"[#.]([A-Za-z0-9_-]+)", selector_text))
+        for token in sorted(tokens):
+            assert token not in css_builder.AGENTIC_SPLIT_PINNED_TOKENS, (
+                f"{filename}: pinned cross-surface token .{token} must stay "
+                "in the bundle -- regenerate with build_css.py"
+            )
+            for other in owners:
+                if other == owner:
+                    continue
+                assert token != other and not token.startswith(other + "-"), (
+                    f"{filename}: token .{token} belongs to the {other} "
+                    f"surface but was generated into the {owner} sheet"
+                )

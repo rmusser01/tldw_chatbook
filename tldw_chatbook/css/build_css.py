@@ -840,22 +840,52 @@ def main():
     # Output file
     output_file = css_dir / "tldw_cli_modular.tcss"
 
-    # Build the CSS. The split sheets are written FIRST, deliberately
-    # (Qodo #2281): if any later builder fails mid-run, new sheets beside
-    # the old fat bundle merely duplicate the moved rules, while a new
-    # remainder bundle beside old sheets would silently DROP them.
-    build_agentic_split(css_dir, css_dir)
-    build_css(css_dir, output_file)
-    build_widget_defaults(
-        css_dir,
-        css_dir / WIDGET_DEFAULTS_SELF_FILENAME,
-        css_dir / WIDGET_DEFAULTS_SCOPED_FILENAME,
-    )
-    build_screen_css(
-        css_dir,
-        css_dir / SCREEN_CSS_SELF_FILENAME,
-        css_dir / SCREEN_CSS_SCOPED_FILENAME,
-    )
+    # Qodo #2281 (build atomicity): every output is generated into a staging
+    # directory first and swapped into place only after ALL builders
+    # succeed. A mid-run failure -- widget extraction raising, a screen
+    # block that cannot be lifted -- previously left a mixed generation on
+    # disk (new bundle beside old sheets drops the moved agentic rules),
+    # and both production entry paths log a failed build and continue, so
+    # the app would boot on it. The stage lives inside css_dir so each
+    # os.replace stays a same-filesystem atomic rename.
+    #
+    # Within the swap the order still encodes the loss-direction: split
+    # sheets land before the bundle, so a crash mid-swap duplicates moved
+    # rules in the old fat bundle rather than dropping them from the new
+    # remainder bundle.
+    import shutil
+
+    stage = css_dir / ".css-build-stage"
+    if stage.exists():
+        shutil.rmtree(stage)
+    stage.mkdir()
+    try:
+        build_agentic_split(css_dir, stage)
+        build_css(css_dir, stage / output_file.name)
+        build_widget_defaults(
+            css_dir,
+            stage / WIDGET_DEFAULTS_SELF_FILENAME,
+            stage / WIDGET_DEFAULTS_SCOPED_FILENAME,
+        )
+        build_screen_css(
+            css_dir,
+            stage / SCREEN_CSS_SELF_FILENAME,
+            stage / SCREEN_CSS_SCOPED_FILENAME,
+        )
+        publish_order = [
+            *AGENTIC_SPLIT_SHEETS.values(),
+            output_file.name,
+            WIDGET_DEFAULTS_SELF_FILENAME,
+            WIDGET_DEFAULTS_SCOPED_FILENAME,
+            SCREEN_CSS_SELF_FILENAME,
+            SCREEN_CSS_SCOPED_FILENAME,
+        ]
+        for name in publish_order:
+            staged = stage / name
+            if staged.is_file():  # the agentic split may legitimately skip
+                os.replace(staged, css_dir / name)
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
     # Qodo finding on PR #1831 (build race): the sheets above were built
     # from one read of the sources and write_build_manifest re-reads them;
     # an edit between those reads would record NEW content in the manifest
