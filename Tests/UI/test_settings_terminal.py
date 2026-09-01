@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import inspect
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +17,7 @@ from Tests.UI.test_settings_raw_cli import (
     _wait_for_save,
     _wait_until,
 )
+from tldw_chatbook.Terminal.contracts import TerminalLifecycle
 from tldw_chatbook.Terminal.session_manager import TerminalArmResult
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
@@ -47,7 +50,10 @@ class RecordingTerminalRuntime:
         self.arm_calls: list[bool] = []
         self.disarm_calls = 0
         self._projections = tuple(
-            SimpleNamespace(session_id=f"session-{index}")
+            SimpleNamespace(
+                session_id=f"session-{index}",
+                lifecycle=TerminalLifecycle.RUNNING,
+            )
             for index in range(session_count)
         )
 
@@ -65,6 +71,56 @@ class RecordingTerminalRuntime:
 
     def projections(self) -> tuple[object, ...]:
         return self._projections
+
+
+def test_terminal_arm_handler_has_google_style_parameter_docs():
+    docstring = inspect.getdoc(SettingsScreen.handle_terminal_arm_pressed) or ""
+
+    assert "Args:" in docstring
+    assert "event:" in docstring
+
+
+def _count_terminal_sessions(runtime: object | None) -> int | None:
+    screen = SimpleNamespace(_terminal_runtime=lambda: runtime)
+    return SettingsScreen._terminal_live_session_count(screen)
+
+
+def test_terminal_live_session_count_only_counts_actionable_lifecycles():
+    assert _count_terminal_sessions(None) == 0
+
+    runtime = SimpleNamespace(projections=lambda: ())
+    assert _count_terminal_sessions(runtime) == 0
+
+    runtime = SimpleNamespace(
+        projections=lambda: tuple(
+            SimpleNamespace(lifecycle=lifecycle) for lifecycle in TerminalLifecycle
+        )
+    )
+    assert _count_terminal_sessions(runtime) == 6
+
+    runtime = SimpleNamespace(
+        projections=lambda: tuple(
+            SimpleNamespace(lifecycle=lifecycle)
+            for lifecycle in (
+                TerminalLifecycle.EXITED,
+                TerminalLifecycle.CLOSED,
+                TerminalLifecycle.CLEANUP_UNPROVEN,
+            )
+        )
+    )
+    assert _count_terminal_sessions(runtime) == 0
+
+
+def test_terminal_live_session_count_failure_logs_safe_runtime_context(caplog):
+    def fail_projections() -> tuple[object, ...]:
+        raise RuntimeError("projection failure")
+
+    runtime = SimpleNamespace(projections=fail_projections)
+
+    with caplog.at_level(logging.ERROR):
+        assert _count_terminal_sessions(runtime) is None
+
+    assert "runtime_type=SimpleNamespace" in caplog.text
 
 
 @pytest.mark.asyncio

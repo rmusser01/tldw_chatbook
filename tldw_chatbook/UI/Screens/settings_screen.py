@@ -4439,13 +4439,24 @@ class SettingsScreen(BaseAppScreen):
         try:
             projections = tuple(runtime.projections())
         except Exception:
-            logger.exception("Failed to inspect Terminal sessions before disarm")
+            logger.exception(
+                "Failed to inspect Terminal sessions before disarm "
+                "(runtime_type=%s)",
+                type(runtime).__name__,
+            )
             return None
         count = 0
         for projection in projections:
             lifecycle = getattr(projection, "lifecycle", None)
             lifecycle_value = getattr(lifecycle, "value", lifecycle)
-            if lifecycle_value not in {"closed", "exited"}:
+            if lifecycle_value in {
+                "reserved",
+                "creating",
+                "admitting",
+                "running",
+                "draining",
+                "closing",
+            }:
                 count += 1
         return count
 
@@ -23539,6 +23550,11 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#settings-terminal-arm")
     def handle_terminal_arm_pressed(self, event: Button.Pressed) -> None:
+        """Arm or disarm persistent Terminal authority for this launch.
+
+        Args:
+            event: Press event from the Terminal authority button.
+        """
         event.stop()
         if getattr(self, "_terminal_confirmation_pending", False):
             self.app.notify(
