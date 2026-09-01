@@ -50,7 +50,7 @@ class TerminalBackend(Protocol):
         ...
 
     def finalize_shutdown(self) -> None:
-        """Close remaining parent-owned handles without waiting."""
+        """Fence future startup and close parent-owned handles without waiting."""
         ...
 
     def cleanup(self, attempt: CleanupAttempt) -> CleanupProof:

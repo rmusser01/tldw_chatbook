@@ -754,6 +754,85 @@ async def test_terminal_manager_shutdown_is_shared_and_shielded_from_waiter_canc
     assert terminal < console < buddy, source
 
 
+@pytest.mark.asyncio
+async def test_app_shutdown_drains_and_finalizes_a_real_terminal_manager():
+    """The app boundary drives real manager cleanup through finalization."""
+    from tldw_chatbook.Terminal.contracts import (
+        AdmissionGate,
+        BackendIdentity,
+        CleanupAttempt,
+        CleanupProof,
+        TerminalLaunchRequest,
+    )
+    from tldw_chatbook.Terminal.session_manager import TerminalSessionManager
+    from tldw_chatbook.app import TldwCli
+
+    cleanup_entered = threading.Event()
+    cleanup_release = threading.Event()
+
+    class Backend:
+        def __init__(self) -> None:
+            self.finalize_calls = 0
+
+        def start(
+            self,
+            _request: TerminalLaunchRequest,
+            admission: AdmissionGate,
+        ) -> BackendIdentity:
+            return BackendIdentity(session_id=admission.token)
+
+        def read(self, _maximum: int = 64 * 1024) -> bytes | None:
+            return None
+
+        def write(self, _data: bytes) -> None:
+            return None
+
+        def resize(self, _columns: int, _rows: int) -> None:
+            return None
+
+        def request_priority_close(self) -> None:
+            return None
+
+        def cleanup(self, _attempt: CleanupAttempt) -> CleanupProof:
+            cleanup_entered.set()
+            assert cleanup_release.wait(1)
+            return CleanupProof()
+
+        def finalize_shutdown(self) -> None:
+            self.finalize_calls += 1
+
+    backend = Backend()
+    manager = TerminalSessionManager(lambda: True, lambda: backend)
+    manager.arm(acknowledge_disclosure=True)
+    created = manager.create_session(
+        TerminalLaunchRequest(
+            name="app-shutdown-integration",
+            shell="default",
+            start_directory=str(Path.cwd()),
+            columns=80,
+            rows=24,
+        )
+    )
+    assert created.admitted is True
+
+    app = object.__new__(TldwCli)
+    app.terminal_session_manager = manager
+    app._terminal_session_manager_shutdown_task = None
+
+    first = asyncio.create_task(TldwCli._shutdown_terminal_session_manager(app))
+    assert await asyncio.to_thread(cleanup_entered.wait, 1)
+    second = asyncio.create_task(TldwCli._shutdown_terminal_session_manager(app))
+
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    assert backend.finalize_calls == 0
+
+    cleanup_release.set()
+    await asyncio.wait_for(second, 1)
+    assert backend.finalize_calls == 1
+
+
 @pytest.mark.unit
 def test_persona_buddy_is_app_owned_and_shutdown_after_console_producers():
     """Console producers stop before Buddy drains, which precedes profiles.

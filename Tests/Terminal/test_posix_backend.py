@@ -1247,6 +1247,62 @@ def test_finalize_shutdown_closes_the_master_without_waiting(
         os.fstat(master_fd)
 
 
+def test_finalize_shutdown_fences_master_publication_during_start(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = PosixTerminalBackend(environment_factory=lambda: _environment(tmp_path))
+    openpty_entered = Event()
+    release_openpty = Event()
+    real_openpty = os.openpty
+    opened_descriptors: list[int] = []
+    outcome: dict[str, object] = {}
+
+    def blocked_openpty() -> tuple[int, int]:
+        descriptors = real_openpty()
+        opened_descriptors.extend(descriptors)
+        openpty_entered.set()
+        assert release_openpty.wait(1)
+        return descriptors
+
+    def start_backend() -> None:
+        try:
+            outcome["identity"] = backend.start(
+                TerminalLaunchRequest(
+                    name="finalized-during-start",
+                    shell="bash",
+                    start_directory=str(tmp_path),
+                    columns=80,
+                    rows=24,
+                ),
+                AdmissionGate(admitted=True, token="finalized-during-start"),
+            )
+        except Exception as error:
+            outcome["error"] = error
+
+    monkeypatch.setattr(os, "openpty", blocked_openpty)
+    launch_thread = Thread(target=start_backend)
+    try:
+        launch_thread.start()
+        assert openpty_entered.wait(1)
+        backend.finalize_shutdown()
+        release_openpty.set()
+        launch_thread.join(3)
+
+        assert not launch_thread.is_alive()
+        assert isinstance(outcome.get("error"), RuntimeError)
+        assert "identity" not in outcome
+        assert backend._master_fd is None
+        for descriptor in opened_descriptors:
+            with pytest.raises(OSError):
+                os.fstat(descriptor)
+    finally:
+        release_openpty.set()
+        launch_thread.join(3)
+        monkeypatch.undo()
+        _cleanup_backend_exact(backend, require_proven=False)
+
+
 def test_exact_shell_exit_is_singly_reaped_and_pty_reaches_eof(
     backend: PosixTerminalBackend,
 ) -> None:
