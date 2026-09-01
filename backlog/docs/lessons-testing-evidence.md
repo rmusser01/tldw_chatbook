@@ -10442,6 +10442,9 @@ the answer.
 **And be suspicious of your own machine.** Concurrent test runs raise flake rates
 for timing-sensitive UI tests, so failures observed while sweeps or other bisects
 are running deserve a quiet-machine re-check before they become findings.
+
+---
+
 ## Encrypted repository deletion must be tested with stale open instances (TASK-24400, 2026-08-29)
 
 **What happened.** The first Personal Context repository implementation passed
@@ -10483,3 +10486,35 @@ subject, assert the generated semantic keys are unique, and run at least one
 end-to-end test that answers and commits every question in the real pack. This
 is especially important when a compact topic label also participates in record
 identity.
+
+---
+
+## A profiled cost is not a felt cost — re-time hot paths without the profiler
+
+**Incident.** TASK-25888, 2026-08-31, the Console button-latency hunt. cProfile
+showed `Screen._refresh_layout` at 61 ms per rail click, and I built the whole
+"110-165 ms per click" latency model on it — filed in the task description and
+argued to the user. A paired direct measurement (perf_counter around the same
+calls, same harness, no profiler) put layout at **8.5 ms**. The profiler's own
+tracing overhead had inflated the hot path ~7x, and everything downstream of
+that number was proportionally wrong.
+
+Same investigation, two more instrument traps, all three now demonstrated in
+one session:
+
+- **Worker-thread cumtime does not add to the measured path.** The profile
+  showed the config save at 166 ms/press cumulative; stubbing it moved the
+  press median by ~6-11 ms. Concurrent GIL time shows up in cumtime as if it
+  were serial.
+- **Pick the paint that matches the felt thing.** press→FIRST paint said
+  30 ms (measures the ack, misses the bill). press→SETTLED said ~210 ms on
+  both sides of a fix (measures the tail of a trailing reconcile cascade the
+  user never feels). The metric that tracked the fix was **summed main-thread
+  blocking** inside layout+paint per press.
+
+**What to do.** Use cProfile to find WHERE time goes, never to say HOW MUCH:
+before quoting any per-call figure, re-time that call with perf_counter and no
+profiler attached. Report worker-thread work as concurrent, and prove its
+main-thread tax by stubbing it, not by reading cumtime. And when a fix is
+claimed to make something faster, measure the quantity the user feels —
+blocking time, bytes written — with the same instrument on both trees.
