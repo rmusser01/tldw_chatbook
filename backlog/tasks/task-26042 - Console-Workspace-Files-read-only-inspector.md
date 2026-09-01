@@ -114,6 +114,13 @@ harness loads the production Console sheet. Targeted verification passed 94
 service/modal/integration tests, 11 controller/routing/dismissal tests, 20
 workspace-action/CSS integrity tests, both startup ratchets, focused Ruff, and
 `git diff --check`; no new ADR or generalized lesson was required.
+The final Qodo rerun found one cancellation-cleanup gap in the controller's
+single-visit admission claim. Cleanup now uses an await-free, event-loop-local
+compare-and-clear, so cancellation cannot interrupt a lock reacquisition and
+strand the claim. A double-cancellation regression reproduced the old leak and
+passes with the fix; all 11 Workspace Files controller tests pass. This
+hardening stays within ADR-079's existing lifecycle boundary and requires no
+new ADR or generalized lesson.
 <!-- SECTION:NOTES:END -->
 
 ## Definition of Done

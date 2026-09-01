@@ -932,10 +932,12 @@ class ConsoleWorkspaceController:
                     raise
         finally:
             # Cancellation is a normal outcome for a Textual exclusive
-            # worker. The claim must never survive it and block later visits.
-            async with self._workspace_files_admission_lock:
-                if self._workspace_files_admission_claim == requested_id:
-                    self._workspace_files_admission_claim = None
+            # worker. Claim access is confined to this event loop, so the
+            # await-free compare-and-clear is atomic with respect to other
+            # request coroutines. Reacquiring the lock here would make the
+            # cleanup itself interruptible by a second cancellation.
+            if self._workspace_files_admission_claim == requested_id:
+                self._workspace_files_admission_claim = None
 
     def _resolve_workspace_files_visit(
         self, workspace_id: str

@@ -440,6 +440,45 @@ async def test_workspace_files_cancelled_resolution_releases_its_admission_claim
 
 
 @pytest.mark.asyncio
+async def test_workspace_files_cleanup_cannot_be_cancelled_while_lock_is_contended():
+    """A second cancellation cannot strand the admission claim during cleanup."""
+    entered = Event()
+    release = Event()
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=object(),
+            notify=_noop,
+        )
+    )
+
+    def resolve(_workspace_id: str):
+        entered.set()
+        release.wait(timeout=2)
+        return None
+
+    controller._resolve_workspace_files_visit = resolve  # type: ignore[method-assign]
+    pending = asyncio.create_task(controller.request_workspace_files("ws-a"))
+    for _ in range(100):
+        if entered.is_set():
+            break
+        await asyncio.sleep(0.02)
+    assert entered.is_set(), "workspace-files resolution did not start"
+
+    await controller._workspace_files_admission_lock.acquire()
+    try:
+        pending.cancel()
+        await asyncio.sleep(0)
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+    finally:
+        controller._workspace_files_admission_lock.release()
+        release.set()
+
+    assert controller._workspace_files_admission_claim is None
+
+
+@pytest.mark.asyncio
 async def test_workspace_files_claim_blocks_different_request_and_promotes_once():
     """The real admission gate, rather than worker cancellation, owns races."""
     entered = Event()
