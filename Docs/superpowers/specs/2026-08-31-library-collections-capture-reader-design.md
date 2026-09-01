@@ -40,10 +40,10 @@ as read-only legacy data. They are not renamed, imported, or silently reinterpre
 
 - Make Collections a coherent capture-to-reading destination shaped like Library Media.
 - Support the same core browsing and reading loop under one explicit Local or Server source.
-- Keep Local captures independent of Media records and server captures independent of the
-  selected server profile, principal, and workspace of any other session.
+- Keep Local captures independent of Media records and Server captures qualified by the selected
+  server profile and authenticated principal.
 - Keep every matching capture reachable through deterministic 20-row pages with an exact
-  active-scope total.
+  active-scope total after the Server snapshot prerequisite below is satisfied.
 - Preserve truthful state through slow extraction, rapid traversal, source switches,
   concurrent writes, partial failures, and application restarts.
 - Let Library and Items collapse independently, with reclaimed Library width expanding
@@ -63,7 +63,8 @@ as read-only legacy data. They are not renamed, imported, or silently reinterpre
 - Automatically converting legacy generic Collections into captures.
 - Building the umbrella Collections features for templates, digest schedules, or full
   import/export management in this task.
-- Adding or changing `tldw_server` endpoints.
+- Adding a new public `tldw_server` endpoint. One internal same-endpoint snapshot fix is a Server
+  enablement prerequisite.
 - Claiming Local and Server feature parity where one authority lacks a capability.
 - Creating another adaptive-pane framework instead of using the Library-owned shell.
 
@@ -75,10 +76,11 @@ favorite flag, tags, freeform note, timestamps, optional highlights, optional li
 and optional Media provenance. Supported reading statuses are `saved`, `reading`, `read`,
 and `archived`.
 
-The server may preserve a capture even when fetching or extracting the URL fails. Local
-mode follows the same user-visible rule: capture persistence and content extraction are two
-separate outcomes. A user never loses the bookmark merely because readable content could not
-be produced.
+The current server performs fetch/extraction before its database upsert; a handled fetch failure
+may still produce a capture with `last_fetch_error`, but it is not a commit-first asynchronous
+lifecycle. Local mode deliberately commits first and extracts afterward. The UI presents these
+timings truthfully instead of claiming mechanical parity. Under either authority, an extraction
+failure that follows an authoritative committed response never removes the bookmark.
 
 The wider server Collections umbrella also includes templates, digest schedules, imports,
 and exports. Those workflows remain separate destinations or follow-up work; they do not
@@ -106,9 +108,18 @@ At cutover:
 - generic-container create, rename, membership, and delete entry points return the explicit
   structured reason `legacy_read_only` during their compatibility window;
 - no old tool or route name is redirected to new captures;
-- a clearly labelled legacy adapter may perform bounded listing/detail and complete streaming
-  JSON export only; export uses a user-chosen validated path, never truncates at an internal page
-  boundary, and never writes record content into logs;
+- whenever any v1 row exists, **More > Legacy Collections data…** remains reachable from the
+  Collections destination and opens a distinctly labelled read-only recovery view;
+- that required recovery adapter provides bounded inspection of active and deleted collections
+  and every membership plus a complete schema-versioned streaming JSON export;
+- export holds one coherent SQLite read snapshot, uses stable collection/member ordering, publishes
+  atomically to a user-chosen validated path, never truncates at an internal page boundary, and
+  never writes record content into logs;
+- the export envelope is `tldw-chatbook-legacy-collections` version 1 with `exported_at`, a
+  `collections` array ordered by `collection_id` (including `deleted_at`), and a `memberships`
+  array ordered by `collection_id, membership_id`; values preserve stored text without inventing
+  capture URLs or types;
+- the recovery entry and adapter remain until a later ADR explicitly decides migration or removal;
 - tool, RAG, Home, rail-count, and help inventories stop describing generic containers as the
   current Collections product;
 - the configured `library_collections_db_path` remains the database location, so users do not
@@ -121,8 +132,13 @@ At cutover:
 Collections follows the active Library source:
 
 - **Local** — the capture tables in the resolved profile's configured Collections database;
-- **Server** — the authenticated Reading List dataset for the selected server profile,
-  authenticated principal, and workspace scope when present.
+- **Server** — the authenticated Reading List dataset for the selected server profile and
+  authenticated principal.
+
+The current Reading API has no workspace or dataset parameter. Changing Chatbook's local workspace
+therefore does not change Server Collections authority, clear its selection, or hide its retained
+receipt. Workspace may join the authority key only after a future Reading API explicitly accepts
+and returns that scope.
 
 The source selector never offers a combined view. A source switch clears the prior page,
 selected and loaded identities, detail, saved-search snapshot, and exact totals before requesting
@@ -136,7 +152,7 @@ Every list row, detail request, cache entry, selection, mutation, and delayed co
 qualified by an opaque authority key plus the source-owned item id. The authority key includes:
 
 - Local profile and resolved Collections database identity; or
-- Server profile, authenticated principal, and workspace/dataset identity.
+- Server profile and authenticated principal identity.
 
 Raw local paths and private principal identifiers are not displayed or logged. A compact,
 non-reversible authority fingerprint may be used internally. Persisted layout preferences are
@@ -183,7 +199,10 @@ The migration:
 
 The current `schema_version` table's maximum-version convention remains valid. Fresh creation,
 real v1-to-v2 migration, failed migration rollback, concurrent-open behavior, and v2 reopen are
-all tested.
+all tested. If `MAX(schema_version) > 2`, this implementation refuses capture reads and writes with
+`schema_too_new`; only the explicitly compatible v1 legacy inspector/export may remain available
+after verifying its expected tables. It never stamps or attempts to repair an unknown future
+schema.
 
 ### Concurrency and coherent reads
 
@@ -210,8 +229,7 @@ Local save mirrors the server's idempotent capture semantics:
   otherwise preserving its current status; and
 - content hash and extraction replacement are deterministic and revisioned.
 
-This uniqueness does not cross Local profiles, database paths, server profiles, principals, or
-workspaces.
+This uniqueness does not cross Local profiles, database paths, server profiles, or principals.
 
 ### Extraction and managed files
 
@@ -224,11 +242,30 @@ Processing states distinguish queued/processing, ready, failed, and interrupted.
 stale in-flight state becomes **Interrupted · Retry** rather than remaining busy forever. Extraction
 failure records a bounded user-safe reason while preserving the saved capture.
 
-Large offline copies are managed private files, not unbounded SQLite blobs. The database stores
-only validated relative ownership metadata, content hash, size, media type, and lifecycle state.
-File creation uses a temporary sibling plus atomic replace. A failed file operation cannot claim an
-offline copy exists. Local **Save Offline Copy** is capability-gated until this managed-file seam is
-available.
+Large offline copies are managed private files, not unbounded SQLite blobs. Local bodies live under
+the profile-resolved private data directory at
+`collections_archives/<local-authority-fingerprint>/`. The root is owner-only; published files are
+owner read/write only. The authority fingerprint is non-reversible and a capture cannot name a
+different authority's root.
+
+The database stores normalized relative ownership metadata, content hash, size, media type, and a
+two-phase lifecycle state. Every open/create/delete re-resolves beneath the authority root and
+rejects absolute paths, `..`, symlinks at any component, or root escape. Initial admission limits
+one offline copy to 50 MiB and one Local authority to 1 GiB. Quota admission and the staging
+reservation occur atomically in the write transaction and count every ready or staging reservation,
+so concurrent saves cannot each admit the same remaining capacity. A limit failure preserves the
+capture and reports the required recovery.
+
+Creation records a staging state, writes and synchronizes a temporary sibling, atomically publishes
+the file, then marks metadata ready. On restart, a staging row with a published final file is
+hash/size-validated and completed to ready; otherwise its temporary/final artifacts are removed and
+the row becomes failed. Hard delete first makes the capture and file metadata
+inaccessible under a transactional purge tombstone, removes the file, and finally deletes owned
+rows. Startup scavenging runs off-loop in bounded batches under a durable resumable cursor; it
+removes abandoned temporary files, reconciles staging rows, completes purge tombstones, and marks
+ready metadata missing if its file cannot be recovered. A crash can therefore leave recoverable
+staging/purge work, never an active row that silently claims a missing copy. Local **Save Offline
+Copy** remains disabled until this complete managed-file seam is available.
 
 ## Cross-database references
 
@@ -253,6 +290,23 @@ It does not reuse `MediaReadingScopeService` or its capture-losing normalizer. T
 the only UI entry point and normalizes both backends into capture-owned models without flattening
 away source-specific capability information.
 
+### Server enablement prerequisite
+
+The current server `list_content_items` implementation executes `COUNT(*)` and its page query as
+separate database statements. A concurrent writer can therefore produce rows and `total` from
+different snapshots. Client validation cannot reconstruct the coherence required by ADR-067.
+
+Before Server Collections browse is enabled, that existing server operation must read count and
+rows inside one database snapshot/transaction and must pass a controlled concurrent-writer test.
+This is an internal implementation correction to the existing endpoint, not a new client-facing
+endpoint. A build containing the fix advertises exact boolean
+`capabilities.hasReadingSnapshotPagesV1: true` through the existing
+`/api/v1/config/docs-info` discovery response only after that controlled test passes. Chatbook
+enables Server browse only for exact `true` under the current server-profile/principal capability
+snapshot. Missing, false, or malformed evidence fails closed as **Server Collections needs a
+paging update** with reason `server_page_snapshot_unavailable`; Local remains available. Runtime
+heuristics and page-shape validation never substitute for the attestation.
+
 ### Page request and envelope
 
 One immutable page request contains:
@@ -268,9 +322,11 @@ One immutable page request contains:
 - one-based page with fixed size 20.
 
 The response contains the complete applied scope, exact total, page, size, validated summary rows,
-and a source revision/generation marker when available. Search, filter, and sort always apply before
-paging. A fresh out-of-range page gets one generation-guarded reload of the last valid page under
-ADR-067; repeated shrink enters stale recovery rather than looping.
+and a source revision/generation marker when available. Local produces count and rows from its own
+read transaction. Server accepts the envelope as coherent only after the enablement prerequisite
+is positively established; shape validation alone is insufficient. Search, filter, and sort always
+apply before paging. A fresh out-of-range page gets one generation-guarded reload of the last valid
+page under ADR-067; repeated shrink enters stale recovery rather than looping.
 
 The exact total is shown for the active scope only. Tags and domains are typed filters and may use
 suggestions from the current item or already returned rows. They are never advertised as complete
@@ -285,14 +341,24 @@ JSON is never translated into SQL.
 
 ### Capabilities
 
-The service returns explicit per-authority capabilities for capture, update, highlights, linked
-Notes, summarize, listen, archive, offline copy, hard delete, and related recovery actions. A
-disabled action remains visible with a source-owned reason. Permission denial, unsupported API,
-offline state, missing dependency, and stale identity remain distinct reasons.
+The service returns tri-state per-authority capabilities—`unknown`, `supported`, or
+`unsupported(reason)`—for browse, capture, update, highlights, linked Notes, summarize, listen,
+archive, offline copy, hard delete, and related recovery actions. A disabled action remains visible
+with a source-owned reason. Permission denial, unsupported API, offline state, missing dependency,
+stale identity, and undiscovered support remain distinct reasons.
 
-No Local implementation is added merely to make a capability table look symmetric. Server
-endpoint absence or version mismatch downgrades that action truthfully without disabling ordinary
-reading.
+Local capabilities derive from composed services. Server support derives only from positive
+evidence: an advertised API version matched by a versioned compatibility table, a documented
+non-mutating feature probe, or an authoritative successful response for that exact feature group.
+Unknown destructive or data-creating actions remain disabled; a reachable **Check availability**
+action may run safe probes. Unknown read-only/idempotent actions may be attempted only after an
+explicit user action and downgrade on a feature-route 404. A feature-route 404 changes only that
+capability, never ordinary reading or unrelated actions.
+
+Server capability state, including `hasReadingSnapshotPagesV1`, is cached by server profile,
+authenticated principal, and advertised API version/capability snapshot. Profile, credential,
+principal, version, or capability-snapshot change invalidates it. No Local implementation is added
+merely to make the table look symmetric.
 
 ## Information architecture
 
@@ -339,9 +405,17 @@ Identity-sensitive actions remain disabled until selected and loaded identities 
 ### Quick Capture
 
 Quick Capture accepts a validated URL with optional title, tags, and freeform note. Local returns
-the committed capture before extraction completes. Server reports commitment only after an
-authoritative save response. A transport failure with no response is **Save outcome unknown**, not
-a confirmed failure or success; Retry is safe because canonical-URL upsert is idempotent.
+the committed capture before extraction completes and preserves omitted status/favorite on a
+canonical-URL retry.
+
+Current Server save performs extraction before persistence and its request defaults
+`status="saved"` and `favorite=false`. The Server UI therefore shows **Saving and extracting…**
+until an authoritative response arrives. A transport failure with no response is **Save outcome
+unknown**, not a confirmed failure or success. It offers Refresh first and never retries
+automatically. An explicit retry requires copy warning that the current server may reapply Saved
+status and clear Favorite on an existing canonical URL; canonical-URL upsert prevents a duplicate
+but is not state-idempotent. A future server change may remove this warning only after status and
+favorite become preserve-on-omission and extraction becomes commit-first.
 
 After a confirmed save, follow-up placement/detail failure does not reclassify the save. Items
 reconciles the known capture when safe, marks the page stale, and offers an authoritative refresh.
@@ -385,7 +459,9 @@ the current filter truthfully, and explains when the item was restored outside t
 
 Hard delete is separate, capability-gated, and title-specific. Confirmation states that the capture,
 its capture-owned highlights, and its managed offline copy are permanently removed and cannot be
-undone. Missing external Media or Notes targets are not part of that deletion.
+undone. Local deletion uses the purge-tombstone lifecycle above, so a crash resumes cleanup rather
+than exposing a half-deleted capture or leaking an untracked file. Missing external Media or Notes
+targets are not part of that deletion.
 
 ## Loading, stale, conflict, and recovery states
 
@@ -413,8 +489,9 @@ one destination preference section, `[library.collections_reader]`, for `items_o
 `[library.reader]`.
 
 Defaults use the shared fixed 40-column Items target, 32-column minimum, and 56-column automatic
-comfort cap. Custom width remains opt-in and uses the shared normalization. Responsive state never
-persists.
+comfort cap. Collections declares a 48-column Work minimum and 56-column Work comfort because its
+Notes mode is editable. Custom width remains opt-in and uses the shared normalization. Responsive
+state never persists.
 
 Resolution follows the shared contract:
 
@@ -427,43 +504,64 @@ Resolution follows the shared contract:
    optional pane.
 6. Widening restores requested panes and widths without rewriting preferences.
 
-Representative outcomes are evidence, not hard-coded breakpoints:
+Pure resolver evidence starts in Read mode with requested Library and Items both open, custom
+widths off, no explicit priority, and an explicit adaptive-shell content width `W`. It pins these
+exact input/output cases independently of terminal chrome:
 
-| Terminal | Expected Collections outcome |
+| Pure resolver input `W` | Effective Library / Items / Work widths |
 | --- | --- |
-| 160x50 | Library + Items + Work; wide reading surface |
-| 120x35 | Items + Work with Library responsively collapsed; full row detail |
-| 100x30 | Deterministic Items + Work or Work-priority state with both grips |
-| 80x24 | Focused Work with both restore controls and no horizontal overflow |
+| 160 | 30 / 40 / 80; all three roles open |
+| 120 | 0 / 56 / 54; Library collapsed |
+| 100 | 0 / 42 / 48; Library collapsed |
+| 80 | 0 / 0 / 70; Work priority with both grips reachable |
+
+Mounted evidence is separate. At terminals 160x50, 120x35, 100x30, and 80x24, the test records the
+actual settled `shell.content_size.width`, computes exactly one result from that measured `W` and
+the declared preferences/mode/profile, and asserts every rendered region and grip matches it. The
+canonical Collections walkthrough stores terminal size, measured `W`, requested state, Work mode,
+and resulting Library/Items/Work/grip geometry alongside its captures. It never assumes terminal
+width equals shell width and never accepts either of two layouts for one measured input.
 
 Focus follows Library, Library grip, Items controls/list, Items grip, Work toolbar/modes/content.
 Automatic collapse evacuates focus to the corresponding visible grip. Escape closes transient
-state first, then graduates outward through effective panes. No screen binding shadows terminal
-conventions or the repository's global bindings.
+state first, then graduates outward through effective panes. In any effective Work-only state, the
+next outward Escape invokes the same explicit Items reopen as the labelled restore control and
+transfers focus to the retained/first Items row; the resolver gives Items temporary priority and
+keeps Work mounted under ADR-086. No screen binding shadows terminal conventions or the
+repository's global bindings.
 
 ## Verification
 
 ### Local repository and migration
 
-- fresh v2 creation, real v1-to-v2 migration, rollback, reopen, and concurrent-open tests;
+- fresh v2 creation, real v1-to-v2 migration, rollback, reopen, concurrent-open, and synthetic
+  future-version `schema_too_new` tests;
 - v1 tables byte/row unchanged by migration and new capture operations;
 - canonical-URL upsert, tag merge, explicit archived resave, content replacement, and revision CAS;
 - exact count/page snapshot, stable tie-breaker, FTS query, page shrink, and malformed envelope;
-- extraction ready/failed/interrupted transitions and managed-file atomicity;
-- validated streaming legacy JSON export that includes every row beyond the first page.
+- extraction ready/failed/interrupted transitions, private-root containment, symlink rejection,
+  quotas, staging/purge restart recovery, and managed-file atomicity;
+- reachable legacy inspection plus validated, coherent-snapshot streaming JSON export containing
+  active/deleted collections and every stably ordered membership beyond the first page.
 
 ### Shared Local/Server contract
 
 One parameterized suite covers supported list, detail, save, update, favorite, status, tags, notes,
 archive/Undo, saved searches, highlights, linked Notes, and capabilities. Source-specific tests
 prove unsupported actions remain disabled with the correct reason. More than 40 captures prove the
-second and third pages are reachable.
+second and third pages are reachable. Server enablement additionally requires a controlled writer
+between count and row evaluation to prove the same endpoint now holds one snapshot; the pre-fix
+server must reproduce the mismatch and remain unsupported.
 
 ### Session and Textual behavior
 
 - selected versus loaded identity and settle-delay/Enter behavior;
-- source/profile/principal/database switches and complete late-response fencing;
-- committed-save/follow-up-read failure, unknown server save outcome, stale refresh, and Retry;
+- source/profile/principal/database switches and complete late-response fencing, plus proof that a
+  local workspace switch does not change Server Collections authority;
+- Local committed-save/follow-up-read failure, unknown Server save outcome with no automatic retry,
+  explicit retry warning, stale refresh, and recovery;
+- Server capability unknown/supported/unsupported transitions, per-authority cache invalidation,
+  safe probes, and feature-route 404 isolation;
 - local conflict preservation and archive receipt/Undo placement;
 - sanitized HTML/text fallback and no active or remote content execution;
 - each mode, capability-disabled copy, missing external references, and narrow toolbar overflow;
@@ -491,6 +589,8 @@ sleeps.
 | Use Media Read Later as Collections | It makes captures Media records, loses capture fields, and preserves the wrong identity model. |
 | Make Collections server-only | It breaks the approved Library source grammar and removes a useful offline/local capture workflow. |
 | Merge Local and Server captures | Identical ids or URLs can belong to different principals and authorities; merged totals and mutations would be unsafe. |
+| Accept current Server totals as exact | The count and rows can come from different database snapshots; the client cannot validate coherence back into existence. |
+| Automatically retry an unknown Server save | Canonical URL prevents duplicates, but current request defaults can reset reading status and favorite. |
 | Put captures in a new database file | It adds an ambiguous second Collections setting and recovery location without improving ownership; additive tables provide a clean boundary. |
 | Reinterpret legacy memberships as captures | A member may not be a URL capture, and automatic conversion would silently change user data semantics. |
 | Reuse Media normalizers and scope service | Their models intentionally omit capture-owned detail and the Local implementation creates Media records. |
