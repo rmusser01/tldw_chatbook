@@ -1,10 +1,10 @@
 ---
 id: TASK-26042
 title: Console Workspace Files read-only inspector
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-31 16:24'
-updated_date: '2026-08-31 17:06'
+updated_date: '2026-09-01 06:02'
 labels: []
 dependencies: []
 references:
@@ -36,16 +36,6 @@ Give Console users a safe way to inspect files from any visible named workspace 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes\nADR path: backlog/decisions/079-workspace-file-inspector-direct-user-authority-and-save-publication.md\nReason: Implements ADR-079's non-activating Console modal, direct-user read authority, revalidation, privacy, and bounded lifecycle boundaries.\n\n1. Build the revalidating read-only filesystem service with bounded list/filter/read paging and hostile-text safety.\n2. Build the Console safe modal with bounded worker lanes, responsive layouts, focus/dismiss behavior, and viewer states.\n3. Wire both typed non-activating entry points, single-visit admission, privacy-minimized attention, and graceful lifecycle behavior.\n4. Complete production-shaped and isolated live scratch evidence, documentation, independent whole-slice review, and task closure.\n\nDetailed plan: Docs/superpowers/plans/2026-08-31-task-26042-workspace-files-read-only.md
 <!-- SECTION:PLAN:END -->
-
-## Definition of Done
-<!-- DOD:BEGIN -->
-- [ ] #1 All acceptance criteria are checked only after their behavior and prohibited side effects are evidenced.
-- [x] #2 The task is moved to In Progress before an Implementation Plan is added, and that plan records ADR required: yes, ADR-079, and the reason.
-- [x] #3 Targeted automated tests, relevant static checks, and git diff --check pass; a full suite is run only after explicit user approval.
-- [x] #4 Production-shaped Textual evidence and an isolated live scratch verification cover the user-facing path and preserve unrelated Console and profile state.
-- [x] #5 Relevant documentation and concise Implementation Notes identify the approach, trade-offs, files changed, verification, and any plan deviation.
-- [ ] #6 A self-review confirms security, privacy, accessibility, performance, licensing, task dependencies, and no unrelated regression before the task is set to Done.
-<!-- DOD:END -->
 
 ## Implementation Notes
 
@@ -79,6 +69,20 @@ visited/result copy, and final untrusted file opens use non-blocking no-follow
 flags before `fstat`, so a listed file swapped to a FIFO is rejected without
 hanging read, dismissal, or quit. The combined service/modal/integration run is
 80 passed; focused Ruff and `git diff --check` are clean.
-The task remains In Progress only for the final independent whole-slice review
-and Definition of Done #1/#6; Done status is intentionally unchanged.
+An independent whole-slice re-review approved the final implementation with no
+Critical or Important findings. Final targeted verification passed all 80
+service/modal/integration tests and all 11 CSS integrity tests; focused Ruff
+and `git diff --check` are clean. The final self-review confirmed the recorded
+security, privacy, accessibility, performance, licensing, dependency, and
+regression gates without requiring a new ADR or lesson.
 <!-- SECTION:NOTES:END -->
+
+## Definition of Done
+<!-- DOD:BEGIN -->
+- [x] #1 All acceptance criteria are checked only after their behavior and prohibited side effects are evidenced.
+- [x] #2 The task is moved to In Progress before an Implementation Plan is added, and that plan records ADR required: yes, ADR-079, and the reason.
+- [x] #3 Targeted automated tests, relevant static checks, and git diff --check pass; a full suite is run only after explicit user approval.
+- [x] #4 Production-shaped Textual evidence and an isolated live scratch verification cover the user-facing path and preserve unrelated Console and profile state.
+- [x] #5 Relevant documentation and concise Implementation Notes identify the approach, trade-offs, files changed, verification, and any plan deviation.
+- [x] #6 A self-review confirms security, privacy, accessibility, performance, licensing, task dependencies, and no unrelated regression before the task is set to Done.
+<!-- DOD:END -->
