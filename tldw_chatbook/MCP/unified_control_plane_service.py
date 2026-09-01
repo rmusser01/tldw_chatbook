@@ -35,6 +35,7 @@ from .permission_prompt_reducer import (
 )
 from .permission_store import (
     EffectiveToolState,
+    arg_rule_allows,
     HASH_FREE_SERVER_KEYS,
     MCPPermissionStore,
     definition_hash,
@@ -3317,6 +3318,56 @@ class UnifiedMCPControlPlaneService:
         if store is None:
             return
         store.set_kill_switch(value)
+
+    def add_tool_arg_rule(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        args: "Mapping[str, Any]",
+        tool: HubTool | None = None,
+        profile_id: str = "default",
+    ) -> None:
+        """Persist one exact-arguments allow rule (TASK-26012).
+
+        Args:
+            server_key: Owning server's stable key.
+            tool_name: Tool name within that server.
+            args: The exact displayed arguments to allow (AC#3).
+            tool: Required outside ``HASH_FREE_SERVER_KEYS`` -- its
+                fingerprint feeds the rug-pull guard (AC#4).
+            profile_id: Permission profile to write.
+        """
+        store = self.permission_store
+        if store is None:
+            return
+        hash_value: str | None = None
+        if server_key not in HASH_FREE_SERVER_KEYS:
+            if tool is None:
+                raise ValueError("tool is required to add an arg rule")
+            hash_value = definition_hash(tool.description, tool.input_schema)
+        store.add_tool_arg_rule(
+            server_key,
+            tool_name,
+            args=args,
+            definition_hash=hash_value,
+            profile_id=profile_id,
+        )
+
+    def arg_rule_allows_call(
+        self,
+        tool: HubTool,
+        args: "Mapping[str, Any]",
+        *,
+        profile_id: str = "default",
+    ) -> bool:
+        """Whether a stored argument-scoped rule allows this exact call."""
+        store = self.permission_store
+        if store is None:
+            return False
+        return arg_rule_allows(
+            store.load(), tool, args, profile_id=profile_id
+        )
 
     def gate_tool_test(
         self, tool: HubTool, *, profile_id: str = "default"

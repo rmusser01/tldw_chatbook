@@ -636,6 +636,10 @@ class MCPToolProvider:
             return None
         if self._is_session_approved_safe(tool):
             return None
+        if self._arg_rule_allows_safe(tool, args):
+            # TASK-26012: a stored argument-scoped allow quiets exactly this
+            # call; non-matching arguments for the same tool still ask.
+            return None
         return MCPPendingCall(
             llm_name=llm_name,
             server_key=tool.server_key,
@@ -784,6 +788,8 @@ class MCPToolProvider:
             return self._execute(tool, call_args, decision=APPROVED_SESSION_DECISION)
 
         # state == "ask"
+        if self._arg_rule_allows_safe(tool, call_args):
+            return self._execute(tool, call_args, decision="allowed")
         if self._approval_callback is None:
             self._record_decision_safe(tool, decision="denied")
             return ToolResult.blocked(DENY_REFUSAL)
@@ -879,6 +885,24 @@ class MCPToolProvider:
             )
             return False
 
+    def _arg_rule_allows_safe(self, tool: HubTool, args: Mapping[str, Any] | dict) -> bool:
+        """TASK-26012: whether a stored argument-scoped rule quiets this call.
+
+        Duck-typed and fail-closed: a service without the capability (or a
+        raising one) means no rule matched. The store enforces the rug-pull
+        hash and the high-risk floor internally.
+        """
+        checker = getattr(self._service, "arg_rule_allows_call", None)
+        if not callable(checker):
+            return False
+        try:
+            return bool(checker(tool, dict(args or {}), **self._profile_kwargs()))
+        except Exception as exc:  # noqa: BLE001 -- a broken rule read never allows
+            logger.warning(
+                f"MCPToolProvider: arg_rule_allows_call failed for {tool.server_key}/{tool.name}: {exc}"
+            )
+            return False
+
     def _is_session_approved_safe(self, tool: HubTool) -> bool:
         try:
             return bool(self._service.is_session_approved(tool.server_key, tool.name))
@@ -921,6 +945,22 @@ class MCPToolProvider:
             )
             decision = APPROVED_SESSION_DECISION if already_approved else "approved"
             return self._execute(tool, args, decision=decision)
+        if verdict == "allow_matching":
+            # TASK-26012: persist an allow scoped to EXACTLY the displayed
+            # arguments (AC#3) -- never a whole-tool allow. Rug-pull hashing
+            # happens service-side against this live HubTool.
+            self._safe_side_effect(
+                lambda: self._service.add_tool_arg_rule(
+                    tool.server_key,
+                    tool.name,
+                    args=dict(args),
+                    tool=tool,
+                    **self._profile_kwargs(),
+                ),
+                tool,
+                what="add_tool_arg_rule",
+            )
+            return self._execute(tool, args, decision="approved")
         if verdict == "always_allow":
             self._safe_side_effect(
                 lambda: self._service.set_tool_state(

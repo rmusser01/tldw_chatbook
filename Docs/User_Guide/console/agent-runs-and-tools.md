@@ -1215,6 +1215,16 @@ separate identities. A session grant may cover later calls in that same live
 Console session, but it is held in process memory only and is cleared by
 Disarm, locking raw CLI, shutdown, or restart.
 
+For ordinary MCP/catalog tools, the approval card offers **Always allow
+this exact input** alongside the existing choices: it saves an allow scoped
+to exactly the arguments displayed on the card — the same tool called with
+different arguments still asks. Argument-scoped rules obey the same
+definition-hash rug-pull guard as whole-tool allows (a changed tool
+definition silently invalidates them), never quiet a high-risk-tagged tool,
+and can be extended by hand in `mcp_permissions.json` with
+`{"field": …, "pattern": …}` glob rules. Raw shell does not offer this
+option.
+
 Beneath all of this sits an **unbypassable hardline floor**: a small set of
 catastrophic command shapes — recursive root delete (`rm -rf /`, `~`,
 `$HOME`), `mkfs`, `dd` onto a block device, fork bombs, and

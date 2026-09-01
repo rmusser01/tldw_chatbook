@@ -48,6 +48,10 @@ from tldw_chatbook.Tools.raw_cli_executor import MAX_RAW_COMMAND_BYTES
 _DECISION_OPTIONS: list[tuple[str, str]] = [
     ("Approve once", "approve_once"),
     ("Approve for session", "approve_session"),
+    # TASK-26012: persists an allow scoped to EXACTLY the arguments shown
+    # on this card (AC#3: the rule is created from what the user read);
+    # the same tool with different arguments still asks.
+    ("Always allow this exact input", "allow_matching"),
     ("Always allow", "always_allow"),
     ("Deny", "deny"),
 ]

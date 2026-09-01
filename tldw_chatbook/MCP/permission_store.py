@@ -64,6 +64,7 @@ here should need to change to accommodate them.
 from __future__ import annotations
 
 import hashlib
+import fnmatch
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -552,6 +553,58 @@ class MCPPermissionStore:
 
         self.save(payload)
 
+
+    def add_tool_arg_rule(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        args: Mapping[str, Any],
+        definition_hash: str | None,
+        profile_id: str = _DEFAULT_PROFILE_ID,
+    ) -> None:
+        """Persist one exact-arguments allow rule for a tool (TASK-26012).
+
+        The rule stores the canonical JSON of the EXACT arguments the user
+        was shown on the approval card (AC#3: no rule is created from text
+        the user did not read); ``arg_rule_allows`` later matches a call
+        only when its canonical arguments are identical. Hand-written
+        ``{"field": ..., "pattern": ...}`` glob rules are also honored by
+        the matcher, but this writer never creates them.
+
+        Args:
+            server_key: Owning server's stable key.
+            tool_name: Tool name within that server.
+            args: The exact arguments to allow, as displayed to the user.
+            definition_hash: The tool's current fingerprint -- the rug-pull
+                guard invalidates the rule when the definition changes
+                (AC#4). May be None only for ``HASH_FREE_SERVER_KEYS``.
+            profile_id: Profile to write into.
+        """
+        if definition_hash is None and server_key not in HASH_FREE_SERVER_KEYS:
+            raise ValueError("definition_hash is required for an arg rule")
+        payload = self.load()
+        self.ensure_profile(profile_id)
+        payload = self.load()
+        profile = payload.setdefault("profiles", {}).setdefault(profile_id, {})
+        entry = (
+            profile.setdefault("servers", {})
+            .setdefault(server_key, {})
+            .setdefault("tools", {})
+            .setdefault(tool_name, {})
+        )
+        rules = entry.setdefault("arg_rules", [])
+        rule = {
+            "args_json": _canonical_args_json(args),
+            "definition_hash": definition_hash,
+            "created_at": _iso_utc_now(),
+        }
+        if rule["args_json"] not in {
+            existing.get("args_json") for existing in rules if isinstance(existing, Mapping)
+        }:
+            rules.append(rule)
+        self.save(payload)
+
     def mark_config_changed(
         self,
         server_key: str,
@@ -919,6 +972,81 @@ def resolve_effective_state(
         config_changed=config_changed,
         risk_floored=risk_floored,
     )
+
+
+def _canonical_args_json(args: Mapping[str, Any]) -> str:
+    """One canonical rendering of a call's arguments for exact-match rules."""
+    try:
+        return json.dumps(dict(args), sort_keys=True, ensure_ascii=False, default=str)
+    except Exception:  # noqa: BLE001 -- unserializable args never match a rule
+        return ""
+
+
+def arg_rule_allows(
+    payload: dict[str, Any],
+    tool: HubTool,
+    args: Mapping[str, Any],
+    *,
+    profile_id: str = _DEFAULT_PROFILE_ID,
+) -> bool:
+    """Whether a stored argument-scoped rule allows this exact call.
+
+    TASK-26012. Two rule shapes:
+
+    * ``{"args_json": ...}`` -- exact canonical-arguments match, the only
+      shape the approval card ever writes.
+    * ``{"field": ..., "pattern": ...}`` -- an fnmatch glob against ONE
+      string argument, for hand-written rules.
+
+    Hard limits, in order: a tool whose tags intersect ``HIGH_RISK_TAGS``
+    is NEVER quieted by an argument rule (AC#5 -- the floor beats the
+    rule), and a rule whose ``definition_hash`` no longer matches the live
+    tool is inert (AC#4 -- same rug-pull guard as tool-level allow;
+    ``HASH_FREE_SERVER_KEYS`` namespaces skip the comparison).
+
+    The profile chain walks like ``resolve_effective_state``: the first
+    profile carrying rules for this tool decides.
+    """
+    if set(tool.tags) & HIGH_RISK_TAGS:
+        return False
+    current_hash = (
+        None
+        if tool.server_key in HASH_FREE_SERVER_KEYS
+        else definition_hash(tool.description, tool.input_schema)
+    )
+    call_json = _canonical_args_json(args)
+    for profile in _profile_chain(payload, profile_id):
+        servers = _as_mapping(profile.get("servers"))
+        server_entry = _as_mapping(servers.get(tool.server_key))
+        tools = _as_mapping(server_entry.get("tools"))
+        tool_entry = tools.get(tool.name)
+        if not isinstance(tool_entry, Mapping):
+            continue
+        rules = tool_entry.get("arg_rules")
+        if not isinstance(rules, list) or not rules:
+            continue
+        for rule in rules:
+            if not isinstance(rule, Mapping):
+                continue
+            if (
+                current_hash is not None
+                and rule.get("definition_hash") != current_hash
+            ):
+                continue
+            args_json = rule.get("args_json")
+            if isinstance(args_json, str) and args_json and args_json == call_json:
+                return True
+            field = rule.get("field")
+            pattern = rule.get("pattern")
+            if (
+                isinstance(field, str)
+                and isinstance(pattern, str)
+                and isinstance(args.get(field), str)
+                and fnmatch.fnmatchcase(args[field], pattern)
+            ):
+                return True
+        return False
+    return False
 
 
 def resolve_builtin_state(
