@@ -16897,6 +16897,18 @@ if __name__ == "__main__":
             exc_info=True,
         )
 
+    # TASK-26040: persist any pending forward config migration once at boot.
+    # A no-op (no lock, no file read) until a real migration is registered.
+    try:
+        from tldw_chatbook.config import migrate_config_file_if_needed
+        migrate_config_file_if_needed()
+    except Exception as e_cfg_migrate:
+        logging.error(
+            f"Config schema migration failed; the original file was left "
+            f"untouched: {e_cfg_migrate}",
+            exc_info=True,
+        )
+
     # --- Initialize Metrics Systems ---
     # Initialize Prometheus metrics server
     try:

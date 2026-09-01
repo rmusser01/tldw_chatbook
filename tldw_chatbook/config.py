@@ -3192,6 +3192,7 @@ LOCAL_PROVIDERS = {
 CONFIG_TOML_CONTENT = """
 # Configuration for tldw-chatbook TUI App
 # Located at: ~/.config/tldw_cli/config.toml
+config_schema_version = 1  # TASK-26040: config schema version; migrated forward on load
 [general]
 default_tab = "chat"  # "chat", "character", "logs", "media", "search", "ingest", "stats"
 focus_mode = false  # Start the Console chrome-free (no nav bar / workbench header; one-line status bar kept)
@@ -5140,6 +5141,127 @@ def first_profile_created_this_session() -> bool:
     return _FIRST_PROFILE_CREATED_THIS_SESSION
 
 
+#: TASK-26040: the config file's schema version. Bumped when a numbered
+#: migration is added to ``_CONFIG_MIGRATIONS``; a fresh config is created
+#: carrying this version. An unversioned (pre-existing) file is treated as
+#: the baseline (0) and migrated forward, never rejected.
+CONFIG_SCHEMA_VERSION_KEY = "config_schema_version"
+_CURRENT_CONFIG_SCHEMA_VERSION = 1
+
+#: Numbered stepwise migrations: ``{target_version: fn(config) -> config}``.
+#: Each transforms a config AT (target-1) into (target). Empty today -- this
+#: is the first versioned config -- but the runner is exercised by tests and
+#: ready for the first key rename, mirroring the DB migration pattern.
+_CONFIG_MIGRATIONS: Dict[int, Any] = {}
+
+
+def migrate_config_forward(
+    config: Dict[str, Any],
+) -> tuple[Dict[str, Any], bool, Optional[str]]:
+    """Run stepwise forward migrations on one config (TASK-26040).
+
+    Returns ``(migrated, changed, conflict)``:
+    * ``migrated`` -- the config transformed to the current version (or the
+      input unchanged when already current, or when a conflict blocks it).
+    * ``changed`` -- whether anything (including a first version stamp) changed.
+    * ``conflict`` -- a human-readable reason when the config is from a NEWER
+      version than this code understands (AC#5); the config is returned
+      untouched rather than mangled.
+    """
+    version = config.get(CONFIG_SCHEMA_VERSION_KEY, 0)
+    try:
+        version = int(version)
+    except (TypeError, ValueError):
+        version = 0  # a junk version stamp is treated as the baseline
+    if version > _CURRENT_CONFIG_SCHEMA_VERSION:
+        return (
+            config,
+            False,
+            (
+                f"config schema version {version} is newer than this "
+                f"application supports ({_CURRENT_CONFIG_SCHEMA_VERSION}); "
+                "not migrating -- upgrade the application or restore an "
+                "older config."
+            ),
+        )
+    if version == _CURRENT_CONFIG_SCHEMA_VERSION:
+        return config, False, None
+    migrated = copy.deepcopy(config)
+    for target in range(version + 1, _CURRENT_CONFIG_SCHEMA_VERSION + 1):
+        migration = _CONFIG_MIGRATIONS.get(target)
+        if migration is not None:
+            migrated = migration(migrated)
+    migrated[CONFIG_SCHEMA_VERSION_KEY] = _CURRENT_CONFIG_SCHEMA_VERSION
+    return migrated, True, None
+
+
+#: TASK-26040: set when the loaded config declares a schema version NEWER
+#: than this application understands. The config is served untouched (never
+#: mangled by a downgrade migration); this signal lets ``app.py`` surface a
+#: loud, user-visible warning, mirroring ``ConfigLoadFailure``.
+_CONFIG_SCHEMA_CONFLICT: Optional[str] = None
+
+
+def get_config_schema_conflict() -> Optional[str]:
+    """Return the newer-than-supported schema warning, if the last load hit one."""
+    return _CONFIG_SCHEMA_CONFLICT
+
+
+def _has_pending_config_migration(from_version: int) -> bool:
+    """Whether any real migration FUNCTION exists between ``from_version`` and now.
+
+    A bare version stamp (no function in range) is NOT worth a full-file
+    rewrite -- it would strip the user's hand-written comments -- so the stamp
+    rides the next natural save instead. Only an actual content transform
+    forces the persist path.
+    """
+    return any(
+        _CONFIG_MIGRATIONS.get(v) is not None
+        for v in range(from_version + 1, _CURRENT_CONFIG_SCHEMA_VERSION + 1)
+    )
+
+
+def migrate_config_file_if_needed() -> Optional[Path]:
+    """Persist a forward migration of the on-disk config (TASK-26040 AC#3/#4).
+
+    Runs under the write lock. Reads the raw file, and only when an actual
+    migration function must run does it back up the original and atomically
+    rewrite the migrated result. A failed migration raises before any write,
+    leaving the original file untouched. Returns the backup path when a
+    migration was written, else ``None`` (no file, already current, bare
+    stamp only, or a newer-than-supported version).
+    """
+    if not _CONFIG_MIGRATIONS:
+        return None  # no real migration exists yet -- free no-op
+    config_path = _get_effective_config_path()
+    with _config_write_lock(config_path):
+        current_serialized = _try_read_cli_config_serialized_unlocked(config_path)
+        if current_serialized is None:
+            return None  # no file yet -- creation stamps the version itself
+        raw = tomllib.loads(current_serialized)
+        raw_version = raw.get(CONFIG_SCHEMA_VERSION_KEY, 0)
+        try:
+            raw_version = int(raw_version)
+        except (TypeError, ValueError):
+            raw_version = 0
+        if raw_version >= _CURRENT_CONFIG_SCHEMA_VERSION:
+            return None
+        if not _has_pending_config_migration(raw_version):
+            return None
+        migrated, changed, conflict = migrate_config_forward(raw)
+        if conflict is not None or not changed:
+            return None
+        backup_path = _write_serialized_config_artifact_unlocked(
+            _advanced_backup_path(config_path),
+            current_serialized,
+            config_path=config_path,
+        )
+        persisted = _config_data_for_persistence(migrated)
+        raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
+        _publish_runtime_config_unlocked(raw_config=raw_written)
+        return backup_path
+
+
 def _preserve_corrupt_config_aside(config_path: Path) -> Optional[Path]:
     """Copy an unparseable config file aside so the user's edits survive.
 
@@ -5213,6 +5335,7 @@ def _load_cli_config_bootstrap_unlocked(
     global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE, _LAST_CONFIG_LOAD_FAILURE
     global _FIRST_PROFILE_CREATED_THIS_SESSION
     global _CONFIG_FILE_STAMP, _CONFIG_STAT_CHECKED_MONOTONIC
+    global _CONFIG_SCHEMA_CONFLICT
     config_path = _get_effective_config_path()
     if (
         _CONFIG_CACHE is not None
@@ -5248,6 +5371,16 @@ def _load_cli_config_bootstrap_unlocked(
         with open_private_binary(config_path) as opened:
             _report_config_path_posture(opened.result)
             user_config_from_file = tomllib.load(opened.stream)
+        # TASK-26040: migrate the RAW file forward before the default merge --
+        # an unversioned file must be seen as the baseline (0), not inherit the
+        # default's current version and skip its migrations. A newer-than-code
+        # version is served untouched with a recorded conflict warning.
+        user_config_from_file, _schema_changed, _schema_conflict = (
+            migrate_config_forward(user_config_from_file)
+        )
+        _CONFIG_SCHEMA_CONFLICT = _schema_conflict
+        if _schema_conflict is not None:
+            logger.warning(_schema_conflict)
         loaded_config = deep_merge_dicts(loaded_config, user_config_from_file)
         logger.info(f"Successfully loaded and merged CLI config from {config_path}")
         decryption = _decrypt_config_section_with_status(loaded_config, strict=True)
