@@ -74,6 +74,17 @@ turns the feature off entirely. Each fold rewrites the memory row, which
 breaks the provider prompt cache from that row onward — the cadence bounds
 that to 1 in N turns.
 
+### Upstream model catalog (models.dev)
+
+`[model_catalog] use_models_dev` lets the app fill in unknown models'
+context windows, vision support, and pricing from the upstream models.dev
+catalog — but only *beneath* the hand-maintained entries, so a deliberate
+local override always wins, and only as a gap-fill (an unknown model still
+refuses to fabricate a price). It is off by default; when on, the lookup
+path never touches the network (the catalog is fetched in the background
+with a conditional ETag request and disk-cached), and any figure sourced
+from models.dev is labeled as such so it is traceable.
+
 ### Auxiliary model for side tasks
 
 `[chat_defaults] auxiliary_provider` / `auxiliary_model` route the Console's

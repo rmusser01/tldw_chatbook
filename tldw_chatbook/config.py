@@ -3648,6 +3648,14 @@ local_transformers = ["None"]
 local_mlx_lm = ["None"]
 
 [model_catalog]
+# TASK-26023: use the upstream models.dev catalog as a LOWER-priority
+# gap-fill for model context windows, vision flags, and pricing -- BENEATH
+# your hand-maintained entries, so a local override always wins. Off by
+# default (offline/today unchanged, no fabricated prices). When on, the
+# lookup path never touches the network: fetching is explicit/background and
+# disk-cached with a conditional (ETag) GET. A displayed models.dev figure
+# is labeled with source "models.dev" so it is traceable.
+use_models_dev = false
 # Automatic model-list refresh for cloud providers (ADR-020).
 auto_refresh_enabled = true
 # The startup check is confirm-first: nothing is contacted online until the
