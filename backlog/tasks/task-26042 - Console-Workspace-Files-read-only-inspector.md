@@ -84,8 +84,9 @@ The final current-dev verification passed 80 service/modal/integration tests,
 21 workspace-tree action/routing/geometry tests, and both exact Workspace Files
 modal-contract checks; focused Ruff and `git diff --check` also passed. A wider
 modal-contract sweep retained the same three launch-inventory/model-popover
-failures reproduced on pristine `origin/dev`. The CSS integrity file passed
-14/15 checks; its remaining inspector-handle minimum-height failure likewise
+failures reproduced on pristine `origin/dev`. After regenerating the new
+current-dev split CSS outputs, the CSS integrity file passed 18/19 checks; its
+remaining inspector-handle minimum-height failure likewise
 reproduces unchanged on pristine `origin/dev` and is outside this feature's CSS
 and behavior scope. The full suite was not run under the repository's
 targeted-verification policy.
