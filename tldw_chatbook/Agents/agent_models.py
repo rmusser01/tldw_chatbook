@@ -616,6 +616,11 @@ class AgentConfig:
         if self.response_reserve_tokens < 0:
             raise ValueError("response_reserve_tokens must be non-negative")
 
+    #: TASK-26002: the provider this run is talking to, so the loop can name
+    #: it when reporting a provider-level fault. Defaults empty: the loop is
+    #: pure and must not require it, and an unset value simply reads as
+    #: "unknown provider" in the message.
+    provider: str = ""
     #: ADR-110: ordered provider fallback chain, consulted only after retry
     #: is exhausted or on a credit/quota-terminal class. Empty means no
     #: fallback and no projection code runs at all.

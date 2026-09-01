@@ -900,6 +900,11 @@ def _effective_review_verdict(
 
 #: Backoff shape for transient model failures. The attempt COUNT is per-run
 #: config (`RunBudget.max_model_retries`); this is only the delay curve.
+#: TASK-26002: consecutive empty turns before the run stops. Two, because
+#: one empty is a blip worth retrying and a second from the same provider
+#: and model means the fault is deterministic.
+EMPTY_TURN_LIMIT = 2
+
 _MODEL_RETRY_POLICY = RetryPolicy(max_attempts=0, base_delay=1.0, max_delay=30.0)
 
 
@@ -963,6 +968,10 @@ def run_agent_loop(
     #: per run rather than per turn: a provider failing every turn is a failing
     #: provider, and should stop the run rather than pay the budget down twice.
     model_retry_attempts = 0
+    #: TASK-26002: CONSECUTIVE empty turns. Reset by any turn that produces
+    #: text or a tool call, so two empties separated by real content are two
+    #: blips rather than a deterministic fault.
+    consecutive_empty_turns = 0
     spawned = 0
     model_turns = 0
     total_tokens = 0
@@ -1363,6 +1372,11 @@ def run_agent_loop(
             model_turns += 1
             total_tokens += turn.tokens
             calls = list(turn.tool_calls)
+        if calls:
+            # A tool call is content: it resets the empty streak even when the
+            # turn carried no text, which is the ordinary shape of a model
+            # deciding to call a tool (TASK-26002 AC#5).
+            consecutive_empty_turns = 0
         fenced = None
         if not calls:
             _visible, fenced = split_visible_text_and_tool_call(turn.text)
@@ -1476,6 +1490,37 @@ def run_agent_loop(
                 call_id="",
             )
         if not calls:
+            # TASK-26002: a turn with no calls AND no text is not an answer.
+            # Returning RUN_DONE here made a provider fault indistinguishable
+            # from the agent deciding it was finished.
+            if not str(turn.text or "").strip():
+                consecutive_empty_turns += 1
+                if consecutive_empty_turns >= EMPTY_TURN_LIMIT:
+                    add(
+                        STEP_ERROR,
+                        summary=(
+                            f"{consecutive_empty_turns} consecutive empty "
+                            f"responses from provider "
+                            f"'{config.provider or 'unknown'}' model "
+                            f"'{config.model}' — stopping rather than "
+                            f"retrying a deterministic fault"
+                        ),
+                    )
+                    return _outcome(RUN_STUCK)
+                trace(
+                    STEP_MODEL_ERROR,
+                    summary=(
+                        f"Empty response from '{config.provider or 'unknown'}' "
+                        f"model '{config.model}'; retrying "
+                        f"({consecutive_empty_turns} of {EMPTY_TURN_LIMIT})"
+                    ),
+                    status="failed",
+                    field_states={"payload": "omitted"},
+                    sensitivity="diagnostic",
+                    parent_step_index=model_request_step.index,
+                )
+                continue
+            consecutive_empty_turns = 0
             return _outcome(RUN_DONE, final_text=turn.text)
         if not restoring_batch:
             messages.append(

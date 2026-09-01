@@ -3776,6 +3776,13 @@ def build_console_first_request_plan(
     config = AgentConfig(
         model=resolved_model,
         system_prompt=direct_prompt,
+        # TASK-26002: so the loop can name the provider when it reports a
+        # provider-level fault (an empty-response run is otherwise
+        # indistinguishable from the agent deciding it was finished).
+        # Reuses `api_endpoint` above rather than re-deriving it -- that is the
+        # key the request is actually sent under, and it already carries the
+        # execution_key -> provider -> "agent" fallback.
+        provider=api_endpoint,
         allowed_tools=allowed_tools,
         budget=run_budget or console_run_budget(),
         native_tools=native_tools,
