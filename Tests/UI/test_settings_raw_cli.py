@@ -44,6 +44,15 @@ RAW_CLI_DISCLOSURE = (
     "Command text and bounded output may persist in local run logs.",
     "This is not a sandbox and is not limited to your workspace.",
 )
+HOST_ACCESS_UNLOCK_DISCLOSURE = (
+    "This saved setting only makes one-shot raw CLI and Persistent Terminal "
+    "eligible on this device.",
+    "It arms neither feature. Each must be armed separately after every Chatbook "
+    "launch.",
+    "Both features have the full file, process, and network authority of your OS "
+    "user. Neither is sandboxed or confined to a workspace.",
+    "Review each feature's separate arm disclosure before use.",
+)
 
 
 async def _wait_until(pilot, predicate, *, timeout: float = 1.0) -> None:
@@ -154,9 +163,16 @@ async def test_raw_cli_unlock_and_arm_are_separate_confirmed_gates():
         error_color = card.query_one("#settings-raw-cli-state", Static).styles.color
         assert (
             str(card.query_one("#settings-raw-cli-title", Static).content)
-            == "DANGER!!! RAW CLI HOST ACCESS"
+            == "DANGER!!! RAW CLI + TERMINAL HOST ACCESS"
         )
         text = _visible_text(card)
+        assert "One-shot raw CLI" in text
+        assert "Persistent Terminal" in text
+        assert (
+            str(card.query_one("#settings-raw-cli-permitted", Checkbox).label)
+            == "Allow raw CLI and Terminal access on this device"
+        )
+        assert "Each feature still arms separately for this Chatbook launch." in text
         for disclosure in RAW_CLI_DISCLOSURE:
             assert disclosure in text
         assert "sandboxed" not in text.lower()
@@ -193,8 +209,8 @@ async def test_raw_cli_unlock_and_arm_are_separate_confirmed_gates():
         screen.action_settings_save_category()
         await _wait_until(pilot, lambda: isinstance(host.screen, ConfirmationDialog))
         unlock_dialog = host.screen
-        assert unlock_dialog.title == "Unlock raw CLI host access"
-        assert unlock_dialog.message == "\n\n".join(RAW_CLI_DISCLOSURE)
+        assert unlock_dialog.title == "Unlock raw CLI and Terminal host access"
+        assert unlock_dialog.message == "\n\n".join(HOST_ACCESS_UNLOCK_DISCLOSURE)
         await _wait_until(
             pilot,
             lambda: getattr(host.focused, "id", None) == "cancel-button",
@@ -215,6 +231,8 @@ async def test_raw_cli_unlock_and_arm_are_separate_confirmed_gates():
         assert type(app.app_config["console"]["raw_cli_permitted"]) is bool
         assert app.app_config["console"]["raw_cli_permitted"] is True
         assert app.raw_cli_runtime.permitted is True
+        assert app.terminal_session_manager.permitted is True
+        assert app.terminal_session_manager.armed is False
         assert SettingsCategoryId.PRIVACY_SECURITY not in screen._settings_drafts
         assert "Unlocked, not armed" in str(
             card.query_one("#settings-raw-cli-state", Static).content
@@ -251,6 +269,7 @@ async def test_raw_cli_unlock_and_arm_are_separate_confirmed_gates():
 
         card = screen.query_one("#settings-raw-cli-card")
         assert app.raw_cli_runtime.armed is True
+        assert app.terminal_session_manager.armed is False
         assert card.has_class("settings-raw-cli-armed")
         armed_border = card.styles.border
         armed_edges = (
@@ -265,7 +284,7 @@ async def test_raw_cli_unlock_and_arm_are_separate_confirmed_gates():
         armed_background = card.styles.background
         assert armed_background != locked_background
         assert armed_background == error_color.with_alpha(0.1)
-        assert "ARMED — HOST ACCESS" in str(
+        assert "ARMED — HOST SHELL" in str(
             card.query_one("#settings-raw-cli-state", Static).content
         )
         assert "raw_cli_armed" not in app.app_config.get("console", {})
@@ -399,6 +418,7 @@ async def test_raw_cli_unlock_uses_ordinary_settings_revert():
 async def test_raw_cli_disarm_is_immediate_and_saved_lock_starts_cleanup(monkeypatch):
     app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": True}})
     assert app.raw_cli_runtime.arm().armed is True
+    assert app.terminal_session_manager.arm(acknowledge_disclosure=True).armed is True
     authority_revocations: list[str] = []
     app.raw_cli_runtime.set_model_authority_revoker(
         lambda: authority_revocations.append("revoked")
@@ -416,12 +436,13 @@ async def test_raw_cli_disarm_is_immediate_and_saved_lock_starts_cleanup(monkeyp
         assert app.raw_cli_runtime.armed is True
 
         disarm_button = screen.query_one("#settings-raw-cli-arm", Button)
-        assert str(disarm_button.label) == "Disarm now"
+        assert str(disarm_button.label) == "Disarm raw CLI"
         assert disarm_button.disabled is False
         disarm_button.press()
         await pilot.pause()
 
         assert app.raw_cli_runtime.armed is False
+        assert app.terminal_session_manager.armed is True
         assert authority_revocations == ["revoked"]
         assert screen._settings_drafts[SettingsCategoryId.PRIVACY_SECURITY] is draft
         assert draft.values == {"console.raw_cli_permitted": False}
@@ -441,11 +462,26 @@ async def test_raw_cli_disarm_is_immediate_and_saved_lock_starts_cleanup(monkeyp
             return result
 
         monkeypatch.setattr(app.raw_cli_runtime, "disarm", tracked_disarm)
+        original_terminal_disarm = app.terminal_session_manager.disarm
+        terminal_disarm_calls = 0
+
+        def tracked_terminal_disarm() -> None:
+            nonlocal terminal_disarm_calls
+            terminal_disarm_calls += 1
+            original_terminal_disarm()
+
+        monkeypatch.setattr(
+            app.terminal_session_manager,
+            "disarm",
+            tracked_terminal_disarm,
+        )
         screen.action_settings_save_category()
         await _wait_for_save(pilot)
 
         assert disarm_calls == [()]
+        assert terminal_disarm_calls == 1
         assert app.raw_cli_runtime.armed is False
+        assert app.terminal_session_manager.armed is False
         assert authority_revocations == ["revoked", "revoked"]
         assert type(app.app_config["console"]["raw_cli_permitted"]) is bool
         assert app.app_config["console"]["raw_cli_permitted"] is False
@@ -480,7 +516,7 @@ async def test_failed_raw_cli_lock_save_keeps_saved_authority_and_draft(monkeypa
         assert app.app_config["console"]["raw_cli_permitted"] is True
         assert screen._category_has_unsaved_changes(SettingsCategoryId.PRIVACY_SECURITY)
         assert screen.query_one("#settings-raw-cli-permitted", Checkbox).value is False
-        assert "ARMED — HOST ACCESS" in str(
+        assert "ARMED — HOST SHELL" in str(
             screen.query_one("#settings-raw-cli-state", Static).content
         )
         assert screen._raw_cli_save_pending is False
@@ -1120,19 +1156,23 @@ async def test_raw_cli_disclosure_wraps_and_disabled_arm_paints_above_contrast_f
             assert disclosure in text
 
         body = screen.query_one("#settings-detail-pane-body")
-        arm_button = card.query_one("#settings-raw-cli-arm", Button)
+        arm_buttons = (
+            card.query_one("#settings-raw-cli-arm", Button),
+            card.query_one("#settings-terminal-arm", Button),
+        )
         assert body.max_scroll_y > 0
         assert any(
             static.region.height > 1
             for static in card.query(".settings-raw-cli-disclosure")
         )
-        body.scroll_to_widget(arm_button, animate=False, force=True)
-        await pilot.pause()
-        assert arm_button.region.width > 0
-        assert body.content_region.contains_region(arm_button.region)
+        for arm_button in arm_buttons:
+            body.scroll_to_widget(arm_button, animate=False, force=True)
+            await pilot.pause()
+            assert arm_button.region.width > 0
+            assert body.content_region.contains_region(arm_button.region)
 
-        painted = _painted_style_of_text(host, arm_button)
-        assert painted is not None
-        assert painted.color is not None and painted.bgcolor is not None
-        ratio = _painted_contrast(painted.color, painted.bgcolor)
-        assert ratio >= 3.0, f"disabled Arm label paints at only {ratio:.2f}:1"
+            painted = _painted_style_of_text(host, arm_button)
+            assert painted is not None
+            assert painted.color is not None and painted.bgcolor is not None
+            ratio = _painted_contrast(painted.color, painted.bgcolor)
+            assert ratio >= 3.0, f"disabled Arm label paints at only {ratio:.2f}:1"
