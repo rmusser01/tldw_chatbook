@@ -942,4 +942,216 @@ def test_review_transitions_and_unread_count(tmp_path):
     assert db.update_result_review(rid, "read", reviewed_by="local")
     assert db.count_unread_results("local") == 1
     assert db.list_automation_results("local", review_state="read")[0]["id"] == rid
+
+
+# ----------------------------------------------------------------------
+# Server-mirror upserts (schedules-handoff PR-3, task 3)
+# ----------------------------------------------------------------------
+
+
+def _definition_item(**overrides):
+    item = {
+        "id": "srv-def-1",
+        "owner_id": "server:42",
+        "family": "recurring_question",
+        "name": "Daily stand-up",
+        "lifecycle": "configured",
+        "health": "execution_unavailable",
+        "schedule": {"kind": "cron", "expression": "0 9 * * 1-5"},
+        "created_at": "2026-07-18T09:00:00+00:00",
+        "updated_at": "2026-07-18T09:00:00+00:00",
+    }
+    item.update(overrides)
+    return item
+
+
+def test_upsert_definitions_inserts_new_row(tmp_path):
+    db = _mk_db(tmp_path)
+    counts = db.upsert_automation_definitions_from_server(
+        "server:42", [_definition_item()]
+    )
+    assert counts == {"inserted": 1, "updated": 0}
+    rows = db.list_automation_definitions(owner_id="server:42")
+    assert len(rows) == 1
+    assert rows[0]["server_id"] == "srv-def-1"
+    assert rows[0]["name"] == "Daily stand-up"
+    assert rows[0]["schedule"] == {"kind": "cron", "expression": "0 9 * * 1-5"}
+
+
+def test_upsert_definitions_server_wins_on_update(tmp_path):
+    db = _mk_db(tmp_path)
+    db.upsert_automation_definitions_from_server("server:42", [_definition_item()])
+    counts = db.upsert_automation_definitions_from_server(
+        "server:42",
+        [_definition_item(name="Renamed", lifecycle="paused")],
+    )
+    assert counts == {"inserted": 0, "updated": 1}
+    rows = db.list_automation_definitions(owner_id="server:42")
+    assert len(rows) == 1
+    assert rows[0]["name"] == "Renamed"
+    assert rows[0]["lifecycle"] == "paused"
+
+
+def test_upsert_definitions_never_clears_local_transfer_state(tmp_path):
+    """spec §6 parked finding: a server payload must never clear a local
+    transfer marker."""
+    db = _mk_db(tmp_path)
+    db.upsert_automation_definitions_from_server("server:42", [_definition_item()])
+    local_id = db.list_automation_definitions(owner_id="server:42")[0]["id"]
+    db.update_automation_definition(local_id, transfer_state="pending_pull")
+
+    # Server payload carries no transfer_state at all (the real server never
+    # sends one, it's local-only) -- the update must not touch the column.
+    db.upsert_automation_definitions_from_server(
+        "server:42", [_definition_item(name="Renamed")]
+    )
+    row = db.get_automation_definition(local_id)
+    assert row["transfer_state"] == "pending_pull"
+    assert row["name"] == "Renamed"
+
+    # Even if a server payload somehow carried transfer_state, it must still
+    # be ignored -- the exclusion is unconditional.
+    db.upsert_automation_definitions_from_server(
+        "server:42", [_definition_item(transfer_state="server_side_value")]
+    )
+    row = db.get_automation_definition(local_id)
+    assert row["transfer_state"] == "pending_pull"
+
+
+def test_upsert_definitions_archived_lifecycle_mirrors_not_deletes(tmp_path):
+    db = _mk_db(tmp_path)
+    db.upsert_automation_definitions_from_server("server:42", [_definition_item()])
+    local_id = db.list_automation_definitions(owner_id="server:42")[0]["id"]
+    db.upsert_automation_definitions_from_server(
+        "server:42",
+        [_definition_item(lifecycle="archived", archived_at="2026-08-01T00:00:00+00:00")],
+    )
+    row = db.get_automation_definition(local_id)
+    assert row["lifecycle"] == "archived"
+    assert row["archived_at"] is not None
+
+
+def test_upsert_definitions_skips_item_missing_id(tmp_path):
+    db = _mk_db(tmp_path)
+    item = _definition_item()
+    del item["id"]
+    counts = db.upsert_automation_definitions_from_server("server:42", [item])
+    assert counts == {"inserted": 0, "updated": 0}
+    assert db.list_automation_definitions(owner_id="server:42") == []
+
+
+def _result_item(**overrides):
+    item = {
+        "id": "srv-res-1",
+        "owner_id": "server:42",
+        "definition_id": "srv-def-1",
+        "run_id": "srv-run-1",
+        "kind": "finding",
+        "title": "Daily stand-up summary",
+        "summary": "Two blockers reported.",
+        "answer": "text",
+        "answer_mode": "synthesized",
+        "confidence": {"score": 0.8},
+        "source_refs": [{"source_type": "message", "source_id": "m1"}],
+        "dedupe_key": "recurring_question:srv-def-1:2026-08-30",
+        "review_state": "unread",
+        "reviewed_at": None,
+        "reviewed_by": None,
+        "review_note": None,
+        "created_at": "2026-08-30T09:00:05+00:00",
+        "updated_at": "2026-08-30T09:00:05+00:00",
+    }
+    item.update(overrides)
+    return item
+
+
+def test_upsert_results_inserts_new_row(tmp_path):
+    db = _mk_db(tmp_path)
+    counts = db.upsert_automation_results_from_server("server:42", [_result_item()])
+    assert counts == {"inserted": 1, "updated": 0, "skipped_dedupe": 0}
+    rows = db.list_automation_results("server:42")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["server_id"] == "srv-res-1"
+    assert row["definition_id"] == "srv-def-1"  # plain TEXT, no local resolve
+    assert row["run_id"] == "srv-run-1"
+    assert row["answer"] == "text"
+    assert row["source_refs"] == [{"source_type": "message", "source_id": "m1"}]
+
+
+def test_upsert_results_update_touches_only_review_fields(tmp_path):
+    db = _mk_db(tmp_path)
+    db.upsert_automation_results_from_server("server:42", [_result_item()])
+    counts = db.upsert_automation_results_from_server(
+        "server:42",
+        [
+            _result_item(
+                title="Different title server-side",
+                summary="Different summary",
+                review_state="read",
+                reviewed_at="2026-08-31T00:00:00+00:00",
+                reviewed_by="user:42",
+                review_note="looks fine",
+                updated_at="2026-08-31T00:00:00+00:00",
+            )
+        ],
+    )
+    assert counts == {"inserted": 0, "updated": 1, "skipped_dedupe": 0}
+    row = db.list_automation_results("server:42")[0]
+    # Review fields updated...
+    assert row["review_state"] == "read"
+    assert row["reviewed_by"] == "user:42"
+    assert row["review_note"] == "looks fine"
+    # ...but non-review fields are left alone even though the server item
+    # carried different values for them.
+    assert row["title"] == "Daily stand-up summary"
+    assert row["summary"] == "Two blockers reported."
+
+
+def test_upsert_results_pending_review_mutation_blocks_update(tmp_path):
+    db = _mk_db(tmp_path)
+    db.upsert_automation_results_from_server("server:42", [_result_item()])
+    local_id = db.list_automation_results("server:42")[0]["id"]
+    db.record_pending_mutation(
+        local_id,
+        "automation_result_review",
+        "server:42",
+        {"server_result_id": "srv-res-1", "review_state": "dismissed"},
+    )
+
+    counts = db.upsert_automation_results_from_server(
+        "server:42",
+        [_result_item(review_state="read", reviewed_by="user:42")],
+    )
+    assert counts == {"inserted": 0, "updated": 0, "skipped_dedupe": 0}
+    row = db.list_automation_results("server:42")[0]
+    # The local unpushed review outranks the mirror until it replays.
+    assert row["review_state"] == "unread"
+
+
+def test_upsert_results_dedupe_conflict_with_local_row_is_skipped(tmp_path):
+    db = _mk_db(tmp_path)
+    local_id = db.create_automation_result(
+        "server:42", "local-def", "local-run", "finding", "Local title",
+        "Local summary", "recurring_question:srv-def-1:2026-08-30",
+    )
+    assert local_id is not None
+
+    counts = db.upsert_automation_results_from_server(
+        "server:42", [_result_item()]  # same dedupe_key as the local row
+    )
+    assert counts == {"inserted": 0, "updated": 0, "skipped_dedupe": 1}
+    rows = db.list_automation_results("server:42")
+    assert len(rows) == 1
+    assert rows[0]["id"] == local_id
+    assert rows[0]["server_id"] is None  # untouched, still the local-only row
+
+
+def test_upsert_results_skips_item_missing_id(tmp_path):
+    db = _mk_db(tmp_path)
+    item = _result_item()
+    del item["id"]
+    counts = db.upsert_automation_results_from_server("server:42", [item])
+    assert counts == {"inserted": 0, "updated": 0, "skipped_dedupe": 0}
+    assert db.list_automation_results("server:42") == []
     assert not db.update_result_review("missing", "dismissed")
