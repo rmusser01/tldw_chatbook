@@ -12,6 +12,7 @@ from textual.widgets import Button, Checkbox, Static
 from Tests.UI.test_screen_navigation import _build_test_app
 from Tests.UI.test_settings_configuration_hub import StyledSettingsDestinationHarness
 from Tests.UI.test_settings_raw_cli import (
+    _install_runtime_generation_state,
     _open_privacy,
     _published_snapshot,
     _wait_for_save,
@@ -121,6 +122,40 @@ def test_terminal_live_session_count_failure_logs_safe_runtime_context(caplog):
         assert _count_terminal_sessions(runtime) is None
 
     assert "runtime_type=SimpleNamespace" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_unlock_save_warns_when_terminal_cleanup_inspection_fails(monkeypatch):
+    app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": True}})
+    terminal = RecordingTerminalRuntime(armed=True, session_count=0)
+
+    def fail_projections() -> tuple[object, ...]:
+        raise RuntimeError("projection failure")
+
+    terminal.projections = fail_projections
+    app.terminal_session_manager = terminal
+    notifications: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        StyledSettingsDestinationHarness,
+        "notify",
+        lambda _self, message, *, severity="information", **_kwargs: (
+            notifications.append((message, severity))
+        ),
+    )
+    locked_values = dict(app.app_config)
+    locked_values["console"] = dict(app.app_config["console"])
+    locked_values["console"]["raw_cli_permitted"] = False
+    snapshot = _published_snapshot(locked_values)
+    _install_runtime_generation_state(monkeypatch, snapshot)
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = await _open_privacy(pilot)
+        screen._apply_raw_cli_save_result(True, snapshot, False)
+        await pilot.pause()
+
+    assert notifications[-1][1] == "warning"
+    assert "could not be inspected" in notifications[-1][0]
 
 
 @pytest.mark.asyncio

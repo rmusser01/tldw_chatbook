@@ -23899,7 +23899,9 @@ class SettingsScreen(BaseAppScreen):
                 )
                 + cleanup_suffix,
                 severity=(
-                    "warning" if value or terminal_cleanup_count else "information"
+                    "warning"
+                    if value or terminal_cleanup_count is None or terminal_cleanup_count
+                    else "information"
                 ),
             )
         else:
