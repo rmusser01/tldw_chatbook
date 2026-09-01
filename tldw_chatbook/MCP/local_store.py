@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+
+from tldw_chatbook.MCP.spawn_guard import screen_spawn_command
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -775,6 +777,14 @@ class LocalMCPStore:
         command = _require_non_empty_field(
             canonical_profile.command, "command", "Local MCP profile"
         )
+        # TASK-26013: refuse a dangerous command shape at save time, naming the
+        # matched rule and leaving the stored list untouched.
+        _spawn_verdict = screen_spawn_command(command, canonical_profile.args)
+        if _spawn_verdict is not None:
+            raise ValueError(
+                f"Local MCP profile command refused: {_spawn_verdict.reason} "
+                f"(rule: {_spawn_verdict.rule})"
+            )
         existing_profile = next(
             (item for item in current.profiles if item.profile_id == profile_id),
             None,

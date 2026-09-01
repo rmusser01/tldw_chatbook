@@ -23,6 +23,8 @@ from urllib.parse import urlsplit
 
 from loguru import logger
 
+from tldw_chatbook.MCP.spawn_guard import screen_spawn_command
+
 _MCP_PROTOCOL_VERSION = "2025-03-26"
 _REQUEST_TIMEOUT_SECONDS = 10.0
 _TERMINATE_TIMEOUT_SECONDS = 2.0
@@ -830,6 +832,17 @@ class MCPClient:
         Returns:
             True if connection successful
         """
+        # TASK-26013: the guard runs at SPAWN time too, so a config edited on
+        # disk to a dangerous shape cannot bypass the save-time check.
+        spawn_verdict = screen_spawn_command(command, args)
+        if spawn_verdict is not None:
+            logger.error(
+                "MCP spawn refused for '{}': {} (rule: {})",
+                server_id,
+                spawn_verdict.reason,
+                spawn_verdict.rule,
+            )
+            return False
         if server_id in self._connect_reservations:
             logger.warning("MCP connection attempt already in progress")
             return False
