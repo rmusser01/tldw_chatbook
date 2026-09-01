@@ -783,6 +783,31 @@ RAW_CLI_DISCLOSURE_LINES = (
     "Command text and bounded output may persist in local run logs.",
     "This is not a sandbox and is not limited to your workspace.",
 )
+HOST_ACCESS_UNLOCK_DISCLOSURE_LINES = (
+    "This saved setting only makes one-shot raw CLI and Persistent Terminal "
+    "eligible on this device.",
+    "It arms neither feature. Each must be armed separately after every Chatbook "
+    "launch.",
+    "Both features have the full file, process, and network authority of your OS "
+    "user. Neither is sandboxed or confined to a workspace.",
+    "Review each feature's separate arm disclosure before use.",
+)
+TERMINAL_DISCLOSURE_LINES = (
+    "The Terminal shell and every program run with the same OS permissions as "
+    "Chatbook.",
+    "Programs may read, modify, or delete any accessible data, use the network, "
+    "invoke credentialed clients, or exhaust machine resources.",
+    "Chatbook starts Terminal from a scrubbed environment, but normal shell profile "
+    "and startup files run and may restore secrets, credentials, agents, proxies, "
+    "aliases, environment variables, or arbitrary commands.",
+    "Shells and programs may save history, files, logs, caches, and other side "
+    "effects outside Chatbook.",
+    "Your active workspace—or your home directory when no workspace is selected—is "
+    "only the starting directory. Terminal is not sandboxed or confined there.",
+    "Closing, disarming, or quitting Chatbook attempts bounded cleanup, but "
+    "deliberately detached processes may survive and cleanup may remain unproven.",
+    "Terminal content is user-only and is not sent to a model.",
+)
 
 # ADR-090: ids of the instant-apply [permission_summary] controls, for the
 # same focus-tracking reason as MODEL_CATALOG_FIELD_IDS above.
@@ -2521,6 +2546,7 @@ class SettingsScreen(BaseAppScreen):
         self._raw_cli_save_pending = False
         self._raw_cli_unlock_confirmation_pending = False
         self._raw_cli_arm_confirmation_pending = False
+        self._terminal_confirmation_pending = False
 
         # Network category pending edits. Deliberately NOT a SettingsDraft in
         # _settings_drafts: the category bypasses the draft-staging machinery
@@ -4359,6 +4385,7 @@ class SettingsScreen(BaseAppScreen):
         )
         self._update_draft_status_widgets(category)
         self._refresh_raw_cli_state()
+        self._refresh_terminal_state()
 
     def _raw_cli_is_armed(self) -> bool:
         runtime = self._raw_cli_runtime()
@@ -4366,32 +4393,122 @@ class SettingsScreen(BaseAppScreen):
 
     def _raw_cli_state_text(self) -> str:
         if self._raw_cli_is_armed():
-            return "ARMED — HOST ACCESS"
+            return "ARMED — HOST SHELL"
         if self._loaded_raw_cli_permitted():
             return "Unlocked, not armed"
         return "Locked"
 
     def _raw_cli_arm_button_state(self) -> tuple[str, bool]:
         if self._raw_cli_is_armed():
-            return "Disarm now", False
+            return "Disarm raw CLI", False
         if self._loaded_raw_cli_permitted() and not self._category_has_unsaved_changes(
             SettingsCategoryId.PRIVACY_SECURITY
         ):
-            return "Arm for this launch", False
+            return "Arm raw CLI", False
         return "Save unlock first", True
+
+    def _terminal_runtime(self) -> Any | None:
+        """Return the app-owned launch-local Terminal manager, when available."""
+        return getattr(self.app_instance, "terminal_session_manager", None)
+
+    def _terminal_is_armed(self) -> bool:
+        runtime = self._terminal_runtime()
+        return bool(runtime is not None and getattr(runtime, "armed", False))
+
+    def _terminal_state_text(self) -> str:
+        if self._terminal_is_armed():
+            return "ARMED — HOST TERMINAL"
+        if self._loaded_raw_cli_permitted():
+            return "Unlocked, not armed"
+        return "Locked"
+
+    def _terminal_arm_button_state(self) -> tuple[str, bool]:
+        if self._terminal_is_armed():
+            return "Disarm Terminal", False
+        if self._loaded_raw_cli_permitted() and not self._category_has_unsaved_changes(
+            SettingsCategoryId.PRIVACY_SECURITY
+        ):
+            return "Arm Terminal", False
+        return "Save unlock first", True
+
+    def _terminal_live_session_count(self) -> int | None:
+        """Return the live retained-session count, or None when unavailable."""
+        runtime = self._terminal_runtime()
+        if runtime is None:
+            return 0
+        try:
+            projections = tuple(runtime.projections())
+        except Exception:
+            logger.exception("Failed to inspect Terminal sessions before disarm")
+            return None
+        count = 0
+        for projection in projections:
+            lifecycle = getattr(projection, "lifecycle", None)
+            lifecycle_value = getattr(lifecycle, "value", lifecycle)
+            if lifecycle_value not in {"closed", "exited"}:
+                count += 1
+        return count
+
+    def _disarm_terminal_runtime(
+        self, runtime: Any, *, session_count: int | None
+    ) -> None:
+        """Revoke Terminal authority and report its content-free cleanup state."""
+        runtime.disarm()
+        self._refresh_terminal_state()
+        self._refresh_raw_cli_state()
+        if session_count:
+            self.app.notify(
+                "Terminal disarmed. Cleanup started for "
+                f"{session_count} sessions; pending or unproven cleanup remains "
+                "available in Terminal.",
+                severity="warning",
+            )
+        elif session_count is None:
+            self.app.notify(
+                "Terminal disarmed. Session cleanup status could not be inspected; "
+                "check Terminal for pending or unproven cleanup.",
+                severity="warning",
+            )
+        else:
+            self.app.notify("Terminal disarmed for this launch.", severity="warning")
+
+    def _host_access_is_armed(self) -> bool:
+        return self._raw_cli_is_armed() or self._terminal_is_armed()
+
+    def _refresh_host_access_card(self) -> None:
+        try:
+            card = self.query_one("#settings-raw-cli-card")
+        except QueryError:
+            return
+        card.set_class(self._host_access_is_armed(), "settings-raw-cli-armed")
 
     def _refresh_raw_cli_state(self) -> None:
         """Refresh raw CLI authority from persisted config and runtime only."""
         try:
-            card = self.query_one("#settings-raw-cli-card")
             state = self.query_one("#settings-raw-cli-state", Static)
             button = self.query_one("#settings-raw-cli-arm", Button)
         except QueryError:
             return
-        armed = self._raw_cli_is_armed()
-        card.set_class(armed, "settings-raw-cli-armed")
+        self._refresh_host_access_card()
         state.update(self._raw_cli_state_text())
         label, disabled = self._raw_cli_arm_button_state()
+        button.label = label
+        button.disabled = disabled
+        button.refresh(layout=True)
+
+    def _refresh_terminal_state(self) -> None:
+        """Refresh Terminal authority from persisted config and manager state."""
+        try:
+            state = self.query_one("#settings-terminal-state", Static)
+            banner = self.query_one("#settings-terminal-host-access", Static)
+            button = self.query_one("#settings-terminal-arm", Button)
+        except QueryError:
+            return
+        self._refresh_host_access_card()
+        armed = self._terminal_is_armed()
+        state.update(self._terminal_state_text())
+        banner.update("HOST TERMINAL - FULL USER ACCESS" if armed else "")
+        label, disabled = self._terminal_arm_button_state()
         button.label = label
         button.disabled = disabled
         button.refresh(layout=True)
@@ -4405,6 +4522,7 @@ class SettingsScreen(BaseAppScreen):
         with checkbox.prevent(Checkbox.Changed):
             checkbox.value = self._raw_cli_draft_value()
         self._refresh_raw_cli_state()
+        self._refresh_terminal_state()
 
     def _chat_defaults(self) -> dict:
         app_config = self._app_config_section_target()
@@ -17443,8 +17561,9 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-privacy-check-result",
                     classes="settings-status-row",
                 )
-            armed_for_launch = self._raw_cli_is_armed()
+            armed_for_launch = self._host_access_is_armed()
             raw_cli_label, raw_cli_disabled = self._raw_cli_arm_button_state()
+            terminal_label, terminal_disabled = self._terminal_arm_button_state()
             with Vertical(
                 id="settings-raw-cli-card",
                 classes=(
@@ -17453,24 +17572,32 @@ class SettingsScreen(BaseAppScreen):
                 ),
             ):
                 yield Static(
-                    "DANGER!!! RAW CLI HOST ACCESS",
+                    "DANGER!!! RAW CLI + TERMINAL HOST ACCESS",
                     id="settings-raw-cli-title",
                     classes="destination-section",
                 )
                 yield Static(
-                    self._raw_cli_state_text(),
-                    id="settings-raw-cli-state",
+                    "One saved unlock controls eligibility for both host-authority "
+                    "features. Each feature still arms separately for this Chatbook "
+                    "launch.",
+                    id="settings-host-access-separation",
+                    classes="settings-raw-cli-disclosure",
                 )
                 for line in RAW_CLI_DISCLOSURE_LINES:
                     yield Static(line, classes="settings-raw-cli-disclosure")
                 yield Checkbox(
-                    "Allow raw CLI host access",
+                    "Allow raw CLI and Terminal access on this device",
                     value=self._raw_cli_draft_value(),
                     id="settings-raw-cli-permitted",
                     tooltip=(
-                        "Stage the persistent raw CLI unlock; Save and Revert use the "
-                        "ordinary Settings draft."
+                        "Stage the shared host-access unlock. Saving it does not arm "
+                        "raw CLI or Terminal."
                     ),
+                )
+                yield Static("One-shot raw CLI", classes="destination-section")
+                yield Static(
+                    self._raw_cli_state_text(),
+                    id="settings-raw-cli-state",
                 )
                 with Vertical(classes="settings-raw-cli-action-row"):
                     yield Static(
@@ -17487,6 +17614,30 @@ class SettingsScreen(BaseAppScreen):
                     )
                     arm_button.disabled = raw_cli_disabled
                     yield arm_button
+                yield Static("Persistent Terminal", classes="destination-section")
+                yield Static(
+                    self._terminal_state_text(),
+                    id="settings-terminal-state",
+                )
+                yield Static(
+                    (
+                        "HOST TERMINAL - FULL USER ACCESS"
+                        if self._terminal_is_armed()
+                        else ""
+                    ),
+                    id="settings-terminal-host-access",
+                )
+                with Vertical(classes="settings-raw-cli-action-row"):
+                    terminal_button = Button(
+                        terminal_label,
+                        id="settings-terminal-arm",
+                        tooltip=(
+                            "Arm persistent Terminal for this launch or disarm it and "
+                            "start cleanup for retained sessions."
+                        ),
+                    )
+                    terminal_button.disabled = terminal_disabled
+                    yield terminal_button
 
         elif category is SettingsCategoryId.NETWORK:
             yield from self._render_network_detail()
@@ -23386,6 +23537,107 @@ class SettingsScreen(BaseAppScreen):
             self._raw_cli_arm_confirmation_pending = False
             raise
 
+    @on(Button.Pressed, "#settings-terminal-arm")
+    def handle_terminal_arm_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if getattr(self, "_terminal_confirmation_pending", False):
+            self.app.notify(
+                "Terminal confirmation is already open.", severity="warning"
+            )
+            return
+        runtime = self._terminal_runtime()
+        if runtime is None:
+            self.app.notify("Terminal runtime is unavailable.", severity="error")
+            return
+        if self._terminal_is_armed():
+            session_count = self._terminal_live_session_count()
+            if session_count == 0:
+                self._disarm_terminal_runtime(runtime, session_count=0)
+                return
+
+            async def _confirmed_disarm() -> None:
+                self._terminal_confirmation_pending = False
+                self._disarm_terminal_runtime(
+                    runtime,
+                    session_count=session_count,
+                )
+
+            async def _cancelled_disarm() -> None:
+                self._terminal_confirmation_pending = False
+
+            count_copy = (
+                f"{session_count} live Terminal sessions"
+                if session_count is not None
+                else "retained Terminal sessions whose status could not be inspected"
+            )
+            self._terminal_confirmation_pending = True
+            try:
+                self.app.push_screen(
+                    ConfirmationDialog(
+                        title="Disarm Terminal and close sessions?",
+                        message=(
+                            f"Disarming will terminate {count_copy}. One shared "
+                            "five-second cleanup attempt starts immediately. "
+                            "Deliberately detached processes may survive, and cleanup "
+                            "may remain unproven."
+                        ),
+                        confirm_label="Disarm and clean up",
+                        cancel_label="Keep Terminal armed",
+                        confirm_callback=_confirmed_disarm,
+                        cancel_callback=_cancelled_disarm,
+                    )
+                )
+            except Exception:
+                self._terminal_confirmation_pending = False
+                raise
+            return
+
+        _label, disabled = self._terminal_arm_button_state()
+        if disabled:
+            self._refresh_terminal_state()
+            return
+
+        def _apply_arm(*, acknowledge_disclosure: bool) -> None:
+            result = runtime.arm(
+                acknowledge_disclosure=acknowledge_disclosure,
+            )
+            self._refresh_terminal_state()
+            self._refresh_raw_cli_state()
+            if getattr(result, "armed", False):
+                self.app.notify("Terminal armed for this launch.", severity="warning")
+            else:
+                self.app.notify(
+                    "Terminal could not be armed; save the shared unlock first.",
+                    severity="error",
+                )
+
+        if getattr(runtime, "disclosure_acknowledged", False):
+            _apply_arm(acknowledge_disclosure=False)
+            return
+
+        async def _confirmed_arm() -> None:
+            self._terminal_confirmation_pending = False
+            _apply_arm(acknowledge_disclosure=True)
+
+        async def _cancelled_arm() -> None:
+            self._terminal_confirmation_pending = False
+
+        self._terminal_confirmation_pending = True
+        try:
+            self.app.push_screen(
+                ConfirmationDialog(
+                    title="Arm Terminal for this launch",
+                    message="\n\n".join(TERMINAL_DISCLOSURE_LINES),
+                    confirm_label="Arm full-user Terminal",
+                    cancel_label="Cancel",
+                    confirm_callback=_confirmed_arm,
+                    cancel_callback=_cancelled_arm,
+                )
+            )
+        except Exception:
+            self._terminal_confirmation_pending = False
+            raise
+
     @on(Button.Pressed, "#settings-open-provider-credentials")
     def handle_open_provider_credentials(self, event: Button.Pressed) -> None:
         event.stop()
@@ -23600,20 +23852,44 @@ class SettingsScreen(BaseAppScreen):
                 saved_value,
                 current_value,
             )
+        terminal_cleanup_count: int | None = 0
         if not value or not saved_value:
             runtime = self._raw_cli_runtime()
             if runtime is not None:
                 runtime.disarm()
+            terminal_runtime = self._terminal_runtime()
+            if terminal_runtime is not None:
+                terminal_cleanup_count = self._terminal_live_session_count()
+                terminal_runtime.disarm()
         self._sync_raw_cli_widgets()
         self._update_draft_status_widgets(category)
+        cleanup_suffix = ""
+        if terminal_cleanup_count:
+            cleanup_suffix = (
+                f" Terminal cleanup started for {terminal_cleanup_count} sessions; "
+                "pending or unproven cleanup remains available in Terminal."
+            )
+        elif terminal_cleanup_count is None:
+            cleanup_suffix = (
+                " Terminal cleanup status could not be inspected; check Terminal "
+                "for pending or unproven cleanup."
+            )
         if stable and saved_value is value:
             self.app.notify(
-                "Raw CLI unlock saved on." if value else "Raw CLI unlock saved off.",
-                severity="warning" if value else "information",
+                (
+                    "Raw CLI and Terminal unlock saved on."
+                    if value
+                    else "Raw CLI and Terminal unlock saved off."
+                )
+                + cleanup_suffix,
+                severity=(
+                    "warning" if value or terminal_cleanup_count else "information"
+                ),
             )
         else:
             self.app.notify(
-                "Raw CLI unlock reconciled to the latest saved state.",
+                "Raw CLI and Terminal unlock reconciled to the latest saved state."
+                + cleanup_suffix,
                 severity="warning",
             )
 
@@ -23675,8 +23951,8 @@ class SettingsScreen(BaseAppScreen):
         try:
             self.app.push_screen(
                 ConfirmationDialog(
-                    title="Unlock raw CLI host access",
-                    message="\n\n".join(RAW_CLI_DISCLOSURE_LINES),
+                    title="Unlock raw CLI and Terminal host access",
+                    message="\n\n".join(HOST_ACCESS_UNLOCK_DISCLOSURE_LINES),
                     confirm_label="Save unlock",
                     cancel_label="Cancel",
                     confirm_callback=_confirmed_unlock,
