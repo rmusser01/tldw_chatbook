@@ -1,6 +1,7 @@
 # TASK-26000 Current-Dev Ruff Formatter Debt Design
 
-**Status:** approved by the owner after adversarial review on 2026-08-30
+**Status:** approved by the owner after adversarial review on 2026-08-30;
+authority-cut closeout amendment approved by the owner on 2026-08-31
 
 **Task:** `TASK-26000`
 
@@ -21,7 +22,8 @@ Backlog boundaries that later formatter-only tasks execute.
 
 The current-development pin after the TASK-26000 refresh is:
 
-- Git revision: `51d3fbdbf20ff9fc2cf3a3ea3c7f71fef308339a`
+- Git revision and immutable authority cut `S`:
+  `e555df102c950c29beed5e7119f433d35eee1f3c`
 - Ruff: `0.15.22`
 - Python: `3.12.11`
 - Interpreter contract: an explicitly supplied absolute Python 3.12.11 invocation
@@ -30,6 +32,83 @@ The current-development pin after the TASK-26000 refresh is:
   symlink or making one developer's absolute path normative
 - Universe: Python paths tracked by Git at the pinned revision
 - Configuration: the Ruff configuration committed at the pinned revision
+
+The refresh begins with one fetch of `origin/dev`, freezes the resulting commit as
+immutable authority cut `S`, and immediately proves the live remote-tracking ref is
+still `S`. Detached evidence is recreated from `S`; every census, lineage,
+provenance, PR, canonical, mutation, and review gate thereafter addresses immutable
+object IDs. A later ordinary fast-forward does not invalidate this point-in-time
+artifact or trigger an endless full-repin cycle. The explicit checker
+`--require-live-current` switch is retained only for the immediate capture diagnostic
+and its self-test, not as a later Task 5/Task 7 closeout invariant.
+
+The owner-approved final authority-cut capture retained common ancestor
+`f0e8961222fe1a7a3ac7566f7f78142e717358f3` and historical base,
+pre-closeout, and closeout pins `31ed49bb368f54211d6482599e00a5c1340f80b2`,
+`1f4f72ac5ff02f5237a4946745e82e8932cd41cf`, and
+`642b1c782fe6c066a781314dae669a55b05b62ad`. The refreshed current checkout
+contained 5,056 tracked Python entries and 1,966 failures; the common checkout
+contained 4,643 entries and 1,746 failures. Both had zero blockers. Historical
+arithmetic remains `M=99`, `B=64`, `C=77`, `C-B=16`, `B-C=3`, and `H=61`;
+`F_closeout=1,738`. The exhaustive current comparison is
+`historical_still_current=44`, `historical_no_longer_current=17`,
+`shared_ancestor_debt=1,603`, and `current_line_drift=319`, represented by 2,096
+stable identities and 83 conflict-safe batches. Cleanup records remain absent.
+
+The refreshed current/common raw SHA-256 values are
+`f888cf9351f1c41f66fb98b4ec218c9268beb9b23295037320f725cec567ae10`
+and `c34c5fe9d8e3154c3450f1cf28d4c9a6f1f631feb4735296fc6b891af5de1b15`;
+the lineage, replay-cache, manifest, PR snapshot, materializer, frozen producer,
+checker, allocator, and renderer SHA-256 values are respectively
+`b9f9876d438b4b6770e84013c515ae54791b14f0e740de67283fb3de20f655a6`,
+`0026dce1124fb3e9fc027dca785101c76a77b63882deac9e1951d5ce2d46a1df`,
+`0f1a8ca2652e7537628c82885f5d5d0cb4421189c31255bb0f05648991083022`,
+`46282d8e81b1bd512263443e97955b1650944684f6c1d0ccd1341f52218bd8d5`,
+`69817bd0bac15097f80c6d194b7b27618bc96f494aab806aeb6d009a9c384c5c`,
+`fd33448f2841d0502509201a5bf6fd2f279f3f2c67cff8f3d4391b9ed7d9ce3e`,
+`a003aee74e01c2729136e244474f1fac08a06ae9ee9331752f56d1bfbffe9e79`,
+`6d7559449c35cd6db3dca31dbbdb510efbb45d1dc0a96c4f01f59c6a8461403b`,
+and `4a08b6a5a9a8b12926ab9417bc330a4e94eb60c3b4afe88226ef232e2653a17a`.
+The cache-cold temporal replay checked 319 ledgers and 1,272 candidates: 736
+failing, 533 clean, and three transient syntax-invalid states. The ownership
+capture inspected all 13 open PRs at `2026-08-31T17:40:01Z`; exact
+current-failure overlaps were `#2265=6`, `#2264=4`, `#2230=1`, `#2196=12`,
+`#2059=1`, `#1903=1`, and `#1655=2`, while six PRs had zero overlap.
+
+The 83 sorted stable labels are `ruff-active-pr-1655`,
+`ruff-active-pr-1655-2059`, `ruff-active-pr-1903-2196`,
+`ruff-active-pr-2196`, `ruff-active-pr-2230`, `ruff-active-pr-2264`,
+`ruff-active-pr-2265`,
+`ruff-agents-runtime`, `ruff-api`,
+`ruff-character-persona`,
+`ruff-chat-agents-tools`, `ruff-chat-citations`, `ruff-chat-console-context`,
+`ruff-chat-console-fleet`, `ruff-chat-console-foundation`,
+`ruff-chat-console-interaction`, `ruff-chat-console-library`,
+`ruff-chat-console-observability`, `ruff-chat-general`, `ruff-chat-media`,
+`ruff-chat-metrics`, `ruff-chat-persistence`, `ruff-chat-providers`,
+`ruff-chat-retrieval`, `ruff-chat-trajectory`, `ruff-chunking`,
+`ruff-console-character-media`, `ruff-console-composer`,
+`ruff-console-fleet-ui`, `ruff-console-foundation-ui`,
+`ruff-console-inspection`, `ruff-console-knowledge-ui`,
+`ruff-console-layout-rails`, `ruff-console-modals`, `ruff-console-runtime`,
+`ruff-console-session-send`, `ruff-console-transcript-selection`,
+`ruff-console-workspaces`, `ruff-core-runtime`, `ruff-database`, `ruff-evals`,
+`ruff-generation-media`, `ruff-ingestion-web-media`, `ruff-integration-live`,
+`ruff-library`, `ruff-library-screen-large`, `ruff-mcp-runtime`,
+`ruff-model-artifacts-tests`, `ruff-notes`, `ruff-performance`,
+`ruff-personas-screen-large`, `ruff-providers-prompts`, `ruff-rag-research`,
+`ruff-rag-search-tests`, `ruff-root-ci-architecture-final`,
+`ruff-root-test-infrastructure`, `ruff-scheduling-notifications`,
+`ruff-skills-runtime`, `ruff-speech-audio`,
+`ruff-state-sync-wizards-tests`,
+`ruff-tests-misc`, `ruff-tools-runtime`, `ruff-ui-evals`,
+`ruff-ui-file-dialogs`, `ruff-ui-library`, `ruff-ui-mcp-tools`,
+`ruff-ui-model-management`, `ruff-ui-navigation-shell`, `ruff-ui-personas`,
+`ruff-ui-prompts-workbench`, `ruff-ui-remaining-screens`, `ruff-ui-research`,
+`ruff-ui-scheduling`, `ruff-ui-settings`, `ruff-ui-speech`,
+`ruff-ui-visual-css`, `ruff-ui-watchlists`, `ruff-ui-wizards`,
+`ruff-utils-config`, `ruff-watchlists-screen-large`,
+`ruff-watchlists-subscriptions`, `ruff-widgets`, and `ruff-workspaces-runtime`.
 
 TASK-22514 supplies the historical comparison, not the current truth. Its scoped
 closeout evidence is pinned to local evidence commit
@@ -69,10 +148,18 @@ optional corroboration, not a hidden prerequisite for understanding the manifest
 
 Every census runs in an isolated clean worktree or checkout at its exact revision.
 The interpreter must report Python 3.12.11 and the executable must report exactly
-Ruff 0.15.22 before any result is retained. If `origin/dev` advances before the
-characterization records are committed, the task rebases, updates the pin, and
-reruns the current census. It never combines path lists, contents, or configuration
-from different revisions.
+Ruff 0.15.22 before any result is retained. The final collision scan still fetches
+every mandatory remote branch, paginated open-PR head, and worktree claim source. It
+accepts observed `origin/dev` equal to `S` or a verified fast-forward descendant,
+records the manifest pin, observed SHA, and exact ancestry result, and fails exact
+`E_ORIGIN_DEV_DIVERGED` for a missing pin/tip or non-ancestor/force-pushed state.
+PR-head movement and task-ID/worktree collisions remain strict. No fetch occurs after
+that final claim scan. The canonical final allocation-audit SHA-256 and its bound
+`manifest_pin`, `observed_origin_dev`, and `origin_dev_ancestry` values are required
+in Task 7 Implementation Notes. The canonical
+`raw/allocation-closeout-rescan.json` remains outside the repository but is retained
+through review and integration with the other temporary evidence. The evidence never
+combines path lists, contents, or configuration from different revisions.
 
 ## Chosen Approach
 
@@ -175,10 +262,12 @@ mechanical proof. It never silently drops a path or absorbs an unassigned one.
 
 The final cleanup record is created after the earlier cleanup records so its
 dependencies only point to lower task IDs. It owns the final explicit Git-tracked
-repository-wide Ruff format check. A new unassigned failure blocks that gate. The
-series either waits for its independently owned correction or creates a superseding
-final record after the new correction record exists; the final task never absorbs
-the regression as formatting debt.
+repository-wide Ruff format check from a clean Git-tracked checkout after all
+dependencies merge. A post-cut unassigned failure blocks that gate, is never silently
+added to the pinned counts or existing batches, and requires a separate correction
+record. The series either waits for its independently owned correction or creates a
+superseding final record after the new correction record exists; the final task never
+absorbs the regression as formatting debt.
 
 ## Records and Scope
 
@@ -201,6 +290,6 @@ ADR required: no.
 
 ADR path: N/A.
 
-Reason: this work characterizes and schedules behavior-preserving mechanical
-formatting. It changes no runtime, dependency, storage, security, privacy, schema,
-or cross-module ownership decision.
+Reason: the owner-approved authority-cut amendment changes only the audit/closeout
+process for this point-in-time formatter characterization. It changes no runtime,
+dependency, storage, security, privacy, schema, or cross-module ownership decision.
