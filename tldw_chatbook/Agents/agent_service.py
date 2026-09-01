@@ -1692,6 +1692,9 @@ class AgentService:
         before_tool_dispatch: (
             Callable[[list[ToolCall], frozenset[str]], None] | None
         ) = None,
+        post_tool_dispatch: (
+            Callable[[ToolCall, ToolResult, float, str], None] | None
+        ) = None,
         review_state_scope: Callable[[str], "contextlib.AbstractContextManager"]
         | None = None,
         install_skill_tool: Callable[[str], ToolResult] | None = None,
@@ -1767,6 +1770,12 @@ class AgentService:
         # and this is where a run's identity reaches the review hook that
         # writes them.
         self.review_tool_calls = review_tool_calls
+        #: TASK-26010: observational post-completion seam -- (call, result,
+        #: duration_seconds, run_id) after EVERY tool call completes, whatever
+        #: the outcome. Strictly observational: a raising hook costs nothing
+        #: but its own observation. None (the default) leaves every closure
+        #: unwrapped, so an unconfigured install pays nothing.
+        self.post_tool_dispatch = post_tool_dispatch
         self.before_tool_dispatch = before_tool_dispatch
         # C1 (probe-verified security regression, pre-merge review of the
         # Phase 5 chat bridge): an optional, generically-shaped seam a
@@ -2586,6 +2595,52 @@ class AgentService:
             trusted_role=trusted_role,
         )
 
+    def _fire_post_tool_dispatch(
+        self, call: ToolCall, result: ToolResult, duration: float, run_id: str
+    ) -> None:
+        """Deliver one completion to the observer; never let it break the run."""
+        hook = self.post_tool_dispatch
+        if hook is None:
+            return
+        try:
+            hook(call, result, duration, run_id)
+        except Exception:  # noqa: BLE001 -- observational by contract
+            logger.opt(exception=True).debug(
+                "post_tool_dispatch hook raised for {}; observation lost",
+                call.name,
+            )
+
+    def _wrap_review_with_observation(self, review, run_id: str):
+        """Report review-hook denials through the post-dispatch seam.
+
+        A call the review hook refuses never dispatches, but its refusal IS
+        its completion -- without this, a denial-heavy run would look silent
+        to an observer that watches only dispatches (TASK-26010 AC#3). The
+        synthetic result carries outcome "review_denied" so it is never
+        mistaken for a gate denial or a provider failure. Duration is 0.0:
+        nothing ran.
+        """
+        if self.post_tool_dispatch is None or review is None:
+            return review
+
+        def observed(calls):
+            verdicts = review(calls) or {}
+            for call in calls:
+                key = call.call_id or call.name
+                verdict = verdicts.get(key, verdicts.get(call.name, "proceed"))
+                if verdict != "proceed":
+                    self._fire_post_tool_dispatch(
+                        call,
+                        ToolResult(
+                            ok=False, error=str(verdict), outcome="review_denied"
+                        ),
+                        0.0,
+                        run_id,
+                    )
+            return verdicts
+
+        return observed
+
     def _make_invoke_tool(
         self,
         config: AgentConfig,
@@ -2714,7 +2769,20 @@ class AgentService:
                 )
             return _invoke()
 
-        return invoke_tool
+        if self.post_tool_dispatch is None:
+            # AC#5: no observer, no wrapper -- the closure above is returned
+            # untouched, so an unconfigured install pays nothing.
+            return invoke_tool
+
+        def observed_invoke_tool(call: ToolCall) -> ToolResult:
+            observation_started = self.clock()
+            result = invoke_tool(call)
+            self._fire_post_tool_dispatch(
+                call, result, self.clock() - observation_started, run_id
+            )
+            return result
+
+        return observed_invoke_tool
 
     # -- fleet helpers (PR2a Task 6) --------------------------------------
 
@@ -6091,10 +6159,11 @@ class AgentService:
             # whole loop below, so the approval bridge this hook calls can
             # record which run armed each card -- see the `use_run_actor`
             # wrapper on `run_agent_loop`.)
-            review_tool_calls=(
+            review_tool_calls=self._wrap_review_with_observation(
                 (lambda calls: self.review_tool_calls(calls, run_id))
                 if self.review_tool_calls is not None
-                else None
+                else None,
+                run_id,
             ),
             before_tool_dispatch=self.before_tool_dispatch,
             prepare_tool_calls=(
