@@ -1,7 +1,7 @@
-"""Server-side composition of the local agent tool provider for external MCP clients.
+"""Local-tool provider compositions for external MCP and operator Hub use.
 
-Non-Console MCP serving has no approval card and no session scope, so this
-composition differs from the Console's ``_compose_local_provider``
+External, non-Console MCP serving has no approval card and no session scope, so
+that composition differs from the Console's ``_compose_local_provider``
 (``Chat/console_chat_controller.py``) in exactly those seams:
 
 - ``resolve_state`` loads the ``MCPPermissionStore`` payload FRESH per call
@@ -27,6 +27,12 @@ path for external local-tool refusals is a separate design question
 (where the execution log lives for a headless server process), so refusals
 here record nothing for now.
 
+The operator Hub diagnostic uses dedicated per-refresh handles instead. Its
+ordinary full composition remains the inspection source, while a separate
+descriptor-filtered composition establishes exact executable identities. Each
+handle owns and closes its lazy Watchlists database resolver, including failure
+cleanup; neither composition uses the external-publication configuration gate.
+
 ``_local_agent_tool_registrations`` turns a composed provider's catalog
 into binding-ready ``LocalToolRegistration`` entries (name, description,
 JSON parameters, handler); ``MCP/server.py`` stages them on the gateway when
@@ -35,6 +41,7 @@ JSON parameters, handler); ``MCP/server.py`` stages them on the gateway when
 
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
 from pathlib import Path
 import threading
 from typing import Any, Callable, NamedTuple
@@ -42,6 +49,7 @@ from typing import Any, Callable, NamedTuple
 from loguru import logger
 
 from tldw_chatbook.Agents.agent_models import ToolResult
+
 # task-24458: deferred to the one runtime construction site below. This
 # module is reached by the screen pre-importer through
 # `UI/MCP_Modules/mcp_workbench.py`, and a module-scope import here puts
@@ -65,6 +73,10 @@ from tldw_chatbook.runtime_policy.bootstrap import (
     load_default_runtime_source_state,
 )
 from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
+from tldw_chatbook.Utils.filesystem_identity import (
+    DirectoryChain,
+    capture_directory_chain,
+)
 
 EXTERNAL_NO_CALLBACK_REFUSAL = (
     "tool requires operator approval (permission state is 'ask' and external "
@@ -125,6 +137,152 @@ class _LazyWatchlistsDBResolver:
 
             self._database = candidate
             return candidate
+
+    def close(self) -> None:
+        """Close retained Watchlists storage once; unopened resolvers are safe."""
+        with self._lock:
+            database = self._database
+            pending = self._pending_cleanup
+            self._database = None
+            self._pending_cleanup = None
+            if database is not None:
+                database.close()
+            elif pending is not None:
+                pending[0].close()
+
+
+@dataclass(slots=True)
+class HubLocalProviderHandle:
+    """One fresh Hub-local provider and the resources it exclusively owns."""
+
+    provider: "LocalToolProvider"
+    authority: DirectoryChain
+    resolver: _LazyWatchlistsDBResolver
+
+    def __enter__(self) -> "HubLocalProviderHandle":
+        return self
+
+    def __exit__(self, *_exc_info: Any) -> None:
+        self.close()
+
+    def close(self) -> None:
+        self.resolver.close()
+
+
+def _build_hub_local_provider_handle(
+    workspace_root: Path,
+    *,
+    resolve_state: Callable[[Any], Any],
+    approval_callback: Callable[[list[Any]], dict[str, str]] | None,
+    shared_only: bool,
+    dispatch_guard: Callable[[], bool] | None = None,
+) -> HubLocalProviderHandle:
+    """Compose one closable Hub-local provider over a captured authority."""
+    from tldw_chatbook.Agents.local_tool_provider import (
+        LocalToolExposure,
+        LocalToolProvider,
+        WorkspaceToolExecutor,
+        _default_specs,
+    )
+    from tldw_chatbook.Utils.path_validation import validate_path
+
+    validated_root = validate_path(
+        workspace_root,
+        workspace_root,
+        redact_paths=True,
+        allow_hidden=True,
+    )
+    authority = capture_directory_chain(validated_root)
+    resolver = _LazyWatchlistsDBResolver()
+    try:
+        watchlists_service = WatchlistsToolService(
+            db_resolver=resolver,
+            runtime_source_loader=load_default_runtime_source_state,
+        )
+        workspace_executor = WorkspaceToolExecutor(authority.canonical_root)
+        specs = _default_specs(
+            authority.canonical_root,
+            workspace_executor=workspace_executor,
+            watchlists_service=watchlists_service,
+        )
+        if dispatch_guard is not None:
+            guarded_specs = []
+            for spec in specs:
+                handler = spec.handler
+
+                def _guarded_handler(
+                    arguments: dict[str, Any],
+                    *,
+                    _handler: Callable[[dict[str, Any]], str] = handler,
+                ) -> str:
+                    if not dispatch_guard():
+                        raise RuntimeError("local Hub dispatch cancelled")
+                    return _handler(arguments)
+
+                guarded_specs.append(replace(spec, handler=_guarded_handler))
+            specs = guarded_specs
+        if shared_only:
+            specs = [
+                spec
+                for spec in specs
+                if spec.exposure is LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP
+            ]
+
+        def _root_guard() -> bool:
+            try:
+                return capture_directory_chain(authority.canonical_root) == authority
+            except Exception:  # noqa: BLE001 -- a raced authority fails closed
+                return False
+
+        provider = LocalToolProvider(
+            workspace_root=authority.canonical_root,
+            specs=specs,
+            resolve_state=resolve_state,
+            kill_switch=lambda: False,
+            approval_callback=approval_callback,
+            root_guard=_root_guard,
+            result_redaction_root=authority.canonical_root,
+            workspace_executor=workspace_executor,
+        )
+        return HubLocalProviderHandle(
+            provider=provider,
+            authority=authority,
+            resolver=resolver,
+        )
+    except BaseException:
+        resolver.close()
+        raise
+
+
+def build_hub_local_provider(
+    workspace_root: Path,
+    *,
+    resolve_state: Callable[[Any], Any],
+    approval_callback: Callable[[list[Any]], dict[str, str]] | None,
+    dispatch_guard: Callable[[], bool] | None = None,
+) -> HubLocalProviderHandle:
+    """Build the descriptor-filtered provider used by Hub-local execution."""
+    return _build_hub_local_provider_handle(
+        workspace_root,
+        resolve_state=resolve_state,
+        approval_callback=approval_callback,
+        shared_only=True,
+        dispatch_guard=dispatch_guard,
+    )
+
+
+def build_hub_local_inspection_provider(
+    workspace_root: Path,
+    *,
+    resolve_state: Callable[[Any], Any],
+) -> HubLocalProviderHandle:
+    """Build the ordinary full provider used only as the Hub inspection source."""
+    return _build_hub_local_provider_handle(
+        workspace_root,
+        resolve_state=resolve_state,
+        approval_callback=None,
+        shared_only=False,
+    )
 
 
 def build_server_local_provider(
@@ -250,9 +408,7 @@ def _local_agent_tool_registrations(
     from tldw_chatbook.Agents.local_tool_provider import LocalToolExposure
 
     registrations: list[LocalToolRegistration] = []
-    for spec in provider.specs_for_exposure(
-        LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP
-    ):
+    for spec in provider.specs_for_exposure(LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP):
         schema = provider.load_schema(spec.name)
         registrations.append(
             LocalToolRegistration(

@@ -144,6 +144,10 @@ ABSENT_AT_READY_MODULES = (
     # on slow runners where mount settling continues after ``_ui_ready``.
     "tldw_chatbook.Chat.console_trace_legacy",
     "tldw_chatbook.Chat.console_trace_maintenance",
+    # TASK-3605: Hub Test Tool admission is first-use work. Importing its
+    # execution coordinator and preview registry during service construction
+    # spends first-paint budget before an operator opens the MCP Hub.
+    "tldw_chatbook.MCP.hub_test_execution",
 )
 
 #: Anti-vacuity: if these are not resident, the boot did not actually mount
@@ -311,9 +315,7 @@ def test_ui_ready_module_census_stays_at_the_pinned_size(
     on_leg = [
         m
         for m in mods
-        if any(
-            m == p or m.startswith(p + ".") for p in ABSENT_AT_READY_PREFIXES
-        )
+        if any(m == p or m.startswith(p + ".") for p in ABSENT_AT_READY_PREFIXES)
         or m in ABSENT_AT_READY_MODULES
     ]
     assert not on_leg, (

@@ -4,10 +4,11 @@ Input validation utilities for secure user input handling.
 
 import re
 import ipaddress
+import math
 from itertools import islice
 import time
 import unicodedata
-from typing import Literal, Optional, TypeVar, Union
+from typing import Any, Literal, Optional, TypeVar, Union
 from urllib.parse import urlparse
 
 from pydantic import (
@@ -31,6 +32,107 @@ TERMINAL_SESSION_NAME_MIN_DISPLAY_CHARACTERS = 1
 TERMINAL_SESSION_NAME_MAX_DISPLAY_CHARACTERS = 64
 TERMINAL_SESSION_NAME_MAX_CODEPOINTS = 1_024
 _EXTENDED_GRAPHEME_PATTERN = regex.compile(r"\X", regex.VERSION1)
+
+
+class ToolArgumentsInput(BaseModel):
+    """Strict shared boundary for an externally supplied tool argument object."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    arguments: dict[str, Any]
+
+    @field_validator("arguments", mode="before")
+    @classmethod
+    def _validate_arguments(cls, value: object) -> dict[str, Any]:
+        if type(value) is not dict:
+            raise ValueError("tool arguments must be a JSON object")
+        _validate_strict_json_value(value, path="$", active_containers=set())
+        return value
+
+
+def validate_tool_arguments(value: object) -> dict[str, Any]:
+    """Validate one strict JSON-object tool payload through the shared model.
+
+    Args:
+        value: Candidate externally supplied tool arguments.
+
+    Returns:
+        The validated JSON object without scalar coercion.
+
+    Raises:
+        ValueError: If the payload is not a strict finite JSON object.
+    """
+    try:
+        return ToolArgumentsInput.model_validate({"arguments": value}).arguments
+    except PydanticValidationError as exc:
+        first = exc.errors(include_url=False)[0]
+        context_error = first.get("ctx", {}).get("error")
+        message = str(context_error or first.get("msg") or "invalid tool arguments")
+        if message.startswith("Value error, "):
+            message = message.removeprefix("Value error, ")
+        raise ValueError(message) from None
+
+
+def _validate_strict_json_value(
+    value: object,
+    *,
+    path: str,
+    active_containers: set[int],
+) -> None:
+    value_type = type(value)
+    if value is None or value_type in (str, bool, int):
+        return
+    if value_type is float:
+        if not math.isfinite(value):
+            raise ValueError(f"JSON number at {path} must be finite")
+        return
+    if value_type is list:
+        _validate_strict_json_container(
+            value,
+            path=path,
+            active_containers=active_containers,
+        )
+        try:
+            for index, item in enumerate(value):
+                _validate_strict_json_value(
+                    item,
+                    path=f"{path}[{index}]",
+                    active_containers=active_containers,
+                )
+        finally:
+            active_containers.remove(id(value))
+        return
+    if value_type is dict:
+        _validate_strict_json_container(
+            value,
+            path=path,
+            active_containers=active_containers,
+        )
+        try:
+            for key, item in value.items():
+                if type(key) is not str:
+                    raise ValueError(f"JSON object key at {path} must be a string")
+                _validate_strict_json_value(
+                    item,
+                    path=f"{path}.{key}",
+                    active_containers=active_containers,
+                )
+        finally:
+            active_containers.remove(id(value))
+        return
+    raise ValueError(f"value at {path} is not a JSON value")
+
+
+def _validate_strict_json_container(
+    value: object,
+    *,
+    path: str,
+    active_containers: set[int],
+) -> None:
+    marker = id(value)
+    if marker in active_containers:
+        raise ValueError(f"JSON value at {path} contains a circular reference")
+    active_containers.add(marker)
 
 
 def derive_console_session_title(draft: str, *, max_length: int) -> str:

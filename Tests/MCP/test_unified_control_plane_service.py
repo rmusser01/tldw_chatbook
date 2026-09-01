@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import pytest
 
+import tldw_chatbook.MCP.local_server_tools as local_server_tools_module
+import tldw_chatbook.MCP.unified_control_plane_service as control_plane_module
+from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
 from tldw_chatbook.MCP.unified_context_store import UnifiedMCPContextStore
 from tldw_chatbook.MCP.unified_control_models import (
@@ -11,6 +14,92 @@ from tldw_chatbook.MCP.unified_control_models import (
     ServerAccessContext,
     UnifiedMCPContext,
 )
+
+
+def _projection_tool(name: str, marker: str) -> HubTool:
+    return HubTool(
+        server_key="local:__local__",
+        server_label="Local workspace, web, and Watchlists",
+        source="local",
+        name=name,
+        description=f"{name}-{marker}",
+        input_schema={"type": "object", "properties": {marker: {"type": "string"}}},
+        tags=(),
+        stale=False,
+        executable=True,
+    )
+
+
+def test_local_hub_tools_requires_exact_definition_identity_and_closes_handles(
+    monkeypatch, tmp_path
+):
+    from tldw_chatbook.MCP.unified_control_plane_service import (
+        UnifiedMCPControlPlaneService,
+    )
+
+    exact = _projection_tool("exact", "same")
+    changed = _projection_tool("changed", "inspection")
+    console_only = _projection_tool("console_only", "inspection")
+    handles = []
+
+    class Provider:
+        def __init__(self, tools):
+            self._tools = tools
+
+        def hub_tools(self):
+            return list(self._tools)
+
+    class Handle:
+        def __init__(self, tools):
+            self.provider = Provider(tools)
+            self.close_calls = 0
+            handles.append(self)
+
+        def close(self):
+            self.close_calls += 1
+
+    monkeypatch.setattr(
+        local_server_tools_module,
+        "build_hub_local_inspection_provider",
+        lambda *_args, **_kwargs: Handle([exact, changed, console_only]),
+    )
+    monkeypatch.setattr(
+        local_server_tools_module,
+        "build_hub_local_provider",
+        lambda *_args, **_kwargs: Handle(
+            [exact, _projection_tool("changed", "executable")]
+        ),
+    )
+    monkeypatch.setattr(
+        local_server_tools_module,
+        "resolve_server_workspace_root",
+        lambda: tmp_path,
+    )
+    requested_settings = []
+
+    def setting(section, key, default=None):
+        requested_settings.append((section, key))
+        if (section, key) == ("console", "local_tools_enabled"):
+            return True
+        if (section, key) == ("mcp", "expose_local_tools"):
+            raise AssertionError("external publication gate is irrelevant")
+        return default
+
+    monkeypatch.setattr(control_plane_module, "get_cli_setting", setting)
+    service = UnifiedMCPControlPlaneService(
+        target_store=None,
+        context_store=None,
+        local_service=None,
+        server_service=None,
+    )
+
+    projected = {tool.name: tool for tool in service.local_hub_tools()}
+
+    assert projected["exact"].executable is True
+    assert projected["changed"].executable is False
+    assert projected["console_only"].executable is False
+    assert requested_settings == [("console", "local_tools_enabled")]
+    assert [handle.close_calls for handle in handles] == [1, 1]
 
 
 # Fix Round H (PR-T3 review), Item 2c -- POLICY on pinning hand-mirrored

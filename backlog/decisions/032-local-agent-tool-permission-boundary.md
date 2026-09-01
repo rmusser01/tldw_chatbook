@@ -12,6 +12,7 @@ Related Tasks:
 - [TASK-22862 - Add transactional Console Watchlists authoring commands](../tasks/task-22862%20-%20Add-transactional-Console-Watchlists-authoring-commands.md)
 - [TASK-22863 - Coordinate durable Watchlists check and briefing operations](../tasks/task-22863%20-%20Coordinate-durable-Watchlists-check-and-briefing-operations.md)
 - [TASK-22864 - Make every-24-hours briefing schedules immediately observable](../tasks/task-22864%20-%20Make-every-24-hours-briefing-schedules-immediately-observable.md)
+- [TASK-3605 - Enable fail-closed MCP Hub execution for local agent tools](../tasks/task-3605%20-%20Enable-fail-closed-MCP-Hub-execution-for-local-agent-tools.md)
 Supersedes: N/A
 
 ## Decision
@@ -264,6 +265,53 @@ migration; and cannot gain those capabilities through an Allow decision.
 Server Watchlists mode does not fall back to the local database for these
 tools. Missing or old read-only storage returns a structured unavailable
 outcome so normal application startup remains the sole migration owner.
+
+**Addendum (TASK-3605, 2026-08-30): MCP Hub Test Tool is an operator-only
+diagnostic, not a chat or external-MCP runtime.** The Hub may directly invoke
+only catalogued `local:__local__` descriptors whose exposure is
+`console_and_external_mcp`; `console_only` descriptors remain inspectable but
+non-executable, session-owned tools remain absent, and the raw MCP
+`tools/call` refusal remains unchanged. Eligibility is resolved from the
+code-owned descriptor on a fresh provider and never from a parallel name
+allowlist.
+
+The diagnostic deliberately ignores the chat/runtime kill switch, matching
+the Hub's existing `gate_tool_test()` contract. That carve-out does not make
+configured Off overridable: Off and unresolved permission block without
+dispatch. Ask is an explicit one-click **Approve & run once** action bound to
+the rendered full identity, definition hash, workspace-authority fingerprint,
+panel nonce, and exact canonical arguments. A click rendered as **Run** cannot
+be reinterpreted as approval if the fresh state becomes Ask, and any identity,
+definition, or authority mismatch blocks and refreshes the preview. One-time
+approval is consumed at most once and is never written to session or durable
+permission state.
+
+The control-plane service, not the widget, issues each preview and retains its
+opaque nonce in a bounded in-memory registry. Close, switch, remount, and expiry
+revoke the nonce; admission atomically consumes it. Workspace authority is the
+strict canonical locator plus the root-first directory identity chain used by
+the existing root pin, not a path-string hash, so replacement at the same path
+also invalidates the preview. Neither locator nor identity chain is displayed
+or persisted.
+
+The application control-plane service owns post-admission execution. It keeps
+an in-memory task registry across inspector remounts, honors code-owned timeout
+and execution policy, and constructs one typed terminal outcome for both UI and
+audit. It attempts at most one best-effort execution-log append per admitted
+invocation; process loss or append failure may omit that row, so this is not a
+crash-safe exactly-once guarantee. Provider refusal hooks are not also wired.
+The fresh workspace root is supplied as `result_redaction_root`, and display
+and audit derive from the same root-redacted result.
+
+`LocalToolProvider` supplies a compatible detailed invocation seam for this
+adapter. It reports the final gate, whether a one-time approval was consumed,
+a closed refusal reason, whether handler dispatch began, and the handler's
+provider-owned terminal category alongside the ordinary result. Provider
+terminals are limited to not-started, returned, or raised. Only the service
+coordinator synthesizes timeout or detached cancellation around the off-loop
+worker, and a late worker completion cannot replace or re-audit that sealed
+outcome. Normal provider callers keep the existing `ToolResult` contract, and
+the Hub never infers these facts by matching refusal text.
 
 All path-taking tools confine to a configurable `[console] workspace_root`
 (default: the app cwd at startup), coerced and templated following the
