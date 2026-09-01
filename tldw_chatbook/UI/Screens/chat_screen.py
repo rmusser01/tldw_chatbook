@@ -16656,12 +16656,14 @@ class ChatScreen(BaseAppScreen):
                         preview.visible_copy, severity="warning"
                     )
                 return
+            focus = ""
             if preview is not None:
-                confirmed = await self.app_instance.push_screen_wait(
+                modal_result = await self.app_instance.push_screen_wait(
                     ConsoleSummarizePreviewModal(preview)
                 )
-                if not confirmed:
+                if modal_result is None:
                     return
+                focus = modal_result
             should_sync = True
             self.app_instance.notify(
                 "Summarizing selected range...", severity="information"
@@ -16669,9 +16671,9 @@ class ChatScreen(BaseAppScreen):
             self._start_console_transcript_sync_timer()
             try:
                 result = await (
-                    controller.summarize_from(message_id)
+                    controller.summarize_from(message_id, focus=focus)
                     if from_here
-                    else controller.summarize_up_to(message_id)
+                    else controller.summarize_up_to(message_id, focus=focus)
                 )
             except asyncio.CancelledError:
                 self.app_instance.notify(

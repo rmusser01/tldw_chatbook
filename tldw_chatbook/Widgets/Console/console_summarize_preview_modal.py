@@ -18,7 +18,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
@@ -26,8 +26,15 @@ if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_context_compaction import ManualSummaryPreview
 
 
-class ConsoleSummarizePreviewModal(SafeModalDismissMixin, ModalScreen[bool]):
-    """Preview one manual summarize; confirm or discard."""
+class ConsoleSummarizePreviewModal(
+    SafeModalDismissMixin, ModalScreen["str | None"]
+):
+    """Preview one manual summarize; confirm or discard.
+
+    Dismisses ``None`` on cancel; on confirm, the (possibly empty) focus
+    topic string typed into the optional input (TASK-26018) -- empty means
+    an unsteered summary, exactly today's behavior.
+    """
 
     BUNDLED_CSS = """
     ConsoleSummarizePreviewModal {
@@ -96,6 +103,13 @@ class ConsoleSummarizePreviewModal(SafeModalDismissMixin, ModalScreen[bool]):
                 id="console-summarize-preview-note",
                 markup=False,
             )
+            yield Input(
+                placeholder="Focus the summary on… (optional)",
+                id="console-summarize-preview-focus",
+                # TASK-26018 AC#4: bounded at the widget; the controller
+                # re-sanitizes (collapse/cap/marker-refusal) regardless.
+                max_length=200,
+            )
             with Horizontal(id="console-summarize-preview-actions"):
                 yield Button("Cancel", id="console-summarize-preview-cancel")
                 yield Button(
@@ -111,9 +125,13 @@ class ConsoleSummarizePreviewModal(SafeModalDismissMixin, ModalScreen[bool]):
 
     async def _perform_safe_cancel(self, *, source: str) -> None:
         del source
-        self.dismiss_safe_once(False)
+        self.dismiss_safe_once(None)
 
     @on(Button.Pressed, "#console-summarize-preview-confirm")
     def _confirm(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(True)
+        try:
+            topic = self.query_one("#console-summarize-preview-focus", Input).value
+        except Exception:  # noqa: BLE001 -- a missing input never blocks commit
+            topic = ""
+        self.dismiss(topic or "")

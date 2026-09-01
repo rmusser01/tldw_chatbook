@@ -145,6 +145,7 @@ from tldw_chatbook.Chat.console_context_compaction import (
     decide_compaction,
     plan_compaction,
     manual_summary_preview,
+    sanitize_summary_focus,
     plan_manual_prefix,
     plan_manual_range,
     prefix_digest,
@@ -13997,16 +13998,24 @@ class ConsoleChatController:
         )
         return result
 
-    async def summarize_up_to(self, message_id: str) -> ConsoleSubmitResult:
+    async def summarize_up_to(
+        self, message_id: str, focus: str = ""
+    ) -> ConsoleSubmitResult:
         """Create a generated memory for complete units strictly before a prompt."""
-        return await self._summarize_manual(message_id, from_here=False)
+        return await self._summarize_manual(
+            message_id, from_here=False, focus=focus
+        )
 
-    async def summarize_from(self, message_id: str) -> ConsoleSubmitResult:
+    async def summarize_from(
+        self, message_id: str, focus: str = ""
+    ) -> ConsoleSubmitResult:
         """Create a generated memory for the complete inclusive range to the leaf."""
-        return await self._summarize_manual(message_id, from_here=True)
+        return await self._summarize_manual(
+            message_id, from_here=True, focus=focus
+        )
 
     async def _manual_summary_planning(
-        self, message_id: str, *, from_here: bool
+        self, message_id: str, *, from_here: bool, focus: str = ""
     ):
         """Shared planning for preview and commit (TASK-26017 AC#4).
 
@@ -14015,6 +14024,7 @@ class ConsoleChatController:
         admission, no attempt-ledger write, and no model call. Returns a
         blocked ``ConsoleSubmitResult`` or a ``_ManualSummaryPlanning``.
         """
+        focus = sanitize_summary_focus(focus)
         active_rejection = self._active_run_rejection()
         if active_rejection is not None:
             return active_rejection
@@ -14141,6 +14151,7 @@ class ConsoleChatController:
                 max_visual_inputs=max_visual_inputs,
                 prepare_projection=prepare_projection,
                 prepare_auxiliary=prepare_auxiliary,
+                focus=focus,
             )
             if from_here
             else plan_manual_prefix(
@@ -14153,6 +14164,7 @@ class ConsoleChatController:
                 max_visual_inputs=max_visual_inputs,
                 prepare_projection=prepare_projection,
                 prepare_auxiliary=prepare_auxiliary,
+                focus=focus,
             )
         )
         if plan_result.plan is None:
@@ -14190,11 +14202,11 @@ class ConsoleChatController:
         )
 
     async def _summarize_manual(
-        self, message_id: str, *, from_here: bool
+        self, message_id: str, *, from_here: bool, focus: str = ""
     ) -> ConsoleSubmitResult:
         """Plan and execute either manual memory direction through one service."""
         planning = await self._manual_summary_planning(
-            message_id, from_here=from_here
+            message_id, from_here=from_here, focus=focus
         )
         if isinstance(planning, ConsoleSubmitResult):
             return planning

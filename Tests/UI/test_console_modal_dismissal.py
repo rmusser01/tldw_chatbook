@@ -403,7 +403,7 @@ TASK2_MODAL_CONTRACTS = (
             )
         ),
         "#console-summarize-preview-modal",
-        False,
+        None,
         "Console rewind summarize action",
         None,
         "none",

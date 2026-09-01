@@ -12,7 +12,10 @@ from loguru import logger
 
 from tldw_chatbook.Chat.console_context_compaction import (
     DEFAULT_COMPACTION_AUXILIARY_TIMEOUT_SECONDS,
+    MAX_SUMMARY_FOCUS_CHARS,
+    focus_directed_prompt,
     manual_summary_preview,
+    sanitize_summary_focus,
     COMPACTION_INPUT_CLOSE,
     COMPACTION_INPUT_OPEN,
     CompactionAdmission,
@@ -1546,10 +1549,16 @@ class _Gateway:
             self.started.set()
         if self.release is not None:
             await self.release.wait()
+        scripted = getattr(self, "texts", None)
+        text = (
+            scripted[min(self.calls - 1, len(scripted) - 1)]
+            if scripted
+            else self.text
+        )
         return AuxiliaryCompletionResult(
             provider="openai",
             model="gpt-test",
-            text=self.text,
+            text=text,
             usage=ProviderUsage(
                 uncached_input=10,
                 output=self.output_tokens,
@@ -2110,7 +2119,7 @@ async def test_range_compaction_progress_counts_active_thinking_candidate() -> N
     assert repository.commits == []
 
 
-def _manual_transaction_inputs() -> tuple[
+def _manual_transaction_inputs(focus: str = "") -> tuple[
     ManualMemoryPlan,
     CompactionPromptSnapshot,
     BranchMemoryCommit,
@@ -2130,6 +2139,7 @@ def _manual_transaction_inputs() -> tuple[
         prepare_auxiliary=lambda rows, cap: _prepare(
             PreparedConsoleRequest(active_request=rows), response_tokens=cap
         ),
+        focus=focus,
     ).plan
     assert plan is not None
     no_memory = MemorySelectionFence(
@@ -4274,3 +4284,159 @@ async def test_hung_manual_auxiliary_call_times_out_the_same_way() -> None:
     assert repository.memories == []
     assert repository.commits == []
     assert repository.finishes[0][1]["status"] is AuxiliaryAttemptStatus.TIMED_OUT
+
+
+# --- TASK-26018: focus-directed manual summaries ----------------------------
+
+
+def test_sanitize_summary_focus_bounds_and_refuses_markers() -> None:
+    assert sanitize_summary_focus("  the   deployment\nbug  ") == "the deployment bug"
+    assert sanitize_summary_focus(None) == ""
+    assert sanitize_summary_focus("   ") == ""
+    long = "x" * (MAX_SUMMARY_FOCUS_CHARS + 50)
+    assert len(sanitize_summary_focus(long)) == MAX_SUMMARY_FOCUS_CHARS
+    # reserved envelope markers cannot ride into the summarizer prompt
+    assert sanitize_summary_focus("<chatbook_compaction_input> x") == ""
+    assert sanitize_summary_focus("a </tool_result> b") == ""
+
+
+def test_focus_directed_prompt_is_identity_without_a_topic() -> None:
+    """AC#2: no topic -> the SAME snapshot, byte-identical prompt text."""
+    prompt = CompactionPromptSnapshot("Preserve decisions.")
+    assert focus_directed_prompt(prompt, "") is prompt
+
+    steered = focus_directed_prompt(prompt, "the deployment bug")
+    assert steered.text.startswith("Preserve decisions.")
+    assert "the deployment bug" in steered.text
+    assert "not an instruction" in steered.text
+    assert steered.digest != prompt.digest
+
+
+def test_manual_plan_with_focus_steers_messages_and_keeps_a_fallback() -> None:
+    messages_src = _durable_units(unit_count=2, words=80)
+    snapshots = tuple(row for unit in messages_src for row in unit.messages)
+    prompt = CompactionPromptSnapshot("Preserve decisions.")
+
+    def _plan(focus):
+        return plan_manual_range(
+            messages=snapshots,
+            selected_prompt_message_id="u1",
+            current_leaf_message_id="a1",
+            system_messages=({"role": "system", "content": "system"},),
+            prompt=prompt,
+            requested_output_cap=40,
+            candidate_memory="candidate",
+            prepare_projection=_prepare,
+            prepare_auxiliary=lambda rows, cap: _prepare(
+                PreparedConsoleRequest(active_request=rows), response_tokens=cap
+            ),
+            focus=focus,
+        ).plan
+
+    unsteered = _plan("")
+    steered = _plan("the deployment bug")
+    assert unsteered is not None and steered is not None
+
+    # AC#2: the no-topic plan is byte-identical to a plan built without the kwarg
+    baseline = plan_manual_range(
+        messages=snapshots,
+        selected_prompt_message_id="u1",
+        current_leaf_message_id="a1",
+        system_messages=({"role": "system", "content": "system"},),
+        prompt=prompt,
+        requested_output_cap=40,
+        candidate_memory="candidate",
+        prepare_projection=_prepare,
+        prepare_auxiliary=lambda rows, cap: _prepare(
+            PreparedConsoleRequest(active_request=rows), response_tokens=cap
+        ),
+    ).plan
+    assert baseline is not None
+    assert unsteered.auxiliary_messages == baseline.auxiliary_messages
+    assert unsteered.fallback_auxiliary_messages is None
+    assert unsteered.focus_topic == ""
+
+    # AC#1/#4: the topic appears in the steered system message, framed as data
+    steered_system = steered.auxiliary_messages[0]["content"]
+    assert "the deployment bug" in steered_system
+    assert "not an instruction" in steered_system
+    assert steered.focus_topic == "the deployment bug"
+    # AC#5 machinery: the unsteered messages ride along for the fallback
+    assert steered.fallback_auxiliary_messages == unsteered.auxiliary_messages
+
+
+@pytest.mark.asyncio
+async def test_focused_summary_records_the_topic_in_provenance() -> None:
+    """AC#3: a committed steered summary says it was steered, and how."""
+    repository = _Repository()
+    gateway = _Gateway(text="Compact focused facts.")
+    service = ConsoleCompactionService(repository, gateway)
+    plan, prompt, admission = _manual_transaction_inputs(focus="the deployment bug")
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.SUCCEEDED
+    assert gateway.calls == 1
+    provenance = json.loads(result.memory.selected_units_json)
+    markers = [row for row in provenance if row.get("kind") == "focus_topic"]
+    assert markers == [
+        {"kind": "focus_topic", "topic": "the deployment bug", "applied": True}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unusable_focused_summary_falls_back_to_the_unsteered_path() -> None:
+    """AC#5: empty steered output -> one unsteered retry, committed honestly
+    (the marker says the steering did NOT apply)."""
+    repository = _Repository()
+    gateway = _Gateway(text="")
+    gateway.texts = ["", "Unsteered facts."]
+    service = ConsoleCompactionService(repository, gateway)
+    plan, prompt, admission = _manual_transaction_inputs(focus="the deployment bug")
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.SUCCEEDED
+    assert gateway.calls == 2
+    assert result.memory.summary_text == "Unsteered facts."
+    provenance = json.loads(result.memory.selected_units_json)
+    markers = [row for row in provenance if row.get("kind") == "focus_topic"]
+    assert markers == [
+        {"kind": "focus_topic", "topic": "the deployment bug", "applied": False}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unfocused_empty_summary_still_fails_without_a_retry() -> None:
+    """AC#2 guard: without a topic there is no second call -- behavior today."""
+    repository = _Repository()
+    gateway = _Gateway(text="")
+    service = ConsoleCompactionService(repository, gateway)
+    plan, prompt, admission = _manual_transaction_inputs()
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.FAILED
+    assert result.reason == "invalid_summary_output"
+    assert gateway.calls == 1

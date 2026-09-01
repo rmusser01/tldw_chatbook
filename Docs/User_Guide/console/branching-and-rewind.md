@@ -136,7 +136,12 @@ the capture in the Layout tour) lists your earlier prompts newest-first as
   will happen — how many turns get summarized, how many are kept as-is, and
   the estimated context change (`~before → ~after tokens`) — and no model
   call is made until you confirm; Cancel discards the preview with nothing
-  recorded. Your visible transcript is untouched; the banner
+  recorded. The dialog also takes an optional **focus topic** ("Focus the
+  summary on…") that biases what the summary preserves — a long debugging
+  session can be compacted *around the bug you care about*. The topic is
+  treated as data, not instructions, capped at 200 characters, and recorded
+  in the memory's provenance; if the focused summary comes back unusable,
+  one unfocused retry runs automatically before anything fails. Your visible transcript is untouched; the banner
   "⤵ Earlier turns summarized for context — full history above" marks the
   boundary in the transcript. If the summarizer hangs, the call is cut off
   after a bound (default 120 s, `[console] compaction_auxiliary_timeout_seconds`)
