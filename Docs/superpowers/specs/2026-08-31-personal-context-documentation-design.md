@@ -1,14 +1,14 @@
 # Personal Context Profile Documentation Design
 
-**Date:** 2026-08-31  
-**Status:** Approved for implementation planning  
-**Repositories:** `tldw_chatbook`, `tldw_server`
+- **Date:** 2026-08-31
+- **Status:** Approved for implementation planning
+- **Repositories:** `tldw_chatbook`, `tldw_server`
 
 ## Decision record check
 
-ADR required: no  
-ADR path: N/A  
-Reason: This work documents the Personal Context architecture and behavior already governed by the existing Personal Context ADRs and merged implementation. It does not change storage, synchronization, security, authority, or user-interface contracts.
+- ADR required: no
+- ADR path: N/A
+- Reason: This work documents the Personal Context architecture and behavior already governed by the existing Personal Context ADRs and merged implementation. It does not change storage, synchronization, security, authority, or user-interface contracts.
 
 ## Purpose
 
