@@ -1492,7 +1492,15 @@ class ConsoleLeftRail(Vertical):
     def _snapshot_outer_viewport_height(self) -> int:
         """Return the no-hint Context viewport height for counterfactual policy."""
 
-        outer = self.query_one("#console-left-rail-body", VerticalScroll)
+        # TASK-25715 finding 2 (captured traceback, 2026-09-01): a deferred
+        # _prepare_allocation_reconcile invoked after this rail's removal
+        # reached this query with `is_mounted` still True and crashed on
+        # NoMatches. A rail with no body has no viewport; report it as such
+        # instead of raising out of a stale callback.
+        try:
+            outer = self.query_one("#console-left-rail-body", VerticalScroll)
+        except (NoMatches, QueryError):
+            return 0
         height = outer.content_region.height
         try:
             hint = self.query_one("#console-left-rail-outer-hint", Static)
