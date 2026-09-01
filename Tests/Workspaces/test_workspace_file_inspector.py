@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import inspect
 import os
 from pathlib import Path
 import shutil
@@ -28,6 +29,12 @@ from tldw_chatbook.Workspaces.models import (
     WorkspaceRuntimeBinding,
 )
 import tldw_chatbook.Workspaces.file_inspector as file_inspector
+
+
+requires_posix_special_files = pytest.mark.skipif(
+    os.name != "posix",
+    reason="Symlink and FIFO race coverage requires POSIX filesystem semantics.",
+)
 
 
 def _registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
@@ -93,6 +100,7 @@ def test_scope_rejects_removed_retargeted_foreign_default_and_nonlocal_bindings(
     assert inspector.list_directory(retargeted_scope).error_code == "binding_changed"
 
 
+@requires_posix_special_files
 def test_list_and_read_reject_component_escape_links_special_files_and_vcs(
     tmp_path: Path,
 ) -> None:
@@ -169,6 +177,7 @@ def test_directory_pages_are_deterministic_bounded_and_revision_pinned(tmp_path:
     assert inspector.list_directory(scope, continuation=first.continuation).error_code == "invalid_page"
 
 
+@requires_posix_special_files
 def test_filter_is_literal_selected_scope_bounded_and_reports_exclusions(tmp_path: Path) -> None:
     """Catch recursive filtering that crosses bindings, follows links, or hides bounds."""
     inspector, registry, root, scope = _scope(tmp_path)
@@ -199,6 +208,7 @@ def test_filter_is_literal_selected_scope_bounded_and_reports_exclusions(tmp_pat
     assert inspector.filter_debounce_ms == 150
 
 
+@requires_posix_special_files
 def test_filter_reports_cancellation_and_does_not_descend_symlink_directories(
     tmp_path: Path,
 ) -> None:
@@ -317,6 +327,7 @@ def test_root_replacement_and_disappeared_file_fail_closed(tmp_path: Path) -> No
     assert inspector.list_directory(scope).error_code == "binding_changed"
 
 
+@requires_posix_special_files
 def test_read_rejects_root_symlink_swap_after_scope_revalidation(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -346,6 +357,7 @@ def test_read_rejects_root_symlink_swap_after_scope_revalidation(
     assert result.text == ""
 
 
+@requires_posix_special_files
 def test_read_rejects_intermediate_directory_symlink_swap_after_root_open(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -378,6 +390,7 @@ def test_read_rejects_intermediate_directory_symlink_swap_after_root_open(
 
 
 @pytest.mark.parametrize("page_offset", (None, 100_000))
+@requires_posix_special_files
 def test_read_rejects_a_listed_file_swapped_to_fifo_without_blocking(
     tmp_path: Path, page_offset: int | None
 ) -> None:
@@ -612,3 +625,117 @@ def test_unconsumed_continuation_detects_directory_revision_change(tmp_path: Pat
     result = inspector.list_directory(scope, continuation=first.continuation)
 
     assert result.error_code == "directory_changed"
+
+
+def test_root_descriptor_is_closed_when_fstat_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A failed post-open identity check must not leak the root descriptor."""
+    inspector, _registry_service, _root, scope = _scope(tmp_path)
+    descriptor = 987_654
+    closed: list[int] = []
+    monkeypatch.setattr(file_inspector.os, "open", lambda *_args, **_kwargs: descriptor)
+    monkeypatch.setattr(
+        file_inspector.os,
+        "fstat",
+        lambda _descriptor: (_ for _ in ()).throw(OSError("fstat failed")),
+    )
+    monkeypatch.setattr(file_inspector.os, "close", closed.append)
+
+    result = inspector.list_directory(scope)
+
+    assert result.error_code == "binding_changed"
+    assert closed == [descriptor]
+
+
+def test_path_validation_rejects_nul_without_calling_os_open(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """NUL is invalid path input, not an uncaught ``os.open`` ValueError."""
+    inspector, _registry_service, _root, scope = _scope(tmp_path)
+    calls: list[object] = []
+    monkeypatch.setattr(
+        file_inspector.os,
+        "open",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    result = inspector.read_file(scope, ("bad\0name.txt",))
+
+    assert result.kind is FileReadKind.FAILED
+    assert result.error_code == "invalid_path"
+    assert calls == []
+
+
+def test_negative_page_offset_is_rejected_before_small_file_decode(
+    tmp_path: Path,
+) -> None:
+    """Every caller-supplied page offset must be a non-negative integer."""
+    inspector, _registry_service, root, scope = _scope(tmp_path)
+    (root / "small.txt").write_text("small")
+
+    result = inspector.read_file(scope, ("small.txt",), page_offset=-1)
+
+    assert result.kind is FileReadKind.FAILED
+    assert result.error_code == "invalid_page"
+
+
+def test_empty_filter_returns_without_traversing_the_binding(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An empty query is an empty result, never an accidental full-tree walk."""
+    inspector, _registry_service, _root, scope = _scope(tmp_path)
+    monkeypatch.setattr(
+        file_inspector.os,
+        "scandir",
+        lambda _descriptor: (_ for _ in ()).throw(
+            AssertionError("empty query traversed the workspace")
+        ),
+    )
+
+    result = inspector.filter_paths(scope, "")
+
+    assert result.status is FilterStatus.EMPTY
+    assert result.matches == ()
+    assert result.visited_entries == 0
+
+
+def test_filter_results_contain_only_files_even_when_directory_name_matches(
+    tmp_path: Path,
+) -> None:
+    """The modal's file-result rows must never receive a directory identity."""
+    inspector, _registry_service, root, scope = _scope(tmp_path)
+    (root / "needle-folder").mkdir()
+    (root / "needle-folder" / "ordinary.txt").write_text("x")
+
+    result = inspector.filter_paths(scope, "needle")
+
+    assert [match.raw_parts for match in result.matches] == [
+        ("needle-folder", "ordinary.txt")
+    ]
+
+
+def test_page_cache_bounds_distinct_file_revisions(tmp_path: Path) -> None:
+    """Sparse per-file paging must also bound the outer file/revision cache."""
+    inspector, _registry_service, root, scope = _scope(tmp_path)
+    for index in range(file_inspector.PAGE_CACHE_FILE_LIMIT + 3):
+        name = f"large-{index}.txt"
+        (root / name).write_text(str(index) * 200_001)
+        assert inspector.read_file(scope, (name,)).kind is FileReadKind.PAGED
+
+    assert len(inspector._page_cache) <= file_inspector.PAGE_CACHE_FILE_LIMIT
+
+
+def test_inspector_public_operations_document_google_style_contracts() -> None:
+    """Public filesystem boundaries document inputs, outputs, and failures."""
+    for method_name in (
+        "capture_binding",
+        "list_directory",
+        "filter_paths",
+        "read_file",
+        "cached_page_offsets",
+    ):
+        docstring = inspect.getdoc(getattr(WorkspaceFileInspector, method_name)) or ""
+        assert "Args:" in docstring
+        assert "Returns:" in docstring
+    assert "Raises:" in (inspect.getdoc(WorkspaceFileInspector.capture_binding) or "")

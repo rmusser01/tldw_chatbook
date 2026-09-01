@@ -38,6 +38,7 @@ FILTER_RESULT_LIMIT = 500
 METADATA_ONLY_BYTES = 8 * 1024 * 1024
 PAGED_TEXT_THRESHOLD = 200_000
 TEXT_PAGE_SIZE = 100_000
+PAGE_CACHE_FILE_LIMIT = 8
 
 _VCS_DIRECTORY_NAMES = frozenset({".git", ".hg", ".svn"})
 _CACHE_DIRECTORY_NAMES = frozenset(
@@ -229,6 +230,12 @@ def safe_filesystem_text(value: str) -> str:
     The result is deliberately one-way.  Callers retain the original raw path
     components for later authority checks rather than attempting to parse this
     display string.
+
+    Args:
+        value: Untrusted filesystem-derived text to make display-safe.
+
+    Returns:
+        One-way escaped text suitable for terminal rendering without markup.
     """
     escaped: list[str] = []
     for character in value:
@@ -257,13 +264,24 @@ class WorkspaceFileInspector:
 
     def __init__(self, registry: WorkspaceRegistry) -> None:
         self._registry = registry
-        self._page_cache: dict[
+        self._page_cache: OrderedDict[
             tuple[str, tuple[str, ...], FileRevision], OrderedDict[int, tuple[str, int]]
-        ] = {}
+        ] = OrderedDict()
         self._continuations: dict[str, DirectoryContinuation] = {}
 
     def capture_binding(self, workspace_id: str, binding_id: str) -> BindingScope:
-        """Capture one immutable local-folder address for an inspector visit."""
+        """Capture one immutable local-folder address for an inspector visit.
+
+        Args:
+            workspace_id: Stable workspace identity that owns the binding.
+            binding_id: Stable local-folder binding identity.
+
+        Returns:
+            Revalidation address pinned to the current workspace and root.
+
+        Raises:
+            ScopeCaptureError: If the workspace or binding is not safely readable.
+        """
         scope, error_code = self._current_scope(workspace_id, binding_id)
         if scope is None:
             raise ScopeCaptureError(error_code)
@@ -276,7 +294,18 @@ class WorkspaceFileInspector:
         *,
         continuation: DirectoryContinuation | None = None,
     ) -> DirectoryPage:
-        """List one bounded direct-child page after fresh scope revalidation."""
+        """List one bounded direct-child page after fresh scope revalidation.
+
+        Args:
+            scope: Previously captured binding address to revalidate.
+            directory_parts: Raw root-relative directory components.
+            continuation: Optional one-shot continuation issued by this service.
+
+        Returns:
+            Bounded directory page with explicit partial or failure state.
+        """
+        if not _safe_relative_parts(directory_parts):
+            return DirectoryPage(DirectoryStatus.FAILED, error_code="invalid_path")
         current, error_code = self._revalidate(scope)
         if current is None:
             return DirectoryPage(DirectoryStatus.FAILED, error_code=error_code)
@@ -382,12 +411,28 @@ class WorkspaceFileInspector:
         is_cancelled: Callable[[], bool] | None = None,
         on_progress: Callable[[FilterProgress], None] | None = None,
     ) -> FilterResult:
-        """Literal case-insensitive recursive filter under exactly one binding."""
+        """Run a bounded literal file filter under exactly one binding.
+
+        Args:
+            scope: Previously captured binding address to revalidate.
+            query: Literal case-insensitive path fragment.
+            is_cancelled: Optional cooperative cancellation probe.
+            on_progress: Optional incremental visit/match observer.
+
+        Returns:
+            Bounded regular-file matches with explicit progress and exclusions.
+        """
+        if not isinstance(query, str):
+            return FilterResult(FilterStatus.FAILED, error_code="invalid_query")
+        if not query:
+            return FilterResult(
+                FilterStatus.EMPTY,
+                status_copy="Enter a path filter.",
+                progress=FilterProgress(0, 0),
+            )
         current, error_code = self._revalidate(scope)
         if current is None:
             return FilterResult(FilterStatus.FAILED, error_code=error_code)
-        if not isinstance(query, str):
-            return FilterResult(FilterStatus.FAILED, error_code="invalid_query")
         needle = query.casefold()
         pending: list[tuple[str, ...]] = [()]
         matches: list[FileRef] = []
@@ -438,7 +483,7 @@ class WorkspaceFileInspector:
                         continue
                     raw_parts = parent_parts + (entry.name,)
                     relative_display = "/".join(raw_parts)
-                    if needle in relative_display.casefold():
+                    if kind == "file" and needle in relative_display.casefold():
                         matches.append(FileRef(raw_parts, _display_parts(raw_parts)))
                         if len(matches) >= FILTER_RESULT_LIMIT:
                             return FilterResult(
@@ -475,7 +520,23 @@ class WorkspaceFileInspector:
         page_offset: int | None = None,
         expected_revision: FileRevision | None = None,
     ) -> FileReadResult:
-        """Read a safe small preview or one revision-pinned text page."""
+        """Read a safe small preview or one revision-pinned text page.
+
+        Args:
+            scope: Previously captured binding address to revalidate.
+            raw_parts: Raw root-relative regular-file components.
+            page_offset: Optional non-negative character offset for a large file.
+            expected_revision: Optional revision that every continued page must match.
+
+        Returns:
+            Safe text, metadata, paging, revision-change, or failure result.
+        """
+        if not _safe_relative_parts(raw_parts):
+            return FileReadResult(FileReadKind.FAILED, error_code="invalid_path")
+        if page_offset is not None and (
+            type(page_offset) is not int or page_offset < 0
+        ):
+            return FileReadResult(FileReadKind.FAILED, error_code="invalid_page")
         current, error_code = self._revalidate(scope)
         if current is None:
             return FileReadResult(FileReadKind.FAILED, error_code=error_code)
@@ -502,8 +563,10 @@ class WorkspaceFileInspector:
                 )
             offset = page_offset or 0
             cache_key = (scope.binding_fingerprint, raw_parts, revision)
-            cached = self._page_cache.get(cache_key, {}).get(offset)
+            file_cache = self._page_cache.get(cache_key)
+            cached = file_cache.get(offset) if file_cache is not None else None
             if cached is not None:
+                self._page_cache.move_to_end(cache_key)
                 cached_text, cached_total = cached
                 return FileReadResult(
                     FileReadKind.PAGED,
@@ -558,10 +621,13 @@ class WorkspaceFileInspector:
         end = min(offset + TEXT_PAGE_SIZE, total_characters)
         cache_key = (scope.binding_fingerprint, raw_parts, revision)
         cache = self._page_cache.setdefault(cache_key, OrderedDict())
+        self._page_cache.move_to_end(cache_key)
         cache[offset] = (page_text, total_characters)
         for cached_offset in tuple(cache):
             if abs(cached_offset - offset) > TEXT_PAGE_SIZE:
                 del cache[cached_offset]
+        while len(self._page_cache) > PAGE_CACHE_FILE_LIMIT:
+            self._page_cache.popitem(last=False)
         return FileReadResult(
             FileReadKind.PAGED,
             revision=revision,
@@ -576,7 +642,15 @@ class WorkspaceFileInspector:
     def cached_page_offsets(
         self, scope: BindingScope, raw_parts: tuple[str, ...]
     ) -> tuple[int, ...]:
-        """Expose only sparse cached offsets for the modal's page contract."""
+        """Expose only sparse cached offsets for the modal's page contract.
+
+        Args:
+            scope: Captured binding whose fingerprint owns the cached pages.
+            raw_parts: Raw root-relative file components.
+
+        Returns:
+            Sorted character offsets currently retained for the file.
+        """
         offsets: list[int] = []
         for (fingerprint, candidate_parts, _revision), cache in self._page_cache.items():
             if fingerprint == scope.binding_fingerprint and candidate_parts == raw_parts:
@@ -585,7 +659,11 @@ class WorkspaceFileInspector:
 
     @property
     def continuation_count(self) -> int:
-        """Bounded number of outstanding service-issued directory tokens."""
+        """Return the bounded number of outstanding directory tokens.
+
+        Returns:
+            Count of service-issued continuations not yet consumed or evicted.
+        """
         return len(self._continuations)
 
     def _current_scope(
@@ -698,21 +776,16 @@ def _safe_relative_parts(raw_parts: tuple[str, ...]) -> bool:
     if not isinstance(raw_parts, tuple):
         return False
     for part in raw_parts:
-        if not isinstance(part, str) or not part or part in {".", ".."}:
+        if (
+            not isinstance(part, str)
+            or not part
+            or "\0" in part
+            or part in {".", ".."}
+        ):
             return False
         if Path(part).is_absolute() or "/" in part or "\\" in part:
             return False
     return True
-
-
-def _directory_revision(path: Path) -> DirectoryRevision | None:
-    try:
-        observed = os.lstat(path)
-    except OSError:
-        return None
-    if not stat.S_ISDIR(observed.st_mode) or stat.S_ISLNK(observed.st_mode):
-        return None
-    return DirectoryRevision(observed.st_dev, observed.st_ino, observed.st_mtime_ns)
 
 
 def _directory_revision_from_stat(observed: os.stat_result) -> DirectoryRevision:
@@ -760,10 +833,16 @@ def _open_root_descriptor(scope: BindingScope) -> tuple[int | None, str]:
     flags = _safe_open_flags(directory=True)
     if flags is None:
         return None, "safe_descriptor_unavailable"
+    descriptor: int | None = None
     try:
         descriptor = os.open(scope.canonical_root, flags)
         observed = os.fstat(descriptor)
     except OSError:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
         return None, "binding_changed"
     if (
         not stat.S_ISDIR(observed.st_mode)
@@ -772,21 +851,6 @@ def _open_root_descriptor(scope: BindingScope) -> tuple[int | None, str]:
     ):
         os.close(descriptor)
         return None, "binding_changed"
-    return descriptor, ""
-
-
-def _open_child_directory(parent_fd: int, name: str) -> tuple[int | None, str]:
-    flags = _safe_open_flags(directory=True)
-    if flags is None:
-        return None, "safe_descriptor_unavailable"
-    try:
-        descriptor = os.open(name, flags, dir_fd=parent_fd)
-        observed = os.fstat(descriptor)
-    except OSError:
-        return None, "unsafe_target"
-    if not stat.S_ISDIR(observed.st_mode):
-        os.close(descriptor)
-        return None, "unsafe_target"
     return descriptor, ""
 
 
@@ -834,28 +898,6 @@ def _open_target_descriptor(
     finally:
         if not success:
             os.close(current_fd)
-
-
-def _open_regular_file(path: Path) -> tuple[int | None, FileRevision | None, str]:
-    """Compatibility helper retained for callers outside this module."""
-    flags = _safe_open_flags(directory=False, nonblocking=True)
-    if flags is None:
-        return None, None, "safe_descriptor_unavailable"
-    try:
-        descriptor = os.open(path, flags)
-        observed = os.fstat(descriptor)
-    except FileNotFoundError:
-        return None, None, "missing_target"
-    except OSError:
-        return None, None, "unsafe_target"
-    if not stat.S_ISREG(observed.st_mode):
-        os.close(descriptor)
-        return None, None, "unsafe_target"
-    revision = _revision_from_descriptor(descriptor, observed)
-    if revision is None:
-        os.close(descriptor)
-        return None, None, "read_failed"
-    return descriptor, revision, ""
 
 
 def _revision_from_stat(observed: os.stat_result) -> FileRevision:

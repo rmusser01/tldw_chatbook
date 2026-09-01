@@ -34,7 +34,16 @@ Give Console users a safe way to inspect files from any visible named workspace 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: yes\nADR path: backlog/decisions/079-workspace-file-inspector-direct-user-authority-and-save-publication.md\nReason: Implements ADR-079's non-activating Console modal, direct-user read authority, revalidation, privacy, and bounded lifecycle boundaries.\n\n1. Build the revalidating read-only filesystem service with bounded list/filter/read paging and hostile-text safety.\n2. Build the Console safe modal with bounded worker lanes, responsive layouts, focus/dismiss behavior, and viewer states.\n3. Wire both typed non-activating entry points, single-visit admission, privacy-minimized attention, and graceful lifecycle behavior.\n4. Complete production-shaped and isolated live scratch evidence, documentation, independent whole-slice review, and task closure.\n\nDetailed plan: Docs/superpowers/plans/2026-08-31-task-26042-workspace-files-read-only.md
+ADR required: yes
+ADR path: backlog/decisions/079-workspace-file-inspector-direct-user-authority-and-save-publication.md
+Reason: Implements ADR-079's non-activating Console modal, direct-user read authority, revalidation, privacy, and bounded lifecycle boundaries.
+
+1. Build the revalidating read-only filesystem service with bounded list/filter/read paging and hostile-text safety.
+2. Build the Console safe modal with bounded worker lanes, responsive layouts, focus/dismiss behavior, and viewer states.
+3. Wire both typed non-activating entry points, single-visit admission, privacy-minimized attention, and graceful lifecycle behavior.
+4. Complete production-shaped and isolated live scratch evidence, documentation, independent whole-slice review, and task closure.
+
+Detailed plan: Docs/superpowers/plans/2026-08-31-task-26042-workspace-files-read-only.md
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -90,6 +99,21 @@ remaining inspector-handle minimum-height failure likewise
 reproduces unchanged on pristine `origin/dev` and is outside this feature's CSS
 and behavior scope. The full suite was not run under the repository's
 targeted-verification policy.
+Post-PR Qodo and Cubic review was then resolved on the latest `dev`: root
+descriptor failures now close their opened fd, NUL and negative paging inputs
+fail closed, filter results contain only files and blank filters never walk the
+tree, and the outer revision/page cache is bounded. The modal now fences
+directory results across binding round-trips without suppressing independent
+expanded-directory results, deduplicates pending continuations, reports invalid
+UTF-8 truthfully, synchronizes compact viewer state immediately, focuses the
+actual selected binding, and keeps Show Files immediately after the primary/RAG
+actions. Foreign scopes are stripped even when already unavailable, the feature
+modules are first-use imports, the required off-loop availability worker is
+explicitly inventoried, test waits are bounded, and the rebased split-CSS test
+harness loads the production Console sheet. Targeted verification passed 94
+service/modal/integration tests, 11 controller/routing/dismissal tests, 20
+workspace-action/CSS integrity tests, both startup ratchets, focused Ruff, and
+`git diff --check`; no new ADR or generalized lesson was required.
 <!-- SECTION:NOTES:END -->
 
 ## Definition of Done

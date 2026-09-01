@@ -155,6 +155,10 @@ ABSENT_AT_READY_MODULES = (
     # execution coordinator and preview registry during service construction
     # spends first-paint budget before an operator opens the MCP Hub.
     "tldw_chatbook.MCP.hub_test_execution",
+    # TASK-26042: Workspace Files is an explicit Console interaction. Its
+    # modal and descriptor-backed reader stay outside the first-paint graph.
+    "tldw_chatbook.Widgets.Console.console_workspace_files_modal",
+    "tldw_chatbook.Workspaces.file_inspector",
 )
 
 #: Anti-vacuity: if these are not resident, the boot did not actually mount

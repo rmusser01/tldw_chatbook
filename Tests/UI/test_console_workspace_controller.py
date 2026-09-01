@@ -75,6 +75,7 @@ from tldw_chatbook.Workspaces import (
     console_rail_section_height_budget,
 )
 from tldw_chatbook.Workspaces.file_inspector import BindingScope, ScopeCaptureError
+import tldw_chatbook.Workspaces.file_inspector as file_inspector_module
 from tldw_chatbook.Workspaces.display_state import (
     ConsoleWorkspaceContextState,
     ConsoleWorkspaceConversationRow,
@@ -246,8 +247,11 @@ async def test_workspace_files_availability_snapshot_never_blocks_context_build(
     with pytest.raises(TypeError):
         state.workspace_files_available_by_id["ws-a"] = True
     assert len(screen.workers) == 1
-    await asyncio.sleep(0)
-    assert entered.is_set()
+    for _ in range(100):
+        if entered.is_set():
+            break
+        await asyncio.sleep(0.02)
+    assert entered.is_set(), "availability snapshot did not start"
 
     # A cadence tick while disk work is blocked is still cache-only and does
     # not mint a duplicate worker or mutate the Console context.
@@ -299,16 +303,22 @@ async def test_workspace_files_availability_snapshot_discards_stale_generation(
     assert controller._build_console_workspace_context_state().workspace_files_available_by_id == {
         "ws-a": False
     }
-    await asyncio.sleep(0)
-    assert first_entered.is_set()
+    for _ in range(100):
+        if first_entered.is_set():
+            break
+        await asyncio.sleep(0.02)
+    assert first_entered.is_set(), "first availability generation did not start"
 
     records[0] = [SimpleNamespace(workspace_id="ws-b")]
     assert controller._build_console_workspace_context_state().workspace_files_available_by_id == {
         "ws-b": False
     }
     first_release.set()
-    while not second_entered.is_set():
-        await asyncio.sleep(0)
+    for _ in range(100):
+        if second_entered.is_set():
+            break
+        await asyncio.sleep(0.02)
+    assert second_entered.is_set(), "replacement availability generation did not start"
     second_release.set()
     await screen.workers[0][0]
 
@@ -383,8 +393,11 @@ async def test_active_files_availability_uses_the_off_loop_binding_snapshot(
     assert time.monotonic() - started < 0.1
     assert state.workspace_files_available is False
     assert state.workspace_files_available_by_id == {"ws-active": False}
-    await asyncio.sleep(0)
-    assert entered.is_set()
+    for _ in range(100):
+        if entered.is_set():
+            break
+        await asyncio.sleep(0.02)
+    assert entered.is_set(), "active availability snapshot did not start"
 
     release.set()
     await screen.workers[0][0]
@@ -409,13 +422,16 @@ async def test_workspace_files_cancelled_resolution_releases_its_admission_claim
 
     def resolve(_workspace_id: str):
         entered.set()
-        release.wait()
+        release.wait(timeout=2)
         return None
 
     controller._resolve_workspace_files_visit = resolve  # type: ignore[method-assign]
     pending = asyncio.create_task(controller.request_workspace_files("ws-a"))
-    while not entered.is_set():
-        await asyncio.sleep(0)
+    for _ in range(100):
+        if entered.is_set():
+            break
+        await asyncio.sleep(0.02)
+    assert entered.is_set(), "workspace-files resolution did not start"
     pending.cancel()
     with pytest.raises(asyncio.CancelledError):
         await pending
@@ -446,7 +462,7 @@ async def test_workspace_files_claim_blocks_different_request_and_promotes_once(
 
     def resolve(workspace_id: str):
         entered.set()
-        release.wait()
+        release.wait(timeout=2)
         return SimpleNamespace(
             workspace_id=workspace_id,
             workspace_name="Workspace A",
@@ -461,8 +477,11 @@ async def test_workspace_files_claim_blocks_different_request_and_promotes_once(
         promotions.append("open") or _Modal()
     )
     first = asyncio.create_task(controller.request_workspace_files("ws-a"))
-    while not entered.is_set():
-        await asyncio.sleep(0)
+    for _ in range(100):
+        if entered.is_set():
+            break
+        await asyncio.sleep(0.02)
+    assert entered.is_set(), "workspace-files admission owner did not start"
     await controller.request_workspace_files("ws-b")
     assert notices == ["Close Workspace Files before inspecting another workspace."]
     release.set()
@@ -550,7 +569,7 @@ def test_workspace_files_resolution_preserves_ro_and_rw_binding_access_labels(mo
                 raise ScopeCaptureError("changed")
             return BindingScope("ws-a", binding_id, "fingerprint", "/safe", 1, 1)
 
-    monkeypatch.setattr(workspace_module, "WorkspaceFileInspector", _Inspector)
+    monkeypatch.setattr(file_inspector_module, "WorkspaceFileInspector", _Inspector)
     controller = _workspace_controller(
         app_instance=SimpleNamespace(workspace_registry_service=_Registry())
     )
@@ -2745,13 +2764,22 @@ def test_workspace_files_owner_seam_fails_closed_for_a_foreign_binding_scope():
         bindings=(
             WorkspaceFilesBinding("binding-a", "Valid", valid_scope),
             WorkspaceFilesBinding("binding-b", "Foreign", foreign_scope),
+            WorkspaceFilesBinding(
+                "binding-c",
+                "Unavailable foreign",
+                foreign_scope,
+                available=False,
+                availability_copy="Already unavailable",
+            ),
         ),
     )
 
-    valid, foreign = pushed[0]._workspace_bindings
+    valid, foreign, unavailable_foreign = pushed[0]._workspace_bindings
     assert valid.available and valid.scope is valid_scope
     assert not foreign.available and foreign.scope is None
     assert "different workspace" in foreign.availability_copy
+    assert not unavailable_foreign.available and unavailable_foreign.scope is None
+    assert "different workspace" in unavailable_foreign.availability_copy
 
 
 def test_workspace_controller_constructor_documents_every_dependency():

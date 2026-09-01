@@ -58,13 +58,6 @@ from ...Widgets.Console import (
     ConsoleWorkspaceSwitcherModal,
 )
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
-from ...Widgets.Console.console_workspace_files_modal import (
-    ConsoleWorkspaceFilesModal,
-    WorkspaceFilesAttention,
-    WorkspaceFilesBinding,
-    WorkspaceFilesService,
-)
-from ...Workspaces.file_inspector import ScopeCaptureError, WorkspaceFileInspector
 from ...Workspaces.models import (
     RuntimeBindingKind,
     RuntimeBindingStatus,
@@ -101,6 +94,12 @@ from ..character_display_text import sanitize_character_display_label
 
 if TYPE_CHECKING:
     from ...Chat.console_chat_controller import ConsoleChatController
+    from ...Widgets.Console.console_workspace_files_modal import (
+        ConsoleWorkspaceFilesModal,
+        WorkspaceFilesAttention,
+        WorkspaceFilesBinding,
+        WorkspaceFilesService,
+    )
     from ...Widgets.workspace_create_modal import WorkspaceCreateResult
     from ..Screens.chat_screen import ChatScreen
 
@@ -802,12 +801,29 @@ class ConsoleWorkspaceController:
         narrow read-only inspector supplied by its future entry owner.  It
         neither reads the registry nor updates Console workspace/session/
         context state; Task 3 owns admission and resolution from its controls.
+
+        Args:
+            inspector: Narrow read-only filesystem service for this visit.
+            inspected_workspace_id: Stable identity of the workspace being viewed.
+            inspected_workspace_name: Presentation name of the viewed workspace.
+            active_workspace_id: Stable identity of the unchanged active workspace.
+            active_workspace_name: Presentation name of the active workspace.
+            bindings: Presentation-safe binding scopes for the viewed workspace.
+            attention: Optional privacy-minimized Console attention snapshot.
+            on_back_to_console: Optional callback after explicit Console return.
+            on_visit_closed: Optional callback after terminal visit teardown.
+
+        Returns:
+            The pushed, pinned Workspace Files modal.
         """
+        from ...Widgets.Console.console_workspace_files_modal import (
+            ConsoleWorkspaceFilesModal,
+        )
+
         safe_bindings = tuple(
             binding
             if (
-                not binding.available
-                or binding.scope is None
+                binding.scope is None
                 or binding.scope.workspace_id == inspected_workspace_id
             )
             else replace(
@@ -840,6 +856,15 @@ class ConsoleWorkspaceController:
         Registry and binding inspection happens off the event loop.  The only
         main-loop effects are the modal push/focus and a generic notification;
         neither changes the Console workspace, session, or staged context.
+
+        Args:
+            workspace_id: Stable identity of the workspace to inspect.
+            expected_available: Whether the clicked cached route previously
+                advertised an attached folder, allowing recovery to open if the
+                binding changed during admission.
+
+        Returns:
+            None after refusal, focus recovery, or modal admission.
         """
         requested_id = str(workspace_id or DEFAULT_WORKSPACE_ID).strip()
         size = self._screen.size
@@ -887,6 +912,8 @@ class ConsoleWorkspaceController:
                     return
                 self._workspace_files_visit_workspace_id = resolution.workspace_id
                 try:
+                    from ...Workspaces.file_inspector import WorkspaceFileInspector
+
                     self._workspace_files_modal = self.open_workspace_files_modal(
                         inspector=WorkspaceFileInspector(
                             getattr(self.app_instance, "workspace_registry_service", None)
@@ -914,6 +941,14 @@ class ConsoleWorkspaceController:
         self, workspace_id: str
     ) -> _WorkspaceFilesResolution | None:
         """Read current workspace/bindings and capture safe scopes off-loop."""
+        from ...Widgets.Console.console_workspace_files_modal import (
+            WorkspaceFilesBinding,
+        )
+        from ...Workspaces.file_inspector import (
+            ScopeCaptureError,
+            WorkspaceFileInspector,
+        )
+
         registry = getattr(self.app_instance, "workspace_registry_service", None)
         if registry is None or workspace_id == DEFAULT_WORKSPACE_ID:
             return None
@@ -963,6 +998,10 @@ class ConsoleWorkspaceController:
 
     def _workspace_files_attention_snapshot(self) -> WorkspaceFilesAttention:
         """Return only generic Console-attention copy; never payload details."""
+        from ...Widgets.Console.console_workspace_files_modal import (
+            WorkspaceFilesAttention,
+        )
+
         count_getter = getattr(self._screen, "_console_pending_approval_count", None)
         count = int(count_getter()) if callable(count_getter) else 0
         controller = self._current_chat_controller_accessor()
@@ -993,7 +1032,11 @@ class ConsoleWorkspaceController:
         return WorkspaceFilesAttention()
 
     def update_workspace_files_attention(self) -> None:
-        """Publish one monotonically ordered generic attention snapshot."""
+        """Publish one monotonically ordered generic attention snapshot.
+
+        Returns:
+            None after publishing to an open visit or finding no active visit.
+        """
         modal = self._workspace_files_modal
         if modal is None:
             return

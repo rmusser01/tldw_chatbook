@@ -51,7 +51,18 @@ class WorkspaceFilesService(Protocol):
         directory_parts: tuple[str, ...] = (),
         *,
         continuation: DirectoryContinuation | None = None,
-    ) -> DirectoryPage: ...
+    ) -> DirectoryPage:
+        """List one bounded direct-child page.
+
+        Args:
+            scope: Captured binding address revalidated by the service.
+            directory_parts: Raw root-relative directory components.
+            continuation: Optional one-shot page continuation.
+
+        Returns:
+            Bounded directory page with explicit status.
+        """
+        ...
 
     def filter_paths(
         self,
@@ -60,7 +71,19 @@ class WorkspaceFilesService(Protocol):
         *,
         is_cancelled: Callable[[], bool] | None = None,
         on_progress: Callable[[FilterProgress], None] | None = None,
-    ) -> FilterResult: ...
+    ) -> FilterResult:
+        """Filter regular-file paths under one selected binding.
+
+        Args:
+            scope: Captured binding address revalidated by the service.
+            query: Literal case-insensitive path fragment.
+            is_cancelled: Optional cooperative cancellation probe.
+            on_progress: Optional incremental visit/match observer.
+
+        Returns:
+            Bounded regular-file matches with explicit status.
+        """
+        ...
 
     def read_file(
         self,
@@ -69,7 +92,19 @@ class WorkspaceFilesService(Protocol):
         *,
         page_offset: int | None = None,
         expected_revision: object | None = None,
-    ) -> FileReadResult: ...
+    ) -> FileReadResult:
+        """Read one safe preview or revision-pinned text page.
+
+        Args:
+            scope: Captured binding address revalidated by the service.
+            raw_parts: Raw root-relative regular-file components.
+            page_offset: Optional non-negative character offset.
+            expected_revision: Optional revision required for continued pages.
+
+        Returns:
+            Safe preview, metadata, paging, revision-change, or failure result.
+        """
+        ...
 
 
 @dataclass(frozen=True)
@@ -259,6 +294,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
             ),
         )
         self._generation = 0
+        self._binding_generation = 0
         self._workspace_files_closing = False
         self._status_sync_deferred = False
         self._filter_timer: Timer | None = None
@@ -373,7 +409,14 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         self._sync_status()
         if self._state.selected_binding_id is not None:
             if len([binding for binding in self._workspace_bindings if binding.available]) > 1:
-                self.query_one("#console-workspace-files-binding-0", Button).focus()
+                selected_index = next(
+                    index
+                    for index, binding in enumerate(self._workspace_bindings)
+                    if binding.binding_id == self._state.selected_binding_id
+                )
+                self.query_one(
+                    f"#console-workspace-files-binding-{selected_index}", Button
+                ).focus()
             else:
                 self.query_one("#console-workspace-files-tree", VerticalScroll).focus()
             self._request_directory()
@@ -495,12 +538,17 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
 
     def _can_publish_directory(
         self,
+        binding_generation: int,
         binding_id: str,
         directory_parts: tuple[str, ...],
         token: int,
         continuation: DirectoryContinuation | None,
     ) -> bool:
-        if self._workspace_files_closing or not self.is_mounted:
+        if (
+            self._workspace_files_closing
+            or not self.is_mounted
+            or binding_generation != self._binding_generation
+        ):
             return False
         if self._state.selected_binding_id != binding_id:
             return False
@@ -544,6 +592,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
             self._sync_status()
             return
         generation = self._next_generation()
+        binding_generation = self._binding_generation
         directory_parts = (
             self._state.directory_parts
             if directory_parts is None
@@ -581,7 +630,11 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
                     continuation=continuation,
                 ),
                 lambda: self._can_publish_directory(
-                    binding.binding_id, directory_parts, token, continuation
+                    binding_generation,
+                    binding.binding_id,
+                    directory_parts,
+                    token,
+                    continuation,
                 ),
             )
         )
@@ -672,11 +725,14 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         copy = "Preview loaded."
         if result.kind is FileReadKind.METADATA_ONLY:
             copy = "File is metadata-only above the safe preview limit."
+        elif result.kind is FileReadKind.INVALID_UTF8:
+            copy = "Preview unavailable: file is not valid UTF-8 text."
         elif result.kind is FileReadKind.REVISION_CHANGED:
             copy = "File changed. Refresh to view the new revision."
         elif result.kind is FileReadKind.FAILED:
             copy = "File is unavailable."
         self._state = replace(self._state, file_result=result, status_copy=copy, compact_stage="viewer")
+        self._sync_layout()
         await self._render_viewer()
         self._sync_status()
 
@@ -882,6 +938,7 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         except (IndexError, ValueError):
             return
         self._cancel_filter_timer()
+        self._binding_generation += 1
         self._next_generation()
         self._directory_request_tokens.clear()
         self._pre_filter_tree_state = None
@@ -915,6 +972,8 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
     def _filter_submitted(self, event: Input.Submitted) -> None:
         event.stop()
         self._cancel_filter_timer()
+        if not event.value:
+            return
         self._request_filter(event.value)
 
     async def _clear_filter(self) -> None:
@@ -986,8 +1045,9 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
     @on(Button.Pressed, ".console-workspace-files-more")
     def _more_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        request = self._tree_more.get(event.button.id or "")
+        request = self._tree_more.pop(event.button.id or "", None)
         if request is not None:
+            event.button.disabled = True
             directory_parts, continuation = request
             self._request_directory(continuation, directory_parts=directory_parts)
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, replace
+import inspect
 from pathlib import Path
 from threading import Event
 
@@ -38,6 +39,9 @@ from tldw_chatbook.Workspaces.file_inspector import (
 )
 
 
+pytestmark = pytest.mark.ui
+
+
 @dataclass
 class _Inspector:
     """A real modal boundary fake; it records only public service operations."""
@@ -61,12 +65,11 @@ class _Inspector:
 
 
 class _Host(App[None]):
-    CSS_PATH = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
+    _CSS_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+    CSS_PATH = [
+        str(_CSS_ROOT / "tldw_cli_modular.tcss"),
+        str(_CSS_ROOT / "screen_agentic_console.tcss"),
+    ]
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -80,6 +83,20 @@ class _Host(App[None]):
 
 def _scope() -> BindingScope:
     return BindingScope("ws-a", "binding-a", "fingerprint", "/not-read", 1, 1)
+
+
+async def _wait_for_thread_event(
+    event: Event, pilot=None, *, what: str, attempts: int = 100
+) -> None:
+    """Poll one worker-thread signal with a hard test-local bound."""
+    for _ in range(attempts):
+        if event.is_set():
+            return
+        if pilot is None:
+            await asyncio.sleep(0.02)
+        else:
+            await pilot.pause(0.02)
+    pytest.fail(f"timed out waiting for {what}")
 
 
 @pytest.mark.asyncio
@@ -135,6 +152,38 @@ async def test_unavailable_binding_is_selected_without_falling_back_to_another_s
         assert modal.state.selected_binding_id == "binding-b"
         assert modal.state.status_copy == "Selected binding is unavailable."
         assert [name for name, _call in inspector.calls] == ["list"]
+
+
+@pytest.mark.asyncio
+async def test_initial_focus_uses_the_selected_available_binding() -> None:
+    """An unavailable leading binding cannot steal initial keyboard focus."""
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=_Inspector([]),
+        inspected_workspace_id="ws-a",
+        inspected_workspace_name="Workspace A",
+        active_workspace_id="ws-a",
+        active_workspace_name="Workspace A",
+        bindings=(
+            WorkspaceFilesBinding("missing", "Missing", None, available=False),
+            WorkspaceFilesBinding("binding-a", "First available", _scope()),
+            WorkspaceFilesBinding(
+                "binding-c",
+                "Second available",
+                BindingScope("ws-a", "binding-c", "fingerprint-c", "/not-read", 1, 2),
+            ),
+        ),
+    )
+    app = _Host()
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert modal.state.selected_binding_id == "binding-a"
+        assert app.focused is modal.query_one(
+            "#console-workspace-files-binding-1", Button
+        )
 
 
 @pytest.mark.asyncio
@@ -299,9 +348,14 @@ async def test_lane_teardown_waits_for_the_bounded_active_operation() -> None:
     entered = __import__("threading").Event()
     release = __import__("threading").Event()
     lane = _OperationLane(modal, "test")
-    lane.submit(_LaneRequest(0, lambda: (entered.set(), release.wait(), "done")[2], lambda _value: None))
-    while not entered.is_set():
-        await __import__("asyncio").sleep(0)
+    lane.submit(
+        _LaneRequest(
+            0,
+            lambda: (entered.set(), release.wait(timeout=2), "done")[2],
+            lambda _value: None,
+        )
+    )
+    await _wait_for_thread_event(entered, what="lane operation start")
     closing = __import__("asyncio").create_task(lane.close())
     await __import__("asyncio").sleep(0)
     assert not closing.done()
@@ -329,12 +383,11 @@ async def test_lane_coalesces_to_one_latest_request_and_discards_it_on_close() -
     lane.submit(
         _LaneRequest(
             1,
-            lambda: (entered.set(), release.wait(), "first")[2],
+            lambda: (entered.set(), release.wait(timeout=2), "first")[2],
             publish,
         )
     )
-    while not entered.is_set():
-        await asyncio.sleep(0)
+    await _wait_for_thread_event(entered, what="coalesced lane operation start")
     lane.submit(_LaneRequest(2, lambda: "second", publish))
     lane.submit(_LaneRequest(3, lambda: "latest", publish))
     assert lane.active and lane.has_latest
@@ -349,12 +402,11 @@ async def test_lane_coalesces_to_one_latest_request_and_discards_it_on_close() -
     lane.submit(
         _LaneRequest(
             4,
-            lambda: (entered.set(), release.wait(), "active")[2],
+            lambda: (entered.set(), release.wait(timeout=2), "active")[2],
             publish,
         )
     )
-    while not entered.is_set():
-        await asyncio.sleep(0)
+    await _wait_for_thread_event(entered, what="closing lane operation start")
     lane.submit(_LaneRequest(5, lambda: "discarded", publish))
     closing = asyncio.create_task(lane.close())
     await asyncio.sleep(0)
@@ -413,8 +465,7 @@ async def test_external_pop_waits_for_an_active_owned_lane_before_closing() -> N
                 _published,
             )
         )
-        while not entered.is_set():
-            await asyncio.sleep(0)
+        await _wait_for_thread_event(entered, pilot, what="modal read operation start")
         # Textual returns an AwaitComplete rather than a bare coroutine here.
         popping = asyncio.ensure_future(app.pop_screen())
         await asyncio.sleep(0)
@@ -521,6 +572,62 @@ async def test_directory_page_and_viewer_paging_keep_raw_identity_and_revision()
 
 
 @pytest.mark.asyncio
+async def test_load_more_is_deduplicated_while_its_continuation_is_pending() -> None:
+    """Rapid activation cannot submit the same one-shot continuation twice."""
+    entered = Event()
+    release = Event()
+
+    class _BlockingInspector(_Inspector):
+        def list_directory(self, scope, directory_parts=(), *, continuation=None):
+            self.calls.append(("list", (scope, directory_parts, continuation)))
+            if continuation is not None:
+                entered.set()
+                release.wait(timeout=2)
+            return DirectoryPage(DirectoryStatus.COMPLETE)
+
+    inspector = _BlockingInspector([])
+    continuation = DirectoryContinuation(
+        "fingerprint", (), DirectoryRevision(1, 2, 4), 200, "one-shot"
+    )
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=inspector,
+        inspected_workspace_id="ws-a",
+        inspected_workspace_name="A",
+        active_workspace_id="ws-a",
+        active_workspace_name="A",
+        bindings=(WorkspaceFilesBinding("binding-a", "Project", _scope()),),
+    )
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal._next_generation()
+        await modal._publish_directory(
+            DirectoryPage(
+                DirectoryStatus.PARTIAL,
+                (DirectoryEntry(("first.txt",), "first.txt", False),),
+                continuation=continuation,
+            )
+        )
+        button = modal.query_one("#console-workspace-files-more", Button)
+        button.press()
+        button.press()
+        await _wait_for_thread_event(entered, pilot, what="continuation request")
+        release.set()
+        for _ in range(100):
+            if modal.owned_lane_count == 0:
+                break
+            await pilot.pause(0.02)
+
+        continuation_calls = [
+            call
+            for name, call in inspector.calls
+            if name == "list" and call[2] is continuation
+        ]
+        assert len(continuation_calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_compact_viewer_has_a_focusable_back_to_files_route() -> None:
     """A compact preview must return to the tree without dismissing the visit."""
     modal = ConsoleWorkspaceFilesModal(
@@ -547,6 +654,60 @@ async def test_compact_viewer_has_a_focusable_back_to_files_route() -> None:
         await pilot.pause()
         assert modal.state.compact_stage == "tree"
         assert modal.query_one("#console-workspace-files-tree").display is True
+
+
+@pytest.mark.asyncio
+async def test_publishing_a_compact_preview_immediately_syncs_viewer_layout() -> None:
+    """The state transition to viewer must update responsive classes immediately."""
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=_Inspector([]),
+        inspected_workspace_id="ws-a",
+        inspected_workspace_name="A",
+        active_workspace_id="ws-a",
+        active_workspace_name="A",
+        bindings=(WorkspaceFilesBinding("binding-a", "Project", _scope()),),
+    )
+    app = _Host()
+    async with app.run_test(size=(100, 30)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal._state = replace(
+            modal.state,
+            selected_file=FileRef(("preview.txt",), "preview.txt"),
+        )
+
+        await modal._publish_file(FileReadResult(FileReadKind.TEXT, text="preview"))
+
+        assert modal.state.compact_stage == "viewer"
+        assert modal.has_class("-viewer-stage")
+
+
+@pytest.mark.asyncio
+async def test_invalid_utf8_preview_has_truthful_status_copy() -> None:
+    """A rejected binary preview cannot announce that a preview loaded."""
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=_Inspector([]),
+        inspected_workspace_id="ws-a",
+        inspected_workspace_name="A",
+        active_workspace_id="ws-a",
+        active_workspace_name="A",
+        bindings=(WorkspaceFilesBinding("binding-a", "Project", _scope()),),
+    )
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal._state = replace(
+            modal.state,
+            selected_file=FileRef(("binary.bin",), "binary.bin"),
+        )
+
+        await modal._publish_file(
+            FileReadResult(FileReadKind.INVALID_UTF8, error_code="invalid_utf8")
+        )
+
+        assert "UTF-8" in modal.state.status_copy
+        assert "loaded" not in modal.state.status_copy.casefold()
         assert app.screen is modal
 
 
@@ -619,6 +780,29 @@ async def test_filter_enter_cancel_and_clear_restore_the_directory_view() -> Non
         await pilot.pause()
         assert modal.state.filter_query == ""
         assert sum(name == "list" for name, _call in inspector.calls) == list_calls_before_clear
+
+
+@pytest.mark.asyncio
+async def test_submitting_an_empty_filter_does_not_start_a_recursive_search() -> None:
+    """Enter on a blank filter behaves like Clear and never calls the service."""
+    inspector = _Inspector([])
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=inspector,
+        inspected_workspace_id="ws-a",
+        inspected_workspace_name="A",
+        active_workspace_id="ws-a",
+        active_workspace_name="A",
+        bindings=(WorkspaceFilesBinding("binding-a", "Project", _scope()),),
+    )
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.click("#console-workspace-files-filter")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert all(name != "filter" for name, _call in inspector.calls)
 
 
 @pytest.mark.asyncio
@@ -814,7 +998,7 @@ async def test_late_collapsed_child_list_result_cannot_reinsert_its_subtree() ->
             self.calls.append(("list", (scope, directory_parts, continuation)))
             if directory_parts == ("folder",):
                 entered.set()
-                release.wait()
+                release.wait(timeout=2)
                 return DirectoryPage(
                     DirectoryStatus.COMPLETE,
                     (DirectoryEntry(("folder", "late.txt"), "late.txt", False),),
@@ -837,8 +1021,7 @@ async def test_late_collapsed_child_list_result_cannot_reinsert_its_subtree() ->
         await pilot.pause()
         root = modal.state.directory_page.entries[0]
         modal._expand_directory(root)
-        while not entered.is_set():
-            await asyncio.sleep(0)
+        await _wait_for_thread_event(entered, pilot, what="child directory listing")
 
         await pilot.click("#console-workspace-files-entry-0")
         assert modal.state.expanded_directory_parts == ()
@@ -888,6 +1071,89 @@ async def test_binding_change_discards_filter_snapshot_and_old_tree_before_clear
         assert modal.state.selected_tree_parts is None
         assert modal._pre_filter_tree_state is None
         assert modal.query_one("#console-workspace-files-filter", Input).value == ""
+
+
+@pytest.mark.asyncio
+async def test_old_directory_result_cannot_publish_after_binding_round_trip() -> None:
+    """A→B→A selection still fences the first A request by visit generation."""
+    first_entered = Event()
+    first_release = Event()
+    second_entered = Event()
+    second_release = Event()
+    a_calls = 0
+
+    class _RoundTripInspector(_Inspector):
+        def list_directory(self, scope, directory_parts=(), *, continuation=None):
+            nonlocal a_calls
+            self.calls.append(("list", (scope, directory_parts, continuation)))
+            if scope.binding_id == "binding-a":
+                a_calls += 1
+                if a_calls == 1:
+                    first_entered.set()
+                    first_release.wait(timeout=2)
+                    return DirectoryPage(
+                        DirectoryStatus.COMPLETE,
+                        (DirectoryEntry(("stale.txt",), "stale.txt", False),),
+                    )
+                second_entered.set()
+                second_release.wait(timeout=2)
+                return DirectoryPage(
+                    DirectoryStatus.COMPLETE,
+                    (DirectoryEntry(("current.txt",), "current.txt", False),),
+                )
+            return DirectoryPage(DirectoryStatus.COMPLETE)
+
+    inspector = _RoundTripInspector([])
+    scope_a = _scope()
+    scope_b = BindingScope(
+        "ws-a", "binding-b", "fingerprint-b", "/not-read", 1, 2
+    )
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=inspector,
+        inspected_workspace_id="ws-a",
+        inspected_workspace_name="A",
+        active_workspace_id="ws-a",
+        active_workspace_name="A",
+        bindings=(
+            WorkspaceFilesBinding("binding-a", "A", scope_a),
+            WorkspaceFilesBinding("binding-b", "B", scope_b),
+        ),
+    )
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await _wait_for_thread_event(first_entered, pilot, what="first A listing")
+        await pilot.click("#console-workspace-files-binding-1")
+        await pilot.click("#console-workspace-files-binding-0")
+        first_release.set()
+        await _wait_for_thread_event(second_entered, pilot, what="second A listing")
+
+        assert modal.state.directory_page is None or all(
+            entry.raw_parts != ("stale.txt",)
+            for entry in modal.state.directory_page.entries
+        )
+
+        second_release.set()
+        for _ in range(100):
+            if modal.owned_lane_count == 0:
+                break
+            await pilot.pause(0.02)
+        assert modal.state.directory_page is not None
+        assert [entry.raw_parts for entry in modal.state.directory_page.entries] == [
+            ("current.txt",)
+        ]
+
+
+def test_workspace_files_protocol_documents_google_style_contracts() -> None:
+    """The modal's public service seam documents each operation contract."""
+    from tldw_chatbook.Widgets.Console.console_workspace_files_modal import (
+        WorkspaceFilesService,
+    )
+
+    for method_name in ("list_directory", "filter_paths", "read_file"):
+        docstring = inspect.getdoc(getattr(WorkspaceFilesService, method_name)) or ""
+        assert "Args:" in docstring
+        assert "Returns:" in docstring
 
 
 @pytest.mark.asyncio
@@ -960,7 +1226,7 @@ async def test_directory_scoped_a_then_b_list_results_publish_in_order() -> None
             self.calls.append(("list", (scope, directory_parts, continuation)))
             if directory_parts == ("a",):
                 entered_a.set()
-                release_a.wait()
+                release_a.wait(timeout=2)
                 return DirectoryPage(DirectoryStatus.COMPLETE, (DirectoryEntry(("a", "a.txt"), "a.txt", False),))
             if directory_parts == ("b",):
                 return DirectoryPage(DirectoryStatus.COMPLETE, (DirectoryEntry(("b", "b.txt"), "b.txt", False),))
@@ -981,8 +1247,9 @@ async def test_directory_scoped_a_then_b_list_results_publish_in_order() -> None
         await pilot.pause()
         root = modal.state.directory_page.entries
         modal._expand_directory(root[0])
-        while not entered_a.is_set():
-            await asyncio.sleep(0)
+        await _wait_for_thread_event(
+            entered_a, pilot, what="first sibling directory listing"
+        )
         modal._expand_directory(root[1])
         release_a.set()
         await pilot.pause()

@@ -34,6 +34,9 @@ from tldw_chatbook.Widgets.Console.console_workspace_tree import (
 )
 
 
+pytestmark = pytest.mark.ui
+
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -427,9 +430,15 @@ async def test_files_action_refuses_below_minimum_without_context_mutation() -> 
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-files-open")
         before = app.workspace_registry_service.get_active_workspace().workspace_id
+        stack_before = tuple(host.screen_stack)
         console.query_one("#console-workspace-files-open", Button).press()
         await pilot.pause()
         assert app.workspace_registry_service.get_active_workspace().workspace_id == before
+        assert tuple(host.screen_stack) == stack_before
+        assert not any(
+            isinstance(screen, ConsoleWorkspaceFilesModal)
+            for screen in host.screen_stack
+        )
 
 
 @pytest.mark.asyncio

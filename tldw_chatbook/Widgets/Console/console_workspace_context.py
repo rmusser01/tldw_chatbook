@@ -1425,6 +1425,33 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         # one-asterisk-per-row pattern the grouped browser adopted in
         # TASK-23200. The ``s`` star-toggle binding on the tree remains.
 
+        # This is deliberately its own row: the primary workspace action row
+        # is geometry constrained and cannot safely absorb another control.
+        # Keep it adjacent to the primary actions so keyboard traversal reaches
+        # Show Files before the workspace search/status controls.
+        with self._record_composed_node(
+            Horizontal(
+                id="console-workspace-files-row",
+                classes="console-workspace-action-row",
+            )
+        ):
+            files_button = Button(
+                "Show Files",
+                id="console-workspace-files-open",
+                classes="console-workspace-action",
+                compact=True,
+            )
+            files_button.workspace_id = self.state.workspace_id
+            files_button.workspace_files_expected_available = bool(
+                self.state.workspace_files_available
+            )
+            files_button.tooltip = (
+                "Show files for this workspace"
+                if self.state.workspace_files_available
+                else "No local folders are attached. Add one in Settings."
+            )
+            yield self._record_composed_node(files_button)
+
         yield self._record_composed_node(
             ConsoleBrowserSearchInput(
                 initial_value=self.state.workspace_query,
@@ -1458,31 +1485,6 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                         compact=True,
                     )
                 )
-
-        # This is deliberately its own row: the primary workspace action row
-        # is geometry constrained and cannot safely absorb another control.
-        with self._record_composed_node(
-            Horizontal(
-                id="console-workspace-files-row",
-                classes="console-workspace-action-row",
-            )
-        ):
-            files_button = Button(
-                "Show Files",
-                id="console-workspace-files-open",
-                classes="console-workspace-action",
-                compact=True,
-            )
-            files_button.workspace_id = self.state.workspace_id
-            files_button.workspace_files_expected_available = bool(
-                self.state.workspace_files_available
-            )
-            files_button.tooltip = (
-                "Show files for this workspace"
-                if self.state.workspace_files_available
-                else "No local folders are attached. Add one in Settings."
-            )
-            yield self._record_composed_node(files_button)
 
         if self.state.recovery_copy:
             yield self._record_composed_node(

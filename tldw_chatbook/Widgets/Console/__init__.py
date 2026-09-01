@@ -84,13 +84,6 @@ from .console_workspace_switcher_modal import (
     ConsoleWorkspaceRenameModal,
     ConsoleWorkspaceSwitcherModal,
 )
-from .console_workspace_files_modal import (
-    ConsoleWorkspaceFilesModal,
-    WorkspaceFilesAttention,
-    WorkspaceFilesBinding,
-    WorkspaceFilesViewState,
-)
-
 __all__ = [
     "build_console_workbench_state",
     "ConsoleActivityActivated",
@@ -137,7 +130,6 @@ __all__ = [
     "ConsoleTranscript",
     "ConsoleTranscriptSurface",
     "ConsoleWorkspaceContextTray",
-    "ConsoleWorkspaceFilesModal",
     "ConsoleWorkspaceTree",
     "ConsoleWorkspaceRenameModal",
     "ConsoleWorkspaceSwitcherModal",
@@ -156,9 +148,6 @@ __all__ = [
     "WorkspaceTreeRetryRequested",
     "WorkspaceTreeStarRequested",
     "WorkspaceTreeWorkspaceSelected",
-    "WorkspaceFilesAttention",
-    "WorkspaceFilesBinding",
-    "WorkspaceFilesViewState",
     "build_console_citation_source_rows",
     "build_console_context_control_state",
 ]
