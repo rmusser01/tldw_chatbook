@@ -52,7 +52,8 @@ selector matching before rejecting it. Measured on a 502-node Console:
 * ``Button`` carries 188 rules against 110 live buttons = 20,680 candidate
   considerations, **71% of the whole screen's candidate work**
 * across the common type keys, **93%** of candidate work comes from
-  ancestor-scoped rules that cannot match the node considering them
+  ancestor-scoped rules (the attribution ceiling -- for their TARGET widgets
+  those rules do match; the measured cannot-match share is the 47% below)
 * **47%** of all candidates are rejectable by checking one cheap thing: does
   this node have an ancestor carrying the rule's leading ``#id``/``.class``?
 

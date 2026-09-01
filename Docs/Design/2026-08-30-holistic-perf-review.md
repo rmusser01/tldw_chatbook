@@ -102,7 +102,7 @@ cold number and refutes the in-app one.
 
 ---
 
-## 2. Method notes / things that did NOT survive
+## 1a. Method notes / things that did NOT survive
 
 * **A route-visiting loop that measured nothing.** A probe for the
   `_parse_cache` LRU(64) cliff wrapped `app.switch_screen(route)` in
@@ -115,7 +115,7 @@ cold number and refutes the in-app one.
 
 ---
 
-## 2. 93% of per-node CSS candidate work comes from rules that cannot match
+## 2. 93% of per-node CSS candidate work comes from ancestor-scoped rules
 
 ### Mechanism (verified in Textual's source, not inferred)
 
@@ -144,6 +144,12 @@ runs on each before it is rejected.
 | **total** | | | | **26,279** | **24,487 (93.2%)** |
 
 `Button` alone supplies **71% of all candidate work on the screen**.
+
+*Framing correction (Qodo, PR #2258):* the 93.2% attributes candidate
+considerations to ancestor-scoped rules -- it is the RE-KEYING opportunity
+ceiling, not dead work. For the widgets those rules target, they can and do
+match; the measured cannot-match share is the **47% rejectable** figure in
+§5, and the A/B below prices what removing the full set is worth.
 
 ### Price, by A/B rather than by inference
 
@@ -439,7 +445,7 @@ involved.
 
 The 2026-08-29 review recorded: *"A measurement window containing two
 activities cannot attribute cost to either."* I quoted that trap in this
-very document's §0 method note and then committed it. Reproducibility was
+very document's own method notes (§1a) and then committed it. Reproducibility was
 what made it convincing — three runs, identical counts — and that is the
 part worth remembering: **a deterministic artifact is indistinguishable
 from a real effect by repetition alone. Only changing the window exposed
@@ -492,10 +498,11 @@ settled Console → Library navigations, three interleaved pairs:
 | filter on | **53.9 ms** | 49.0 / 53.9 / 69.6 |
 | **delta** | **−18.8 ms (−26%)** | just non-overlapping (69.6 < 70.6) |
 
-**26%, not 37%, is the user-facing number**, and it is the honest one to
-quote: a navigation does more than restyle, so the filter's share of it is
-smaller. Against a switch whose total apply cost is 45–79 ms (§6), removing
-~19 ms is a real but bounded win.
+**26%, not 37%, is the number to quote — and it is a reduction of the
+switch's CSS-APPLY time, not of switch wall time** (Qodo, PR #2258: the
+paired wall-time delta was not separately measured). In wall terms it
+removes ~19 ms from a navigation whose total apply cost is 45–79 ms
+(§6) — a real but bounded win.
 
 Windows were settled before every measurement. Skipping that is what
 produced the retracted §3.

@@ -157,7 +157,7 @@ construction here would duplicate a private contract that
 have to pin as well. Worth measuring the hit rate before deciding it is
 worth that coupling.
 
-## The user-facing number
+## The number to quote
 
 The −37% above is a synthetic full-screen `stylesheet.update`. On a real,
 settled Console → Library navigation (three interleaved pairs):
@@ -168,9 +168,11 @@ settled Console → Library navigation (three interleaved pairs):
 | filter on | **53.9 ms** |
 | **delta** | **−18.8 ms (−26%)** |
 
-**Quote 26%, not 37%, as the user-facing benefit.** A navigation does more
-than restyle, so the filter's share of it is smaller. Remaining CSS re-keying
-headroom should be measured against these numbers, not the synthetic ones.
+**Quote 26%, not 37% — and it is the reduction of a switch's CSS-APPLY
+time, not of switch wall time** (Qodo, PR #2258; the paired wall-time delta
+was not separately measured — in wall terms it removes ~19 ms per
+navigation). Remaining CSS re-keying headroom should be measured against
+these numbers, not the synthetic ones.
 
 ## Sizing of the remaining re-key (2026-08-31) — CLOSED by owner decision 2026-08-31
 
