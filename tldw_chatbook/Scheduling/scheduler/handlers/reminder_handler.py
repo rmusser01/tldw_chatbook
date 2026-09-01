@@ -17,12 +17,18 @@ class ReminderHandler:
         dispatch_service: NotificationDispatchService,
         app_getter: Callable[[], Any] | None = None,
     ) -> None:
+        """Initialize the handler.
+
+        Args:
+            dispatch_service: Service used to persist the reminder as an
+                inbox notification and attempt transient (toast) delivery.
+            app_getter: Zero-arg getter for the running app, resolved fresh
+                per dispatch (BriefingJobHandler's chachanotes_db_getter
+                discipline): the handler is constructed before app wiring
+                completes, and dispatch() only attempts transient toast
+                delivery when given a live app handle.
+        """
         self.dispatch_service = dispatch_service
-        #: Zero-arg getter for the running app, resolved fresh per dispatch
-        #: (BriefingJobHandler's chachanotes_db_getter discipline): the
-        #: handler is constructed before app wiring completes, and
-        #: dispatch() only attempts transient toast delivery when given a
-        #: live app handle.
         self.app_getter = app_getter
 
     async def handle(self, task: dict[str, Any]) -> None:
