@@ -27,8 +27,8 @@ _DEFINITION_COLUMNS_V4: tuple[tuple[str, str], ...] = (
     ("resolved_at", "TEXT"),
     ("resolved_by", "TEXT"),
     ("resolved_result_id", "TEXT"),
-    ("finding_policy", "TEXT"),
-    ("retention_policy", "TEXT"),
+    ("finding_policy", "TEXT NOT NULL DEFAULT '{\"preset\": \"balanced_findings\"}'"),
+    ("retention_policy", "TEXT NOT NULL DEFAULT '{\"mode\": \"default\"}'"),
     ("next_run_at", "TEXT"),
     ("transfer_state", "TEXT"),
 )

@@ -145,3 +145,28 @@ def test_v4_migrate_then_rollback_round_trips_to_v3(tmp_path):
     })
     assert "transfer_state" not in rem_cols
     assert {"automation_runs", "automation_results"}.isdisjoint(tables)
+
+
+def test_v4_finding_and_retention_policy_defaults_hydrate(tmp_path):
+    """A definition row written without finding_policy/retention_policy
+    (e.g. a pre-existing row from before v4, or any insert that omits
+    them) must read back with the same defaults AutomationDefinition's
+    Pydantic fields carry -- the DDL DEFAULT is what backfills NULL,
+    since the model fields are non-Optional (final-review finding #1).
+    """
+    from tldw_chatbook.Scheduling.models import AutomationDefinition
+
+    db = ScheduledTasksDB(str(tmp_path / "s.db"), client_id="t")
+    definition_id = db.create_automation_definition(
+        "local", "recurring_question", "No explicit policy"
+    )
+
+    row = db.get_automation_definition(definition_id)
+    assert row is not None
+    # _row_to_dict already parses the JSON columns into dicts.
+    assert row["finding_policy"] == {"preset": "balanced_findings"}
+    assert row["retention_policy"] == {"mode": "default"}
+
+    definition = AutomationDefinition(**row)
+    assert definition.finding_policy == {"preset": "balanced_findings"}
+    assert definition.retention_policy == {"mode": "default"}

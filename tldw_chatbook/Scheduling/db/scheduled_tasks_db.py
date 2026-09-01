@@ -1214,6 +1214,7 @@ class ScheduledTasksDB(BaseDB):
                 fields[key] = self._to_utc_iso(value)
             else:
                 fields[key] = value
+        self._validate_sql_identifiers(list(fields.keys()))
         columns = ", ".join(fields)
         placeholders = ", ".join("?" for _ in fields)
         with self.transaction() as conn:
@@ -1222,7 +1223,9 @@ class ScheduledTasksDB(BaseDB):
                     f"INSERT INTO automation_runs ({columns}) VALUES ({placeholders})",
                     list(fields.values()),
                 )
-            except sqlite3.IntegrityError:
+            except sqlite3.IntegrityError as exc:
+                if "UNIQUE constraint failed" not in str(exc):
+                    raise
                 # The (definition, version, slot) UNIQUE fired: this slot
                 # already ran. Dedupe is a result, not an error.
                 return None
@@ -1384,7 +1387,9 @@ class ScheduledTasksDB(BaseDB):
                     f"INSERT INTO automation_results ({columns}) VALUES ({placeholders})",
                     list(fields.values()),
                 )
-            except sqlite3.IntegrityError:
+            except sqlite3.IntegrityError as exc:
+                if "UNIQUE constraint failed" not in str(exc):
+                    raise
                 # The (owner_id, dedupe_key) UNIQUE fired: already reported.
                 return None
         return result_id
