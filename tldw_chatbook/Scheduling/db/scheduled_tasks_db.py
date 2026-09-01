@@ -219,6 +219,17 @@ class ScheduledTasksDB(BaseDB):
         consistent v4 schema even though each step sees its own
         connection.
         """
+        if self._schema_is_current():
+            # Warm-boot fast path (ADR-097 boot ratchet): a fully-migrated
+            # file DB skips importing the four migration modules entirely,
+            # keeping them out of the `_ui_ready` module census on every
+            # boot after the first. Only a PROOF of completeness skips --
+            # any probe failure (missing table on a fresh or `:memory:`
+            # per-connection DB, an older recorded version) falls through
+            # to the full chain below, whose idempotence remains the
+            # correctness backstop.
+            return
+
         from tldw_chatbook.Scheduling.db.migrations.v0_to_v1 import (
             migrate as migrate_v0_to_v1,
         )
@@ -236,6 +247,28 @@ class ScheduledTasksDB(BaseDB):
         migrate_v1_to_v2(self)
         migrate_v2_to_v3(self)
         migrate_v3_to_v4(self)
+
+    def _schema_is_current(self) -> bool:
+        """Return True when the recorded version proves the chain already ran.
+
+        A single pre-check before the migration chain, not a version
+        consultation between steps -- the `:memory:` discipline in
+        `_initialize_schema`'s docstring is untouched: a memory DB's fresh
+        connection has no ``schema_version`` table, the probe returns
+        False, and the chain runs exactly as before.
+        """
+        try:
+            with closing(self._get_connection()) as conn:
+                row = conn.execute(
+                    "SELECT MAX(version) FROM schema_version"
+                ).fetchone()
+        except sqlite3.Error:
+            return False
+        return bool(
+            row
+            and row[0] is not None
+            and int(row[0]) >= self._CURRENT_SCHEMA_VERSION
+        )
 
     def get_schema_version(self) -> int:
         """Return the currently recorded schema version."""

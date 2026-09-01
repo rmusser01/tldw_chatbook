@@ -170,3 +170,25 @@ def test_v4_finding_and_retention_policy_defaults_hydrate(tmp_path):
     definition = AutomationDefinition(**row)
     assert definition.finding_policy == {"preset": "balanced_findings"}
     assert definition.retention_policy == {"mode": "default"}
+
+
+def test_warm_reopen_skips_migration_module_imports(tmp_path):
+    """ADR-097 boot ratchet: a fully-migrated file DB must not re-import
+    the migration modules on reopen (they'd land in the `_ui_ready`
+    module census on every warm boot)."""
+    import sys
+
+    path = str(tmp_path / "s.db")
+    ScheduledTasksDB(path, client_id="t")  # first open runs the chain
+
+    prefix = "tldw_chatbook.Scheduling.db.migrations.v"
+    for name in [m for m in list(sys.modules) if m.startswith(prefix)]:
+        sys.modules.pop(name)
+
+    db2 = ScheduledTasksDB(path, client_id="t")  # warm reopen
+    assert db2.get_schema_version() == 4
+    reimported = [m for m in sys.modules if m.startswith(prefix)]
+    assert reimported == [], (
+        "warm reopen re-imported migration modules despite the recorded "
+        f"schema version proving the chain already ran: {reimported}"
+    )
