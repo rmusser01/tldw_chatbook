@@ -4,6 +4,7 @@ import threading
 from types import SimpleNamespace
 
 from tldw_chatbook.Chat import console_chat_controller as ccc
+from tldw_chatbook.Chat import permission_summary_service as summary_service
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.permission_summary_service import (
     PermissionSummaryResolution,
@@ -44,7 +45,9 @@ class _ThreadStub:
 
 def _armed(monkeypatch, mode, active=True):
     monkeypatch.setattr(
-        ccc, "resolve_permission_summary", lambda cfg: _resolution(mode, active)
+        summary_service,
+        "resolve_permission_summary",
+        lambda cfg: _resolution(mode, active),
     )
     _ThreadStub.started = []
     monkeypatch.setattr(ccc.threading, "Thread", _ThreadStub)

@@ -11,13 +11,17 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
-from tldw_chatbook.Chat.console_semantic_revision import SemanticRevisionCoordinator
 from tldw_chatbook.Chat.console_trace_models import (
     FrozenTracePolicy,
     SemanticRevisionRef,
 )
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_semantic_revision import (
+        SemanticRevisionCoordinator,
+    )
 
 
 MAX_PROVENANCE_TRANSFORM_INPUTS = 256

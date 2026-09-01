@@ -95,7 +95,6 @@ from ...Chat.console_provider_support import (
     supported_console_provider_catalog,
 )
 from ...Chat.console_session_settings import CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
-from ...Chat.permission_summary_service import permission_summary_settings_payload
 from ...ACP_Interop.runtime_session import ACPRuntimeSessionState
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...Sync_Interop.sync_promotion_state import (
@@ -4383,6 +4382,10 @@ class SettingsScreen(BaseAppScreen):
         compose-time widget values and the instant-apply no-op guard can
         never disagree about what "saved" means.
         """
+        from ...Chat.permission_summary_service import (
+            permission_summary_settings_payload,
+        )
+
         section = load_settings().get("permission_summary")
         section = section if isinstance(section, dict) else {}
         return permission_summary_settings_payload(
@@ -5088,6 +5091,10 @@ class SettingsScreen(BaseAppScreen):
         saved config are skipped (no-op guard) so merely viewing the
         category never rewrites config.toml.
         """
+        from ...Chat.permission_summary_service import (
+            permission_summary_settings_payload,
+        )
+
         try:
             mode = self._select_text_value(
                 self.query_one("#settings-permission-summary-mode", Select).value

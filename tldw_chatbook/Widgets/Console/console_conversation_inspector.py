@@ -69,7 +69,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from textual import on
@@ -103,7 +103,6 @@ from tldw_chatbook.Chat.console_exchange_capture import (
 )
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_trace_projection import project_capture_for_viewer
-from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
 from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
@@ -112,13 +111,16 @@ from tldw_chatbook.Widgets.pausable_progress import PausableLoadingIndicator
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Utils.token_counter import estimate_tokens
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
-from tldw_chatbook.Widgets.Console.console_project_instructions import (
-    ConsoleProjectInstructionContextPanel,
-)
 from tldw_chatbook.Widgets.Console.console_capture_policy_dialog import (
     CapturePolicyBindings,
     ConsoleTracePrivacyDialog,
 )
+from tldw_chatbook.Widgets.Console.console_project_instructions import (
+    ConsoleProjectInstructionContextPanel,
+)
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
 
 MODAL_ID = "console-inspector-modal"
 CLOSE_BUTTON_ID = "console-inspector-close"
@@ -434,6 +436,8 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             initial_tab: Which tab id starts active -- ``"inspector-costs"``
                 from the cost chip, ``"inspector-next-send"`` from Ctrl+Shift+P.
         """
+        from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
+
         super().__init__()
         self._rows = list(rows)
         self._totals = totals
@@ -746,6 +750,8 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
 
     async def action_viewer_profile(self) -> None:
         """Switch disclosure profile, confirming every Safe-to-Full change."""
+
+        from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
 
         if self._viewer_profile is TraceViewerProfile.FULL:
             self._viewer_profile = TraceViewerProfile.SAFE

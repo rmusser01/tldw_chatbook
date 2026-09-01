@@ -220,8 +220,10 @@ from tldw_chatbook.Chat.console_settings_defaults import ConsoleDefaultDurabilit
 from tldw_chatbook.Chat.server_chat_conversation_service import (
     ServerChatConversationService,
 )
-from tldw_chatbook.Terminal.backend import TerminalBackend  # noqa: E402
 from tldw_chatbook.Terminal.session_manager import TerminalSessionManager  # noqa: E402
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.Terminal.backend import TerminalBackend
+
 from tldw_chatbook.DB.Client_Media_DB_v2 import (
     DatabaseError as MediaDatabaseError,
     InputError as MediaInputError,
@@ -1068,7 +1070,7 @@ def _read_app_raw_cli_permitted(app: object) -> bool:
     return isinstance(console, Mapping) and console.get("raw_cli_permitted") is True
 
 
-def _build_terminal_backend() -> TerminalBackend:
+def _build_terminal_backend() -> "TerminalBackend":
     """Build the supported platform backend without eager platform imports."""
     if os.name != "posix":
         raise OSError("persistent Terminal backend unavailable")

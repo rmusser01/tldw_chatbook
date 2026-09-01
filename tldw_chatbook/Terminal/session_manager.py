@@ -8,10 +8,9 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from threading import Event, Lock, RLock
 from time import monotonic
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from .backend import TerminalBackend
 from .contracts import (
     AdmissionGate,
     CleanupAttempt,
@@ -26,16 +25,18 @@ from .contracts import (
     TerminalReceipt,
     apply_event,
 )
-from .io_actors import (
-    InputOfferResult,
-    OutputOfferResult,
-    ParserTurnResult,
-    TerminalInputActor,
-    TerminalInputEvent,
-    TerminalOutputActor,
-)
-from .launch import normalize_session_name
-from .screen_model import TerminalScreenModel, TerminalScreenSnapshot
+
+if TYPE_CHECKING:
+    from .backend import TerminalBackend
+    from .io_actors import (
+        InputOfferResult,
+        OutputOfferResult,
+        ParserTurnResult,
+        TerminalInputActor,
+        TerminalInputEvent,
+        TerminalOutputActor,
+    )
+    from .screen_model import TerminalScreenSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,6 +232,9 @@ class TerminalSessionManager:
         Returns:
             Content-free admission result and immutable projection when admitted.
         """
+        from .io_actors import TerminalInputActor, TerminalOutputActor
+        from .launch import normalize_session_name
+
         with self._lock:
             refusal = self._creation_refusal_locked()
             if refusal is not None:
@@ -516,6 +520,8 @@ class TerminalSessionManager:
 
     def offer_output(self, session_id: str, data: bytes) -> OutputOfferResult:
         """Offer bounded backend bytes to a healthy retained parser path."""
+        from .io_actors import OutputOfferResult
+
         with self._lock:
             record = self._sessions.get(session_id)
             actor = None if record is None else record.output_actor
@@ -614,6 +620,8 @@ class TerminalSessionManager:
 
     def view_state(self, view: TerminalViewToken) -> TerminalViewState | None:
         """Return immutable projections only to the current generation."""
+        from .screen_model import TerminalScreenSnapshot
+
         with self._lock:
             if not self._valid_view_locked(view):
                 return None
@@ -836,6 +844,8 @@ class TerminalSessionManager:
         view: TerminalViewToken,
     ) -> bool:
         """Rename a retained record under normalized unique-name policy."""
+        from .launch import normalize_session_name
+
         with self._lock:
             if not self._valid_view_locked(view):
                 return False
@@ -866,6 +876,8 @@ class TerminalSessionManager:
         view: TerminalViewToken,
     ) -> InputOfferResult:
         """Offer one key event through the manager-owned bounded input actor."""
+        from .io_actors import InputOfferResult
+
         with self._lock:
             actor = self._input_actor_for_view_locked(session_id, view)
             if actor is None:
@@ -881,6 +893,8 @@ class TerminalSessionManager:
         view: TerminalViewToken,
     ) -> InputOfferResult:
         """Offer one atomic paste through the manager-owned input actor."""
+        from .io_actors import InputOfferResult
+
         with self._lock:
             actor = self._input_actor_for_view_locked(session_id, view)
             if actor is None:
@@ -972,6 +986,8 @@ class TerminalSessionManager:
     def _make_screen_model(self, columns: int, rows: int) -> Any:
         if self._screen_model_factory is not None:
             return self._screen_model_factory(columns, rows)
+        from .screen_model import TerminalScreenModel
+
         return TerminalScreenModel(columns=columns, rows=rows)
 
     def _begin_cleanup_locked(

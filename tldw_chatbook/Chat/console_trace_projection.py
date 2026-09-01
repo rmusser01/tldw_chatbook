@@ -12,7 +12,7 @@ import json
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Literal, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Literal, TypeAlias, TypeVar
 
 from loguru import logger
 
@@ -21,10 +21,8 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     ExchangeCapture,
     capture_from_storage,
 )
-from tldw_chatbook.Chat.trace_export_profiles import (
-    TraceExportProfile,
-    TraceViewerProfile,
-)
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +112,10 @@ def project_capture_for_viewer(
     # Keep the Inspector's first-paint import closure small. Export projection is
     # needed only when a call body is actually opened.
     from tldw_chatbook.Chat.console_exchange_export import project_exchange_export
+    from tldw_chatbook.Chat.trace_export_profiles import (
+        TraceExportProfile,
+        TraceViewerProfile,
+    )
 
     if not isinstance(profile, TraceViewerProfile):
         raise TypeError("profile")
