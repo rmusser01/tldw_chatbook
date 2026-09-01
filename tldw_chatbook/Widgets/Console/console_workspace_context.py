@@ -1459,8 +1459,8 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                     )
                 )
 
-        # This is deliberately its own row: the Switch/New row is geometry
-        # constrained and must remain byte-for-byte a two-action row.
+        # This is deliberately its own row: the primary workspace action row
+        # is geometry constrained and cannot safely absorb another control.
         with self._record_composed_node(
             Horizontal(
                 id="console-workspace-files-row",
@@ -1811,27 +1811,6 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 classes="console-conversation-browser-group-title",
             )
             yield title
-            files = Button(
-                "Files",
-                id=f"console-conversation-browser-group-files-{index}",
-                classes="console-workspace-action console-workspace-group-files",
-                compact=True,
-            )
-            files.workspace_id = group.workspace_id
-            files.workspace_files_expected_available = bool(
-                self.state.workspace_files_available_by_id.get(
-                    group.workspace_id, False
-                )
-            )
-            files.styles.width = 7
-            files.styles.min_width = 7
-            files.styles.max_width = 7
-            files.tooltip = (
-                "Show files for this workspace"
-                if files.workspace_files_expected_available
-                else "No local folders are attached. Add one in Settings."
-            )
-            yield files
             toggle = Button(
                 resolve_glyph(GLYPH_COLLAPSED if group.collapsed else GLYPH_EXPANDED),
                 id=f"console-conversation-browser-group-toggle-{index}",
@@ -1857,11 +1836,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             yield toggle
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Translate only the two Files controls into a typed intent."""
+        """Translate the active workspace's Show Files control into a typed intent."""
         button_id = str(event.button.id or "")
-        if button_id != "console-workspace-files-open" and not button_id.startswith(
-            "console-conversation-browser-group-files-"
-        ):
+        if button_id != "console-workspace-files-open":
             return
         event.stop()
         workspace_id = str(

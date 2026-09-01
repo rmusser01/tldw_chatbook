@@ -77,10 +77,11 @@
 
 **Files:**
 - Modify: `tldw_chatbook/Widgets/Console/console_workspace_context.py`
+- Modify: `tldw_chatbook/Chat/console_workspace_actions.py`
+- Modify: `tldw_chatbook/Widgets/Console/console_workspace_action_menu.py`
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
 - Modify: `tldw_chatbook/UI/Console_Modules/workspace.py`
 - Modify: `tldw_chatbook/UI/Console_Modules/wiring.py` only if a new late-bound dependency is required
-- Modify: `tldw_chatbook/Workspaces/conversation_browser_state.py` only if the grouped header needs an explicit workspace identity field
 - Modify: `Tests/UI/test_console_workspace_context_rail.py`
 - Modify: `Tests/UI/test_console_workspace_action_row_geometry.py`
 - Modify: `Tests/UI/test_console_button_routing.py`
@@ -89,8 +90,8 @@
 ### TDD sequence
 
 1. Add failing rail tests for a dedicated **Show Files** row immediately after RAG Scope, visible/focusable blocked guidance for Default/no-local-folder states, unchanged Switch/New geometry, exact focus order, and a typed `WorkspaceFilesRequested(workspace_id)` message that never parses display text.
-2. Add failing grouped-browser-header tests for a permanent seven-cell **Files** control before the three-cell collapse toggle, label truncation before fixed controls, exact keyboard/click routing by stable workspace ID, and unchanged switcher controls.
-3. Add failing production-shaped integration tests that fingerprint active workspace, task/session/conversation, composer text/attachments, approval state, staged context, and conversation selection before opening a non-active workspace from both entry points; exercise navigation/dismissal and assert every fingerprint remains unchanged.
+2. Add failing Workspaces-tree action-menu tests for a permanent **Show files** command, exact keyboard/click routing by stable workspace ID, and unchanged workspace activation/switcher controls.
+3. Add failing production-shaped integration tests that fingerprint active workspace, task/session/conversation, composer text/attachments, approval state, staged context, and conversation selection before opening the active card and a non-active tree-menu entry; exercise navigation/dismissal and assert every fingerprint remains unchanged.
 4. Add failing admission tests: one mounted visit; same-workspace request focuses it; another workspace is blocked with exact copy; stale request after binding disappearance opens the pinned empty recovery state; below-minimum geometry refuses open with exact copy; no activation or worker duplication occurs.
 5. Add failing attention tests for generation-checked, privacy-minimized pending-approval count and generic blocked/failed/new-activity flags plus Back to Console. Assert no approval body/path/tool args/error details leak and no underlying action resolves in the modal.
 6. Add failing graceful-quit and screen lifecycle tests for a clean read-only visit: dismissal/quit tears down lanes once, does not leave timers/workers/resources, and returns focus to opener or composer fallback after recomposition.
@@ -112,7 +113,7 @@
 1. Run all focused service, modal, entry, geometry, routing, integration, and existing Console safe-dismiss/workspace-context tests. Do not run the full repository suite without the user's explicit approval.
 2. Run relevant Ruff/static checks and `git diff --check`.
 3. Run production-shaped Textual evidence using the exact `TldwCli.CSS_PATH` stack at 80x24, 100x30, 120x40, and 160x50. Capture compositor/geometry assertions for both entry controls, pinned modal rows/actions, tree/viewer transitions, filter states, paging, and focus restoration.
-4. Launch the real TUI with `TLDW_CONFIG_PATH` and all writable state redirected to a verified scratch profile/root. Through actual input, open an active and non-active workspace from both entry points; browse hostile names, filter, page a large file, resize through all four target geometries, dismiss by supported paths, trigger generic attention, and gracefully quit.
+4. Launch the real TUI with `TLDW_CONFIG_PATH` and all writable state redirected to a verified scratch profile/root. Through actual input, open the active-card entry and a non-active workspace's tree-menu entry; browse hostile names, filter, page a large file, resize through all four target geometries, dismiss by supported paths, trigger generic attention, and gracefully quit.
 5. Compare before/after fingerprints for active Console state, approvals, profile files, database/sync state, logs, worker/process inventory, and temporary roots. Confirm there were no file writes, binding mutations, agent approvals, context injection, persistence of file/filter/path data, or leaked raw filesystem errors.
 6. If live evidence exposes a defect, return to the owning task's TDD/fix/review loop rather than editing around the review gate.
 7. Update the Backlog task: check ACs only with evidence, add concise Implementation Notes with commits/files/trade-offs/results, record ADR-079, complete DoD, and set Done through Backlog CLI.

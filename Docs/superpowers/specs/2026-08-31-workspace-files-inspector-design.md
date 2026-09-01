@@ -66,9 +66,9 @@ The Console exposes workspaces and their agent activity but does not provide a d
 Two entry points open the same modal:
 
 - The active `ConsoleWorkspaceContext` card exposes **Show Files** on its own compact action row immediately after the existing **RAG Scope** row. It is not added to the width-sensitive **Switch** / **New** row.
-- Each named workspace header in the grouped all-workspaces conversation browser exposes a permanently rendered, seven-cell **Files** control, including its padding, immediately before the existing three-cell collapse toggle. The flexible workspace label truncates before either fixed control does.
+- Each named workspace row in the Workspaces tree exposes **Show files** through its existing asterisk action menu. The menu target captures the stable workspace ID and render-time folder availability; it never activates the row's workspace.
 
-The separate workspace switcher remains unchanged and does not gain a fourth persistent button. The two entry actions are text-labeled, keyboard reachable, present at rest, and never hover-only. In the active card, **Show Files** follows **RAG Scope** in focus order. In a grouped-browser header, the order is workspace header, **Files**, then collapse toggle. Both entry points emit a typed `WorkspaceFilesRequested(workspace_id)` intent. Names, list positions, labels, and widget IDs are display data and are never parsed to resolve the workspace.
+The separate workspace switcher remains unchanged and does not gain a fourth persistent button. Both entry paths are text-labeled and keyboard reachable. In the active card, **Show Files** follows **RAG Scope** in focus order; for any visible tree workspace, the existing `m`/asterisk menu includes **Show files**. Both paths route a typed stable workspace ID into the same admission seam. Names, list positions, labels, and widget IDs are display data and are never parsed to resolve the workspace.
 
 The default workspace and workspaces with no local-folder bindings keep the action visible as a focusable, pressable-but-blocked control rather than an unfocusable disabled button. Its tooltip and activation response both say `No local folders are attached. Add one in Settings.` A stale event that reaches the modal after bindings disappear opens the same empty recovery state rather than switching context or selecting another workspace.
 
@@ -283,7 +283,7 @@ New Console UI modules:
 Console integration remains thin:
 
 - `tldw_chatbook/UI/Console_Modules/wiring.py` routes typed entry intents.
-- `tldw_chatbook/Widgets/Console/console_workspace_context.py` owns the exact active-card and grouped-browser entry placement and emits `WorkspaceFilesRequested`.
+- `tldw_chatbook/Widgets/Console/console_workspace_context.py` owns the active-card entry and emits `WorkspaceFilesRequested`; the Workspaces-tree action menu owns the non-active entry and routes the same stable workspace ID to the same admission seam.
 - `tldw_chatbook/UI/Screens/chat_screen.py` owns the single-modal admission gate, installs/dismisses the modal, and supplies the active workspace identity plus a generic Console-attention summary; it does not perform filesystem work or resolve attention from the modal.
 
 New workspace services:
@@ -496,7 +496,7 @@ Verification uses real temporary filesystems and repositories for authority/publ
 | Precondition | Action or interleaving | Service outcome | Required visible result | Prohibited side effect / evidence |
 |---|---|---|---|---|
 | Workspace B is not active | Open B from either entry | Inspection for B | Header names B; notice says Console remains A | Active workspace, task, conversation, composer, and approval state fingerprints remain unchanged |
-| Active rail is 24–30 cells or grouped header label is long | Focus both entry actions | UI-only | Complete text action remains visible and focusable; workspace label truncates first | No clipped or invisible clickable region; switcher remains unchanged |
+| Active rail is 24–30 cells or a tree workspace label is long | Focus both entry actions | UI-only | The active action and tree-menu command remain complete and focusable; the workspace label truncates first | No clipped or invisible clickable region; switcher remains unchanged |
 | Workspace has no local folders | Focus/press Files | Blocked intent | Inline/activation guidance points to Settings | No modal, activation, or unfocusable disabled mystery control |
 | Workspace Files is already mounted | Activate same workspace, then another workspace | Existing visit focused; other request blocked | Existing inspected identity remains visible | No second modal, retarget, worker set, visit ledger, or lease |
 | Read A is slow, then user selects B | B read finishes before A | B snapshot accepted; A token stale | Viewer shows only B | A bytes never flash or replace B |
@@ -565,7 +565,7 @@ Verification uses real temporary filesystems and repositories for authority/publ
 
 6. **Live scratch verification**
    - launch with an isolated `TLDW_CONFIG_PATH` and temporary roots;
-   - open a non-active workspace through both entry points;
+   - open the active workspace from its card and a non-active workspace from its tree action menu;
    - view, page a large file, edit, Save, conflict, Copy, dismiss, gracefully quit, and resize using actual UI input;
    - compare before/after fingerprints for unrelated Console state and for intended file publication only.
 

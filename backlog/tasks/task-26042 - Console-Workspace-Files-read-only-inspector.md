@@ -52,8 +52,8 @@ status-query race in the modal. ADR-079 remains applicable; no new ADR or
 lesson is required. Targeted verification is recorded in the Task 4 report.
 The remaining gate was completed in a real `python -m tldw_chatbook.app`
 process under an isolated tmux PTY rooted at `/private/tmp/task-26042-live`.
-Terminal input opened both the active `Live Active` action and the grouped,
-non-active `Live Other` Files action; the latter continued to display `Console
+Terminal input opened both the active `Live Active` action and the non-active
+`Live Other` workspace Files action; the latter continued to display `Console
 remains Live Active` while previewing `other-root`. The run covered escaped
 hostile names, literal filtering, 100,000-character UTF-8 paging, 160x50,
 120x40, 100x30, and 80x24 resizes, Escape and explicit-back dismissal, and
@@ -75,6 +75,18 @@ service/modal/integration tests and all 11 CSS integrity tests; focused Ruff
 and `git diff --check` are clean. The final self-review confirmed the recorded
 security, privacy, accessibility, performance, licensing, dependency, and
 regression gates without requiring a new ADR or lesson.
+Before PR creation, the branch was rebased onto current `dev`, whose Workspaces
+tree had replaced the former grouped workspace headers. The non-active entry
+was moved into the tree's existing workspace action menu, preserving the same
+stable-id, cached-availability, and non-activating admission contracts; stale
+binding and four-size integration evidence were rerun against that current UI.
+The current-dev reconciliation verification passed 80 service/modal/integration
+tests, 21 workspace-tree action/routing/geometry tests, and 9 modal/status-row
+safety tests; focused Ruff and `git diff --check` also passed. The CSS integrity
+file passed 14/15 checks. Its remaining inspector-handle minimum-height failure
+reproduces unchanged on a pristine `origin/dev` worktree and is outside this
+feature's CSS and behavior scope. The full suite was not run under the
+repository's targeted-verification policy.
 <!-- SECTION:NOTES:END -->
 
 ## Definition of Done

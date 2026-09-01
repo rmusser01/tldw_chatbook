@@ -25,7 +25,7 @@ rows and already have coverage in their owning feature's test file.
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 
 import pytest
 
@@ -329,25 +329,23 @@ async def test_flat_browser_has_no_retired_workspace_group_toggles():
 
 @pytest.mark.asyncio
 async def test_workspace_files_controls_carry_stable_workspace_ids() -> None:
-    """The Files controls address workspaces without parsing their labels."""
+    """The tree menu target addresses a workspace without parsing its label."""
     app = _build_test_app()
+    app.workspace_registry_service.create_workspace(
+        workspace_id="ws-a", name="Workspace [label only]"
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=_ROUTING_SIZE) as pilot:
         console = await _mounted_console(host, pilot)
-        await _sync_tray(console, pilot, _base_grouped_workspace_state())
-
-        group_files = console.query_one(
-            "#console-conversation-browser-group-files-0", Button
+        console._workspace._workspace_files_availability_by_id = MappingProxyType(
+            {"ws-a": True}
         )
-        assert group_files.label.plain == "Files"
-        assert group_files.workspace_id == "ws-a"
-        assert group_files.region.width == 7
+        target = console._workspace_menu_target("ws-a")
 
-        collapse = console.query_one(
-            "#console-conversation-browser-group-toggle-0", Button
-        )
-        assert collapse.region.width == 3
+        assert target.workspace_id == "ws-a"
+        assert target.name == "Workspace [label only]"
+        assert target.files_available is True
 
 
 # --------------------------------------------------------------------------

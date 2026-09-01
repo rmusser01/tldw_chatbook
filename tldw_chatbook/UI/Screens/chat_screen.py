@@ -4877,6 +4877,11 @@ class ChatScreen(BaseAppScreen):
             workspace_id=workspace_id,
             name=str(getattr(record, "name", "") or ""),
             is_active=bool(getattr(record, "active", False)),
+            files_available=bool(
+                self._workspace._workspace_files_availability_by_id.get(
+                    workspace_id, False
+                )
+            ),
         )
 
     async def _open_console_workspace_action_menu(
@@ -5114,6 +5119,7 @@ class ChatScreen(BaseAppScreen):
             ACTION_NEW_CHAT,
             ACTION_RAG_SCOPE,
             ACTION_RENAME,
+            ACTION_SHOW_FILES,
         )
 
         event.stop()
@@ -5127,6 +5133,16 @@ class ChatScreen(BaseAppScreen):
                 self._create_console_chat_in_workspace(workspace_id),
                 exclusive=True,
                 group="console-workspace-new-chat",
+            )
+            return
+        if event.action_id == ACTION_SHOW_FILES:
+            self.run_worker(
+                self._workspace.request_workspace_files(
+                    workspace_id,
+                    expected_available=bool(target.files_available),
+                ),
+                exclusive=False,
+                group="console-workspace-files-open",
             )
             return
         if event.action_id == ACTION_RENAME:

@@ -22,9 +22,15 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
 from tldw_chatbook.Chat.console_fleet_attention import set_fleet_unseen_completion
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
+from tldw_chatbook.Widgets.Console.console_workspace_action_menu import (
+    ConsoleWorkspaceActionMenu,
+)
 from tldw_chatbook.Widgets.Console.console_workspace_files_modal import (
     ConsoleWorkspaceFilesModal,
     WorkspaceFilesAttention,
+)
+from tldw_chatbook.Widgets.Console.console_workspace_tree import (
+    WorkspaceTreeMenuRequested,
 )
 
 
@@ -116,8 +122,8 @@ def _console_fingerprint(console, app) -> tuple[object, ...]:
     selections = tuple(
         (row.row_key, row.selected)
         for section in (context.conversation_browser.sections if context.conversation_browser else ())
-        for group in section.groups
-        for row in group.rows
+        for row in tuple(section.rows)
+        + tuple(row for group in section.groups for row in group.rows)
     )
     active = app.workspace_registry_service.get_active_workspace()
     return (
@@ -157,15 +163,12 @@ async def _open_navigate_and_dismiss(host, pilot, button: Button) -> ConsoleWork
 
 
 async def _wait_for_available_files_button(
-    console, pilot, *, workspace_id: str, grouped: bool
+    console, pilot, *, workspace_id: str
 ) -> Button:
-    """Wait for the real off-loop binding snapshot to enable one typed route."""
+    """Wait for the real off-loop binding snapshot to enable the active route."""
+    tray = console.query_one("#console-workspaces-context")
     for _ in range(100):
-        buttons = (
-            console.query(".console-workspace-group-files")
-            if grouped
-            else console.query("#console-workspace-files-open")
-        )
+        buttons = tray.query("#console-workspace-files-open")
         button = next(
             (
                 candidate
@@ -179,6 +182,40 @@ async def _wait_for_available_files_button(
             return button
         await pilot.pause(0.02)
     raise AssertionError(f"Files route for {workspace_id!r} did not become available")
+
+
+async def _wait_for_workspace_files_available(console, pilot, workspace_id: str) -> None:
+    """Wait for the controller's real off-loop availability snapshot."""
+    for _ in range(100):
+        if console._workspace._workspace_files_availability_by_id.get(
+            workspace_id, False
+        ):
+            return
+        await pilot.pause(0.02)
+    raise AssertionError(f"Workspace {workspace_id!r} did not become inspectable")
+
+
+async def _open_workspace_files_menu(console, pilot, workspace_id: str) -> Button:
+    """Open the current Workspaces-tree menu and return its Show files action."""
+    console.on_workspace_tree_menu_requested(
+        WorkspaceTreeMenuRequested(
+            kind="workspace",
+            workspace_id=workspace_id,
+            screen_x=2,
+            screen_y=2,
+        )
+    )
+    for _ in range(100):
+        menus = console.query(ConsoleWorkspaceActionMenu)
+        if menus:
+            menu = menus.first()
+            buttons = menu.query("#console-workspace-action-show-files")
+            if buttons:
+                assert menu.target.workspace_id == workspace_id
+                assert menu.target.files_available is True
+                return buttons.first()
+        await pilot.pause(0.02)
+    raise AssertionError(f"Show files action for {workspace_id!r} did not open")
 
 
 async def _reveal_and_click_files_button(console, pilot, button: Button) -> None:
@@ -210,6 +247,23 @@ async def _ensure_workspace_rail_open(console, pilot) -> None:
             return
         await pilot.pause(0.02)
     raise AssertionError("Context rail did not open through its visible control")
+
+
+async def _ensure_rail_section_open(console, pilot, section_id: str) -> None:
+    """Expand a real Console rail section through its visible disclosure."""
+    body = console.query_one(f"#console-rail-section-body-{section_id}")
+    if body.display:
+        return
+    toggle = console.query_one(f"#console-rail-section-toggle-{section_id}", Button)
+    toggle.scroll_visible(animate=False)
+    await pilot.pause()
+    assert await pilot.click(toggle)
+    for _ in range(100):
+        body = console.query_one(f"#console-rail-section-body-{section_id}")
+        if body.display and body.region.height:
+            return
+        await pilot.pause(0.02)
+    raise AssertionError(f"Console rail section {section_id!r} did not open")
 
 
 @pytest.mark.asyncio
@@ -253,8 +307,9 @@ async def test_shipped_css_four_size_routes_keep_read_only_console_fingerprint(
         console._set_console_pending_approval({"approval_id": "scratch-approval", "body": "private"})
         if size[0] >= 84:
             await _ensure_workspace_rail_open(console, pilot)
+            await _ensure_rail_section_open(console, pilot, "workspace")
             active_button = await _wait_for_available_files_button(
-                console, pilot, workspace_id="ws-active", grouped=False
+                console, pilot, workspace_id="ws-active"
             )
         else:
             active_button = None
@@ -331,12 +386,13 @@ async def test_shipped_css_four_size_routes_keep_read_only_console_fingerprint(
         assert _console_fingerprint(console, app) == before
 
         if size[0] >= 84:
-            grouped_button = await _wait_for_available_files_button(
-                console, pilot, workspace_id="ws-other", grouped=True
+            await _wait_for_workspace_files_available(console, pilot, "ws-other")
+            tree_button = await _open_workspace_files_menu(
+                console, pilot, "ws-other"
             )
-            await _reveal_and_click_files_button(console, pilot, grouped_button)
-            grouped_modal = await _wait_for_files_modal(host, pilot)
-            assert grouped_modal.inspected_workspace_id == "ws-other"
+            assert await pilot.click(tree_button)
+            tree_modal = await _wait_for_files_modal(host, pilot)
+            assert tree_modal.inspected_workspace_id == "ws-other"
             await pilot.click("#console-workspace-files-back")
             await pilot.pause()
 
@@ -395,6 +451,9 @@ async def test_two_named_workspace_files_routes_preserve_complete_console_finger
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-files-open")
+        await _seed_ready_console_transcript(console)
+        await _ensure_workspace_rail_open(console, pilot)
+        await _ensure_rail_section_open(console, pilot, "workspace")
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("draft remains exactly here")
         composer.set_pending_attachment_label("evidence.txt · 1 KB")
@@ -403,26 +462,27 @@ async def test_two_named_workspace_files_routes_preserve_complete_console_finger
         )
         before = _console_fingerprint(console, app)
 
-        active_button = console.query_one("#console-workspace-files-open", Button)
+        active_button = await _wait_for_available_files_button(
+            console, pilot, workspace_id="ws-active"
+        )
         assert active_button.workspace_id == "ws-active"
         active_modal = await _open_navigate_and_dismiss(host, pilot, active_button)
         assert active_modal.inspected_workspace_id == "ws-active"
         assert app.workspace_registry_service.get_active_workspace().workspace_id == "ws-active"
         assert _console_fingerprint(console, app) == before
 
-        group_button = next(
-            button
-            for button in console.query(".console-workspace-group-files")
-            if getattr(button, "workspace_id", None) == "ws-other"
+        await _wait_for_workspace_files_available(console, pilot, "ws-other")
+        tree_button = await _open_workspace_files_menu(
+            console, pilot, "ws-other"
         )
-        grouped_modal = await _open_navigate_and_dismiss(host, pilot, group_button)
-        assert grouped_modal.inspected_workspace_id == "ws-other"
+        tree_modal = await _open_navigate_and_dismiss(host, pilot, tree_button)
+        assert tree_modal.inspected_workspace_id == "ws-other"
         assert app.workspace_registry_service.get_active_workspace().workspace_id == "ws-active"
         assert _console_fingerprint(console, app) == before
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("route", ["active", "grouped"])
+@pytest.mark.parametrize("route", ["active", "tree"])
 async def test_typed_stale_files_routes_open_pinned_empty_recovery_without_activation(
     tmp_path: Path, route: str
 ) -> None:
@@ -441,17 +501,21 @@ async def test_typed_stale_files_routes_open_pinned_empty_recovery_without_activ
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-files-open")
-        button = (
-            console.query_one("#console-workspace-files-open", Button)
-            if route == "active"
-            else next(
-                candidate
-                for candidate in console.query(".console-workspace-group-files")
-                if getattr(candidate, "workspace_id", None) == "ws-other"
-            )
+        await _seed_ready_console_transcript(console)
+        await _ensure_workspace_rail_open(console, pilot)
+        await _ensure_rail_section_open(
+            console, pilot, "workspace"
         )
-        requested_id = button.workspace_id
-        assert button.workspace_files_expected_available is True
+        if route == "active":
+            button = await _wait_for_available_files_button(
+                console, pilot, workspace_id="ws-active"
+            )
+        else:
+            await _wait_for_workspace_files_available(console, pilot, "ws-other")
+            button = await _open_workspace_files_menu(console, pilot, "ws-other")
+        requested_id = "ws-active" if route == "active" else "ws-other"
+        if route == "active":
+            assert button.workspace_files_expected_available is True
         binding = service.list_folder_bindings(requested_id)[0]
         service.remove_runtime_binding(binding.binding_id)
         before = _console_fingerprint(console, app)

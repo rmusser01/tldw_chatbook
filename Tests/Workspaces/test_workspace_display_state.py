@@ -211,7 +211,7 @@ def test_console_workspace_state_without_snapshot_never_reads_runtime_bindings_o
     )
 
     assert state.workspace_files_available is False
-    assert state.runtime_label == "Runtime: none"
+    assert state.runtime_label == "Local file tools: Private scratch"
 
 
 def test_console_workspace_state_freezes_caller_availability_mapping() -> None:

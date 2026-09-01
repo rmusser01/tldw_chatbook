@@ -88,7 +88,7 @@ async def test_workspace_action_row_holds_switch_and_new_side_by_side() -> None:
 
 
 @pytest.mark.asyncio
-async def test_workspace_files_is_a_dedicated_row_after_rag_scope() -> None:
+async def test_workspace_files_is_a_dedicated_row_after_primary_actions() -> None:
     """Files remains a complete, keyboard-reachable rail action.
 
     It must not consume space in the width-sensitive Switch/New row.
@@ -98,12 +98,17 @@ async def test_workspace_files_is_a_dedicated_row_after_rag_scope() -> None:
 
     async with host.run_test(size=(235, 52)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-context")
-        await pilot.pause()
+        await _wait_for_selector(console, pilot, "#console-workspaces-context")
+        console.query_one("#console-left-rail").apply_section_open("workspace", True)
+        for _ in range(10):
+            await pilot.pause()
+            if console.query_one("#console-workspace-files-open").region.width:
+                break
 
-        rag = console.query_one("#console-workspace-rag-scope-row")
-        files_row = console.query_one("#console-workspace-files-row")
-        files = console.query_one("#console-workspace-files-open")
+        tray = console.query_one("#console-workspaces-context")
+        primary_row = tray.query_one("#console-workspace-action-row")
+        files_row = tray.query_one("#console-workspace-files-row")
+        files = tray.query_one("#console-workspace-files-open")
         assert files.disabled is False
-        assert rag.region.bottom <= files_row.region.y
+        assert primary_row.region.bottom <= files_row.region.y
         assert files.region.right <= files_row.content_region.right
