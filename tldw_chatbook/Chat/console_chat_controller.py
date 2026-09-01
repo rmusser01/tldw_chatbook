@@ -10938,12 +10938,23 @@ class ConsoleChatController:
                 if self.app is not None and self.park_pending_approval is not None:
                     self.app.call_from_thread(self.park_pending_approval, session_id)
             elif is_head:
-                self._marshal_pending_approval(payload)
+                # ADR-090: deliver the payload WITHOUT the summary fire hook
+                # here -- the human-input wait mark below must be entered
+                # with dev's original marshal→mark spacing, or the hook's
+                # config read widens the window in which an armed round is
+                # not yet marked as waiting (regression caught by
+                # test_request_mcp_approvals_marks_human_input_wait_while_round_armed).
+                self._marshal_pending_approval(payload, fire_summary=False)
             # ADR-067: mark this run as waiting on a human decision for the
             # duration of the wait, so a per-call wrapper hosting this round
             # (the invoke-path fallback approval) pauses its deadline -- an
             # indefinite wait must not trip `max_tool_call_seconds`.
             with use_human_input_wait(owning_run_id):
+                # ADR-090: fire the advisory summarizer now, INSIDE the
+                # wait mark -- the payload is already mounted and the mark
+                # is already process state, so the hook's config read
+                # cannot delay either.
+                self._maybe_fire_permission_summary(payload)
                 while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
                     if self._is_session_cancelled(
                         session_id,
@@ -11139,11 +11150,22 @@ class ConsoleChatController:
                     "Failed to record cancelled MCP approval decision"
                 )
 
-    def _marshal_pending_approval(self, payload: dict[str, Any] | None) -> None:
-        """Push ``payload`` (or clear it) onto the UI thread, if wired."""
+    def _marshal_pending_approval(
+        self, payload: dict[str, Any] | None, *, fire_summary: bool = True
+    ) -> None:
+        """Push ``payload`` (or clear it) onto the UI thread, if wired.
+
+        Args:
+            payload: The approval payload dict, or ``None`` to clear.
+            fire_summary: Whether to run the ADR-090 advisory-summary
+                trigger check after delivery. The arm-time head-mount site
+                passes ``False`` and fires the check itself inside the
+                ``use_human_input_wait`` mark, so the hook's config read
+                cannot sit between payload delivery and the wait mark.
+        """
         if self.app is not None and self.set_pending_approval is not None:
             self.app.call_from_thread(self.set_pending_approval, payload)
-        if isinstance(payload, dict):
+        if fire_summary and isinstance(payload, dict):
             self._maybe_fire_permission_summary(payload)
 
     def _maybe_fire_permission_summary(self, payload: dict[str, Any]) -> None:
