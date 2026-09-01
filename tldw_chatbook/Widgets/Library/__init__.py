@@ -1,6 +1,13 @@
 """Library destination widgets."""
 
 from .library_collections_panel import LibraryCollectionsPanel
+from .library_collections_capture_reader import (
+    CollectionsCaptureReaderPresentation,
+    CollectionsReaderMode,
+    LibraryCollectionsItemsPane,
+    LibraryCollectionsScopeRows,
+    LibraryCollectionsWorkPane,
+)
 from .library_conversations_canvas import LibraryConversationsCanvas
 from .library_conversation_reader import LibraryConversationReader
 from .library_adaptive_reader_shell import (
@@ -109,6 +116,11 @@ __all__ = [
     "LibraryAdaptiveReaderPaneGrip",
     "LibraryAdaptiveReaderShell",
     "LibraryCollectionsPanel",
+    "CollectionsCaptureReaderPresentation",
+    "CollectionsReaderMode",
+    "LibraryCollectionsItemsPane",
+    "LibraryCollectionsScopeRows",
+    "LibraryCollectionsWorkPane",
     "LibraryConversationsCanvas",
     "LibraryConversationReader",
     "LibraryExportCanvas",

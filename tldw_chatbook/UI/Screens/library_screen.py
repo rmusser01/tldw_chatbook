@@ -86,6 +86,10 @@ from ...Library.export_progress import (
     ExportProgressThrottle,
     format_export_progress_line,
 )
+from ...Library.collections_capture_models import (
+    CaptureCapabilities,
+    SavedCaptureSearch,
+)
 from ...Library.library_collections_service import LibraryCollectionsServiceError
 from ...Library.library_collections_state import (
     CollectionBrowseScope,
@@ -481,12 +485,17 @@ from ...Widgets.workbench_focus import (
 )
 from ...Widgets.Library import (
     AdaptiveReaderShellResized,
+    CollectionsCaptureReaderPresentation,
+    CollectionsReaderMode,
     LIBRARY_SKILLS_FILTER_ID,
     LIBRARY_SKILLS_PAGE_NEXT_ID,
     LIBRARY_SKILLS_PAGE_PREVIOUS_ID,
     LIBRARY_SKILLS_RETRY_ID,
     LibraryAdaptiveReaderShell,
+    LibraryCollectionsItemsPane,
     LibraryCollectionsPanel,
+    LibraryCollectionsScopeRows,
+    LibraryCollectionsWorkPane,
     LibraryConversationReader,
     LibraryConversationsCanvas,
     LibraryExportCanvas,
@@ -598,6 +607,9 @@ from ..Library_Modules.library_media_trash_browse_controller import (
 )
 from ..Library_Modules.library_collections_browse_controller import (
     LibraryCollectionsBrowseController,
+)
+from ..Library_Modules.library_collections_capture_controller import (
+    CollectionsCaptureControllerState,
 )
 from ..Library_Modules.library_note_import_controller import (
     LibraryNoteImportController,
@@ -747,6 +759,7 @@ def _library_ingest_options_for(owner: Any) -> dict[str, Any]:
 
 LibraryReaderDestination = Literal[
     "media",
+    "collections",
     "conversations",
     "notes",
     "notes_files",
@@ -754,6 +767,10 @@ LibraryReaderDestination = Literal[
     "skills",
 ]
 LIBRARY_CONVERSATION_READER_PROFILE = AdaptiveReaderLayoutProfile()
+LIBRARY_COLLECTIONS_READER_PROFILE = AdaptiveReaderLayoutProfile(
+    work_min_width=48,
+    work_comfort_width=56,
+)
 LIBRARY_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=48)
 LIBRARY_FILE_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=30)
 LIBRARY_PROMPTS_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=48)
@@ -956,11 +973,12 @@ LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS = 500
 LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS = frozenset({"library-rag-results-heading"})
 LIBRARY_NOTES_COMPACT_BREAKPOINT = 120
 LIBRARY_INGEST_RAIL_COLLAPSE_BREAKPOINT = 100
-# TASK-23025: the five adaptive reader shells, all constructed exclusively in
+# TASK-23025: the adaptive reader shells, all constructed exclusively in
 # ``compose_content`` -- the basis for the one-probe-per-recompose negative
 # cache in ``_library_adaptive_reader_shell_active``.
 _LIBRARY_READER_SHELL_SELECTOR = (
     "#library-media-reader-shell, "
+    "#library-collections-reader-shell, "
     "#library-conversations-reader-shell, "
     "#library-notes-reader-shell, "
     "#library-prompts-reader-shell, "
@@ -3640,6 +3658,27 @@ class LibraryScreen(BaseAppScreen):
             self._library_prompts_reader_preferences,
             self._library_skills_reader_preferences,
         ) = self._load_library_reader_preference_snapshot()
+        self._library_collections_capture_state = CollectionsCaptureControllerState()
+        self._library_collections_capture_capabilities: CaptureCapabilities | None = None
+        self._library_collections_saved_searches: tuple[SavedCaptureSearch, ...] = ()
+        self._library_collections_saved_searches_total = 0
+        self._library_collections_active_scope = "all"
+        self._library_collections_reader_mode: CollectionsReaderMode = "read"
+        self._library_collections_more_open = False
+        self._library_collections_confirming_hard_delete = False
+        self._library_collections_legacy_recovery_rows = 0
+        self._library_collections_reader_preferences = AdaptiveReaderLayoutPreferences(
+            library_open=self._library_reader_shared_preferences.library_open,
+            custom_widths_enabled=(
+                self._library_reader_shared_preferences.custom_widths_enabled
+            ),
+            library_width=self._library_reader_shared_preferences.library_width,
+        )
+        self._library_collections_reader_layout = resolve_adaptive_reader_layout(
+            0,
+            self._library_collections_reader_preferences,
+            LIBRARY_COLLECTIONS_READER_PROFILE,
+        )
         self._library_notes_reader_layout: AdaptiveReaderEffectiveLayout = (
             resolve_adaptive_reader_layout(
                 0,
@@ -6567,6 +6606,7 @@ class LibraryScreen(BaseAppScreen):
             return False
         if self.query(
             "#library-media-reader-shell, "
+            "#library-collections-reader-shell, "
             "#library-conversations-reader-shell, "
             "#library-notes-reader-shell, "
             "#library-prompts-reader-shell, "
@@ -7569,6 +7609,7 @@ class LibraryScreen(BaseAppScreen):
         adaptive_reader = bool(
             self.query(
                 "#library-media-reader-shell, "
+                "#library-collections-reader-shell, "
                 "#library-conversations-reader-shell, "
                 "#library-notes-reader-shell, "
                 "#library-prompts-reader-shell, "
@@ -7719,6 +7760,7 @@ class LibraryScreen(BaseAppScreen):
         """Apply the settled ordinary rail contract at the existing UI seams."""
         if self.query(
             "#library-media-reader-shell, "
+            "#library-collections-reader-shell, "
             "#library-conversations-reader-shell, "
             "#library-notes-reader-shell, "
             "#library-prompts-reader-shell, "
@@ -8252,6 +8294,37 @@ class LibraryScreen(BaseAppScreen):
         self._library_conversation_reader_layout = layout
         self._sync_library_conversation_reader()
 
+    def _sync_library_collections_reader_layout_from_shell(
+        self,
+        priority: Literal["library", "items"] | None = None,
+    ) -> None:
+        """Resolve the settled Collections shell and patch it in place."""
+        try:
+            shell = self.query_one(
+                "#library-collections-reader-shell", LibraryAdaptiveReaderShell
+            )
+        except (NoMatches, QueryError):
+            return
+        width = shell.content_size.width
+        if width <= 0 or not self._library_adaptive_reader_allocation_is_current(shell):
+            return
+        previous = self._library_collections_reader_layout
+        if (
+            previous.reader_width == 0
+            and previous.library_width == 0
+            and previous.items_width == 0
+        ):
+            previous = None
+        layout = resolve_adaptive_reader_layout(
+            width,
+            self._library_collections_reader_preferences,
+            LIBRARY_COLLECTIONS_READER_PROFILE,
+            previous=previous,
+            priority=priority,
+        )
+        shell.sync_layout(layout)
+        self._library_collections_reader_layout = layout
+
     def _mirror_library_conversation_reader_preference(
         self,
         key: Literal["library_open", "items_open"],
@@ -8362,6 +8435,7 @@ class LibraryScreen(BaseAppScreen):
         """Replace one pane choice, sharing only the Library-pane preference."""
         attributes = {
             "media": "_library_media_reader_preferences",
+            "collections": "_library_collections_reader_preferences",
             "conversations": "_library_conversation_reader_preferences",
             "notes": "_library_notes_reader_preferences",
             "notes_files": "_library_file_notes_reader_preferences",
@@ -8429,6 +8503,8 @@ class LibraryScreen(BaseAppScreen):
         """Sync the mounted consumer of one optimistic choice or rollback."""
         if key == "library_open" or destination == "media":
             self._sync_library_media_reader_layout_from_shell(priority)
+        if key == "library_open" or destination == "collections":
+            self._sync_library_collections_reader_layout_from_shell(priority)
         if key == "library_open" or destination == "conversations":
             self._sync_library_conversation_reader_layout_from_shell(priority)
         if key == "library_open" or destination == "notes":
@@ -8924,6 +9000,19 @@ class LibraryScreen(BaseAppScreen):
     def _toggle_library_media_reader_pane(self, event: PaneToggleRequested) -> None:
         """Apply and persist one manual preferred pane choice."""
         event.stop()
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
+            layout = self._library_collections_reader_layout
+            opening = not (
+                layout.library_open if event.pane == "library" else layout.items_open
+            )
+            key: Literal["library_open", "items_open"] = (
+                "library_open" if event.pane == "library" else "items_open"
+            )
+            self._replace_library_reader_preference("collections", key, opening)
+            self._sync_library_reader_preference_layout(
+                "collections", key, event.pane if opening else None
+            )
+            return
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
             layout = self._library_conversation_reader_layout
             opening = not (
@@ -9131,7 +9220,9 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Resolve one mounted shared shell through its destination authority."""
         event.stop()
-        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
+            self._sync_library_collections_reader_layout_from_shell()
+        elif self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
             self._sync_library_conversation_reader_layout_from_shell()
         elif (
             self._library_selected_row_id
@@ -12973,17 +13064,10 @@ class LibraryScreen(BaseAppScreen):
                 id="library-skills-canvas",
             )
         if shell.canvas_kind == "collections":
-            return LibraryCollectionsPanel(
-                self._library_collections_panel_state(),
-                name_value=self._library_collection_name_input,
-                description_value=self._library_collection_description_input,
-                delete_pending=bool(self._library_collection_pending_delete_id),
-                pager=self._library_collections_browse_controller.pager,
-                page_actions_disabled=(
-                    self._library_collections_browse_controller.freshness == "stale"
-                ),
-                id="library-collections-panel",
-            )
+            # Collections changes the whole route topology (rail scopes +
+            # Items + Work), so the ordinary one-child replacement seam must
+            # fall through to the central recompose path.
+            return None
         if shell.canvas_kind == "export":
             return LibraryExportCanvas(
                 self._build_library_export_state(),
@@ -13448,6 +13532,7 @@ class LibraryScreen(BaseAppScreen):
             LIBRARY_CANVAS_KIND_NOTES_CREATE: "#library-notes-reader-shell",
             "prompts": "#library-prompts-reader-shell",
             "skills": "#library-skills-reader-shell",
+            "collections": "#library-collections-reader-shell",
             "conversations": "#library-conversations-reader-shell",
             "media": "#library-media-reader-shell",
         }
@@ -15408,6 +15493,30 @@ class LibraryScreen(BaseAppScreen):
             sync_profile_summary=self._library_sync_profile_summary,
         )
 
+    def _library_collections_capture_presentation(
+        self,
+    ) -> CollectionsCaptureReaderPresentation:
+        """Project source-neutral capture state into the render-only panes."""
+        runtime_policy = getattr(self.app_instance, "runtime_policy", None)
+        runtime_state = runtime_policy.state if runtime_policy is not None else None
+        active_source = str(
+            getattr(runtime_state, "active_source", "local") or "local"
+        ).lower()
+        return CollectionsCaptureReaderPresentation(
+            state=self._library_collections_capture_state,
+            capabilities=self._library_collections_capture_capabilities,
+            saved_searches=self._library_collections_saved_searches,
+            saved_searches_total=self._library_collections_saved_searches_total,
+            active_scope=self._library_collections_active_scope,
+            authority_label="Server" if active_source == "server" else "Local",
+            mode=self._library_collections_reader_mode,
+            more_open=self._library_collections_more_open,
+            confirming_hard_delete=(
+                self._library_collections_confirming_hard_delete
+            ),
+            legacy_recovery_rows=self._library_collections_legacy_recovery_rows,
+        )
+
     def _workspace_handoff_summary_label(
         self, state: LibraryWorkspaceDepthState
     ) -> str:
@@ -15864,6 +15973,59 @@ class LibraryScreen(BaseAppScreen):
                 self._restore_library_notes_authority_focus,
                 "files",
             )
+            return
+        if shell.canvas_kind == "collections":
+            presentation = self._library_collections_capture_presentation()
+            rail = LibraryRail(
+                shell,
+                preferences,
+                query=self._library_rag_query,
+                search_placeholder=self._library_rail_search_placeholder(),
+                workspaces_body_factory=self._compose_workspaces_rail_body,
+                top_action_factory=self._compose_library_rail_top_action,
+                row_context_factory=lambda row: (
+                    (
+                        LibraryCollectionsScopeRows(
+                            presentation,
+                            id="library-collections-scopes",
+                        ),
+                    )
+                    if row.row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
+                    else ()
+                ),
+                lifecycle=self._library_lifecycle,
+                onboarding_all_empty=self._library_onboarding_all_empty,
+                id="library-rail",
+                classes="destination-workbench-pane",
+            )
+            items = LibraryCollectionsItemsPane(
+                presentation,
+                id="library-collections-items",
+            )
+            items_host = Vertical(
+                items,
+                id="library-canvas",
+                classes="destination-workbench-pane",
+            )
+            work = LibraryCollectionsWorkPane(
+                presentation,
+                id="library-collections-work",
+            )
+            with shell_grid:
+                yield LibraryAdaptiveReaderShell(
+                    library=rail,
+                    items=items_host,
+                    work=work,
+                    layout=self._library_collections_reader_layout,
+                    id_prefix="library-collections",
+                    library_label="Library",
+                    items_label="Items",
+                    id="library-collections-reader-shell",
+                )
+            self.call_after_refresh(
+                self._sync_library_collections_reader_layout_from_shell
+            )
+            self.call_after_refresh(self._hide_library_adaptive_reader_rail_collapse)
             return
         if shell.canvas_kind == "prompts":
             rail = LibraryRail(
@@ -25944,8 +26106,9 @@ class LibraryScreen(BaseAppScreen):
         self._cancel_library_media_selection_settlement()
         if row_id != LIBRARY_ROW_BROWSE_MEDIA:
             self._library_media_browse_controller.invalidate()
-        if row_id != LIBRARY_ROW_BROWSE_COLLECTIONS:
-            self._library_collections_browse_controller.invalidate()
+        # The legacy generic-container controller no longer owns the
+        # Collections destination; retained rows remain recovery-only.
+        self._library_collections_browse_controller.invalidate()
         if row_id != LIBRARY_ROW_BROWSE_SKILLS:
             self._library_skills_filter_cursor_context = None
             self._library_skills_browse_controller.invalidate()
@@ -26099,11 +26262,6 @@ class LibraryScreen(BaseAppScreen):
             # result off screen under load.
             self._request_library_prompts_browse(
                 self._library_prompt_browse_controller.mutation_refresh_scope,
-                focus_identity=None,
-            )
-        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
-            self._request_library_collections_browse(
-                self._library_collections_browse_controller.mutation_refresh_scope,
                 focus_identity=None,
             )
         if (

@@ -1170,6 +1170,173 @@ ConsoleRunLogModal {
     color: $ds-action-focus;
 }
 
+#library-collections-reader-shell > .library-adaptive-reader-pane-grip {
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+}
+
+#library-collections-reader-shell > .library-adaptive-reader-pane-grip:focus {
+    background: $ds-input-focus-bg;
+    color: $ds-action-focus;
+}
+
+#library-collections-reader-shell #library-canvas {
+    padding: 0;
+    margin: 0;
+    border: none;
+    overflow-x: hidden;
+}
+
+#library-collections-scopes {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+}
+
+.library-collections-scope-row {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    content-align: left middle;
+}
+
+#library-collections-more-saved-searches {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    color: $ds-text-muted;
+    content-align: left middle;
+}
+
+#library-collections-items,
+#library-collections-work {
+    width: 1fr;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    background: $ds-surface-panel;
+}
+
+#library-collections-items {
+    padding: 0;
+}
+
+#library-collections-work {
+    padding: 0 1;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+#library-collections-items-toolbar,
+#library-collections-page-toolbar,
+#library-collections-primary-toolbar,
+#library-collections-mode-toolbar,
+#library-collections-archive-receipt {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+    margin: 0;
+}
+
+#library-collections-items-toolbar > Button,
+#library-collections-page-toolbar > Button,
+#library-collections-primary-toolbar > Button,
+#library-collections-mode-toolbar > Button,
+#library-collections-archive-receipt > Button {
+    width: auto;
+    min-width: 0;
+    margin: 0;
+    padding: 0 1;
+}
+
+#library-collections-filter {
+    width: 100%;
+    min-width: 0;
+    height: 3;
+    min-height: 3;
+    margin: 0;
+}
+
+#library-collections-items-scroll {
+    width: 100%;
+    min-width: 0;
+    height: 1fr;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+.library-collections-item-row {
+    width: 100%;
+    min-width: 0;
+    height: 2;
+    min-height: 2;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    content-align: left top;
+}
+
+.library-collections-item-row:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+}
+
+#library-collections-page-range,
+#library-collections-reader-identity,
+#library-collections-reader-byline {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    color: $ds-text-muted;
+}
+
+#library-collections-reader-title {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+    text-style: bold;
+    color: $ds-text-primary;
+}
+
+#library-collections-read-body,
+#library-collections-info-body {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+    margin-top: 1;
+}
+
+#library-collections-freeform-note {
+    width: 100%;
+    min-width: 0;
+    height: 6;
+    min-height: 4;
+    margin: 0 0 1 0;
+}
+
 #library-conversations-reader-shell #library-canvas {
     padding: 0;
     margin: 0;
