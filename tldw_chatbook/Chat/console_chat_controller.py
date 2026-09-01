@@ -145,6 +145,7 @@ from tldw_chatbook.Chat.console_context_compaction import (
     decide_compaction,
     plan_compaction,
     manual_summary_preview,
+    micro_compaction_due,
     sanitize_summary_focus,
     plan_manual_prefix,
     plan_manual_range,
@@ -3139,6 +3140,21 @@ class ConsoleChatController:
         #: session -- captured at the send preflight (the same accounting
         #: that built the request), read by the context breakdown surface.
         self._context_accounting_by_session: dict[str, object] = {}
+        #: TASK-25910: completed-turn counters per session for the
+        #: micro-compaction cadence; a per-session in-flight guard keeps
+        #: a slow fold from stacking.
+        self._micro_compaction_counters: dict[str, int] = {}
+        self._micro_compaction_inflight: set[str] = set()
+        # Read once at construction (the 26016 timeout-knob precedent, and
+        # a per-completion get_cli_setting call would also exhaust every
+        # test double with a finite side_effect list): cadence changes
+        # take effect on the next app start.
+        try:
+            self._micro_compaction_cadence = get_cli_setting(
+                "console", "micro_compaction_every_turns", 0
+            )
+        except Exception:
+            self._micro_compaction_cadence = 0
         self._active_capture_details: dict[str, CaptureDetail] = {}
         # Cost-ticker PR3: per-session cache-break/TTL ground truth for the
         # cost chip. All three are process-local and best-effort -- a missed
@@ -17924,8 +17940,48 @@ class ConsoleChatController:
                     bump_epoch(session_id)
         return count
 
-    async def compact_context_now(self, session_id: str) -> tuple[bool, str]:
-        """Run one user-initiated bounded compaction without sending a turn."""
+    def _maybe_schedule_micro_compaction(self, session_id: str) -> None:
+        """One cadence step after a completed turn (TASK-25910 AC#1/#4).
+
+        Never runs during a send (the compact entry re-checks run state),
+        never blocks anything here (fire-and-forget task on the running
+        loop; off-loop callers simply skip the beat), and folds only when
+        the configured cadence comes due. Cadence 0 (the default) is fully
+        off -- today's behavior exactly (AC#2).
+        """
+        cadence = self._micro_compaction_cadence
+        due, next_counter = micro_compaction_due(
+            self._micro_compaction_counters.get(session_id, 0), cadence
+        )
+        self._micro_compaction_counters[session_id] = next_counter
+        if not due or session_id in self._micro_compaction_inflight:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        async def _run() -> None:
+            try:
+                await self.compact_context_now(session_id, micro=True)
+            except Exception:  # noqa: BLE001 -- a background fold never raises out
+                logger.opt(exception=True).debug("micro_compaction_failed")
+            finally:
+                self._micro_compaction_inflight.discard(session_id)
+
+        self._micro_compaction_inflight.add(session_id)
+        loop.create_task(_run())
+
+    async def compact_context_now(
+        self, session_id: str, *, micro: bool = False
+    ) -> tuple[bool, str]:
+        """Run one user-initiated bounded compaction without sending a turn.
+
+        TASK-25910: ``micro=True`` is the per-turn micro-compaction pass --
+        same assembly, but the preflight only escalates a below-trigger
+        AUTOMATIC decision (never ASK) and caps the plan at the single
+        oldest exchange; every refusal is silent for that caller.
+        """
         if not self.run_state_for(session_id).is_send_allowed:
             return False, "Wait for the active run to finish before compacting."
         owner = next(
@@ -17966,8 +18022,9 @@ class ConsoleChatController:
             ),
             assistant_message_id="",
             agent_tools_enabled=False,
-            force_compaction=True,
+            force_compaction=not micro,
             manual_action=True,
+            micro_compaction=micro,
             continuation_sidecar=continuation_sidecar,
             continuation_target=continuation_target,
         )
@@ -18076,6 +18133,7 @@ class ConsoleChatController:
         agent_tools_enabled: bool,
         force_compaction: bool = False,
         manual_action: bool = False,
+        micro_compaction: bool = False,
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_target: ContinuationRestoreTarget | None = None,
         thinking_sidecar: tuple[ProviderThinkingSidecar, ...] = (),
@@ -18227,6 +18285,22 @@ class ConsoleChatController:
             decision = CompactionDecision.NON_COMPACTABLE
         elif force_compaction and units:
             decision = CompactionDecision.AUTOMATIC
+        # TASK-25910: a micro pass escalates ONLY the below-trigger
+        # AUTOMATIC case, folding the single oldest exchange; ASK is never
+        # silently bypassed (AC#5) and any other decision is a silent
+        # no-op for a background pass.
+        micro_escalated = False
+        if (
+            micro_compaction
+            and units
+            and decision is CompactionDecision.BELOW_TRIGGER
+            and resolved.policy.compaction_mode
+            is ContextCompactionMode.AUTOMATIC
+        ):
+            decision = CompactionDecision.AUTOMATIC
+            micro_escalated = True
+        elif micro_compaction and decision is not CompactionDecision.AUTOMATIC:
+            return _flatten_preflight_messages(semantic), None
         logger.info("console_context_policy_decision")
         if decision in {CompactionDecision.OFF, CompactionDecision.BELOW_TRIGGER}:
             return _flatten_preflight_messages(semantic), None
@@ -18375,7 +18449,13 @@ class ConsoleChatController:
             max_visual_inputs=max_visual_inputs,
             prepare_main=prepare_main,
             prepare_auxiliary=prepare_auxiliary,
+            max_units=1 if micro_escalated else None,
         )
+        if micro_escalated and planned.plan is None:
+            # An unprofitable single-exchange fold (too small to beat the
+            # summary cap) just waits for a later tick -- never a blocked
+            # notice from a background pass.
+            return _flatten_preflight_messages(semantic), None
         if planned.plan is None:
             if (
                 resolved.policy.failure_behavior
@@ -22298,6 +22378,12 @@ class ConsoleChatController:
         previous_status = self.run_state_for(target).status
         self._run_states[target] = run_state
         self.run_state_history_for(target).append(run_state.status)
+        if (
+            run_state.status is ConsoleRunStatus.COMPLETED
+            and previous_status is not ConsoleRunStatus.COMPLETED
+            and target
+        ):
+            self._maybe_schedule_micro_compaction(target)
         if self._buddy_sink is not None:
             context_owners = self._buddy_run_owner_context.get() or {}
             if run_state.status is ConsoleRunStatus.VALIDATING:

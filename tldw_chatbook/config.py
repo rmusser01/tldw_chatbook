@@ -3233,6 +3233,7 @@ compaction_trigger_ratio = 0.80
 compaction_target_ratio = 0.55
 compaction_summary_max_tokens = 1024
 compaction_auxiliary_timeout_seconds = 120  # wall-clock bound on the summarizer call; invalid/<=0 falls back to 120
+micro_compaction_every_turns = 0         # TASK-25910: in AUTOMATIC mode, fold the oldest exchange into memory every N completed turns (0 = off; bounds prompt-cache breaks to 1/N of turns)
 compaction_failure_behavior = "stop_and_ask"  # stop_and_ask, omit_older_context
 compaction_carry_forward_mode = "memory_with_recent_turns"  # memory_with_recent_turns, memory_with_latest_exchange
 # Confinement root for the fs_*/git_* agent tools (ADR-032). Empty = the app's

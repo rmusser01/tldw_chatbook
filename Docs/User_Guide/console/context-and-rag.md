@@ -59,6 +59,21 @@ Where this page's controls live:
 
 ## Features & controls
 
+### Per-turn micro-compaction
+
+With compaction mode **Automatic**, setting `[console]
+micro_compaction_every_turns = N` amortizes compaction instead of paying one
+big summarize stall at the trigger ratio: every N completed turns, a
+background pass folds the **single oldest exchange** into the existing
+conversation memory — after the turn settles, never during a send, and it
+never blocks the composer. It uses the same planner, memory record, and
+provenance as ordinary automatic compaction; an exchange too small to be
+worth a summary call simply waits for a later tick. **Ask** mode is never
+bypassed (micro-compaction only runs in Automatic), and `0` (the default)
+turns the feature off entirely. Each fold rewrites the memory row, which
+breaks the provider prompt cache from that row onward — the cadence bounds
+that to 1 in N turns.
+
 ### Context breakdown by category
 
 The model popover's context block (Request / Conversation / Compaction rows)

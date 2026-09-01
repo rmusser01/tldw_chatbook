@@ -447,6 +447,32 @@ def focus_directed_prompt(
     )
 
 
+def micro_compaction_due(counter: int, every: object) -> tuple[bool, int]:
+    """One cadence step for per-turn micro-compaction (TASK-25910).
+
+    Args:
+        counter: Completed turns since the last fold for this session.
+        every: The configured cadence -- fold every N completed turns.
+            0, negative, or junk means OFF (AC#2).
+
+    Returns:
+        ``(due, next_counter)``: whether a fold is due NOW, and the
+        counter value to store. Cadence N bounds the prompt-cache break to
+        1/N of turns (AC#6) -- the memory row rewrite is the only prefix
+        change a fold makes.
+    """
+    try:
+        cadence = int(every)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        cadence = 0
+    if cadence < 1:
+        return False, 0
+    advanced = counter + 1
+    if advanced >= cadence:
+        return True, 0
+    return False, advanced
+
+
 def manual_summary_preview(
     plan: ManualMemoryPlan, *, from_here: bool
 ) -> ManualSummaryPreview:
@@ -1442,8 +1468,16 @@ def plan_compaction(
     prepare_auxiliary: Callable[
         [tuple[Mapping[str, Any], ...], int], PreparedProviderRequest
     ],
+    max_units: int | None = None,
 ) -> CompactionPlanResult:
-    """Select the largest useful oldest prefix that fits one auxiliary call."""
+    """Select the largest useful oldest prefix that fits one auxiliary call.
+
+    TASK-25910: ``max_units`` caps the selected span (micro-compaction folds
+    exactly the oldest exchange(s) each cadence tick); ``None`` -- the
+    default -- is today's unbounded selection, byte-identical. The
+    range-to-prefix branch ignores the cap: a GENERATED_RANGE memory's
+    reshape is inherently whole-span, so micro passes stay no-ops there.
+    """
     budget = resolved_policy.effective_conversation_budget_tokens
     if budget is None or budget <= 0:
         return CompactionPlanResult(None, "unknown_or_empty_budget")
@@ -1481,6 +1515,10 @@ def plan_compaction(
         summary_limit = min(summary_limit, provider_output_cap)
 
     visual_reason: str | None = None
+    if max_units is not None:
+        available = min(available, max(0, max_units))
+        if available < 1:
+            return CompactionPlanResult(None, "no_complete_durable_units")
     for selected_count in range(available, 0, -1):
         selected = tuple(durable_units[:selected_count])
         visual_reason = _automatic_visual_input_reason(selected, max_visual_inputs)

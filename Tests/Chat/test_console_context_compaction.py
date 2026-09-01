@@ -4452,3 +4452,76 @@ async def test_unfocused_empty_summary_still_fails_without_a_retry() -> None:
     assert result.terminal is CompactionTerminal.FAILED
     assert result.reason == "invalid_summary_output"
     assert gateway.calls == 1
+
+
+# --- TASK-25910: per-turn micro-compaction ----------------------------------
+
+
+def test_plan_with_max_units_folds_only_the_oldest_exchange() -> None:
+    """AC#1/#3: the SAME automatic planner, capped to the smallest step --
+    prior memory folds in via the existing iterative path."""
+    semantic = _semantic()
+    before = _prepare(semantic)
+    # Micro folds run BELOW the trigger: the budget is roomy, so removing
+    # one exchange easily satisfies the target check that a full
+    # over-budget compaction would fail at span 1.
+    result = plan_compaction(
+        semantic=semantic,
+        prepared_before=before,
+        durable_units=_durable_units(),
+        resolved_policy=_resolved(budget=4_000),
+        prompt=CompactionPromptSnapshot("Preserve decisions."),
+        prior_memory=None,
+        prepare_main=_prepare,
+        prepare_auxiliary=lambda messages, cap: _prepare(
+            PreparedConsoleRequest(active_request=messages),
+            response_tokens=cap,
+        ),
+        max_units=1,
+    )
+    assert result.plan is not None
+    assert len(result.plan.selected_units) == 1
+    assert result.plan.selected_units[0].messages[0].message_id == "u0"
+
+
+def test_plan_without_max_units_is_byte_identical_to_today() -> None:
+    """AC#2: the kwarg default changes nothing."""
+    semantic = _semantic()
+    before = _prepare(semantic)
+
+    def build(**kwargs):
+        return plan_compaction(
+            semantic=semantic,
+            prepared_before=before,
+            durable_units=_durable_units(),
+            resolved_policy=_resolved(),
+            prompt=CompactionPromptSnapshot("Preserve decisions."),
+            prior_memory=None,
+            prepare_main=_prepare,
+            prepare_auxiliary=lambda messages, cap: _prepare(
+                PreparedConsoleRequest(active_request=messages),
+                response_tokens=cap,
+            ),
+            **kwargs,
+        )
+
+    default_plan = build().plan
+    explicit_none = build(max_units=None).plan
+    assert default_plan is not None and explicit_none is not None
+    assert default_plan.selected_units == explicit_none.selected_units
+    assert len(default_plan.selected_units) == 3
+
+
+def test_micro_compaction_cadence_counter() -> None:
+    """AC#2/#6: fully off at 0; a fold is DUE only every N turns, bounding
+    prompt-cache breaks to 1/N of turns."""
+    from tldw_chatbook.Chat.console_context_compaction import (
+        micro_compaction_due,
+    )
+
+    assert micro_compaction_due(5, 0) == (False, 0)
+    assert micro_compaction_due(0, 3) == (False, 1)
+    assert micro_compaction_due(1, 3) == (False, 2)
+    assert micro_compaction_due(2, 3) == (True, 0)
+    # junk cadence coerces to off
+    assert micro_compaction_due(2, -4) == (False, 0)
