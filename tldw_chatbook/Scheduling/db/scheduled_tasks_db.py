@@ -133,6 +133,15 @@ class ScheduledTasksDB(BaseDB):
         "run_summary", "evidence_summary", "failure_reason",
     }
 
+    _AUTOMATION_RESULT_COLUMNS = {
+        "server_id", "answer", "answer_mode", "confidence", "source_refs",
+        "visibility_destination", "review_state", "reviewed_at",
+        "reviewed_by", "review_note", "updated_at",
+    }
+    _AUTOMATION_RESULT_JSON_FIELDS = {
+        "answer", "confidence", "source_refs", "visibility_destination",
+    }
+
     _DATETIME_FIELDS = {
         "run_at",
         "next_run_at",
@@ -1319,6 +1328,135 @@ class ScheduledTasksDB(BaseDB):
                 (json.dumps({"code": "interrupted"}), now_iso, now_iso, cutoff),
             )
             return cursor.rowcount
+
+    # ------------------------------------------------------------------
+    # Automation results
+    # ------------------------------------------------------------------
+
+    def create_automation_result(
+        self,
+        owner_id: str,
+        definition_id: str,
+        run_id: str,
+        kind: str,
+        title: str,
+        summary: str,
+        dedupe_key: str,
+        **kwargs: Any,
+    ) -> str | None:
+        """Insert a result; return its id, or None when the dedupe key fired.
+
+        Mirrors ``create_automation_run``'s create shape: no pruning here
+        (results are user-facing findings, not run bookkeeping).
+        """
+        self._validate_kwargs(kwargs, self._AUTOMATION_RESULT_COLUMNS, "automation result")
+        result_id = str(uuid.uuid4())
+        now_iso = self._to_utc_iso(datetime.now(timezone.utc))
+        fields: dict[str, Any] = {
+            "id": result_id,
+            "owner_id": owner_id,
+            "definition_id": definition_id,
+            "run_id": run_id,
+            "kind": kind,
+            "title": title,
+            "summary": summary,
+            "dedupe_key": dedupe_key,
+            "review_state": "unread",
+            "answer_mode": "none",
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        }
+        for key, value in kwargs.items():
+            if value is None:
+                continue
+            if key in self._AUTOMATION_RESULT_JSON_FIELDS:
+                fields[key] = json.dumps(value)
+            elif isinstance(value, datetime):
+                fields[key] = self._to_utc_iso(value)
+            else:
+                fields[key] = value
+        self._validate_sql_identifiers(list(fields.keys()))
+        columns = ", ".join(fields)
+        placeholders = ", ".join("?" for _ in fields)
+        with self.transaction() as conn:
+            try:
+                conn.execute(
+                    f"INSERT INTO automation_results ({columns}) VALUES ({placeholders})",
+                    list(fields.values()),
+                )
+            except sqlite3.IntegrityError:
+                # The (owner_id, dedupe_key) UNIQUE fired: already reported.
+                return None
+        return result_id
+
+    def list_automation_results(
+        self,
+        owner_id: str,
+        review_state: str | None = None,
+        definition_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List automation results for an owner, newest first.
+
+        Optionally filtered by ``review_state`` and/or ``definition_id``;
+        paginated via ``limit``/``offset``.
+        """
+        conditions = ["owner_id = ?"]
+        params: list[Any] = [owner_id]
+
+        if review_state is not None:
+            conditions.append("review_state = ?")
+            params.append(review_state)
+
+        if definition_id is not None:
+            conditions.append("definition_id = ?")
+            params.append(definition_id)
+
+        where_clause = f"WHERE {' AND '.join(conditions)}"
+        params.extend([limit, offset])
+
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                f"SELECT * FROM automation_results {where_clause} "
+                "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                params,
+            )
+            return self._rows_to_dicts(
+                cursor.fetchall(), json_fields=self._AUTOMATION_RESULT_JSON_FIELDS
+            )
+
+    def count_unread_results(self, owner_id: str) -> int:
+        """Count unread results for an owner (spec §4's inbox badge)."""
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM automation_results "
+                "WHERE owner_id = ? AND review_state = 'unread'",
+                (owner_id,),
+            )
+            row = cursor.fetchone()
+            return int(row[0]) if row else 0
+
+    def update_result_review(
+        self,
+        result_id: str,
+        review_state: str,
+        review_note: str | None = None,
+        reviewed_by: str | None = None,
+    ) -> bool:
+        """Set a result's review state; returns False for an unknown id."""
+        now_iso = self._to_utc_iso(datetime.now(timezone.utc))
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE automation_results
+                SET review_state = ?, review_note = ?, reviewed_by = ?,
+                    reviewed_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (review_state, review_note, reviewed_by, now_iso, now_iso, result_id),
+            )
+            return cursor.rowcount > 0
 
     # ------------------------------------------------------------------
     # Sync helpers

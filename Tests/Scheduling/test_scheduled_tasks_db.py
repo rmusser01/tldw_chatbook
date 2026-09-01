@@ -722,3 +722,38 @@ def test_reconcile_marks_stale_running_as_interrupted(tmp_path):
     row = db.list_automation_runs("local", definition_id="d1")[0]
     assert row["status"] == "failed"
     assert row["failure_reason"] == {"code": "interrupted"}
+
+
+# ----------------------------------------------------------------------
+# Automation results
+# ----------------------------------------------------------------------
+
+
+def test_create_result_and_dedupe(tmp_path):
+    db = _mk_db(tmp_path)
+    rid = db.create_automation_result(
+        "local", "d1", "r1", "finding", "Title", "Summary", "key-1",
+        answer_mode="synthesized", answer={"text": "42"},
+        source_refs=[{"source": "notes", "id": "n1"}],
+    )
+    assert rid is not None
+    assert db.create_automation_result(
+        "local", "d1", "r2", "finding", "Again", "S", "key-1"
+    ) is None  # same (owner, dedupe_key)
+    row = db.list_automation_results("local")[0]
+    assert row["review_state"] == "unread"
+    assert row["answer"] == {"text": "42"}
+    assert row["source_refs"] == [{"source": "notes", "id": "n1"}]
+
+
+def test_review_transitions_and_unread_count(tmp_path):
+    db = _mk_db(tmp_path)
+    rid = db.create_automation_result(
+        "local", "d1", "r1", "finding", "T", "S", "k1"
+    )
+    db.create_automation_result("local", "d1", "r2", "failure", "F", "S", "k2")
+    assert db.count_unread_results("local") == 2
+    assert db.update_result_review(rid, "read", reviewed_by="local")
+    assert db.count_unread_results("local") == 1
+    assert db.list_automation_results("local", review_state="read")[0]["id"] == rid
+    assert not db.update_result_review("missing", "dismissed")
