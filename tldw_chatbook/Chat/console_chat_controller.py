@@ -126,6 +126,10 @@ from tldw_chatbook.Chat.console_history_budget import (
     count_console_messages_tokens,
     provider_continuation_owner_groups,
 )
+from tldw_chatbook.Chat.console_auxiliary_routing import (
+    auxiliary_selection_from_config,
+    select_auxiliary_or_main,
+)
 from tldw_chatbook.Chat.console_context_compaction import (
     NO_LEGACY_MEMORY,
     CompactionAdmission,
@@ -2673,6 +2677,36 @@ class ConsoleChatController:
     #: and no way forward. Generous enough for a slow first TLS handshake;
     #: finite so the composer never wedges.
     PROVIDER_VALIDATION_TIMEOUT_SECONDS = 30.0
+
+    async def _auxiliary_compaction_resolution(
+        self, main_selection, main_resolution):
+        """Resolve a cheaper auxiliary model for compaction, or fall back.
+
+        TASK-26024. Reads ``[chat_defaults] auxiliary_provider`` /
+        ``auxiliary_model``; unconfigured reproduces today (returns the main
+        resolution, AC#2), and an auxiliary that will not resolve ready
+        falls back to the main rather than failing the side task (AC#3).
+        Only ever called on the compaction path -- never a chat send
+        (AC#5). Separate attribution is automatic: the auxiliary-attempt
+        ledger records provider+model per attempt (AC#4).
+        """
+        try:
+            aux_provider = get_cli_setting(
+                "chat_defaults", "auxiliary_provider", None
+            )
+            aux_model = get_cli_setting("chat_defaults", "auxiliary_model", None)
+        except Exception:
+            return main_resolution
+        aux_selection = auxiliary_selection_from_config(
+            main_selection, provider=aux_provider, model=aux_model
+        )
+        if aux_selection is None:
+            return main_resolution
+        try:
+            aux_resolution = await self._resolve_for_send_bounded(aux_selection)
+        except Exception:
+            return main_resolution
+        return select_auxiliary_or_main(aux_resolution, main_resolution)
 
     async def _resolve_for_send_bounded(self, selection: Any) -> Any:
         """resolve_for_send with a hard deadline (UAT H-3).
@@ -14121,6 +14155,11 @@ class ConsoleChatController:
                 session_id,
                 self._blocked_visible_copy(getattr(resolution, "visible_copy", "")),
             )
+        # TASK-26024: route the summary call to a cheaper auxiliary model
+        # when configured; falls back to this resolution otherwise.
+        resolution = await self._auxiliary_compaction_resolution(
+            configuration.provider_selection, resolution
+        )
         prompt = CompactionPromptSnapshot(
             get_internal_prompt("console.rewind_summarize")
         )
@@ -18003,15 +18042,19 @@ class ConsoleChatController:
             # Review #2: the OWNING session's provider, never the viewed
             # tab's -- a background micro fold can fire on a session the
             # user has switched away from.
-            resolution = await self._resolve_for_send_bounded(
-                self._provider_selection_for_session(session_id)
-            )
+            main_selection = self._provider_selection_for_session(session_id)
+            resolution = await self._resolve_for_send_bounded(main_selection)
         except Exception:
             return False, "The active provider could not be prepared for compaction."
         if not getattr(resolution, "ready", False):
             return False, self._blocked_visible_copy(
                 getattr(resolution, "visible_copy", "")
             )
+        # TASK-26024: route the compaction summary to a cheaper auxiliary
+        # model when configured (fallback to this resolution otherwise).
+        resolution = await self._auxiliary_compaction_resolution(
+            main_selection, resolution
+        )
         overrides, global_overrides, before_memory = self.context_control_inputs(
             session_id
         )

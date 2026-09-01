@@ -74,6 +74,20 @@ turns the feature off entirely. Each fold rewrites the memory row, which
 breaks the provider prompt cache from that row onward — the cadence bounds
 that to 1 in N turns.
 
+### Auxiliary model for side tasks
+
+`[chat_defaults] auxiliary_provider` / `auxiliary_model` route the Console's
+side-task LLM call — conversation compaction/summarization — to a cheaper
+model instead of your main chat model, so an expensive reasoning model
+isn't billed to summarize old turns. Both keys empty is today's behavior;
+model-only keeps your main provider; a cross-provider auxiliary must resolve
+ready or the side task silently falls back to the main model. The auxiliary
+model never handles a user-visible chat turn, and its usage is attributed
+separately in the compaction attempt ledger. (This covers manual `/rewind`
+summarize, "compact now", and per-turn micro-compaction; the automatic
+on-send compaction stays on the main model. Titling is deterministic and
+uses no model.)
+
 ### Provider-native compaction (opt-in seam)
 
 `[console] compaction_native_delegation = true` lets compaction delegate the

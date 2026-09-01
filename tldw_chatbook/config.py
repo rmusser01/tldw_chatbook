@@ -4070,6 +4070,16 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
 
 [chat_defaults]
 rag_auto_retrieve_on_send = false  # New Console chats do not search Library automatically
+# TASK-26024: route Console SIDE tasks (compaction/summarization -- titling
+# here is deterministic, no model) to a cheaper auxiliary model. Both keys
+# empty = today's behavior (side tasks use the main chat model). Model-only
+# keeps the main provider; a cross-provider auxiliary must resolve ready or
+# the side task silently falls back to the main model. The auxiliary NEVER
+# handles a user-visible chat turn. (The auto-on-send compaction stays on
+# the main model; this routes manual /rewind summarize, "compact now", and
+# per-turn micro-compaction.)
+# auxiliary_provider = ""
+# auxiliary_model = ""
 # Default settings specifically for the 'Chat' tab
 user_display_name = "User"
 provider = "OpenAI"
