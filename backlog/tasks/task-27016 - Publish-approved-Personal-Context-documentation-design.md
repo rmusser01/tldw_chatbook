@@ -1,5 +1,5 @@
 ---
-id: TASK-26836
+id: TASK-27016
 title: Publish approved Personal Context documentation design
 status: Done
 assignee:
@@ -47,12 +47,19 @@ Published the reviewed Personal Context documentation design by applying commits
 ADR required: no. ADR-102 governs the implemented Personal Context authority, sync, and encryption architecture; this task adds no architectural decision.
 
 Verification evidence before closeout:
-- backlog task 26836 --plain resolved the exact TASK-26836 file and rendered all three acceptance criteria.
+- backlog task 27016 --plain resolved the exact TASK-27016 file and rendered all three acceptance criteria.
 - git diff --check origin/dev...HEAD exited 0 at 6aeb559283.
-- Exact-scope comparison exited 0: only Docs/superpowers/specs/2026-08-31-personal-context-documentation-design.md and backlog/tasks/task-26836 - Publish-approved-Personal-Context-documentation-design.md differ from origin/dev.
-- The all-ref sweep found TASK-26836 only at the same filename on refs/heads/codex/personal-context-docs and refs/heads/codex/personal-context-docs-spec; the all-worktree sweep found the same single filename in their two corresponding worktrees. No distinct TASK-26836 claimant exists.
+- Exact-scope comparison exited 0: only Docs/superpowers/specs/2026-08-31-personal-context-documentation-design.md and backlog/tasks/task-27016 - Publish-approved-Personal-Context-documentation-design.md differ from origin/dev.
+- The fresh-ID sweep found no TASK-27016 claimant across local/remote refs or repository worktrees before allocation.
 - Both files are tracked, and the task references the published spec path.
 - No application tests were run because this is documentation-only; the approved spec explicitly requires no full application sweep.
 
-Post-rebase verification: rebased conflict-free onto current origin/dev 79d98ee01a. At a8a505648a, git diff --check origin/dev...HEAD and the exact two-file scope comparison both exited 0. The refreshed all-ref/all-worktree sweep still found one TASK-26836 filename and no distinct claimant. The initial PR review reported no issues and all required checks passed before the branch-update gate required this rebase; those checks must rerun on the final pushed SHA.
+Post-rebase verification: rebased conflict-free onto current origin/dev b17946c57a. The initial PR review reported no issues. The branch-update check then exposed a duplicate TASK-26836 added to dev by the older Console tray task, so this younger publication task was renumbered under the repository collision rule. Diff, exact-scope, task rendering, targeted uniqueness tests, and all-ref/all-worktree verification must rerun on the renumbered final branch before merge.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+- Previous ID: TASK-26836
+- Current ID: TASK-27016
+- Reason: current dev contains the older `task-26836 - Console-tray-recomposes-for-state-fields-its-content-mode-never-renders.md` record (created 2026-09-01 14:51); this publication record was created at 2026-09-01 15:07 and therefore moved under the younger-task-renumbers rule.
+- Inbound references: the specification contains no task-ID reference; the filename, frontmatter ID, task verification commands, and exact-scope evidence were updated to TASK-27016.
