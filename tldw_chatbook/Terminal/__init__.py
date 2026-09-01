@@ -1,6 +1,7 @@
 """Platform-neutral contracts for persistent terminal sessions."""
 
-from .backend import TerminalBackend
+from typing import TYPE_CHECKING, Any
+
 from .contracts import (
     MAX_IO_CHUNK_BYTES,
     MAX_PARSER_TURN_BYTES,
@@ -32,6 +33,29 @@ from .contracts import (
     slot_held,
     validate_transition,
 )
+
+if TYPE_CHECKING:
+    from .backend import TerminalBackend
+
+
+def __getattr__(name: str) -> Any:
+    """Load the backend protocol only for callers that request it.
+
+    Args:
+        name: Package attribute requested by the caller.
+
+    Returns:
+        The lazily imported :class:`TerminalBackend` protocol.
+
+    Raises:
+        AttributeError: If ``name`` is not a supported lazy package export.
+    """
+
+    if name == "TerminalBackend":
+        from .backend import TerminalBackend
+
+        return TerminalBackend
+    raise AttributeError(name)
 
 __all__ = [
     "AdmissionGate",

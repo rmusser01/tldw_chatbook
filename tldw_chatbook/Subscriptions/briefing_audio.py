@@ -215,9 +215,7 @@ from tldw_chatbook.TTS.audio_stitch import (
     wav_duration_seconds,
 )
 from tldw_chatbook.TTS.legacy_bridge import LEGACY_PROVIDER_IDS
-from tldw_chatbook.TTS.legacy_request_builder import build_legacy_speech_request
 from tldw_chatbook.TTS.playground_types import TTSRequestedSelectionSnapshot
-from tldw_chatbook.TTS.text_processing import TextChunker
 from tldw_chatbook.Utils.path_validation import is_safe_path
 from tldw_chatbook.Utils.private_paths import (
     atomic_private_write_bytes,
@@ -387,6 +385,8 @@ def _split_turn_text(text: str) -> list[str]:
     """
     if len(text) <= MAX_TURN_CHARS:
         return [text]
+
+    from tldw_chatbook.TTS.text_processing import TextChunker
 
     chunker = TextChunker(max_tokens=_CHUNK_MAX_TOKENS)
     pieces = [chunk.text for chunk in chunker.chunk_text(text) if chunk.text.strip()]
@@ -680,6 +680,8 @@ async def _synthesize_legacy_chunk(
             f"speaker {selection.speaker!r} turn {turn_index}: no voice is "
             "selected for this provider"
         )
+
+    from tldw_chatbook.TTS.legacy_request_builder import build_legacy_speech_request
 
     request, internal_model_id = build_legacy_speech_request(
         provider_id=selection.provider_id,

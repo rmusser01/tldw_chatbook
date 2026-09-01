@@ -321,13 +321,6 @@ from tldw_chatbook.Chat.console_skill_resolver import (
     resolve_skill_command,
 )
 from tldw_chatbook.Chat.prompt_history import PromptHistory
-from tldw_chatbook.Chat.permission_summary_service import (
-    build_messages_tail,
-    pending_calls_info_from_payload,
-    resolve_permission_summary,
-    summarize_pending_round,
-)
-
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.agent_lesson_promotion import ManagedSkillProposalGate
     from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
@@ -11199,6 +11192,10 @@ class ConsoleChatController:
         # `run_if_runtime_config_generation_current` in config.py) -- so the
         # config read happens before the approval lock is taken.
         try:
+            from tldw_chatbook.Chat.permission_summary_service import (
+                resolve_permission_summary,
+            )
+
             resolution = resolve_permission_summary(
                 get_runtime_config_snapshot().values
             )
@@ -11239,6 +11236,12 @@ class ConsoleChatController:
         unaffected; a slow call that outlives the round is dropped on
         delivery. Content-free failures only (ADR-090).
         """
+        from tldw_chatbook.Chat.permission_summary_service import (
+            build_messages_tail,
+            pending_calls_info_from_payload,
+            summarize_pending_round,
+        )
+
         try:
             tail = build_messages_tail(
                 self._summary_tail_messages(payload), resolution.tail_max_chars

@@ -1,9 +1,12 @@
 """ADR-090: fire-once trigger matrix + guarded delivery, no real threads."""
 
+import builtins
+
 import threading
 from types import SimpleNamespace
 
 from tldw_chatbook.Chat import console_chat_controller as ccc
+from tldw_chatbook.Chat import permission_summary_service as summary_service
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.permission_summary_service import (
     PermissionSummaryResolution,
@@ -44,7 +47,9 @@ class _ThreadStub:
 
 def _armed(monkeypatch, mode, active=True):
     monkeypatch.setattr(
-        ccc, "resolve_permission_summary", lambda cfg: _resolution(mode, active)
+        summary_service,
+        "resolve_permission_summary",
+        lambda cfg: _resolution(mode, active),
     )
     _ThreadStub.started = []
     monkeypatch.setattr(ccc.threading, "Thread", _ThreadStub)
@@ -58,6 +63,25 @@ def test_mode_off_never_fires(monkeypatch):
     }
     ctrl._maybe_fire_permission_summary(_payload())
     assert _ThreadStub.started == []
+    assert ctrl._pending_approval_rounds["r1"]["summary_fired"] is True
+
+
+def test_summary_service_import_failure_is_advisory(monkeypatch):
+    ctrl = _bare_controller()
+    ctrl._pending_approval_rounds["r1"] = {
+        "event": threading.Event(), "summary_fired": False,
+    }
+    real_import = builtins.__import__
+
+    def fail_summary_service_import(name, *args, **kwargs):
+        if name == "tldw_chatbook.Chat.permission_summary_service":
+            raise ImportError("summary service unavailable")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fail_summary_service_import)
+
+    ctrl._maybe_fire_permission_summary(_payload())
+
     assert ctrl._pending_approval_rounds["r1"]["summary_fired"] is True
 
 
