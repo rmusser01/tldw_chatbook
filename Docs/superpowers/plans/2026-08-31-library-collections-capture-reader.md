@@ -836,6 +836,11 @@ Server save tests must distinguish confirmed save, response error, and transport
 unknown never retries automatically. A confirmed save followed by placement/detail failure remains
 confirmed and marks the page stale.
 
+For Local extraction, hold a controlled `asyncio.to_thread` extractor beyond one heartbeat
+interval, run a same-authority recovery sweep from a second repository instance, and prove the
+live claim survives and completes. Also prove wrong-owner lease renewal fails closed without
+changing the claim.
+
 - [ ] **Step 2: Run and witness missing adapters**
 
 ```bash

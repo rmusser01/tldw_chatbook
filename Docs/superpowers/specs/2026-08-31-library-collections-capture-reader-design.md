@@ -193,7 +193,8 @@ The migrations:
 
 - acquire a bounded `BEGIN IMMEDIATE` migration lock;
 - recheck the current schema inside the transaction;
-- create all v2 objects and record version 2 atomically, then add the v3 lease fields atomically;
+- create the full current v3 shape and record version 3 directly for fresh/v1 databases, while an
+  existing v2 database atomically adds the lease fields and records version 3;
 - never rename, delete, or write v1 generic-container rows;
 - roll back completely on failure; and
 - leave an older process able to read or mutate only the physically separate legacy tables.

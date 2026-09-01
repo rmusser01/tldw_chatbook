@@ -151,7 +151,7 @@ required.
   repartition a Reading dataset until the Reading API owns that scope.
 - Server feature capabilities are tri-state and authority/version-qualified. Unknown destructive
   or data-creating actions remain disabled.
-- Schema versions newer than 2 fail capture reads/writes closed; the implementation never
+- Schema versions newer than 3 fail capture reads/writes closed; the implementation never
   downgrades or stamps an unknown schema.
 - Legacy recovery is mandatory whenever v1 rows exist and exports one stable coherent snapshot;
   later removal requires a new explicit migration decision.
