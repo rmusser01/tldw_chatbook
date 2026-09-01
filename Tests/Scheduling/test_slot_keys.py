@@ -25,6 +25,13 @@ def test_scheduled_key_matches_server_recipe_byte_for_byte():
         schedule_slot="2026-09-01T09:00:00+00:00",
     )
     assert key == f"scheduled-task-rq:{expected_digest}"
+    # Golden digest pinned for this exact payload (computed once, hardcoded
+    # here) so a change to the recipe that happens to agree with itself
+    # can't silently pass the reimplementation check above.
+    assert key == (
+        "scheduled-task-rq:"
+        "3ffcacb8c8dd370f97175787b144e08c521b9888ac91512e001de88f684075bb"
+    )
 
 
 def test_canonical_hash_is_key_order_independent():

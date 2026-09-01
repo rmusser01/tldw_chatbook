@@ -1265,8 +1265,12 @@ class ScheduledTasksDB(BaseDB):
                 params.append(value)
 
         self._validate_sql_identifiers([key.split(" ", 1)[0] for key in updates])
-        updates.append("updated_at = ?")
-        params.append(self._to_utc_iso(datetime.now(timezone.utc)))
+        if "updated_at" not in kwargs:
+            # Auto-stamp only when the caller didn't supply one, mirroring
+            # create_automation_run (caller's value wins) so sync code can
+            # set server timestamps without them being clobbered.
+            updates.append("updated_at = ?")
+            params.append(self._to_utc_iso(datetime.now(timezone.utc)))
         params.append(run_id)
 
         with self.transaction() as conn:

@@ -296,6 +296,33 @@ def test_definition_gains_parity_fields_with_defaults():
     assert d.next_run_at is None and d.transfer_state is None
 
 
+def test_automation_run_tolerates_null_json_columns():
+    """A DB row created without snapshot kwargs stores NULL; must not raise."""
+    run = AutomationRun(
+        owner_id="local", definition_id="d1",
+        definition_version=1, trigger_reason="scheduled",
+        scope_snapshot=None, finding_policy_snapshot=None,
+        rag_request_snapshot=None, run_summary=None, evidence_summary=None,
+    )
+    assert run.scope_snapshot == {}
+    assert run.finding_policy_snapshot == {}
+    assert run.rag_request_snapshot == {}
+    assert run.run_summary == {}
+    assert run.evidence_summary == {}
+
+
+def test_automation_result_tolerates_null_json_columns():
+    """A DB row created without snapshot kwargs stores NULL; must not raise."""
+    result = AutomationResult(
+        owner_id="local", definition_id="d1", run_id="r1",
+        kind="finding", title="t", summary="s", dedupe_key="k",
+        confidence=None, source_refs=None, visibility_destination=None,
+    )
+    assert result.confidence == {}
+    assert result.source_refs == []
+    assert result.visibility_destination == {}
+
+
 def test_preview_error_lists_hold_server_shaped_dicts():
     p = AutomationPreview(
         family=AutomationFamily.RECURRING_QUESTION,

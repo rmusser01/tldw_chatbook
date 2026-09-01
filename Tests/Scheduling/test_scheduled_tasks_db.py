@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+from tldw_chatbook.Scheduling.models import AutomationRun
 from tldw_chatbook.config import get_scheduled_tasks_db_path
 
 
@@ -692,6 +693,26 @@ def test_update_and_list_runs(tmp_path):
     rows = db.list_automation_runs("local", definition_id="d1")
     assert rows[0]["status"] == "completed"
     assert rows[0]["run_summary"] == {"note": "ok"}  # JSON round-trips
+
+
+def test_create_run_with_no_snapshot_kwargs_round_trips_and_hydrates(tmp_path):
+    db = _mk_db(tmp_path)
+    run_id = db.create_automation_run("local", "d1", 1, "manual")
+    row = db.list_automation_runs("local", definition_id="d1")[0]
+    assert row["id"] == run_id
+    assert row["scope_snapshot"] is None  # NULL column, not json.loads'd
+    assert row["run_summary"] is None
+    AutomationRun(**row)  # must not raise (models.py None -> {} coercion)
+
+
+def test_update_automation_run_honors_caller_supplied_updated_at(tmp_path):
+    db = _mk_db(tmp_path)
+    run_id = db.create_automation_run("local", "d1", 1, "manual", status="running")
+    assert db.update_automation_run(
+        run_id, status="completed", updated_at=_utc(2020, 1, 1),
+    )
+    row = db.list_automation_runs("local", definition_id="d1")[0]
+    assert row["updated_at"] == "2020-01-01T00:00:00+00:00"
 
 
 def test_prune_keeps_newest_200_per_definition(tmp_path):

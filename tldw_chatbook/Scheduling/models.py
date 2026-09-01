@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class TaskStatus(str, Enum):
@@ -120,6 +120,19 @@ class AutomationRun(BaseModel):
     started_at: datetime | None = None
     ended_at: datetime | None = None
 
+    @field_validator(
+        "scope_snapshot",
+        "finding_policy_snapshot",
+        "rag_request_snapshot",
+        "run_summary",
+        "evidence_summary",
+        mode="before",
+    )
+    @classmethod
+    def _none_dict_to_default(cls, value: Any) -> Any:
+        """A DB row created without these kwargs stores NULL; coerce it."""
+        return {} if value is None else value
+
 
 class AutomationResult(BaseModel):
     """One automation result (server ``ResultRow`` shape, spec §4.2)."""
@@ -146,6 +159,18 @@ class AutomationResult(BaseModel):
     review_note: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime | None = None
+
+    @field_validator("confidence", "visibility_destination", mode="before")
+    @classmethod
+    def _none_dict_to_default(cls, value: Any) -> Any:
+        """A DB row created without these kwargs stores NULL; coerce it."""
+        return {} if value is None else value
+
+    @field_validator("source_refs", mode="before")
+    @classmethod
+    def _none_list_to_default(cls, value: Any) -> Any:
+        """A DB row created without ``source_refs`` stores NULL; coerce it."""
+        return [] if value is None else value
 
 
 class ScheduledTask(BaseModel):
