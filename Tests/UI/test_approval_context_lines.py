@@ -3,7 +3,7 @@
 import pytest
 from textual.app import App, ComposeResult
 
-from tldw_chatbook.Chat.approval_display import (
+from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
     CONTEXT_LABEL,
     RATIONALE_DISPLAY_CAP,
     SUMMARY_LABEL,

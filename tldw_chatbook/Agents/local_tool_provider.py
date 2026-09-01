@@ -31,7 +31,7 @@ from typing import (
 
 from loguru import logger
 
-from tldw_chatbook.Chat.approval_display import TOOL_DESCRIPTION_CAPTURE_CAP
+from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import TOOL_DESCRIPTION_CAPTURE_CAP
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.local_runtime_delegate import PERMISSION_STATE_UNRESOLVED_CLAUSE
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
