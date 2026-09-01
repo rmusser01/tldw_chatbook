@@ -860,6 +860,7 @@ async def test_reading_save_route_wires_url_save_payload(monkeypatch):
             "status": "saved",
             "favorite": True,
             "tags": ["ai", "reading"],
+            "revision": 7,
         }
     )
     monkeypatch.setattr(client, "_request", mocked)
@@ -893,6 +894,7 @@ async def test_reading_save_route_wires_url_save_payload(monkeypatch):
     assert isinstance(result, api.ReadingItem)
     assert result.id == 77
     assert result.tags == ["ai", "reading"]
+    assert result.revision == 7
 
 
 @pytest.mark.asyncio

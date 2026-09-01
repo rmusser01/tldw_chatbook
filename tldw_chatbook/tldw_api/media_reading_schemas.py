@@ -1150,6 +1150,7 @@ class ReadingItem(BaseModel):
     created_at: str | None = None
     updated_at: str | None = None
     read_at: str | None = None
+    revision: int = Field(default=1, ge=1)
 
     def __getitem__(self, key: str) -> Any:
         return getattr(self, key)
