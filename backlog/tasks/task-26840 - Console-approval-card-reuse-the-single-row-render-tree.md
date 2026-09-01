@@ -1,10 +1,10 @@
 ---
-id: TASK-26836
+id: TASK-26840
 title: Console approval card - reuse the single-row render tree
 status: Done
 assignee: []
 created_date: '2026-09-01 14:57'
-updated_date: '2026-09-01 15:44'
+updated_date: '2026-09-01 17:06'
 labels:
   - console
   - agents
@@ -52,8 +52,22 @@ Evidence: RED/GREEN regressions cover mounted detail identity, changed visible c
 
 Timing, same 60-update mounted probe: exact base sync median/p95/max 1.185/1.319/1.560 ms and settled 8.492/14.305/58.973 ms; final tree sync 1.233/1.312/1.428 ms and settled 7.563/8.795/46.149 ms. First prompt was unchanged at 12.645 vs 12.543 ms; warm settled median improved 8.456 to 7.525 ms. This is about 11% lower median and 39% lower p95 visible settle latency.
 
-Verification: scoped Ruff passed, git diff --check passed, and independent correctness/security review found no remaining Critical or Important issue after two stale-interaction fixes. ADR required: no; rendering optimization only, with no permission policy, persistence, service contract, security-boundary, or long-lived UI-structure decision. Added the hidden-precomposition first-open lesson to backlog/docs/lessons-testing-evidence.md. Modified files: chat_approval_card.py, test_console_mcp_approval.py, lessons-testing-evidence.md, and this task record.
+Verification: scoped Ruff passed, git diff --check passed, and independent correctness/security review found no remaining Critical or Important issue after two stale-interaction fixes. ADR required: no; rendering optimization only, with no permission policy, persistence, service contract, security-boundary, or long-lived UI-structure decision. Added the hidden-precomposition first-open lesson to backlog/docs/lessons-testing-evidence.md.
+
+Pre-PR UAT: a Textual-web/CDP run drove the production `ChatApprovalCard` with two native calculator calls from a live local llama.cpp provider. Round 1 recorded `approve_once`; round 2 rendered the changed expression while reporting `row_reused=True`, `fresh_controls=True`, and a 9.37 ms synchronous `set_batch`; Deny then resolved only the second live call. Screenshots and the honest boundary between this passing scoped flow and unrelated full-Console project-inspector/provider-preflight blockers are recorded in `Docs/superpowers/qa/console-uat-parallelization/task-26840-approval-reuse-cdp-2026-09-01.md`. The isolated run left the real config and data fingerprints unchanged.
+
+Modified files: chat_approval_card.py, test_console_mcp_approval.py, lessons-testing-evidence.md, this task record, the UAT evidence note, and two UAT PNGs.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+This task was originally created as TASK-26836 at 2026-09-01 14:57. On the
+final pre-PR rebase, current `dev` already contained the older TASK-26836
+created at 2026-09-01 14:51. Per the TASK-19601 older-arrival owner rule, this
+younger task was renumbered to the then-free TASK-26840. Its task file, lesson
+reference, UAT evidence note, and evidence filenames were updated together;
+the `/private/tmp/tldw-approval-uat-26836.XHn8sn` strings in the evidence note
+remain unchanged because they are the exact historical paths used for the run.
 
 ## Definition of Done
 <!-- DOD:BEGIN -->

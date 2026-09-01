@@ -10735,7 +10735,7 @@ descendant output through the production reader rather than a manually paused on
 
 ## Hidden precomposition can move a Textual first-open race instead of removing it
 
-**TASK-26836, 2026-09-01.** The first approval-card optimization precomposed a
+**TASK-26840, 2026-09-01.** The first approval-card optimization precomposed a
 hidden ordinary row so the first permission prompt could reveal an existing
 subtree. Its mounted identity regression passed, but the production first-open
 paint test intermittently rendered the title and tool details with the action
