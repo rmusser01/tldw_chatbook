@@ -56,6 +56,18 @@ interval, so a deliberately long interval is not mistaken for a stall. The
 signal is durable (a small heartbeat file), so a stalled or dead loop is
 distinguishable from an idle one even across a restart.
 
+## Preflight checks
+
+A handler can declare a **preflight** check that runs immediately before a
+task fires — verifying, say, that a watchlist's source still exists or a
+briefing's provider key is still configured. A failed preflight is a
+distinct, legible outcome (shown as *preflight failed* in the run history,
+not confused with a handler crash), never runs the handler, and keeps the
+task visibly needing attention. Repeated preflight failures compose with the
+incident grouping above — you're told once per condition, not once per
+occurrence — and the check is time-bounded so it can't wedge the scheduler.
+Handlers without a preflight fire exactly as before.
+
 ## Repeated-failure incidents
 
 A briefing that fails the same way over and over no longer floods you with

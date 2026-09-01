@@ -66,6 +66,10 @@ class SchedulerLoop:
     #: are the handlers that lacked one.
     _LEDGER_TASK_TYPES = frozenset({"reminder", "briefing_job"})
 
+    #: TASK-26028: hard bound on a handler's preflight check so it can
+    #: never wedge the loop (AC#6).
+    _PREFLIGHT_TIMEOUT_SECONDS = 10.0
+
     def __init__(
         self,
         db: Any,
@@ -476,6 +480,25 @@ class SchedulerLoop:
         # server-scoped rows, whose history is server-authoritative per
         # ADR-077 -- AC#6). Never lets a ledger write break dispatch.
         run_id = await self._begin_run_ledger(task, task_type, task_id, now)
+        # TASK-26028: a handler may declare a preflight that runs immediately
+        # before dispatch. A failed preflight is a DISTINCT, legible outcome
+        # (never runs the handler), records a grouped incident (told once per
+        # condition), and keeps the task visibly needing attention.
+        preflight_reason = await self._run_preflight(handler, task)
+        if preflight_reason is not None:
+            await self._finish_run_ledger(
+                run_id, "preflight_failed", now, error=preflight_reason
+            )
+            self._record_preflight_incident(task, task_type, task_id, preflight_reason)
+            if task_type == "reminder" and task_id:
+                await asyncio.to_thread(
+                    self.db.mark_reminder_dispatched,
+                    task_id,
+                    now,
+                    False,
+                    grace_seconds=self.missed_fire_grace_seconds,
+                )
+            return False
         timeout = self._effective_timeout_seconds(task)
         timed_out = False
         try:
@@ -563,6 +586,57 @@ class SchedulerLoop:
             )
         except Exception:  # noqa: BLE001 -- the ledger never breaks dispatch
             logger.opt(exception=True).debug("run-ledger finish failed")
+
+    async def _run_preflight(self, handler: Handler, task: dict[str, Any]):
+        """Run a handler's optional preflight; return a reason string on
+        failure, or None to proceed (TASK-26028).
+
+        Bounded so a preflight cannot itself wedge the loop (AC#6), and
+        never raises out -- a preflight that errors is treated as a
+        proceed, not a false block (the handler's own failure handling
+        then applies).
+        """
+        preflight = getattr(handler, "preflight", None)
+        if not callable(preflight):
+            return None
+        try:
+            result = preflight(task)
+            if asyncio.iscoroutine(result):
+                result = await asyncio.wait_for(
+                    result, timeout=self._PREFLIGHT_TIMEOUT_SECONDS
+                )
+        except Exception:  # noqa: BLE001 -- a broken preflight never blocks dispatch
+            logger.opt(exception=True).debug("preflight check raised; proceeding")
+            return None
+        ok, reason = result if isinstance(result, tuple) else (bool(result), "")
+        if ok:
+            return None
+        return str(reason or "preflight check failed")
+
+    def _record_preflight_incident(
+        self, task: dict[str, Any], task_type: str, task_id: Any, reason: str
+    ) -> None:
+        """Record a grouped incident for a preflight failure (TASK-26028
+        AC#4, composing with TASK-26027). Never breaks dispatch."""
+        if (
+            not task_id
+            or is_server_scoped_owner(task.get("owner_id"))
+            or not hasattr(self.db, "record_task_failure")
+        ):
+            return
+        try:
+            from tldw_chatbook.Scheduling.task_incidents import (
+                normalize_error_signature,
+            )
+
+            self.db.record_task_failure(
+                str(task_id),
+                task_type,
+                normalize_error_signature(f"preflight: {reason}"),
+                self.clock(),
+            )
+        except Exception:  # noqa: BLE001 -- incident recording never breaks dispatch
+            logger.opt(exception=True).debug("preflight incident record failed")
 
     def _report_lateness_cause(
         self, task: dict[str, Any], task_type: str, now: datetime
