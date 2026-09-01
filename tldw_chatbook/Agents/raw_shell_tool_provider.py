@@ -14,6 +14,7 @@ from pydantic import ValidationError as PydanticValidationError
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.raw_cli_executor import (
+    RawCliHardlineViolation,
     MAX_RAW_COMMAND_BYTES,
     MAX_RAW_TIMEOUT_SECONDS,
     RawCliRequest,
@@ -459,6 +460,14 @@ class RawShellToolProvider:
             request = self._validated_request(
                 args,
                 invocation_id=current_tool_call_id() or f"raw-shell-{uuid4()}",
+            )
+        except RawCliHardlineViolation as exc:
+            # TASK-25905 AC#4: the floor's refusal is ITS OWN thing -- it
+            # names the rule, states it is not a user denial, and no
+            # approval option (session grants included) can clear it.
+            return ToolResult.blocked(
+                f"{exc} — this is the built-in safety floor, "
+                "not a user denial; it cannot be approved or overridden"
             )
         except (TypeError, ValueError, OSError) as exc:
             return ToolResult(ok=False, error=f"invalid shell_exec request: {exc}")

@@ -1215,6 +1215,17 @@ separate identities. A session grant may cover later calls in that same live
 Console session, but it is held in process memory only and is cleared by
 Disarm, locking raw CLI, shutdown, or restart.
 
+Beneath all of this sits an **unbypassable hardline floor**: a small set of
+catastrophic command shapes — recursive root delete (`rm -rf /`, `~`,
+`$HOME`), `mkfs`, `dd` onto a block device, fork bombs, and
+shutdown/poweroff/reboot — is refused at request validation, before any
+permission state or session grant is consulted, for both the user path and
+model `shell_exec`. Detection resists trivial obfuscation (quoting,
+whitespace padding, variable indirection on the command word), the refusal
+names the rule that fired and states it is not a user denial, and the floor
+is not configurable off. It is a floor under the approval card, not a
+replacement for it.
+
 Both paths are one-shot and non-interactive: shell profiles are disabled,
 standard input is closed, and no terminal or PTY is provided. Output streams
 into the Console, is bounded and sanitized, and follows the shared timeout,

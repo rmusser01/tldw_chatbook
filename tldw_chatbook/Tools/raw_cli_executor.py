@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import posixpath
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -141,6 +142,97 @@ class RawCliResult:
     cleanup_proven: bool
 
 
+# ---------------------------------------------------------------------------
+# TASK-25905: the unbypassable hardline command floor.
+#
+# A deliberately SMALL set of catastrophic command shapes is refused at this
+# validation boundary -- before any permission state, approval stamp, or
+# session grant is consulted, for BOTH callers. This is a floor under the
+# approval card, not a replacement for it. It is not configurable: the rule
+# tuple is a module constant and nothing reads config here (AC#5); any
+# user-supplied deny list elsewhere is additive on top.
+#
+# Detection philosophy: normalize away TRIVIAL obfuscation (quotes,
+# backslashes, whitespace padding) and match argument SHAPES anchored to
+# command position, so `$X -rf /` trips on the arguments even when the
+# command word is hidden behind a variable. A determined adversary can
+# still evade a static floor; the approval card remains the real gate.
+
+#: Matches a token in command position: start of string or right after a
+#: separator (;, &&, ||, |, &, newline) or `sudo`/`env`.
+_CMD_POS = r"(?:^|[;&|\n]\s*|\bsudo\s+|\benv\s+)"
+
+_HARDLINE_RULES: tuple[tuple[str, "re.Pattern[str]"], ...] = (
+    (
+        "recursive-root-delete",
+        re.compile(
+            _CMD_POS
+            + r"\S+\s+(?:-[a-zA-Z]*[rR][a-zA-Z]*[fF][a-zA-Z]*"
+            + r"|-[a-zA-Z]*[fF][a-zA-Z]*[rR][a-zA-Z]*"
+            + r"|--recursive\s+--force|--force\s+--recursive)"
+            + r"\s+(?:/|/\*|~|~/|\$HOME)(?:\s|$|[;&|*])"
+        ),
+    ),
+    (
+        "filesystem-format",
+        re.compile(_CMD_POS + r"mkfs(?:\.[a-z0-9]+)?\b"),
+    ),
+    (
+        "dd-to-block-device",
+        re.compile(
+            _CMD_POS
+            + r"dd\b[^;&|]*\bof=/dev/(?:sd|hd|nvme|disk|mmcblk|vd|xvd|loop)"
+        ),
+    ),
+    (
+        "fork-bomb",
+        # a function that pipes into itself and backgrounds, then calls
+        # itself: the classic `:(){ :|:& };:` and named variants
+        re.compile(
+            r"(\S+)\s*\(\s*\)\s*\{[^}]*\1[^}]*\|[^}]*\1[^}]*&[^}]*\}\s*;\s*\1"
+        ),
+    ),
+    (
+        "system-shutdown",
+        re.compile(_CMD_POS + r"(?:shutdown|poweroff|halt|reboot|init\s+0)\b"),
+    ),
+)
+
+
+class RawCliHardlineViolation(ValueError):
+    """A catastrophic command shape hit the hardline floor.
+
+    Distinct from every permission refusal on purpose (AC#4): callers
+    surface it as "the safety floor refused this", never as a user denial,
+    and no approval option can clear it.
+    """
+
+    def __init__(self, rule: str) -> None:
+        self.rule = rule
+        super().__init__(
+            f"hardline safety floor: rule '{rule}' refuses this command"
+        )
+
+
+def _hardline_normalized(command: str) -> str:
+    """Strip trivial obfuscation: quotes, backslashes, padded whitespace."""
+    stripped = command.replace("\"", "").replace("'", "").replace("\\", "")
+    return " ".join(stripped.split())
+
+
+def hardline_violation(command: str) -> str | None:
+    """Name the hardline rule ``command`` violates, or ``None``.
+
+    Both the raw text and the obfuscation-normalized text are checked, so
+    quoting a flag apart (``rm -"rf" /``) changes nothing.
+    """
+    for text in (command, _hardline_normalized(command)):
+        for rule, pattern in _HARDLINE_RULES:
+            if pattern.search(text):
+                return rule
+    return None
+
+
 def validate_raw_cli_request(request: RawCliRequest) -> RawCliRequest:
     """Validate and normalize a request crossing the executor boundary."""
     if request.caller not in ("user", "model"):
@@ -155,6 +247,9 @@ def validate_raw_cli_request(request: RawCliRequest) -> RawCliRequest:
         request.command,
         max_bytes=MAX_RAW_COMMAND_BYTES,
     )
+    violation = hardline_violation(command)
+    if violation is not None:
+        raise RawCliHardlineViolation(violation)
 
     timeout = request.timeout_seconds
     if (

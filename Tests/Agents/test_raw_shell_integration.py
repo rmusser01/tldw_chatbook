@@ -510,3 +510,23 @@ def test_provider_generated_native_id_cannot_collide_with_model_supplied_id(
         "printf approved"
     ]
     assert runtime.execute_calls[0].invocation_id == "call_1#1"
+
+
+def test_hardline_floor_survives_an_active_session_grant(tmp_path: Path) -> None:
+    """TASK-25905 AC#2: approve_session authorizes ordinary commands for the
+    rest of the session -- the hardline floor still refuses, names its rule,
+    and is distinguishable from a user denial."""
+    provider, runtime, _gates = _provider(tmp_path)
+    runtime.grant_model_session("console-session")
+
+    with use_run_id("run-1"), use_tool_call_id("call-hardline"):
+        ordinary = provider.invoke("shell_exec", {"command": "printf fine"})
+        blocked = provider.invoke("shell_exec", {"command": "rm -rf /"})
+
+    assert ordinary.ok is True
+    assert blocked.ok is False
+    assert blocked.outcome == "blocked"
+    assert "hardline" in (blocked.error or "")
+    assert "recursive-root-delete" in (blocked.error or "")
+    assert "denial" not in (blocked.error or "").split("not a user")[0]
+    assert len(runtime.execute_calls) == 1, "the hardline command reached the runtime"
