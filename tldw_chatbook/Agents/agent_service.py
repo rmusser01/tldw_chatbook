@@ -2636,14 +2636,9 @@ class AgentService:
             mailbox.append((STEERING_SOURCE_USER, stripped))
         return None
 
-    def _register_primary_mailbox(self, run_id: str):
-        """Create the run's mailbox; return its drain for LoopDeps.
-
-        Also fires `on_primary_steer_ready` with a bound steer callable, so
-        the Console can steer without knowing the run id.
-        """
-        with self._primary_steering_lock:
-            self._primary_mailboxes[run_id] = []
+    def _primary_drain_for(self, run_id: str):
+        """The drain closure alone -- safe to hand to LoopDeps before the
+        mailbox exists (it just returns [] until registration)."""
 
         def drain() -> list[tuple[str, str]]:
             with self._primary_steering_lock:
@@ -2653,6 +2648,21 @@ class AgentService:
                 drained, mailbox[:] = list(mailbox), []
                 return drained
 
+        return drain
+
+    def _register_primary_mailbox(self, run_id: str):
+        """Create the run's mailbox; return its drain for LoopDeps.
+
+        Also fires `on_primary_steer_ready` with a bound steer callable, so
+        the Console can steer without knowing the run id. Review M-4: called
+        INSIDE the try whose finally unregisters -- registering earlier (at
+        deps construction) meant a raise in between leaked the mailbox and
+        left a steer hook that ACCEPTED text that would never be delivered,
+        the one path where the honest-refusal contract silently failed.
+        """
+        with self._primary_steering_lock:
+            self._primary_mailboxes[run_id] = []
+        drain = self._primary_drain_for(run_id)
         if self.on_primary_steer_ready is not None:
             try:
                 self.on_primary_steer_ready(
@@ -5408,6 +5418,21 @@ class AgentService:
             if self.skill_runner is not None and self.skill_runner.is_skill_tool(
                 call.name
             ):
+                # TASK-26010 review I-5: skill calls exit here before the
+                # observed registry closure, so they must report their own
+                # completions or the "fires after every tool call" contract
+                # is quietly false for exactly the calls users script.
+                skill_observation_started = self.clock()
+
+                def _observed_skill_result(result: ToolResult) -> ToolResult:
+                    self._fire_post_tool_dispatch(
+                        call,
+                        result,
+                        self.clock() - skill_observation_started,
+                        run_id,
+                    )
+                    return result
+
                 # Task-12 review Finding 1: a skill tool must pass the SAME
                 # two-part gate as an ordinary catalog tool (mirrors
                 # _make_invoke_tool above) -- allowed_tools is the
@@ -5421,7 +5446,9 @@ class AgentService:
                     call.name not in config.allowed_tools
                     or call.name not in disclosed_names
                 ):
-                    return ToolResult.blocked(f"Tool not permitted: {call.name}")
+                    return _observed_skill_result(
+                        ToolResult.blocked(f"Tool not permitted: {call.name}")
+                    )
                 # Cheap early exit before rendering the skill: the
                 # authoritative check-and-increment lives in `spawn` itself
                 # (shared with the native spawn_subagent path), so the
@@ -5429,7 +5456,9 @@ class AgentService:
                 # without this line -- it only saves an unnecessary
                 # render/trust round-trip once the shared budget is spent.
                 if sub_agent_spawns >= config.budget.max_subagents:
-                    return ToolResult(ok=False, error="sub-agent budget exhausted")
+                    return _observed_skill_result(
+                        ToolResult(ok=False, error="sub-agent budget exhausted")
+                    )
                 # PR2a Task 6.5: a SKILL call runs its child INLINE even
                 # when the fleet is on, so it still returns the skill's
                 # OUTPUT rather than a handle. `spawn_subagent` is a
@@ -5452,14 +5481,16 @@ class AgentService:
                 # silently get the fleet. A runner cannot get this wrong
                 # because it never chooses -- it just calls what it was
                 # given.
-                return self.skill_runner.run(
-                    call.name,
-                    str(call.args.get("args", "")),
-                    functools.partial(
-                        spawn,
-                        inline=True,
-                        spawn_step_index=trace_step_index,
-                    ),
+                return _observed_skill_result(
+                    self.skill_runner.run(
+                        call.name,
+                        str(call.args.get("args", "")),
+                        functools.partial(
+                            spawn,
+                            inline=True,
+                            spawn_step_index=trace_step_index,
+                        ),
+                    )
                 )
             dispatch_call = call
             if dispatch_call_id and call.call_id != dispatch_call_id:
@@ -6195,11 +6226,13 @@ class AgentService:
                 )
             return entries
 
-        # TASK-25903: the primary's user-steering mailbox. Registered here so
-        # `on_primary_steer_ready` fires before the first model call; the
-        # matching unregister sits in the finally around run_agent_loop.
+        # TASK-25903: the drain closure is safe before the mailbox exists
+        # (empty drains); actual REGISTRATION -- which is what hands the
+        # Console an accepting steer hook -- happens inside the try below,
+        # so a raise during deps construction cannot leave a hook that
+        # accepts undeliverable text (review M-4).
         primary_steering_drain = (
-            self._register_primary_mailbox(run_id)
+            self._primary_drain_for(run_id)
             if agent_kind == AGENT_KIND_PRIMARY
             else None
         )
@@ -6391,6 +6424,8 @@ class AgentService:
                     continuation_kwargs["resume_provider_continuation"] = True
                 with use_run_actor(run_actor):
                     try:
+                        if agent_kind == AGENT_KIND_PRIMARY:
+                            self._register_primary_mailbox(run_id)
                         outcome = run_agent_loop(
                             config,
                             run_messages,

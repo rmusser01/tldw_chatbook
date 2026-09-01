@@ -5161,6 +5161,7 @@ class ConsoleChatController:
                 self._active_assistant_message_ids.pop(session_id, None)
                 self._active_cancel_events.pop(session_id, None)
                 self._active_steer_hooks.pop(session_id, None)
+                self._active_steer_hooks.pop(session_id, None)
                 self._stop_requested = False
         try:
             current = self.store.get_message(message.id)
@@ -13258,6 +13259,7 @@ class ConsoleChatController:
                 self._active_stream_tasks.pop(session_id, None)
                 self._active_assistant_message_ids.pop(session_id, None)
                 self._active_cancel_events.pop(session_id, None)
+                self._active_steer_hooks.pop(session_id, None)
         for task in submit_tasks:
             self._unregister_submit_task(task)
         if current not in tasks:
@@ -13497,6 +13499,7 @@ class ConsoleChatController:
                 self._active_stream_tasks.pop(session_id, None)
                 self._active_assistant_message_ids.pop(session_id, None)
                 self._active_cancel_events.pop(session_id, None)
+                self._active_steer_hooks.pop(session_id, None)
 
     def _active_streaming_assistant_message_id(self) -> str | None:
         """Return the visible streaming assistant message for the active session."""
@@ -21316,14 +21319,23 @@ class ConsoleChatController:
                 reason = step.summary
                 break
         if outcome.status == RUN_STUCK:
+            # TASK-26001 review I-2: a budget-exhausted run may carry the
+            # wrap-up summary in final_text -- the one model call it paid
+            # for at exhaustion. This consumer previously dropped it, so on
+            # non-streaming providers the summary was invisible.
+            summary = str(getattr(outcome, "final_text", "") or "").strip()
+            suffix = f"\n\n{summary}" if summary else ""
             if reason.startswith("Agent stopped:"):
                 # Round 1 review (Minor): the loop-guard's own copy
                 # (agent_runtime.py) already reads as a complete,
                 # user-facing sentence -- prefixing "Agent run stuck: "
                 # here would double the lead-in ("Agent run stuck: Agent
                 # stopped: ...").
-                return reason
-            return f"Agent run stuck: {reason or 'budget or loop limit reached'}."
+                return reason + suffix
+            return (
+                f"Agent run stuck: "
+                f"{reason or 'budget or loop limit reached'}.{suffix}"
+            )
         return f"Agent run failed: {reason or outcome.status}."
 
     def _presentation_context_for(self, session_id: str) -> ConsolePresentationContext:

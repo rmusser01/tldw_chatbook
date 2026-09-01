@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-31 15:43'
-updated_date: '2026-09-01 01:11'
+updated_date: '2026-09-01 06:24'
 labels:
   - agents
   - reliability
@@ -60,4 +60,14 @@ Verified non-vacuous by mutation: removing the wrap-up call fails 3 of the 8 tes
 `Tests/Agents/` holds at the same 15 baseline failures (2296 passing); `Tests/App/`, `Tests/MCP/`, `Tests/Metrics/` unchanged at the 2 known MCP baselines.
 
 **Files:** `tldw_chatbook/Agents/agent_runtime.py`, `tldw_chatbook/Agents/agent_models.py`, `Tests/Agents/test_budget_wrapup.py` (new), `Tests/Agents/test_fleet_continuation.py` (property updated to the new contract).
+
+## Review round (2026-08-31)
+
+**I-2, the one that mattered:** the RUN_STUCK wrap-up summary was being dropped by the Console consumer — the non-done finalizer built visible copy solely from the last STEP_ERROR and never read `outcome.final_text`, so on non-streaming providers the summary the wrap-up call paid for was invisible. AC#3 held at the loop API only. `_agent_failure_visible_copy` now appends the summary beneath the exhaustion reason on both placeholder paths, pinned by two static-method tests (with and without a summary).
+
+**I-4:** `budget_warning_fraction` existed only as a RunBudget field — no user could set it, the exact defect class (C3a) that reopened 25902. Now `[console] agent_budget_warning_fraction`, clamped to [0,1]; 1.0 disables the warning.
+
+**M-3:** the wrap-up call's token spend was unmetered; it now adds to `total_tokens` so run spend does not under-report the one extra call.
+
+The reviewer also verified empirically that the warning survives history projection on a provider switch (it rides message content, which projection preserves verbatim), and that the cache-prefix pin has no aliasing false-positive — the warning REBINDS the content string, so records captured earlier are not retroactively altered.
 <!-- SECTION:NOTES:END -->

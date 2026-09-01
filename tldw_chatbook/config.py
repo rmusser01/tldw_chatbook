@@ -851,6 +851,12 @@ DEFAULT_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS = 3600.0
 DEFAULT_CONSOLE_AGENT_MAX_MODEL_RETRIES = 2
 MIN_CONSOLE_AGENT_MAX_MODEL_RETRIES = 0
 
+#: TASK-26001: fraction of any budget dimension at which the running agent is
+#: told once to wrap up. Clamped to [0.0, 1.0]; 1.0 effectively disables the
+#: warning (exhaustion arrives with it).
+DEFAULT_CONSOLE_AGENT_BUDGET_WARNING_FRACTION = 0.8
+MIN_CONSOLE_AGENT_BUDGET_WARNING_FRACTION = 0.0
+
 MIN_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS = 0.0
 
 # Ephemeral side chat (Console selection menu): the default prompt template

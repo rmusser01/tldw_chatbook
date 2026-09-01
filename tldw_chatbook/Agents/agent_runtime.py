@@ -1267,6 +1267,8 @@ def run_agent_loop(
                 if active_call_model_with_continuation is not None
                 else active_call_model(wrap_messages, ())
             )
+            nonlocal total_tokens
+            total_tokens += getattr(wrap_turn, "tokens", 0) or 0
             summary_text = str(getattr(wrap_turn, "text", "") or "").strip()
             if summary_text:
                 return _outcome(RUN_STUCK, final_text=summary_text)
@@ -1537,6 +1539,22 @@ def run_agent_loop(
                             continue
                         new_call = deps.fallback.build(candidate.provider)
                         if new_call is None:
+                            # Review M-1: the only silent skip in the chain
+                            # walk -- trace it like the unready skip, or a
+                            # user's configured candidate vanishes without a
+                            # word.
+                            trace(
+                                STEP_MODEL_ERROR,
+                                summary=(
+                                    f"Provider fallback skipped: "
+                                    f"{candidate.provider} (could not build "
+                                    f"a model call for it)"
+                                ),
+                                status="failed",
+                                field_states={"payload": "omitted"},
+                                sensitivity="diagnostic",
+                                parent_step_index=model_request_step.index,
+                            )
                             continue
                         # Length-preserving by construction, so coherent_len
                         # and every step index stay valid; in-place so the
@@ -1656,7 +1674,7 @@ def run_agent_loop(
                         summary=(
                             f"{consecutive_empty_turns} consecutive empty "
                             f"responses from provider "
-                            f"'{config.provider or 'unknown'}' model "
+                            f"'{active_provider}' model "
                             f"'{config.model}' — stopping rather than "
                             f"retrying a deterministic fault"
                         ),
@@ -1665,7 +1683,7 @@ def run_agent_loop(
                 trace(
                     STEP_MODEL_ERROR,
                     summary=(
-                        f"Empty response from '{config.provider or 'unknown'}' "
+                        f"Empty response from '{active_provider}' "
                         f"model '{config.model}'; retrying "
                         f"({consecutive_empty_turns} of {EMPTY_TURN_LIMIT})"
                     ),

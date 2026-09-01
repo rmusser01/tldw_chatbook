@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-31 15:08'
-updated_date: '2026-09-01 05:31'
+updated_date: '2026-09-01 06:24'
 labels:
   - console
   - agents
@@ -59,4 +59,16 @@ The primary run can now be steered mid-flight. Every piece of machinery existed 
 **Scope note:** the `/steer` handler chain is verified link-by-link (grammar parse, handler-map entry, controller seam, service refusals) but was not driven through a live TUI session in this pass -- a runtime check with the `verify` skill on a real long-running turn is the remaining confidence step, worth doing alongside 26000's UI work.
 
 **Files:** `tldw_chatbook/Agents/agent_service.py`, `tldw_chatbook/Chat/console_agent_bridge.py`, `tldw_chatbook/Chat/console_chat_controller.py`, `tldw_chatbook/Chat/console_command_grammar.py`, `tldw_chatbook/Chat/console_command_suggestions.py`, `tldw_chatbook/UI/Screens/chat_screen.py`, `Docs/User_Guide/console.md`, `Tests/Agents/test_primary_steering.py` (new), `Tests/Agents/test_fleet_steering_mailbox.py` (2 pins updated), `Tests/Chat/test_console_command_grammar.py`, `Tests/Chat/test_console_command_suggestions.py`.
+
+## Review round (2026-08-31)
+
+**I-3:** `/steer` left the full command text in the composer on success (dispatch restores the stash before the handler runs), so one habitual extra Enter delivered the SAME guidance twice into the live run. It now clears the draft on the success path, like its siblings.
+
+**M-4, an honest-refusal hole closed:** mailbox registration sat ~190 lines before the try/finally that unregisters, so a raise during deps construction leaked the mailbox and left a steer hook that ACCEPTED text that would never be delivered — the one path where AC#5 silently failed. Registration (the act that hands the Console an accepting hook) now happens inside the try, immediately before the loop; the drain closure alone is handed to LoopDeps early, which is safe because it returns [] until registration.
+
+**M-5:** the two teardown safety nets that pop cancel events now pop steer hooks too (hygiene — the service already refused via the unregistered mailbox).
+
+**Known edge, recorded not fixed:** a steer accepted after the run's final drain is consumed by run end — inherent to the pre-existing "a dead run never consumes a mailbox" contract, but the producer is now a human who saw "Steered." A future pass could report undelivered entries at unregistration.
+
+The reviewer verified the drain-swap idiom is correct Python under the shared lock, the drain fires before the FIRST model call, fleet children can never reach the primary wiring, and per-run service instances make mailbox collisions impossible.
 <!-- SECTION:NOTES:END -->

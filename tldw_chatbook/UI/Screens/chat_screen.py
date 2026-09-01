@@ -15494,6 +15494,11 @@ class ChatScreen(BaseAppScreen):
         if refusal is not None:
             self.app_instance.notify(f"Not steered: {refusal}", severity="warning")
             return False
+        # Review I-3: dispatch restores the stash before the handler, so
+        # without this the full `/steer <text>` stays in the composer and one
+        # habitual extra Enter delivers the SAME guidance twice into the live
+        # run. Siblings (/prefill, /fewer-permission-prompts) clear too.
+        self._clear_console_composer_draft()
         self.app_instance.notify("Steered into the running turn.")
         return True
 

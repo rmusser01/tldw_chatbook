@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-31 15:44'
-updated_date: '2026-09-01 05:14'
+updated_date: '2026-09-01 06:24'
 labels:
   - agents
   - tools
@@ -57,4 +57,10 @@ Added `AgentService(post_tool_dispatch=...)`: an observational hook receiving `(
 **A test-infrastructure finding worth recording.** After adding this task's test file, the `Tests/Agents/` full-suite failure count dropped from the long-standing 15 to 7 -- with ZERO new failure names (verified by diffing sorted names, as every task in this lane has). The 8 that flipped pass in isolation at the review base too: they are ordering/pollution-sensitive members of the "baseline 15", and new test files shifted collection order under `-p no:randomly`. The stable baseline is therefore at most 7; the other 8 are flaky-by-ordering, which the repo's baseline bookkeeping should not treat as fixed OR as regressions when they flip.
 
 **Files:** `tldw_chatbook/Agents/agent_service.py`, `tldw_chatbook/Tools/file_operation_hooks.py` (retired header), `Tests/Agents/test_post_tool_dispatch_hook.py` (new).
+
+## Review round (2026-08-31)
+
+**I-5:** the hook did not fire for SKILL-tool calls — the outer invoke wrapper's skill branch returns before the observed registry closure, so the "fires after every tool call completes" claim was quietly false for exactly the calls users script. All three skill-branch exits (not-permitted, sub-agent budget, and the run itself) now report through the same `_fire_post_tool_dispatch`, with their own timing. Scope stated precisely: spawn/wait/send_to_agent runtime tools remain unobserved — they were never registry dispatches, and observing them is a different seam.
+
+The reviewer confirmed the verdict-keying in `_wrap_review_with_observation` matches `_effective_review_verdict`'s real precedence (the wrapper receives correlation-stamped calls), and that `invoke_tool_at_step` routes through the outer wrapper without a signature break.
 <!-- SECTION:NOTES:END -->

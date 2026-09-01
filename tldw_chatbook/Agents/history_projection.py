@@ -85,14 +85,21 @@ def _native_call_parts(message: dict) -> list[tuple[str, str, Any]]:
     return parts
 
 
-def _parse_fence(text: str) -> tuple[str, Any] | None:
-    """Parse a real tool-call fence, or None for text/look-alikes."""
-    from .agent_runtime import parse_fenced_tool_call
+def _parse_fence(text: str) -> tuple[str, str, Any] | None:
+    """Parse a fence out of assistant text, or None for text/look-alikes.
 
-    call = parse_fenced_tool_call(text)
+    Returns ``(visible_text, name, args)``. Review I-1 (2026-08-31): the first
+    version used the strict whole-text parser, which returns None for the
+    DOMINANT real shape -- narration followed by a fence -- because the loop
+    appends fence assistant turns verbatim, visible text included. Splitting
+    keeps the narration in ``content`` beside the projected ``tool_calls``.
+    """
+    from .agent_runtime import split_visible_text_and_tool_call
+
+    visible, call = split_visible_text_and_tool_call(text)
     if call is None:
         return None
-    return call.name, call.args
+    return str(visible or "").strip(), call.name, call.args
 
 
 def _native_to_fence(messages: list[dict]) -> list[dict]:
@@ -181,13 +188,13 @@ def _fence_to_native(messages: list[dict]) -> list[dict]:
         if message.get("role") == "assistant":
             parsed = _parse_fence(content)
             if parsed is not None:
-                name, arguments = parsed
+                visible, name, arguments = parsed
                 call_id = f"proj_{len(projected)}_{name}"
                 pending.append((call_id, name))
                 projected.append(
                     {
                         "role": "assistant",
-                        "content": "",
+                        "content": visible,
                         "tool_calls": [
                             {
                                 "id": call_id,

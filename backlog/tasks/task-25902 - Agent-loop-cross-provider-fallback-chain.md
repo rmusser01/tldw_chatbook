@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-31 15:08'
-updated_date: '2026-09-01 01:01'
+updated_date: '2026-09-01 06:24'
 labels:
   - agents
   - reliability
@@ -177,4 +177,10 @@ Scope limit unchanged: cohere is native, so the native→fence crossing remains 
 Also fixed from the review minors: the interleaved doc comments above `EMPTY_TURN_LIMIT`, retry backoff sliced into ≤0.5s chunks so Stop is honoured during a sleep, sub-agent configs now carry `provider` (children previously reported "unknown provider"), and the no-backoff-on-empty choice is documented as deliberate.
 
 **Files (rework):** `tldw_chatbook/Agents/agent_runtime.py`, `tldw_chatbook/Agents/agent_service.py`, `tldw_chatbook/Agents/fallback_chain.py`, `tldw_chatbook/Chat/Chat_Deps.py`, `tldw_chatbook/Chat/Chat_Functions.py`, `tldw_chatbook/Chat/console_agent_bridge.py`, `Tests/Agents/test_fallback_chain.py` (rewritten), `Tests/Agents/test_history_projection.py`, `Tests/Agents/test_model_retry_loop.py`, `Tests/Chat/test_dispatcher_status_mapping.py` (new).
+
+## Third review round (2026-08-31) — verified sound, one Important closed
+
+The reviewer empirically confirmed the rework's core properties: a budget notice appended to a tool result survives projection verbatim in both directions, steering messages pass through as copies, `messages` is never rebound anywhere so in-place projection can never orphan the drain's appends, retry-then-fallback order and stickiness hold through the real loop, and the fleet-mailbox mutation claim reproduced independently.
+
+**Fixed from that round (I-1):** `_fence_to_native` used the strict whole-text parser, which returns None for the DOMINANT real fence shape — narration followed by a fence in one assistant turn (the loop appends fence turns verbatim, visible text included). Real fence histories therefore stayed fence-shaped after a fence→native switch: nothing lost, but ADR-110 decision 3 undelivered for the common case, and invisible to the round-trip test because its fixtures used pure-fence turns. Projection now splits with the loop's own `split_visible_text_and_tool_call`, keeps the narration in `content` beside the projected `tool_calls`, and two new tests cover the mixed shape including a structural (parse-back, not substring) round-trip. Also traced the one silent skip in the chain walk — a candidate whose closure could not be built now traces like an unready skip (M-1), and post-switch empty-turn diagnostics blame `active_provider` rather than the original config (M-2).
 <!-- SECTION:NOTES:END -->

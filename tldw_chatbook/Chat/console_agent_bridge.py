@@ -538,12 +538,14 @@ def console_run_budget() -> RunBudget:
         from tldw_chatbook.config import (
             DEFAULT_CONSOLE_AGENT_MAX_MODEL_TURNS,
             DEFAULT_CONSOLE_AGENT_MAX_STEPS,
+            DEFAULT_CONSOLE_AGENT_BUDGET_WARNING_FRACTION,
             DEFAULT_CONSOLE_AGENT_MAX_MODEL_RETRIES,
             DEFAULT_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
             DEFAULT_CONSOLE_AGENT_MAX_TOTAL_TOKENS,
             DEFAULT_CONSOLE_AGENT_MAX_WALL_SECONDS,
             MIN_CONSOLE_AGENT_MAX_MODEL_TURNS,
             MIN_CONSOLE_AGENT_MAX_STEPS,
+            MIN_CONSOLE_AGENT_BUDGET_WARNING_FRACTION,
             MIN_CONSOLE_AGENT_MAX_MODEL_RETRIES,
             MIN_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
             MIN_CONSOLE_AGENT_MAX_TOTAL_TOKENS,
@@ -617,6 +619,18 @@ def console_run_budget() -> RunBudget:
             "agent_max_model_retries",
             DEFAULT_CONSOLE_AGENT_MAX_MODEL_RETRIES,
             MIN_CONSOLE_AGENT_MAX_MODEL_RETRIES,
+        ),
+        # TASK-26001 review I-4: "configurable fraction" must mean a USER can
+        # configure it -- the same defect class (C3a) that reopened 25902.
+        # Clamped to <=1.0; 1.0 disables the warning (exhaustion arrives
+        # with it).
+        budget_warning_fraction=min(
+            1.0,
+            _float(
+                "agent_budget_warning_fraction",
+                DEFAULT_CONSOLE_AGENT_BUDGET_WARNING_FRACTION,
+                MIN_CONSOLE_AGENT_BUDGET_WARNING_FRACTION,
+            ),
         ),
     )
 

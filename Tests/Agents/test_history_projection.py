@@ -293,3 +293,59 @@ def test_every_native_provider_round_trips():
 
     assert checked_native >= 1, "no native provider exercised"
     assert checked_fence >= 1, "no fence provider exercised"
+
+
+def test_mixed_narration_and_fence_projects_to_native():
+    """Review I-1: the DOMINANT real fence shape is narration + fence in one
+    assistant turn (the loop appends fence turns verbatim). The first
+    implementation's strict parser returned None for it, so real fence
+    histories silently stayed fence-shaped after a fence->native switch."""
+    mixed = {
+        "role": "assistant",
+        "content": "Let me compute that first.\n" + _fence_call(
+            "calculator", {"expression": "6*7"}
+        )["content"],
+    }
+    history = [
+        {"role": "user", "content": "6*7?"},
+        mixed,
+        _fence_result("calculator", "42"),
+    ]
+
+    out = project_history_for_protocol(history, native=True)
+
+    assert out[1].get("tool_calls"), "the fence must become a native call"
+    assert out[1]["tool_calls"][0]["function"]["name"] == "calculator"
+    assert "Let me compute that first." in out[1]["content"], (
+        "the narration must survive beside the call"
+    )
+    assert out[2]["role"] == "tool"
+    assert out[2]["content"] == "42"
+    assert out[2]["tool_call_id"] == out[1]["tool_calls"][0]["id"]
+
+
+def test_mixed_turn_round_trip_is_structurally_stable():
+    mixed_history = [
+        {"role": "user", "content": "6*7?"},
+        {
+            "role": "assistant",
+            "content": "Working on it.\n"
+            + _fence_call("calculator", {"expression": "6*7"})["content"],
+        },
+        _fence_result("calculator", "42"),
+    ]
+
+    once = project_history_for_protocol(mixed_history, native=True)
+    twice = project_history_for_protocol(once, native=False)
+
+    assert len(twice) == len(mixed_history)
+    assert [m["role"] for m in twice] == ["user", "assistant", "user"]
+    # structural, not substring: the fence body must parse back to the call
+    from tldw_chatbook.Agents.agent_runtime import (
+        split_visible_text_and_tool_call,
+    )
+
+    visible, call = split_visible_text_and_tool_call(twice[1]["content"])
+    assert call is not None and call.name == "calculator"
+    assert "Working on it." in visible
+    assert twice[2]["content"].startswith(FENCE_TOOL_RESULT_PREFIX)
