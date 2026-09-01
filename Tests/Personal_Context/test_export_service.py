@@ -11,6 +11,7 @@ from loguru import logger
 from tldw_profile_core import PreferencePayload, ProfileRecord
 from tldw_profile_core.canonical import canonical_json_bytes
 
+import tldw_chatbook.Personal_Context.export_service as export_service_module
 from tldw_chatbook.Personal_Context.export_service import (
     ExportRequest,
     PersonalContextExportError,
@@ -54,6 +55,30 @@ def test_plaintext_export_requires_explicit_absolute_destination_and_confirmatio
         service.export_plaintext(
             ExportRequest(destination="profile.json", confirm_plaintext=True)
         )
+
+
+def test_export_destination_passes_through_central_path_validation(
+    tmp_path, memory_protector, record_factory, monkeypatch
+) -> None:
+    service, _ = _service(tmp_path, memory_protector, record_factory)
+    destination = tmp_path / "profile.json"
+
+    def reject_selected_path(*_args, **_kwargs):
+        raise ValueError("central validator rejection")
+
+    monkeypatch.setattr(
+        export_service_module,
+        "validate_path",
+        reject_selected_path,
+        raising=False,
+    )
+
+    with pytest.raises(PersonalContextExportError, match="invalid"):
+        service.export_plaintext(
+            ExportRequest(destination=destination, confirm_plaintext=True)
+        )
+
+    assert not destination.exists()
 
 
 @pytest.mark.parametrize("recovery", [False, True])

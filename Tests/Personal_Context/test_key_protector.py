@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -111,6 +112,40 @@ def test_missing_existing_passphrase_bundle_never_creates_replacement(tmp_path) 
             "install-1"
         )
     assert not bundle_path.exists()
+
+
+def test_passphrase_protector_rejects_permissive_existing_bundle(tmp_path) -> None:
+    if not hasattr(os, "geteuid"):
+        pytest.skip("POSIX privacy checks are unavailable")
+    bundle_path = tmp_path / "profile.keys"
+    protector = PassphraseProfileKeyProtector(bundle_path, lambda: "passphrase")
+    protector.load_or_create("install-1")
+    bundle_path.chmod(0o644)
+
+    with pytest.raises(ProfileLockedError, match="not private"):
+        protector.load("install-1")
+
+
+@pytest.mark.parametrize("substitution", ["symlink", "hardlink"])
+def test_passphrase_protector_rejects_substituted_existing_bundle(
+    tmp_path, substitution: str
+) -> None:
+    if not hasattr(os, "geteuid"):
+        pytest.skip("POSIX privacy checks are unavailable")
+    original = tmp_path / "original.keys"
+    PassphraseProfileKeyProtector(original, lambda: "passphrase").load_or_create(
+        "install-1"
+    )
+    substituted = tmp_path / "substituted.keys"
+    if substitution == "symlink":
+        substituted.symlink_to(original)
+    else:
+        os.link(original, substituted)
+
+    with pytest.raises(ProfileLockedError, match="not private"):
+        PassphraseProfileKeyProtector(substituted, lambda: "passphrase").load(
+            "install-1"
+        )
 
 
 def test_interview_passphrase_protector_keeps_session_bundles_independent(

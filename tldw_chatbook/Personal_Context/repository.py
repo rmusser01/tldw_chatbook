@@ -50,6 +50,7 @@ _ENVELOPE_SCHEMA_VERSION = 1
 _WRAP_NONCE_BYTES = 12
 _PEER_ENVELOPE = "chatbook-local-v1"
 MAX_UNRESOLVED_PROPOSALS = 200
+_COLLECTION_PAGE_SIZE = 128
 
 
 class RepositorySchemaError(RuntimeError):
@@ -287,6 +288,26 @@ class PersonalContextRepository:
         except BaseException:
             connection.close()
             raise
+
+    def _iter_head_rows(self, object_type: str) -> Iterator[sqlite3.Row]:
+        """Yield one complete head set through bounded, stable keyset pages."""
+
+        if object_type not in {"record", "scope", "proposal"}:
+            raise ValueError("Unsupported collection object type.")
+        after_object_id = ""
+        while True:
+            with closing(self._connect()) as connection:
+                rows = connection.execute(
+                    "SELECT encrypted_objects.* FROM object_heads "
+                    "JOIN encrypted_objects USING (object_type, object_id, version_id) "
+                    "WHERE object_type = ? AND object_id > ? "
+                    "ORDER BY object_id LIMIT ?",
+                    (object_type, after_object_id, _COLLECTION_PAGE_SIZE),
+                ).fetchall()
+            if not rows:
+                return
+            yield from rows
+            after_object_id = rows[-1]["object_id"]
 
     def close(self) -> None:
         """Close the repository; operations own no persistent connection."""
@@ -1336,18 +1357,8 @@ class PersonalContextRepository:
     def list_records(self) -> list[ProfileRecord]:
         """Return authenticated current records, omitting quarantined objects."""
 
-        with closing(self._connect()) as connection:
-            rows = connection.execute(
-                """
-                SELECT encrypted_objects.*
-                FROM object_heads
-                JOIN encrypted_objects USING (object_type, object_id, version_id)
-                WHERE object_type = 'record'
-                ORDER BY object_id
-                """
-            ).fetchall()
         records: list[ProfileRecord] = []
-        for row in rows:
+        for row in self._iter_head_rows("record"):
             record = self.get_record(row["object_id"])
             if record is not None:
                 records.append(record)
@@ -1434,12 +1445,11 @@ class PersonalContextRepository:
             return None
 
     def list_scopes(self) -> list[ProfileScope]:
-        with closing(self._connect()) as connection:
-            rows = connection.execute(
-                "SELECT object_id FROM object_heads WHERE object_type = 'scope' "
-                "ORDER BY object_id"
-            ).fetchall()
-        return [scope for row in rows if (scope := self.get_scope(row["object_id"]))]
+        return [
+            scope
+            for row in self._iter_head_rows("scope")
+            if (scope := self.get_scope(row["object_id"]))
+        ]
 
     def commit_proposal(
         self,
@@ -1534,16 +1544,8 @@ class PersonalContextRepository:
     def list_proposals(self) -> list[ProfileProposal]:
         """Return all authenticated current proposal states."""
 
-        with closing(self._connect()) as connection:
-            rows = connection.execute(
-                """
-                SELECT encrypted_objects.* FROM object_heads
-                JOIN encrypted_objects USING (object_type, object_id, version_id)
-                WHERE object_type = 'proposal' ORDER BY object_id
-                """
-            ).fetchall()
         proposals: list[ProfileProposal] = []
-        for row in rows:
+        for row in self._iter_head_rows("proposal"):
             if self._is_quarantined("proposal", row["object_id"], row["version_id"]):
                 continue
             try:

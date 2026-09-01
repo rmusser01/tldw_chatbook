@@ -17,6 +17,11 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from tldw_chatbook.runtime_policy.server_credentials import is_secure_keyring_backend
+from tldw_chatbook.Utils.private_paths import (
+    PrivatePathError,
+    PrivatePathStatus,
+    open_private_binary,
+)
 
 
 _KEYRING_SERVICE = "tldw_chatbook.personal_context"
@@ -196,7 +201,7 @@ class PassphraseProfileKeyProtector:
 
     def load_or_create(self, profile_ref: str) -> ProfileKeyMaterial:
         profile_ref = _normalized_ref(profile_ref)
-        if self._path.exists():
+        if os.path.lexists(self._path):
             return self.load(profile_ref)
         passphrase = self._get_passphrase()
         material = _new_material()
@@ -217,11 +222,10 @@ class PassphraseProfileKeyProtector:
 
     def load(self, profile_ref: str) -> ProfileKeyMaterial:
         profile_ref = _normalized_ref(profile_ref)
-        if not self._path.is_file():
-            raise ProfileLockedError("Profile key material is unavailable.")
-        passphrase = self._get_passphrase()
         try:
-            payload = json.loads(self._path.read_text(encoding="utf-8"))
+            encoded = self._read_private()
+            passphrase = self._get_passphrase()
+            payload = json.loads(encoded)
             if payload.get("version") != 1 or payload.get("scrypt") != {
                 "n": _SCRYPT_N,
                 "r": _SCRYPT_R,
@@ -236,12 +240,50 @@ class PassphraseProfileKeyProtector:
                 nonce, ciphertext, aad
             )
             return _deserialize_material(plaintext)
+        except FileNotFoundError:
+            raise ProfileLockedError("Profile key material is unavailable.") from None
         except ProfileLockedError:
             raise
+        except PrivatePathError as exc:
+            raise ProfileLockedError("Profile key material is not private.") from exc
         except (InvalidTag, KeyError, TypeError, ValueError, OSError) as exc:
             raise ProfileLockedError(
                 "Profile key material could not be unlocked."
             ) from exc
+
+    def _read_private(self) -> bytes:
+        """Read the bundle from a pinned private regular file."""
+
+        try:
+            with open_private_binary(self._path) as opened:
+                if opened.result.status is PrivatePathStatus.HARDENED_PRIVATE:
+                    raise ProfileLockedError("Profile key material is not private.")
+                return opened.stream.read()
+        except PrivatePathError as exc:
+            if exc.result.reason != "required_posix_guards_unavailable":
+                raise
+
+        nofollow = getattr(os, "O_NOFOLLOW", 0)
+        if not nofollow:
+            raise ProfileLockedError("Profile key material is not private.")
+        descriptor = os.open(self._path, os.O_RDONLY | nofollow)
+        try:
+            lexical = self._path.lstat()
+            opened = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(lexical.st_mode)
+                or not stat.S_ISREG(opened.st_mode)
+                or opened.st_nlink != 1
+                or stat.S_IMODE(opened.st_mode) & 0o077
+                or (lexical.st_dev, lexical.st_ino) != (opened.st_dev, opened.st_ino)
+            ):
+                raise ProfileLockedError("Profile key material is not private.")
+            with os.fdopen(descriptor, "rb", closefd=True) as stream:
+                descriptor = -1
+                return stream.read()
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
 
     def delete(self, profile_ref: str) -> None:
         _normalized_ref(profile_ref)

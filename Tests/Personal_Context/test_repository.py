@@ -375,6 +375,38 @@ def test_corrupt_record_is_quarantined_and_omitted(
     assert repo.list_quarantine()[0].reason_code == "integrity_failure"
 
 
+def test_collection_heads_are_read_with_bounded_keyset_pages(
+    tmp_path, memory_protector, record_factory, monkeypatch
+) -> None:
+    repo = PersonalContextRepository(
+        tmp_path / "personal-context.db", key_protector=memory_protector
+    )
+    manifest = repo.create_provisional_profile()
+    record = record_factory(manifest.profile_id)
+    repo.commit_record_version(record, expected_version_id=None)
+    statements: list[str] = []
+    original_connect = repo._connect
+
+    def traced_connect():
+        connection = original_connect()
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(repo, "_connect", traced_connect)
+    monkeypatch.setattr(repository_module, "_COLLECTION_PAGE_SIZE", 1, raising=False)
+
+    assert repo.list_records() == [record]
+    head_queries = [
+        statement
+        for statement in statements
+        if "FROM object_heads" in statement
+        and "object_type = 'record'" in statement
+        and "object_id >" in statement
+    ]
+    assert len(head_queries) == 2
+    assert all("LIMIT 1" in statement for statement in head_queries)
+
+
 def test_untrusted_envelope_key_version_is_quarantined(
     tmp_path, memory_protector, record_factory
 ) -> None:

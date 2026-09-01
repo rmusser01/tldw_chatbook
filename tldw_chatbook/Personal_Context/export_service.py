@@ -28,6 +28,7 @@ from tldw_chatbook.Utils.private_paths import (
     atomic_private_write_bytes,
     open_private_binary,
 )
+from tldw_chatbook.Utils.path_validation import validate_path
 
 if TYPE_CHECKING:
     from .service import PersonalContextService
@@ -73,9 +74,17 @@ def _destination(
     confirm_overwrite: bool,
 ) -> tuple[Path, PrivateFileWritePrecondition]:
     try:
-        destination = Path(value)
-        if not destination.is_absolute():
+        selected = Path(value)
+        if not selected.is_absolute():
             raise PersonalContextExportError("Export destination must be absolute.")
+        destination = validate_path(
+            selected,
+            selected.parent,
+            redact_paths=True,
+            allow_hidden=True,
+        )
+        if destination != selected:
+            raise PersonalContextExportError("Export destination is invalid.")
         if destination.name in {"", ".", ".."} or not destination.parent.is_dir():
             raise PersonalContextExportError("Export destination is invalid.")
         if destination.parent.resolve(strict=True) != destination.parent:
@@ -153,6 +162,19 @@ def _snapshot_dict(snapshot: RecoverySnapshot, *, format_name: str) -> dict[str,
 
 
 def export_plaintext(service: "PersonalContextService", request: ExportRequest) -> Path:
+    """Publish an explicitly confirmed plaintext profile snapshot.
+
+    Args:
+        service: Personal Context service that owns the canonical snapshot.
+        request: Validated destination, scope selection, and confirmations.
+
+    Returns:
+        The normalized path of the private export file.
+
+    Raises:
+        PersonalContextExportError: If validation, snapshotting, or publication fails.
+    """
+
     if not isinstance(request, ExportRequest):
         raise PersonalContextExportError("Plaintext export request is invalid.")
     if request.confirm_plaintext is not True:
@@ -201,6 +223,19 @@ def _recovery_key(passphrase: str, salt: bytes) -> bytes:
 def export_recovery(
     service: "PersonalContextService", request: RecoveryExportRequest
 ) -> Path:
+    """Publish a passphrase-protected complete recovery snapshot.
+
+    Args:
+        service: Personal Context service that owns the canonical snapshot.
+        request: Validated destination, passphrase, and overwrite confirmation.
+
+    Returns:
+        The normalized path of the private recovery file.
+
+    Raises:
+        PersonalContextExportError: If validation, encryption, or publication fails.
+    """
+
     if not isinstance(request, RecoveryExportRequest):
         raise PersonalContextExportError("Recovery export request is invalid.")
     destination, precondition = _destination(
@@ -317,6 +352,19 @@ def _decode_snapshot(plaintext: bytes) -> RecoverySnapshot:
 def load_recovery_export(
     path: str | os.PathLike[str], passphrase: str
 ) -> RecoverySnapshot:
+    """Unlock and validate one private Personal Context recovery export.
+
+    Args:
+        path: Existing private recovery file to open without following links.
+        passphrase: Passphrase used to derive the recovery key.
+
+    Returns:
+        The authenticated canonical recovery snapshot.
+
+    Raises:
+        PersonalContextExportError: If the file is unsafe, malformed, or cannot be unlocked.
+    """
+
     try:
         with open_private_binary(path) as opened:
             encoded = opened.stream.read()
