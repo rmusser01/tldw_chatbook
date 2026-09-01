@@ -68,6 +68,48 @@ class ScheduledTaskAutomationRunNowResponse(BaseModel):
     deduped: bool = False
 
 
+class ScheduledTaskResult(BaseModel):
+    """One server-side scheduled-task result row (spec §4.2 / server
+    ``ScheduledTaskResultResponse``, ``/api/v1/scheduled-tasks/results``).
+
+    Datetimes are ``str | None`` here (not ``datetime``) to match the
+    reminder/notification schemas' style elsewhere in this package --
+    results are consumed as opaque ISO strings, never date-arithmetic'd
+    client-side.
+    """
+
+    id: str
+    owner_id: str | None = None
+    definition_id: str
+    run_id: str
+    kind: str
+    title: str
+    summary: str
+    answer: Any | None = None
+    answer_mode: str = "none"
+    confidence: dict[str, Any] = Field(default_factory=dict)
+    source_refs: list[dict[str, Any]] = Field(default_factory=list)
+    dedupe_key: str
+    visibility_destination: dict[str, Any] = Field(default_factory=dict)
+    review_state: str = "unread"
+    reviewed_at: str | None = None
+    reviewed_by: str | None = None
+    review_note: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class ScheduledTaskResultList(BaseModel):
+    """Paginated list of server-side scheduled-task results."""
+
+    items: list[ScheduledTaskResult] = Field(default_factory=list)
+    total: int = Field(default=0, ge=0)
+    limit: int = Field(default=50, ge=1)
+    offset: int = Field(default=0, ge=0)
+    has_more: bool = False
+    next_offset: int | None = Field(default=None, ge=0)
+
+
 class ScheduledTaskAuditEvent(BaseModel):
     """One durable audit event from a definition's execution trail.
 

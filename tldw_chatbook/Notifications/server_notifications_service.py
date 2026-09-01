@@ -337,3 +337,67 @@ class ServerNotificationsService:
                 definition_id, idempotency_key=idempotency_key
             )
         )
+
+    async def list_scheduled_automation_results(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        definition_id: str | None = None,
+        review_state: str | None = None,
+    ) -> dict[str, Any]:
+        """List the server's scheduled-task results (spec §4.2).
+
+        Args:
+            limit: Page size to request from the server.
+            offset: Pagination offset to request from the server.
+            definition_id: Optional filter to one definition's results.
+            review_state: Optional review-state filter.
+
+        Returns:
+            The result list response (``items`` plus total/has_more
+            pagination fields) as a JSON-mode dict.
+        """
+        self._enforce("scheduler.automations.list.server")
+        return self._dump(
+            await self._require_client().list_scheduled_task_results(
+                limit=limit,
+                offset=offset,
+                definition_id=definition_id,
+                review_state=review_state,
+            )
+        )
+
+    async def review_scheduled_automation_result(
+        self,
+        result_id: str,
+        review_state: str,
+        *,
+        review_note: str | None = None,
+    ) -> dict[str, Any]:
+        """Set one result's review state.
+
+        Unlike ``run_scheduled_automation_now`` (which uses the LAUNCH
+        action -- it dispatches a brand-new execution), reviewing a result
+        only mutates existing metadata; it never launches or lists
+        anything. That makes it a CONFIGURE-class action, the same
+        reasoning ``notifications.reminders.configure.server`` uses for
+        reminder create/update/delete.
+
+        Args:
+            result_id: The server result to update.
+            review_state: New review state (``read``/``dismissed``/etc).
+            review_note: Optional free-text note attached to the review.
+
+        Returns:
+            The updated result row.
+
+        Raises:
+            PolicyDeniedError: If the runtime policy refuses the action.
+        """
+        self._enforce("scheduler.automations.configure.server")
+        return self._dump(
+            await self._require_client().review_scheduled_task_result(
+                result_id, review_state, review_note=review_note
+            )
+        )

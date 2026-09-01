@@ -1,5 +1,7 @@
 """Client routing + schema tests for the scheduled-tasks automation control plane."""
 
+import json
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -10,6 +12,8 @@ from tldw_chatbook.tldw_api.scheduled_tasks_automation_schemas import (
     ScheduledTaskAutomationDefinitionList,
     ScheduledTaskAutomationRunNowResponse,
     ScheduledTaskAuditList,
+    ScheduledTaskResult,
+    ScheduledTaskResultList,
 )
 
 
@@ -154,3 +158,110 @@ async def test_definition_audit_routes_to_audit_endpoint_with_filters(monkeypatc
     assert result.items[0].event_type == "run_succeeded"
     assert result.items[0].after == {"run_id": "run-1", "status": "succeeded"}
     assert result.total == 1
+
+
+_RESULTS_FIXTURE = (
+    Path(__file__).resolve().parents[1]
+    / "Scheduling"
+    / "fixtures"
+    / "server_responses"
+    / "automation_results_list.json"
+)
+
+
+@pytest.mark.asyncio
+async def test_list_results_routes_to_results_endpoint_with_pagination_only(
+    monkeypatch,
+):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(return_value=json.loads(_RESULTS_FIXTURE.read_text()))
+    monkeypatch.setattr(client, "_request", mocked)
+
+    result = await client.list_scheduled_task_results(limit=25, offset=0)
+
+    assert mocked.await_args.args[:2] == ("GET", "/api/v1/scheduled-tasks/results")
+    # definition_id/review_state are unset -- must not appear in params.
+    assert mocked.await_args.kwargs["params"] == {"limit": 25, "offset": 0}
+    assert isinstance(result, ScheduledTaskResultList)
+    assert result.total == 2
+    assert result.items[0].id == "res_01J5RHPQWXYZ1234567890AB"
+    assert result.items[0].review_state == "unread"
+    assert result.items[0].answer_mode == "synthesized"
+    assert result.items[1].review_state == "read"
+    assert result.items[1].reviewed_by == "user:42"
+
+
+@pytest.mark.asyncio
+async def test_list_results_includes_only_the_filters_that_are_set(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(return_value={"items": [], "total": 0})
+    monkeypatch.setattr(client, "_request", mocked)
+
+    await client.list_scheduled_task_results(
+        definition_id="def-1", review_state="unread"
+    )
+
+    assert mocked.await_args.kwargs["params"] == {
+        "limit": 50,
+        "offset": 0,
+        "definition_id": "def-1",
+        "review_state": "unread",
+    }
+
+
+@pytest.mark.asyncio
+async def test_review_result_posts_to_review_route(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "id": "res-1",
+            "definition_id": "def-1",
+            "run_id": "run-1",
+            "kind": "finding",
+            "title": "T",
+            "summary": "S",
+            "dedupe_key": "dk-1",
+            "review_state": "dismissed",
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    result = await client.review_scheduled_task_result(
+        "res-1", review_state="dismissed", review_note="not relevant"
+    )
+
+    assert mocked.await_args.args[:2] == (
+        "POST",
+        "/api/v1/scheduled-tasks/results/res-1/review",
+    )
+    assert mocked.await_args.kwargs["json_data"] == {
+        "review_state": "dismissed",
+        "review_note": "not relevant",
+    }
+    assert isinstance(result, ScheduledTaskResult)
+    assert result.review_state == "dismissed"
+
+
+@pytest.mark.asyncio
+async def test_review_result_sends_null_note_when_not_given(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "id": "res-1",
+            "definition_id": "def-1",
+            "run_id": "run-1",
+            "kind": "finding",
+            "title": "T",
+            "summary": "S",
+            "dedupe_key": "dk-1",
+            "review_state": "read",
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    await client.review_scheduled_task_result("res-1", review_state="read")
+
+    assert mocked.await_args.kwargs["json_data"] == {
+        "review_state": "read",
+        "review_note": None,
+    }
