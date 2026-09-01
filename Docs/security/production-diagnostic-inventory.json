@@ -1819,7 +1819,7 @@
     },
     {
       "call_count": 18,
-      "diagnostic_digest": "87613ce9bc0539378f25",
+      "diagnostic_digest": "19f690eb882b7d5c9ba7",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Scheduling/services/sync_engine.py",
       "reason": "remaining Chatbook production diagnostic owner"
