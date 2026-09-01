@@ -22,6 +22,7 @@
 ####################
 #
 # Import necessary libraries
+import hashlib
 import json
 import time
 from collections.abc import Mapping
@@ -518,6 +519,43 @@ def get_openai_embeddings(input_data: str, model: str) -> List[float]:
         raise ValueError(f"OpenAI Embeddings: Unexpected error occurred: {str(e)}")
 
 
+def _openai_prompt_cache_key(
+    system_message: object, tools: object
+) -> str:
+    """A content-addressed, rotation-stable OpenAI ``prompt_cache_key``.
+
+    TASK-26015. Digests the STABLE prefix -- the system message and the
+    tool list, the parts that do not change turn to turn -- so the key is
+    identical across a conversation's turns (AC#2) and changes only when
+    that prefix genuinely changes. It is a SHA-256 digest, never the text
+    (AC#3): the content cannot be recovered from it, and no request is
+    malformed by a hint the provider ignores (AC#4). Not
+    conversation-scoped on purpose: two conversations that share a system
+    prompt and tools SHOULD share a cache node.
+    """
+    payload = json.dumps(
+        {
+            "system": system_message if isinstance(system_message, str) else "",
+            "tools": tools if isinstance(tools, list) else [],
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+        default=str,
+    )
+    return "tldw-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+
+
+def _openai_cache_key_enabled() -> bool:
+    """``[caching] openai_cache_key`` gate -- OFF by default (AC#6)."""
+    try:
+        return bool(get_cli_setting("caching", "openai_cache_key", False))
+    except Exception as exc:  # noqa: BLE001 -- fail safe to OFF (today's behavior)
+        logger.warning(
+            f"caching openai_cache_key read failed; defaulting OFF: {exc!r}"
+        )
+        return False
+
+
 def chat_with_openai(
     input_data: List[Dict[str, Any]],  # Mapped from 'messages_payload'
     model: Optional[str] = None,  # Mapped from 'model'
@@ -753,6 +791,13 @@ def chat_with_openai(
         payload["tool_choice"] = "none"
     if user is not None:
         payload["user"] = user  # 'user' is OpenAI's user identifier field
+    # TASK-26015: a stable prefix-derived cache key. OpenAI ignores an
+    # unknown field, so a provider that does not accept it is unaffected
+    # (AC#4); off by default reproduces today's payload exactly (AC#6).
+    if _openai_cache_key_enabled():
+        payload["prompt_cache_key"] = _openai_prompt_cache_key(
+            system_message, tools
+        )
 
     headers = {
         "Authorization": f"Bearer {final_api_key}",

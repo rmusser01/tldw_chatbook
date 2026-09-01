@@ -11,6 +11,7 @@ from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 from tldw_chatbook.LLM_Calls.LLM_API_Calls import (
     _anthropic_caching_enabled,
     chat_with_anthropic,
+    chat_with_openai,
     _contains_cache_control,
     _without_cache_control,
 )
@@ -274,3 +275,88 @@ def test_5m_default_adds_no_beta_header(mock_session):
         )
 
     assert "anthropic-beta" not in posted["headers"]
+
+
+# --- TASK-26015: OpenAI prompt_cache_key -----------------------------------
+
+
+def test_openai_cache_key_is_a_stable_digest_of_the_prefix():
+    from tldw_chatbook.LLM_Calls.LLM_API_Calls import _openai_prompt_cache_key
+
+    tools = [{"type": "function", "function": {"name": "search"}}]
+    key1 = _openai_prompt_cache_key("You are helpful.", tools)
+    key2 = _openai_prompt_cache_key("You are helpful.", tools)
+    assert key1 == key2, "stable across turns for the same prefix (AC#2)"
+    assert key1 != _openai_prompt_cache_key("You are DIFFERENT.", tools), (
+        "a changed prefix changes the key"
+    )
+    assert key1 != _openai_prompt_cache_key("You are helpful.", None), (
+        "changed tools change the key"
+    )
+    # AC#3: a digest, not a summary -- the system text never appears in it
+    assert "helpful" not in key1
+    assert "You are" not in key1
+    assert len(key1) <= 64
+
+
+@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_default_session")
+def test_openai_cache_key_flows_into_payload_when_enabled(mock_session):
+    posted = {}
+
+    def _post(url, headers=None, json=None, **kwargs):
+        posted["json"] = json
+        return _ok_response()
+
+    session = Mock()
+    session.post.side_effect = _post
+    session.__enter__ = Mock(return_value=session)
+    session.__exit__ = Mock(return_value=False)
+    mock_session.return_value = session
+
+    def _setting(section, key, default=None):
+        if key == "openai_cache_key":
+            return True
+        return default
+
+    with patch(
+        "tldw_chatbook.LLM_Calls.LLM_API_Calls.get_cli_setting", side_effect=_setting
+    ):
+        chat_with_openai(
+            input_data=[{"role": "user", "content": "hi"}],
+            api_key="k",
+            model="gpt-5",
+            system_message="stable prefix",
+            streaming=False,
+        )
+
+    assert "prompt_cache_key" in posted["json"]
+    assert "stable prefix" not in posted["json"]["prompt_cache_key"]
+
+
+@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_default_session")
+def test_openai_cache_key_absent_by_default(mock_session):
+    posted = {}
+
+    def _post(url, headers=None, json=None, **kwargs):
+        posted["json"] = json
+        return _ok_response()
+
+    session = Mock()
+    session.post.side_effect = _post
+    session.__enter__ = Mock(return_value=session)
+    session.__exit__ = Mock(return_value=False)
+    mock_session.return_value = session
+
+    with patch(
+        "tldw_chatbook.LLM_Calls.LLM_API_Calls.get_cli_setting",
+        side_effect=lambda s, k, d=None: d,
+    ):
+        chat_with_openai(
+            input_data=[{"role": "user", "content": "hi"}],
+            api_key="k",
+            model="gpt-5",
+            system_message="stable prefix",
+            streaming=False,
+        )
+
+    assert "prompt_cache_key" not in posted["json"], "AC#6: off by default"

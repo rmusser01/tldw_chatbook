@@ -3391,6 +3391,12 @@ anthropic_enabled = true
 # unrecognized value fall back to 5m silently; the kill switch above
 # disables this along with everything else.
 cache_ttl = "5m"
+# TASK-26015: send OpenAI/Codex a stable prompt_cache_key derived from the
+# conversation's stable prefix (system prompt + tools) so the provider can
+# route repeated prefixes to the same implicit-cache node. It is a digest,
+# never content; unknown to providers that ignore it (harmless). OFF by
+# default = today's request shape exactly.
+openai_cache_key = false
 
 [agents]
 # Sub-agent fleet knobs. Every key here is COMMENTED OUT on purpose: the
