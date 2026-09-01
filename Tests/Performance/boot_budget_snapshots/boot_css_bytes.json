@@ -1,14 +1,16 @@
 {
   "_comment": "Boot-parsed CSS byte census. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
-  "total": 679726,
+  "total": 780368,
   "per_source": {
+    "screen_agentic_console.tcss": 95707,
     "screen_css_scoped.tcss": 15216,
     "screen_css_self.tcss": 2769,
-    "tldw_cli_modular.tcss": 470401,
+    "tldw_cli_modular.tcss": 475336,
     "widget_defaults_scoped.tcss": 96715,
     "widget_defaults_self.tcss": 94625
   },
   "per_segment": {
+    "screen_agentic_console.tcss::(whole file)": 95707,
     "screen_css_scoped.tcss::(header)": 455,
     "screen_css_scoped.tcss::ConsoleCapturePolicyDialog (Widgets/Console/console_capture_policy_dialog.py)": 1246,
     "screen_css_scoped.tcss::ConsoleExchangeExportDialog (Widgets/Console/console_exchange_export_dialog.py)": 1355,
@@ -34,7 +36,7 @@
     "screen_css_self.tcss::TraceFiltersDialog (UI/Widgets/trace_filter_bar.py)": 267,
     "screen_css_self.tcss::VoiceBlendDialog (Widgets/voice_blend_dialog.py)": 135,
     "tldw_cli_modular.tcss::(header)": 377,
-    "tldw_cli_modular.tcss::components/_agentic_terminal.tcss": 80818,
+    "tldw_cli_modular.tcss::components/_agentic_terminal.tcss": 85753,
     "tldw_cli_modular.tcss::components/_buttons.tcss": 1741,
     "tldw_cli_modular.tcss::components/_change_review.tcss": 7398,
     "tldw_cli_modular.tcss::components/_dialogs.tcss": 2515,

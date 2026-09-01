@@ -73,13 +73,15 @@ from tldw_chatbook.css import build_css
 #: rises -- see the module docstring before touching it.
 #:
 #: TIGHTENED 2026-08-31 (TASK-25812): the agentic-terminal split moved the
-#: Console/Library/Settings rules onto those screens' lazily-parsed
-#: ``CSS_PATH`` sheets, taking the boot census from a BREACHED 879,439 B to
-#: a measured 679,726 B. Lowered to measured + the guard's standard 25,000 B
-#: slack per ADR-097's tightening convention, so the freed headroom is
-#: banked instead of silently re-consumed. Lowering needs no ledger row --
-#: only raises do.
-MAX_BOOT_PARSED_CSS_BYTES = 705_000
+#: Console/Library/Settings rules off the bundle, taking the boot census
+#: from a BREACHED 879,439 B to 679,726 B. The CONSOLE sheet was then put
+#: back on the boot path deliberately (see ``TldwCli.CSS_PATH``: loading it
+#: at first Console mount cost a one-time full-app restyle and destabilised
+#: the `_ui_ready` census), landing at a measured 780,368 B. Pinned at
+#: measured + the guard's standard 25,000 B slack per ADR-097's tightening
+#: convention -- still banking ~54 KB against the pre-split 860,000.
+#: Lowering needs no ledger row -- only raises do.
+MAX_BOOT_PARSED_CSS_BYTES = 806_000
 
 #: Anti-vacuity floor: the app bundle alone is ~470 KB post-split, so a
 #: census that comes in under this did not measure the real boot-parsed set

@@ -1,3 +1,29 @@
+---
+id: task-25812
+title: Boot CSS parse is 191ms and one file is 28% of it
+status: In Progress
+assignee:
+  - '@claude'
+created_date: '2026-08-30'
+updated_date: '2026-08-31'
+labels:
+  - performance
+  - css
+  - boot
+priority: medium
+---
+
+## Description (the why)
+
+Filed by the 2026-08-30 holistic perf review (full filing, evidence and
+ACs on branch `perf/holistic-review-2026-08-30`, PR #2258 — this copy was
+created on the implementation branch and carries the implementation
+record; merge by union if the two ever conflict). Short form: boot CSS
+parsing is one ~191 ms pre-first-paint hit, `components/
+_agentic_terminal.tcss` is ~54 ms (28%) of it by cold-subprocess ablation,
+and the boot byte ratchet was RED at 879,439/860,000 with this file
+supplying most of the growth. Owner decision 2026-08-31: split-by-screen.
+
 
 ## Implementation (2026-08-31, branch `perf/task-25812-split-agentic-css`)
 
