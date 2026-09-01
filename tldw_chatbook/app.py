@@ -7072,6 +7072,19 @@ class TldwCli(
     CSS_PATH = [
         str(build_css.screen_css_paths(Path(__file__).parent / "css")[0]),
         str(Path(__file__).parent / "css/tldw_cli_modular.tcss"),
+        # TASK-25812: the CONSOLE sheet split from the agentic-terminal
+        # module rides the boot parse deliberately, unlike its library and
+        # settings siblings (those load lazily via their screens'
+        # `CSS_PATH`). The Console is the initial tab: loading its sheet at
+        # first ChatScreen mount instead put a one-time parse + full-app
+        # `stylesheet.update` (~100 ms) on the mount leg for every user, and
+        # on splashless boots that leg precedes `_ui_ready`, where it
+        # dragged deferred-family imports across the module-census line
+        # (972 -> 979 locally, 981 on the slower CI runner). Boot-parsing it
+        # costs ~30 ms against the ~85 ms the split saves and keeps the
+        # first Console mount free of restyle work -- `_load_screen_css`
+        # sees `has_source` and does nothing.
+        str(Path(__file__).parent / "css/screen_agentic_console.tcss"),
         str(build_css.screen_css_paths(Path(__file__).parent / "css")[1]),
     ]
 
@@ -17147,6 +17160,17 @@ def _generated_css_is_stale(package_root: Path) -> tuple[bool, str]:
         css_dir / build_css.WIDGET_DEFAULTS_SCOPED_FILENAME,
         css_dir / build_css.SCREEN_CSS_SELF_FILENAME,
         css_dir / build_css.SCREEN_CSS_SCOPED_FILENAME,
+        # TASK-25812 (Qodo #2281): the per-screen sheets split from the
+        # agentic module are generated outputs too -- a missing or stale one
+        # must trigger the same rebuild, or visiting that screen loads
+        # nothing (the bundle no longer carries its rules). Required only
+        # when the SOURCE module is part of this tree, mirroring
+        # `build_agentic_split`'s own skip for partial/scratch checkouts.
+        *(
+            (css_dir / name for name in build_css.AGENTIC_SPLIT_SHEETS.values())
+            if (css_dir / build_css.AGENTIC_SPLIT_MODULE).is_file()
+            else ()
+        ),
     ]
     missing = [path.name for path in generated if not path.is_file()]
     if missing:

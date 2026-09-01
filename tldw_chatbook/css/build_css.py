@@ -17,6 +17,7 @@ Five files are generated (TASK-15450 -- see ``widget_css.py`` for the why):
 import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -293,6 +294,330 @@ CSS_MODULES = [
     "utilities/_overrides.tcss",
 ]
 
+#: TASK-25812 (owner decision 2026-08-31: "split-by-screen"): the module whose
+#: single-screen rules are split OUT of the boot bundle and onto the owning
+#: screens' ``CSS_PATH``. Measured 2026-08-30: this one file was 283 KB (32%
+#: of boot CSS bytes), 1,251 rules, and ~54 ms of the ~191 ms pre-first-paint
+#: parse -- while ChatScreen, the first real screen, is constructed ~1.5 s
+#: AFTER first paint. Textual loads a screen's ``CSS_PATH`` lazily on first
+#: visit (``App._load_screen_css``), so the moved rules parse then instead.
+AGENTIC_SPLIT_MODULE = "components/_agentic_terminal.tcss"
+
+#: Owner -> (token prefix, generated sheet). A rule block moves to a sheet
+#: only when EVERY ``#id``/``.class`` token in its selector belongs to that
+#: one owner; blocks naming several owners, none, or bare widget types stay
+#: in the boot bundle. Split by SCREEN, never per-component: Textual's parse
+#: cache is an ``LRUCache(64)`` per stylesheet and TASK-15450 measured 94
+#: sources making every parse run fully cold (125-380 ms).
+AGENTIC_SPLIT_SHEETS = {
+    "console": "screen_agentic_console.tcss",
+    "library": "screen_agentic_library.tcss",
+    "settings": "screen_agentic_settings.tcss",
+}
+
+#: Tokens that PREFIX-match an owner but are composed by widgets on OTHER
+#: surfaces, so their rules must stay in the boot bundle. Found by auditing
+#: every moved token against Python compose sites (2026-08-31):
+#: `.settings-input-label` is yielded by
+#: ``Widgets/Persona_Widgets/personas_policy_rules_editor.py`` -- moving it
+#: to the Settings sheet would leave Personas' policy-rule labels unstyled
+#: until Settings is first visited. Add a token here (with the compose site
+#: that pins it) rather than weakening the classifier.
+AGENTIC_SPLIT_PINNED_TOKENS = {
+    "settings-input-label",
+    # The `console-*` DESIGN VOCABULARY (Qodo review of PR #2281, finding 1):
+    # these carry a legacy Console prefix but are composed app-wide -- Evals,
+    # MCP, Lab, Personas, Library and the shared destination rail all yield
+    # them. The first cross-surface audit missed every one of these because
+    # it filtered ABSOLUTE paths for the substring "console" and the
+    # worktree directory was named console-inspect-burndown, so every path
+    # matched "home" and the console audit was vacuous. Re-audited with
+    # repo-relative paths; compose sites per token are in the PR record.
+    "console-action-primary",
+    "console-action-secondary",
+    "console-action-subdued",
+    "console-modal-header",
+    "console-rail-collapse-button",
+    "console-rail-handle",
+    "console-rail-handle-badge",
+    "console-rail-handle-button",
+    "console-rail-handle-button-vertical",
+    "console-rail-handle-vertical",
+    "console-rail-header",
+    "console-rail-section-header",
+    "console-rail-section-title",
+    "console-rail-section-toggle",
+    "console-rail-title",
+    "console-workspace-action",
+}
+
+_SPLIT_HEADER = """/* ========================================
+ * GENERATED FILE - DO NOT EDIT DIRECTLY
+ * ========================================
+ * {owner}-owned rules split out of components/_agentic_terminal.tcss
+ * by build_css.py (TASK-25812). Loaded via the owning screen's CSS_PATH,
+ * so these bytes are parsed on first visit instead of before first paint.
+ * Edit components/_agentic_terminal.tcss and re-run build_css.py.
+ * ======================================== */
+
+"""
+
+_VARIABLE_DEF_RE = re.compile(r"^\$[\w-]+\s*:[^;{}]*;\s*$", re.M)
+_SELECTOR_TOKEN_RE = re.compile(r"[#.]([A-Za-z0-9_-]+)")
+_COMMENT_RE = re.compile(r"/\*.*?\*/", re.S)
+
+
+def _split_top_level_units(text: str) -> list[str]:
+    """Partition ``text`` into top-level units, losslessly.
+
+    A unit is one top-level ``{...}`` block together with everything since
+    the previous unit ended (comments and blank lines travel with the block
+    they precede); text after the final block is its own tail unit. Brace
+    counting skips ``/* ... */`` spans so a brace inside a comment cannot
+    corrupt the partition.
+
+    ``"".join(result) == text`` always -- the caller asserts it, because a
+    splitter that silently drops CSS is exactly the incident class the
+    ``_settings_splash_theme.tcss`` manifest note records.
+    """
+    units: list[str] = []
+    depth = 0
+    unit_start = 0
+    i = 0
+    length = len(text)
+    while i < length:
+        ch = text[i]
+        if ch == "/" and text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = length if end == -1 else end + 2
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                # Include the trailing newline so the remainder file keeps
+                # the exact spacing of the original.
+                end = i + 1
+                if end < length and text[end] == "\n":
+                    end += 1
+                units.append(text[unit_start:end])
+                unit_start = end
+                i = end
+                continue
+        i += 1
+    if unit_start < length:
+        units.append(text[unit_start:])
+    return units
+
+
+def _unit_owner(unit: str) -> str | None:
+    """Which single owner a unit's selectors belong to, or ``None``.
+
+    Only the text before the first ``{`` is inspected (the selector), with
+    comments stripped first so prose cannot misclassify a block. A unit with
+    no block (a tail comment) or whose tokens span owners stays in the
+    bundle.
+    """
+    stripped = _COMMENT_RE.sub("", unit)
+    brace = stripped.find("{")
+    if brace == -1:
+        return None
+    selector = stripped[:brace]
+    owners = set()
+    for token in _SELECTOR_TOKEN_RE.findall(selector):
+        if token in AGENTIC_SPLIT_PINNED_TOKENS:
+            return None
+        for owner in AGENTIC_SPLIT_SHEETS:
+            if token == owner or token.startswith(owner + "-"):
+                owners.add(owner)
+                break
+        else:
+            # A token belonging to no owner (e.g. `.ds-panel`) pins the
+            # block to the bundle: it may match widgets on any screen.
+            return None
+    if len(owners) == 1:
+        return owners.pop()
+    return None
+
+
+def _unit_selector_set(unit: str) -> set[str]:
+    """Whitespace-normalised selectors of a unit, comma members separately.
+
+    Comments are stripped BEFORE locating the block's brace: a comment
+    containing ``{`` ahead of the rule otherwise wins ``find("{")`` and the
+    "selector" becomes comment prose (caught by the splitter's unit tests --
+    the affected block was silently pinned to the bundle with garbage
+    selector bookkeeping).
+    """
+    stripped = _COMMENT_RE.sub("", unit)
+    brace = stripped.find("{")
+    if brace == -1:
+        return set()
+    selector = stripped[:brace]
+    return {
+        " ".join(part.split())
+        for part in selector.split(",")
+        if part.strip()
+    }
+
+
+def _later_module_selectors(css_dir: Path | None) -> set[str]:
+    """Selectors of every ``CSS_MODULES`` entry AFTER the agentic module.
+
+    A moved block parses after the whole bundle, so an equal-specificity
+    selector in a LATER module (features, utilities -- the latter documented
+    as able to "override anything") would lose a tie it used to win. These
+    selectors seed the demotion pass below so the protection is enforced at
+    every build rather than by a one-time review audit.
+
+    Args:
+        css_dir: Root of the modular stylesheets, or ``None`` when the
+            caller has no tree (pure-text unit tests) -- then no cross-module
+            selectors are known and only the intra-module pass applies.
+
+    Returns:
+        Whitespace-normalised selectors, comma members separately.
+    """
+    if css_dir is None:
+        return set()
+    selectors: set[str] = set()
+    seen_agentic = False
+    for module in CSS_MODULES:
+        if module == AGENTIC_SPLIT_MODULE:
+            seen_agentic = True
+            continue
+        if not seen_agentic:
+            continue
+        source = css_dir / module
+        if not source.is_file():
+            continue
+        for unit in _split_top_level_units(source.read_text(encoding="utf-8")):
+            selectors |= _unit_selector_set(unit)
+    return selectors
+
+
+def split_agentic_terminal(
+    text: str, css_dir: Path | None = None
+) -> tuple[str, dict[str, str]]:
+    """Split the agentic-terminal module into a bundle remainder + sheets.
+
+    Args:
+        text: The full source text of ``AGENTIC_SPLIT_MODULE``.
+        css_dir: Root of the modular stylesheets, used to seed the
+            cascade-order demotion with LATER modules' selectors. ``None``
+            limits demotion to intra-module ordering (unit tests).
+
+    Returns:
+        ``(remainder, {owner: moved_css})``. Concatenating the remainder and
+        every moved block in original order reproduces ``text`` exactly.
+
+    Raises:
+        AssertionError: If the partition is not lossless.
+    """
+    units = _split_top_level_units(text)
+    assert "".join(units) == text, (
+        "agentic split partition is not lossless -- refusing to build, "
+        "because a lossy split silently drops live CSS"
+    )
+    owners: list[str | None] = [_unit_owner(unit) for unit in units]
+
+    # Cascade-order safety (found live: `#settings-category-pane`). A moved
+    # block parses AFTER the whole bundle, so a kept block LATER in this
+    # module that shares a selector -- previously winning the tie by source
+    # order -- would now lose to it. Demote any moved block whose selector
+    # set intersects a later kept block's, iterating to a fixpoint because a
+    # demotion makes that block "kept" for the ones before it. Different
+    # owners cannot collide (each owner's selectors carry only its own
+    # tokens), and kept-before-moved pairs keep their relative order, so
+    # this is the only inversion the split can create within the module.
+    unit_selectors = [_unit_selector_set(unit) for unit in units]
+    later_modules = _later_module_selectors(css_dir)
+    changed = True
+    while changed:
+        changed = False
+        # Seeded with LATER modules' selectors (Qodo #2281 finding: the
+        # intra-module pass alone was blind to features/utilities ties).
+        kept_later: set[str] = set(later_modules)
+        for index in range(len(units) - 1, -1, -1):
+            if owners[index] is not None and unit_selectors[index] & kept_later:
+                owners[index] = None
+                changed = True
+            if owners[index] is None:
+                kept_later |= unit_selectors[index]
+
+    remainder: list[str] = []
+    moved: dict[str, list[str]] = {owner: [] for owner in AGENTIC_SPLIT_SHEETS}
+    for unit, owner in zip(units, owners):
+        if owner is None:
+            remainder.append(unit)
+        else:
+            moved[owner].append(unit)
+    return "".join(remainder), {
+        owner: "".join(parts) for owner, parts in moved.items()
+    }
+
+
+def _agentic_variables_preamble(css_dir: Path) -> str:
+    """Every top-level ``$var: value;`` visible to the agentic module.
+
+    Variable definitions inside one stylesheet source do not carry into
+    another, so each split sheet must restate the definitions the module saw
+    in the bundle: those of every module at or before it in ``CSS_MODULES``
+    order (later definitions win, which re-ordering preserves).
+    """
+    defs: list[str] = []
+    for module in CSS_MODULES:
+        source = css_dir / module
+        if source.is_file():
+            defs.extend(_VARIABLE_DEF_RE.findall(source.read_text(encoding="utf-8")))
+        if module == AGENTIC_SPLIT_MODULE:
+            break
+    if not defs:
+        return ""
+    return (
+        "\n".join(defs)
+        + "\n\n"
+        # Terminate the preamble with an empty rule: several test contracts
+        # scan `selector { body }` pairs with regexes that treat everything
+        # since the last `}` as the selector, and with no closing brace
+        # before the first real rule they swallow the whole preamble into
+        # its selector and stop matching anything. Textual parses an empty
+        # rule without complaint; the sentinel name matches nothing.
+        + ".tldw-agentic-split-preamble-end { }\n\n"
+    )
+
+
+def build_agentic_split(css_dir: Path, output_dir: Path) -> None:
+    """Write the three per-screen sheets split from the agentic module.
+
+    Args:
+        css_dir: Root directory containing the modular stylesheets.
+        output_dir: Directory the sheets are written into (``css_dir`` in a
+            real build; a temp dir when ``check_bundle_sync`` verifies).
+    """
+    source = css_dir / AGENTIC_SPLIT_MODULE
+    if AGENTIC_SPLIT_MODULE not in CSS_MODULES or not source.is_file():
+        # The manifest is the authority on what this build contains: a tree
+        # built from a patched/partial CSS_MODULES (the staleness test's
+        # scratch checkout, an embedder vendoring a subset) simply has no
+        # agentic module to split. Skipping is correct there; a REAL missing
+        # module is caught loudly by build_css()'s own missing-modules check.
+        print("Agentic split skipped: module not in this build")
+        return
+    text = source.read_text(encoding="utf-8")
+    _, moved = split_agentic_terminal(text, css_dir=css_dir)
+    preamble = _agentic_variables_preamble(css_dir)
+    for owner, filename in AGENTIC_SPLIT_SHEETS.items():
+        content = _SPLIT_HEADER.format(owner=owner) + preamble + moved[owner]
+        _atomic_write_text(output_dir / filename, content)
+    print(
+        "Agentic split complete: "
+        + ", ".join(
+            f"{owner}={len(moved[owner]):,}B" for owner in AGENTIC_SPLIT_SHEETS
+        )
+    )
+
 
 def build_css(css_dir: Path, output_file: Path) -> None:
     """Concatenate all declared CSS modules into a single file.
@@ -331,6 +656,13 @@ def build_css(css_dir: Path, output_file: Path) -> None:
     for index, module in enumerate(CSS_MODULES, start=1):
         print(f"Processing CSS module {index} of {len(CSS_MODULES)}")
         content = (css_dir / module).read_text(encoding="utf-8")
+        if module == AGENTIC_SPLIT_MODULE:
+            # TASK-25812: only the multi-screen remainder rides the boot
+            # bundle; the console/library/settings rules ship as the
+            # per-screen sheets `build_agentic_split` writes, parsed on
+            # first visit to the owning screen instead of before first
+            # paint.
+            content, _ = split_agentic_terminal(content, css_dir=css_dir)
 
         # Add module separator
         combined_css.append(f"\n/* ===== MODULE: {module} ===== */\n")
@@ -508,18 +840,52 @@ def main():
     # Output file
     output_file = css_dir / "tldw_cli_modular.tcss"
 
-    # Build the CSS
-    build_css(css_dir, output_file)
-    build_widget_defaults(
-        css_dir,
-        css_dir / WIDGET_DEFAULTS_SELF_FILENAME,
-        css_dir / WIDGET_DEFAULTS_SCOPED_FILENAME,
-    )
-    build_screen_css(
-        css_dir,
-        css_dir / SCREEN_CSS_SELF_FILENAME,
-        css_dir / SCREEN_CSS_SCOPED_FILENAME,
-    )
+    # Qodo #2281 (build atomicity): every output is generated into a staging
+    # directory first and swapped into place only after ALL builders
+    # succeed. A mid-run failure -- widget extraction raising, a screen
+    # block that cannot be lifted -- previously left a mixed generation on
+    # disk (new bundle beside old sheets drops the moved agentic rules),
+    # and both production entry paths log a failed build and continue, so
+    # the app would boot on it. The stage lives inside css_dir so each
+    # os.replace stays a same-filesystem atomic rename.
+    #
+    # Within the swap the order still encodes the loss-direction: split
+    # sheets land before the bundle, so a crash mid-swap duplicates moved
+    # rules in the old fat bundle rather than dropping them from the new
+    # remainder bundle.
+    import shutil
+
+    stage = css_dir / ".css-build-stage"
+    if stage.exists():
+        shutil.rmtree(stage)
+    stage.mkdir()
+    try:
+        build_agentic_split(css_dir, stage)
+        build_css(css_dir, stage / output_file.name)
+        build_widget_defaults(
+            css_dir,
+            stage / WIDGET_DEFAULTS_SELF_FILENAME,
+            stage / WIDGET_DEFAULTS_SCOPED_FILENAME,
+        )
+        build_screen_css(
+            css_dir,
+            stage / SCREEN_CSS_SELF_FILENAME,
+            stage / SCREEN_CSS_SCOPED_FILENAME,
+        )
+        publish_order = [
+            *AGENTIC_SPLIT_SHEETS.values(),
+            output_file.name,
+            WIDGET_DEFAULTS_SELF_FILENAME,
+            WIDGET_DEFAULTS_SCOPED_FILENAME,
+            SCREEN_CSS_SELF_FILENAME,
+            SCREEN_CSS_SCOPED_FILENAME,
+        ]
+        for name in publish_order:
+            staged = stage / name
+            if staged.is_file():  # the agentic split may legitimately skip
+                os.replace(staged, css_dir / name)
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
     # Qodo finding on PR #1831 (build race): the sheets above were built
     # from one read of the sources and write_build_manifest re-reads them;
     # an edit between those reads would record NEW content in the manifest

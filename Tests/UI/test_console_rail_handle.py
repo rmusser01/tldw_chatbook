@@ -19,18 +19,15 @@ from tldw_chatbook.Chat.console_rail_state import (
 from tldw_chatbook.Widgets.Console.console_rail_handle import ConsoleRailHandle
 
 
-_BUNDLED_STYLESHEET = (
-    Path(__file__).resolve().parents[2]
-    / "tldw_chatbook"
-    / "css"
-    / "tldw_cli_modular.tcss"
-)
+# TASK-25812: the console handle rules live in the split console sheet;
+# the harness loads the same app-tier set the running app ends up with.
+from Tests.UI.consolidated_css import APP_STYLESHEETS as _APP_STYLESHEETS
 
 
 class _VerticalRailHandleHarness(App[None]):
     """Small live layout for asserting bundled vertical-handle geometry."""
 
-    CSS_PATH = str(_BUNDLED_STYLESHEET)
+    CSS_PATH = [str(path) for path in _APP_STYLESHEETS]
 
     def compose(self) -> ComposeResult:
         yield Horizontal(

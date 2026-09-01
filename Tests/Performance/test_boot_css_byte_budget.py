@@ -71,13 +71,25 @@ from tldw_chatbook.css import build_css
 #: Drift budget for the total bytes of CSS parsed on the boot path.
 #: Measured 833,841 on 2026-08-25. RATCHET (ADR-097): this constant never
 #: rises -- see the module docstring before touching it.
-MAX_BOOT_PARSED_CSS_BYTES = 860_000
+#:
+#: TIGHTENED 2026-08-31 (TASK-25812): the agentic-terminal split moved the
+#: Console/Library/Settings rules off the bundle, taking the boot census
+#: from a BREACHED 879,439 B to 679,726 B. The CONSOLE sheet was then put
+#: back on the boot path deliberately (see ``TldwCli.CSS_PATH``: loading it
+#: at first Console mount cost a one-time full-app restyle and destabilised
+#: the `_ui_ready` census), landing at a measured 780,368 B. Pinned at
+#: measured + the guard's standard 25,000 B slack per ADR-097's tightening
+#: convention -- still banking ~54 KB against the pre-split 860,000.
+#: Lowering needs no ledger row -- only raises do.
+MAX_BOOT_PARSED_CSS_BYTES = 806_000
 
-#: Anti-vacuity floor: the app bundle alone is ~640 KB, so a census that
-#: comes in under this did not measure the real boot-parsed set (a renamed
-#: file, an empty generated sheet, a broken source list) and must fail
-#: loudly rather than "pass" on a hollow measurement.
-MIN_BOOT_PARSED_CSS_BYTES = 700_000
+#: Anti-vacuity floor: the app bundle alone is ~470 KB post-split, so a
+#: census that comes in under this did not measure the real boot-parsed set
+#: (a renamed file, an empty generated sheet, a broken source list) and must
+#: fail loudly rather than "pass" on a hollow measurement. Re-pinned below
+#: the post-split reality on 2026-08-31 (was 700,000 against a pre-split
+#: ~854 KB census).
+MIN_BOOT_PARSED_CSS_BYTES = 600_000
 
 
 #: The generated sheets' internal separators: ``/* ===== MODULE: x ===== */``

@@ -54,9 +54,16 @@ class _HandleHarness(App[None]):
 class _StyledHandleHarness(_HandleHarness):
     """Handle harness using the same generated stylesheet as production."""
 
-    CSS_PATH = str(
-        Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
-    )
+    # TASK-25812: the console/destination handle rules live in the split
+    # console sheet; load the app-tier set the running app ends up with.
+    CSS_PATH = [
+        str(Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"),
+        str(
+            Path(tldw_chatbook.__file__).parent
+            / "css"
+            / "screen_agentic_console.tcss"
+        ),
+    ]
 
 
 def _assert_region_contains(container, child) -> None:
