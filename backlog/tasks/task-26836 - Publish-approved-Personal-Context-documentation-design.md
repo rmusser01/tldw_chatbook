@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-01 15:07'
-updated_date: '2026-09-01 15:23'
+updated_date: '2026-09-01 15:41'
 labels: []
 dependencies: []
 references:
@@ -53,4 +53,6 @@ Verification evidence before closeout:
 - The all-ref sweep found TASK-26836 only at the same filename on refs/heads/codex/personal-context-docs and refs/heads/codex/personal-context-docs-spec; the all-worktree sweep found the same single filename in their two corresponding worktrees. No distinct TASK-26836 claimant exists.
 - Both files are tracked, and the task references the published spec path.
 - No application tests were run because this is documentation-only; the approved spec explicitly requires no full application sweep.
+
+Post-rebase verification: rebased conflict-free onto current origin/dev 79d98ee01a. At a8a505648a, git diff --check origin/dev...HEAD and the exact two-file scope comparison both exited 0. The refreshed all-ref/all-worktree sweep still found one TASK-26836 filename and no distinct claimant. The initial PR review reported no issues and all required checks passed before the branch-update gate required this rebase; those checks must rerun on the final pushed SHA.
 <!-- SECTION:NOTES:END -->
