@@ -36,59 +36,116 @@ TASK-22514 proved that its closeout introduced no Ruff formatter regressions whi
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Recheck duplicate work, rebase only the TASK-26000 range onto current `origin/dev`, and record the exact task base, current pin, and common ancestor with TASK-22514's closeout branch.
+1. Fetch `origin/dev` once, freeze and immediately authenticate immutable authority cut `S`, recheck duplicate work, rebase only the TASK-26000 range onto `S`, and record the exact task base, current pin, and common ancestor with TASK-22514's closeout branch.
 2. Build and self-test a temporary standard-library census tool that records exact revision-local Git paths, blob IDs, Ruff exit-code status, blockers, configuration provenance, and aggregate control results without modifying any checkout.
 3. Run whole-repository base/pre-closeout/closeout/common/current censuses, reconstruct TASK-22514's scoped `M/B/C/H` identity sets, resolve revision-path lineage, and prove the projected final-closeout invariant.
 4. Generate one canonical point-in-time JSON manifest, mechanically derive every current classification, define owner-aligned stable batches, prove validator negative cases, and append the exact counts and stable labels to both plans before cleanup records exist.
-5. Allocate collision-safe Backlog IDs, create every non-final cleanup record before the lower-ID-dependent final record, bind records to batches, and make the positive manifest checker plus task-ID guard pass.
+5. Allocate collision-safe Backlog IDs using every mandatory remote/PR/worktree claim source, accepting only an observed `origin/dev` equal to or a verified fast-forward descendant of `S`; create every non-final cleanup record before the lower-ID-dependent final record, bind records to batches, and make the positive point-in-time manifest checker plus task-ID guard pass.
 6. Obtain independent subagent approval of the evidence, lineage, batches, and task contracts; verify and correct every finding before re-review.
-7. Recheck current `origin/dev`, run documentation/evidence closeout gates, check all TASK-26000 criteria, add implementation notes, and mark only the characterization task Done.
+7. Run the final ancestry/collision audit without a post-scan fetch, run documentation/evidence point-in-time closeout gates, check all TASK-26000 criteria, add implementation notes, and mark only the characterization task Done.
 
-Task 1 authority state (2026-08-30):
+Current immutable authority-cut state (2026-08-31):
 
-- `task_base`: `51d3fbdbf20ff9fc2cf3a3ea3c7f71fef308339a`
-- `current_pin`: `51d3fbdbf20ff9fc2cf3a3ea3c7f71fef308339a`
+- `task_base`: `e555df102c950c29beed5e7119f433d35eee1f3c`
+- `current_pin`: `e555df102c950c29beed5e7119f433d35eee1f3c`
 - `common_ancestor`: `f0e8961222fe1a7a3ac7566f7f78142e717358f3`
 
 ADR required: no.
 
 ADR path: N/A.
 
-Reason: the task records and schedules behavior-preserving formatter cleanup without changing runtime, storage, security, dependency, or cross-module architecture.
+Reason: the owner-approved authority-cut amendment changes only this audit/closeout process; the task still records and schedules behavior-preserving formatter cleanup without changing runtime, storage, security, dependency, or cross-module architecture.
 
-Task 4 manifest record (2026-08-30): pins are task base/current
-`05c858e87cc1f11c96d6b384b34fdaf914efc51e`, common
+Owner approval (2026-08-31): freeze one immutable refresh-start cut and keep all
+later evidence object-ID based. Ordinary pre-records/final checker phases validate
+the point-in-time artifact; `--require-live-current` is only an immediate capture
+diagnostic/self-test. Appendix C records the manifest pin, observed `origin/dev`, and
+exact equality/fast-forward ancestry result; missing or divergent/force-pushed state
+fails `E_ORIGIN_DEV_DIVERGED`, while a normal descendant does not restart the full
+refresh. No fetch occurs after the allocator's final claim scan. The
+canonical final allocation-audit SHA-256 plus its bound `manifest_pin`,
+`observed_origin_dev`, and `origin_dev_ancestry` values must be recorded in Task 7
+Implementation Notes, and
+`raw/allocation-closeout-rescan.json` must be retained through review and integration.
+The final cleanup record retains the clean Git-tracked repository-wide Ruff gate;
+any post-cut unassigned failure blocks and requires a separate correction record
+rather than changing the pinned counts or batches.
+
+Current authority-cut manifest record (2026-08-31): pins are task base/current
+`e555df102c950c29beed5e7119f433d35eee1f3c`, common
 `f0e8961222fe1a7a3ac7566f7f78142e717358f3`, historical base
 `31ed49bb368f54211d6482599e00a5c1340f80b2`, pre-closeout
 `1f4f72ac5ff02f5237a4946745e82e8932cd41cf`, and closeout
 `642b1c782fe6c066a781314dae669a55b05b62ad`. Counts are `M=99`, `B=64`,
 `C=77`, `C-B=16`, `B-C=3`, `H=61`, `F_closeout=1,738`, `F_common=1,746`,
-current `=1,903`, `historical_still_current=41`,
-`historical_no_longer_current=20`, `shared_ancestor_debt=1,599`,
-`current_line_drift=263`, and blockers `=0`.
+current `=1,966`, `historical_still_current=44`,
+`historical_no_longer_current=17`, `shared_ancestor_debt=1,603`,
+`current_line_drift=319`, identities `=2,096`, batches `=83`, blockers `=0`, and
+cleanup records `=0`. Recreated current/common snapshots contain `5,056/1,966` and
+`4,643/1,746` entries/failures.
 
-All 263 current-line-drift rows use commit-by-commit Ruff 0.15.22 replay. Three
-transient unparsable intermediate states across two paths were recorded as
-non-formatter results, with zero ambiguous final chronologies. The fresh
-point-in-time ownership capture inspected nine open PRs; exact current-failure
-overlaps were `#2230=1`, `#2196=11`, `#2059=1`, and `#1655=2`, with every
-complete API file list matching its exact pinned local diff. PR `#2244` was no
-longer open and is not live authority.
+All 319 drift rows carry authenticated first-parent integration ledgers plus an
+independently derived complete rename-alias inventory. The revision-local Ruff
+0.15.22 replay recorded 1,272 candidates: 736 failing, 533 clean, and three
+independently Python-syntax-invalid states, with zero ambiguous final chronologies.
+Candidate kinds/causes are derived from Git/config/exclusion transitions; any other
+Ruff exit 2 is a blocking non-formatter error. All-parent merge evidence is included
+even when `git log --follow` omits the merge-side transition.
+The point-in-time ownership capture inspected all 13 open PRs at
+`2026-08-31T17:40:01Z`; current-failure overlaps were `#2265=6`, `#2264=4`,
+`#2230=1`, `#2196=12`, `#2059=1`, `#1903=1`, and `#1655=2`, while six PRs
+had zero overlap. Every API file list matched its exact pinned local diff. The
+snapshot SHA-256 is
+`46282d8e81b1bd512263443e97955b1650944684f6c1d0ccd1341f52218bd8d5`.
 
-The 36 stable labels are `ruff-agents-runtime`, `ruff-api`,
-`ruff-api-client-large`, `ruff-app-shell-large`,
-`ruff-character-persona`, `ruff-chat-core`, `ruff-chunking`,
-`ruff-ci-workflow-active`, `ruff-console-composer-active`,
-`ruff-console-performance-active`,
-`ruff-console-ui`, `ruff-core-runtime`, `ruff-database`, `ruff-evals`,
+The 83 stable labels are `ruff-active-pr-1655`, `ruff-active-pr-1655-2059`,
+`ruff-active-pr-1903-2196`, `ruff-active-pr-2196`,
+`ruff-active-pr-2230`, `ruff-active-pr-2264`, `ruff-active-pr-2265`,
+`ruff-agents-runtime`, `ruff-api`,
+`ruff-character-persona`, `ruff-chat-agents-tools`, `ruff-chat-citations`,
+`ruff-chat-console-context`, `ruff-chat-console-fleet`,
+`ruff-chat-console-foundation`, `ruff-chat-console-interaction`,
+`ruff-chat-console-library`, `ruff-chat-console-observability`,
+`ruff-chat-general`, `ruff-chat-media`, `ruff-chat-metrics`,
+`ruff-chat-persistence`, `ruff-chat-providers`, `ruff-chat-retrieval`,
+`ruff-chat-trajectory`, `ruff-chunking`, `ruff-console-character-media`,
+`ruff-console-composer`, `ruff-console-fleet-ui`,
+`ruff-console-foundation-ui`, `ruff-console-inspection`,
+`ruff-console-knowledge-ui`, `ruff-console-layout-rails`, `ruff-console-modals`,
+`ruff-console-runtime`,
+`ruff-console-session-send`, `ruff-console-transcript-selection`,
+`ruff-console-workspaces`, `ruff-core-runtime`, `ruff-database`, `ruff-evals`,
 `ruff-generation-media`, `ruff-ingestion-web-media`, `ruff-integration-live`,
-`ruff-library`, `ruff-library-screen-large`, `ruff-notes`, `ruff-performance`,
+`ruff-library`, `ruff-library-screen-large`, `ruff-mcp-runtime`,
+`ruff-model-artifacts-tests`, `ruff-notes`, `ruff-performance`,
 `ruff-personas-screen-large`, `ruff-providers-prompts`, `ruff-rag-research`,
-`ruff-root-ci-architecture-final`, `ruff-scheduling-notifications`,
-`ruff-settings-screen-large`, `ruff-speech-audio`, `ruff-tests-misc`,
-`ruff-tools-workspaces`, `ruff-tts-windows-active`, `ruff-ui-screens`,
-`ruff-utils-config`, `ruff-watchlists-screen-large`,
-`ruff-watchlists-subscriptions`, and `ruff-widgets`.
+`ruff-rag-search-tests`, `ruff-root-ci-architecture-final`,
+`ruff-root-test-infrastructure`, `ruff-scheduling-notifications`,
+`ruff-skills-runtime`, `ruff-speech-audio`,
+`ruff-state-sync-wizards-tests`, `ruff-tests-misc`, `ruff-tools-runtime`,
+`ruff-ui-evals`, `ruff-ui-file-dialogs`, `ruff-ui-library`, `ruff-ui-mcp-tools`,
+`ruff-ui-model-management`, `ruff-ui-navigation-shell`, `ruff-ui-personas`,
+`ruff-ui-prompts-workbench`, `ruff-ui-remaining-screens`, `ruff-ui-research`,
+`ruff-ui-scheduling`, `ruff-ui-settings`, `ruff-ui-speech`, `ruff-ui-visual-css`,
+`ruff-ui-watchlists`, `ruff-ui-wizards`, `ruff-utils-config`,
+`ruff-watchlists-screen-large`, `ruff-watchlists-subscriptions`, `ruff-widgets`,
+and `ruff-workspaces-runtime`.
+
+Current/common raw SHA-256 values are
+`f888cf9351f1c41f66fb98b4ec218c9268beb9b23295037320f725cec567ae10`
+and `c34c5fe9d8e3154c3450f1cf28d4c9a6f1f631feb4735296fc6b891af5de1b15`.
+Lineage and replay-cache SHA-256 values are
+`b9f9876d438b4b6770e84013c515ae54791b14f0e740de67283fb3de20f655a6`
+and `0026dce1124fb3e9fc027dca785101c76a77b63882deac9e1951d5ce2d46a1df`.
+The complete producer/checker sources are durable plan appendices and every Task 5/
+Task 7 authority sequence hash-verifies their deterministic materialization first.
+Manifest/materializer/producer/checker/allocator/renderer hashes are
+`0f1a8ca2652e7537628c82885f5d5d0cb4421189c31255bb0f05648991083022`,
+`69817bd0bac15097f80c6d194b7b27618bc96f494aab806aeb6d009a9c384c5c`,
+`fd33448f2841d0502509201a5bf6fd2f279f3f2c67cff8f3d4391b9ed7d9ce3e`,
+`a003aee74e01c2729136e244474f1fac08a06ae9ee9331752f56d1bfbffe9e79`,
+`6d7559449c35cd6db3dca31dbbdb510efbb45d1dc0a96c4f01f59c6a8461403b`,
+and `4a08b6a5a9a8b12926ab9417bc330a4e94eb60c3b4afe88226ef232e2653a17a`.
 <!-- SECTION:PLAN:END -->
 
 ### Task 1 Repin Record (2026-08-30)

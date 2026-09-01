@@ -48,9 +48,62 @@ pytest task-ID guard.
   export task26000_python task26000_resolved_python
   ```
 
-- Current pin is `51d3fbdbf20ff9fc2cf3a3ea3c7f71fef308339a`.
-  Rebase, repin, and rerun the current census if `origin/dev` advances before the
-  characterization records are committed.
+- Immutable authority cut `S`, manifest `task_base`, and manifest `current` are all
+  `e555df102c950c29beed5e7119f433d35eee1f3c`; common is
+  `f0e8961222fe1a7a3ac7566f7f78142e717358f3`. Later allocation audits accept an
+  observed `origin/dev` equal to `S` or a verified fast-forward descendant. Missing
+  or divergent/force-pushed ancestry fails `E_ORIGIN_DEV_DIVERGED`; ordinary
+  fast-forward movement never restarts the full evidence cycle.
+- The current/common snapshots contain `5,056/1,966` and `4,643/1,746`
+  entries/failures. The exhaustive classes are `historical_still_current=44`,
+  `historical_no_longer_current=17`, `shared_ancestor_debt=1,603`, and
+  `current_line_drift=319`, represented by 2,096 identities and 83 batches with zero
+  blockers and zero cleanup records.
+- Current/common raw, lineage, replay-cache, manifest, PR snapshot, materializer,
+  producer, checker, allocator, and renderer SHA-256 values are respectively
+  `f888cf9351f1c41f66fb98b4ec218c9268beb9b23295037320f725cec567ae10`,
+  `c34c5fe9d8e3154c3450f1cf28d4c9a6f1f631feb4735296fc6b891af5de1b15`,
+  `b9f9876d438b4b6770e84013c515ae54791b14f0e740de67283fb3de20f655a6`,
+  `0026dce1124fb3e9fc027dca785101c76a77b63882deac9e1951d5ce2d46a1df`,
+  `0f1a8ca2652e7537628c82885f5d5d0cb4421189c31255bb0f05648991083022`,
+  `46282d8e81b1bd512263443e97955b1650944684f6c1d0ccd1341f52218bd8d5`,
+  `69817bd0bac15097f80c6d194b7b27618bc96f494aab806aeb6d009a9c384c5c`,
+  `fd33448f2841d0502509201a5bf6fd2f279f3f2c67cff8f3d4391b9ed7d9ce3e`,
+  `a003aee74e01c2729136e244474f1fac08a06ae9ee9331752f56d1bfbffe9e79`,
+  `6d7559449c35cd6db3dca31dbbdb510efbb45d1dc0a96c4f01f59c6a8461403b`,
+  and `4a08b6a5a9a8b12926ab9417bc330a4e94eb60c3b4afe88226ef232e2653a17a`.
+- The 83 exact sorted labels are `ruff-active-pr-1655`,
+  `ruff-active-pr-1655-2059`, `ruff-active-pr-1903-2196`,
+  `ruff-active-pr-2196`, `ruff-active-pr-2230`, `ruff-active-pr-2264`,
+  `ruff-active-pr-2265`, `ruff-agents-runtime`, `ruff-api`,
+  `ruff-character-persona`, `ruff-chat-agents-tools`, `ruff-chat-citations`,
+  `ruff-chat-console-context`, `ruff-chat-console-fleet`,
+  `ruff-chat-console-foundation`, `ruff-chat-console-interaction`,
+  `ruff-chat-console-library`, `ruff-chat-console-observability`,
+  `ruff-chat-general`, `ruff-chat-media`, `ruff-chat-metrics`,
+  `ruff-chat-persistence`, `ruff-chat-providers`, `ruff-chat-retrieval`,
+  `ruff-chat-trajectory`, `ruff-chunking`, `ruff-console-character-media`,
+  `ruff-console-composer`, `ruff-console-fleet-ui`,
+  `ruff-console-foundation-ui`, `ruff-console-inspection`,
+  `ruff-console-knowledge-ui`, `ruff-console-layout-rails`,
+  `ruff-console-modals`, `ruff-console-runtime`, `ruff-console-session-send`,
+  `ruff-console-transcript-selection`, `ruff-console-workspaces`,
+  `ruff-core-runtime`, `ruff-database`, `ruff-evals`, `ruff-generation-media`,
+  `ruff-ingestion-web-media`, `ruff-integration-live`, `ruff-library`,
+  `ruff-library-screen-large`, `ruff-mcp-runtime`, `ruff-model-artifacts-tests`,
+  `ruff-notes`, `ruff-performance`, `ruff-personas-screen-large`,
+  `ruff-providers-prompts`, `ruff-rag-research`, `ruff-rag-search-tests`,
+  `ruff-root-ci-architecture-final`, `ruff-root-test-infrastructure`,
+  `ruff-scheduling-notifications`, `ruff-skills-runtime`, `ruff-speech-audio`,
+  `ruff-state-sync-wizards-tests`, `ruff-tests-misc`, `ruff-tools-runtime`,
+  `ruff-ui-evals`, `ruff-ui-file-dialogs`, `ruff-ui-library`,
+  `ruff-ui-mcp-tools`, `ruff-ui-model-management`, `ruff-ui-navigation-shell`,
+  `ruff-ui-personas`, `ruff-ui-prompts-workbench`,
+  `ruff-ui-remaining-screens`, `ruff-ui-research`, `ruff-ui-scheduling`,
+  `ruff-ui-settings`, `ruff-ui-speech`, `ruff-ui-visual-css`,
+  `ruff-ui-watchlists`, `ruff-ui-wizards`, `ruff-utils-config`,
+  `ruff-watchlists-screen-large`, `ruff-watchlists-subscriptions`,
+  `ruff-widgets`, and `ruff-workspaces-runtime`.
 - TASK-22514 evidence commit is
   `642b1c782fe6c066a781314dae669a55b05b62ad`, implementation base is
   `31ed49bb368f54211d6482599e00a5c1340f80b2`, and pre-closeout census is
@@ -64,6 +117,11 @@ pytest task-ID guard.
   manifest acceptance and cleanup-record creation.
 - No current formatter failure may be omitted, duplicated, silently reclassified,
   or absorbed by the final cleanup record.
+- The final allocation audit is one canonical
+  `raw/allocation-closeout-rescan.json`. Record its canonical final allocation-audit
+  SHA-256 plus bound `manifest_pin`, `observed_origin_dev`, and
+  `origin_dev_ancestry` in Task 7 Implementation Notes, retain the raw audit through
+  review and integration, and do not fetch after that scan.
 - Parent plans and task records use stable batch labels, not future task IDs. Cleanup
   records may reference TASK-26000 because it has a lower ID. The final cleanup
   record is created last and depends only on already-created lower IDs.
@@ -120,7 +178,7 @@ The temporary census tool consumes:
 ```text
 "${task26000_python}" "${task26000_tmp_root}/task26000_ruff_census.py" \
   --checkout "${task26000_tmp_root}/checkouts/current" \
-  --revision 51d3fbdbf20ff9fc2cf3a3ea3c7f71fef308339a \
+  --revision e555df102c950c29beed5e7119f433d35eee1f3c \
   --label current \
   --output "${task26000_tmp_root}/raw/current.json"
 ```
@@ -128,7 +186,8 @@ The temporary census tool consumes:
 An optional scoped call passes `--paths0 PATH`, where `PATH` is a NUL-terminated
 byte stream of Git paths. TASK-26000 uses unscoped whole-tree snapshots for all five
 revisions and projects `M` into the base/pre-closeout snapshots afterward. The
-example current SHA is replaced by Task 1's recorded pin when `origin/dev` advances.
+example current SHA is the owner-approved immutable authority cut; later
+`origin/dev` fast-forwards are handled by allocation ancestry audits.
 
 It produces this revision-local typed shape:
 
@@ -757,7 +816,9 @@ current raw census, and complete lineage were rebuilt.
 
 - Create:
   `Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json`
-- Create temporarily: `task26000_tmp_root/task26000_manifest_check.py`
+- Create temporarily: `task26000_tmp_root/task26000_manifest_producer.py`,
+  `task26000_tmp_root/task26000_manifest_check.py`, and
+  `task26000_tmp_root/task26000_tool_authority.py`.
 
 **Interfaces:**
 
@@ -802,7 +863,14 @@ current raw census, and complete lineage were rebuilt.
   Each `source_reachability` value is exactly
   `{object_present: true, remote_tracking_refs: [...]}`, with the refs sorted and
   unique. The three historical raw commits currently have empty ref arrays;
-  `current` must include `refs/remotes/origin/dev`. The committed appendices are the durable tool source;
+  `current` must include `refs/remotes/origin/dev`. These arrays are authenticated
+  point-in-time capture evidence at `generated_at_utc`: ordinary artifact validation
+  checks their closed syntax plus every captured revision/tree/blob object, but does
+  not require the mutable live remote-ref set to remain equal. The orthogonal
+  `--require-live-current` gate is only an immediate authority-cut capture diagnostic:
+  after the one refresh-start fetch it proves live `origin/dev` equals the newly
+  frozen `revisions.current`. It is not a later pre-records/final closeout invariant.
+  The committed appendices are the durable tool source;
   `tools`, `commands`, and every complete census snapshot record the exact runtime
   and invocation provenance without a pre-records/final schema transition.
 
@@ -837,6 +905,13 @@ current raw census, and complete lineage were rebuilt.
   current_line_drift =
       current_failures - historical_still_current - shared_ancestor_debt
   ```
+
+  Every current-line-drift row stores an ordered authenticated candidate ledger and
+  an independently derived complete `source_aliases` rename chain. Candidate
+  `kind`/`causes` are derived from Git path/config/exclusion transitions rather than
+  trusted labels. Ruff exit 2 is `invalid` only when an independent Python compile
+  of that candidate's exact source blob proves `python_syntax_error`; malformed
+  config, invocation, or runtime exit 2 is a blocking non-formatter error.
 
   `project(F_common identities, current)` comes from Task 3's complete
   common-to-current lineage graph. A duplicate current projection, unexplained copy,
@@ -875,6 +950,12 @@ current raw census, and complete lineage were rebuilt.
   blocker, batch, and cleanup-record binding is checked recursively. Do not replace
   the oracle with a JSON Schema or a looser producer-local assertion set.
 
+  `--phase pre-records` and `--phase final` are point-in-time artifact phases.
+  They authenticate all stored Git objects and replayable evidence even after an
+  unrelated live remote advances. `--require-live-current` is an explicit immediate
+  authority-cut capture diagnostic/self-test only; ordinary Task 5 and later Task 7
+  review/closeout commands omit it.
+
   Its core assertions must be explicit:
 
   ```python
@@ -906,10 +987,16 @@ current raw census, and complete lineage were rebuilt.
   Also require full 40-character revisions, sorted unique arrays, blob IDs for every
   present path, a lineage record for every moved path, one cleanup-record path per
   batch label, and the required child-task acceptance-criteria phrases.
+  Appendix A.1, Appendix B, Appendix C, and Appendix D are the complete durable
+  producer/checker/allocator/renderer authority; Appendix B.1 authenticates their marker hashes before atomically materializing
+  temporary copies. Task 5 and Task 7 must run that hash preflight before any
+  producer/checker/allocator/renderer authority sequence; `/tmp` is never the source of truth.
 
 - [x] **Step 5: Prove the checker fails for corrupt manifests**
 
-  Generate JSON-normalized temporary mutations and require nonzero exits for:
+  Generate JSON-normalized temporary mutations and require nonzero exits for the
+  original manifest corruptions plus captured-ref syntax, explicit live-current,
+  canonical-byte, and temporal-ledger corruptions:
 
   ```text
   missing-current-failure         E_BATCH_UNION
@@ -926,15 +1013,35 @@ current raw census, and complete lineage were rebuilt.
   absent-cleanup-record           E_RECORD_COUNT
   missing-behavior-contract       E_RECORD_CONTRACT
   missing-final-gate              E_FINAL_GATE
+  missing-post-cut-correction     E_FINAL_GATE
+  malformed-captured-ref          E_REACHABILITY
+  live-current-mismatch           E_ORIGIN_DEV
+  noncanonical-whitespace         E_CANONICAL_BYTES
+  noncanonical-key-order          E_CANONICAL_BYTES
+  missing-final-newline           E_CANONICAL_BYTES
+  nonexistent-temporal-commit     E_TEMPORAL_RANGE
+  out-of-range-temporal-commit    E_TEMPORAL_RANGE
+  omitted-first-evidence          E_TEMPORAL_EVIDENCE
+  reordered-temporal-candidate    E_TEMPORAL_ORDER
+  wrong-temporal-result           E_TEMPORAL_RESULT
+  wrong-temporal-path-blob        E_TEMPORAL_PATH
+  wrong-temporal-config-blob      E_TEMPORAL_CONFIG
+  wrong-temporal-exclusion-blob   E_TEMPORAL_EXCLUSION
+  missing-prior-clean-state       E_TEMPORAL_COMPLETENESS
+  missing-prior-invalid-state     E_TEMPORAL_COMPLETENESS
+  wrong-temporal-invalid-reason   E_TEMPORAL_RESULT
+  false-temporal-cause            E_TEMPORAL_CAUSE
+  missing-pre-rename-alias-segment E_TEMPORAL_COMPLETENESS
+  nonformatter-exit-two           E_TEMPORAL_NONFORMATTER
   ```
 
   Restore the unmodified manifest after every mutation. Run the Appendix B built-in
   fixtures first. The arithmetic fixture contains exactly 99 `M` identities plus one
   shared-ancestor and one current-only identity, passes both positive phases, and
-  applies the original 13 mutations independently. The authentic Git fixture covers
-  `A`, `D`, `M`, and `R100`, then changes one stored historical row without changing
-  the authentic stdout digest for the 14th mutation. Each mutation must produce the
-  exact first code recorded by Appendix B.
+  applies the original 13 mutations independently. Authentic Git fixtures cover
+  `A`, `D`, `M`, `R100`, point-in-time ref churn, explicit live-current equality and
+  mismatch, canonical raw bytes, and clean/invalid/failing revision-local Ruff
+  histories. Each mutation must produce the exact first code recorded by Appendix B.
 
   ```bash
   "${task26000_python}" \
@@ -944,7 +1051,7 @@ current raw census, and complete lineage were rebuilt.
   Expected stdout is exactly:
 
   ```text
-  manifest self-tests: 2 positive phases and 14 deterministic mutations passed
+  manifest self-tests: 2 positive phases and 34 deterministic mutations passed
   ```
 
   The positive check remains red until cleanup records are created in Task 5; all
@@ -960,6 +1067,11 @@ current raw census, and complete lineage were rebuilt.
     --repo "$PWD"
   ```
 
+  Task 4 intentionally omits `--require-live-current`. Its self-test preserves that
+  gate solely as an immediate authority-cut capture diagnostic: equality succeeds and
+  mismatch fails exact `E_ORIGIN_DEV`. Once the cut is frozen, all ordinary validation
+  is object-ID based and a later fast-forward does not invalidate the artifact.
+
 - [x] **Step 6: Record derived counts and stable labels in both plans**
 
   After all Task 4 arithmetic checks pass, append an `Execution Record` section to
@@ -968,58 +1080,196 @@ current raw census, and complete lineage were rebuilt.
   Append the same counts and labels—never higher task IDs—to TASK-26000's concise
   Implementation Plan. Regenerate canonical JSON after any resulting label change.
 
-#### Task 4 Execution Record (2026-08-30)
+#### Historical Task 4 Execution Record (2026-08-30)
 
 - Pins: task base/current
-  `05c858e87cc1f11c96d6b384b34fdaf914efc51e`, common
+  `51d3fbdbf20ff9fc2cf3a3ea3c7f71fef308339a`, common
   `f0e8961222fe1a7a3ac7566f7f78142e717358f3`, historical base
   `31ed49bb368f54211d6482599e00a5c1340f80b2`, pre-closeout
   `1f4f72ac5ff02f5237a4946745e82e8932cd41cf`, and closeout
   `642b1c782fe6c066a781314dae669a55b05b62ad`.
 - Historical/current counts: `M=99`, `B=64`, `C=77`, `C-B=16`, `B-C=3`,
-  `H=61`, `F_closeout=1,738`, `F_common=1,746`, and current failures `=1,903`.
-  The exhaustive comparison is `historical_still_current=41`,
-  `historical_no_longer_current=20`, `shared_ancestor_debt=1,599`, and
-  `current_line_drift=263`; blockers remained zero.
-- All 263 current-line-drift rows were replayed commit by commit with the pinned
-  Ruff 0.15.22 tool and applicable config, selecting the first formatter exit-1
-  source state within first-parent integration chronology. Spot checks include
-  `tldw_chatbook/config.py` at
-  `c6218918d1e70c1938f7e11df592d0c70ca60383` and
-  `Tests/UI/test_library_notes_folder_navigator.py` at
-  `f7b64d1a4801ece98cd0d3ee8f868dcfac63ab2e`. Three transient unparsable
-  intermediate states across two paths were recorded and excluded as non-formatter
-  results; no ambiguous chronology remained in the 263 final rows.
-- Live ownership capture inspected all nine open PRs at
-  `2026-08-31T02:08:11Z`; the previously captured PR `#2244` was no longer open
-  and is not live authority. Complete paginated API paths and exact heads were
-  checked against local `05c858e...head` diffs for every PR. Exact current failure
-  overlaps were PR `#2230` (one), `#2196` (11), `#2059` (one), and `#1655`
-  (two, including one also owned by `#2059`); PRs `#2026`, `#1991`, `#1903`,
-  `#1851`, and `#1651` had no overlap. Matching active worktrees and the explicit
-  `origin/dev` 14-day Python history were projected into each batch's nonempty
+  `H=61`, `F_closeout=1,738`, `F_common=1,746`, and current failures `=1,946`.
+  The exhaustive comparison is `historical_still_current=43`,
+  `historical_no_longer_current=18`, `shared_ancestor_debt=1,600`, and
+  `current_line_drift=303`; blockers remained zero.
+- All 303 current-line-drift rows carry ordered, self-contained first-parent
+  integration ledgers authenticated against the captured Git objects. The frozen
+  producer replayed 1,211 revision-local Ruff states: 709 failing, 499 clean, and
+  three transient invalid states; the invalid states remain explicit and no
+  ambiguous final chronology survived. The replay used full detached Git trees,
+  tracked ignore/config context, NUL-safe path plumbing, and pinned Ruff 0.15.22.
+  Candidate causes use every commit parent, including merge-side path transitions
+  that `git log --follow` omits; the independent audit matched all 1,211 candidates.
+- Point-in-time ownership capture inspected all 11 open PRs at
+  `2026-08-31T04:46:24Z`. Paginated API paths at exact recorded heads matched local
+  `51d3fbdb...head` diffs for every PR. Exact current-failure overlaps were
+  `#2252=5`, `#2251=4`, `#2230=1`, `#2196=12`, `#2059=1`, `#1903=1`, and
+  `#1655=2`; `#2026`, `#1991`, `#1851`, and `#1651` had zero. Worktree and
+  14-day recent-Python evidence were projected into every batch's nonempty
   `conflict_basis`.
-- The 36 sorted stable labels are `ruff-agents-runtime`, `ruff-api`,
-  `ruff-api-client-large`, `ruff-app-shell-large`,
-  `ruff-character-persona`, `ruff-chat-core`, `ruff-chunking`,
-  `ruff-ci-workflow-active`, `ruff-console-composer-active`,
-  `ruff-console-performance-active`,
-  `ruff-console-ui`, `ruff-core-runtime`, `ruff-database`, `ruff-evals`,
+- The 87 sorted stable labels are `ruff-active-pr-1655`,
+  `ruff-active-pr-1655-2059`, `ruff-active-pr-1903-2196`,
+  `ruff-active-pr-2196`, `ruff-active-pr-2196-2252`, `ruff-active-pr-2230`,
+  `ruff-active-pr-2251`, `ruff-active-pr-2252`, `ruff-agents-runtime`, `ruff-api`,
+  `ruff-api-client-large`, `ruff-chachanotes-db-large`,
+  `ruff-character-persona`, `ruff-chat-agents-tools`, `ruff-chat-citations`,
+  `ruff-chat-console-context`, `ruff-chat-console-fleet`,
+  `ruff-chat-console-foundation`, `ruff-chat-console-interaction`,
+  `ruff-chat-console-library`, `ruff-chat-console-observability`,
+  `ruff-chat-general`, `ruff-chat-media`, `ruff-chat-metrics`,
+  `ruff-chat-persistence`, `ruff-chat-providers`, `ruff-chat-retrieval`,
+  `ruff-chat-trajectory`, `ruff-chunking`, `ruff-console-character-media`,
+  `ruff-console-composer`, `ruff-console-fleet-ui`,
+  `ruff-console-foundation-ui`, `ruff-console-inspection`,
+  `ruff-console-knowledge-ui`, `ruff-console-layout-rails`, `ruff-console-modals`,
+  `ruff-console-runtime`,
+  `ruff-console-session-send`, `ruff-console-transcript-selection`,
+  `ruff-console-workspaces`, `ruff-core-runtime`, `ruff-database`, `ruff-evals`,
   `ruff-generation-media`, `ruff-ingestion-web-media`, `ruff-integration-live`,
-  `ruff-library`, `ruff-library-screen-large`, `ruff-notes`, `ruff-performance`,
+  `ruff-library`, `ruff-library-screen-large`, `ruff-mcp-runtime`,
+  `ruff-model-artifacts-tests`, `ruff-notes`, `ruff-performance`,
   `ruff-personas-screen-large`, `ruff-providers-prompts`, `ruff-rag-research`,
-  `ruff-root-ci-architecture-final`, `ruff-scheduling-notifications`,
-  `ruff-settings-screen-large`, `ruff-speech-audio`, `ruff-tests-misc`,
-  `ruff-tools-workspaces`, `ruff-tts-windows-active`, `ruff-ui-screens`,
-  `ruff-utils-config`, `ruff-watchlists-screen-large`,
-  `ruff-watchlists-subscriptions`, and `ruff-widgets`.
-- Verbatim Appendix B SHA-256 remained
-  `b16cfb7bdbd94fe0946cad99a4225f8981de87c27df324e78516f5556459a413`.
+  `ruff-rag-search-tests`, `ruff-root-ci-architecture-final`,
+  `ruff-root-test-infrastructure`, `ruff-scheduling-notifications`,
+  `ruff-settings-screen-large`, `ruff-skills-runtime`, `ruff-speech-audio`,
+  `ruff-state-sync-wizards-tests`, `ruff-tests-misc`, `ruff-tools-runtime`,
+  `ruff-ui-evals`, `ruff-ui-file-dialogs`, `ruff-ui-library`, `ruff-ui-mcp-tools`,
+  `ruff-ui-model-management`, `ruff-ui-navigation-shell`, `ruff-ui-personas`,
+  `ruff-ui-prompts-workbench`, `ruff-ui-remaining-screens`, `ruff-ui-research`,
+  `ruff-ui-scheduling`, `ruff-ui-settings`, `ruff-ui-speech`, `ruff-ui-visual-css`,
+  `ruff-ui-watchlists`, `ruff-ui-wizards`, `ruff-utils-config`,
+  `ruff-watchlists-screen-large`, `ruff-watchlists-subscriptions`, `ruff-widgets`,
+  and `ruff-workspaces-runtime`.
+- Canonical manifest SHA-256 is
+  `e012b77f091dee598cfb4495ab4ed7c14f236c86f2ae308c324b32d682afb49f`;
+  the frozen producer SHA-256 is
+  `dc89d298c9df801c0b08dcf76d9f0a0a2e3669a0cb168b9ee80bde4144085872`;
+  verbatim Appendix B/checker SHA-256 is
+  `4e89b960c0efe85fb22bde53b9e7b38444e1bb2d44abaee64cc65ff72c3a21a0`,
+  and Appendix B.1 authority SHA-256 is
+  `6486a50497e6dbef847b10447f190877f90d5215ddc259fd77c08c4100545ac3`.
   Its built-in suite printed exactly
-  `manifest self-tests: 2 positive phases and 14 deterministic mutations passed`;
-  an independent run reproduced all 14 named first error codes, and real
-  `--phase pre-records` accepted the canonical 16-key manifest with 2,041 identities,
-  36 batches, zero blockers, and zero cleanup records.
+  `manifest self-tests: 2 positive phases and 33 deterministic mutations passed`.
+  Ordinary repo-aware `--phase pre-records` accepted the canonical 16-key manifest
+  with 2,080 identities, 87 batches, zero blockers, and zero
+  cleanup records.
+- The manifest is point-in-time evidence at `51d3fbdb...`. During validation,
+  live `origin/dev` advanced to
+  `1f2d03beb0a2cd82985e395f94bfb05ee992ca7f`; ordinary artifact validation
+  intentionally remained green, while the explicit
+  `--require-live-current` authority gate failed exactly
+  `E_ORIGIN_DEV: origin/dev differs from captured current`. Task 7 owns the deferred
+  refresh/reconciliation; no live movement was silently ignored or folded into this
+  Task 4 artifact.
+
+#### Historical Task 7 Step 1 Refresh Record (2026-08-31, superseded cut)
+
+- The mandatory live refresh rebased only the 31-commit TASK-26000 range onto task
+  base/current `0577884cf24a358a86c2e8711f3b4d5933d6d564`; the resulting uncommitted
+  task HEAD is `442e823d9c799ad84a47a04b9fc6b95deae96434`. Common remains
+  `f0e8961222fe1a7a3ac7566f7f78142e717358f3`; historical base,
+  pre-closeout, and closeout remain `31ed49bb368f54211d6482599e00a5c1340f80b2`,
+  `1f4f72ac5ff02f5237a4946745e82e8932cd41cf`, and
+  `642b1c782fe6c066a781314dae669a55b05b62ad`.
+- The recreated clean detached current checkout contained 5,047 tracked Python
+  entries and 1,958 failures; the recreated common checkout contained 4,643 entries
+  and 1,746 failures. Both had zero blockers and aggregate exit 1. Current/common
+  raw SHA-256 values are
+  `5a1c03ac7d56f7aaff4961b7dc8f67b8ca7fd672bb56eb2f10d2432b7c6f4ebf`
+  and `c34c5fe9d8e3154c3450f1cf28d4c9a6f1f631feb4735296fc6b891af5de1b15`;
+  rebuilt lineage SHA-256 is
+  `86999279bfa65dadd17774308f238e63c9e3830348471430a63f0fc5d75fefef`.
+- Historical arithmetic remains `M=99`, `B=64`, `C=77`, `C-B=16`, `B-C=3`,
+  `H=61`, and `F_closeout=1,738`. The exhaustive comparison is
+  `historical_still_current=43`, `historical_no_longer_current=18`,
+  `shared_ancestor_debt=1,602`, and `current_line_drift=313`; the refreshed manifest
+  has 2,090 identities, 90 batches, zero blockers, and zero cleanup records.
+- The cache-cold temporal replay checked 313 rows and 1,257 revision-local Ruff
+  candidates: 725 failing, 529 clean, and three transient syntax-invalid states.
+  Its SHA-256 is
+  `7b2f5c5eda6bb20bbacfff1847eec9fca14e33f34d0f563e1cf052cd11101287`.
+- Point-in-time ownership capture inspected all 15 open PRs at
+  `2026-08-31T15:51:54Z`; every paginated API file list matched its exact pinned
+  local `0577884c...head` diff. Exact current-failure overlaps were `#2262=7`,
+  `#2261=4`, `#2257=7`, `#2230=1`, `#2196=12`, `#2059=1`, `#1903=1`,
+  and `#1655=2`; `#2263`, `#2258`, `#2254`, `#2026`, `#1991`, `#1851`,
+  and `#1651` had zero overlap.
+- The 90 sorted stable labels are `ruff-active-pr-1655`,
+  `ruff-active-pr-1655-2059`, `ruff-active-pr-1903-2196`,
+  `ruff-active-pr-2196`, `ruff-active-pr-2196-2257-2261-2262`,
+  `ruff-active-pr-2230`, `ruff-active-pr-2257`,
+  `ruff-active-pr-2257-2261`, `ruff-active-pr-2261`, `ruff-active-pr-2262`,
+  `ruff-agents-runtime`, `ruff-api`, `ruff-api-client-large`,
+  `ruff-app-shell-large`, `ruff-chachanotes-db-large`, `ruff-character-persona`,
+  `ruff-chat-agents-tools`, `ruff-chat-citations`, `ruff-chat-console-context`,
+  `ruff-chat-console-fleet`, `ruff-chat-console-foundation`,
+  `ruff-chat-console-interaction`, `ruff-chat-console-library`,
+  `ruff-chat-console-observability`, `ruff-chat-general`, `ruff-chat-media`,
+  `ruff-chat-metrics`, `ruff-chat-persistence`, `ruff-chat-providers`,
+  `ruff-chat-retrieval`, `ruff-chat-trajectory`, `ruff-chunking`,
+  `ruff-console-character-media`, `ruff-console-composer`,
+  `ruff-console-fleet-ui`, `ruff-console-foundation-ui`,
+  `ruff-console-inspection`, `ruff-console-knowledge-ui`,
+  `ruff-console-layout-rails`, `ruff-console-modals`, `ruff-console-runtime`,
+  `ruff-console-session-send`, `ruff-console-transcript-selection`,
+  `ruff-console-workspaces`, `ruff-core-runtime`, `ruff-database`, `ruff-evals`,
+  `ruff-generation-media`, `ruff-ingestion-web-media`, `ruff-integration-live`,
+  `ruff-library`, `ruff-library-screen-large`, `ruff-mcp-runtime`,
+  `ruff-model-artifacts-tests`, `ruff-notes`, `ruff-performance`,
+  `ruff-personas-screen-large`, `ruff-providers-prompts`, `ruff-rag-research`,
+  `ruff-rag-search-tests`, `ruff-root-ci-architecture-final`,
+  `ruff-root-test-infrastructure`, `ruff-scheduling-notifications`,
+  `ruff-settings-screen-large`, `ruff-skills-runtime`, `ruff-speech-audio`,
+  `ruff-state-sync-wizards-tests`,
+  `ruff-tests-misc`, `ruff-tools-runtime`, `ruff-ui-evals`,
+  `ruff-ui-file-dialogs`, `ruff-ui-library`, `ruff-ui-mcp-tools`,
+  `ruff-ui-model-management`, `ruff-ui-navigation-shell`, `ruff-ui-personas`,
+  `ruff-ui-prompts-workbench`, `ruff-ui-remaining-screens`, `ruff-ui-research`,
+  `ruff-ui-scheduling`, `ruff-ui-settings`, `ruff-ui-speech`,
+  `ruff-ui-visual-css`, `ruff-ui-watchlists`, `ruff-ui-wizards`,
+  `ruff-utils-config`, `ruff-watchlists-screen-large`,
+  `ruff-watchlists-subscriptions`, `ruff-widgets`, and `ruff-workspaces-runtime`.
+- Canonical manifest, frozen producer, checker, and authority SHA-256 values are
+  `94997c33c057f82b91afc758ec0b94d577692a56aea970ba96647d4cf86b6e3d`,
+  `c9b1d49521f475715b7b44ff906b4bf5c1279153f851de922970a0025fff4f50`,
+  `4e89b960c0efe85fb22bde53b9e7b38444e1bb2d44abaee64cc65ff72c3a21a0`,
+  and `6486a50497e6dbef847b10447f190877f90d5215ddc259fd77c08c4100545ac3`.
+  Cleanup records remain intentionally absent, so no renderer refresh ran.
+
+#### Current Owner-Approved Authority-Cut Record (2026-08-31)
+
+- Immutable `task_base`/`current` authority cut is
+  `e555df102c950c29beed5e7119f433d35eee1f3c`; common remains
+  `f0e8961222fe1a7a3ac7566f7f78142e717358f3`. HEAD at capture was
+  `e322f68ec4b50b5f1b28570d946876618db2059d`. A later allocation audit accepts
+  `origin/dev` equal to the cut or a verified fast-forward descendant and rejects
+  missing/divergent ancestry without refreshing the evidence again.
+- Current/common snapshots contain `5,056/1,966` and `4,643/1,746`
+  entries/failures with zero blockers. Historical arithmetic remains `M=99`,
+  `B=64`, `C=77`, `C-B=16`, `B-C=3`, `H=61`, `F_closeout=1,738`, and
+  `F_common=1,746`. Current classes are `historical_still_current=44`,
+  `historical_no_longer_current=17`, `shared_ancestor_debt=1,603`, and
+  `current_line_drift=319`, represented by 2,096 identities, the 83 exact Global
+  Constraints labels, zero blockers, and zero cleanup records.
+- The 319 temporal ledgers contain 1,272 candidates: 736 failing, 533 clean, and
+  three transient syntax-invalid states. The 13-PR snapshot at
+  `2026-08-31T17:40:01Z` has exact current-failure overlaps `#2265=6`, `#2264=4`,
+  `#2230=1`, `#2196=12`, `#2059=1`, `#1903=1`, and `#1655=2`; six PRs have
+  zero overlap.
+- Current/common raw, lineage, replay-cache, manifest, and PR snapshot SHA-256 values
+  are `f888cf9351f1c41f66fb98b4ec218c9268beb9b23295037320f725cec567ae10`,
+  `c34c5fe9d8e3154c3450f1cf28d4c9a6f1f631feb4735296fc6b891af5de1b15`,
+  `b9f9876d438b4b6770e84013c515ae54791b14f0e740de67283fb3de20f655a6`,
+  `0026dce1124fb3e9fc027dca785101c76a77b63882deac9e1951d5ce2d46a1df`,
+  `0f1a8ca2652e7537628c82885f5d5d0cb4421189c31255bb0f05648991083022`,
+  and `46282d8e81b1bd512263443e97955b1650944684f6c1d0ccd1341f52218bd8d5`.
+- Materializer, producer, checker, allocator, and renderer SHA-256 values are
+  `69817bd0bac15097f80c6d194b7b27618bc96f494aab806aeb6d009a9c384c5c`,
+  `fd33448f2841d0502509201a5bf6fd2f279f3f2c67cff8f3d4391b9ed7d9ce3e`,
+  `a003aee74e01c2729136e244474f1fac08a06ae9ee9331752f56d1bfbffe9e79`,
+  `6d7559449c35cd6db3dca31dbbdb510efbb45d1dc0a96c4f01f59c6a8461403b`,
+  and `4a08b6a5a9a8b12926ab9417bc330a4e94eb60c3b4afe88226ef232e2653a17a`.
 
 ---
 
@@ -1041,32 +1291,107 @@ current raw census, and complete lineage were rebuilt.
 - Produces: one atomic cleanup record per batch and a final record whose dependencies
   name only earlier-created lower IDs.
 
+Before any Task 5 authority sequence, materialize Appendix B.1 verbatim, authenticate
+the materializer itself, extract the tracked Appendix A.1/B/C/D sources, and establish
+this fail-closed preflight. Re-run `task26000_verify_tool_authority` immediately
+before every later Task 5/Task 7 producer, checker, allocator, or renderer sequence; a mismatch stops
+before that sequence executes.
+
+```bash
+task26000_tool_authority="${task26000_tmp_root}/task26000_tool_authority.py"
+task26000_plan='Docs/superpowers/plans/2026-08-30-task-26000-ruff-formatter-debt.md'
+task26000_manifest_producer="${task26000_tmp_root}/task26000_manifest_producer.py"
+task26000_manifest_checker="${task26000_tmp_root}/task26000_manifest_check.py"
+task26000_allocator="${task26000_tmp_root}/task26000_allocate_ids.py"
+task26000_renderer="${task26000_tmp_root}/task26000_render_cleanup.py"
+task26000_verify_child_hashes() {
+  printf '%s  %s\n' \
+    'fd33448f2841d0502509201a5bf6fd2f279f3f2c67cff8f3d4391b9ed7d9ce3e' "${task26000_manifest_producer}" \
+    'a003aee74e01c2729136e244474f1fac08a06ae9ee9331752f56d1bfbffe9e79' "${task26000_manifest_checker}" \
+    '6d7559449c35cd6db3dca31dbbdb510efbb45d1dc0a96c4f01f59c6a8461403b' "${task26000_allocator}" \
+    '4a08b6a5a9a8b12926ab9417bc330a4e94eb60c3b4afe88226ef232e2653a17a' "${task26000_renderer}" | shasum -a 256 -c - || {
+      echo 'E_TOOL_AUTHORITY_PREFLIGHT: child digest mismatch' >&2
+      exit 2
+    }
+}
+printf '%s  %s\n' \
+  '69817bd0bac15097f80c6d194b7b27618bc96f494aab806aeb6d009a9c384c5c' \
+  "${task26000_tool_authority}" | shasum -a 256 -c - || {
+    echo 'E_TOOL_AUTHORITY_PREFLIGHT: materializer digest mismatch' >&2
+    exit 2
+  }
+"${task26000_python}" "${task26000_tool_authority}" \
+  --plan "${task26000_plan}" \
+  --producer "${task26000_manifest_producer}" \
+  --checker "${task26000_manifest_checker}" \
+  --allocator "${task26000_allocator}" \
+  --renderer "${task26000_renderer}" || {
+    echo 'E_TOOL_AUTHORITY_PREFLIGHT: materialization failed' >&2
+    exit 2
+  }
+task26000_verify_child_hashes
+task26000_verify_tool_authority() {
+  printf '%s  %s\n' \
+    '69817bd0bac15097f80c6d194b7b27618bc96f494aab806aeb6d009a9c384c5c' \
+    "${task26000_tool_authority}" | shasum -a 256 -c - || {
+      echo 'E_TOOL_AUTHORITY_PREFLIGHT: materializer digest mismatch' >&2
+      exit 2
+    }
+  task26000_verify_child_hashes
+  "${task26000_python}" "${task26000_tool_authority}" \
+    --plan "${task26000_plan}" \
+    --producer "${task26000_manifest_producer}" \
+    --checker "${task26000_manifest_checker}" \
+    --allocator "${task26000_allocator}" \
+    --renderer "${task26000_renderer}" \
+    --verify-only || {
+      echo 'E_TOOL_AUTHORITY_PREFLIGHT: verification failed' >&2
+      exit 2
+    }
+}
+task26000_verify_tool_authority
+```
+
 - [ ] **Step 1: Allocate IDs against the live repository and in-flight work**
 
   Materialize Appendix C, then run:
 
   ```bash
+  task26000_verify_tool_authority
   "${task26000_python}" \
-    "${task26000_tmp_root}/task26000_allocate_ids.py" --self-test
+    "${task26000_tmp_root}/task26000_allocate_ids.py" --self-test || {
+      echo 'E_ALLOCATOR_SELF_TEST' >&2
+      exit 2
+    }
+  task26000_verify_tool_authority
   "${task26000_python}" \
     "${task26000_tmp_root}/task26000_allocate_ids.py" \
     --repo "$PWD" \
     --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
-    --output "${task26000_tmp_root}/raw/allocation.json"
+    --output "${task26000_tmp_root}/raw/allocation.json" || {
+      echo 'E_INITIAL_ALLOCATION' >&2
+      exit 2
+    }
   "${task26000_python}" -m pytest \
-    Tests/CI/test_backlog_task_id_uniqueness.py -q
+    Tests/CI/test_backlog_task_id_uniqueness.py -q || {
+      echo 'E_INITIAL_IDENTITY_TEST' >&2
+      exit 2
+    }
   ```
 
   Expected scanner self-test stdout is exactly:
 
   ```text
-  allocation scanner self-tests: 8 cases passed
+  allocation scanner self-tests: 38 cases passed
   ```
 
   Inspect the scanner's claims for title-fragment renumbered twins before accepting
   its leapfrog allocation. Do not assume the local maximum is authoritative; the
   scanner's refreshed origin branches, paginated PR-head snapshots, and all local
-  worktrees are mandatory inputs.
+  worktrees are mandatory inputs. Its canonical audit records `manifest_pin`,
+  `observed_origin_dev`, and `origin_dev_ancestry`. Equal tips and verified
+  fast-forward descendants are accepted; a missing pin/tip or non-ancestor fails
+  exact `E_ORIGIN_DEV_DIVERGED`.
 
 - [ ] **Step 2: Create non-final cleanup records first**
 
@@ -1077,22 +1402,38 @@ current raw census, and complete lineage were rebuilt.
   rendering. Then invoke the renderer once:
 
   ```bash
+  task26000_verify_tool_authority
   "${task26000_python}" \
-    "${task26000_tmp_root}/task26000_render_cleanup.py" --self-test
+    "${task26000_tmp_root}/task26000_render_cleanup.py" --self-test || {
+      echo 'E_RENDERER_SELF_TEST' >&2
+      exit 2
+    }
   if test -e "${task26000_tmp_root}/cleanup-render-transaction.json"; then
+    task26000_verify_tool_authority
     "${task26000_python}" \
       "${task26000_tmp_root}/task26000_render_cleanup.py" \
       --mode recover \
       --repo "$PWD" \
-      --journal "${task26000_tmp_root}/cleanup-render-transaction.json"
+      --journal "${task26000_tmp_root}/cleanup-render-transaction.json" || {
+        echo 'E_RENDERER_RECOVERY' >&2
+        exit 2
+      }
   fi
-  test ! -e "${task26000_tmp_root}/cleanup-render-transaction.json"
+  test ! -e "${task26000_tmp_root}/cleanup-render-transaction.json" || {
+    echo 'E_RENDERER_RECOVERY: journal remains' >&2
+    exit 2
+  }
+  task26000_verify_tool_authority
   "${task26000_python}" \
     "${task26000_tmp_root}/task26000_allocate_ids.py" \
     --repo "$PWD" \
     --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
     --output "${task26000_tmp_root}/raw/allocation-precreate.json" \
-    --expect-map "${task26000_tmp_root}/raw/allocation.json"
+    --expect-map "${task26000_tmp_root}/raw/allocation.json" || {
+      echo 'E_PRECREATE_ALLOCATION' >&2
+      exit 2
+    }
+  task26000_verify_tool_authority
   "${task26000_python}" \
     "${task26000_tmp_root}/task26000_render_cleanup.py" \
     --mode create \
@@ -1101,7 +1442,10 @@ current raw census, and complete lineage were rebuilt.
     --allocation "${task26000_tmp_root}/raw/allocation.json" \
     --paths0-output "${task26000_tmp_root}/raw/new-task-paths0" \
     --active-state-output "${task26000_tmp_root}/active-cleanup-state.json" \
-    --journal "${task26000_tmp_root}/cleanup-render-transaction.json"
+    --journal "${task26000_tmp_root}/cleanup-render-transaction.json" || {
+      echo 'E_CREATE_RENDER' >&2
+      exit 2
+    }
   ```
 
   The renderer validates every batch/title/allocation before writing, creates every
@@ -1113,8 +1457,8 @@ current raw census, and complete lineage were rebuilt.
   absent handoffs. Nothing is silently overwritten. `--active-state-output`
   atomically publishes the outside-repository handoff that later tasks must use
   instead of hardcoding `allocation.json` or `new-task-paths0`. The renderer self-test must print exactly
-  `cleanup renderer self-tests: 5 cases passed` before any real create, refresh, or
-  reallocate invocation.
+  `cleanup renderer self-tests: 9 cases passed` before any real create or reallocate
+  invocation; its ninth case proves the superseded refresh entry point changes no bytes.
 
 - [ ] **Step 3: Create the final cleanup record last**
 
@@ -1135,15 +1479,21 @@ current raw census, and complete lineage were rebuilt.
   Run:
 
   ```bash
+  task26000_verify_tool_authority
   "${task26000_python}" \
     "${task26000_tmp_root}/task26000_manifest_check.py" \
     --phase final \
     --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
-    --repo "$PWD"
+    --repo "$PWD" || {
+      echo 'E_TASK5_MANIFEST_CHECK' >&2
+      exit 2
+    }
   ```
 
   Expected: exit zero with counts for historical sets, current classifications,
-  batches, cleanup records, and zero blockers.
+  batches, cleanup records, and zero blockers. Task 5 deliberately omits
+  `--require-live-current`: it validates cleanup records against the frozen
+  authority-cut artifact.
 
 - [ ] **Step 5: Run Backlog identity and platform-name guards**
 
@@ -1151,8 +1501,14 @@ current raw census, and complete lineage were rebuilt.
 
   ```bash
   "${task26000_python}" -m pytest \
-    Tests/CI/test_backlog_task_id_uniqueness.py -q
-  git diff --check
+    Tests/CI/test_backlog_task_id_uniqueness.py -q || {
+      echo 'E_TASK5_IDENTITY_TEST' >&2
+      exit 2
+    }
+  git diff --check || {
+    echo 'E_TASK5_DIFF_CHECK' >&2
+    exit 2
+  }
   ```
 
   Expected: three task-ID tests pass, every new basename is checkout-safe, and diff
@@ -1161,46 +1517,85 @@ current raw census, and complete lineage were rebuilt.
 
 - [ ] **Step 6: Commit the evidence and cleanup records**
 
-  Immediately repeat the remote-ref, open-PR-head, candidate-ID, filename/frontmatter,
-  and uniqueness scans from Step 1. The normal no-collision path is:
+  First repeat the remote-ref, open-PR-head, candidate-ID, filename/frontmatter,
+  and uniqueness scans from Step 1 as a precommit collision probe. This is not the
+  final claim audit; the final authenticated scan occurs after the active allocation
+  is resolved below. The normal no-collision probe is:
 
   ```bash
-  "${task26000_python}" \
-    "${task26000_tmp_root}/task26000_allocate_ids.py" \
-    --repo "$PWD" \
-    --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
-    --output "${task26000_tmp_root}/raw/allocation-rescan.json" \
-    --expect-map "${task26000_tmp_root}/raw/allocation.json"
+  task26000_reallocation_required=0
+  task26000_rescan_stderr="${task26000_tmp_root}/raw/allocation-rescan.stderr"
+  : > "${task26000_rescan_stderr}" || {
+    echo 'E_ALLOCATION_RESCAN: cannot create stderr capture' >&2
+    exit 2
+  }
+  task26000_verify_tool_authority
+  if "${task26000_python}" \
+      "${task26000_tmp_root}/task26000_allocate_ids.py" \
+      --repo "$PWD" \
+      --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
+      --output "${task26000_tmp_root}/raw/allocation-rescan.json" \
+      --expect-map "${task26000_tmp_root}/raw/allocation.json" \
+      2> "${task26000_rescan_stderr}"; then
+    test ! -s "${task26000_rescan_stderr}" || {
+      echo 'E_ALLOCATION_RESCAN: unexpected stderr on success' >&2
+      exit 2
+    }
+  else
+    task26000_rescan_status=$?
+    if test "${task26000_rescan_status}" -eq 2 && \
+        "${task26000_python}" -c \
+          'import sys; from pathlib import Path; lines=Path(sys.argv[1]).read_text(encoding="utf-8").splitlines(); raise SystemExit(0 if len(lines)==1 and lines[0].split(":",1)[0]=="E_ID_COLLISION" else 1)' \
+          "${task26000_rescan_stderr}"; then
+      cat "${task26000_rescan_stderr}" >&2
+      task26000_reallocation_required=1
+    else
+      cat "${task26000_rescan_stderr}" >&2
+      echo 'E_ALLOCATION_RESCAN: non-collision allocator failure' >&2
+      exit 2
+    fi
+  fi
   ```
 
-  `E_ORIGIN_DEV` is not an allocation collision. It means the fetch advanced
-  `origin/dev` beyond the manifest pin: stop, run the full Task 7 Step 1 repin cycle
-  (including census, lineage, renderer, mutations, and review), and return here only
-  with a manifest pinned to the refreshed remote-tracking commit.
+  The scanner accepts an observed `origin/dev` equal to the manifest pin or a verified
+  fast-forward descendant and records both object IDs plus the ancestry result. Exact
+  `E_ORIGIN_DEV_DIVERGED` means the pin/tip is missing or the observed tip is not a
+  descendant (including force-push/divergence), and is a hard stop. A normal
+  descendant does not trigger another full census/review cycle.
 
   An `E_ID_COLLISION` after rendering, or a reviewed change that adds, removes, or
   renames any batch label, must not be repaired with manual renames or a sequence of
   `refresh` calls. Preserve the old manifest `cleanup_records` and their task files,
   update only the reviewed `batches` / `final_batch_label` structure when applicable,
-  and run this exact recovery once. The allocator intentionally runs without
+  and run this exact recovery at most once. The allocator intentionally runs without
   `--expect-map`: its fresh audit must observe every old generated ID as occupied,
   and Appendix D rejects an audit that does not contain all of those old IDs.
 
   ```bash
-  "${task26000_python}" \
-    "${task26000_tmp_root}/task26000_allocate_ids.py" \
-    --repo "$PWD" \
-    --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
-    --output "${task26000_tmp_root}/raw/allocation-recovery.json"
-  "${task26000_python}" \
-    "${task26000_tmp_root}/task26000_render_cleanup.py" \
-    --mode reallocate \
-    --repo "$PWD" \
-    --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
-    --allocation "${task26000_tmp_root}/raw/allocation-recovery.json" \
-    --paths0-output "${task26000_tmp_root}/raw/reallocated-task-paths0" \
-    --active-state-output "${task26000_tmp_root}/active-cleanup-state.json" \
-    --journal "${task26000_tmp_root}/cleanup-render-transaction.json"
+  if test "${task26000_reallocation_required}" -eq 1; then
+    task26000_verify_tool_authority
+    "${task26000_python}" \
+      "${task26000_tmp_root}/task26000_allocate_ids.py" \
+      --repo "$PWD" \
+      --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
+      --output "${task26000_tmp_root}/raw/allocation-recovery.json" || {
+        echo 'E_REALLOCATION_AUDIT' >&2
+        exit 2
+      }
+    task26000_verify_tool_authority
+    "${task26000_python}" \
+      "${task26000_tmp_root}/task26000_render_cleanup.py" \
+      --mode reallocate \
+      --repo "$PWD" \
+      --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
+      --allocation "${task26000_tmp_root}/raw/allocation-recovery.json" \
+      --paths0-output "${task26000_tmp_root}/raw/reallocated-task-paths0" \
+      --active-state-output "${task26000_tmp_root}/active-cleanup-state.json" \
+      --journal "${task26000_tmp_root}/cleanup-render-transaction.json" || {
+        echo 'E_REALLOCATION_RENDER' >&2
+        exit 2
+      }
+  fi
   ```
 
   `reallocate` is journaled and no-overwrite: before any retirement it verifies every
@@ -1215,18 +1610,25 @@ current raw census, and complete lineage were rebuilt.
   `update-index --add --remove` so both a tracked deletion and a retired, never-tracked
   path are handled without broadening the stage set.
 
-  A normal refresh/reallocation removes its journal only after the selected
+  A normal reallocation removes its journal only after the selected
   generation is fully verified. After an interruption, or whenever the journal
   remains, run this exact idempotent recovery command before any renderer, scanner,
   staging, or commit command; do not delete or edit the journal manually:
 
   ```bash
+  task26000_verify_tool_authority
   "${task26000_python}" \
     "${task26000_tmp_root}/task26000_render_cleanup.py" \
     --mode recover \
     --repo "$PWD" \
-    --journal "${task26000_tmp_root}/cleanup-render-transaction.json"
-  test ! -e "${task26000_tmp_root}/cleanup-render-transaction.json"
+    --journal "${task26000_tmp_root}/cleanup-render-transaction.json" || {
+      echo 'E_REALLOCATION_RECOVERY' >&2
+      exit 2
+    }
+  test ! -e "${task26000_tmp_root}/cleanup-render-transaction.json" || {
+    echo 'E_REALLOCATION_RECOVERY: journal remains' >&2
+    exit 2
+  }
   ```
 
   Expected output is exactly `cleanup renderer recovery: rolled-back` when the old
@@ -1240,7 +1642,7 @@ current raw census, and complete lineage were rebuilt.
   `schema_version`, `mode`, the active label-to-ID `allocation`, the absolute active
   `paths0_output`, and `record_set_sha256`. The digest covers the sorted closed
   identity projection (`label`, `path`, `task_id`) of the current manifest records,
-  so an ordinary repin refresh does not invalidate the allocation handoff. Before
+  so an ordinary verified fast-forward of `origin/dev` does not invalidate the allocation handoff.
   `paths0_sha256` separately binds the exact NUL path-list bytes, including the
   old-plus-new union required after reallocation. Before any later task consumes the
   allocation or path file, run this exact resolver; a
@@ -1248,9 +1650,10 @@ current raw census, and complete lineage were rebuilt.
   `E_ACTIVE_ALLOCATION` and blocks all staging or scans:
 
   ```bash
+  task26000_resolve_active_allocation() {
   task26000_active_state="${task26000_tmp_root}/active-cleanup-state.json"
   task26000_active_exports="$(
-  env -u PYTHONOPTIMIZE "${task26000_python}" -c '
+  env -u PYTHONOPTIMIZE "${task26000_python}" -c 'if True:
   import hashlib, json, os, shlex, sys
   from pathlib import Path, PurePosixPath
   def need(condition):
@@ -1303,7 +1706,36 @@ current raw census, and complete lineage were rebuilt.
     "${task26000_tmp_root}" \
     "$PWD"
   )" || { echo 'E_ACTIVE_ALLOCATION' >&2; exit 2; }
-  eval "${task26000_active_exports}"
+  eval "${task26000_active_exports}" || {
+    echo 'E_ACTIVE_ALLOCATION: export evaluation failed' >&2
+    exit 2
+  }
+  }
+  task26000_resolve_active_allocation
+  ```
+
+  After either the normal probe or the one permitted reallocation completes, run the
+  resolver above, then perform this authenticated scan against the newly active
+  allocation. This is Task 5's last fetch and claim scan. A renewed
+  `E_ID_COLLISION` is a hard stop: do not run a second reallocation and do not stage
+  or commit. Only this successful canonical audit may be carried forward as the
+  Task 5 allocation authority.
+
+  ```bash
+  test ! -e "${task26000_tmp_root}/raw/allocation-closeout-rescan.json" || {
+    echo 'E_FINAL_ALLOCATION_AUDIT: output already exists' >&2
+    exit 2
+  }
+  task26000_verify_tool_authority
+  "${task26000_python}" \
+    "${task26000_tmp_root}/task26000_allocate_ids.py" \
+    --repo "$PWD" \
+    --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
+    --output "${task26000_tmp_root}/raw/allocation-closeout-rescan.json" \
+    --expect-map "${task26000_active_allocation}" || {
+      echo 'E_FINAL_ALLOCATION_AUDIT: final allocation scan failed' >&2
+      exit 2
+    }
   ```
 
   A mismatch is a hard stop, so a process interruption before the manifest commit
@@ -1314,43 +1746,80 @@ current raw census, and complete lineage were rebuilt.
   new handoff before mutation and restores the exact prior handoff on every caught
   rollback; it performs no fallible cleanup or handoff write after manifest commit.
 
-  After either the normal rescan or the recovery command, rerun the positive checker,
+  After the final successful allocation audit, rerun the positive checker,
   identity guard, and diff guard unconditionally:
 
   ```bash
+  task26000_verify_tool_authority
   "${task26000_python}" \
     "${task26000_tmp_root}/task26000_manifest_check.py" \
     --phase final \
     --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
-    --repo "$PWD"
+    --repo "$PWD" || {
+      echo 'E_FINAL_MANIFEST_CHECK' >&2
+      exit 2
+    }
   "${task26000_python}" -m pytest \
-    Tests/CI/test_backlog_task_id_uniqueness.py -q
-  git diff --check
+    Tests/CI/test_backlog_task_id_uniqueness.py -q || {
+      echo 'E_FINAL_IDENTITY_TEST' >&2
+      exit 2
+    }
+  git diff --check || {
+    echo 'E_FINAL_DIFF_CHECK' >&2
+    exit 2
+  }
   ```
 
   If the normal rescan succeeded, stage and commit with the original create-mode
   path list:
 
   ```bash
-  git add Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json
+  git add Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json || {
+    echo 'E_TASK5_STAGE' >&2
+    exit 2
+  }
   git add Docs/superpowers/plans/2026-08-30-task-26000-ruff-formatter-debt.md \
-    'backlog/tasks/task-26000 - Characterize-current-dev-inherited-Ruff-formatter-drift.md'
+    'backlog/tasks/task-26000 - Characterize-current-dev-inherited-Ruff-formatter-drift.md' || {
+      echo 'E_TASK5_STAGE' >&2
+      exit 2
+    }
   git add --pathspec-from-file="${task26000_tmp_root}/raw/new-task-paths0" \
-    --pathspec-file-nul
-  git commit -m "chore(backlog): partition current Ruff formatter debt"
+    --pathspec-file-nul || {
+      echo 'E_TASK5_STAGE' >&2
+      exit 2
+    }
+  git commit -m "chore(backlog): partition current Ruff formatter debt" || {
+    echo 'E_TASK5_COMMIT' >&2
+    exit 2
+  }
   ```
 
   If recovery ran, stage the same durable inputs plus the exact removal/addition
   union, inspect its name-status, and commit instead with:
 
   ```bash
-  git add Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json
+  git add Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json || {
+    echo 'E_TASK5_STAGE' >&2
+    exit 2
+  }
   git add Docs/superpowers/plans/2026-08-30-task-26000-ruff-formatter-debt.md \
-    'backlog/tasks/task-26000 - Characterize-current-dev-inherited-Ruff-formatter-drift.md'
+    'backlog/tasks/task-26000 - Characterize-current-dev-inherited-Ruff-formatter-drift.md' || {
+      echo 'E_TASK5_STAGE' >&2
+      exit 2
+    }
   git update-index --add --remove -z --stdin \
-    < "${task26000_tmp_root}/raw/reallocated-task-paths0"
-  git diff --cached --name-status -- backlog/tasks
-  git commit -m "chore(backlog): partition current Ruff formatter debt"
+    < "${task26000_tmp_root}/raw/reallocated-task-paths0" || {
+      echo 'E_TASK5_STAGE' >&2
+      exit 2
+    }
+  git diff --cached --name-status -- backlog/tasks || {
+    echo 'E_TASK5_STAGED_DIFF' >&2
+    exit 2
+  }
+  git commit -m "chore(backlog): partition current Ruff formatter debt" || {
+    echo 'E_TASK5_COMMIT' >&2
+    exit 2
+  }
   ```
 
 ---
@@ -1392,7 +1861,9 @@ current raw census, and complete lineage were rebuilt.
   Reproduce factual findings against the raw snapshots and Git history. Apply only
   verified corrections, regenerate canonical JSON, rerun all negative mutations and
   the positive checker, then request re-review. Repeat until the reviewer returns
-  APPROVED.
+  APPROVED. Task 6 review is point-in-time artifact review and therefore omits
+  `--require-live-current`; reviewers must still authenticate every captured
+  revision/tree/blob and must not reinterpret a later mutable ref as captured truth.
 
 - [ ] **Step 3: Commit reviewed corrections**
 
@@ -1404,17 +1875,44 @@ current raw census, and complete lineage were rebuilt.
   changes with the selected exact path set and commit:
 
   ```bash
-  git add Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json
+  task26000_resolve_active_allocation || {
+    echo 'E_TASK6_ACTIVE_ALLOCATION' >&2
+    exit 2
+  }
+  git add Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json || {
+    echo 'E_TASK6_STAGE' >&2
+    exit 2
+  }
   git add Docs/superpowers/plans/2026-08-30-task-26000-ruff-formatter-debt.md \
-    'backlog/tasks/task-26000 - Characterize-current-dev-inherited-Ruff-formatter-drift.md'
+    'backlog/tasks/task-26000 - Characterize-current-dev-inherited-Ruff-formatter-drift.md' || {
+      echo 'E_TASK6_STAGE' >&2
+      exit 2
+    }
   if test "${task26000_active_stage_mode}" = add; then
-    git add --pathspec-from-file="${task26000_active_paths0}" --pathspec-file-nul
+    git add --pathspec-from-file="${task26000_active_paths0}" --pathspec-file-nul || {
+      echo 'E_TASK6_STAGE' >&2
+      exit 2
+    }
   elif test "${task26000_active_stage_mode}" = update-index; then
-    git update-index --add --remove -z --stdin < "${task26000_active_paths0}"
+    git update-index --add --remove -z --stdin < "${task26000_active_paths0}" || {
+      echo 'E_TASK6_STAGE' >&2
+      exit 2
+    }
   else
     echo 'E_ACTIVE_ALLOCATION: invalid stage mode' >&2; exit 2
   fi
-  git commit -m "docs: harden TASK-26000 formatter debt records"
+  git diff --cached --name-status -- \
+    Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
+    Docs/superpowers/plans/2026-08-30-task-26000-ruff-formatter-debt.md \
+    'backlog/tasks/task-26000 - Characterize-current-dev-inherited-Ruff-formatter-drift.md' \
+    backlog/tasks || {
+      echo 'E_TASK6_STAGED_DIFF' >&2
+      exit 2
+    }
+  git commit -m "docs: harden TASK-26000 formatter debt records" || {
+    echo 'E_TASK6_COMMIT' >&2
+    exit 2
+  }
   ```
 
   Skip only if the reviewer approved without changes.
@@ -1433,126 +1931,436 @@ current raw census, and complete lineage were rebuilt.
 - Consumes: approved manifest and cleanup records.
 - Produces: a Done characterization task; future formatter cleanup remains To Do.
 
-- [ ] **Step 1: Recheck `origin/dev` before closeout**
+- [ ] **Step 1: Authenticate the owner-approved immutable authority cut**
 
-  Fetch and compare `origin/dev` with the recorded current pin:
-
-  ```bash
-  task26000_old_current_pin="${task26000_current_pin}"
-  task26000_old_common_ancestor="${task26000_common_ancestor}"
-  git fetch origin dev
-  task26000_new_current_pin="$(git rev-parse refs/remotes/origin/dev)"
-  if test "${task26000_new_current_pin}" != "${task26000_old_current_pin}"; then
-    task26000_status="$(git -C "${task26000_tmp_root}/checkouts/current" status --porcelain=v1 --untracked-files=all)" || exit 2
-    task26000_ignored="$(git -C "${task26000_tmp_root}/checkouts/current" ls-files --others --ignored --exclude-standard)" || exit 2
-    test -z "${task26000_status}"
-    test -z "${task26000_ignored}"
-    git -C "${task26000_tmp_root}/checkouts/current" diff --quiet
-    git -C "${task26000_tmp_root}/checkouts/current" diff --cached --quiet
-    git -C "${task26000_evidence_repo}" worktree remove "${task26000_tmp_root}/checkouts/current"
-    git -C "${task26000_evidence_repo}" worktree add --detach "${task26000_tmp_root}/checkouts/current" "${task26000_new_current_pin}"
-
-    task26000_new_common_ancestor="$(git -C "${task26000_evidence_repo}" merge-base 642b1c782fe6c066a781314dae669a55b05b62ad "${task26000_new_current_pin}")"
-    if test "${task26000_new_common_ancestor}" != "${task26000_old_common_ancestor}"; then
-      task26000_common_status="$(git -C "${task26000_tmp_root}/checkouts/common" status --porcelain=v1 --untracked-files=all)" || exit 2
-      task26000_common_ignored="$(git -C "${task26000_tmp_root}/checkouts/common" ls-files --others --ignored --exclude-standard)" || exit 2
-      test -z "${task26000_common_status}"
-      test -z "${task26000_common_ignored}"
-      git -C "${task26000_evidence_repo}" worktree remove "${task26000_tmp_root}/checkouts/common"
-      git -C "${task26000_evidence_repo}" worktree add --detach "${task26000_tmp_root}/checkouts/common" "${task26000_new_common_ancestor}"
-    fi
-  fi
-  ```
-
-  If the pin changed, rebase only the TASK-26000 range using the previously recorded
-  task base, then update the full `task_base`, `current`, and `common` values in the
-  design, task, plan, and manifest. Recreate the detached checkout before overwriting
-  `${task26000_tmp_root}/raw/current.json`; always rerun the current census, and rerun
-  the common census when its pin changed. Assert full HEAD, ordinary clean status,
-  and no ignored residue in each recreated checkout. Rebuild common-to-current
-  lineage, classifications, batches, record digests, and allocator evidence. A
-  renderer refresh may replace only a task file whose current bytes match its old
-  manifest SHA-256. If labels or IDs change, use Appendix D's hash-guarded
-  structural-regeneration mode and its old-plus-new NUL pathspec output. Resolve any
-  ID collision, rerun the census/manifest self-tests, the positive checker, the
-  task-ID guard, and independent review. Never reset or reuse the stale detached
-  checkout or raw current snapshot.
-
-  A changed pin does not flow directly into Done closeout. After the corrected
-  manifest/records receive independent approval, stage and commit that refresh as a
-  separate cycle:
+  Do not fetch, rebase, repin, or regenerate the point-in-time evidence again. The
+  approved authority cut `S`, manifest `task_base`, and manifest `current` are
+  `e555df102c950c29beed5e7119f433d35eee1f3c`; common is
+  `f0e8961222fe1a7a3ac7566f7f78142e717358f3`. Repeat Task 5's exact Appendix B.1
+  materialization/function block, call `task26000_verify_tool_authority`, verify the
+  manifest's canonical authority-cut provenance, revisions, zero blockers, and
+  completed label-to-record bindings, and obtain independent approval of the final
+  allocated artifact. All census,
+  lineage, provenance, PR, canonical, mutation, and review evidence remains bound to
+  immutable object IDs. A mutable `origin/dev` fast-forward does not invalidate the
+  artifact; Step 2 owns the one later ancestry and collision audit.
 
   ```bash
-  git add -- \
-    Docs/superpowers/specs/2026-08-30-task-26000-ruff-formatter-debt-design.md \
-    Docs/superpowers/plans/2026-08-30-task-26000-ruff-formatter-debt.md \
-    Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
-    'backlog/tasks/task-26000 - Characterize-current-dev-inherited-Ruff-formatter-drift.md'
-  # First rerun Task 5's exact active-allocation resolver. It must bind
-  # task26000_active_allocation, task26000_active_paths0, and
-  # task26000_active_stage_mode to the one audit matching cleanup_records.
-  if test "${task26000_active_stage_mode}" = add; then
-    git add --pathspec-from-file="${task26000_active_paths0}" --pathspec-file-nul
-  elif test "${task26000_active_stage_mode}" = update-index; then
-    git update-index --add --remove -z --stdin < "${task26000_active_paths0}"
-  else
-    echo 'E_ACTIVE_ALLOCATION: invalid stage mode' >&2; exit 2
-  fi
+  task26000_verify_tool_authority
   "${task26000_python}" \
     "${task26000_tmp_root}/task26000_manifest_check.py" \
     --phase final \
     --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
-    --repo "$PWD"
-  "${task26000_python}" -m pytest \
-    Tests/CI/test_backlog_task_id_uniqueness.py -q
-  task26000_task_base=$("${task26000_python}" \
-    -c 'import json; print(json.load(open("Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json"))["revisions"]["task_base"])')
-  git diff --check "${task26000_task_base}"
-  test -z "$(git diff --name-only "${task26000_task_base}" -- '*.py')"
-  test -z "$(git ls-files --others --exclude-standard)"
-  git commit -m "docs: refresh TASK-26000 formatter debt pin"
-  test -z "$(git status --short)"
+    --repo "$PWD" || {
+      echo 'E_TASK7_INITIAL_MANIFEST_CHECK' >&2
+      exit 2
+    }
   ```
 
-  Restart Task 7 Step 1 after this commit; proceed to Step 2 only when a fresh fetch
-  leaves `origin/dev` equal to the committed manifest pin.
+  This is the only accepted cut for allocation. Do not run the checker's
+  `--require-live-current` diagnostic here: exact live equality was proved at capture,
+  while Step 2 deliberately accepts equality or verified fast-forward ancestry.
 
 - [ ] **Step 2: Unconditionally rescan live task-ID claims**
 
   Rerun Task 5's exact active-allocation resolver, then execute Appendix C against
-  that selected audit even when Step 1 found no `origin/dev` change:
+  that selected audit after Step 1 authenticates the immutable artifact. Preserve
+  Task 5's final audit under the no-overwrite archival name below before creating the
+  Task 7 audit. The first authenticated allocator invocation captures stderr and
+  authorizes recovery only when exit 2 carries exactly one `E_ID_COLLISION` error
+  code; every other exit or stderr shape stops before reading audit fields. Run the
+  Task-7-only fresh allocation and rollback-backed `reallocate` branch below exactly
+  once, obtain independent review, rerun the active-allocation resolver, prove the
+  closeout output is still absent, and run the authenticated closeout allocator once
+  more. A renewed
+  `E_ID_COLLISION` is a hard stop; do not reallocate again and do not continue
+  closeout. The first successful `raw/allocation-closeout-rescan.json` is the last
+  fetch and claim scan and the only audit allowed to populate the final evidence
+  variables.
 
   ```bash
-  "${task26000_python}" \
-    "${task26000_tmp_root}/task26000_allocate_ids.py" \
-    --repo "$PWD" \
-    --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
-    --output "${task26000_tmp_root}/raw/allocation-closeout-rescan.json" \
-    --expect-map "${task26000_active_allocation}"
+  task26000_task5_final_allocation_audit="${task26000_tmp_root}/raw/allocation-task5-final-rescan.json"
+  if test -e "${task26000_tmp_root}/raw/allocation-closeout-rescan.json"; then
+    test ! -e "${task26000_task5_final_allocation_audit}" || {
+      echo 'E_TASK5_AUDIT_ARCHIVE: archive already exists' >&2
+      exit 2
+    }
+    mv "${task26000_tmp_root}/raw/allocation-closeout-rescan.json" \
+      "${task26000_task5_final_allocation_audit}" || {
+        echo 'E_TASK5_AUDIT_ARCHIVE: move failed' >&2
+        exit 2
+      }
+  fi
+  test ! -e "${task26000_tmp_root}/raw/allocation-closeout-rescan.json" || {
+    echo 'E_FINAL_ALLOCATION_AUDIT: output already exists' >&2
+    exit 2
+  }
+  task26000_task7_reallocation_required=0
+  task26000_task7_scan_stderr="${task26000_tmp_root}/raw/allocation-task7-closeout.stderr"
+  : > "${task26000_task7_scan_stderr}" || {
+    echo 'E_FINAL_ALLOCATION_AUDIT: cannot create stderr capture' >&2
+    exit 2
+  }
+  task26000_verify_tool_authority
+  if "${task26000_python}" \
+      "${task26000_tmp_root}/task26000_allocate_ids.py" \
+      --repo "$PWD" \
+      --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
+      --output "${task26000_tmp_root}/raw/allocation-closeout-rescan.json" \
+      --expect-map "${task26000_active_allocation}" \
+      2> "${task26000_task7_scan_stderr}"; then
+    test ! -s "${task26000_task7_scan_stderr}" || {
+      echo 'E_FINAL_ALLOCATION_AUDIT: unexpected stderr on success' >&2
+      exit 2
+    }
+  else
+    task26000_task7_scan_status=$?
+    if test "${task26000_task7_scan_status}" -eq 2 && \
+        "${task26000_python}" -c \
+          'import sys; from pathlib import Path; lines=Path(sys.argv[1]).read_text(encoding="utf-8").splitlines(); raise SystemExit(0 if len(lines)==1 and lines[0].split(":",1)[0]=="E_ID_COLLISION" else 1)' \
+          "${task26000_task7_scan_stderr}"; then
+      cat "${task26000_task7_scan_stderr}" >&2
+      task26000_task7_reallocation_required=1
+    else
+      cat "${task26000_task7_scan_stderr}" >&2
+      echo 'E_FINAL_ALLOCATION_AUDIT: non-collision allocator failure' >&2
+      exit 2
+    fi
+  fi
+  ```
+
+  The next conditional block runs only when the preceding closeout allocator produced
+  the exact `E_ID_COLLISION` authorization; it is skipped after a successful scan.
+  Its Task-7-only audit path cannot collide with Task 5's preserved recovery audit.
+  It performs only the fresh allocation and rollback-backed reallocation, writes a
+  canonical review-request artifact binding the recovery audit, active handoff, and
+  resulting manifest, and then exits with `E_TASK7_REVIEW_REQUIRED`. It MUST NOT run
+  the active-allocation resolver or closeout allocator in the same invocation.
+
+  ```bash
+  if test "${task26000_task7_reallocation_required}" -eq 1; then
+    task26000_task7_review_request="${task26000_tmp_root}/raw/task7-reallocation-review-request.json"
+    task26000_task7_review_approval="${task26000_tmp_root}/raw/task7-reallocation-review-approval.json"
+    test ! -e "${task26000_tmp_root}/raw/allocation-task7-recovery.json" || {
+      echo 'E_TASK7_REALLOCATION: recovery audit already exists' >&2
+      exit 2
+    }
+    test ! -e "${task26000_task7_review_request}" || {
+      echo 'E_TASK7_REVIEW_REQUEST: request already exists' >&2
+      exit 2
+    }
+    test ! -e "${task26000_task7_review_approval}" || {
+      echo 'E_TASK7_REVIEW_REQUEST: premature approval exists' >&2
+      exit 2
+    }
+    task26000_verify_tool_authority
+    "${task26000_python}" \
+      "${task26000_tmp_root}/task26000_allocate_ids.py" \
+      --repo "$PWD" \
+      --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
+      --output "${task26000_tmp_root}/raw/allocation-task7-recovery.json" || {
+        echo 'E_TASK7_REALLOCATION: fresh allocation failed' >&2
+        exit 2
+      }
+    task26000_verify_tool_authority
+    "${task26000_python}" \
+      "${task26000_tmp_root}/task26000_render_cleanup.py" \
+      --mode reallocate \
+      --repo "$PWD" \
+      --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
+      --allocation "${task26000_tmp_root}/raw/allocation-task7-recovery.json" \
+      --paths0-output "${task26000_tmp_root}/raw/reallocated-task-paths0" \
+      --active-state-output "${task26000_tmp_root}/active-cleanup-state.json" \
+      --journal "${task26000_tmp_root}/cleanup-render-transaction.json" || {
+        echo 'E_TASK7_REALLOCATION: renderer failed' >&2
+        exit 2
+      }
+    test ! -e "${task26000_tmp_root}/raw/allocation-closeout-rescan.json" || {
+      echo 'E_FINAL_ALLOCATION_AUDIT: recovery produced an unexpected closeout audit' >&2
+      exit 2
+    }
+    "${task26000_python}" \
+      -c 'import hashlib,json,os,sys
+from pathlib import Path
+allocation,active,manifest,output = map(Path,sys.argv[1:])
+def digest(path):
+    if not path.is_file() or path.is_symlink():
+        raise SystemExit("invalid review-request input")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+value={
+    "active_state_sha256":digest(active),
+    "allocation_audit_sha256":digest(allocation),
+    "decision_required":"independent_review",
+    "manifest_sha256":digest(manifest),
+    "schema_version":1,
+}
+raw=(json.dumps(value,ensure_ascii=False,indent=2,sort_keys=True)+"\n").encode()
+fd=os.open(output,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+with os.fdopen(fd,"wb") as stream:
+    stream.write(raw)
+' \
+      "${task26000_tmp_root}/raw/allocation-task7-recovery.json" \
+      "${task26000_tmp_root}/active-cleanup-state.json" \
+      Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
+      "${task26000_task7_review_request}" || {
+        echo 'E_TASK7_REVIEW_REQUEST: materialization failed' >&2
+        exit 2
+      }
+    echo 'E_TASK7_REVIEW_REQUIRED: independent approval artifact required before resume' >&2
+    exit 2
+  fi
+  ```
+
+  The collision invocation ends at that boundary. An independent reviewer must inspect
+  the bound request, the reallocated task records, and the manifest, then separately
+  create canonical `raw/task7-reallocation-review-approval.json` with exactly
+  `schema_version: 1`, `decision: "APPROVED"`, and the SHA-256 of the exact request
+  bytes as `request_sha256`. No workflow command creates that approval. In a new
+  explicitly resumed shell, repeat Step 1's authority materialization and then
+  define the resolver without invoking it by running this exact definition-only
+  block:
+
+  ```bash
+  task26000_resolve_active_allocation() {
+  task26000_active_state="${task26000_tmp_root}/active-cleanup-state.json"
+  task26000_active_exports="$(
+  env -u PYTHONOPTIMIZE "${task26000_python}" -c 'if True:
+  import hashlib, json, os, shlex, sys
+  from pathlib import Path, PurePosixPath
+  def need(condition):
+      if not condition:
+          raise SystemExit("E_ACTIVE_ALLOCATION")
+  state_path, manifest_path, tmp_path, repo_path = map(lambda value: Path(value).resolve(), sys.argv[1:])
+  def valid_task_path(value):
+      relative = PurePosixPath(value)
+      return (
+          not relative.is_absolute()
+          and len(relative.parts) == 3
+          and relative.parts[:2] == ("backlog", "tasks")
+          and relative.parts[2] not in {".", ".."}
+          and "\n" not in value
+      )
+  state = json.loads(state_path.read_text(encoding="utf-8"))
+  manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+  records = manifest["cleanup_records"]
+  identities = sorted(
+      ({"label": row["label"], "path": row["path"], "task_id": row["task_id"]} for row in records),
+      key=lambda row: row["label"],
+  )
+  canonical = (json.dumps(identities, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+  expected_allocation = {row["label"]: row["task_id"] for row in identities}
+  need(set(state) == {"schema_version", "mode", "allocation", "paths0_output", "paths0_sha256", "record_set_sha256"})
+  need(state["schema_version"] == 1 and state["mode"] in {"create", "reallocate"})
+  need(state["allocation"] == expected_allocation)
+  need(state["record_set_sha256"] == hashlib.sha256(canonical).hexdigest())
+  paths0 = Path(state["paths0_output"]).resolve()
+  need(paths0.parent == tmp_path / "raw" and paths0.is_file() and not paths0.is_symlink())
+  expected_name = "new-task-paths0" if state["mode"] == "create" else "reallocated-task-paths0"
+  need(paths0.name == expected_name)
+  paths_raw = paths0.read_bytes()
+  need(state["paths0_sha256"] == hashlib.sha256(paths_raw).hexdigest())
+  fields = paths_raw.split(b"\0")
+  need(bool(fields) and fields[-1] == b"" and all(fields[:-1]))
+  decoded = [field.decode("utf-8") for field in fields[:-1]]
+  need(decoded == sorted(set(decoded)) and all(valid_task_path(value) for value in decoded))
+  current_paths = {row["path"] for row in records}
+  need(current_paths <= set(decoded))
+  retired_paths = set(decoded) - current_paths
+  need(state["mode"] == "reallocate" or not retired_paths)
+  need(not any(os.path.lexists(repo_path.joinpath(*PurePosixPath(value).parts)) for value in retired_paths))
+  stage_mode = "add" if state["mode"] == "create" else "update-index"
+  print("task26000_active_allocation=" + shlex.quote(str(state_path)))
+  print("task26000_active_paths0=" + shlex.quote(str(paths0)))
+  print("task26000_active_stage_mode=" + shlex.quote(stage_mode))
+  ' "${task26000_active_state}" \
+    Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
+    "${task26000_tmp_root}" \
+    "$PWD"
+  )" || { echo 'E_ACTIVE_ALLOCATION' >&2; exit 2; }
+  eval "${task26000_active_exports}" || {
+    echo 'E_ACTIVE_ALLOCATION: export evaluation failed' >&2
+    exit 2
+  }
+  }
+  ```
+
+  The definition block performs no reads or validation until called. After it is
+  defined, set `task26000_task7_resume_reallocation=1` and run only the resume block
+  below. Its first resolver invocation remains after canonical request and approval
+  validation. Missing,
+  noncanonical, open-schema, stale, or mismatched request/approval bytes stop before
+  the resolver and final scan:
+
+  ```bash
+  test "${task26000_task7_resume_reallocation:-0}" = 1 || {
+    echo 'E_TASK7_REVIEW_APPROVAL: explicit resume authorization missing' >&2
+    exit 2
+  }
+  task26000_task7_review_request="${task26000_tmp_root}/raw/task7-reallocation-review-request.json"
+  task26000_task7_review_approval="${task26000_tmp_root}/raw/task7-reallocation-review-approval.json"
+  task26000_task7_scan_stderr="${task26000_tmp_root}/raw/allocation-task7-closeout.stderr"
+  "${task26000_python}" -c 'import hashlib,json,sys
+from pathlib import Path
+request_path,approval_path,allocation_path,active_path,manifest_path=map(Path,sys.argv[1:])
+def canonical(path):
+    if not path.is_file() or path.is_symlink():
+        raise SystemExit("missing or linked review artifact")
+    raw=path.read_bytes()
+    value=json.loads(raw)
+    expected=(json.dumps(value,ensure_ascii=False,indent=2,sort_keys=True)+"\n").encode()
+    if raw != expected:
+        raise SystemExit("noncanonical review artifact")
+    return raw,value
+def digest(path):
+    if not path.is_file() or path.is_symlink():
+        raise SystemExit("invalid reviewed input")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+request_raw,request=canonical(request_path)
+_,approval=canonical(approval_path)
+if set(request)!={"schema_version","decision_required","manifest_sha256","allocation_audit_sha256","active_state_sha256"}:
+    raise SystemExit("open review-request schema")
+if request["schema_version"] != 1 or request["decision_required"] != "independent_review":
+    raise SystemExit("invalid review request")
+if request["allocation_audit_sha256"] != digest(allocation_path):
+    raise SystemExit("stale recovery allocation")
+if request["active_state_sha256"] != digest(active_path):
+    raise SystemExit("stale active state")
+if request["manifest_sha256"] != digest(manifest_path):
+    raise SystemExit("stale manifest")
+if set(approval)!={"schema_version","decision","request_sha256"}:
+    raise SystemExit("open review-approval schema")
+if approval != {"schema_version":1,"decision":"APPROVED","request_sha256":hashlib.sha256(request_raw).hexdigest()}:
+    raise SystemExit("invalid review approval")
+' \
+    "${task26000_task7_review_request}" \
+    "${task26000_task7_review_approval}" \
+    "${task26000_tmp_root}/raw/allocation-task7-recovery.json" \
+    "${task26000_tmp_root}/active-cleanup-state.json" \
+    Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json || {
+      echo 'E_TASK7_REVIEW_APPROVAL: validation failed' >&2
+      exit 2
+    }
+  task26000_resolve_active_allocation || {
+    echo 'E_TASK7_REVIEW_APPROVAL: active allocation resolution failed' >&2
+    exit 2
+  }
+  test ! -e "${task26000_tmp_root}/raw/allocation-closeout-rescan.json" || {
+    echo 'E_FINAL_ALLOCATION_AUDIT: reviewed resume found an existing closeout audit' >&2
+    exit 2
+  }
+  : > "${task26000_task7_scan_stderr}" || {
+    echo 'E_FINAL_ALLOCATION_AUDIT: cannot reset stderr capture' >&2
+    exit 2
+  }
+  task26000_verify_tool_authority
+  if "${task26000_python}" \
+      "${task26000_tmp_root}/task26000_allocate_ids.py" \
+      --repo "$PWD" \
+      --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
+      --output "${task26000_tmp_root}/raw/allocation-closeout-rescan.json" \
+      --expect-map "${task26000_active_allocation}" \
+      2> "${task26000_task7_scan_stderr}"; then
+    test ! -s "${task26000_task7_scan_stderr}" || {
+      echo 'E_FINAL_ALLOCATION_AUDIT: unexpected stderr on reviewed success' >&2
+      exit 2
+    }
+  else
+    task26000_task7_scan_status=$?
+    if test "${task26000_task7_scan_status}" -eq 2 && \
+        "${task26000_python}" -c \
+          'import sys; from pathlib import Path; lines=Path(sys.argv[1]).read_text(encoding="utf-8").splitlines(); raise SystemExit(0 if len(lines)==1 and lines[0].split(":",1)[0]=="E_ID_COLLISION" else 1)' \
+          "${task26000_task7_scan_stderr}"; then
+      cat "${task26000_task7_scan_stderr}" >&2
+      echo 'E_FINAL_ALLOCATION_AUDIT: renewed collision after reviewed reallocation' >&2
+    else
+      cat "${task26000_task7_scan_stderr}" >&2
+      echo 'E_FINAL_ALLOCATION_AUDIT: reviewed post-reallocation scan failed' >&2
+    fi
+    exit 2
+  fi
+  ```
+
+  Only after the first successful closeout allocator scan—whether the initial scan
+  or the one rerun after the bounded recovery—extract its canonical evidence and
+  rerun the authenticated final checker:
+
+  ```bash
+  task26000_final_allocation_audit="${task26000_tmp_root}/raw/allocation-closeout-rescan.json"
+  task26000_final_allocation_audit_sha256=$("${task26000_python}" -c \
+    'import hashlib,json,sys; from pathlib import Path; p=Path(sys.argv[1]); raw=p.read_bytes(); value=json.loads(raw); canonical=(json.dumps(value,ensure_ascii=False,indent=2,sort_keys=True)+"\n").encode(); assert raw==canonical,"allocation audit is not canonical"; print(hashlib.sha256(raw).hexdigest())' \
+    "${task26000_final_allocation_audit}") || {
+      echo 'E_FINAL_EVIDENCE: audit digest extraction failed' >&2
+      exit 2
+    }
+  task26000_final_manifest_pin=$("${task26000_python}" -c \
+    'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8"))["manifest_pin"])' \
+    "${task26000_final_allocation_audit}") || {
+      echo 'E_FINAL_EVIDENCE: manifest pin extraction failed' >&2
+      exit 2
+    }
+  task26000_final_observed_origin_dev=$("${task26000_python}" -c \
+    'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8"))["observed_origin_dev"])' \
+    "${task26000_final_allocation_audit}") || {
+      echo 'E_FINAL_EVIDENCE: observed origin extraction failed' >&2
+      exit 2
+    }
+  task26000_final_origin_dev_ancestry=$("${task26000_python}" -c \
+    'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8"))["origin_dev_ancestry"])' \
+    "${task26000_final_allocation_audit}") || {
+      echo 'E_FINAL_EVIDENCE: ancestry extraction failed' >&2
+      exit 2
+    }
+  test "${task26000_final_manifest_pin}" = \
+    'e555df102c950c29beed5e7119f433d35eee1f3c' || {
+      echo 'E_FINAL_MANIFEST_PIN' >&2
+      exit 2
+    }
+  case "${task26000_final_origin_dev_ancestry}" in
+    equal|fast_forward_descendant) ;;
+    *) echo 'E_ORIGIN_DEV_DIVERGED: invalid final ancestry' >&2; exit 2 ;;
+  esac
+  task26000_verify_tool_authority
   "${task26000_python}" \
     "${task26000_tmp_root}/task26000_manifest_check.py" \
     --phase final \
     --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
-    --repo "$PWD"
+    --repo "$PWD" || {
+      echo 'E_TASK7_MANIFEST_CHECK' >&2
+      exit 2
+    }
   "${task26000_python}" -m pytest \
-    Tests/CI/test_backlog_task_id_uniqueness.py -q
+    Tests/CI/test_backlog_task_id_uniqueness.py -q || {
+      echo 'E_TASK7_IDENTITY_TEST' >&2
+      exit 2
+    }
   ```
 
-  Appendix C fetches every mandatory remote/PR/worktree source before comparing the
-  full content-bound claim identities. `E_ORIGIN_DEV` returns to Step 1's repin
-  cycle. `E_ID_COLLISION` runs Task 5's fresh no-`--expect-map` allocation and
-  rollback-backed `reallocate`, reruns independent review, commits that recovery as
-  its own cycle, and restarts Step 1. The final manifest oracle and task-ID guard
-  must pass after the successful rescan; a recovery never permits closeout without
-  another fresh `--expect-map` scan.
+  Appendix C fetches every mandatory remote branch, paginated PR head, and worktree
+  task-ID source before comparing the full content-bound claim identities. It records
+  the manifest pin, observed `origin/dev`, and exact ancestry result; equality or a
+  verified fast-forward descendant is accepted. Missing/non-ancestor state fails
+  exact `E_ORIGIN_DEV_DIVERGED` and stops. Collision recovery is bounded by the
+  one-attempt procedure above. No fetch occurs after this final scan.
+  Retain the canonical
+  `raw/allocation-closeout-rescan.json` through review and integration; its
+  canonical final allocation-audit SHA-256 and bound `manifest_pin`,
+  `observed_origin_dev`, and `origin_dev_ancestry` variables are closeout evidence,
+  not replaceable summaries.
+  The ordinary point-in-time manifest oracle and task-ID guard must pass; PR-head
+  movement and task-ID/worktree collision checks remain strict.
 
 - [ ] **Step 3: Complete task hygiene before the final gate**
 
   Check all four TASK-26000 acceptance criteria, add concise Implementation Notes
   naming the pins, historical/current counts, comparison categories, batch labels,
   created record count, validator/mutation/review evidence, targeted test result,
-  no-Python diff, and `ADR required: no`. Set status to Done only after every item is
-  true. Do not mark any cleanup record Done.
+  no-Python diff, and `ADR required: no`. The Implementation Notes must also record
+  `task26000_final_allocation_audit_sha256`, `task26000_final_manifest_pin`,
+  `task26000_final_observed_origin_dev`, and
+  `task26000_final_origin_dev_ancestry` under their durable meanings: canonical final
+  allocation-audit SHA-256, `manifest_pin`, `observed_origin_dev`, and
+  `origin_dev_ancestry`. Set status to Done only after every item is true. Do not mark
+  any cleanup record Done.
 
 - [ ] **Step 4: Decide whether a lessons entry is warranted**
 
@@ -1569,25 +2377,55 @@ current raw census, and complete lineage were rebuilt.
   task boundary, so the checks include both index and working-tree closeout edits:
 
   ```bash
-  git add -- 'backlog/tasks/task-26000 - Characterize-current-dev-inherited-Ruff-formatter-drift.md'
+  git add -- 'backlog/tasks/task-26000 - Characterize-current-dev-inherited-Ruff-formatter-drift.md' || {
+    echo 'E_TASK7_STAGE' >&2
+    exit 2
+  }
   if test -n "${task26000_lesson_path}"; then
     case "${task26000_lesson_path}" in
-      backlog/docs/lessons-*.md) git add -- "${task26000_lesson_path}" ;;
+      backlog/docs/lessons-*.md) git add -- "${task26000_lesson_path}" || { echo 'E_TASK7_STAGE' >&2; exit 2; } ;;
       *) echo 'invalid TASK-26000 lesson path' >&2; exit 2 ;;
     esac
   fi
+  task26000_verify_tool_authority
   "${task26000_python}" \
     "${task26000_tmp_root}/task26000_manifest_check.py" \
     --phase final \
     --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
-    --repo "$PWD"
+    --repo "$PWD" || {
+      echo 'E_TASK7_FINAL_MANIFEST_CHECK' >&2
+      exit 2
+    }
   "${task26000_python}" -m pytest \
-    Tests/CI/test_backlog_task_id_uniqueness.py -q
+    Tests/CI/test_backlog_task_id_uniqueness.py -q || {
+      echo 'E_TASK7_FINAL_IDENTITY_TEST' >&2
+      exit 2
+    }
   task26000_task_base=$("${task26000_python}" \
-    -c 'import json; print(json.load(open("Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json"))["revisions"]["task_base"])')
-  git diff --check "${task26000_task_base}"
-  test -z "$(git diff --name-only "${task26000_task_base}" -- '*.py')"
-  test -z "$(git ls-files --others --exclude-standard)"
+    -c 'import json; print(json.load(open("Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json"))["revisions"]["task_base"])') || {
+      echo 'E_TASK7_TASK_BASE' >&2
+      exit 2
+    }
+  git diff --check "${task26000_task_base}" || {
+    echo 'E_TASK7_DIFF_CHECK' >&2
+    exit 2
+  }
+  task26000_python_diff=$(git diff --name-only "${task26000_task_base}" -- '*.py') || {
+    echo 'E_TASK7_PYTHON_DIFF: git diff failed' >&2
+    exit 2
+  }
+  test -z "${task26000_python_diff}" || {
+    echo 'E_TASK7_PYTHON_DIFF' >&2
+    exit 2
+  }
+  task26000_untracked=$(git ls-files --others --exclude-standard) || {
+    echo 'E_TASK7_UNTRACKED_FILES: git ls-files failed' >&2
+    exit 2
+  }
+  test -z "${task26000_untracked}" || {
+    echo 'E_TASK7_UNTRACKED_FILES' >&2
+    exit 2
+  }
   ```
 
   Expected: manifest checker zero; three task-ID tests pass; diff check clean; the
@@ -1597,12 +2435,21 @@ current raw census, and complete lineage were rebuilt.
 - [ ] **Step 6: Commit the characterization closeout**
 
   ```bash
-  git commit -m "docs: close TASK-26000 formatter debt characterization"
-  git status --short
+  git commit -m "docs: close TASK-26000 formatter debt characterization" || {
+    echo 'E_TASK7_COMMIT' >&2
+    exit 2
+  }
+  git status --short || {
+    echo 'E_TASK7_STATUS' >&2
+    exit 2
+  }
   ```
 
-  Expected: clean worktree. Preserve the temporary raw snapshots until the branch is
-  reviewed/integrated; the committed JSON remains the durable evidence afterward.
+  Expected: clean worktree. Preserve the temporary raw snapshots, including the exact
+  canonical `raw/allocation-closeout-rescan.json`, through review and integration;
+  the committed JSON remains the durable point-in-time formatter evidence afterward,
+  while Task 7 Implementation Notes retain the final allocation-audit digest and
+  ancestry binding.
   Remove every clean detached worktree with:
 
   ```bash
@@ -2653,6 +3500,1783 @@ injected write or file-sync failure.
 
 ---
 
+## Appendix A.1: Exact Durable Manifest Producer
+
+Task 4 and any separately owner-approved manifest rebuild materialize this complete producer source through Appendix B.1's authority tool. The approved Task 7 authority-cut workflow does not rebuild or refresh the manifest. The marker digest is authoritative; private temporary copies are never sources of truth.
+
+<!-- TASK-26000-PRODUCER-SOURCE-BEGIN sha256=fd33448f2841d0502509201a5bf6fd2f279f3f2c67cff8f3d4391b9ed7d9ce3e -->
+```python
+from __future__ import annotations
+
+import argparse
+import atexit
+import datetime as dt
+import hashlib
+import json
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any, Callable
+
+
+LABELS = ("base", "pre_closeout", "closeout", "common", "current")
+TMP = Path("/tmp/task26000.b0z8M0")
+RAW = TMP / "raw"
+REPO = Path("/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/track-ruff-format-debt")
+MANIFEST = REPO / "Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json"
+TASK_BASE = "e555df102c950c29beed5e7119f433d35eee1f3c"
+RECENT_SINCE = "2026-08-16T00:00:00Z"
+LEGACY_OPEN_PRS = [
+    {
+        "number": 2244,
+        "head": "codex/task-23026-trace-ledger-plan",
+        "title": "Implement reference-backed semantic trace ledger lifecycle",
+        "paths": [
+            "Docs/superpowers/qa/2026-08-15-local-thinking-controls-live-verification/live-verify.py",
+            "Packaging/check_manifest.py",
+            "Tests/ChaChaNotesDB/test_index_census.py",
+            "Tests/Chat/test_assistant_generation_state_roundtrip.py",
+            "Tests/Chat/test_console_agent_bridge.py",
+            "Tests/Chat/test_console_chat_controller.py",
+            "Tests/Chat/test_console_context_compaction.py",
+            "Tests/Chat/test_console_ephemeral.py",
+            "Tests/Chat/test_console_exchange_capture.py",
+            "Tests/Chat/test_console_prepared_request.py",
+            "Tests/Chat/test_console_provider_continuation.py",
+            "Tests/Chat/test_console_provider_gateway.py",
+            "Tests/Chat/test_console_terminal_citation_persistence.py",
+            "Tests/Chat/test_console_video_actions.py",
+            "Tests/Chat/test_console_visual_evaluation.py",
+            "Tests/DB/test_chachanotes_message_exchanges.py",
+            "Tests/DB/test_chachanotes_v55_console_memory_selection_migration.py",
+            "Tests/Packaging/test_installed_distribution.py",
+            "Tests/Research/test_chat_handoff.py",
+            "Tests/Sync_Interop/test_provider_continuation_reconciliation.py",
+            "Tests/UI/test_chat_screen_console_inspector_loader.py",
+            "tldw_chatbook/Agents/agent_service.py",
+            "tldw_chatbook/Chat/Chat_Functions.py",
+            "tldw_chatbook/Chat/chat_persistence_service.py",
+            "tldw_chatbook/Chat/console_agent_bridge.py",
+            "tldw_chatbook/Chat/console_chat_store.py",
+            "tldw_chatbook/Chat/console_context_compaction.py",
+            "tldw_chatbook/Chat/console_conversation_hydration.py",
+            "tldw_chatbook/Chat/console_exchange_capture.py",
+            "tldw_chatbook/Chat/console_provider_gateway.py",
+        ],
+    },
+    {
+        "number": 2230,
+        "head": "fix/console-voice-chip-width",
+        "title": "Console voice chip width",
+        "paths": ["Tests/UI/test_console_dictation_streaming.py"],
+    },
+    {
+        "number": 2196,
+        "head": "perf/burndown-0828",
+        "title": "Console keystroke and boot work",
+        "paths": [
+            "Tests/Performance/test_boot_worker_census.py",
+            "tldw_chatbook/Chat/console_chat_store.py",
+            "tldw_chatbook/Chunking/engine/strategies/semantic.py",
+            "tldw_chatbook/Chunking/engine/strategies/tokens.py",
+            "tldw_chatbook/Subscriptions/briefing_audio.py",
+            "tldw_chatbook/UI/Console_Modules/prompt_queue.py",
+            "tldw_chatbook/UI/Console_Modules/workspace.py",
+            "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+            "tldw_chatbook/UI/Screens/chat_screen.py",
+            "tldw_chatbook/__init__.py",
+            "tldw_chatbook/config.py",
+        ],
+    },
+    {
+        "number": 2059,
+        "head": "fix/task-21969-test-workflow-pr-cancellation",
+        "title": "Pull-request workflow cancellation",
+        "paths": ["Tests/CI/test_github_actions_test_workflow.py"],
+    },
+    {
+        "number": 1655,
+        "head": "codex/task-13208-windows-audio-cpp",
+        "title": "Windows audio.cpp lifecycle parity",
+        "paths": [
+            "Tests/CI/test_github_actions_test_workflow.py",
+            "Tests/UI/test_speech_playground_pane_lifecycle.py",
+        ],
+    },
+]
+
+PR_SNAPSHOT_PATH = TMP / "open-pr-snapshot.json"
+TEMPORAL_CACHE_PATH = TMP / f"temporal-replay-cache.{TASK_BASE}.json"
+TEMPORAL_CACHE_VERSION = "first-valid-failure-v5-authenticated-alias-syntax-ledger"
+TEMPORAL_CACHE_SCHEMA = 3
+_ANCESTOR_CACHE: dict[tuple[str, str, str], bool] = {}
+_REV_LIST_CACHE: dict[tuple[str, str, str, str], list[str]] = {}
+
+
+def producer_source_digest() -> str:
+    return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+
+
+def temporal_cache_fingerprint(
+    *,
+    common: str,
+    current: str,
+    resolved_python: str,
+    python_version: str,
+    ruff_version: str,
+    current_census_sha256: str,
+) -> dict[str, Any]:
+    return {
+        "algorithm_version": TEMPORAL_CACHE_VERSION,
+        "schema_version": TEMPORAL_CACHE_SCHEMA,
+        "common": common,
+        "current": current,
+        "resolved_python": resolved_python,
+        "python_version": python_version,
+        "ruff_version": ruff_version,
+        "current_census_sha256": current_census_sha256,
+        "producer_source_sha256": producer_source_digest(),
+    }
+
+
+def load_temporal_cache(fingerprint: dict[str, Any]) -> dict[str, Any]:
+    if TEMPORAL_CACHE_PATH.exists():
+        try:
+            raw = TEMPORAL_CACHE_PATH.read_bytes()
+            data = json.loads(raw.decode("utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return {"fingerprint": fingerprint, "rows": {}}
+        if (
+            isinstance(data, dict)
+            and data.get("fingerprint") == fingerprint
+            and isinstance(data.get("rows"), dict)
+            and raw == canonical_bytes(data)
+        ):
+            return {"fingerprint": fingerprint, "rows": data["rows"]}
+    return {"fingerprint": fingerprint, "rows": {}}
+
+
+def write_temporal_cache(cache: dict[str, Any]) -> None:
+    encoded = json.dumps(cache, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    temporary = TEMPORAL_CACHE_PATH.with_suffix(".json.tmp")
+    temporary.write_text(encoded, encoding="utf-8")
+    temporary.replace(TEMPORAL_CACHE_PATH)
+
+
+def load_open_pr_snapshot() -> tuple[str, int, list[dict[str, Any]]]:
+    data = json.loads(PR_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+    captured_at = data.get("captured_at_utc")
+    per_page = data.get("per_page")
+    prs = data.get("prs")
+    if not isinstance(captured_at, str) or not captured_at:
+        raise RuntimeError("missing open PR capture timestamp")
+    if per_page != 100 or not isinstance(prs, list) or not prs:
+        raise RuntimeError("invalid open PR snapshot control")
+    numbers: set[int] = set()
+    for pr in prs:
+        required = {
+            "number",
+            "base",
+            "base_sha",
+            "head",
+            "head_sha",
+            "title",
+            "paths",
+            "file_count",
+            "page_counts",
+            "head_object_present",
+            "base_object_present",
+            "local_diff_match",
+            "open_at_capture",
+        }
+        if not isinstance(pr, dict) or not required <= set(pr):
+            raise RuntimeError("incomplete open PR snapshot row")
+        number = pr["number"]
+        if not isinstance(number, int) or number in numbers:
+            raise RuntimeError(f"duplicate or invalid open PR number: {number}")
+        numbers.add(number)
+        paths = pr["paths"]
+        if paths != sorted(set(paths)) or pr["file_count"] != len(paths):
+            raise RuntimeError(f"invalid open PR file census: {number}")
+        page_counts = pr["page_counts"]
+        if not isinstance(page_counts, list) or sum(page_counts) != len(paths):
+            raise RuntimeError(f"invalid open PR page census: {number}")
+        if any(count != per_page for count in page_counts[:-1]):
+            raise RuntimeError(f"short non-final open PR page: {number}")
+        if (
+            not pr["head_object_present"]
+            or not pr["base_object_present"]
+            or pr["local_diff_match"] is not True
+        ):
+            raise RuntimeError(f"open PR lacks exact local diff proof: {number}")
+        if pr["open_at_capture"] is not True:
+            raise RuntimeError(f"PR was not open at capture: {number}")
+    return captured_at, per_page, sorted(prs, key=lambda row: row["number"], reverse=True)
+
+
+PR_CAPTURED_AT, PR_PER_PAGE, OPEN_PRS = load_open_pr_snapshot()
+PR_BY_NUMBER = {pr["number"]: pr for pr in OPEN_PRS}
+
+
+def canonical_bytes(value: Any) -> bytes:
+    return (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def digest(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def git(repo: Path, *argv: str, binary: bool = False) -> bytes | str:
+    completed = subprocess.run(
+        ("git", *argv), cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False
+    )
+    if completed.returncode:
+        raise RuntimeError(completed.stderr.decode("utf-8", "backslashreplace").strip())
+    return completed.stdout if binary else completed.stdout.decode("utf-8").strip()
+
+
+def transition_kind(
+    source_path: str | None,
+    target_path: str | None,
+    source_blob: str | None,
+    target_blob: str | None,
+) -> tuple[str, str]:
+    if source_path is None and target_path is None:
+        return "absent", "absent"
+    if source_path is None:
+        return "add", "A"
+    if target_path is None:
+        return "delete", "D"
+    if source_path != target_path:
+        return "rename", "R100"
+    if source_blob == target_blob:
+        return "unchanged", "same"
+    return "modify", "M"
+
+
+def lineage_row(
+    revisions: dict[str, str],
+    source: str,
+    target: str,
+    paths: dict[str, str | None],
+    blobs: dict[str, str | None],
+    *,
+    git_status: str | None = None,
+    commits: list[str] | None = None,
+    rationale: str,
+) -> dict[str, Any]:
+    kind, derived_status = transition_kind(
+        paths[source], paths[target], blobs[source], blobs[target]
+    )
+    return {
+        "kind": kind,
+        "source_revision": revisions[source],
+        "target_revision": revisions[target],
+        "source_path": paths[source],
+        "target_path": paths[target],
+        "source_blob": blobs[source],
+        "target_blob": blobs[target],
+        "git_status": git_status or derived_status,
+        "follow_commits": sorted(set(commits or [revisions[target]])),
+        "rationale": rationale,
+    }
+
+
+def entry_indexes(censuses: dict[str, Any]) -> dict[str, dict[str, dict[str, Any]]]:
+    return {label: {row["path"]: row for row in censuses[label]["entries"]} for label in LABELS}
+
+
+def build_identities(
+    source: dict[str, Any], censuses: dict[str, Any], revisions: dict[str, str]
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    entries = entry_indexes(censuses)
+    result: list[dict[str, Any]] = []
+    by_source_id: dict[str, dict[str, Any]] = {}
+    current_owner: dict[str, str] = {}
+    common_by_m: dict[str, dict[str, Any]] = {}
+    for common in source["common_failure_identities"]:
+        for source_id in common["m_identity_ids"]:
+            common_by_m[source_id] = common
+
+    def append_identity(
+        identity_id: str,
+        paths: dict[str, str | None],
+        blobs: dict[str, str | None],
+        *,
+        historical_status: str | None = None,
+        common_source: dict[str, Any] | None = None,
+    ) -> None:
+        common_commits: list[str] = []
+        if common_source is not None:
+            inspection = common_source["lineage"].get("inspection", {})
+            common_commits = inspection.get("interval_commit_oids", [])
+        lineage = {
+            "base_to_pre": lineage_row(
+                revisions,
+                "base",
+                "pre_closeout",
+                paths,
+                blobs,
+                git_status=historical_status,
+                rationale="TASK-22514 historical diff identity projection.",
+            ),
+            "pre_to_closeout": lineage_row(
+                revisions,
+                "pre_closeout",
+                "closeout",
+                paths,
+                blobs,
+                rationale="TASK-22514 pre-closeout to closeout projection.",
+            ),
+            "common_to_current": lineage_row(
+                revisions,
+                "common",
+                "current",
+                paths,
+                blobs,
+                commits=common_commits or None,
+                rationale="Current-line projection from the branches' common ancestor; closeout is not used as a temporal ancestor.",
+            ),
+        }
+        row = {"id": identity_id, "paths": paths, "blobs": blobs, "lineage": lineage}
+        result.append(row)
+        current_path = paths["current"]
+        if current_path is not None:
+            if current_path in current_owner:
+                raise RuntimeError(f"duplicate current owner: {current_path}")
+            current_owner[current_path] = identity_id
+
+    for historical in source["identities"]:
+        identity_id = historical["identity_id"]
+        paths = dict(historical["paths"])
+        blobs = dict(historical["blob_ids"])
+        append_identity(
+            identity_id,
+            paths,
+            blobs,
+            historical_status=historical["change"],
+            common_source=common_by_m.get(identity_id),
+        )
+        by_source_id[identity_id] = result[-1]
+
+    next_number = len(result)
+    for common in source["common_failure_identities"]:
+        if common["m_identity_ids"]:
+            continue
+        identity_id = f"I-{next_number:04d}"
+        next_number += 1
+        paths = {label: None for label in LABELS}
+        blobs = {label: None for label in LABELS}
+        paths.update(common["paths"])
+        blobs.update(common["blob_ids"])
+        append_identity(identity_id, paths, blobs, common_source=common)
+
+    current_failures = {
+        row["path"]
+        for row in censuses["current"]["entries"]
+        if row["result"] == "would_reformat"
+    }
+    for current_path in sorted(current_failures - set(current_owner)):
+        identity_id = f"I-{next_number:04d}"
+        next_number += 1
+        paths = {label: None for label in LABELS}
+        blobs = {label: None for label in LABELS}
+        paths["current"] = current_path
+        blobs["current"] = entries["current"][current_path]["blob_id"]
+        if current_path in entries["common"]:
+            paths["common"] = current_path
+            blobs["common"] = entries["common"][current_path]["blob_id"]
+        append_identity(identity_id, paths, blobs)
+
+    result.sort(key=lambda row: row["id"])
+    return result, current_owner
+
+
+def collect_paginated_pr_files(
+    fetch_page: Callable[[int, int], list[dict[str, Any]]], *, per_page: int = 100
+) -> dict[str, Any]:
+    if per_page <= 0:
+        raise RuntimeError("invalid PR page size")
+    paths: list[str] = []
+    page_counts: list[int] = []
+    seen: set[str] = set()
+    page = 1
+    while True:
+        rows = fetch_page(page, per_page)
+        if not isinstance(rows, list):
+            raise RuntimeError(f"invalid PR files page {page}")
+        page_counts.append(len(rows))
+        for row in rows:
+            path = row.get("filename") if isinstance(row, dict) else None
+            if not isinstance(path, str) or not path:
+                raise RuntimeError(f"invalid PR file path on page {page}")
+            if path in seen:
+                raise RuntimeError(f"duplicate PR file path across pages: {path}")
+            seen.add(path)
+            paths.append(path)
+        if len(rows) < per_page:
+            break
+        page += 1
+    return {
+        "paths": sorted(paths),
+        "file_count": len(paths),
+        "page_counts": page_counts,
+    }
+
+
+def git_exists(repo: Path, object_name: str) -> bool:
+    completed = subprocess.run(
+        ("git", "cat-file", "-e", object_name),
+        cwd=repo,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return completed.returncode == 0
+
+
+def commit_parents(repo: Path, commit: str) -> list[str]:
+    return str(git(repo, "show", "-s", "--format=%P", commit)).split()
+
+
+def is_ancestor(repo: Path, ancestor: str, descendant: str) -> bool:
+    cache_key = (str(repo.resolve()), ancestor, descendant)
+    if cache_key in _ANCESTOR_CACHE:
+        return _ANCESTOR_CACHE[cache_key]
+    completed = subprocess.run(
+        ("git", "merge-base", "--is-ancestor", ancestor, descendant),
+        cwd=repo,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if completed.returncode not in {0, 1}:
+        raise RuntimeError(f"cannot compare commit topology: {ancestor} -> {descendant}")
+    result = completed.returncode == 0
+    _ANCESTOR_CACHE[cache_key] = result
+    return result
+
+
+def cached_revision_list(
+    repo: Path, common: str, current: str, mode: str
+) -> list[str]:
+    cache_key = (str(repo.resolve()), common, current, mode)
+    if cache_key not in _REV_LIST_CACHE:
+        if mode == "topology":
+            argv = ("rev-list", "--reverse", "--topo-order", f"{common}..{current}")
+        elif mode == "first-parent":
+            argv = ("rev-list", "--first-parent", "--reverse", f"{common}..{current}")
+        else:
+            raise ValueError(f"unknown revision-list mode: {mode}")
+        _REV_LIST_CACHE[cache_key] = str(git(repo, *argv)).splitlines()
+    return _REV_LIST_CACHE[cache_key]
+
+
+def first_integration_index(
+    repo: Path, commit: str, first_parent: list[str]
+) -> int:
+    """Return the earliest first-parent state containing commit in O(log n) checks."""
+    if not first_parent or not is_ancestor(repo, commit, first_parent[-1]):
+        raise RuntimeError(f"no first-parent integration interval for {commit}")
+    lower = 0
+    upper = len(first_parent) - 1
+    while lower < upper:
+        middle = (lower + upper) // 2
+        if is_ancestor(repo, commit, first_parent[middle]):
+            upper = middle
+        else:
+            lower = middle + 1
+    return lower
+
+
+def config_paths_for(path: str) -> list[str]:
+    parent = Path(path).parent
+    directories = [Path(".")]
+    if parent != Path("."):
+        current = Path()
+        for part in parent.parts:
+            current /= part
+            directories.append(current)
+    result: list[str] = []
+    for directory in directories:
+        for name in ("pyproject.toml", "ruff.toml", ".ruff.toml"):
+            candidate = str(directory / name)
+            if candidate.startswith("./"):
+                candidate = candidate[2:]
+            result.append(candidate)
+    return sorted(set(result))
+
+
+def nul_commits(repo: Path, *argv: str) -> list[str]:
+    raw = git(repo, *argv, binary=True)
+    assert isinstance(raw, bytes)
+    values = [value.strip() for value in raw.split(b"\0") if value.strip()]
+    try:
+        commits = [value.decode("ascii") for value in values]
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("non-ASCII commit id in NUL-delimited Git output") from exc
+    if any(len(value) != 40 for value in commits):
+        raise RuntimeError("invalid commit id in NUL-delimited Git output")
+    return commits
+
+
+def name_status_z(repo: Path, parent: str, commit: str) -> list[tuple[str, list[str]]]:
+    raw = git(
+        repo, "diff", "--name-status", "-z", "-M", parent, commit, "--", binary=True
+    )
+    assert isinstance(raw, bytes)
+    if raw and not raw.endswith(b"\0"):
+        raise RuntimeError("unterminated NUL-delimited Git path output")
+    tokens = raw[:-1].split(b"\0") if raw else []
+    result: list[tuple[str, list[str]]] = []
+    index = 0
+    while index < len(tokens):
+        status = tokens[index].decode("ascii")
+        index += 1
+        count = 2 if status.startswith(("R", "C")) else 1
+        if index + count > len(tokens):
+            raise RuntimeError(f"truncated Git name-status record: {status}")
+        paths = [token.decode("utf-8") for token in tokens[index:index + count]]
+        result.append((status, paths))
+        index += count
+    return result
+
+
+def rename_lineage_paths(
+    repo: Path, common: str, current: str, current_path: str
+) -> tuple[set[str], dict[str, tuple[str, str]]]:
+    commits = nul_commits(
+        repo, "log", "--topo-order", "--format=%H%x00", "--follow",
+        f"{common}..{current}", "--", current_path,
+    )
+    tracked = current_path
+    paths = {current_path}
+    renames: dict[str, tuple[str, str]] = {}
+    for commit in commits:
+        parents = commit_parents(repo, commit)
+        transitions: set[tuple[str, str]] = set()
+        for parent in parents:
+            for status, fields in name_status_z(repo, parent, commit):
+                if status.startswith("R") and len(fields) == 2:
+                    source_path, target_path = fields
+                    if target_path == tracked:
+                        transitions.add((source_path, target_path))
+        if len(transitions) > 1:
+            raise RuntimeError(
+                f"ambiguous rename ancestry for {current_path} at {commit}: {sorted(transitions)}"
+            )
+        if transitions:
+            source_path, target_path = next(iter(transitions))
+            paths.update((source_path, target_path))
+            renames[commit] = (source_path, target_path)
+            tracked = source_path
+    return paths, renames
+
+
+def unique_merge_transition(
+    current_path: str, transitions: set[tuple[str, str]]
+) -> tuple[str, str] | None:
+    relevant = {transition for transition in transitions if transition[1] == current_path}
+    if len(relevant) > 1:
+        raise RuntimeError(
+            f"ambiguous merge/rename chronology for {current_path}: {sorted(relevant)}"
+        )
+    return next(iter(relevant)) if relevant else None
+
+
+def all_parent_path_transition(
+    repo: Path, commit: str, path: str
+) -> str | None:
+    """Derive a candidate's path cause from every parent with NUL-safe plumbing."""
+    parents = commit_parents(repo, commit)
+    if not parents:
+        raise RuntimeError(f"root temporal candidate: {commit}")
+    rename_sources: set[str] = set()
+    path_changed = False
+    for parent in parents:
+        for status, fields in name_status_z(repo, parent, commit):
+            if status.startswith("R") and len(fields) == 2 and fields[1] == path:
+                rename_sources.add(fields[0])
+                path_changed = True
+            elif (
+                len(fields) == 1
+                and fields[0] == path
+                and status[:1] in {"A", "M"}
+            ):
+                path_changed = True
+    if len(rename_sources) > 1:
+        raise RuntimeError(
+            f"ambiguous all-parent rename chronology for {path} at {commit}: "
+            f"{sorted(rename_sources)}"
+        )
+    if rename_sources:
+        return "path_rename"
+    if not path_changed:
+        return None
+    return (
+        "path_modify"
+        if any(git_exists(repo, f"{parent}:{path}") for parent in parents)
+        else "path_add"
+    )
+
+
+def relevant_state_candidates(
+    repo: Path, common: str, current: str, current_path: str
+) -> tuple[list[dict[str, Any]], list[str]]:
+    path_commits = nul_commits(
+        repo, "log", "--topo-order", "--format=%H%x00", "--follow",
+        f"{common}..{current}", "--", current_path,
+    )
+    tracked = current_path
+    lineage_paths = {current_path}
+    path_events: dict[str, dict[str, str]] = {}
+    for commit in path_commits:
+        parents = commit_parents(repo, commit)
+        if not parents:
+            continue
+        transitions: set[tuple[str, str]] = set()
+        for parent in parents:
+            for status, fields in name_status_z(repo, parent, commit):
+                if status.startswith("R") and len(fields) == 2:
+                    transitions.add((fields[0], fields[1]))
+        transition = unique_merge_transition(tracked, transitions)
+        target_path = tracked
+        if transition is not None:
+            source_path, target_path = transition
+            lineage_paths.update((source_path, target_path))
+            kind = "path_rename"
+            tracked = source_path
+        else:
+            existed = any(git_exists(repo, f"{parent}:{target_path}") for parent in parents)
+            kind = "path_modify" if existed else "path_add"
+        if git_exists(repo, f"{commit}:{target_path}"):
+            path_events[commit] = {
+                "commit": commit,
+                "path": target_path,
+                "kind": kind,
+                "causes": [kind],
+            }
+    config_paths = sorted(
+        set().union(*(set(config_paths_for(path)) for path in lineage_paths))
+    )
+    raw_config_commits = nul_commits(
+        repo, "log", "--full-history", "--topo-order", "--format=%H%x00",
+        f"{common}..{current}", "--", *config_paths,
+    )
+    config_events: dict[str, dict[str, str]] = {}
+    for commit in raw_config_commits:
+        relevant = False
+        for config_path in config_paths:
+            before_values = []
+            for parent in commit_parents(repo, commit):
+                before_values.append(
+                    git(repo, "show", f"{parent}:{config_path}", binary=True)
+                    if git_exists(repo, f"{parent}:{config_path}")
+                    else b""
+                )
+            after = (
+                git(repo, "show", f"{commit}:{config_path}", binary=True)
+                if git_exists(repo, f"{commit}:{config_path}")
+                else b""
+            )
+            if not any(before != after for before in before_values):
+                continue
+            if config_path.endswith(("ruff.toml", ".ruff.toml")) or b"[tool.ruff" in b"".join(before_values) + after:
+                relevant = True
+                break
+        if not relevant:
+            continue
+        present_paths = sorted(
+            path for path in lineage_paths if git_exists(repo, f"{commit}:{path}")
+        )
+        if not present_paths:
+            continue
+        if len(present_paths) != 1:
+            raise RuntimeError(
+                f"ambiguous Ruff-config path chronology for {current_path} at {commit}: {present_paths}"
+            )
+        config_events[commit] = {
+            "commit": commit,
+            "path": present_paths[0],
+            "kind": "ruff_config",
+            "causes": ["ruff_config"],
+        }
+
+    exclusion_specs = [".gitignore", ".ignore", ":(glob)**/.gitignore", ":(glob)**/.ignore"]
+    exclusion_commits = nul_commits(
+        repo, "log", "--full-history", "--topo-order", "--format=%H%x00",
+        f"{common}..{current}", "--", *exclusion_specs,
+    )
+    exclusion_events: dict[str, dict[str, Any]] = {}
+    for commit in exclusion_commits:
+        present_paths = sorted(
+            path for path in lineage_paths if git_exists(repo, f"{commit}:{path}")
+        )
+        if len(present_paths) > 1:
+            raise RuntimeError(
+                f"ambiguous exclusion path chronology for {current_path} at {commit}: {present_paths}"
+            )
+        if present_paths:
+            exclusion_events[commit] = {
+                "commit": commit,
+                "path": present_paths[0],
+                "kind": "exclusion_change",
+                "causes": ["exclusion_change"],
+            }
+    topology = cached_revision_list(repo, common, current, "topology")
+    topology_index = {commit: index for index, commit in enumerate(topology)}
+    first_parent = cached_revision_list(repo, common, current, "first-parent")
+    events: dict[str, dict[str, Any]] = {}
+    for source in (config_events, exclusion_events, path_events):
+        for commit, event in source.items():
+            if commit not in events:
+                events[commit] = event
+            else:
+                events[commit]["causes"] = sorted(
+                    set(events[commit]["causes"]) | set(event["causes"])
+                )
+                if event["kind"].startswith("path_"):
+                    events[commit]["kind"] = event["kind"]
+                    events[commit]["path"] = event["path"]
+    for commit, event in events.items():
+        path_cause = all_parent_path_transition(repo, commit, event["path"])
+        if path_cause is not None:
+            event["causes"] = sorted(set(event["causes"]) | {path_cause})
+            event["kind"] = path_cause
+    candidates: list[dict[str, Any]] = []
+    for commit, event in events.items():
+        integration_index = first_integration_index(repo, commit, first_parent)
+        candidates.append(
+            {
+                **event,
+                "integration_index": integration_index,
+                "integration_commit": first_parent[integration_index],
+                "topology_index": topology_index[commit],
+            }
+        )
+    candidates.sort(
+        key=lambda row: (row["integration_index"], topology_index[row["commit"]])
+    )
+    if not candidates:
+        raise RuntimeError(f"no relevant current-line state candidates for {current_path}")
+    return candidates, config_paths
+
+
+def tracked_inventory(root: Path) -> dict[str, dict[str, str]]:
+    raw = subprocess.run(
+        ("git", "ls-files", "-s", "-z"), cwd=root, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, check=False,
+    )
+    if raw.returncode or (raw.stdout and not raw.stdout.endswith(b"\0")):
+        raise RuntimeError(raw.stderr.decode("utf-8", "backslashreplace").strip() or "invalid ls-files output")
+    inventory: dict[str, dict[str, str]] = {}
+    for token in raw.stdout[:-1].split(b"\0") if raw.stdout else []:
+        meta, raw_path = token.split(b"\t", 1)
+        mode, blob, stage = meta.decode("ascii").split(" ")
+        if stage != "0":
+            raise RuntimeError("non-stage-zero entry in detached replay checkout")
+        path = raw_path.decode("utf-8")
+        inventory[path] = {"path": path, "mode": mode, "blob_id": blob}
+    return inventory
+
+
+def is_ruff_config(root: Path, path: str) -> bool:
+    name = Path(path).name
+    if name in {"ruff.toml", ".ruff.toml"}:
+        return True
+    return name == "pyproject.toml" and b"[tool.ruff" in (root / path).read_bytes()
+
+
+class ReplayWorkspace:
+    """One sanitized shared-object clone reused for all revision-local Ruff states."""
+
+    def __init__(self, repo: Path) -> None:
+        self.repo = repo.resolve()
+        self.parent = Path(tempfile.mkdtemp(prefix="temporal-replay-v4-", dir=TMP))
+        self.root = self.parent / "checkout"
+        self.home = self.parent / "home"
+        self.home.mkdir()
+        completed = subprocess.run(
+            ("git", "clone", "-q", "--shared", "--no-checkout", str(self.repo), str(self.root)),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        if completed.returncode:
+            shutil.rmtree(self.parent, ignore_errors=True)
+            raise RuntimeError(completed.stderr.decode("utf-8", "backslashreplace").strip())
+        self.current: str | None = None
+        self.cache: dict[tuple[str, str, str], dict[str, Any]] = {}
+
+    def checkout(self, commit: str) -> None:
+        if self.current == commit:
+            return
+        completed = subprocess.run(
+            ("git", "checkout", "-q", "--detach", "--force", commit), cwd=self.root,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        if completed.returncode:
+            raise RuntimeError(completed.stderr.decode("utf-8", "backslashreplace").strip())
+        resolved = subprocess.run(
+            ("git", "rev-parse", "HEAD^{commit}"), cwd=self.root, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        status = subprocess.run(
+            ("git", "status", "--porcelain=v1", "-z"), cwd=self.root,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        if resolved.returncode or resolved.stdout.strip() != commit or status.returncode or status.stdout:
+            raise RuntimeError(f"unauthenticated or dirty replay checkout for {commit}")
+        self.current = commit
+
+    def run(self, commit: str, path: str, resolved_python: str) -> dict[str, Any]:
+        key = (commit, path, resolved_python)
+        if key in self.cache:
+            return self.cache[key]
+        self.checkout(commit)
+        inventory = tracked_inventory(self.root)
+        if path not in inventory:
+            raise RuntimeError(f"missing replay path {commit}:{path}")
+        configs = [
+            row for candidate, row in sorted(inventory.items())
+            if is_ruff_config(self.root, candidate)
+        ]
+        exclusions = [
+            row for candidate, row in sorted(inventory.items())
+            if Path(candidate).name in {".gitignore", ".ignore"}
+        ]
+        argv = [
+            resolved_python, "-m", "ruff", "format", "--check",
+            "--force-exclude", "--no-cache", f"./{path}",
+        ]
+        env = {
+            "HOME": str(self.home),
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "LANG": "C.UTF-8",
+            "LC_ALL": "C.UTF-8",
+            "PYTHONHASHSEED": "0",
+        }
+        completed = subprocess.run(
+            argv, cwd=self.root, env=env, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, check=False,
+        )
+        if completed.returncode not in {0, 1, 2}:
+            detail = completed.stderr.decode("utf-8", "backslashreplace").strip()
+            raise RuntimeError(f"Ruff replay failed for {commit}:{path}: {detail}")
+        exit_class, invalid_reason = classify_ruff_exit(
+            completed.returncode,
+            (self.root / path).read_bytes(),
+            path,
+        )
+        result = {
+            "path_mode": inventory[path]["mode"],
+            "path_blob": inventory[path]["blob_id"],
+            "config_inputs": configs,
+            "exclusion_inputs": exclusions,
+            "command_argv": argv,
+            "exit_code": completed.returncode,
+            "exit_class": exit_class,
+            "invalid_reason": invalid_reason,
+            "stdout_sha256": digest(completed.stdout),
+            "stderr_sha256": digest(completed.stderr),
+        }
+        self.cache[key] = result
+        return result
+
+    def close(self) -> None:
+        shutil.rmtree(self.parent, ignore_errors=True)
+
+
+_REPLAY_WORKSPACES: dict[str, ReplayWorkspace] = {}
+
+
+def replay_workspace(repo: Path) -> ReplayWorkspace:
+    key = str(repo.resolve())
+    if key not in _REPLAY_WORKSPACES:
+        _REPLAY_WORKSPACES[key] = ReplayWorkspace(repo)
+    return _REPLAY_WORKSPACES[key]
+
+
+def close_replay_workspaces() -> None:
+    for workspace in _REPLAY_WORKSPACES.values():
+        workspace.close()
+    _REPLAY_WORKSPACES.clear()
+
+
+atexit.register(close_replay_workspaces)
+
+
+def classify_ruff_exit(
+    exit_code: int,
+    source: bytes,
+    path: str,
+) -> tuple[str, str | None]:
+    """Classify Ruff only after independently authenticating an exit-2 source error."""
+    if exit_code == 0:
+        return "clean", None
+    if exit_code == 1:
+        return "failing", None
+    if exit_code != 2:
+        raise RuntimeError(f"unexpected Ruff exit {exit_code} for {path}")
+    try:
+        compile(source, path, "exec", dont_inherit=True)
+    except SyntaxError:
+        return "invalid", "python_syntax_error"
+    raise RuntimeError(
+        f"non-source-syntax Ruff exit 2 for {path}; config, invocation, or runtime failure"
+    )
+
+
+def ruff_state_fails(
+    repo: Path, commit: str, path: str, resolved_python: str
+) -> tuple[bool, list[str], str]:
+    """Compatibility shim for the producer tests; durable details live in the ledger."""
+    result = replay_workspace(repo).run(commit, path, resolved_python)
+    configs = [row["path"] for row in result["config_inputs"]]
+    status = "unparsable" if result["exit_class"] == "invalid" else "formatter-result"
+    return result["exit_class"] == "failing", configs, status
+
+
+def first_failing_state(
+    repo: Path,
+    common: str,
+    current: str,
+    current_path: str,
+    resolved_python: str,
+) -> dict[str, Any]:
+    if not is_ancestor(repo, common, current):
+        raise RuntimeError(f"common revision is not an ancestor of current: {common}")
+    source_aliases, _rename_events = rename_lineage_paths(
+        repo, common, current, current_path
+    )
+    candidates, _config_paths = relevant_state_candidates(
+        repo, common, current, current_path
+    )
+    results: list[dict[str, Any]] = []
+    first: dict[str, Any] | None = None
+    integration_indexes = sorted({row["integration_index"] for row in candidates})
+    for integration_index in integration_indexes:
+        group_results: list[dict[str, Any]] = []
+        for candidate in candidates:
+            if candidate["integration_index"] != integration_index:
+                continue
+            replay = replay_workspace(repo).run(
+                candidate["commit"], candidate["path"], resolved_python
+            )
+            group_results.append({
+                **candidate,
+                "integration_parent": (
+                    common if candidate["integration_index"] == 0
+                    else cached_revision_list(repo, common, current, "first-parent")[candidate["integration_index"] - 1]
+                ),
+                "source_path": candidate["path"],
+                "current_path": current_path,
+                **replay,
+            })
+        results.extend(group_results)
+        failing = [row for row in group_results if row["exit_class"] == "failing"]
+        if failing:
+            minimal = [
+                row
+                for row in failing
+                if not any(
+                    other["commit"] != row["commit"]
+                    and is_ancestor(repo, other["commit"], row["commit"])
+                    for other in failing
+                )
+            ]
+            if len(minimal) != 1:
+                raise RuntimeError(
+                    f"ambiguous merge/config chronology for {current_path} in "
+                    f"integration {group_results[0]['integration_commit']}: "
+                    f"{sorted(row['commit'] for row in minimal)}"
+                )
+            first = minimal[0]
+            break
+    current_result = replay_workspace(repo).run(current, current_path, resolved_python)
+    current_configs = [row["path"] for row in current_result["config_inputs"]]
+    if current_result["exit_class"] == "invalid":
+        raise RuntimeError(f"pinned current path is unparsable: {current_path}")
+    if current_result["exit_class"] != "failing":
+        raise RuntimeError(f"pinned current path does not fail Ruff replay: {current_path}")
+    if first is None:
+        raise RuntimeError(f"no relevant failing state for {current_path}")
+    clean_commits = [
+        row["commit"]
+        for row in results
+        if row["exit_class"] == "clean"
+        and row["integration_index"] <= first["integration_index"]
+    ]
+    invalid_commits = [
+        row["commit"]
+        for row in results
+        if row["exit_class"] == "invalid"
+        and row["integration_index"] <= first["integration_index"]
+    ]
+    checked_commits = sorted({row["commit"] for row in results})
+    replay = (
+        "Topology-aware Ruff 0.15.22 replay in a clean detached full-tree Git checkout. Run `"
+        + " ".join(shlex.quote(value) for value in first["command_argv"])
+        + f"`; exit 1 is the first failing source state after {len(clean_commits)} clean path/config states; "
+        + f"{len(invalid_commits)} unparsable intermediate state(s) were recorded but are not formatter-result states. "
+        + f"Its first-parent integration interval is {first['integration_commit']}; checked "
+        + f"{len(checked_commits)} topology-ordered candidates plus the pinned current state."
+    )
+    return {
+        "commit": first["commit"],
+        "path": first["path"],
+        "kind": first["kind"],
+        "clean_commits": clean_commits,
+        "invalid_commits": invalid_commits,
+        "checked_commits": checked_commits,
+        "source_aliases": sorted(source_aliases),
+        "current_configs": current_configs,
+        "selected_index": results.index(first),
+        "ledger": results,
+        "summary": replay,
+    }
+
+
+def derive_classifications(
+    identities: list[dict[str, Any]],
+    current_owner: dict[str, str],
+    source: dict[str, Any],
+    censuses: dict[str, Any],
+    revisions: dict[str, str],
+    repo: Path,
+) -> tuple[dict[str, Any], dict[str, int]]:
+    by_id = {row["id"]: row for row in identities}
+    failures = {
+        label: {
+            row["path"]
+            for row in censuses[label]["entries"]
+            if row["result"] == "would_reformat"
+        }
+        for label in LABELS
+    }
+    H = set(source["sets"]["H"])
+    still = {
+        by_id[identity_id]["paths"]["current"]
+        for identity_id in H
+        if by_id[identity_id]["paths"]["current"] in failures["current"]
+    }
+    still.discard(None)
+    resolved_ids = H - {current_owner[path] for path in still}
+    projected_common = {
+        row["paths"]["current"]
+        for row in identities
+        if row["paths"]["common"] in failures["common"]
+    }
+    projected_common.discard(None)
+    shared = (failures["current"] - still) & projected_common
+    drift = failures["current"] - still - shared
+
+    resolved_rows: list[dict[str, Any]] = []
+    for identity_id in sorted(resolved_ids):
+        identity = by_id[identity_id]
+        current_path = identity["paths"]["current"]
+        if current_path is None:
+            reason = "deleted"
+        elif current_path != identity["paths"]["pre_closeout"]:
+            reason = "renamed"
+        else:
+            reason = "formatted"
+        commits = identity["lineage"]["common_to_current"]["follow_commits"]
+        resolved_rows.append(
+            {
+                "identity": identity_id,
+                "current_path": current_path,
+                "reason": reason,
+                "lineage_evidence": {
+                    "commits": commits,
+                    "summary": "Current projection is absent or no longer fails the pinned formatter census.",
+                },
+            }
+        )
+
+    drift_rows: list[dict[str, Any]] = []
+    resolved_python = censuses["current"]["toolchain"]["resolved_python"]
+    fingerprint = temporal_cache_fingerprint(
+        common=revisions["common"],
+        current=revisions["current"],
+        resolved_python=resolved_python,
+        python_version=censuses["current"]["toolchain"]["python"],
+        ruff_version=censuses["current"]["toolchain"]["ruff"],
+        current_census_sha256=digest(canonical_bytes(censuses["current"])),
+    )
+    temporal_cache = load_temporal_cache(fingerprint)
+    drift_paths = sorted(drift)
+    for index, path in enumerate(drift_paths, start=1):
+        identity_id = current_owner[path]
+        identity = by_id[identity_id]
+        common_path = identity["paths"]["common"]
+        reason = (
+            "added_on_current"
+            if common_path is None
+            else "renamed_and_introduced_on_current"
+            if common_path != path
+            else "introduced_on_current"
+        )
+        replay = temporal_cache["rows"].get(path)
+        source = "cache"
+        if replay is None:
+            replay = first_failing_state(
+                repo,
+                revisions["common"],
+                revisions["current"],
+                path,
+                resolved_python,
+            )
+            temporal_cache["rows"][path] = replay
+            write_temporal_cache(temporal_cache)
+            source = "replay"
+        if index == 1 or index % 25 == 0 or index == len(drift_paths):
+            print(
+                f"temporal replay {index}/{len(drift_paths)} ({source}): {path}",
+                file=sys.stderr,
+                flush=True,
+            )
+        first = replay["commit"]
+        drift_rows.append(
+            {
+                "path": path,
+                "identity": identity_id,
+                "reason": reason,
+                "first_current_commit": first,
+                "lineage_evidence": {
+                    "commits": replay["checked_commits"],
+                    "summary": replay["summary"],
+                },
+                "temporal_provenance": {
+                    "algorithm": TEMPORAL_CACHE_VERSION,
+                    "common": revisions["common"],
+                    "current": revisions["current"],
+                    "source_aliases": replay["source_aliases"],
+                    "selected_index": replay["selected_index"],
+                    "candidates": replay["ledger"],
+                },
+            }
+        )
+
+    classifications = {
+        "historical_still_current": sorted(still),
+        "historical_no_longer_current": resolved_rows,
+        "shared_ancestor_debt": sorted(shared),
+        "current_line_drift": drift_rows,
+    }
+    counts = {
+        "historical_still_current": len(still),
+        "historical_no_longer_current": len(resolved_ids),
+        "shared_ancestor_debt": len(shared),
+        "current_line_drift": len(drift),
+    }
+    if sum((counts[key] for key in counts if key != "historical_no_longer_current")) != len(failures["current"]):
+        raise RuntimeError("classification partition mismatch")
+    return classifications, counts
+
+
+def batch_label(path: str) -> str:
+    active_owners = sorted(
+        pr["number"] for pr in OPEN_PRS if path in pr.get("paths", [])
+    )
+    if active_owners:
+        return "ruff-active-pr-" + "-".join(str(number) for number in active_owners)
+    large = {
+        "tldw_chatbook/UI/Screens/library_screen.py": "ruff-library-screen-large",
+        "tldw_chatbook/UI/Screens/settings_screen.py": "ruff-settings-screen-large",
+        "tldw_chatbook/DB/ChaChaNotes_DB.py": "ruff-chachanotes-db-large",
+        "tldw_chatbook/UI/Screens/chat_screen.py": "ruff-chat-screen-large",
+        "tldw_chatbook/app.py": "ruff-app-shell-large",
+        "tldw_chatbook/tldw_api/client.py": "ruff-api-client-large",
+        "tldw_chatbook/UI/Screens/personas_screen.py": "ruff-personas-screen-large",
+        "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": "ruff-watchlists-screen-large",
+    }
+    if path in large:
+        return large[path]
+    lowered = path.lower()
+    if path.startswith(("Tests/Chat/", "tldw_chatbook/Chat/")):
+        if "/test_console_" in lowered or "/console_" in lowered:
+            if any(token in lowered for token in ("context", "memory", "prefill", "prepared", "rag", "world_info")):
+                return "ruff-chat-console-context"
+            if any(token in lowered for token in ("fleet", "wake", "headless", "run_state", "runtime_lifetime")):
+                return "ruff-chat-console-fleet"
+            if any(token in lowered for token in ("library",)):
+                return "ruff-chat-console-library"
+            if any(token in lowered for token in ("cost", "trace", "display", "status", "diff", "glyph", "citation")):
+                return "ruff-chat-console-observability"
+            if any(token in lowered for token in ("send", "edit", "rewind", "regenerate", "roleplay", "session", "switcher", "stop", "transaction")):
+                return "ruff-chat-console-interaction"
+            return "ruff-chat-console-foundation"
+        if any(token in lowered for token in ("character", "persona")):
+            return "ruff-chat-character"
+        if any(token in lowered for token in ("provider", "gateway", "model", "llm")):
+            return "ruff-chat-providers"
+        if any(token in lowered for token in ("persist", "store", "conversation", "message", "history")):
+            return "ruff-chat-persistence"
+        if any(token in lowered for token in ("media", "image", "video", "audio", "attachment")):
+            return "ruff-chat-media"
+        if any(token in lowered for token in ("agent", "tool", "mcp", "approval")):
+            return "ruff-chat-agents-tools"
+        if any(token in lowered for token in ("trajectory", "trace_event")):
+            return "ruff-chat-trajectory"
+        if any(token in lowered for token in ("citation",)):
+            return "ruff-chat-citations"
+        if any(token in lowered for token in ("cache", "usage", "token", "cost")):
+            return "ruff-chat-metrics"
+        if any(token in lowered for token in ("rag", "scope", "library")):
+            return "ruff-chat-retrieval"
+        return "ruff-chat-general"
+    if path.startswith(("Tests/UI/test_console", "Tests/UI/console_", "tldw_chatbook/UI/Console_Modules/", "tldw_chatbook/Widgets/Console/")):
+        if any(token in lowered for token in ("runtime", "executor", "provider", "gateway", "wiring", "permission", "tool")):
+            return "ruff-console-runtime"
+        if any(token in lowered for token in ("workspace", "project", "terminal", "file_", "path")):
+            return "ruff-console-workspaces"
+        if any(token in lowered for token in ("composer", "prompt", "input", "dictation", "queue")):
+            return "ruff-console-composer"
+        if any(token in lowered for token in ("inspector", "trace", "status", "sidebar", "activity")):
+            return "ruff-console-inspection"
+        if any(token in lowered for token in ("transcript", "selection")):
+            return "ruff-console-transcript-selection"
+        if any(token in lowered for token in ("rail", "layout", "resize", "geometry", "chip", "strip")):
+            return "ruff-console-layout-rails"
+        if any(token in lowered for token in ("modal", "dialog", "picker", "menu")):
+            return "ruff-console-modals"
+        if any(token in lowered for token in ("headless", "fleet", "wake", "parallel")):
+            return "ruff-console-fleet-ui"
+        if any(token in lowered for token in ("library", "research", "rag", "citation")):
+            return "ruff-console-knowledge-ui"
+        if any(token in lowered for token in ("character", "image", "video", "voice", "media")):
+            return "ruff-console-character-media"
+        if any(token in lowered for token in ("session", "send", "stop", "store", "persist", "sync")):
+            return "ruff-console-session-send"
+        return "ruff-console-foundation-ui"
+    if path.startswith(("Tests/UI/", "tldw_chatbook/UI/")):
+        ui_rules = (
+            (("eval",), "ruff-ui-evals"),
+            (("library",), "ruff-ui-library"),
+            (("mcp", "toolbox", "tool_"), "ruff-ui-mcp-tools"),
+            (("persona", "character", "actor"), "ruff-ui-personas"),
+            (("research", "rag", "search"), "ruff-ui-research"),
+            (("schedul", "notification", "calendar"), "ruff-ui-scheduling"),
+            (("setting", "config", "preferences"), "ruff-ui-settings"),
+            (("speech", "audio", "tts", "stt", "voice"), "ruff-ui-speech"),
+            (("watchlist", "subscription", "collection"), "ruff-ui-watchlists"),
+            (("wizard", "onboarding", "setup_"), "ruff-ui-wizards"),
+        )
+        for tokens, label in ui_rules:
+            if any(token in lowered for token in tokens):
+                return label
+        generic_rules = (
+            (("navigation", "destination", "shell", "screen_navigation", "footer", "command_palette", "splash"), "ruff-ui-navigation-shell"),
+            (("file_dialog", "file_picker", "fspicker", "smartcontenttree"), "ruff-ui-file-dialogs"),
+            (("model", "llm", "ollama", "parakeet", "gguf"), "ruff-ui-model-management"),
+            (("css", "visual", "focus", "render", "layout", "tooltip", "datatable", "checkbox", "responsive"), "ruff-ui-visual-css"),
+            (("prompt", "workbench", "approval", "skill_install"), "ruff-ui-prompts-workbench"),
+        )
+        for tokens, label in generic_rules:
+            if any(token in lowered for token in tokens):
+                return label
+        return "ruff-ui-remaining-screens"
+    if path.startswith(("Tests/MCP/", "tldw_chatbook/MCP/")):
+        return "ruff-mcp-runtime"
+    if path.startswith(("Tests/Skills/", "tldw_chatbook/Skills_Interop/")):
+        return "ruff-skills-runtime"
+    if path.startswith(("Tests/Tools/", "tldw_chatbook/Tools/")):
+        return "ruff-tools-runtime"
+    if path.startswith(("Tests/Workspaces/", "tldw_chatbook/Workspaces/", "Tests/RuntimePolicy/", "tldw_chatbook/runtime_policy/")):
+        return "ruff-workspaces-runtime"
+    if path.startswith(("Tests/Model_Artifacts/",)):
+        return "ruff-model-artifacts-tests"
+    if path.startswith(("Tests/RAG_Search/",)):
+        return "ruff-rag-search-tests"
+    if path.startswith(("Tests/Wizards/", "Tests/State/", "Tests/Sync_Interop/", "Tests/Event_Handlers/")):
+        return "ruff-state-sync-wizards-tests"
+    if path.startswith("Tests/") and path.count("/") == 1:
+        return "ruff-root-test-infrastructure"
+    surface_rules = [
+        (("Tests/Agents/", "tldw_chatbook/Agents/"), "ruff-agents-runtime"),
+        (("Tests/Audio/", "Tests/STT/", "Tests/TTS/", "Tests/TTS_Events/", "tldw_chatbook/Audio/", "tldw_chatbook/STT/", "tldw_chatbook/TTS/", "tldw_chatbook/Event_Handlers/TTS_Events"), "ruff-speech-audio"),
+        (("Tests/Character_Chat/", "Tests/Actor_Packs/", "tldw_chatbook/Character_Chat/", "tldw_chatbook/Persona_Visual/"), "ruff-character-persona"),
+        (("Tests/DB/", "Tests/ChaChaNotesDB/", "Tests/Media_DB/", "Tests/Prompts_DB/", "tldw_chatbook/DB/"), "ruff-database"),
+        (("Tests/Chunking/", "tldw_chatbook/Chunking/"), "ruff-chunking"),
+        (("Tests/Evals/", "Tests/RAG_Eval/", "tldw_chatbook/Evals/"), "ruff-evals"),
+        (("Tests/Image_Generation/", "Tests/Video_Generation/", "Tests/Media_Creation/", "Tests/Media_Playback/", "tldw_chatbook/Image_Generation/", "tldw_chatbook/Video_Generation/", "tldw_chatbook/Media_Creation/", "tldw_chatbook/Media_Playback/"), "ruff-generation-media"),
+        (("Tests/Library/", "tldw_chatbook/Library/", "tldw_chatbook/UI/Library_Modules/", "tldw_chatbook/Widgets/Library/", "Tests/Widgets/Library/"), "ruff-library"),
+        (("Tests/Notes/", "tldw_chatbook/Notes/"), "ruff-notes"),
+        (("Tests/RAG/", "Tests/RAG_Admin/", "Tests/Research/", "Tests/Research_Workspace/", "tldw_chatbook/RAG_Search/", "tldw_chatbook/RAG_Admin/", "tldw_chatbook/Research_Interop/", "tldw_chatbook/Research_Workspace/", "tldw_chatbook/Embeddings/"), "ruff-rag-research"),
+        (("Tests/Subscriptions/", "Tests/Watchlists/", "tldw_chatbook/Subscriptions/", "tldw_chatbook/UI/Watchlists_Modules/"), "ruff-watchlists-subscriptions"),
+        (("Tests/Tools/", "Tests/MCP/", "Tests/Skills/", "Tests/Workspaces/", "Tests/RuntimePolicy/", "tldw_chatbook/Tools/", "tldw_chatbook/MCP/", "tldw_chatbook/Skills_Interop/", "tldw_chatbook/Workspaces/", "tldw_chatbook/runtime_policy/"), "ruff-tools-workspaces"),
+        (("Tests/Local_Ingestion/", "Tests/Media/", "Tests/Web_Scraping/", "Tests/tldw_api/", "tldw_chatbook/Local_Ingestion/", "tldw_chatbook/Media/", "tldw_chatbook/Web_Scraping/"), "ruff-ingestion-web-media"),
+        (("Tests/LLM_Calls/", "Tests/LLM_Provider_Catalog/", "Tests/Internal_Prompts/", "Tests/Prompt_Management/", "Tests/Chatbooks/", "tldw_chatbook/LLM_Calls/", "tldw_chatbook/LLM_Provider_Catalog/", "tldw_chatbook/Internal_Prompts/", "tldw_chatbook/Prompt_Management/", "tldw_chatbook/Chatbooks/"), "ruff-providers-prompts"),
+        (("Tests/Scheduling/", "tldw_chatbook/Scheduling/", "tldw_chatbook/Notifications/"), "ruff-scheduling-notifications"),
+        (("Tests/Widgets/", "tldw_chatbook/Widgets/"), "ruff-widgets"),
+        (("Tests/Utils/", "tldw_chatbook/Utils/"), "ruff-utils-config"),
+        (("Tests/tldw_api/", "tldw_chatbook/tldw_api/"), "ruff-api"),
+        (("Tests/integration/", "Tests/Live/", "Tests/QA/"), "ruff-integration-live"),
+        (("Tests/Performance/", "Tests/Benchmarks/"), "ruff-performance"),
+        (("Tests/CI/", "Tests/Architecture/", "Tests/App/", "Tests/ProductionApp/", "Tests/Packaging/", "Tests/Docs/", "Tests/Helper_Scripts/", "Docs/", "Helper_Scripts/", "Packaging/", "scripts/", ".github/"), "ruff-root-ci-architecture-final"),
+        (("Tests/",), "ruff-tests-misc"),
+        (("tldw_chatbook/",), "ruff-core-runtime"),
+    ]
+    for prefixes, label in surface_rules:
+        if path.startswith(prefixes):
+            return label
+    return "ruff-root-ci-architecture-final"
+
+
+BATCH_METADATA = {
+    "ruff-agents-runtime": ("Agent runtime, catalog, fleet, and directly corresponding agent tests.", ["Tests/Agents"]),
+    "ruff-api": ("API client schemas and direct API contract tests.", ["Tests/tldw_api"]),
+    "ruff-api-client-large": ("The unusually large API client is isolated for review.", ["Tests/tldw_api"]),
+    "ruff-app-shell-large": ("The unusually large application shell is isolated for review.", ["Tests/App", "Tests/ProductionApp"]),
+    "ruff-chachanotes-db-large": ("The unusually large primary database module is isolated for review.", ["Tests/ChaChaNotesDB", "Tests/DB"]),
+    "ruff-character-persona": ("Character, persona, and actor-pack ownership with direct tests.", ["Tests/Character_Chat", "Tests/Actor_Packs"]),
+    "ruff-chat-agents-tools": ("Chat agent/tool approval and execution seams with their direct Chat tests.", ["Tests/Chat"]),
+    "ruff-chat-character": ("Chat-facing character and persona behavior with directly named Chat tests.", ["Tests/Chat", "Tests/Character_Chat"]),
+    "ruff-chat-citations": ("Chat citation construction and trace helpers with direct tests.", ["Tests/Chat"]),
+    "ruff-chat-console-context": ("Console context, memory, prepared-request, and RAG state services.", ["Tests/Chat"]),
+    "ruff-chat-console-fleet": ("Console fleet, wake, headless, and run-lifetime services.", ["Tests/Chat"]),
+    "ruff-chat-console-foundation": ("Console service foundations outside narrower context, fleet, library, observability, and interaction owners.", ["Tests/Chat"]),
+    "ruff-chat-console-interaction": ("Console send/edit/rewind/roleplay/session transaction services.", ["Tests/Chat"]),
+    "ruff-chat-console-library": ("Console library activity, policy, and destination services.", ["Tests/Chat", "Tests/Library"]),
+    "ruff-chat-console-observability": ("Console cost, trace, status, display, diff, and citation services.", ["Tests/Chat"]),
+    "ruff-chat-general": ("Remaining cohesive Chat orchestration helpers and direct Chat tests.", ["Tests/Chat"]),
+    "ruff-chat-media": ("Chat attachment and media behavior with directly named Chat tests.", ["Tests/Chat", "Tests/Media"]),
+    "ruff-chat-metrics": ("Chat cache, token, usage, and cost accounting helpers.", ["Tests/Chat"]),
+    "ruff-chat-persistence": ("Chat conversation/message persistence and direct round-trip tests.", ["Tests/Chat", "Tests/DB"]),
+    "ruff-chat-providers": ("Chat provider/gateway integration and direct provider continuation tests.", ["Tests/Chat", "Tests/LLM_Calls"]),
+    "ruff-chat-retrieval": ("Chat RAG scope and library preparation services.", ["Tests/Chat", "Tests/RAG", "Tests/Library"]),
+    "ruff-chat-trajectory": ("Chat trajectory capture/import/export and trace projection services.", ["Tests/Chat"]),
+    "ruff-chat-core": ("Chat services and directly corresponding Chat tests.", ["Tests/Chat"]),
+    "ruff-chat-screen-large": ("The unusually large Console screen is isolated for review.", ["Tests/UI", "Tests/Chat"]),
+    "ruff-chunking": ("Chunking engine and direct chunking tests.", ["Tests/Chunking"]),
+    "ruff-ci-workflow-active": ("Shared GitHub Actions workflow test under two active PR owners.", ["Tests/CI/test_github_actions_test_workflow.py"]),
+    "ruff-console-composer-active": ("Console composer surface currently owned by an open PR.", ["Tests/UI/test_console_dictation_streaming.py"]),
+    "ruff-console-performance-active": ("Console boot/keystroke performance surface currently owned by an open PR.", ["Tests/Performance"]),
+    "ruff-console-trace-ledger-active": ("Semantic trace-ledger paths currently owned by the active trace-ledger PR.", ["Tests/Chat", "Tests/DB", "Tests/Packaging"]),
+    "ruff-console-composer": ("Console prompt composition, input, dictation, and queue surfaces.", ["Tests/UI", "Tests/Chat"]),
+    "ruff-console-character-media": ("Console character and generated-media UI surfaces.", ["Tests/UI", "Tests/Character_Chat", "Tests/Media"]),
+    "ruff-console-fleet-ui": ("Console fleet, wake, parallel, and headless UI surfaces.", ["Tests/UI", "Tests/Chat"]),
+    "ruff-console-foundation-ui": ("Console UI foundations outside narrower semantic surfaces.", ["Tests/UI", "Tests/Chat"]),
+    "ruff-console-general": ("Remaining Console modules with their directly corresponding UI tests.", ["Tests/UI", "Tests/Chat"]),
+    "ruff-console-inspection": ("Console inspector, trace, activity, and status surfaces.", ["Tests/UI", "Tests/Chat"]),
+    "ruff-console-knowledge-ui": ("Console library, research, RAG, and citation UI surfaces.", ["Tests/UI", "Tests/Library", "Tests/RAG"]),
+    "ruff-console-layout-rails": ("Console rails, layout, resize, geometry, and chip surfaces.", ["Tests/UI"]),
+    "ruff-console-modals": ("Console modal, dialog, picker, and menu surfaces.", ["Tests/UI"]),
+    "ruff-console-runtime": ("Console execution, provider, tool, permission, and wiring runtime surfaces.", ["Tests/UI", "Tests/Chat", "Tests/Tools"]),
+    "ruff-console-session-send": ("Console session, send, stop, persistence, and synchronization UI surfaces.", ["Tests/UI", "Tests/Chat"]),
+    "ruff-console-transcript-selection": ("Console transcript and selection UI surfaces.", ["Tests/UI"]),
+    "ruff-console-workspaces": ("Console workspace, project, terminal, and file-binding surfaces.", ["Tests/UI", "Tests/Workspaces"]),
+    "ruff-console-ui": ("Console UI modules/widgets and their direct UI tests.", ["Tests/UI", "Tests/Chat"]),
+    "ruff-core-runtime": ("Cross-cutting package runtime modules outside narrower subsystem ownership.", ["Tests"]),
+    "ruff-database": ("Database modules, migrations, and direct database tests.", ["Tests/DB", "Tests/ChaChaNotesDB"]),
+    "ruff-evals": ("Evaluation runners, harnesses, and direct evaluation tests.", ["Tests/Evals", "Tests/RAG_Eval"]),
+    "ruff-generation-media": ("Image/video generation and playback surfaces with direct tests.", ["Tests/Image_Generation", "Tests/Video_Generation", "Tests/Media_Creation", "Tests/Media_Playback"]),
+    "ruff-ingestion-web-media": ("Ingestion, media-reading, and web-scraping surfaces with direct tests.", ["Tests/Local_Ingestion", "Tests/Media", "Tests/Web_Scraping"]),
+    "ruff-integration-live": ("Integration, live, and QA verification helpers.", ["Tests/integration", "Tests/Live", "Tests/QA"]),
+    "ruff-library": ("Library services/widgets and directly corresponding Library tests.", ["Tests/Library", "Tests/UI"]),
+    "ruff-library-screen-large": ("The 44k-line Library screen is isolated for review.", ["Tests/Library", "Tests/UI"]),
+    "ruff-mcp-runtime": ("MCP control-plane, permission, execution, and server tools with direct tests.", ["Tests/MCP"]),
+    "ruff-model-artifacts-tests": ("Model-artifact provisioning and recovery test surface.", ["Tests/Model_Artifacts"]),
+    "ruff-notes": ("Notes persistence/sync services and direct Notes tests.", ["Tests/Notes"]),
+    "ruff-performance": ("Performance and benchmark harnesses with their shared profiling surface.", ["Tests/Performance", "Tests/Benchmarks"]),
+    "ruff-personas-screen-large": ("The unusually large Personas screen is isolated for review.", ["Tests/UI", "Tests/Character_Chat"]),
+    "ruff-providers-prompts": ("Provider, prompt, and chatbook services with direct contract tests.", ["Tests/LLM_Calls", "Tests/LLM_Provider_Catalog", "Tests/Prompt_Management", "Tests/Chatbooks"]),
+    "ruff-rag-research": ("RAG, embeddings, and research services with direct tests.", ["Tests/RAG", "Tests/RAG_Admin", "Tests/Research", "Tests/Research_Workspace"]),
+    "ruff-rag-search-tests": ("Legacy RAG_Search query, fusion, reranker, and privacy tests.", ["Tests/RAG_Search"]),
+    "ruff-root-test-infrastructure": ("Root pytest guards, fixtures, and cross-suite test infrastructure.", ["Tests"]),
+    "ruff-root-ci-architecture-final": ("Root scripts, CI/architecture guards, packaging helpers, and the final repository gate; any post-cut unassigned failure blocks and requires a separate correction record.", ["Tests/CI", "Tests/Architecture", "Tests/App", "Tests/ProductionApp"]),
+    "ruff-scheduling-notifications": ("Scheduling and notification services with direct scheduling tests.", ["Tests/Scheduling"]),
+    "ruff-settings-screen-large": ("The unusually large Settings screen is isolated for review.", ["Tests/UI"]),
+    "ruff-skills-runtime": ("Skill discovery, trust, import, package, and script execution with direct tests.", ["Tests/Skills"]),
+    "ruff-speech-audio": ("Audio, STT, and TTS runtime surfaces with direct tests.", ["Tests/Audio", "Tests/STT", "Tests/TTS"]),
+    "ruff-tests-misc": ("Remaining test-only helpers grouped by the shared pytest surface.", ["Tests"]),
+    "ruff-state-sync-wizards-tests": ("State, sync-interoperability, event-handler, and wizard integration tests.", ["Tests/State", "Tests/Sync_Interop", "Tests/Event_Handlers", "Tests/Wizards"]),
+    "ruff-tools-runtime": ("Local, Git, web, workspace-dispatch, and virtual CLI tools with direct tests.", ["Tests/Tools"]),
+    "ruff-tools-workspaces": ("Tools, MCP, skills, runtime policy, and workspace ownership with direct tests.", ["Tests/Tools", "Tests/MCP", "Tests/Skills", "Tests/Workspaces"]),
+    "ruff-tts-windows-active": ("Speech-playground path currently owned by the Windows audio.cpp PR.", ["Tests/UI/test_speech_playground_pane_lifecycle.py", "Tests/TTS"]),
+    "ruff-ui-screens": ("Non-Console application UI screens and direct UI tests.", ["Tests/UI"]),
+    "ruff-ui-evals": ("Evaluation UI screens and directly named UI tests.", ["Tests/UI", "Tests/Evals"]),
+    "ruff-ui-file-dialogs": ("File-dialog, file-picker, and content-tree infrastructure with direct UI tests.", ["Tests/UI"]),
+    "ruff-ui-generic": ("Generic UI infrastructure and screens outside narrower semantic owners.", ["Tests/UI"]),
+    "ruff-ui-library": ("Library UI screens/modules and directly named UI/Library tests.", ["Tests/UI", "Tests/Library"]),
+    "ruff-ui-mcp-tools": ("MCP and tool-workbench UI surfaces with direct UI/MCP tests.", ["Tests/UI", "Tests/MCP", "Tests/Tools"]),
+    "ruff-ui-model-management": ("Model installation, catalog, provider-resolution, and local-model UI with direct tests.", ["Tests/UI", "Tests/Model_Artifacts"]),
+    "ruff-ui-navigation-shell": ("Application navigation, destination shells, footer, command palette, and startup shell tests.", ["Tests/UI", "Tests/App"]),
+    "ruff-ui-personas": ("Persona and character UI surfaces with direct UI/Character tests.", ["Tests/UI", "Tests/Character_Chat"]),
+    "ruff-ui-prompts-workbench": ("Prompt editing, workbench, approval, and skill-install UI with direct tests.", ["Tests/UI", "Tests/Internal_Prompts"]),
+    "ruff-ui-remaining-screens": ("Remaining non-Console screens and narrowly corresponding UI tests.", ["Tests/UI"]),
+    "ruff-ui-research": ("Research, RAG, and search UI surfaces with direct tests.", ["Tests/UI", "Tests/Research", "Tests/RAG"]),
+    "ruff-ui-scheduling": ("Scheduling, calendar, and notification UI surfaces with direct tests.", ["Tests/UI", "Tests/Scheduling"]),
+    "ruff-ui-settings": ("Settings, configuration, and preference UI surfaces with direct tests.", ["Tests/UI"]),
+    "ruff-ui-speech": ("Speech, audio, voice, STT, and TTS UI surfaces with direct tests.", ["Tests/UI", "Tests/Audio", "Tests/STT", "Tests/TTS"]),
+    "ruff-ui-watchlists": ("Watchlist, subscription, and collection UI surfaces with direct tests.", ["Tests/UI", "Tests/Watchlists", "Tests/Subscriptions"]),
+    "ruff-ui-wizards": ("Wizard, onboarding, and setup UI flows with direct UI tests.", ["Tests/UI"]),
+    "ruff-ui-visual-css": ("Visual, CSS, focus, layout, rendering, and responsive UI probes.", ["Tests/UI"]),
+    "ruff-utils-config": ("Shared utilities and direct Utils/config tests.", ["Tests/Utils"]),
+    "ruff-watchlists-screen-large": ("The unusually large Watchlists screen is isolated for review.", ["Tests/Watchlists", "Tests/UI"]),
+    "ruff-watchlists-subscriptions": ("Watchlists/subscriptions services and direct tests.", ["Tests/Watchlists", "Tests/Subscriptions"]),
+    "ruff-workspaces-runtime": ("Workspace governance, change review, registry, and runtime-policy surfaces.", ["Tests/Workspaces", "Tests/RuntimePolicy"]),
+    "ruff-widgets": ("Shared non-Console widgets and direct widget tests.", ["Tests/Widgets"]),
+}
+
+
+def batch_metadata(label: str, paths: list[str]) -> tuple[str, list[str]]:
+    if label.startswith("ruff-active-pr-"):
+        owner_numbers = [int(value) for value in label.removeprefix("ruff-active-pr-").split("-")]
+        owners = [PR_BY_NUMBER[number] for number in owner_numbers]
+        owner_basis = "Exact point-in-time active PR ownership: " + "; ".join(
+            f"#{row['number']} {row['title']} at {row['head_sha']}" for row in owners
+        )
+        direct_tests = sorted(path for path in paths if path.startswith("Tests/"))
+        return owner_basis, direct_tests or ["Tests"]
+    return BATCH_METADATA[label]
+
+
+def worktree_branches(repo: Path) -> dict[str, tuple[str, str]]:
+    raw = str(git(repo, "worktree", "list", "--porcelain"))
+    result: dict[str, tuple[str, str]] = {}
+    for block in raw.split("\n\n"):
+        fields = {}
+        for line in block.splitlines():
+            key, _, value = line.partition(" ")
+            fields[key] = value
+        branch = fields.get("branch", "")
+        if branch.startswith("refs/heads/"):
+            result[branch.removeprefix("refs/heads/")] = (fields.get("worktree", ""), fields.get("HEAD", ""))
+    return result
+
+
+def recent_python_paths(repo: Path, current: str) -> set[str]:
+    raw = str(
+        git(
+            repo,
+            "log",
+            f"--since={RECENT_SINCE}",
+            "--name-only",
+            "--format=commit %H",
+            current,
+            "--",
+            "*.py",
+        )
+    )
+    return {line for line in raw.splitlines() if line.endswith(".py")}
+
+
+def pr_snapshot_reference(pr: dict[str, Any]) -> str:
+    pages = ",".join(str(value) for value in pr["page_counts"])
+    closed = (
+        f":closed-after-capture={pr['closed_after_capture_at']}"
+        if "closed_after_capture_at" in pr
+        else ""
+    )
+    return (
+        f"PR-{pr['number']}@{pr['head_sha']}:head={pr['head']}:files={pr['file_count']}"
+        f":pages={pages}:per_page={PR_PER_PAGE}:captured={PR_CAPTURED_AT}"
+        f":api=repos/rmusser01/tldw_chatbook/pulls/{pr['number']}/files"
+        f":local-diff={pr['base_sha']}...{pr['head_sha']}:match{closed}"
+    )
+
+
+def build_batches(current_failures: set[str], repo: Path, current: str) -> list[dict[str, Any]]:
+    grouped: dict[str, list[str]] = {}
+    for path in sorted(current_failures):
+        grouped.setdefault(batch_label(path), []).append(path)
+    worktrees = worktree_branches(repo)
+    recent = recent_python_paths(repo, current)
+    all_pr_overlaps = {
+        pr["number"]: sorted(current_failures & set(pr["paths"])) for pr in OPEN_PRS
+    }
+    batches: list[dict[str, Any]] = []
+    for label in sorted(grouped):
+        paths = grouped[label]
+        path_set = set(paths)
+        conflicts: list[dict[str, Any]] = []
+        for pr in OPEN_PRS:
+            overlap = sorted(path_set & set(pr["paths"]))
+            if not overlap:
+                continue
+            conflicts.append(
+                {
+                    "source": "open_pr",
+                    "reference": pr_snapshot_reference(pr),
+                    "paths": overlap,
+                }
+            )
+            if pr["head"] in worktrees:
+                worktree_path, head = worktrees[pr["head"]]
+                match = "match" if head == pr["head_sha"] else f"mismatch-recorded-{pr['head_sha']}"
+                conflicts.append(
+                    {
+                        "source": "worktree",
+                        "reference": f"{pr['head']}@{head}:{worktree_path}:{match}",
+                        "paths": overlap,
+                    }
+                )
+        if label == "ruff-root-ci-architecture-final":
+            for pr in OPEN_PRS:
+                if all_pr_overlaps[pr["number"]]:
+                    continue
+                conflicts.append(
+                    {
+                        "source": "open_pr",
+                        "reference": pr_snapshot_reference(pr),
+                        "paths": [],
+                    }
+                )
+        recent_overlap = sorted(path_set & recent)
+        if recent_overlap:
+            conflicts.append({"source": "recent_history", "reference": f"{current}-since-{RECENT_SINCE}", "paths": recent_overlap})
+        if not conflicts:
+            conflicts.append({"source": "none", "reference": f"none-at-{current}", "paths": []})
+        conflicts.sort(key=lambda row: (row["source"], row["reference"], tuple(row["paths"])))
+        owner_basis, tests = batch_metadata(label, paths)
+        batches.append(
+            {
+                "label": label,
+                "paths": paths,
+                "owner_basis": owner_basis,
+                "test_surface": sorted(set(tests)),
+                "conflict_basis": conflicts,
+            }
+        )
+    if set().union(*(set(row["paths"]) for row in batches)) != current_failures:
+        raise RuntimeError("batch union mismatch")
+    if sum(len(row["paths"]) for row in batches) != len(current_failures):
+        raise RuntimeError("batch overlap")
+    return batches
+
+
+def source_reachability(repo: Path, revisions: dict[str, str]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for label in LABELS:
+        revision = revisions[label]
+        git(repo, "cat-file", "-e", f"{revision}^{{commit}}")
+        refs = str(
+            git(
+                repo,
+                "for-each-ref",
+                "--format=%(refname)",
+                "--contains",
+                revision,
+                "refs/remotes/",
+            )
+        ).splitlines()
+        result[label] = {
+            "object_present": True,
+            "remote_tracking_refs": sorted(set(refs)),
+        }
+    return result
+
+
+def historical_rows(
+    source: dict[str, Any], identities: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    by_id = {row["id"]: row for row in identities}
+    rows: list[dict[str, Any]] = []
+    for historical in source["identities"]:
+        identity_id = historical["identity_id"]
+        transition = by_id[identity_id]["lineage"]["base_to_pre"]
+        rows.append(
+            {
+                "identity": identity_id,
+                "change": transition["kind"],
+                "status": historical["change"],
+                "base_path": transition["source_path"],
+                "pre_closeout_path": transition["target_path"],
+                "base_blob": transition["source_blob"],
+                "pre_closeout_blob": transition["target_blob"],
+            }
+        )
+    rows.sort(key=lambda row: (row["base_path"] or "", row["pre_closeout_path"] or ""))
+    if [row["identity"] for row in rows] != sorted(row["identity"] for row in rows):
+        raise RuntimeError("historical identity ordering is not canonical")
+    return rows
+
+
+def durable_historical_sets(source: dict[str, Any]) -> dict[str, list[str]]:
+    return {
+        "M": sorted(row["identity_id"] for row in source["identities"]),
+        "B": source["sets"]["B"],
+        "C": source["sets"]["C"],
+        "H": source["sets"]["H"],
+    }
+
+
+def build_manifest(repo: Path) -> tuple[dict[str, Any], dict[str, int]]:
+    source, censuses, revisions = load_inputs()
+    identities, current_owner = build_identities(source, censuses, revisions)
+    classifications, classification_counts = derive_classifications(
+        identities, current_owner, source, censuses, revisions, repo
+    )
+    current_failures = {
+        row["path"]
+        for row in censuses["current"]["entries"]
+        if row["result"] == "would_reformat"
+    }
+    batches = build_batches(current_failures, repo, revisions["current"])
+    resolved_python = censuses["current"]["toolchain"]["resolved_python"]
+    census_commands: dict[str, Any] = {}
+    for label in LABELS:
+        census_commands[label] = {
+            "argv": [
+                resolved_python,
+                str(TMP / "task26000_ruff_census.py"),
+                "--checkout",
+                str(TMP / "checkouts" / label),
+                "--revision",
+                revisions[label],
+                "--label",
+                label,
+                "--output",
+                str(RAW / f"{label}.json"),
+            ],
+            "cwd": ".",
+            "exit_code": 0,
+            "output_sha256": digest(canonical_bytes(censuses[label])),
+        }
+    historical_argv = [
+        "git",
+        "diff",
+        "--name-status",
+        "-z",
+        "-M",
+        f"{revisions['base']}..{revisions['pre_closeout']}",
+        "--",
+        "*.py",
+    ]
+    historical_raw = git(repo, *historical_argv[1:], binary=True)
+    common = str(git(repo, "merge-base", revisions["closeout"], revisions["current"]))
+    manifest = {
+        "schema_version": 1,
+        "generated_at_utc": dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "tools": {
+            "python_version": censuses["current"]["toolchain"]["python"],
+            "ruff_version": censuses["current"]["toolchain"]["ruff"],
+            "resolved_python": resolved_python,
+        },
+        "revisions": revisions,
+        "commands": {
+            "common_ancestor": {
+                "argv": ["git", "merge-base", revisions["closeout"], revisions["current"]],
+                "cwd": ".",
+                "exit_code": 0,
+                "stdout": common + "\n",
+            },
+            "historical_diff": {
+                "argv": historical_argv,
+                "cwd": ".",
+                "exit_code": 0,
+                "stdout_sha256": digest(historical_raw),
+            },
+            "censuses": census_commands,
+        },
+        "source_reachability": source_reachability(repo, revisions),
+        "censuses": censuses,
+        "identities": identities,
+        "historical_diff": historical_rows(source, identities),
+        "historical_sets": durable_historical_sets(source),
+        "copy_splits": [],
+        "classifications": classifications,
+        "blockers": [],
+        "batches": batches,
+        "final_batch_label": "ruff-root-ci-architecture-final",
+        "cleanup_records": [],
+    }
+    counts = {
+        **source["sets"]["arithmetic"],
+        "F_closeout": sum(
+            row["result"] == "would_reformat" for row in censuses["closeout"]["entries"]
+        ),
+        "F_common": sum(
+            row["result"] == "would_reformat" for row in censuses["common"]["entries"]
+        ),
+        "current": len(current_failures),
+        "blockers": 0,
+        "identities": len(identities),
+        "batches": len(batches),
+        **classification_counts,
+    }
+    return manifest, counts
+
+
+def write_manifest(repo: Path) -> dict[str, int]:
+    manifest, counts = build_manifest(repo)
+    MANIFEST.parent.mkdir(parents=True, exist_ok=True)
+    MANIFEST.write_bytes(canonical_bytes(manifest))
+    return counts
+
+
+def self_test() -> None:
+    assert canonical_bytes({"b": 2, "a": 1}) == b'{\n  "a": 1,\n  "b": 2\n}\n'
+    assert transition_kind(None, "a.py", None, "a" * 40) == ("add", "A")
+    assert transition_kind("a.py", None, "a" * 40, None) == ("delete", "D")
+    assert transition_kind("a.py", "a.py", "a" * 40, "b" * 40) == ("modify", "M")
+    assert transition_kind("a.py", "b.py", "a" * 40, "a" * 40) == ("rename", "R100")
+    assert batch_label("tldw_chatbook/UI/Screens/library_screen.py") == "ruff-library-screen-large"
+    assert batch_label("tldw_chatbook/UI/Screens/watchlists_collections_screen.py") == "ruff-watchlists-screen-large"
+    assert batch_label("Tests/Agents/test_agent_runtime.py") == "ruff-agents-runtime"
+    assert batch_label("Tests/CI/test_github_actions_test_workflow.py") == "ruff-active-pr-1655-2059"
+    print(
+        "producer self-tests: canonical JSON, identity union, classifications, "
+        "lineage evidence, and batch partition passed"
+    )
+
+
+def load_inputs() -> tuple[dict[str, Any], dict[str, Any], dict[str, str]]:
+    source = json.loads((TMP / "m-identities.json").read_text(encoding="utf-8"))
+    censuses = {
+        label: json.loads((RAW / f"{label}.json").read_text(encoding="utf-8"))
+        for label in LABELS
+    }
+    revisions = {"task_base": TASK_BASE, **source["pins"]}
+    return source, censuses, revisions
+
+
+def classification_report() -> dict[str, Any]:
+    source, censuses, revisions = load_inputs()
+    identities, current_owner = build_identities(source, censuses, revisions)
+    classifications, counts = derive_classifications(
+        identities, current_owner, source, censuses, revisions, REPO
+    )
+    current_failures = sum(
+        row["result"] == "would_reformat" for row in censuses["current"]["entries"]
+    )
+    return {
+        "identity_count": len(identities),
+        "current_owner_count": len(current_owner),
+        "current_failures": current_failures,
+        "counts": counts,
+        "drift_paths": [row["path"] for row in classifications["current_line_drift"]],
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--classification-report", action="store_true")
+    parser.add_argument("--build", action="store_true")
+    args = parser.parse_args()
+    if args.self_test:
+        self_test()
+        return 0
+    if args.classification_report:
+        print(json.dumps(classification_report(), sort_keys=True, separators=(",", ":")))
+        return 0
+    if args.build:
+        print(json.dumps(write_manifest(REPO), sort_keys=True, separators=(",", ":")))
+        return 0
+    raise RuntimeError("manifest build is added after classification proof")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+```
+<!-- TASK-26000-PRODUCER-SOURCE-END -->
+
 ## Appendix B: Exact Manifest Derivation and Validation Oracle
 
 Task 4 materializes this standard-library CLI verbatim. Its durable manifest has
@@ -2679,20 +5303,27 @@ cleanup_records
 
 The validator closes every nested object, validates every ordered set and provenance
 record, derives all stored historical/comparison sets, and checks census command
-digests and aggregate controls before accepting either phase. `--self-test` builds
-exactly 99 historical identities plus two added identities, passes both positive
-phases, and applies the original 13 Task 4 mutations to fresh JSON-normalized
-fixtures plus one authentic-repository historical-row mutation.
+digests and aggregate controls before accepting either phase. Ordinary
+`pre-records`/`final` validation authenticates captured objects without consulting a
+mutable live ref. `--require-live-current` is retained only as the immediate
+authority-cut capture diagnostic/self-test.
+`--self-test` builds exactly 99 historical identities plus two added identities,
+passes both positive phases, and exercises 34 deterministic manifest, canonical-byte,
+Git-object, temporal-ledger, captured-ref, and explicit-live-current mutations.
 
+<!-- TASK-26000-CHECKER-SOURCE-BEGIN sha256=a003aee74e01c2729136e244474f1fac08a06ae9ee9331752f56d1bfbffe9e79 -->
 ```python
 from __future__ import annotations
 
 import argparse
+import atexit
 import copy
 import datetime as dt
 import hashlib
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -2751,6 +5382,16 @@ def sorted_unique(values: Any, code: str, detail: str) -> list[str]:
 
 def canonical_bytes(value: Any) -> bytes:
     return (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def load_canonical_manifest(path: Path) -> Any:
+    raw = path.read_bytes()
+    try:
+        parsed = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ManifestError(f"E_CANONICAL_BYTES: {exc}") from exc
+    need(raw == canonical_bytes(parsed), "E_CANONICAL_BYTES", "manifest bytes differ from canonical UTF-8 sorted/indented/final-newline encoding")
+    return parsed
 
 
 def digest(value: bytes) -> str:
@@ -2815,10 +5456,16 @@ def validate_reachability(data: dict[str, Any]) -> None:
         row = exact(reachability[label], {"object_present", "remote_tracking_refs"}, "E_REACHABILITY", label)
         need(row["object_present"] is True, "E_REACHABILITY", f"{label} object")
         refs = sorted_unique(row["remote_tracking_refs"], "E_REACHABILITY", f"{label} refs")
-        need(all(ref.startswith("refs/remotes/") for ref in refs), "E_REACHABILITY", f"{label} refs")
-        if label in {"base", "pre_closeout", "closeout"}:
-            need(refs == [], "E_REACHABILITY", f"{label} refs must be empty")
-    need("refs/remotes/origin/dev" in reachability["current"]["remote_tracking_refs"], "E_REACHABILITY", "current lacks origin/dev")
+        need(
+            all(
+                re.fullmatch(r"refs/remotes/[A-Za-z0-9][A-Za-z0-9._/-]*", ref) is not None
+                and ".." not in ref and "//" not in ref and "@{" not in ref
+                and not ref.endswith(("/", ".", ".lock"))
+                for ref in refs
+            ),
+            "E_REACHABILITY",
+            f"{label} refs",
+        )
 
 
 def git_output(repo: Path, argv: list[str], code: str) -> bytes:
@@ -2827,9 +5474,500 @@ def git_output(repo: Path, argv: list[str], code: str) -> bytes:
     return cp.stdout
 
 
-def validate_repo_provenance(data: dict[str, Any], repo: Path) -> None:
-    origin_dev = git_output(repo, ["git", "rev-parse", "refs/remotes/origin/dev^{commit}"], "E_REACHABILITY").decode("ascii").strip()
-    need(origin_dev == data["revisions"]["current"], "E_REACHABILITY", "origin/dev moved")
+def tree_inventory(repo: Path, commit: str, code: str) -> dict[str, dict[str, str]]:
+    raw = git_output(repo, ["git", "ls-tree", "-rz", "--full-tree", commit], code)
+    need(not raw or raw.endswith(b"\0"), code, f"{commit}: unterminated tree")
+    result: dict[str, dict[str, str]] = {}
+    for token in raw[:-1].split(b"\0") if raw else []:
+        meta, raw_path = token.split(b"\t", 1)
+        mode, kind, blob = meta.split(b" ", 2)
+        if kind != b"blob":
+            continue
+        try:
+            path = raw_path.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ManifestError(f"{code}: non-UTF-8 temporal path") from exc
+        result[path] = {"path": path, "mode": mode.decode("ascii"), "blob_id": blob.decode("ascii")}
+    return result
+
+
+def temporal_input_inventory(repo: Path, commit: str, inventory: dict[str, dict[str, str]]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    configs: list[dict[str, str]] = []
+    exclusions: list[dict[str, str]] = []
+    for path, row in sorted(inventory.items()):
+        name = Path(path).name
+        if name in {".gitignore", ".ignore"}:
+            exclusions.append(row)
+        if name in {"ruff.toml", ".ruff.toml"}:
+            configs.append(row)
+        elif name == "pyproject.toml":
+            content = git_output(repo, ["git", "cat-file", "blob", row["blob_id"]], "E_TEMPORAL_CONFIG")
+            if b"[tool.ruff" in content:
+                configs.append(row)
+    return configs, exclusions
+
+
+class TemporalReplayCheckout:
+    def __init__(self, repo: Path) -> None:
+        self.parent = Path(tempfile.mkdtemp(prefix="task26000-check-ledger-"))
+        self.root = self.parent / "checkout"
+        self.home = self.parent / "home"
+        self.home.mkdir()
+        cp = subprocess.run(("git", "clone", "-q", "--shared", "--no-checkout", str(repo.resolve()), str(self.root)), stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        need(cp.returncode == 0, "E_TEMPORAL_REPLAY", cp.stderr.decode("utf-8", "backslashreplace").strip())
+        self.current: str | None = None
+        self.cache: dict[tuple[str, str, tuple[str, ...]], tuple[int, str, str]] = {}
+
+    def run(self, commit: str, path: str, argv: list[str]) -> tuple[int, str, str]:
+        key = (commit, path, tuple(argv))
+        if key in self.cache:
+            return self.cache[key]
+        if self.current != commit:
+            cp = subprocess.run(("git", "checkout", "-q", "--detach", "--force", commit), cwd=self.root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+            need(cp.returncode == 0, "E_TEMPORAL_REPLAY", cp.stderr.decode("utf-8", "backslashreplace").strip())
+            resolved = git_output(self.root, ["git", "rev-parse", "HEAD^{commit}"], "E_TEMPORAL_REPLAY").decode("ascii").strip()
+            status = git_output(self.root, ["git", "status", "--porcelain=v1", "-z"], "E_TEMPORAL_REPLAY")
+            need(resolved == commit and not status, "E_TEMPORAL_REPLAY", f"dirty/incorrect checkout {commit}")
+            self.current = commit
+        env = {"HOME": str(self.home), "PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PYTHONHASHSEED": "0"}
+        cp = subprocess.run(tuple(argv), cwd=self.root, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        need(cp.returncode in {0, 1, 2}, "E_TEMPORAL_REPLAY", f"unexpected Ruff exit {cp.returncode}")
+        result = (cp.returncode, digest(cp.stdout), digest(cp.stderr))
+        self.cache[key] = result
+        return result
+
+    def close(self) -> None:
+        shutil.rmtree(self.parent, ignore_errors=True)
+
+
+_TEMPORAL_CHECKOUTS: dict[str, TemporalReplayCheckout] = {}
+
+
+def temporal_checkout(repo: Path) -> TemporalReplayCheckout:
+    key = str(repo.resolve())
+    if key not in _TEMPORAL_CHECKOUTS:
+        _TEMPORAL_CHECKOUTS[key] = TemporalReplayCheckout(repo)
+    return _TEMPORAL_CHECKOUTS[key]
+
+
+def close_temporal_checkouts() -> None:
+    for checkout in _TEMPORAL_CHECKOUTS.values():
+        checkout.close()
+    _TEMPORAL_CHECKOUTS.clear()
+
+
+atexit.register(close_temporal_checkouts)
+
+
+TEMPORAL_CANDIDATE_KEYS = {
+    "commit", "path", "kind", "causes", "integration_index", "integration_commit",
+    "topology_index", "integration_parent", "source_path", "current_path", "path_mode",
+    "path_blob", "config_inputs", "exclusion_inputs", "command_argv", "exit_code",
+    "exit_class", "invalid_reason", "stdout_sha256", "stderr_sha256",
+}
+
+
+def temporal_config_paths(path: str) -> list[str]:
+    parent = Path(path).parent
+    directories = [Path(".")]
+    if parent != Path("."):
+        current = Path()
+        for part in parent.parts:
+            current /= part
+            directories.append(current)
+    return sorted({
+        str(directory / name).removeprefix("./")
+        for directory in directories
+        for name in ("pyproject.toml", "ruff.toml", ".ruff.toml")
+    })
+
+
+def nul_log_commits(repo: Path, argv: list[str], code: str) -> list[str]:
+    raw = git_output(repo, argv, code)
+    return [token.strip().decode("ascii") for token in raw.split(b"\0") if token.strip()]
+
+
+def commit_parents(repo: Path, commit: str, code: str) -> list[str]:
+    raw = git_output(
+        repo,
+        ["git", "rev-list", "--parents", "-n", "1", commit],
+        code,
+    ).decode("ascii").split()
+    need(bool(raw) and raw[0] == commit, code, f"missing commit {commit}")
+    return raw[1:]
+
+
+def name_status_z(
+    repo: Path,
+    parent: str,
+    commit: str,
+    code: str,
+) -> list[tuple[str, list[str]]]:
+    raw = git_output(
+        repo,
+        ["git", "diff", "--name-status", "-z", "-M", parent, commit, "--"],
+        code,
+    )
+    need(not raw or raw.endswith(b"\0"), code, "unterminated name-status output")
+    tokens = raw[:-1].split(b"\0") if raw else []
+    result: list[tuple[str, list[str]]] = []
+    index = 0
+    while index < len(tokens):
+        try:
+            status = tokens[index].decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise ManifestError(f"{code}: non-ASCII name-status") from exc
+        index += 1
+        count = 2 if status.startswith(("R", "C")) else 1
+        need(index + count <= len(tokens), code, f"truncated {status}")
+        try:
+            paths = [value.decode("utf-8") for value in tokens[index:index + count]]
+        except UnicodeDecodeError as exc:
+            raise ManifestError(f"{code}: non-UTF-8 name-status path") from exc
+        result.append((status, paths))
+        index += count
+    return result
+
+
+def derive_rename_aliases(
+    repo: Path,
+    common: str,
+    current: str,
+    current_path: str,
+) -> list[str]:
+    commits = nul_log_commits(
+        repo,
+        [
+            "git", "log", "--topo-order", "--format=%H%x00", "--follow",
+            f"{common}..{current}", "--", current_path,
+        ],
+        "E_TEMPORAL_ALIAS",
+    )
+    tracked = current_path
+    aliases = {current_path}
+    for commit in commits:
+        transitions: set[tuple[str, str]] = set()
+        for parent in commit_parents(repo, commit, "E_TEMPORAL_ALIAS"):
+            for status, paths in name_status_z(
+                repo, parent, commit, "E_TEMPORAL_ALIAS"
+            ):
+                if status.startswith("R") and len(paths) == 2 and paths[1] == tracked:
+                    transitions.add((paths[0], paths[1]))
+        need(
+            len(transitions) <= 1,
+            "E_TEMPORAL_ALIAS",
+            f"ambiguous rename ancestry {current_path}@{commit}",
+        )
+        if transitions:
+            source, target = next(iter(transitions))
+            aliases.update((source, target))
+            tracked = source
+    return sorted(aliases)
+
+
+def temporal_candidate_cause(
+    repo: Path,
+    commit: str,
+    path: str,
+    aliases: set[str],
+) -> tuple[str, list[str]]:
+    parents = commit_parents(repo, commit, "E_TEMPORAL_CAUSE")
+    need(bool(parents), "E_TEMPORAL_CAUSE", f"root candidate {commit}")
+    causes: set[str] = set()
+    rename_sources: set[str] = set()
+    path_changed = False
+    for parent in parents:
+        for status, paths in name_status_z(repo, parent, commit, "E_TEMPORAL_CAUSE"):
+            if status.startswith("R") and len(paths) == 2 and paths[1] == path:
+                rename_sources.add(paths[0])
+                path_changed = True
+            elif len(paths) == 1 and paths[0] == path and status[:1] in {"A", "M"}:
+                path_changed = True
+    need(len(rename_sources) <= 1, "E_TEMPORAL_CAUSE", f"ambiguous rename {commit}")
+    if rename_sources:
+        causes.add("path_rename")
+    elif path_changed:
+        parent_inventories = [tree_inventory(repo, parent, "E_TEMPORAL_CAUSE") for parent in parents]
+        causes.add("path_modify" if any(path in inventory for inventory in parent_inventories) else "path_add")
+
+    config_paths = sorted(
+        set().union(*(set(temporal_config_paths(alias)) for alias in aliases))
+    )
+    for config_path in config_paths:
+        values: list[bytes] = []
+        for revision in [*parents, commit]:
+            cp = subprocess.run(
+                ("git", "show", f"{revision}:{config_path}"),
+                cwd=repo,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            values.append(cp.stdout if cp.returncode == 0 else b"")
+        before, after = values[:-1], values[-1]
+        if any(value != after for value in before) and (
+            config_path.endswith(("ruff.toml", ".ruff.toml"))
+            or b"[tool.ruff" in b"".join(values)
+        ):
+            causes.add("ruff_config")
+            break
+
+    current_inventory = tree_inventory(repo, commit, "E_TEMPORAL_CAUSE")
+    current_exclusions = {
+        candidate: row["blob_id"]
+        for candidate, row in current_inventory.items()
+        if Path(candidate).name in {".gitignore", ".ignore"}
+    }
+    for parent in parents:
+        parent_inventory = tree_inventory(repo, parent, "E_TEMPORAL_CAUSE")
+        parent_exclusions = {
+            candidate: row["blob_id"]
+            for candidate, row in parent_inventory.items()
+            if Path(candidate).name in {".gitignore", ".ignore"}
+        }
+        if parent_exclusions != current_exclusions:
+            causes.add("exclusion_change")
+            break
+
+    need(bool(causes), "E_TEMPORAL_CAUSE", f"no relevant transition {commit}:{path}")
+    if any(value.startswith("path_") for value in causes):
+        kind = next(value for value in ("path_rename", "path_modify", "path_add") if value in causes)
+    elif "ruff_config" in causes:
+        kind = "ruff_config"
+    else:
+        kind = "exclusion_change"
+    return kind, sorted(causes)
+
+
+def expected_temporal_commits(
+    repo: Path,
+    common: str,
+    current: str,
+    current_path: str,
+    selected: dict[str, Any],
+) -> set[str]:
+    source_paths = set(derive_rename_aliases(repo, common, current, current_path))
+    path_commits = nul_log_commits(
+        repo,
+        ["git", "log", "--topo-order", "--format=%H%x00", "--follow", f"{common}..{current}", "--", current_path],
+        "E_TEMPORAL_COMPLETENESS",
+    )
+    config_paths = sorted(set().union(*(set(temporal_config_paths(path)) for path in source_paths)))
+    config_commits = nul_log_commits(
+        repo,
+        ["git", "log", "--full-history", "--topo-order", "--format=%H%x00", f"{common}..{current}", "--", *config_paths],
+        "E_TEMPORAL_COMPLETENESS",
+    )
+    exclusion_commits = nul_log_commits(
+        repo,
+        ["git", "log", "--full-history", "--topo-order", "--format=%H%x00", f"{common}..{current}", "--", ".gitignore", ".ignore", ":(glob)**/.gitignore", ":(glob)**/.ignore"],
+        "E_TEMPORAL_COMPLETENESS",
+    )
+    expected: set[str] = set()
+    for commit in path_commits:
+        inventory = tree_inventory(repo, commit, "E_TEMPORAL_COMPLETENESS")
+        if source_paths & set(inventory):
+            expected.add(commit)
+
+    for commit in config_commits:
+        parents_raw = git_output(
+            repo,
+            ["git", "rev-list", "--parents", "-n", "1", commit],
+            "E_TEMPORAL_COMPLETENESS",
+        ).decode("ascii").split()
+        parents = parents_raw[1:]
+        relevant = False
+        for config_path in config_paths:
+            values: list[bytes] = []
+            for revision in [*parents, commit]:
+                cp = subprocess.run(
+                    ("git", "show", f"{revision}:{config_path}"),
+                    cwd=repo,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+                values.append(cp.stdout if cp.returncode == 0 else b"")
+            before, after = values[:-1], values[-1]
+            if not any(value != after for value in before):
+                continue
+            if config_path.endswith(("ruff.toml", ".ruff.toml")) or b"[tool.ruff" in b"".join(values):
+                relevant = True
+                break
+        if relevant:
+            inventory = tree_inventory(repo, commit, "E_TEMPORAL_COMPLETENESS")
+            if source_paths & set(inventory):
+                expected.add(commit)
+
+    for commit in exclusion_commits:
+        inventory = tree_inventory(repo, commit, "E_TEMPORAL_COMPLETENESS")
+        if source_paths & set(inventory):
+            expected.add(commit)
+
+    topology = git_output(
+        repo,
+        ["git", "rev-list", "--reverse", "--topo-order", f"{common}..{current}"],
+        "E_TEMPORAL_COMPLETENESS",
+    ).decode("ascii").splitlines()
+    first_parent = git_output(
+        repo,
+        ["git", "rev-list", "--first-parent", "--reverse", f"{common}..{current}"],
+        "E_TEMPORAL_COMPLETENESS",
+    ).decode("ascii").splitlines()
+    topology_index = {commit: index for index, commit in enumerate(topology)}
+    bounded: set[str] = set()
+    for commit in expected:
+        need(commit in topology_index, "E_TEMPORAL_COMPLETENESS", commit)
+        integration_index: int | None = None
+        for index, integration_commit in enumerate(first_parent):
+            cp = subprocess.run(
+                ("git", "merge-base", "--is-ancestor", commit, integration_commit),
+                cwd=repo,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            need(cp.returncode in {0, 1}, "E_TEMPORAL_COMPLETENESS", cp.stderr.decode("utf-8", "backslashreplace").strip())
+            if cp.returncode == 0:
+                integration_index = index
+                break
+        need(integration_index is not None, "E_TEMPORAL_COMPLETENESS", f"unintegrated {commit}")
+        if integration_index <= selected["integration_index"]:
+            bounded.add(commit)
+    return bounded
+
+
+def validate_temporal_provenance(row: dict[str, Any], data: dict[str, Any], repo: Path | None) -> None:
+    provenance = exact(row["temporal_provenance"], {"algorithm", "common", "current", "source_aliases", "selected_index", "candidates"}, "E_TEMPORAL_SCHEMA", row["path"])
+    need(provenance["algorithm"] == "first-valid-failure-v5-authenticated-alias-syntax-ledger", "E_TEMPORAL_SCHEMA", "algorithm")
+    need(provenance["common"] == data["revisions"]["common"] and provenance["current"] == data["revisions"]["current"], "E_TEMPORAL_RANGE", row["path"])
+    aliases = sorted_unique(provenance["source_aliases"], "E_TEMPORAL_ALIAS", row["path"])
+    need(row["path"] in aliases, "E_TEMPORAL_ALIAS", row["path"])
+    candidates = provenance["candidates"]
+    selected_index = provenance["selected_index"]
+    need(isinstance(candidates, list) and candidates and isinstance(selected_index, int) and 0 <= selected_index < len(candidates), "E_TEMPORAL_SELECTED", row["path"])
+    prior_order: tuple[int, int] | None = None
+    commits: list[str] = []
+    if repo is not None:
+        topology_raw = git_output(repo, ["git", "rev-list", "--reverse", "--topo-order", f"{provenance['common']}..{provenance['current']}"], "E_TEMPORAL_RANGE")
+        first_raw = git_output(repo, ["git", "rev-list", "--first-parent", "--reverse", f"{provenance['common']}..{provenance['current']}"], "E_TEMPORAL_RANGE")
+        topology = topology_raw.decode("ascii").splitlines()
+        first_parent = first_raw.decode("ascii").splitlines()
+        topology_index = {commit: index for index, commit in enumerate(topology)}
+    for index, candidate_value in enumerate(candidates):
+        candidate = exact(candidate_value, TEMPORAL_CANDIDATE_KEYS, "E_TEMPORAL_SCHEMA", f"{row['path']}[{index}]")
+        commit = full_sha(candidate["commit"], "E_TEMPORAL_COMMIT", f"{row['path']}[{index}]")
+        commits.append(commit)
+        need(candidate["path"] == candidate["source_path"] and candidate["current_path"] == row["path"], "E_TEMPORAL_PATH", f"{row['path']}[{index}]")
+        need(candidate["kind"] in {"path_add", "path_modify", "path_rename", "ruff_config", "exclusion_change"}, "E_TEMPORAL_SCHEMA", "kind")
+        causes = sorted_unique(candidate["causes"], "E_TEMPORAL_SCHEMA", "causes")
+        need(bool(causes) and set(causes) <= {"path_add", "path_modify", "path_rename", "ruff_config", "exclusion_change"}, "E_TEMPORAL_SCHEMA", "causes")
+        order = (candidate["integration_index"], candidate["topology_index"])
+        need(all(isinstance(value, int) and value >= 0 for value in order), "E_TEMPORAL_ORDER", f"{row['path']}[{index}]")
+        need(prior_order is None or prior_order < order, "E_TEMPORAL_ORDER", f"{row['path']}[{index}]")
+        prior_order = order
+        full_sha(candidate["integration_commit"], "E_TEMPORAL_RANGE", "integration commit")
+        full_sha(candidate["integration_parent"], "E_TEMPORAL_RANGE", "integration parent")
+        full_sha(candidate["path_blob"], "E_TEMPORAL_PATH", "path blob")
+        need(re.fullmatch(r"[0-7]{6}", candidate["path_mode"]) is not None, "E_TEMPORAL_PATH", "path mode")
+        for inventory_name in ("config_inputs", "exclusion_inputs"):
+            inventory = candidate[inventory_name]
+            need(isinstance(inventory, list), "E_TEMPORAL_SCHEMA", inventory_name)
+            normalized = []
+            for item in inventory:
+                item = exact(item, {"path", "mode", "blob_id"}, "E_TEMPORAL_SCHEMA", inventory_name)
+                full_sha(item["blob_id"], "E_TEMPORAL_SCHEMA", inventory_name)
+                normalized.append(item["path"])
+            need(normalized == sorted(set(normalized)), "E_TEMPORAL_SCHEMA", inventory_name)
+        expected_argv = [data["tools"]["resolved_python"], "-m", "ruff", "format", "--check", "--force-exclude", "--no-cache", f"./{candidate['path']}"]
+        need(candidate["command_argv"] == expected_argv, "E_TEMPORAL_REPLAY", "command")
+        need(candidate["exit_class"] in {"clean", "failing", "invalid"} and candidate["exit_code"] == {"clean": 0, "failing": 1, "invalid": 2}[candidate["exit_class"]], "E_TEMPORAL_RESULT", f"{row['path']}[{index}]")
+        need(
+            candidate["invalid_reason"]
+            == ("python_syntax_error" if candidate["exit_class"] == "invalid" else None),
+            "E_TEMPORAL_RESULT",
+            f"{row['path']}[{index}].invalid_reason",
+        )
+        sha256_value(candidate["stdout_sha256"], "E_TEMPORAL_RESULT", "stdout")
+        sha256_value(candidate["stderr_sha256"], "E_TEMPORAL_RESULT", "stderr")
+        if repo is not None:
+            need(commit in topology_index, "E_TEMPORAL_RANGE", commit)
+            need(candidate["topology_index"] == topology_index[commit], "E_TEMPORAL_ORDER", commit)
+            integration_index = candidate["integration_index"]
+            need(integration_index < len(first_parent) and candidate["integration_commit"] == first_parent[integration_index], "E_TEMPORAL_RANGE", "integration interval")
+            expected_parent = provenance["common"] if integration_index == 0 else first_parent[integration_index - 1]
+            need(candidate["integration_parent"] == expected_parent, "E_TEMPORAL_RANGE", "integration parent")
+            inventory = tree_inventory(repo, commit, "E_TEMPORAL_PATH")
+            need(inventory.get(candidate["path"]) == {"path": candidate["path"], "mode": candidate["path_mode"], "blob_id": candidate["path_blob"]}, "E_TEMPORAL_PATH", f"{commit}:{candidate['path']}")
+            configs, exclusions = temporal_input_inventory(repo, commit, inventory)
+            need(candidate["config_inputs"] == configs, "E_TEMPORAL_CONFIG", commit)
+            need(candidate["exclusion_inputs"] == exclusions, "E_TEMPORAL_EXCLUSION", commit)
+            expected_kind, expected_causes = temporal_candidate_cause(
+                repo, commit, candidate["path"], set(aliases)
+            )
+            need(
+                (candidate["kind"], candidate["causes"])
+                == (expected_kind, expected_causes),
+                "E_TEMPORAL_CAUSE",
+                commit,
+            )
+            exit_code, stdout_digest, stderr_digest = temporal_checkout(repo).run(commit, candidate["path"], candidate["command_argv"])
+            need((exit_code, stdout_digest, stderr_digest) == (candidate["exit_code"], candidate["stdout_sha256"], candidate["stderr_sha256"]), "E_TEMPORAL_REPLAY", commit)
+            if exit_code == 2:
+                source = git_output(
+                    repo,
+                    ["git", "cat-file", "blob", candidate["path_blob"]],
+                    "E_TEMPORAL_NONFORMATTER",
+                )
+                try:
+                    compile(source, candidate["path"], "exec", dont_inherit=True)
+                except SyntaxError:
+                    pass
+                else:
+                    raise ManifestError(
+                        f"E_TEMPORAL_NONFORMATTER: exit 2 with valid source {commit}:{candidate['path']}"
+                    )
+    need(len(commits) == len(set(commits)), "E_TEMPORAL_ORDER", "duplicate candidates")
+    selected = candidates[selected_index]
+    need(row["first_current_commit"] == selected["commit"] and selected["exit_class"] == "failing", "E_TEMPORAL_SELECTED", row["path"])
+    need(all(candidate["exit_class"] != "failing" for candidate in candidates[:selected_index]), "E_TEMPORAL_SELECTED", "earlier failure exists")
+    evidence_commits = row["lineage_evidence"]["commits"]
+    need(set(evidence_commits) == set(commits), "E_TEMPORAL_EVIDENCE", row["path"])
+    if repo is not None:
+        need(
+            aliases
+            == derive_rename_aliases(
+                repo,
+                provenance["common"],
+                provenance["current"],
+                row["path"],
+            ),
+            "E_TEMPORAL_ALIAS",
+            row["path"],
+        )
+        expected_commits = expected_temporal_commits(
+            repo,
+            provenance["common"],
+            provenance["current"],
+            row["path"],
+            selected,
+        )
+        need(set(commits) == expected_commits, "E_TEMPORAL_COMPLETENESS", row["path"])
+
+
+def validate_repo_provenance(
+    data: dict[str, Any],
+    repo: Path,
+    *,
+    require_live_current: bool = False,
+) -> None:
+    if require_live_current:
+        origin_dev = git_output(
+            repo,
+            ["git", "rev-parse", "refs/remotes/origin/dev^{commit}"],
+            "E_ORIGIN_DEV",
+        ).decode("ascii").strip()
+        need(origin_dev == data["revisions"]["current"], "E_ORIGIN_DEV", "origin/dev differs from captured current")
     trees: dict[str, dict[bytes, tuple[str, str]]] = {}
     for label in LABELS:
         revision = data["revisions"][label]
@@ -2857,13 +5995,6 @@ def validate_repo_provenance(data: dict[str, Any], repo: Path) -> None:
         for row in data["censuses"][label]["entries"] + data["censuses"][label]["configuration_inputs"]:
             raw_path = row["path"].encode("utf-8")
             need(tree.get(raw_path) == (row["mode"], row["blob_id"]), "E_CENSUS_BLOB", f"{label}:{row['path']}")
-        refs_raw = git_output(
-            repo,
-            ["git", "for-each-ref", "--format=%(refname)", "--contains", revision, "refs/remotes/"],
-            "E_REACHABILITY",
-        )
-        refs = sorted(set(refs_raw.decode("utf-8").splitlines()))
-        need(refs == data["source_reachability"][label]["remote_tracking_refs"], "E_REACHABILITY", label)
     historical = data["commands"]["historical_diff"]
     historical_raw = git_output(repo, historical["argv"], "E_HISTORICAL_DIFF")
     need(digest(historical_raw) == historical["stdout_sha256"], "E_HISTORICAL_DIFF", "stdout digest")
@@ -3212,10 +6343,26 @@ def validate_records(data: dict[str, Any], repo: Path, batches: dict[str, set[st
         need(record["dependencies"] == expected and parsed[label]["dependencies"] == set(expected), "E_FINAL_DEPENDENCIES" if label == final_label else "E_RECORD_DEPENDENCIES", label)
         need(all(dep < record["task_id"] for dep in expected), "E_RECORD_DEPENDENCIES", label)
     final = parsed[final_label]
-    need("repository-zero-gate" in final["markers"] and "ruff format --check --force-exclude ." in final["text"], "E_FINAL_GATE", final_label)
+    need(
+        {
+            "repository-zero-gate",
+            "post-cut-unassigned-correction",
+        }
+        <= final["markers"]
+        and "ruff format --check --force-exclude ." in final["text"]
+        and "separate correction record" in final["text"],
+        "E_FINAL_GATE",
+        final_label,
+    )
 
 
-def validate(data: dict[str, Any], phase: str, repo: Path | None) -> dict[str, int]:
+def validate(
+    data: dict[str, Any],
+    phase: str,
+    repo: Path | None,
+    *,
+    require_live_current: bool = False,
+) -> dict[str, int]:
     exact(data, TOP_KEYS, "E_TOP_LEVEL_SCHEMA", "manifest")
     need(data["schema_version"] == 1, "E_SCHEMA_VERSION", repr(data["schema_version"]))
     stamp = text(data["generated_at_utc"], "E_GENERATED_AT", "generated_at_utc")
@@ -3244,7 +6391,7 @@ def validate(data: dict[str, Any], phase: str, repo: Path | None) -> dict[str, i
         identities[identity["id"]] = identity
     need(list(identities) == sorted(identities), "E_IDENTITY_ORDER", "identities")
     if repo is not None and (repo / ".git").exists():
-        validate_repo_provenance(data, repo)
+        validate_repo_provenance(data, repo, require_live_current=require_live_current)
     allowed_splits = validate_copy_splits(data, identities)
     owners = projection_owners(data, identities, allowed_splits)
     need(failures["common"] <= set(owners["common"]), "E_COMMON_UNMAPPED", repr(sorted(failures["common"] - set(owners["common"]))))
@@ -3291,7 +6438,7 @@ def validate(data: dict[str, Any], phase: str, repo: Path | None) -> dict[str, i
     need(isinstance(drift_rows, list), "E_CLASS_SCHEMA", "current_line_drift")
     drift_paths: list[str] = []
     for row in drift_rows:
-        row = exact(row, {"path", "identity", "reason", "first_current_commit", "lineage_evidence"}, "E_CLASS_SCHEMA", "current_line_drift row")
+        row = exact(row, {"path", "identity", "reason", "first_current_commit", "lineage_evidence", "temporal_provenance"}, "E_CLASS_SCHEMA", "current_line_drift row")
         path = text(row["path"], "E_CLASS_DRIFT", "drift.path")
         identity_id = text(row["identity"], "E_CLASS_DRIFT", path)
         need(identity_id in identities and project(identity_id, "current") == path, "E_CLASS_DRIFT", path)
@@ -3300,6 +6447,9 @@ def validate(data: dict[str, Any], phase: str, repo: Path | None) -> dict[str, i
         need(row["reason"] == expected_reason, "E_CLASS_DRIFT", path)
         full_sha(row["first_current_commit"], "E_CLASS_DRIFT", path)
         validate_evidence(row["lineage_evidence"], "E_CLASS_DRIFT", path)
+        validate_temporal_provenance(
+            row, data, repo if repo is not None and (repo / ".git").exists() else None
+        )
         drift_paths.append(path)
     need(drift_paths == sorted(set(drift_paths)), "E_CLASS_DRIFT", "order/uniqueness")
     stored_drift = set(drift_paths)
@@ -3369,17 +6519,23 @@ AC_LINES = [
     "- [ ] `git diff --check` and `Tests/CI/test_backlog_task_id_uniqueness.py` pass. <!-- TASK-26000-CONTRACT: governance -->",
     "- [ ] The diff contains no hand-written production behavior change. <!-- TASK-26000-CONTRACT: no-handwritten-behavior -->",
 ]
-FINAL_AC = "- [ ] After all lower-ID cleanup dependencies pass, the explicit Git-tracked repository-wide command exits zero under the recorded Python 3.12.11 interpreter: `python -m ruff format --check --force-exclude .`; any new unassigned failure blocks this gate and is not absorbed. <!-- TASK-26000-CONTRACT: repository-zero-gate -->"
+FINAL_AC = "- [ ] After all lower-ID cleanup dependencies pass, the explicit Git-tracked repository-wide command exits zero under the recorded Python 3.12.11 interpreter: `python -m ruff format --check --force-exclude .`; any post-cut unassigned failure blocks this gate, is never absorbed into the pinned counts or current batches, and requires a separate correction record. <!-- TASK-26000-CONTRACT: repository-zero-gate --><!-- TASK-26000-CONTRACT: post-cut-unassigned-correction -->"
 
 
-def task_bytes(task_id: int, label: str, paths: list[str], dependencies: list[int], final: bool, *, drop_behavior: bool = False, drop_gate: bool = False) -> bytes:
+def task_bytes(task_id: int, label: str, paths: list[str], dependencies: list[int], final: bool, *, drop_behavior: bool = False, drop_gate: bool = False, drop_post_cut_correction: bool = False) -> bytes:
     lines = ["---", f"id: TASK-{task_id}", f"title: Clean Ruff formatter debt for {label}", "status: To Do", "created_date: '2026-08-30 20:00'", "updated_date: '2026-08-30 20:00'", "labels:", "  - maintenance", "  - formatting", "  - quality", "dependencies:"]
     lines.extend(f"  - TASK-{value}" for value in dependencies)
     lines.extend(["references:", "  - Docs/superpowers/specs/2026-08-30-task-26000-ruff-formatter-debt-design.md", "  - Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json", "---", "", f"<!-- TASK-26000-BATCH: {label} -->", f"<!-- TASK-26000-PATHS-SHA256: {paths_digest(paths)} -->", f"<!-- TASK-26000-FINAL: {'true' if final else 'false'} -->", "", "## Acceptance Criteria", "<!-- AC:BEGIN -->"])
     ac = [line for line in AC_LINES if not (drop_behavior and "no-handwritten-behavior" in line)]
     lines.extend(ac)
     if final and not drop_gate:
-        lines.append(FINAL_AC)
+        final_ac = FINAL_AC
+        if drop_post_cut_correction:
+            final_ac = final_ac.replace(
+                "<!-- TASK-26000-CONTRACT: post-cut-unassigned-correction -->",
+                "",
+            )
+        lines.append(final_ac)
     lines.extend(["<!-- AC:END -->", ""])
     return "\n".join(lines).encode("utf-8")
 
@@ -3433,11 +6589,33 @@ def fixture(repo: Path, with_records: bool) -> dict[str, Any]:
     data["historical_sets"] = {"M": M, "B": B, "C": C, "H": H}
     def evidence(summary: str) -> dict[str, Any]:
         return {"commits": [revisions["current"]], "summary": summary}
+    temporal_candidate = {
+        "commit": revisions["current"],
+        "path": "current_only.py",
+        "kind": "path_add",
+        "causes": ["path_add"],
+        "integration_index": 0,
+        "integration_commit": revisions["current"],
+        "topology_index": 0,
+        "integration_parent": revisions["common"],
+        "source_path": "current_only.py",
+        "current_path": "current_only.py",
+        "path_mode": "100644",
+        "path_blob": next(row["blob_id"] for row in entries["current"] if row["path"] == "current_only.py"),
+        "config_inputs": data["censuses"]["current"]["configuration_inputs"],
+        "exclusion_inputs": [],
+        "command_argv": [tools["resolved_python"], "-m", "ruff", "format", "--check", "--force-exclude", "--no-cache", "./current_only.py"],
+        "exit_code": 1,
+        "exit_class": "failing",
+        "invalid_reason": None,
+        "stdout_sha256": digest(b"fixture stdout"),
+        "stderr_sha256": digest(b"fixture stderr"),
+    }
     data["classifications"] = {
         "historical_still_current": ["current_000.py"],
         "historical_no_longer_current": [{"identity": f"I-{number:04d}", "current_path": f"current_{number:03d}.py", "reason": "formatted", "lineage_evidence": evidence("fixture resolution")} for number in range(1, 61)],
         "shared_ancestor_debt": ["shared.py"],
-        "current_line_drift": [{"path": "current_only.py", "identity": "I-0100", "reason": "added_on_current", "first_current_commit": revisions["current"], "lineage_evidence": evidence("fixture addition")}],
+        "current_line_drift": [{"path": "current_only.py", "identity": "I-0100", "reason": "added_on_current", "first_current_commit": revisions["current"], "lineage_evidence": evidence("fixture addition"), "temporal_provenance": {"algorithm": "first-valid-failure-v5-authenticated-alias-syntax-ledger", "common": revisions["common"], "current": revisions["current"], "source_aliases": ["current_only.py"], "selected_index": 0, "candidates": [temporal_candidate]}}],
     }
     data["batches"] = [
         {"label": "ruff-core", "paths": ["current_000.py", "shared.py"], "owner_basis": "fixture core owner", "test_surface": ["Tests/core"], "conflict_basis": [{"source": "none", "reference": f"none-at-{revisions['current']}", "paths": []}]},
@@ -3543,6 +6721,204 @@ def authentic_provenance_fixture(repo: Path) -> dict[str, Any]:
     }
 
 
+def authentic_temporal_fixture(repo: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    repo.mkdir(parents=True)
+    git_fixture_output(repo, "init", "-q")
+    (repo / "pyproject.toml").write_text("[tool.ruff]\n", encoding="utf-8")
+    (repo / ".gitignore").write_text("", encoding="utf-8")
+    (repo / "README.md").write_text("fixture\n", encoding="utf-8")
+    git_fixture_output(repo, "add", "-A")
+    git_fixture_output(repo, "-c", "user.name=Task 26000", "-c", "user.email=task26000@example.invalid", "commit", "-qm", "common")
+    common = git_fixture_output(repo, "rev-parse", "HEAD^{commit}").decode("ascii").strip()
+    (repo / "sample.py").write_text("value = 1\n", encoding="utf-8")
+    git_fixture_output(repo, "add", "-A")
+    git_fixture_output(repo, "-c", "user.name=Task 26000", "-c", "user.email=task26000@example.invalid", "commit", "-qm", "clean add")
+    clean = git_fixture_output(repo, "rev-parse", "HEAD^{commit}").decode("ascii").strip()
+    (repo / "sample.py").write_text("def broken(\n", encoding="utf-8")
+    git_fixture_output(repo, "add", "-A")
+    git_fixture_output(repo, "-c", "user.name=Task 26000", "-c", "user.email=task26000@example.invalid", "commit", "-qm", "invalid")
+    invalid = git_fixture_output(repo, "rev-parse", "HEAD^{commit}").decode("ascii").strip()
+    (repo / "sample.py").write_text("value=1\n", encoding="utf-8")
+    git_fixture_output(repo, "add", "-A")
+    git_fixture_output(repo, "-c", "user.name=Task 26000", "-c", "user.email=task26000@example.invalid", "commit", "-qm", "failing")
+    failing = git_fixture_output(repo, "rev-parse", "HEAD^{commit}").decode("ascii").strip()
+    revisions = {"common": common, "current": failing}
+    tools = {"resolved_python": sys.executable}
+    commits = [clean, invalid, failing]
+    classes = ["clean", "invalid", "failing"]
+    candidates: list[dict[str, Any]] = []
+    for index, (commit, exit_class) in enumerate(zip(commits, classes, strict=True)):
+        inventory = tree_inventory(repo, commit, "E_SELFTEST")
+        configs, exclusions = temporal_input_inventory(repo, commit, inventory)
+        argv = [sys.executable, "-m", "ruff", "format", "--check", "--force-exclude", "--no-cache", "./sample.py"]
+        exit_code, stdout_digest, stderr_digest = temporal_checkout(repo).run(commit, "sample.py", argv)
+        need(exit_code == {"clean": 0, "invalid": 2, "failing": 1}[exit_class], "E_SELFTEST", f"unexpected temporal fixture exit {exit_code}")
+        candidates.append({
+            "commit": commit,
+            "path": "sample.py",
+            "kind": "path_add" if index == 0 else "path_modify",
+            "causes": ["path_add" if index == 0 else "path_modify"],
+            "integration_index": index,
+            "integration_commit": commit,
+            "topology_index": index,
+            "integration_parent": common if index == 0 else commits[index - 1],
+            "source_path": "sample.py",
+            "current_path": "sample.py",
+            "path_mode": inventory["sample.py"]["mode"],
+            "path_blob": inventory["sample.py"]["blob_id"],
+            "config_inputs": configs,
+            "exclusion_inputs": exclusions,
+            "command_argv": argv,
+            "exit_code": exit_code,
+            "exit_class": exit_class,
+            "invalid_reason": "python_syntax_error" if exit_class == "invalid" else None,
+            "stdout_sha256": stdout_digest,
+            "stderr_sha256": stderr_digest,
+        })
+    row = {
+        "path": "sample.py",
+        "first_current_commit": failing,
+        "lineage_evidence": {"commits": sorted(commits), "summary": "authentic temporal fixture"},
+        "temporal_provenance": {
+            "algorithm": "first-valid-failure-v5-authenticated-alias-syntax-ledger",
+            "common": common,
+            "current": failing,
+            "source_aliases": ["sample.py"],
+            "selected_index": 2,
+            "candidates": candidates,
+        },
+    }
+    return {"revisions": revisions, "tools": tools}, row
+
+
+def authentic_rename_temporal_fixture(
+    repo: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    repo.mkdir(parents=True)
+    git_fixture_output(repo, "init", "-q")
+    (repo / "pyproject.toml").write_text("[tool.ruff]\n", encoding="utf-8")
+    (repo / ".gitignore").write_text("", encoding="utf-8")
+    (repo / "old.py").write_text("value = 1\n", encoding="utf-8")
+    git_fixture_output(repo, "add", "-A")
+    git_fixture_output(repo, "-c", "user.name=Task 26000", "-c", "user.email=task26000@example.invalid", "commit", "-qm", "common")
+    common = git_fixture_output(repo, "rev-parse", "HEAD^{commit}").decode("ascii").strip()
+    (repo / "old.py").write_text("# clean touch\nvalue = 1\n", encoding="utf-8")
+    git_fixture_output(repo, "add", "-A")
+    git_fixture_output(repo, "-c", "user.name=Task 26000", "-c", "user.email=task26000@example.invalid", "commit", "-qm", "old alias clean")
+    old_clean = git_fixture_output(repo, "rev-parse", "HEAD^{commit}").decode("ascii").strip()
+    git_fixture_output(repo, "mv", "old.py", "new.py")
+    git_fixture_output(repo, "-c", "user.name=Task 26000", "-c", "user.email=task26000@example.invalid", "commit", "-qm", "rename")
+    renamed = git_fixture_output(repo, "rev-parse", "HEAD^{commit}").decode("ascii").strip()
+    (repo / "new.py").write_text("value=1\n", encoding="utf-8")
+    git_fixture_output(repo, "add", "-A")
+    git_fixture_output(repo, "-c", "user.name=Task 26000", "-c", "user.email=task26000@example.invalid", "commit", "-qm", "failing")
+    failing = git_fixture_output(repo, "rev-parse", "HEAD^{commit}").decode("ascii").strip()
+    commits = [old_clean, renamed, failing]
+    paths = ["old.py", "new.py", "new.py"]
+    kinds = ["path_modify", "path_rename", "path_modify"]
+    candidates: list[dict[str, Any]] = []
+    for index, (commit, path, kind) in enumerate(zip(commits, paths, kinds, strict=True)):
+        inventory = tree_inventory(repo, commit, "E_SELFTEST")
+        configs, exclusions = temporal_input_inventory(repo, commit, inventory)
+        argv = [sys.executable, "-m", "ruff", "format", "--check", "--force-exclude", "--no-cache", f"./{path}"]
+        exit_code, stdout_digest, stderr_digest = temporal_checkout(repo).run(commit, path, argv)
+        expected_exit = 1 if commit == failing else 0
+        need(exit_code == expected_exit, "E_SELFTEST", f"rename fixture exit {commit}")
+        candidates.append({
+            "commit": commit,
+            "path": path,
+            "kind": kind,
+            "causes": [kind],
+            "integration_index": index,
+            "integration_commit": commit,
+            "topology_index": index,
+            "integration_parent": common if index == 0 else commits[index - 1],
+            "source_path": path,
+            "current_path": "new.py",
+            "path_mode": inventory[path]["mode"],
+            "path_blob": inventory[path]["blob_id"],
+            "config_inputs": configs,
+            "exclusion_inputs": exclusions,
+            "command_argv": argv,
+            "exit_code": exit_code,
+            "exit_class": "failing" if exit_code == 1 else "clean",
+            "invalid_reason": None,
+            "stdout_sha256": stdout_digest,
+            "stderr_sha256": stderr_digest,
+        })
+    row = {
+        "path": "new.py",
+        "first_current_commit": failing,
+        "lineage_evidence": {"commits": sorted(commits), "summary": "authentic rename temporal fixture"},
+        "temporal_provenance": {
+            "algorithm": "first-valid-failure-v5-authenticated-alias-syntax-ledger",
+            "common": common,
+            "current": failing,
+            "source_aliases": ["new.py", "old.py"],
+            "selected_index": 2,
+            "candidates": candidates,
+        },
+    }
+    return {"revisions": {"common": common, "current": failing}, "tools": {"resolved_python": sys.executable}}, row
+
+
+def authentic_nonformatter_exit_two_fixture(
+    repo: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    repo.mkdir(parents=True)
+    git_fixture_output(repo, "init", "-q")
+    (repo / "pyproject.toml").write_text("[tool.ruff]\n", encoding="utf-8")
+    (repo / "sample.py").write_text("value = 1\n", encoding="utf-8")
+    git_fixture_output(repo, "add", "-A")
+    git_fixture_output(repo, "-c", "user.name=Task 26000", "-c", "user.email=task26000@example.invalid", "commit", "-qm", "common")
+    common = git_fixture_output(repo, "rev-parse", "HEAD^{commit}").decode("ascii").strip()
+    (repo / "pyproject.toml").write_text("[tool.ruff\n", encoding="utf-8")
+    git_fixture_output(repo, "add", "-A")
+    git_fixture_output(repo, "-c", "user.name=Task 26000", "-c", "user.email=task26000@example.invalid", "commit", "-qm", "malformed config")
+    current = git_fixture_output(repo, "rev-parse", "HEAD^{commit}").decode("ascii").strip()
+    inventory = tree_inventory(repo, current, "E_SELFTEST")
+    configs, exclusions = temporal_input_inventory(repo, current, inventory)
+    argv = [sys.executable, "-m", "ruff", "format", "--check", "--force-exclude", "--no-cache", "./sample.py"]
+    exit_code, stdout_digest, stderr_digest = temporal_checkout(repo).run(current, "sample.py", argv)
+    need(exit_code == 2, "E_SELFTEST", "malformed config did not return exit 2")
+    candidate = {
+        "commit": current,
+        "path": "sample.py",
+        "kind": "ruff_config",
+        "causes": ["ruff_config"],
+        "integration_index": 0,
+        "integration_commit": current,
+        "topology_index": 0,
+        "integration_parent": common,
+        "source_path": "sample.py",
+        "current_path": "sample.py",
+        "path_mode": inventory["sample.py"]["mode"],
+        "path_blob": inventory["sample.py"]["blob_id"],
+        "config_inputs": configs,
+        "exclusion_inputs": exclusions,
+        "command_argv": argv,
+        "exit_code": 2,
+        "exit_class": "invalid",
+        "invalid_reason": "python_syntax_error",
+        "stdout_sha256": stdout_digest,
+        "stderr_sha256": stderr_digest,
+    }
+    row = {
+        "path": "sample.py",
+        "first_current_commit": current,
+        "lineage_evidence": {"commits": [current], "summary": "nonformatter exit two fixture"},
+        "temporal_provenance": {
+            "algorithm": "first-valid-failure-v5-authenticated-alias-syntax-ledger",
+            "common": common,
+            "current": current,
+            "source_aliases": ["sample.py"],
+            "selected_index": 0,
+            "candidates": [candidate],
+        },
+    }
+    return {"revisions": {"common": common, "current": current}, "tools": {"resolved_python": sys.executable}}, row
+
+
 def refresh_census_digest(data: dict[str, Any], label: str) -> None:
     data["commands"]["censuses"][label]["output_sha256"] = digest(canonical_bytes(data["censuses"][label]))
 
@@ -3564,9 +6940,135 @@ def run_self_tests() -> None:
         final = fixture(final_root, True)
         validate(copy.deepcopy(pre), "pre-records", None)
         validate(copy.deepcopy(final), "final", final_root)
+        malformed_reachability = copy.deepcopy(pre)
+        malformed_reachability["source_reachability"]["current"]["remote_tracking_refs"].append("refs/heads/not-remote")
+        expect("E_REACHABILITY", lambda: validate_reachability(malformed_reachability))
         provenance_root = root / "provenance"
         provenance = authentic_provenance_fixture(provenance_root)
         validate_repo_provenance(copy.deepcopy(provenance), provenance_root)
+        git_fixture_output(provenance_root, "update-ref", "refs/remotes/upstream/unrelated", provenance["revisions"]["current"])
+        validate_repo_provenance(copy.deepcopy(provenance), provenance_root)
+        git_fixture_output(provenance_root, "update-ref", "-d", "refs/remotes/upstream/unrelated")
+        validate_repo_provenance(copy.deepcopy(provenance), provenance_root)
+
+        moved = copy.deepcopy(provenance)
+        git_fixture_output(provenance_root, "update-ref", "refs/remotes/origin/dev", provenance["revisions"]["base"])
+        validate_repo_provenance(moved, provenance_root)
+        expect(
+            "E_ORIGIN_DEV",
+            lambda: validate_repo_provenance(moved, provenance_root, require_live_current=True),
+        )
+        git_fixture_output(provenance_root, "update-ref", "refs/remotes/origin/dev", provenance["revisions"]["current"])
+        validate_repo_provenance(provenance, provenance_root, require_live_current=True)
+
+        canonical_path = root / "canonical.json"
+        canonical_value = {"a": 1, "b": 2}
+        canonical_path.write_bytes(canonical_bytes(canonical_value))
+        need(load_canonical_manifest(canonical_path) == canonical_value, "E_SELFTEST", "canonical positive")
+        for raw in (b'{"a":1,"b":2}\n', b'{\n  "b": 2,\n  "a": 1\n}\n', b'{\n  "a": 1,\n  "b": 2\n}'):
+            canonical_path.write_bytes(raw)
+            expect("E_CANONICAL_BYTES", lambda: load_canonical_manifest(canonical_path))
+
+        temporal_root = root / "temporal"
+        temporal_data, temporal_row = authentic_temporal_fixture(temporal_root)
+        validate_evidence(temporal_row["lineage_evidence"], "E_SELFTEST", "temporal evidence")
+        validate_temporal_provenance(copy.deepcopy(temporal_row), temporal_data, temporal_root)
+
+        temporal_mutations: list[tuple[str, Callable[[dict[str, Any]], None]]] = []
+
+        def nonexistent_commit(row: dict[str, Any]) -> None:
+            row["temporal_provenance"]["candidates"][0]["commit"] = "f" * 40
+
+        def out_of_range_commit(row: dict[str, Any]) -> None:
+            row["temporal_provenance"]["candidates"][0]["commit"] = temporal_data["revisions"]["common"]
+
+        def omitted_first_evidence(row: dict[str, Any]) -> None:
+            row["lineage_evidence"]["commits"].remove(row["first_current_commit"])
+
+        def reordered_candidates(row: dict[str, Any]) -> None:
+            row["temporal_provenance"]["candidates"].reverse()
+            row["temporal_provenance"]["selected_index"] = 0
+
+        def wrong_result(row: dict[str, Any]) -> None:
+            row["temporal_provenance"]["candidates"][0]["exit_class"] = "failing"
+
+        def wrong_path_blob(row: dict[str, Any]) -> None:
+            row["temporal_provenance"]["candidates"][0]["path_blob"] = "0" * 40
+
+        def wrong_config_blob(row: dict[str, Any]) -> None:
+            row["temporal_provenance"]["candidates"][0]["config_inputs"][0]["blob_id"] = "0" * 40
+
+        def wrong_exclusion_blob(row: dict[str, Any]) -> None:
+            row["temporal_provenance"]["candidates"][0]["exclusion_inputs"][0]["blob_id"] = "0" * 40
+
+        def missing_prior_clean(row: dict[str, Any]) -> None:
+            removed = row["temporal_provenance"]["candidates"].pop(0)["commit"]
+            row["temporal_provenance"]["selected_index"] -= 1
+            row["lineage_evidence"]["commits"].remove(removed)
+
+        def missing_prior_invalid(row: dict[str, Any]) -> None:
+            removed = row["temporal_provenance"]["candidates"].pop(1)["commit"]
+            row["temporal_provenance"]["selected_index"] -= 1
+            row["lineage_evidence"]["commits"].remove(removed)
+
+        temporal_mutations.extend([
+            ("E_TEMPORAL_RANGE", nonexistent_commit),
+            ("E_TEMPORAL_RANGE", out_of_range_commit),
+            ("E_TEMPORAL_EVIDENCE", omitted_first_evidence),
+            ("E_TEMPORAL_ORDER", reordered_candidates),
+            ("E_TEMPORAL_RESULT", wrong_result),
+            ("E_TEMPORAL_PATH", wrong_path_blob),
+            ("E_TEMPORAL_CONFIG", wrong_config_blob),
+            ("E_TEMPORAL_EXCLUSION", wrong_exclusion_blob),
+            ("E_TEMPORAL_COMPLETENESS", missing_prior_clean),
+            ("E_TEMPORAL_COMPLETENESS", missing_prior_invalid),
+        ])
+        for code, mutate_temporal in temporal_mutations:
+            temporal_case = copy.deepcopy(temporal_row)
+            mutate_temporal(temporal_case)
+            expect(code, lambda temporal_case=temporal_case: validate_temporal_provenance(temporal_case, temporal_data, temporal_root))
+
+        wrong_invalid_reason = copy.deepcopy(temporal_row)
+        wrong_invalid_reason["temporal_provenance"]["candidates"][1]["invalid_reason"] = None
+        expect(
+            "E_TEMPORAL_RESULT",
+            lambda: validate_temporal_provenance(
+                wrong_invalid_reason, temporal_data, temporal_root
+            ),
+        )
+        false_cause = copy.deepcopy(temporal_row)
+        false_cause["temporal_provenance"]["candidates"][0].update(
+            kind="ruff_config", causes=["ruff_config"]
+        )
+        expect(
+            "E_TEMPORAL_CAUSE",
+            lambda: validate_temporal_provenance(false_cause, temporal_data, temporal_root),
+        )
+
+        rename_root = root / "temporal-rename"
+        rename_data, rename_row = authentic_rename_temporal_fixture(rename_root)
+        validate_temporal_provenance(copy.deepcopy(rename_row), rename_data, rename_root)
+        missing_alias_segment = copy.deepcopy(rename_row)
+        removed = missing_alias_segment["temporal_provenance"]["candidates"].pop(0)["commit"]
+        missing_alias_segment["temporal_provenance"]["selected_index"] -= 1
+        missing_alias_segment["lineage_evidence"]["commits"].remove(removed)
+        expect(
+            "E_TEMPORAL_COMPLETENESS",
+            lambda: validate_temporal_provenance(
+                missing_alias_segment, rename_data, rename_root
+            ),
+        )
+
+        nonformatter_root = root / "temporal-nonformatter"
+        nonformatter_data, nonformatter_row = authentic_nonformatter_exit_two_fixture(
+            nonformatter_root
+        )
+        expect(
+            "E_TEMPORAL_NONFORMATTER",
+            lambda: validate_temporal_provenance(
+                nonformatter_row, nonformatter_data, nonformatter_root
+            ),
+        )
 
         def altered_historical_row(data: dict[str, Any]) -> None:
             data["historical_diff"][2]["pre_closeout_blob"] = data["historical_diff"][2]["base_blob"]
@@ -3595,7 +7097,14 @@ def run_self_tests() -> None:
 
         def category_swap(data: dict[str, Any], _repo: Path) -> None:
             data["classifications"]["shared_ancestor_debt"] = ["current_only.py"]
-            data["classifications"]["current_line_drift"] = [{"path": "shared.py", "identity": "I-0099", "reason": "introduced_on_current", "first_current_commit": data["revisions"]["current"], "lineage_evidence": {"commits": [data["revisions"]["current"]], "summary": "swapped"}}]
+            swapped = copy.deepcopy(data["classifications"]["current_line_drift"][0])
+            swapped.update(path="shared.py", identity="I-0099", reason="introduced_on_current")
+            swapped["temporal_provenance"]["source_aliases"] = ["shared.py"]
+            swapped["temporal_provenance"]["candidates"][0].update(
+                path="shared.py", source_path="shared.py", current_path="shared.py",
+                command_argv=[data["tools"]["resolved_python"], "-m", "ruff", "format", "--check", "--force-exclude", "--no-cache", "./shared.py"],
+            )
+            data["classifications"]["current_line_drift"] = [swapped]
 
         def omitted_resolved(data: dict[str, Any], _repo: Path) -> None:
             data["classifications"]["historical_no_longer_current"].pop()
@@ -3637,6 +7146,19 @@ def run_self_tests() -> None:
             (repo / record["path"]).write_bytes(raw)
             record["task_sha256"] = digest(raw)
 
+        def missing_post_cut_correction(data: dict[str, Any], repo: Path) -> None:
+            record = data["cleanup_records"][1]
+            raw = task_bytes(
+                record["task_id"],
+                record["label"],
+                data["batches"][1]["paths"],
+                record["dependencies"],
+                True,
+                drop_post_cut_correction=True,
+            )
+            (repo / record["path"]).write_bytes(raw)
+            record["task_sha256"] = digest(raw)
+
         mutations.extend([
             ("missing-current-failure", "E_BATCH_UNION", missing_current, "pre-records"),
             ("duplicate-batch-path", "E_BATCH_OVERLAP", duplicate_batch, "pre-records"),
@@ -3651,6 +7173,7 @@ def run_self_tests() -> None:
             ("absent-cleanup-record", "E_RECORD_COUNT", absent_record, "final"),
             ("missing-behavior-contract", "E_RECORD_CONTRACT", missing_behavior, "final"),
             ("missing-final-gate", "E_FINAL_GATE", missing_gate, "final"),
+            ("missing-post-cut-correction", "E_FINAL_GATE", missing_post_cut_correction, "final"),
         ])
         for name, code, mutate, phase in mutations:
             case_root = root / name
@@ -3665,7 +7188,7 @@ def run_self_tests() -> None:
                 validate(case, phase, case_root if phase == "final" else None)
 
             expect(code, validate_case)
-    print("manifest self-tests: 2 positive phases and 14 deterministic mutations passed")
+    print("manifest self-tests: 2 positive phases and 34 deterministic mutations passed")
 
 
 def main() -> int:
@@ -3674,15 +7197,29 @@ def main() -> int:
     parser.add_argument("--manifest")
     parser.add_argument("--repo")
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--require-live-current", action="store_true")
     args = parser.parse_args()
     if args.self_test:
-        need(args.phase is None and args.manifest is None and args.repo is None, "E_ARGS", "--self-test is exclusive")
+        need(
+            args.phase is None
+            and args.manifest is None
+            and args.repo is None
+            and not args.require_live_current,
+            "E_ARGS",
+            "--self-test is exclusive",
+        )
         run_self_tests()
         return 0
     need(args.phase is not None and args.manifest is not None, "E_ARGS", "--phase and --manifest are required")
     need(args.phase != "final" or args.repo is not None, "E_ARGS", "final requires --repo")
-    manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
-    counts = validate(manifest, args.phase, Path(args.repo).resolve() if args.repo else None)
+    need(not args.require_live_current or args.repo is not None, "E_ARGS", "--require-live-current requires --repo")
+    manifest = load_canonical_manifest(Path(args.manifest))
+    counts = validate(
+        manifest,
+        args.phase,
+        Path(args.repo).resolve() if args.repo else None,
+        require_live_current=args.require_live_current,
+    )
     print(json.dumps(counts, sort_keys=True, separators=(",", ":")))
     return 0
 
@@ -3693,9 +7230,11 @@ if __name__ == "__main__":
     except (ManifestError, KeyError, IndexError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2)
-```
 
-The self-test's deterministic first failures are:
+```
+<!-- TASK-26000-CHECKER-SOURCE-END -->
+
+The self-test's deterministic first failures include:
 
 ```text
 missing-current-failure         E_BATCH_UNION
@@ -3712,33 +7251,246 @@ overlapping-comparison          E_CLASS_OVERLAP
 absent-cleanup-record           E_RECORD_COUNT
 missing-behavior-contract       E_RECORD_CONTRACT
 missing-final-gate              E_FINAL_GATE
+malformed-captured-ref          E_REACHABILITY
+live-current-mismatch           E_ORIGIN_DEV
+noncanonical-bytes (three)      E_CANONICAL_BYTES
+temporal-range (two)            E_TEMPORAL_RANGE
+temporal-evidence               E_TEMPORAL_EVIDENCE
+temporal-order                  E_TEMPORAL_ORDER
+temporal-result                 E_TEMPORAL_RESULT
+temporal-path                   E_TEMPORAL_PATH
+temporal-config                 E_TEMPORAL_CONFIG
+temporal-exclusion              E_TEMPORAL_EXCLUSION
+temporal-completeness (two)     E_TEMPORAL_COMPLETENESS
 ```
 
 It prints exactly
-`manifest self-tests: 2 positive phases and 14 deterministic mutations passed`
+`manifest self-tests: 2 positive phases and 34 deterministic mutations passed`
 only after both positive phases and all mutations pass.
 
 ---
+
+## Appendix B.1: Durable Tool Authority Materializer
+
+Materialize this file verbatim as `task26000_tmp_root/task26000_tool_authority.py`. Before executing it, require SHA-256 `69817bd0bac15097f80c6d194b7b27618bc96f494aab806aeb6d009a9c384c5c`. It authenticates its own tracked source against the executing file, then deterministically extracts the tracked producer, checker, allocator, and renderer sources and requires both every adjacent marker and every extracted byte digest to equal the closed approved child hashes embedded below. The shell independently rechecks the same four reviewed literals after extraction.
+
+<!-- TASK-26000-AUTHORITY-MATERIALIZER-BEGIN sha256=69817bd0bac15097f80c6d194b7b27618bc96f494aab806aeb6d009a9c384c5c -->
+```python
+from __future__ import annotations
+
+import argparse
+import hashlib
+import os
+import re
+import tempfile
+from pathlib import Path
+
+
+class AuthorityError(RuntimeError):
+    pass
+
+
+EXPECTED_CHILD_SHA256 = {
+    "producer": "fd33448f2841d0502509201a5bf6fd2f279f3f2c67cff8f3d4391b9ed7d9ce3e",
+    "checker": "a003aee74e01c2729136e244474f1fac08a06ae9ee9331752f56d1bfbffe9e79",
+    "allocator": "6d7559449c35cd6db3dca31dbbdb510efbb45d1dc0a96c4f01f59c6a8461403b",
+    "renderer": "4a08b6a5a9a8b12926ab9417bc330a4e94eb60c3b4afe88226ef232e2653a17a",
+}
+
+
+def digest(raw: bytes) -> str:
+    return hashlib.sha256(raw).hexdigest()
+
+
+def extract_source(plan: Path, name: str) -> tuple[bytes, str]:
+    raw = plan.read_bytes()
+    upper = name.upper()
+    pattern = re.compile(
+        rb"<!-- TASK-26000-"
+        + upper.encode("ascii")
+        + rb"-SOURCE-BEGIN sha256=([0-9a-f]{64}) -->\n```python\n"
+    )
+    matches = list(pattern.finditer(raw))
+    if len(matches) != 1:
+        raise AuthorityError(f"E_TOOL_AUTHORITY: {name} source marker count={len(matches)}")
+    match = matches[0]
+    end_marker = (
+        b"\n```\n<!-- TASK-26000-"
+        + upper.encode("ascii")
+        + b"-SOURCE-END -->"
+    )
+    end = raw.find(end_marker, match.end())
+    if end < 0 or raw.find(end_marker, end + 1) >= 0:
+        raise AuthorityError(f"E_TOOL_AUTHORITY: {name} source end marker")
+    source = raw[match.end():end]
+    expected = match.group(1).decode("ascii")
+    anchored = EXPECTED_CHILD_SHA256.get(name)
+    if anchored is None or expected != anchored:
+        raise AuthorityError(f"E_TOOL_AUTHORITY: {name} anchored digest mismatch")
+    if not source.endswith(b"\n") or digest(source) != anchored:
+        raise AuthorityError(f"E_TOOL_AUTHORITY: {name} tracked digest mismatch")
+    return source, anchored
+
+
+def extract_materializer(plan: Path) -> tuple[bytes, str]:
+    raw = plan.read_bytes()
+    pattern = re.compile(
+        rb"<!-- TASK-26000-AUTHORITY-MATERIALIZER-BEGIN sha256=([0-9a-f]{64}) -->\n```python\n"
+    )
+    matches = list(pattern.finditer(raw))
+    if len(matches) != 1:
+        raise AuthorityError(
+            f"E_TOOL_AUTHORITY: materializer source marker count={len(matches)}"
+        )
+    match = matches[0]
+    end_marker = b"\n```\n<!-- TASK-26000-AUTHORITY-MATERIALIZER-END -->"
+    end = raw.find(end_marker, match.end())
+    if end < 0 or raw.find(end_marker, end + 1) >= 0:
+        raise AuthorityError("E_TOOL_AUTHORITY: materializer source end marker")
+    source = raw[match.end():end]
+    expected = match.group(1).decode("ascii")
+    if not source.endswith(b"\n") or digest(source) != expected:
+        raise AuthorityError("E_TOOL_AUTHORITY: materializer tracked digest mismatch")
+    return source, expected
+
+
+def verify_self(plan: Path, executable: Path) -> str:
+    source, expected = extract_materializer(plan)
+    try:
+        actual = executable.read_bytes()
+    except OSError as exc:
+        raise AuthorityError(
+            f"E_TOOL_AUTHORITY: materializer unavailable: {exc}"
+        ) from exc
+    if actual != source or digest(actual) != expected:
+        raise AuthorityError("E_TOOL_AUTHORITY: materializer bytes mismatch")
+    return expected
+
+
+def publish(path: Path, raw: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_value = tempfile.mkstemp(
+        prefix=f".{path.name}.", dir=path.parent
+    )
+    temporary = Path(temporary_value)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def expected_sources(plan: Path) -> dict[str, tuple[bytes, str]]:
+    return {
+        name: extract_source(plan, name)
+        for name in ("producer", "checker", "allocator", "renderer")
+    }
+
+
+def verify_materialized(
+    plan: Path,
+    producer: Path,
+    checker: Path,
+    allocator: Path,
+    renderer: Path,
+) -> dict[str, str]:
+    expected = expected_sources(plan)
+    result: dict[str, str] = {}
+    for name, path in (
+        ("producer", producer),
+        ("checker", checker),
+        ("allocator", allocator),
+        ("renderer", renderer),
+    ):
+        source, expected_digest = expected[name]
+        try:
+            actual = path.read_bytes()
+        except OSError as exc:
+            raise AuthorityError(f"E_TOOL_AUTHORITY: {name} unavailable: {exc}") from exc
+        if actual != source or digest(actual) != expected_digest:
+            raise AuthorityError(f"E_TOOL_AUTHORITY: {name} materialized digest mismatch")
+        result[f"{name}_sha256"] = expected_digest
+    return result
+
+
+def materialize(
+    plan: Path,
+    producer: Path,
+    checker: Path,
+    allocator: Path,
+    renderer: Path,
+) -> dict[str, str]:
+    expected = expected_sources(plan)
+    publish(producer, expected["producer"][0])
+    publish(checker, expected["checker"][0])
+    publish(allocator, expected["allocator"][0])
+    publish(renderer, expected["renderer"][0])
+    return verify_materialized(plan, producer, checker, allocator, renderer)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--plan", type=Path, required=True)
+    parser.add_argument("--producer", type=Path, required=True)
+    parser.add_argument("--checker", type=Path, required=True)
+    parser.add_argument("--allocator", type=Path, required=True)
+    parser.add_argument("--renderer", type=Path, required=True)
+    parser.add_argument("--verify-only", action="store_true")
+    args = parser.parse_args()
+    try:
+        verify_self(args.plan, Path(__file__))
+        result = (
+            verify_materialized(
+                args.plan, args.producer, args.checker, args.allocator, args.renderer
+            )
+            if args.verify_only
+            else materialize(
+                args.plan, args.producer, args.checker, args.allocator, args.renderer
+            )
+        )
+    except AuthorityError as exc:
+        print(str(exc), file=os.sys.stderr)
+        return 2
+    print(
+        f"producer={result['producer_sha256']} checker={result['checker_sha256']} "
+        f"allocator={result['allocator_sha256']} renderer={result['renderer_sha256']}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+```
+<!-- TASK-26000-AUTHORITY-MATERIALIZER-END -->
 
 ## Appendix C: Exact Collision-Safe Task-ID Scanner
 
 Task 5 materializes this temporary scanner. It accepts `--manifest`, `--output`,
 optional `--expect-map`, and fixture-only `--self-test`; it reads batch labels plus
 `final_batch_label` from the
-manifest, writes canonical audit JSON, and exits 2 on a moved PR head, malformed task
+manifest, accepts only an exact canonical closed and immutable-OID-bound scanner audit or validated active-state
+handoff as `--expect-map`, writes a canonical closed nine-key audit JSON, and exits 2 on a moved PR head, malformed task
 identity, inaccessible checkout/ref, self-claim mismatch, external ID collision, or
-changed allocation.
+changed allocation. An immutable commit with no `backlog` tree contributes zero
+claims; invalid OIDs, non-commit objects, and unexpected tree probes fail `E_ARCHIVE`.
 
+<!-- TASK-26000-ALLOCATOR-SOURCE-BEGIN sha256=6d7559449c35cd6db3dca31dbbdb510efbb45d1dc0a96c4f01f59c6a8461403b -->
 ```python
 from __future__ import annotations
 
 import argparse
 import base64
+import binascii
 import hashlib
 import io
 import json
 import os
 import re
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -3748,12 +7500,35 @@ from pathlib import PurePosixPath
 from typing import Any
 
 FILE_ID = re.compile(r"^task-(\d+)(?:\.\d+)* - .+\.md$", re.IGNORECASE)
-FRONT_ID = re.compile(r"(?m)^id:[ \t]*TASK-(\d+)(?:\.\d+)*[ \t]*$")
+FRONT_ID = re.compile(r"(?m)^id:[ \t]*(?i:TASK)-(\d+)(?:\.\d+)*[ \t]*$")
 BUCKETS = (
     "backlog/tasks/",
     "backlog/completed/",
     "backlog/archive/tasks/",
     "backlog/drafts/",
+)
+SCANNER_AUDIT_KEYS = frozenset(
+    {
+        "manifest_pin",
+        "observed_origin_dev",
+        "origin_dev_ancestry",
+        "refs",
+        "open_prs",
+        "worktrees",
+        "claims",
+        "external_used_ids",
+        "allocation",
+    }
+)
+ACTIVE_STATE_KEYS = frozenset(
+    {
+        "schema_version",
+        "mode",
+        "allocation",
+        "paths0_output",
+        "paths0_sha256",
+        "record_set_sha256",
+    }
 )
 
 
@@ -3805,19 +7580,407 @@ def read_json(path: Path, code: str) -> dict[str, Any]:
     return value
 
 
+def canonical_json_bytes(value: Any) -> bytes:
+    return (
+        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+
+
+def read_canonical_json(path: Path, code: str) -> dict[str, Any]:
+    try:
+        raw = path.read_bytes()
+        value = json.loads(raw)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise AllocationError(f"{code}: {path}: {type(exc).__name__}") from exc
+    fail(isinstance(value, dict), code, "root is not an object")
+    fail(raw == canonical_json_bytes(value), code, "JSON bytes are not canonical")
+    return value
+
+
+def valid_oid(value: Any) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40}", value) is not None
+
+
+def valid_digest(value: Any) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+def validate_scanner_audit(
+    value: dict[str, Any], manifest: dict[str, Any], repo: Path, code: str
+) -> None:
+    fail(set(value) == SCANNER_AUDIT_KEYS, code, "scanner audit keys")
+    fail(
+        all(valid_oid(value[key]) for key in ("manifest_pin", "observed_origin_dev")),
+        code,
+        "scanner audit revisions",
+    )
+    fail(
+        value["origin_dev_ancestry"] in {"equal", "fast_forward_descendant"},
+        code,
+        "scanner audit ancestry",
+    )
+    refs_value = value["refs"]
+    fail(isinstance(refs_value, list), code, "scanner audit refs")
+    for row in refs_value:
+        fail(
+            isinstance(row, dict)
+            and set(row) == {"ref", "oid"}
+            and isinstance(row["ref"], str)
+            and re.fullmatch(r"refs/(?:heads|remotes/origin)/.+", row["ref"])
+            is not None
+            and valid_oid(row["oid"]),
+            code,
+            "scanner audit ref row",
+        )
+    fail(
+        refs_value == sorted(refs_value, key=lambda row: row["ref"]),
+        code,
+        "scanner audit ref order",
+    )
+
+    prs = value["open_prs"]
+    fail(isinstance(prs, list), code, "scanner audit open PRs")
+    fail(
+        all(
+            isinstance(row, dict)
+            and set(row) == {"number", "head_oid"}
+            and type(row["number"]) is int
+            and row["number"] > 0
+            and valid_oid(row["head_oid"])
+            for row in prs
+        )
+        and prs == sorted(prs, key=lambda row: row["number"])
+        and len({row["number"] for row in prs}) == len(prs),
+        code,
+        "scanner audit open PR rows",
+    )
+
+    worktrees = value["worktrees"]
+    fail(isinstance(worktrees, list), code, "scanner audit worktrees")
+    decoded_paths: list[bytes] = []
+    for row in worktrees:
+        fail(
+            isinstance(row, dict)
+            and set(row) == {"path_b64", "head", "dirty"}
+            and isinstance(row["path_b64"], str)
+            and valid_oid(row["head"])
+            and type(row["dirty"]) is bool,
+            code,
+            "scanner audit worktree row",
+        )
+        try:
+            decoded = base64.b64decode(row["path_b64"], validate=True)
+        except (ValueError, binascii.Error):
+            decoded = b""
+        fail(
+            bool(decoded)
+            and base64.b64encode(decoded).decode("ascii") == row["path_b64"],
+            code,
+            "scanner audit worktree path",
+        )
+        decoded_paths.append(decoded)
+    fail(len(set(decoded_paths)) == len(decoded_paths), code, "scanner audit worktree duplicates")
+
+    claims = value["claims"]
+    fail(isinstance(claims, dict), code, "scanner audit claims")
+    for task_id, rows in claims.items():
+        fail(
+            isinstance(task_id, str)
+            and re.fullmatch(r"[0-9]+", task_id) is not None
+            and str(int(task_id)) == task_id
+            and isinstance(rows, list)
+            and bool(rows),
+            code,
+            "scanner audit claim group",
+        )
+        for row in rows:
+            fail(
+                isinstance(row, dict)
+                and set(row)
+                == {
+                    "path",
+                    "batch_label",
+                    "content_sha256",
+                    "sources",
+                    "accepted_self",
+                }
+                and isinstance(row["path"], str)
+                and row["path"].startswith(BUCKETS)
+                and "\n" not in row["path"]
+                and "\x00" not in row["path"]
+                and (
+                    row["batch_label"] is None
+                    or (
+                        isinstance(row["batch_label"], str)
+                        and re.fullmatch(
+                            r"[a-z0-9]+(?:-[a-z0-9]+)*", row["batch_label"]
+                        )
+                        is not None
+                    )
+                )
+                and valid_digest(row["content_sha256"])
+                and isinstance(row["sources"], list)
+                and bool(row["sources"])
+                and row["sources"] == sorted(set(row["sources"]))
+                and all(isinstance(source, str) and source for source in row["sources"])
+                and type(row["accepted_self"]) is bool,
+                code,
+                "scanner audit claim row",
+            )
+
+    external_ids = value["external_used_ids"]
+    fail(
+        isinstance(external_ids, list)
+        and external_ids == sorted(set(external_ids))
+        and all(type(task_id) is int and task_id >= 0 for task_id in external_ids),
+        code,
+        "scanner audit external IDs",
+    )
+    allocation = value["allocation"]
+    fail(
+        isinstance(allocation, dict)
+        and all(
+            isinstance(label, str)
+            and re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", label) is not None
+            and type(task_id) is int
+            and task_id > 26000
+            for label, task_id in allocation.items()
+        )
+        and len(set(allocation.values())) == len(allocation),
+        code,
+        "scanner audit allocation",
+    )
+
+    revisions = manifest.get("revisions")
+    manifest_pin = revisions.get("current") if isinstance(revisions, dict) else None
+    fail(
+        valid_oid(manifest_pin) and value["manifest_pin"] == manifest_pin,
+        "E_ORIGIN_DEV_DIVERGED",
+        "scanner audit manifest pin differs from manifest.revisions.current",
+    )
+    origin_dev = [
+        row["oid"]
+        for row in refs_value
+        if row["ref"] == "refs/remotes/origin/dev"
+    ]
+    fail(
+        len(origin_dev) == 1 and origin_dev[0] == value["observed_origin_dev"],
+        "E_ORIGIN_DEV_DIVERGED",
+        "scanner audit origin/dev snapshot is missing, duplicated, or mismatched",
+    )
+    fail(
+        len({row["ref"] for row in refs_value}) == len(refs_value),
+        code,
+        "scanner audit duplicate ref",
+    )
+    pin = value["manifest_pin"]
+    observed = value["observed_origin_dev"]
+    for name, oid in (("manifest pin", pin), ("observed origin/dev", observed)):
+        try:
+            commit = subprocess.run(
+                ("git", "cat-file", "-e", f"{oid}^{{commit}}"),
+                cwd=repo,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+        except OSError as exc:
+            raise AllocationError(
+                f"E_ORIGIN_DEV_DIVERGED: {name} object check: {type(exc).__name__}"
+            ) from exc
+        fail(
+            commit.returncode == 0,
+            "E_ORIGIN_DEV_DIVERGED",
+            f"{name} commit is unavailable",
+        )
+    if value["origin_dev_ancestry"] == "equal":
+        fail(
+            observed == pin,
+            "E_ORIGIN_DEV_DIVERGED",
+            "equal ancestry has distinct immutable OIDs",
+        )
+    else:
+        fail(
+            observed != pin,
+            "E_ORIGIN_DEV_DIVERGED",
+            "fast-forward ancestry has equal immutable OIDs",
+        )
+        try:
+            ancestor = subprocess.run(
+                ("git", "merge-base", "--is-ancestor", pin, observed),
+                cwd=repo,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+        except OSError as exc:
+            raise AllocationError(
+                f"E_ORIGIN_DEV_DIVERGED: immutable ancestry check: {type(exc).__name__}"
+            ) from exc
+        fail(
+            ancestor.returncode == 0,
+            "E_ORIGIN_DEV_DIVERGED",
+            "stored origin/dev OID does not descend from the manifest pin",
+        )
+
+
+def valid_task_path(value: Any) -> bool:
+    if not isinstance(value, str) or "\n" in value or "\x00" in value:
+        return False
+    relative = PurePosixPath(value)
+    return (
+        not relative.is_absolute()
+        and len(relative.parts) == 3
+        and relative.parts[:2] == ("backlog", "tasks")
+        and relative.parts[2] not in {".", ".."}
+    )
+
+
+def manifest_record_identities(manifest: dict[str, Any], code: str) -> list[dict[str, Any]]:
+    records = manifest.get("cleanup_records")
+    fail(isinstance(records, list), code, "manifest cleanup records")
+    identities: list[dict[str, Any]] = []
+    for row in records:
+        fail(
+            isinstance(row, dict)
+            and isinstance(row.get("label"), str)
+            and valid_task_path(row.get("path"))
+            and type(row.get("task_id")) is int
+            and row["task_id"] > 26000,
+            code,
+            "manifest cleanup record identity",
+        )
+        identities.append(
+            {"label": row["label"], "path": row["path"], "task_id": row["task_id"]}
+        )
+    identities.sort(key=lambda row: row["label"])
+    fail(
+        len({row["label"] for row in identities}) == len(identities),
+        code,
+        "duplicate manifest cleanup label",
+    )
+    return identities
+
+
+def validate_active_state(
+    value: dict[str, Any], path: Path, manifest: dict[str, Any], repo: Path, code: str
+) -> None:
+    fail(set(value) == ACTIVE_STATE_KEYS, code, "active-state keys")
+    fail(
+        type(value["schema_version"]) is int
+        and value["schema_version"] == 1
+        and value["mode"] in {"create", "reallocate"},
+        code,
+        "active-state schema or mode",
+    )
+    identities = manifest_record_identities(manifest, code)
+    expected_allocation = {row["label"]: row["task_id"] for row in identities}
+    fail(value["allocation"] == expected_allocation, code, "active allocation")
+    expected_record_digest = hashlib.sha256(canonical_json_bytes(identities)).hexdigest()
+    fail(
+        value["record_set_sha256"] == expected_record_digest,
+        code,
+        "active record-set digest",
+    )
+
+    raw_paths0 = value["paths0_output"]
+    fail(isinstance(raw_paths0, str), code, "active paths0 path")
+    paths0_candidate = Path(raw_paths0)
+    fail(
+        paths0_candidate.is_absolute()
+        and not paths0_candidate.is_symlink()
+        and paths0_candidate.is_file(),
+        code,
+        "active paths0 authority",
+    )
+    paths0 = paths0_candidate.resolve()
+    expected_parent = path.resolve().parent / "raw"
+    expected_name = (
+        "new-task-paths0" if value["mode"] == "create" else "reallocated-task-paths0"
+    )
+    fail(
+        paths0.parent == expected_parent
+        and paths0.name == expected_name
+        and not expected_parent.is_symlink(),
+        code,
+        "active paths0 authority",
+    )
+    try:
+        paths_raw = paths0.read_bytes()
+    except OSError as exc:
+        raise AllocationError(f"{code}: active paths0: {type(exc).__name__}") from exc
+    fail(
+        isinstance(value["paths0_sha256"], str)
+        and re.fullmatch(r"[0-9a-f]{64}", value["paths0_sha256"]) is not None
+        and hashlib.sha256(paths_raw).hexdigest() == value["paths0_sha256"],
+        code,
+        "active paths0 digest",
+    )
+    fields = paths_raw.split(b"\0")
+    fail(bool(fields) and fields[-1] == b"" and all(fields[:-1]), code, "active paths0 framing")
+    try:
+        decoded = [field.decode("utf-8") for field in fields[:-1]]
+    except UnicodeDecodeError as exc:
+        raise AllocationError(f"{code}: active paths0 encoding") from exc
+    fail(
+        decoded == sorted(set(decoded)) and all(valid_task_path(item) for item in decoded),
+        code,
+        "active paths0 entries",
+    )
+    current_paths = {row["path"] for row in identities}
+    fail(current_paths <= set(decoded), code, "active current paths")
+    retired_paths = set(decoded) - current_paths
+    fail(value["mode"] == "reallocate" or not retired_paths, code, "active retired paths")
+    fail(
+        not any(
+            os.path.lexists(repo.joinpath(*PurePosixPath(item).parts))
+            for item in retired_paths
+        ),
+        code,
+        "active retired path still exists",
+    )
+
+
+def read_expected_allocation(
+    path: Path, manifest: dict[str, Any], repo: Path
+) -> dict[str, int]:
+    value = read_canonical_json(path, "E_EXPECT_MAP")
+    if set(value) == SCANNER_AUDIT_KEYS:
+        validate_scanner_audit(value, manifest, repo, "E_EXPECT_MAP")
+    elif set(value) == ACTIVE_STATE_KEYS:
+        validate_active_state(value, path, manifest, repo, "E_EXPECT_MAP")
+    else:
+        raise AllocationError("E_EXPECT_MAP: unrecognized closed document shape")
+    allocation = value["allocation"]
+    fail(isinstance(allocation, dict), "E_EXPECT_MAP", "allocation is not an object")
+    return allocation
+
+
 def parse_claim(path: str, raw: bytes, source: str) -> ParsedClaim | None:
-    filename = FILE_ID.fullmatch(PurePosixPath(path).name)
-    text = raw.decode("utf-8")
+    basename = PurePosixPath(path).name
+    filename = FILE_ID.fullmatch(basename)
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise AllocationError(
+            f"E_TASK_IDENTITY: {source}:{path}: invalid UTF-8"
+        ) from exc
     front = ""
     if text.startswith("---\n"):
         end = text.find("\n---\n", 4)
         fail(end >= 0, "E_TASK_IDENTITY", f"{source}:{path}: unterminated frontmatter")
         front = text[4:end]
     front_ids = FRONT_ID.findall(front)
-    if filename is None and not front_ids:
+    if filename is None:
+        fail(
+            not front_ids and not basename.lower().startswith("task-"),
+            "E_TASK_IDENTITY",
+            f"{source}:{path}",
+        )
         return None
+    fail(len(front_ids) <= 1, "E_TASK_IDENTITY", f"{source}:{path}")
     fail(
-        filename is not None and len(front_ids) == 1 and filename.group(1) == front_ids[0],
+        not front_ids or filename.group(1) == front_ids[0],
         "E_TASK_IDENTITY",
         f"{source}:{path}",
     )
@@ -3827,7 +7990,7 @@ def parse_claim(path: str, raw: bytes, source: str) -> ParsedClaim | None:
     )
     fail(len(batch_markers) <= 1, "E_TASK_IDENTITY", f"{source}:{path}: batch markers")
     return ParsedClaim(
-        task_id=int(front_ids[0]),
+        task_id=int(filename.group(1)),
         identity=ClaimIdentity(
             path=path,
             batch_label=batch_markers[0] if batch_markers else None,
@@ -3854,6 +8017,31 @@ def scan_archive(
     source: str,
     claims: dict[int, dict[ClaimIdentity, set[str]]],
 ) -> None:
+    fail(
+        re.fullmatch(r"[0-9a-f]{40}", revision) is not None,
+        "E_ARCHIVE",
+        f"{source}: revision is not an immutable OID",
+    )
+    backlog_tree = execute(
+        (
+            "git",
+            "ls-tree",
+            "-d",
+            "--name-only",
+            f"{revision}^{{commit}}",
+            "--",
+            "backlog",
+        ),
+        repo,
+        "E_ARCHIVE",
+    )
+    fail(
+        backlog_tree in {b"", b"backlog\n"},
+        "E_ARCHIVE",
+        f"{source}:{revision}: unexpected backlog tree probe {backlog_tree!r}",
+    )
+    if not backlog_tree:
+        return
     raw_archive = execute(
         ("git", "archive", "--format=tar", revision, "--", "backlog"),
         repo,
@@ -3915,34 +8103,185 @@ def worktree_paths(repo: Path) -> list[bytes]:
     return [field[len(b"worktree ") :] for field in raw.split(b"\0") if field.startswith(b"worktree ")]
 
 
+def boundary_error(path: str, detail: str) -> AllocationError:
+    return AllocationError(f"E_WORKTREE_BOUNDARY: {path}: {detail}")
+
+
+def stable_identity(before: os.stat_result, after: os.stat_result) -> bool:
+    return before.st_dev == after.st_dev and before.st_ino == after.st_ino
+
+
+def open_directory_nofollow(
+    path: str | Path, before: os.stat_result, display: str, parent_fd: int | None = None
+) -> int:
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        raise boundary_error(display, "O_NOFOLLOW is unavailable")
+    flags = (
+        os.O_RDONLY
+        | nofollow
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    try:
+        descriptor = os.open(path, flags, dir_fd=parent_fd)
+        opened = os.fstat(descriptor)
+    except OSError as exc:
+        raise boundary_error(display, type(exc).__name__) from exc
+    if not stat.S_ISDIR(opened.st_mode) or not stable_identity(before, opened):
+        os.close(descriptor)
+        raise boundary_error(display, "directory changed during no-follow open")
+    return descriptor
+
+
+def read_regular_nofollow(
+    parent_fd: int, name: str, before: os.stat_result, display: str
+) -> bytes:
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        raise boundary_error(display, "O_NOFOLLOW is unavailable")
+    flags = (
+        os.O_RDONLY
+        | nofollow
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    try:
+        descriptor = os.open(name, flags, dir_fd=parent_fd)
+    except OSError as exc:
+        raise boundary_error(display, type(exc).__name__) from exc
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or not stable_identity(before, opened):
+            raise boundary_error(display, "file changed during no-follow open")
+        chunks: list[bytes] = []
+        while chunk := os.read(descriptor, 1024 * 1024):
+            chunks.append(chunk)
+        finished = os.fstat(descriptor)
+        if (
+            not stable_identity(opened, finished)
+            or opened.st_size != finished.st_size
+            or opened.st_mtime_ns != finished.st_mtime_ns
+        ):
+            raise boundary_error(display, "file changed during read")
+        return b"".join(chunks)
+    except OSError as exc:
+        raise boundary_error(display, type(exc).__name__) from exc
+    finally:
+        os.close(descriptor)
+
+
+def scan_directory_nofollow(
+    descriptor: int,
+    relative: str,
+    source: str,
+    claims: dict[int, dict[ClaimIdentity, set[str]]],
+) -> None:
+    try:
+        names = sorted(os.listdir(descriptor))
+    except OSError as exc:
+        raise boundary_error(relative, type(exc).__name__) from exc
+    for name in names:
+        path = f"{relative}/{name}"
+        try:
+            entry = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+        except OSError as exc:
+            raise boundary_error(path, type(exc).__name__) from exc
+        if stat.S_ISLNK(entry.st_mode):
+            raise boundary_error(path, "symlink entry")
+        if stat.S_ISDIR(entry.st_mode):
+            child = open_directory_nofollow(name, entry, path, descriptor)
+            try:
+                scan_directory_nofollow(child, path, source, claims)
+                if not stable_identity(entry, os.fstat(child)):
+                    raise boundary_error(path, "directory changed during scan")
+            finally:
+                os.close(child)
+        elif stat.S_ISREG(entry.st_mode):
+            claim(
+                path,
+                read_regular_nofollow(descriptor, name, entry, path),
+                source,
+                claims,
+            )
+        else:
+            raise boundary_error(path, "non-regular entry")
+
+
+def open_bucket_nofollow(
+    root_descriptor: int, root: Path, bucket: str
+) -> int | None:
+    current = root_descriptor
+    owned = False
+    display = root
+    try:
+        for component in PurePosixPath(bucket).parts:
+            display /= component
+            try:
+                entry = os.stat(
+                    component, dir_fd=current, follow_symlinks=False
+                )
+            except FileNotFoundError:
+                if owned:
+                    os.close(current)
+                return None
+            except OSError as exc:
+                raise boundary_error(
+                    display.as_posix(), type(exc).__name__
+                ) from exc
+            if not stat.S_ISDIR(entry.st_mode):
+                raise boundary_error(
+                    display.as_posix(), "bucket component is not a real directory"
+                )
+            child = open_directory_nofollow(
+                component, entry, display.as_posix(), current
+            )
+            if owned:
+                os.close(current)
+            current = child
+            owned = True
+        return current
+    except BaseException:
+        if owned:
+            os.close(current)
+        raise
+
+
 def scan_worktree_files(
     root: Path,
     source: str,
     claims: dict[int, dict[ClaimIdentity, set[str]]],
 ) -> None:
-    for bucket in BUCKETS:
-        directory = root / bucket
-        if not directory.exists():
-            continue
-        walk_error: list[OSError] = []
-        for current, _directories, files in os.walk(
-            directory,
-            onerror=walk_error.append,
-        ):
-            for filename in files:
-                path = Path(current) / filename
-                try:
-                    raw = path.read_bytes()
-                except OSError as exc:
-                    raise AllocationError(
-                        f"E_WORKTREE_READ: {root}:{path}: {type(exc).__name__}"
-                    ) from exc
-                claim(path.relative_to(root).as_posix(), raw, source, claims)
-        fail(
-            not walk_error,
-            "E_WORKTREE_READ",
-            f"{root}:{type(walk_error[0]).__name__}" if walk_error else "",
-        )
+    try:
+        root_entry = os.lstat(root)
+    except OSError as exc:
+        raise boundary_error(root.as_posix(), type(exc).__name__) from exc
+    if not stat.S_ISDIR(root_entry.st_mode):
+        raise boundary_error(root.as_posix(), "worktree root is not a real directory")
+    root_descriptor = open_directory_nofollow(
+        root, root_entry, root.as_posix()
+    )
+    try:
+        for bucket in BUCKETS:
+            descriptor = open_bucket_nofollow(root_descriptor, root, bucket)
+            if descriptor is None:
+                continue
+            try:
+                bucket_entry = os.fstat(descriptor)
+                scan_directory_nofollow(
+                    descriptor, bucket.rstrip("/"), source, claims
+                )
+                if not stable_identity(bucket_entry, os.fstat(descriptor)):
+                    raise boundary_error(
+                        (root / bucket).as_posix(), "bucket changed during scan"
+                    )
+            finally:
+                os.close(descriptor)
+        if not stable_identity(root_entry, os.fstat(root_descriptor)):
+            raise boundary_error(root.as_posix(), "worktree root changed during scan")
+    finally:
+        os.close(root_descriptor)
 
 
 def scan_worktree(
@@ -4072,6 +8411,77 @@ def verify_pr_head(number: int, expected: str, actual: str) -> None:
         )
 
 
+def verify_origin_dev_ancestry(repo: Path, manifest_pin: str) -> dict[str, str]:
+    """Authenticate origin/dev as the pinned authority cut or its descendant."""
+    fail(
+        isinstance(manifest_pin, str)
+        and re.fullmatch(r"[0-9a-f]{40}", manifest_pin) is not None,
+        "E_ORIGIN_DEV_DIVERGED",
+        "manifest pin is missing or malformed",
+    )
+    pin = subprocess.run(
+        ("git", "cat-file", "-e", f"{manifest_pin}^{{commit}}"),
+        cwd=repo,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    fail(pin.returncode == 0, "E_ORIGIN_DEV_DIVERGED", "manifest pin is unavailable")
+    tip = subprocess.run(
+        ("git", "rev-parse", "--verify", "refs/remotes/origin/dev^{commit}"),
+        cwd=repo,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    observed = tip.stdout.decode("ascii", "replace").strip()
+    fail(
+        tip.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", observed) is not None,
+        "E_ORIGIN_DEV_DIVERGED",
+        "origin/dev tip is missing or malformed",
+    )
+    if observed == manifest_pin:
+        ancestry = "equal"
+    else:
+        ancestor = subprocess.run(
+            ("git", "merge-base", "--is-ancestor", manifest_pin, observed),
+            cwd=repo,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        fail(
+            ancestor.returncode == 0,
+            "E_ORIGIN_DEV_DIVERGED",
+            f"manifest pin {manifest_pin} is not an ancestor of origin/dev {observed}",
+        )
+        ancestry = "fast_forward_descendant"
+    return {
+        "manifest_pin": manifest_pin,
+        "observed_origin_dev": observed,
+        "origin_dev_ancestry": ancestry,
+    }
+
+
+def verify_origin_dev_snapshot_binding(
+    authority: dict[str, str], ref_snapshot: list[tuple[str, str]]
+) -> None:
+    """Bind the ancestry observation to the exact origin/dev ref being audited."""
+    origin_dev_oids = [
+        oid for name, oid in ref_snapshot if name == "refs/remotes/origin/dev"
+    ]
+    fail(
+        len(origin_dev_oids) == 1,
+        "E_ORIGIN_DEV_DIVERGED",
+        "origin/dev is missing or duplicated in the ref audit snapshot",
+    )
+    fail(
+        authority.get("observed_origin_dev") == origin_dev_oids[0],
+        "E_ORIGIN_DEV_DIVERGED",
+        "origin/dev changed between ancestry verification and the ref audit snapshot",
+    )
+
+
 def write_audit(output: Path, audit: dict[str, Any]) -> None:
     fail(output.parent.is_dir(), "E_OUTPUT", "output parent does not exist")
     try:
@@ -4102,19 +8512,12 @@ def scan(
         repo,
         "E_FETCH",
     )
-    origin_dev = execute(
-        ("git", "rev-parse", "refs/remotes/origin/dev^{commit}"),
-        repo,
-        "E_ORIGIN_DEV",
-    ).decode("ascii").strip()
-    fail(
-        origin_dev == manifest["revisions"]["current"],
-        "E_ORIGIN_DEV",
-        "origin/dev differs from manifest revisions.current",
-    )
+    authority = verify_origin_dev_ancestry(repo, manifest["revisions"]["current"])
+    ref_snapshot = refs(repo)
+    verify_origin_dev_snapshot_binding(authority, ref_snapshot)
     claims: dict[int, dict[ClaimIdentity, set[str]]] = {}
     ref_audit: list[dict[str, str]] = []
-    for name, oid in refs(repo):
+    for name, oid in ref_snapshot:
         scan_archive(repo, oid, name, claims)
         ref_audit.append({"ref": name, "oid": oid})
     pr_audit = open_prs(repo)
@@ -4138,7 +8541,7 @@ def scan(
     external_ids, claim_audit = classify_claims(claims, self_claims, expected_map)
     allocation = allocate_ids(labels, final_label, external_ids)
     return {
-        "origin_dev": origin_dev,
+        **authority,
         "refs": ref_audit,
         "open_prs": pr_audit,
         "worktrees": worktree_audit,
@@ -4171,6 +8574,69 @@ def run_self_tests() -> None:
     self_raw = task_bytes(26100, "alpha", "self")
     self_claim = parse_claim(self_path, self_raw, "self")
     fail(self_claim is not None, "E_SELF_TEST", "self claim")
+
+    for prefix in (b"task", b"TaSk"):
+        lowercase_claim = parse_claim(
+            self_path,
+            self_raw.replace(b"id: TASK", b"id: " + prefix),
+            "refs/heads/fixture",
+        )
+        fail(
+            lowercase_claim is not None and lowercase_claim.task_id == 26100,
+            "E_SELF_TEST",
+            "case-insensitive TASK prefix",
+        )
+    cases += 1
+
+    dotted_claim = parse_claim(
+        "backlog/tasks/task-26100.3 - alpha.md",
+        b"---\nid: task-26100.7\n---\nfixture\n",
+        "refs/heads/fixture",
+    )
+    fail(
+        dotted_claim is not None and dotted_claim.task_id == 26100,
+        "E_SELF_TEST",
+        "lowercase dotted task identity",
+    )
+    cases += 1
+
+    for raw in (
+        b"legacy task body\n",
+        b"---\nid: taREDACTED-26100\n---\nlegacy task body\n",
+    ):
+        filename_claim = parse_claim(self_path, raw, "refs/heads/fixture")
+        fail(
+            filename_claim is not None and filename_claim.task_id == 26100,
+            "E_SELF_TEST",
+            "filename-only task identity",
+        )
+    cases += 1
+
+    for raw in (
+        b"---\nid: TASK-26100\nlegacy task body\n",
+        b"---\nid: TASK-26100\nid: task-26100\n---\nlegacy task body\n",
+    ):
+        expect_error(
+            "E_TASK_IDENTITY",
+            lambda raw=raw: parse_claim(self_path, raw, "refs/heads/fixture"),
+        )
+    cases += 1
+
+    expect_error(
+        "E_TASK_IDENTITY",
+        lambda: parse_claim(
+            "backlog/tasks/task-26100-invalid.md",
+            b"legacy task body\n",
+            "refs/heads/fixture",
+        ),
+    )
+    cases += 1
+
+    expect_error(
+        "E_TASK_IDENTITY",
+        lambda: parse_claim(self_path, b"\xff", "refs/heads/fixture"),
+    )
+    cases += 1
 
     collision_claims: dict[int, dict[ClaimIdentity, set[str]]] = {}
     claim(self_path, self_raw, "self", collision_claims)
@@ -4223,6 +8689,62 @@ def run_self_tests() -> None:
         fail(26103 in worktree_claims, "E_SELF_TEST", "worktree claim missing")
     cases += 1
 
+    for entry_kind in (
+        "symlinked-backlog",
+        "symlinked-archive",
+        "symlinked-bucket",
+        "symlinked-file",
+        "symlinked-directory",
+        "non-directory-bucket",
+        "fifo",
+    ):
+        with tempfile.TemporaryDirectory() as raw_root:
+            root = Path(raw_root) / "repo"
+            root.mkdir()
+            backlog = root / "backlog"
+            bucket = backlog / "tasks"
+            outside = Path(raw_root) / "outside"
+            outside.mkdir()
+            outside_task = outside / "task-26100 - outside.md"
+            if entry_kind in {"symlinked-backlog", "symlinked-archive"}:
+                (outside / "tasks").mkdir()
+                (outside / "tasks" / outside_task.name).write_bytes(
+                    task_bytes(26100, "alpha")
+                )
+            else:
+                outside_task.write_bytes(task_bytes(26100, "alpha"))
+            if entry_kind == "symlinked-backlog":
+                backlog.symlink_to(outside, target_is_directory=True)
+            elif entry_kind == "symlinked-archive":
+                backlog.mkdir()
+                (backlog / "archive").symlink_to(
+                    outside, target_is_directory=True
+                )
+            else:
+                backlog.mkdir()
+            if entry_kind not in {"symlinked-backlog", "symlinked-archive"}:
+                if entry_kind == "symlinked-bucket":
+                    bucket.symlink_to(outside, target_is_directory=True)
+                elif entry_kind == "non-directory-bucket":
+                    bucket.write_text("not a directory\n", encoding="utf-8")
+                else:
+                    bucket.mkdir()
+                    if entry_kind == "symlinked-file":
+                        (bucket / outside_task.name).symlink_to(outside_task)
+                    elif entry_kind == "symlinked-directory":
+                        (bucket / "linked").symlink_to(
+                            outside, target_is_directory=True
+                        )
+                    else:
+                        os.mkfifo(bucket / "task-26100 - fifo.md")
+            expect_error(
+                "E_WORKTREE_BOUNDARY",
+                lambda root=root: scan_worktree_files(
+                    root, "worktree:fixture", {}
+                ),
+            )
+        cases += 1
+
     allocation = allocate_ids(["zeta", "alpha", "final"], "final", {26150})
     fail(
         allocation == {"alpha": 26250, "zeta": 26251, "final": 26252}
@@ -4238,8 +8760,246 @@ def run_self_tests() -> None:
         expect_error("E_OUTPUT", lambda: write_audit(output, {"fixture": True}))
     cases += 1
 
-    fail(cases == 8, "E_SELF_TEST", f"case count {cases}")
-    print("allocation scanner self-tests: 8 cases passed")
+    with tempfile.TemporaryDirectory() as raw_root:
+        root = Path(raw_root)
+        repo = root / "repo"
+        repo.mkdir()
+        execute(("git", "init", "-q", "-b", "main"), repo, "E_SELF_TEST")
+        execute(("git", "config", "user.name", "Task 26000 Test"), repo, "E_SELF_TEST")
+        execute(("git", "config", "user.email", "task26000@example.invalid"), repo, "E_SELF_TEST")
+        (repo / "fixture.txt").write_text("authority\n", encoding="utf-8")
+        execute(("git", "add", "fixture.txt"), repo, "E_SELF_TEST")
+        execute(("git", "commit", "-q", "-m", "authority"), repo, "E_SELF_TEST")
+        manifest_pin = execute(
+            ("git", "rev-parse", "HEAD"), repo, "E_SELF_TEST"
+        ).decode("ascii").strip()
+        task_path = "backlog/tasks/task-26100 - alpha.md"
+        manifest = {
+            "revisions": {"current": manifest_pin},
+            "cleanup_records": [
+                {"label": "alpha", "path": task_path, "task_id": 26100}
+            ]
+        }
+        scanner_path = root / "allocation.json"
+        scanner_audit = {
+            "manifest_pin": manifest_pin,
+            "observed_origin_dev": manifest_pin,
+            "origin_dev_ancestry": "equal",
+            "refs": [
+                {"ref": "refs/remotes/origin/dev", "oid": manifest_pin}
+            ],
+            "open_prs": [],
+            "worktrees": [],
+            "claims": {},
+            "external_used_ids": [],
+            "allocation": expected,
+        }
+        scanner_path.write_bytes(canonical_json_bytes(scanner_audit))
+        fail(
+            read_expected_allocation(scanner_path, manifest, repo) == expected,
+            "E_SELF_TEST",
+            "canonical scanner audit",
+        )
+        cases += 1
+        scanner_path.write_text(json.dumps(scanner_audit), encoding="utf-8")
+        expect_error(
+            "E_EXPECT_MAP",
+            lambda: read_expected_allocation(scanner_path, manifest, repo),
+        )
+        cases += 1
+        paths0 = root / "raw/new-task-paths0"
+        paths0.parent.mkdir()
+        paths_raw = task_path.encode("utf-8") + b"\0"
+        paths0.write_bytes(paths_raw)
+        identities = [{"label": "alpha", "path": task_path, "task_id": 26100}]
+        active_path = root / "active-cleanup-state.json"
+        active = {
+            "schema_version": 1,
+            "mode": "create",
+            "allocation": expected,
+            "paths0_output": os.fspath(paths0),
+            "paths0_sha256": hashlib.sha256(paths_raw).hexdigest(),
+            "record_set_sha256": hashlib.sha256(
+                canonical_json_bytes(identities)
+            ).hexdigest(),
+        }
+        active_path.write_bytes(canonical_json_bytes(active))
+        fail(
+            read_expected_allocation(active_path, manifest, repo) == expected,
+            "E_SELF_TEST",
+            "canonical active state",
+        )
+        cases += 1
+        active["record_set_sha256"] = "f" * 64
+        active_path.write_bytes(canonical_json_bytes(active))
+        expect_error(
+            "E_EXPECT_MAP",
+            lambda: read_expected_allocation(active_path, manifest, repo),
+        )
+        cases += 1
+        scanner_audit["unexpected"] = True
+        scanner_path.write_bytes(canonical_json_bytes(scanner_audit))
+        expect_error(
+            "E_EXPECT_MAP",
+            lambda: read_expected_allocation(scanner_path, manifest, repo),
+        )
+        cases += 1
+        scanner_audit.pop("unexpected")
+        scanner_audit["open_prs"] = [
+            {"number": 1, "head_oid": manifest_pin, "extra": True}
+        ]
+        scanner_path.write_bytes(canonical_json_bytes(scanner_audit))
+        expect_error(
+            "E_EXPECT_MAP",
+            lambda: read_expected_allocation(scanner_path, manifest, repo),
+        )
+        cases += 1
+
+    with tempfile.TemporaryDirectory() as raw_root:
+        repo = Path(raw_root)
+        execute(("git", "init", "-q", "-b", "main"), repo, "E_SELF_TEST")
+        execute(("git", "config", "user.name", "Task 26000 Test"), repo, "E_SELF_TEST")
+        execute(("git", "config", "user.email", "task26000@example.invalid"), repo, "E_SELF_TEST")
+        fixture = repo / "fixture.txt"
+        fixture.write_text("common\n", encoding="utf-8")
+        execute(("git", "add", "fixture.txt"), repo, "E_SELF_TEST")
+        execute(("git", "commit", "-q", "-m", "common"), repo, "E_SELF_TEST")
+        common = execute(("git", "rev-parse", "HEAD"), repo, "E_SELF_TEST").decode("ascii").strip()
+        archive_claims: dict[int, dict[ClaimIdentity, set[str]]] = {}
+        scan_archive(repo, common, "refs/heads/no-backlog", archive_claims)
+        fail(not archive_claims, "E_SELF_TEST", "no-backlog archive claims")
+        cases += 1
+        expect_error(
+            "E_ARCHIVE",
+            lambda: scan_archive(repo, "f" * 40, "refs/heads/invalid", {}),
+        )
+        cases += 1
+        fixture.write_text("authority cut\n", encoding="utf-8")
+        execute(("git", "add", "fixture.txt"), repo, "E_SELF_TEST")
+        execute(("git", "commit", "-q", "-m", "authority cut"), repo, "E_SELF_TEST")
+        manifest_pin = execute(("git", "rev-parse", "HEAD"), repo, "E_SELF_TEST").decode("ascii").strip()
+        execute(("git", "update-ref", "refs/remotes/origin/dev", manifest_pin), repo, "E_SELF_TEST")
+        equal = verify_origin_dev_ancestry(repo, manifest_pin)
+        fail(equal["origin_dev_ancestry"] == "equal", "E_SELF_TEST", "equal authority cut")
+        cases += 1
+
+        fixture.write_text("descendant\n", encoding="utf-8")
+        execute(("git", "add", "fixture.txt"), repo, "E_SELF_TEST")
+        execute(("git", "commit", "-q", "-m", "descendant"), repo, "E_SELF_TEST")
+        descendant = execute(("git", "rev-parse", "HEAD"), repo, "E_SELF_TEST").decode("ascii").strip()
+        execute(("git", "update-ref", "refs/remotes/origin/dev", descendant), repo, "E_SELF_TEST")
+        advanced = verify_origin_dev_ancestry(repo, manifest_pin)
+        fail(
+            advanced == {
+                "manifest_pin": manifest_pin,
+                "observed_origin_dev": descendant,
+                "origin_dev_ancestry": "fast_forward_descendant",
+            },
+            "E_SELF_TEST",
+            "descendant authority cut",
+        )
+        cases += 1
+
+        audit_manifest = {"revisions": {"current": manifest_pin}}
+        stored_equal = {
+            **equal,
+            "refs": [
+                {"ref": "refs/remotes/origin/dev", "oid": manifest_pin}
+            ],
+            "open_prs": [],
+            "worktrees": [],
+            "claims": {},
+            "external_used_ids": [],
+            "allocation": expected,
+        }
+        stored_advanced = {
+            **advanced,
+            "refs": [
+                {"ref": "refs/remotes/origin/dev", "oid": descendant}
+            ],
+            "open_prs": [],
+            "worktrees": [],
+            "claims": {},
+            "external_used_ids": [],
+            "allocation": expected,
+        }
+        validate_scanner_audit(stored_equal, audit_manifest, repo, "E_SELF_TEST")
+        validate_scanner_audit(stored_advanced, audit_manifest, repo, "E_SELF_TEST")
+        cases += 1
+        for forged in (
+            {**stored_advanced, "origin_dev_ancestry": "equal"},
+            {**stored_equal, "origin_dev_ancestry": "fast_forward_descendant"},
+            {**stored_equal, "refs": []},
+            {**stored_equal, "refs": [*stored_equal["refs"], *stored_equal["refs"]]},
+            {
+                **stored_advanced,
+                "observed_origin_dev": "f" * 40,
+                "refs": [
+                    {"ref": "refs/remotes/origin/dev", "oid": "f" * 40}
+                ],
+            },
+            {**stored_advanced, "refs": stored_equal["refs"]},
+        ):
+            expect_error(
+                "E_ORIGIN_DEV_DIVERGED",
+                lambda forged=forged: validate_scanner_audit(
+                    forged, audit_manifest, repo, "E_SELF_TEST"
+                ),
+            )
+        expect_error(
+            "E_ORIGIN_DEV_DIVERGED",
+            lambda: validate_scanner_audit(
+                stored_advanced,
+                {"revisions": {"current": descendant}},
+                repo,
+                "E_SELF_TEST",
+            ),
+        )
+        cases += 1
+
+        expect_error(
+            "E_ORIGIN_DEV_DIVERGED",
+            lambda: verify_origin_dev_snapshot_binding(
+                advanced,
+                [("refs/remotes/origin/dev", manifest_pin)],
+            ),
+        )
+        cases += 1
+
+        execute(("git", "checkout", "-q", "-b", "replacement", common), repo, "E_SELF_TEST")
+        fixture.write_text("replacement\n", encoding="utf-8")
+        execute(("git", "add", "fixture.txt"), repo, "E_SELF_TEST")
+        execute(("git", "commit", "-q", "-m", "replacement"), repo, "E_SELF_TEST")
+        replacement = execute(("git", "rev-parse", "HEAD"), repo, "E_SELF_TEST").decode("ascii").strip()
+        expect_error(
+            "E_ORIGIN_DEV_DIVERGED",
+            lambda: validate_scanner_audit(
+                {
+                    **stored_advanced,
+                    "observed_origin_dev": replacement,
+                    "refs": [
+                        {"ref": "refs/remotes/origin/dev", "oid": replacement}
+                    ],
+                },
+                audit_manifest,
+                repo,
+                "E_SELF_TEST",
+            ),
+        )
+        cases += 1
+        execute(("git", "update-ref", "refs/remotes/origin/dev", replacement), repo, "E_SELF_TEST")
+        expect_error("E_ORIGIN_DEV_DIVERGED", lambda: verify_origin_dev_ancestry(repo, manifest_pin))
+        cases += 1
+
+        execute(("git", "update-ref", "-d", "refs/remotes/origin/dev"), repo, "E_SELF_TEST")
+        expect_error("E_ORIGIN_DEV_DIVERGED", lambda: verify_origin_dev_ancestry(repo, manifest_pin))
+        cases += 1
+        execute(("git", "update-ref", "refs/remotes/origin/dev", replacement), repo, "E_SELF_TEST")
+        expect_error("E_ORIGIN_DEV_DIVERGED", lambda: verify_origin_dev_ancestry(repo, "f" * 40))
+        cases += 1
+
+    fail(cases == 38, "E_SELF_TEST", f"case count {cases}")
+    print("allocation scanner self-tests: 38 cases passed")
 
 
 def main() -> int:
@@ -4264,7 +9024,9 @@ def main() -> int:
     labels = [row["label"] for row in manifest["batches"]]
     expected: dict[str, int] | None = None
     if args.expect_map:
-        expected_raw = read_json(Path(args.expect_map), "E_EXPECT_MAP")["allocation"]
+        expected_raw = read_expected_allocation(
+            Path(args.expect_map), manifest, repo
+        )
         fail(
             isinstance(expected_raw, dict)
             and set(expected_raw) == set(labels)
@@ -4275,6 +9037,7 @@ def main() -> int:
         )
         expected = expected_raw
     audit = scan(repo, labels, manifest["final_batch_label"], expected, manifest)
+    validate_scanner_audit(audit, manifest, repo, "E_AUDIT")
     if expected is not None:
         if audit["allocation"] != expected:
             raise AllocationError(
@@ -4293,23 +9056,36 @@ if __name__ == "__main__":
     except (OSError, UnicodeError, json.JSONDecodeError, tarfile.TarError, KeyError, TypeError, ValueError) as exc:
         print(f"E_SCANNER_IO: {type(exc).__name__}", file=__import__("sys").stderr)
         raise SystemExit(2)
+
 ```
+<!-- TASK-26000-ALLOCATOR-SOURCE-END -->
 
 `--self-test` invokes no fetch, GitHub CLI, or repository scan. It uses only
 temporary fixture bytes and directories to prove that distinct identities sharing
 one task ID fail closed, an exact content-bound self copy is accepted, a
-filename/frontmatter mismatch fails, moved or changed PR heads fail, worktree files
+valid task filename reserves its numeric ID even when legacy frontmatter lacks a
+usable numeric ID, filename/frontmatter numeric mismatches and ambiguous numeric
+frontmatter fail closed without consulting headings, invalid UTF-8 maps to exact
+`E_TASK_IDENTITY`, commits without a `backlog` tree contribute zero claims while
+invalid archive OIDs fail closed, moved or changed PR heads fail, worktree files
 become claims, allocation leapfrogs deterministically with the final label highest,
-and an audit output cannot be overwritten. Each mutation must raise its documented
-scanner error; a missed mutation makes the self-test exit nonzero. Successful output
-is exactly `allocation scanner self-tests: 8 cases passed`.
+an audit output cannot be overwritten, equal and fast-forward-descendant authority
+tips are distinguished, and missing/divergent authority fails closed. Each mutation must raise its documented
+scanner error; canonical scanner-audit and active-state inputs are accepted while
+noncanonical, open-shaped, or digest-invalid handoffs fail closed. A missed mutation
+makes the self-test exit nonzero. Successful output is exactly
+`allocation scanner self-tests: 38 cases passed`.
 
 The first scan's audit is retained under `task26000_tmp_root/raw/allocation.json`.
 Immediately before task-file creation and again immediately before commit, rerun the
 scanner with `--expect-map` pointing to that audit. Any `E_ALLOCATION_MOVED` forces a
 fresh allocation and regeneration of filenames, frontmatter, manifest bindings, and
-final dependencies before staging. Every scan verifies the post-fetch `origin/dev`
-commit equals `manifest.revisions.current` before it can write an audit. Before
+final dependencies before staging. Every scan verifies that the post-fetch
+`origin/dev` commit equals `manifest.revisions.current` or is its fast-forward
+descendant, captures the complete audited ref snapshot once, mechanically binds
+the ancestry observation to that snapshot's `origin/dev` OID, and records both
+SHAs plus the exact ancestry result. Missing, moved-between-observation-and-snapshot, or
+non-ancestor state fails `E_ORIGIN_DEV_DIVERGED`. Before
 creation, `cleanup_records` is empty and the expected IDs must be wholly unclaimed.
 After rendering, the scanner excludes only manifest-proven self claims whose exact
 path, frontmatter ID, batch marker, and content SHA-256 match; a ref, PR, or worktree
@@ -4330,14 +9106,14 @@ is interrupted, `--mode recover` removes partial tasks and handoffs while the ol
 empty-record manifest remains, or completes the tasks and handoffs after the new
 manifest landed; a completed identical rerun remains byte-for-byte idempotent.
 
-The separate `refresh` mode exists only for a Task 7 repin that changes an assigned
-batch. It refreshes exactly one named cleanup record. Before replacement it requires
-the current task-file SHA-256 to equal that record's old manifest
-`task_sha256`; it then writes a durable phase journal containing exact old/new task,
-manifest, and optional path-list bytes before mutation. The manifest bytes are the
-commit oracle: `--mode recover` rolls back the other entries when the old manifest
-remains and completes them when the new manifest landed. It never overwrites an
-unbound, missing, locally edited, or third-generation path.
+The renderer retains an unreachable legacy `refresh` implementation only as
+historical recovery code. Its authenticated CLI rejects every `refresh` request with
+exact `E_REFRESH_SUPERSEDED` immediately after argument parsing and before reading a
+repository path, allocation, manifest, task, path list, or journal. The negative
+self-test proves this gate changes no bytes. Task 7 MUST NOT invoke renderer refresh:
+ordinary `origin/dev` equality or verified fast-forward advancement leaves the pinned
+batches and records unchanged, while an ID or batch collision uses only the bounded
+`reallocate` workflow.
 
 The separate `reallocate` mode is the only collision and structural-regeneration
 recovery. It accepts the complete old `cleanup_records` already bound in the
@@ -4358,17 +9134,20 @@ ignoring a retired path that was never tracked.
 inode identity. Cleanup unlinks that temporary only when `lstat` still matches the
 owned device/inode; a colliding or substituted path is never removed.
 
+<!-- TASK-26000-RENDERER-SOURCE-BEGIN sha256=4a08b6a5a9a8b12926ab9417bc330a4e94eb60c3b4afe88226ef232e2653a17a -->
 ```python
 from __future__ import annotations
 
 import argparse
 import base64
+import binascii
 import hashlib
 import json
 import os
 import re
 import secrets
 import stat
+import subprocess
 import sys
 import tempfile
 from pathlib import Path, PurePosixPath
@@ -4379,6 +9158,14 @@ TOP_KEYS = {
     "source_reachability", "censuses", "identities", "historical_diff",
     "historical_sets", "copy_splits", "classifications", "blockers", "batches",
     "final_batch_label", "cleanup_records",
+}
+SCANNER_AUDIT_KEYS = {
+    "manifest_pin", "observed_origin_dev", "origin_dev_ancestry", "refs",
+    "open_prs", "worktrees", "claims", "external_used_ids", "allocation",
+}
+ACTIVE_STATE_KEYS = {
+    "schema_version", "mode", "allocation", "paths0_output", "paths0_sha256",
+    "record_set_sha256",
 }
 SPEC = "Docs/superpowers/specs/2026-08-30-task-26000-ruff-formatter-debt-design.md"
 EVIDENCE = "Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json"
@@ -4392,13 +9179,19 @@ AC_LINES = [
     "- [ ] `git diff --check` and `Tests/CI/test_backlog_task_id_uniqueness.py` pass. <!-- TASK-26000-CONTRACT: governance -->",
     "- [ ] The diff contains no hand-written production behavior change. <!-- TASK-26000-CONTRACT: no-handwritten-behavior -->",
 ]
-FINAL_AC = "- [ ] After all lower-ID cleanup dependencies pass, the explicit Git-tracked repository-wide command exits zero under the recorded Python 3.12.11 interpreter: `python -m ruff format --check --force-exclude .`; any new unassigned failure blocks this gate and is not absorbed. <!-- TASK-26000-CONTRACT: repository-zero-gate -->"
+FINAL_AC = "- [ ] After all lower-ID cleanup dependencies pass, the explicit Git-tracked repository-wide command exits zero under the recorded Python 3.12.11 interpreter: `python -m ruff format --check --force-exclude .`; any post-cut unassigned failure blocks this gate, is never absorbed into the pinned counts or current batches, and requires a separate correction record. <!-- TASK-26000-CONTRACT: repository-zero-gate --><!-- TASK-26000-CONTRACT: post-cut-unassigned-correction -->"
 RECORD_KEYS = {
     "label", "path", "task_id", "final", "dependencies", "paths_sha256",
     "task_sha256", "created_at", "updated_at",
 }
 SHA256 = re.compile(r"[0-9a-f]{64}")
 MINUTE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}")
+TASK_BUCKETS = (
+    "backlog/tasks/",
+    "backlog/completed/",
+    "backlog/archive/tasks/",
+    "backlog/drafts/",
+)
 
 
 class RenderError(RuntimeError):
@@ -4416,6 +9209,249 @@ def digest(raw: bytes) -> str:
 
 def canonical_bytes(value: Any) -> bytes:
     return (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def valid_oid(value: Any) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40}", value) is not None
+
+
+def validate_scanner_audit(
+    value: dict[str, Any], data: dict[str, Any], repo: Path
+) -> None:
+    need(set(value) == SCANNER_AUDIT_KEYS, "E_RENDER_ALLOCATION", "scanner audit schema")
+    need(
+        all(valid_oid(value[key]) for key in ("manifest_pin", "observed_origin_dev")),
+        "E_RENDER_ALLOCATION",
+        "scanner audit revisions",
+    )
+    need(
+        value["origin_dev_ancestry"] in {"equal", "fast_forward_descendant"},
+        "E_RENDER_ALLOCATION",
+        "scanner audit ancestry",
+    )
+    refs_value = value["refs"]
+    need(isinstance(refs_value, list), "E_RENDER_ALLOCATION", "scanner audit refs")
+    for row in refs_value:
+        need(
+            isinstance(row, dict)
+            and set(row) == {"ref", "oid"}
+            and isinstance(row["ref"], str)
+            and re.fullmatch(r"refs/(?:heads|remotes/origin)/.+", row["ref"])
+            is not None
+            and valid_oid(row["oid"]),
+            "E_RENDER_ALLOCATION",
+            "scanner audit ref row",
+        )
+    need(
+        refs_value == sorted(refs_value, key=lambda row: row["ref"]),
+        "E_RENDER_ALLOCATION",
+        "scanner audit ref order",
+    )
+    prs = value["open_prs"]
+    need(isinstance(prs, list), "E_RENDER_ALLOCATION", "scanner audit open PRs")
+    need(
+        all(
+            isinstance(row, dict)
+            and set(row) == {"number", "head_oid"}
+            and type(row["number"]) is int
+            and row["number"] > 0
+            and valid_oid(row["head_oid"])
+            for row in prs
+        )
+        and prs == sorted(prs, key=lambda row: row["number"])
+        and len({row["number"] for row in prs}) == len(prs),
+        "E_RENDER_ALLOCATION",
+        "scanner audit open PR rows",
+    )
+    worktrees = value["worktrees"]
+    need(isinstance(worktrees, list), "E_RENDER_ALLOCATION", "scanner audit worktrees")
+    decoded_paths: list[bytes] = []
+    for row in worktrees:
+        need(
+            isinstance(row, dict)
+            and set(row) == {"path_b64", "head", "dirty"}
+            and isinstance(row["path_b64"], str)
+            and valid_oid(row["head"])
+            and type(row["dirty"]) is bool,
+            "E_RENDER_ALLOCATION",
+            "scanner audit worktree row",
+        )
+        try:
+            decoded = base64.b64decode(row["path_b64"], validate=True)
+        except (ValueError, binascii.Error):
+            decoded = b""
+        need(
+            bool(decoded)
+            and base64.b64encode(decoded).decode("ascii") == row["path_b64"],
+            "E_RENDER_ALLOCATION",
+            "scanner audit worktree path",
+        )
+        decoded_paths.append(decoded)
+    need(
+        len(set(decoded_paths)) == len(decoded_paths),
+        "E_RENDER_ALLOCATION",
+        "scanner audit worktree duplicates",
+    )
+    claims = value["claims"]
+    need(isinstance(claims, dict), "E_RENDER_ALLOCATION", "scanner audit claims")
+    for task_id, rows in claims.items():
+        need(
+            isinstance(task_id, str)
+            and re.fullmatch(r"[0-9]+", task_id) is not None
+            and str(int(task_id)) == task_id
+            and isinstance(rows, list)
+            and bool(rows),
+            "E_RENDER_ALLOCATION",
+            "scanner audit claim group",
+        )
+        for row in rows:
+            need(
+                isinstance(row, dict)
+                and set(row)
+                == {
+                    "path",
+                    "batch_label",
+                    "content_sha256",
+                    "sources",
+                    "accepted_self",
+                }
+                and isinstance(row["path"], str)
+                and row["path"].startswith(TASK_BUCKETS)
+                and "\n" not in row["path"]
+                and "\x00" not in row["path"]
+                and (
+                    row["batch_label"] is None
+                    or (
+                        isinstance(row["batch_label"], str)
+                        and re.fullmatch(
+                            r"[a-z0-9]+(?:-[a-z0-9]+)*", row["batch_label"]
+                        )
+                        is not None
+                    )
+                )
+                and isinstance(row["content_sha256"], str)
+                and SHA256.fullmatch(row["content_sha256"]) is not None
+                and isinstance(row["sources"], list)
+                and bool(row["sources"])
+                and row["sources"] == sorted(set(row["sources"]))
+                and all(isinstance(source, str) and source for source in row["sources"])
+                and type(row["accepted_self"]) is bool,
+                "E_RENDER_ALLOCATION",
+                "scanner audit claim row",
+            )
+    external_ids = value["external_used_ids"]
+    need(
+        isinstance(external_ids, list)
+        and external_ids == sorted(set(external_ids))
+        and all(type(task_id) is int and task_id >= 0 for task_id in external_ids),
+        "E_RENDER_ALLOCATION",
+        "scanner audit external IDs",
+    )
+    allocation = value["allocation"]
+    need(
+        isinstance(allocation, dict)
+        and all(
+            isinstance(label, str)
+            and re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", label) is not None
+            and type(task_id) is int
+            and task_id > 26000
+            for label, task_id in allocation.items()
+        )
+        and len(set(allocation.values())) == len(allocation),
+        "E_RENDER_ALLOCATION",
+        "scanner audit allocation",
+    )
+    revisions = data.get("revisions")
+    manifest_pin = revisions.get("current") if isinstance(revisions, dict) else None
+    need(
+        valid_oid(manifest_pin) and value["manifest_pin"] == manifest_pin,
+        "E_ORIGIN_DEV_DIVERGED",
+        "scanner audit manifest pin differs from manifest.revisions.current",
+    )
+    origin_dev = [
+        row["oid"]
+        for row in refs_value
+        if row["ref"] == "refs/remotes/origin/dev"
+    ]
+    need(
+        len(origin_dev) == 1 and origin_dev[0] == value["observed_origin_dev"],
+        "E_ORIGIN_DEV_DIVERGED",
+        "scanner audit origin/dev snapshot is missing, duplicated, or mismatched",
+    )
+    need(
+        len({row["ref"] for row in refs_value}) == len(refs_value),
+        "E_RENDER_ALLOCATION",
+        "scanner audit duplicate ref",
+    )
+    pin = value["manifest_pin"]
+    observed = value["observed_origin_dev"]
+    for name, oid in (("manifest pin", pin), ("observed origin/dev", observed)):
+        commit = subprocess.run(
+            ("git", "cat-file", "-e", f"{oid}^{{commit}}"),
+            cwd=repo,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        need(
+            commit.returncode == 0,
+            "E_ORIGIN_DEV_DIVERGED",
+            f"{name} commit is unavailable",
+        )
+    if value["origin_dev_ancestry"] == "equal":
+        need(
+            observed == pin,
+            "E_ORIGIN_DEV_DIVERGED",
+            "equal ancestry has distinct immutable OIDs",
+        )
+    else:
+        need(
+            observed != pin,
+            "E_ORIGIN_DEV_DIVERGED",
+            "fast-forward ancestry has equal immutable OIDs",
+        )
+        ancestor = subprocess.run(
+            ("git", "merge-base", "--is-ancestor", pin, observed),
+            cwd=repo,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        need(
+            ancestor.returncode == 0,
+            "E_ORIGIN_DEV_DIVERGED",
+            "stored origin/dev OID does not descend from the manifest pin",
+        )
+
+
+def read_allocation_authority(
+    path: Path, mode: str, data: dict[str, Any], repo: Path
+) -> dict[str, Any]:
+    raw = path.read_bytes()
+    value = json.loads(raw.decode("utf-8"))
+    need(isinstance(value, dict) and raw == canonical_bytes(value), "E_RENDER_ALLOCATION", "canonical JSON")
+    if mode in {"create", "reallocate"}:
+        validate_scanner_audit(value, data, repo)
+        return value
+    need(mode == "refresh" and set(value) == ACTIVE_STATE_KEYS, "E_RENDER_ALLOCATION", "active-state schema")
+    need(value["schema_version"] == 1 and value["mode"] in {"create", "reallocate"}, "E_RENDER_ALLOCATION", "active-state identity")
+    paths0 = value["paths0_output"]
+    need(isinstance(paths0, str) and Path(paths0).is_absolute(), "E_RENDER_ALLOCATION", "active-state paths0_output")
+    paths0_path = Path(paths0)
+    need(not paths0_path.is_symlink() and paths0_path.is_file(), "E_RENDER_ALLOCATION", "active-state paths0 file")
+    paths_raw = paths0_path.read_bytes()
+    need(isinstance(value["paths0_sha256"], str) and SHA256.fullmatch(value["paths0_sha256"]) is not None and digest(paths_raw) == value["paths0_sha256"], "E_RENDER_ALLOCATION", "active-state paths0 digest")
+    records = data.get("cleanup_records")
+    need(isinstance(records, list), "E_RENDER_ALLOCATION", "active-state cleanup records")
+    need(all(isinstance(row, dict) and isinstance(row.get("label"), str) and isinstance(row.get("path"), str) and row["path"].startswith("backlog/tasks/") and "\n" not in row["path"] and "\x00" not in row["path"] and type(row.get("task_id")) is int and row["task_id"] > 26000 for row in records), "E_RENDER_ALLOCATION", "active-state record identities")
+    identities = sorted(
+        ({"label": row["label"], "path": row["path"], "task_id": row["task_id"]} for row in records),
+        key=lambda row: row["label"],
+    )
+    expected_allocation = {row["label"]: row["task_id"] for row in identities}
+    need(len(expected_allocation) == len(identities) and value["allocation"] == expected_allocation, "E_RENDER_ALLOCATION", "active-state allocation")
+    need(isinstance(value["record_set_sha256"], str) and SHA256.fullmatch(value["record_set_sha256"]) is not None and digest(canonical_bytes(identities)) == value["record_set_sha256"], "E_RENDER_ALLOCATION", "active-state record-set digest")
+    return value
 
 
 def paths_digest(paths: list[str]) -> str:
@@ -5146,6 +10182,11 @@ def self_test_seed(root: Path, external: Path) -> tuple[Path, Path, Path, dict[s
     return manifest, paths0, active, allocation
 
 
+def reject_superseded_refresh(mode: str | None) -> None:
+    if mode == "refresh":
+        raise RenderError("E_REFRESH_SUPERSEDED")
+
+
 def run_self_tests() -> None:
     global atomic_replace, run_transaction, write_journal_phase
     original_atomic = atomic_replace
@@ -5153,8 +10194,213 @@ def run_self_tests() -> None:
     original_phase = write_journal_phase
     cases = 0
     try:
+        read_authority = globals().get("read_allocation_authority")
+        need(callable(read_authority), "E_SELF_TEST", "mode-specific allocation authority reader")
+        expected_final_ac = "- [ ] After all lower-ID cleanup dependencies pass, the explicit Git-tracked repository-wide command exits zero under the recorded Python 3.12.11 interpreter: `python -m ruff format --check --force-exclude .`; any post-cut unassigned failure blocks this gate, is never absorbed into the pinned counts or current batches, and requires a separate correction record. <!-- TASK-26000-CONTRACT: repository-zero-gate --><!-- TASK-26000-CONTRACT: post-cut-unassigned-correction -->"
+        final_task = render_task(
+            self_test_batch("ruff-final-gate", "z.py"),
+            30001,
+            [26000, 30000],
+            True,
+            "2026-08-30 20:00",
+            "2026-08-30 20:00",
+        ).decode("utf-8")
+        need(FINAL_AC == expected_final_ac, "E_SELF_TEST", "exact final acceptance criterion")
+        need(final_task.count(expected_final_ac) == 1, "E_SELF_TEST", "rendered final acceptance criterion")
+        need("any new unassigned failure" not in final_task, "E_SELF_TEST", "stale final acceptance criterion")
+        cases += 1
+
         with tempfile.TemporaryDirectory(prefix="task26000-render-selftest-") as temporary_root:
             sandbox = Path(temporary_root)
+
+            refresh_sentinel = sandbox / "refresh-superseded-sentinel"
+            refresh_sentinel.write_bytes(b"unchanged\n")
+            refresh_before = refresh_sentinel.read_bytes()
+            try:
+                reject_superseded_refresh("refresh")
+            except RenderError as exc:
+                need(str(exc) == "E_REFRESH_SUPERSEDED", "E_SELF_TEST", "refresh supersession error")
+            else:
+                raise RenderError("E_SELF_TEST: refresh supersession accepted")
+            need(refresh_sentinel.read_bytes() == refresh_before, "E_SELF_TEST", "refresh supersession mutated bytes")
+            cases += 1
+
+            authority_data = self_test_manifest(
+                [self_test_batch("ruff-final-gate", "z.py")],
+                "ruff-final-gate",
+            )
+            authority_repo = sandbox / "authority-repo"
+            authority_repo.mkdir()
+
+            def authority_git(*argv: str) -> str:
+                completed = subprocess.run(
+                    ("git", *argv),
+                    cwd=authority_repo,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+                need(completed.returncode == 0, "E_SELF_TEST", completed.stderr)
+                return completed.stdout.strip()
+
+            authority_git("init", "-q", "-b", "main")
+            authority_git("config", "user.name", "Task 26000 Test")
+            authority_git("config", "user.email", "task26000@example.invalid")
+            authority_fixture = authority_repo / "fixture.txt"
+            authority_fixture.write_text("common\n", encoding="utf-8")
+            authority_git("add", "fixture.txt")
+            authority_git("commit", "-q", "-m", "common")
+            common = authority_git("rev-parse", "HEAD")
+            authority_fixture.write_text("authority\n", encoding="utf-8")
+            authority_git("add", "fixture.txt")
+            authority_git("commit", "-q", "-m", "authority")
+            pin = authority_git("rev-parse", "HEAD")
+            authority_data["revisions"] = {"current": pin}
+            scanner = {
+                "manifest_pin": pin,
+                "observed_origin_dev": pin,
+                "origin_dev_ancestry": "equal",
+                "refs": [{"ref": "refs/remotes/origin/dev", "oid": pin}],
+                "open_prs": [],
+                "worktrees": [],
+                "claims": {},
+                "external_used_ids": [],
+                "allocation": {"ruff-final-gate": 30001},
+            }
+            scanner_path = sandbox / "allocation.json"
+            scanner_path.write_bytes(canonical_bytes(scanner))
+            need(
+                read_authority(
+                    scanner_path, "create", authority_data, authority_repo
+                )
+                == scanner,
+                "E_SELF_TEST",
+                "canonical equal scanner audit",
+            )
+            authority_fixture.write_text("descendant\n", encoding="utf-8")
+            authority_git("add", "fixture.txt")
+            authority_git("commit", "-q", "-m", "descendant")
+            descendant = authority_git("rev-parse", "HEAD")
+            fast_forward = {
+                **scanner,
+                "observed_origin_dev": descendant,
+                "origin_dev_ancestry": "fast_forward_descendant",
+                "refs": [
+                    {"ref": "refs/remotes/origin/dev", "oid": descendant}
+                ],
+            }
+            scanner_path.write_bytes(canonical_bytes(fast_forward))
+            need(
+                read_authority(
+                    scanner_path, "reallocate", authority_data, authority_repo
+                )
+                == fast_forward,
+                "E_SELF_TEST",
+                "canonical fast-forward scanner audit",
+            )
+            authority_git("checkout", "-q", "-b", "replacement", common)
+            authority_fixture.write_text("replacement\n", encoding="utf-8")
+            authority_git("add", "fixture.txt")
+            authority_git("commit", "-q", "-m", "replacement")
+            replacement = authority_git("rev-parse", "HEAD")
+            for changed in (
+                {**scanner, "extra": None},
+                {key: value for key, value in scanner.items() if key != "claims"},
+                {**scanner, "manifest_pin": "a" * 64},
+                {**scanner, "origin_dev_ancestry": "divergent"},
+                {**scanner, "claims": []},
+                {**fast_forward, "manifest_pin": descendant},
+                {**fast_forward, "origin_dev_ancestry": "equal"},
+                {**scanner, "origin_dev_ancestry": "fast_forward_descendant"},
+                {**scanner, "refs": []},
+                {**scanner, "refs": [*scanner["refs"], *scanner["refs"]]},
+                {
+                    **fast_forward,
+                    "observed_origin_dev": "f" * 40,
+                    "refs": [
+                        {"ref": "refs/remotes/origin/dev", "oid": "f" * 40}
+                    ],
+                },
+                {**fast_forward, "refs": scanner["refs"]},
+                {
+                    **fast_forward,
+                    "observed_origin_dev": replacement,
+                    "refs": [
+                        {"ref": "refs/remotes/origin/dev", "oid": replacement}
+                    ],
+                },
+                {
+                    **scanner,
+                    "open_prs": [
+                        {"number": 1, "head_oid": pin, "extra": True}
+                    ],
+                },
+            ):
+                scanner_path.write_bytes(canonical_bytes(changed))
+                try:
+                    read_authority(
+                        scanner_path, "reallocate", authority_data, authority_repo
+                    )
+                except RenderError as exc:
+                    need(
+                        str(exc).startswith(
+                            ("E_RENDER_ALLOCATION:", "E_ORIGIN_DEV_DIVERGED:")
+                        ),
+                        "E_SELF_TEST",
+                        "scanner authority error",
+                    )
+                else:
+                    raise RenderError("E_SELF_TEST: scanner mutation accepted")
+            scanner_path.write_text(json.dumps(scanner), encoding="utf-8")
+            try:
+                read_authority(
+                    scanner_path, "create", authority_data, authority_repo
+                )
+            except RenderError as exc:
+                need(str(exc).startswith("E_RENDER_ALLOCATION:"), "E_SELF_TEST", "scanner canonical error")
+            else:
+                raise RenderError("E_SELF_TEST: noncanonical scanner audit accepted")
+            cases += 1
+
+            paths_authority = sandbox / "active-paths0"
+            paths_raw = b"backlog/tasks/task-30001 - final.md\0"
+            paths_authority.write_bytes(paths_raw)
+            active_identity = {
+                "label": "ruff-final-gate",
+                "path": "backlog/tasks/task-30001 - final.md",
+                "task_id": 30001,
+            }
+            authority_data["cleanup_records"] = [active_identity]
+            active = {
+                "schema_version": 1,
+                "mode": "create",
+                "allocation": {"ruff-final-gate": 30001},
+                "paths0_output": os.fspath(paths_authority),
+                "paths0_sha256": digest(paths_raw),
+                "record_set_sha256": digest(canonical_bytes([active_identity])),
+            }
+            active_path = sandbox / "active.json"
+            active_path.write_bytes(canonical_bytes(active))
+            need(read_authority(active_path, "refresh", authority_data, authority_repo) == active, "E_SELF_TEST", "canonical active state")
+            active["allocation"] = {"ruff-final-gate": 30002}
+            active_path.write_bytes(canonical_bytes(active))
+            try:
+                read_authority(active_path, "refresh", authority_data, authority_repo)
+            except RenderError as exc:
+                need(str(exc).startswith("E_RENDER_ALLOCATION:"), "E_SELF_TEST", "active allocation error")
+            else:
+                raise RenderError("E_SELF_TEST: active-state allocation mutation accepted")
+            active["allocation"] = {"ruff-final-gate": 30001}
+            active["paths0_sha256"] = "0" * 64
+            active_path.write_bytes(canonical_bytes(active))
+            try:
+                read_authority(active_path, "refresh", authority_data, authority_repo)
+            except RenderError as exc:
+                need(str(exc).startswith("E_RENDER_ALLOCATION:"), "E_SELF_TEST", "active digest error")
+            else:
+                raise RenderError("E_SELF_TEST: active-state digest mutation accepted")
+            cases += 1
 
             collision_target = sandbox / "atomic-target"
             tokens = iter(("a" * 32, "b" * 32))
@@ -5304,8 +10550,8 @@ def run_self_tests() -> None:
         atomic_replace = original_atomic
         run_transaction = original_run_transaction
         write_journal_phase = original_phase
-    need(cases == 5, "E_SELF_TEST", f"case count {cases}")
-    print("cleanup renderer self-tests: 5 cases passed")
+    need(cases == 9, "E_SELF_TEST", f"case count {cases}")
+    print("cleanup renderer self-tests: 9 cases passed")
 
 
 def main() -> int:
@@ -5320,6 +10566,7 @@ def main() -> int:
     parser.add_argument("--journal")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
+    reject_superseded_refresh(args.mode)
     if args.self_test:
         need(all(value is None for value in (args.mode, args.repo, args.manifest, args.allocation, args.paths0_output, args.active_state_output, args.refresh_label, args.journal)), "E_ARGS", "--self-test is exclusive")
         run_self_tests()
@@ -5336,7 +10583,7 @@ def main() -> int:
     need(manifest.is_relative_to(repo), "E_MANIFEST_PATH", str(manifest))
     original_manifest = manifest.read_bytes()
     data = json.loads(original_manifest.decode("utf-8"))
-    audit = json.loads(Path(args.allocation).read_text(encoding="utf-8"))
+    audit = read_allocation_authority(Path(args.allocation), args.mode, data, repo)
     batches, allocation = validate_inputs(data, audit)
     paths0 = Path(args.paths0_output).resolve() if args.paths0_output else None
     active_state = Path(args.active_state_output).absolute() if args.active_state_output else None
@@ -5358,28 +10605,13 @@ if __name__ == "__main__":
     except (RenderError, KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2)
+
 ```
+<!-- TASK-26000-RENDERER-SOURCE-END -->
 
-A repin refresh uses the already revalidated allocation and exactly one stable label.
-Set `task26000_refresh_label` from the reviewed repin delta, and invoke the command
-once for each label whose assigned paths or rendered ownership evidence changed:
-
-```bash
-"${task26000_python}" \
-  "${task26000_tmp_root}/task26000_render_cleanup.py" \
-  --mode refresh \
-  --refresh-label "$task26000_refresh_label" \
-  --repo "$PWD" \
-  --manifest Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json \
-  --allocation "${task26000_tmp_root}/active-cleanup-state.json" \
-  --journal "${task26000_tmp_root}/cleanup-render-transaction.json"
-```
-
-Repeat the command once per actually changed label. An `E_REFRESH_DIRTY` result is
-a hard stop: inspect the task diff and do not replace it through another tool. Refresh
-does not rewrite `active-cleanup-state.json` because its closed record identity,
-allocation, and task-path set are unchanged. If the command is interrupted or reports
-`E_TRANSACTION_RECOVERY`, run the exact Task 5 Step 6 `--mode recover` command before
-retrying the label. The retained journal either restores the exact old task/path-list
-generation or completes the exact new generation according to the manifest bytes;
-it refuses independently changed content.
+The former Task 7 repin-refresh procedure is closed and superseded. It intentionally
+has no executable mutation command in this plan; any compatibility invocation fails
+exact `E_REFRESH_SUPERSEDED` before reading or changing bytes. Do not derive a refresh
+label. A collision follows Task 5's one-attempt `reallocate` branch;
+ordinary equal or verified-fast-forward remote state proceeds without rewriting any
+cleanup record.
