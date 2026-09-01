@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from tldw_profile_core import SERIALIZED_SCHEMA_VERSION
 
 from tldw_chatbook.runtime_policy.server_parity_models import SyncReadinessReport
-from tldw_chatbook.tldw_api.sync_schemas import SyncV2CapabilitiesResponse
+
+if TYPE_CHECKING:
+    from tldw_chatbook.tldw_api.sync_schemas import SyncV2CapabilitiesResponse
 
 PERSONAL_CONTEXT_SYNC_DOMAINS: tuple[str, ...] = (
     "personal_context.manifest",
