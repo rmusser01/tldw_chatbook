@@ -107,6 +107,7 @@ from ...Sync_Interop.sync_readiness import (
 )
 from ...Sync_Interop.manual_sync_control import ManualSyncPreview, ManualSyncRunResult
 from ...Terminal.contracts import TERMINAL_DISCLOSURE_LINES
+
 # NOTE (boot budget, ADR-097): `Workspaces.assistant_defaults` is imported
 # lazily at its render/use sites (settings interaction only) so it stays out
 # of the UI-ready module census.
