@@ -65,6 +65,18 @@ from .console_staged_context import (
     ConsoleStagedSourceOpenRequested,
 )
 from .console_staged_evidence_strip import ConsoleStagedEvidenceStrip
+from .console_terminal_session_modal import (
+    ConsoleTerminalSessionModal,
+    TerminalSessionFormResult,
+    build_default_terminal_name,
+)
+from .console_terminal_workspace import (
+    ConsoleTerminalActionRequested,
+    ConsoleTerminalInputRequested,
+    ConsoleTerminalWorkspace,
+    TerminalViewport,
+    terminal_key_bytes,
+)
 from .console_transcript import ConsoleTranscript
 from .console_workbench_state import build_console_workbench_state
 from .console_workspace_context import ConsoleWorkspaceContextTray
@@ -127,6 +139,12 @@ __all__ = [
     "ConsoleStagedContextTray",
     "ConsoleStagedSourceOpenRequested",
     "ConsoleStagedEvidenceStrip",
+    "ConsoleTerminalActionRequested",
+    "ConsoleTerminalInputRequested",
+    "ConsoleTerminalSessionModal",
+    "ConsoleTerminalWorkspace",
+    "TerminalSessionFormResult",
+    "TerminalViewport",
     "ConsoleTranscript",
     "ConsoleTranscriptSurface",
     "ConsoleWorkspaceContextTray",
@@ -150,4 +168,6 @@ __all__ = [
     "WorkspaceTreeWorkspaceSelected",
     "build_console_citation_source_rows",
     "build_console_context_control_state",
+    "build_default_terminal_name",
+    "terminal_key_bytes",
 ]

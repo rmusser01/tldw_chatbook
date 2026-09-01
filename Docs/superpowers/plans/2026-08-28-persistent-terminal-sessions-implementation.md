@@ -1095,6 +1095,8 @@ git commit -m "feat: add independent terminal launch arm"
 ### Task 12: Build the user-only Terminal workspace widget and controller
 
 **Files:**
+- Modify: `tldw_chatbook/Terminal/contracts.py`
+- Modify: `tldw_chatbook/UI/Screens/settings_screen.py`
 - Create: `tldw_chatbook/UI/Console_Modules/terminal.py`
 - Create: `tldw_chatbook/Widgets/Console/console_terminal_workspace.py`
 - Create: `tldw_chatbook/Widgets/Console/console_terminal_session_modal.py`
@@ -1105,15 +1107,15 @@ git commit -m "feat: add independent terminal launch arm"
 - Create: `Tests/UI/test_console_terminal_keyboard.py`
 - Create: `Tests/UI/test_console_terminal_session_modal.py`
 
-- [ ] **Step 1: Write safe projection/render RED tests**
+- [x] **Step 1: Write safe projection/render RED tests**
 
 Construct the workspace only from immutable manager projections. Require locked state plus Settings route, unlocked/unarmed state plus the same first-arm disclosure flow, persistent armed danger banner, selected name/lifecycle/shell/starting-directory, dimensions/clamping, four-record list, New/Rename/Focus/Close/Retry/Jump-live actions by state, content-free refusal/status copy, and safe styled cells. Closing a running/draining session confirms termination; closing an exited session does not confirm. Assert no widget field contains a backend, process handle, environment mapping, raw output bytes, or parser object.
 
-- [ ] **Step 2: Write creation/rename form RED tests**
+- [x] **Step 2: Write creation/rename form RED tests**
 
 New defaults to `Terminal N`, discovered `Default` shell, and the selected working-folder binding or real home. Rename exposes only name. Validate names both in the modal for feedback and again in the manager for authority. Validate the launch directory again immediately before backend admission to close mount/modal races.
 
-- [ ] **Step 3: Write keyboard and local scrollback RED tests**
+- [x] **Step 3: Write keyboard and local scrollback RED tests**
 
 Use explicit key-event mapping tests:
 
@@ -1128,11 +1130,11 @@ Use explicit key-event mapping tests:
 
 Do not add a Screen binding for terminal-convention keys; the focused viewport handles them and lets reserved globals bubble.
 
-- [ ] **Step 4: Write view-generation and repaint RED tests**
+- [x] **Step 4: Write view-generation and repaint RED tests**
 
 Attach/detach/remount the controller around one live manager session. Stale generation callbacks must not resize/focus/repaint. Hidden sessions parse but schedule no widget refresh; when selected again, their accumulated safe state and new-output count project without restarting. A visible session coalesces dirty updates to one Textual frame and sends one debounced resize after remount without clearing screen/scrollback.
 
-- [ ] **Step 5: Verify RED**
+- [x] **Step 5: Verify RED**
 
 Run:
 
@@ -1144,11 +1146,11 @@ Run:
 
 Expected: each test collects against the minimal presentation skeleton and reaches its own safe-projection, keyboard-routing, or modal-state assertion while the widgets render neutral/refusal state. Import, collection, or a failure in another file does not count.
 
-- [ ] **Step 6: Implement a thin controller and projection-only widgets**
+- [x] **Step 6: Implement a thin controller and projection-only widgets**
 
 `ConsoleTerminalController` owns only screen-local open/closed mode, selected projection subscription, view generation, first-arm confirmation routing, and modal/action routing. Its constructor accepts only named keyword accessors suitable for centralized late binding; do not construct it in `chat_screen.py` yet. It calls app-owned manager methods for arm/create/rename/focus/close/retry/input/resize. `ConsoleTerminalWorkspace` renders safe lines and owns local scrollback offset/focus state; it never launches or reaps. Both Settings and Console render disclosure from the same immutable copy constants and let the manager enforce first-arm acknowledgement. Implement renderer/input mapping fresh; this plan forbids copying or adapting `textual-terminal` source.
 
-- [ ] **Step 7: Verify GREEN and commit**
+- [x] **Step 7: Verify GREEN and commit**
 
 Run:
 

@@ -16,6 +16,23 @@ MAX_IO_CHUNK_BYTES = 64 * 1024
 MAX_PARSER_TURN_BYTES = 256 * 1024
 MAX_PARSER_TURN_SECONDS = 0.008
 
+TERMINAL_DISCLOSURE_LINES = (
+    "The Terminal shell and every program run with the same OS permissions as "
+    "Chatbook.",
+    "Programs may read, modify, or delete any accessible data, use the network, "
+    "invoke credentialed clients, or exhaust machine resources.",
+    "Chatbook starts Terminal from a scrubbed environment, but normal shell profile "
+    "and startup files run and may restore secrets, credentials, agents, proxies, "
+    "aliases, environment variables, or arbitrary commands.",
+    "Shells and programs may save history, files, logs, caches, and other side "
+    "effects outside Chatbook.",
+    "Your active workspace—or your home directory when no workspace is selected—is "
+    "only the starting directory. Terminal is not sandboxed or confined there.",
+    "Closing, disarming, or quitting Chatbook attempts bounded cleanup, but "
+    "deliberately detached processes may survive and cleanup may remain unproven.",
+    "Terminal content is user-only and is not sent to a model.",
+)
+
 
 class TerminalLifecycle(str, Enum):
     """Lifecycle states retained by the terminal session manager."""
