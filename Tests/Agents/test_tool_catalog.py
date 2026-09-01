@@ -489,3 +489,123 @@ def test_registration_read_coerces_quoted_true_to_registered(monkeypatch):
     monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
     provider = BuiltinToolProvider()
     assert target.tool_name in provider._tools
+
+
+# --- TASK-26007: fuzzy ranking + deferred-tool listing ----------------------
+
+
+def _paraphrase_registry():
+    entries = [
+        ToolCatalogEntry(
+            "p:glob",
+            "fs_glob",
+            "Match files under the workspace with a glob pattern, "
+            "newest-mtime first, workspace-relative paths.",
+            "p",
+        ),
+        ToolCatalogEntry("p:read", "fs_read", "Read one workspace file.", "p"),
+        ToolCatalogEntry("p:clock", "clock", "current time", "p"),
+    ]
+    reg = ToolCatalogRegistry()
+    reg.register_provider(FakeCatalogProvider(entries))
+    return reg
+
+
+def test_paraphrased_query_matches_without_a_literal_substring():
+    """AC#1/#6: 'find files by name' shares no substring with fs_glob's
+    name or description, yet token overlap surfaces it."""
+    reg = _paraphrase_registry()
+
+    found = [entry.name for entry in reg.find("find files by name")]
+
+    assert "fs_glob" in found
+    assert "clock" not in found, "zero-overlap tools must not ride along"
+
+
+def test_fuzzy_ranking_is_deterministic_and_below_substring_tiers():
+    """AC#4/#5."""
+    reg = _paraphrase_registry()
+
+    first = [entry.name for entry in reg.find("read workspace files")]
+    second = [entry.name for entry in reg.find("read workspace files")]
+    assert first == second, "same query must return the same order"
+
+    # 'read' is a name-substring of fs_read (tier 2); fs_glob only matches
+    # by token overlap (tier 4) -- the substring tier must rank first.
+    ranked = [entry.name for entry in reg.find("read")]
+    assert ranked.index("fs_read") == 0
+
+
+def test_find_tools_schema_embeds_a_bounded_listing():
+    """AC#2/#3."""
+    from tldw_chatbook.Agents.tool_catalog import (
+        FIND_TOOLS_SCHEMA,
+        build_find_tools_schema,
+    )
+
+    small = build_find_tools_schema(["fs_read", "fs_glob", "clock"])
+    assert "fs_glob" in small.description
+    assert "clock" in small.description
+    assert small.name == FIND_TOOLS_SCHEMA.name
+
+    many = build_find_tools_schema(
+        [f"fs_{'x' * 30}_{i}" for i in range(40)]
+        + [f"git_{'y' * 30}_{i}" for i in range(40)]
+    )
+    assert len(many.description) < len(FIND_TOOLS_SCHEMA.description) + 900
+    assert "fs_*" in many.description and "git_*" in many.description, (
+        "an oversized list must degrade to group names, not vanish"
+    )
+
+    empty = build_find_tools_schema([])
+    assert empty is FIND_TOOLS_SCHEMA
+
+
+def test_deferred_disclosure_plan_lists_available_tools():
+    """AC#6: when the catalog is deferred, find_tools' own description
+    names what exists so the model cannot conclude absence."""
+    from tldw_chatbook.Agents.agent_models import AgentConfig, RunBudget
+    from tldw_chatbook.Agents.agent_service import (
+        build_first_request_schema_plan,
+    )
+
+    entries = [
+        ToolCatalogEntry("p:glob", "fs_glob", "Match files with a glob.", "p"),
+        *[
+            ToolCatalogEntry(
+                f"p:pad{i}", f"pad_tool_{i}", "padding description " * 40, "p"
+            )
+            for i in range(300)
+        ],
+    ]
+    reg = ToolCatalogRegistry()
+    reg.register_provider(FakeCatalogProvider(entries))
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        provider="llama_cpp",
+        budget=RunBudget(max_steps=5),
+    )
+    plan = build_first_request_schema_plan(
+        reg,
+        tuple(entry.name for entry in entries),
+        config,
+        "llama_cpp",
+        [{"role": "user", "content": "hi"}],
+        skill_file_enabled=False,
+        install_skill_enabled=False,
+        run_skill_script_enabled=False,
+        run_log_active=False,
+    )
+
+    assert plan.offer_find_load, "300 padded tools must defer disclosure"
+    find_schema = next(
+        schema
+        for schema in plan.runtime_schemas
+        if schema.name == "find_tools"
+    )
+    # 301 tools exceed the name-listing bound, so the surface degrades to
+    # groups (AC#3) -- and the fs group is still named, so the capability
+    # is visibly present (AC#2).
+    assert "fs_*" in find_schema.description
+    assert "pad_* (300)" in find_schema.description

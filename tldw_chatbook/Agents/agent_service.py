@@ -159,6 +159,7 @@ from .project_instruction_runtime import (
 from .tool_catalog import (
     CHECK_AGENTS_SCHEMA,
     FIND_TOOLS_SCHEMA,
+    build_find_tools_schema,
     INSTALL_SKILL_TOOL_SCHEMA,
     PREPARE_MANAGED_SKILL_PROMOTION_TOOL_SCHEMA,
     LOAD_TOOLS_SCHEMA,
@@ -670,6 +671,18 @@ def build_first_request_schema_plan(
     direct_prompt = direct_system_prompt or config.system_prompt
     discovery_prompt = discovery_system_prompt or config.system_prompt
 
+    def _deferred_names() -> tuple[str, ...]:
+        try:
+            entries = registry.list_catalog()
+        except Exception:  # noqa: BLE001 -- an unreadable catalog lists nothing
+            return ()
+        allowed = frozenset(allowed_tools)
+        return tuple(
+            entry.name
+            for entry in entries
+            if not allowed or entry.name in allowed
+        )
+
     def make_plan(
         active: tuple[ToolSchema, ...], offer_find_load: bool, system_prompt: str
     ) -> FirstRequestSchemaPlan:
@@ -681,7 +694,14 @@ def build_first_request_schema_plan(
                 (WAIT_AGENTS_SCHEMA, CHECK_AGENTS_SCHEMA, SEND_TO_AGENT_SCHEMA)
             )
         if offer_find_load:
-            runtime.extend((FIND_TOOLS_SCHEMA, LOAD_TOOLS_SCHEMA))
+            # TASK-26007: the deferred surface NAMES what exists -- the
+            # model must never conclude a present capability is absent.
+            runtime.extend(
+                (
+                    build_find_tools_schema(_deferred_names()),
+                    LOAD_TOOLS_SCHEMA,
+                )
+            )
         if skill_file_enabled:
             runtime.append(SKILL_FILE_TOOL_SCHEMA)
         if install_skill_enabled and agent_kind == AGENT_KIND_PRIMARY:

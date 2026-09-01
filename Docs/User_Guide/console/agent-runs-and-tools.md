@@ -1215,6 +1215,14 @@ separate identities. A session grant may cover later calls in that same live
 Console session, but it is held in process memory only and is cleared by
 Disarm, locking raw CLI, shutdown, or restart.
 
+Tool discovery got two upgrades: `find_tools` now matches paraphrases
+(stemmed-token overlap ranks below the exact/prefix/substring tiers, so
+"find files by name" surfaces `fs_glob`), and when the catalog is too large
+to disclose directly, `find_tools`' own description names the available
+tools — degrading to prefix groups (`fs_* (7), git_* (5)`) when even the
+name list would be too long — so the model can never conclude a present
+capability is absent.
+
 Oversized local tool results no longer lose their tail: in Console runs
 (where a private scratch root exists) a result over the 32 KiB ceiling is
 written **in full** to a restricted file under the scratch's `tool-spill/`

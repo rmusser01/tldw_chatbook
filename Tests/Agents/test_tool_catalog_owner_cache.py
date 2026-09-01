@@ -365,7 +365,12 @@ def test_duplicate_tool_id_suppresses_the_later_entry_everywhere():
     ]
     assert registry.resolve_name("leaked_name") is None
     assert registry.resolve_owner_for_name("leaked_name") is None
-    assert registry.find("leaked_name") == []
+    # TASK-26007: the fuzzy tier may now surface the SURVIVING entry for
+    # this query (token overlap on "name"); the pin's intent is that the
+    # suppressed entry itself never appears.
+    assert all(
+        entry.name != "leaked_name" for entry in registry.find("leaked_name")
+    )
     assert registry.invoke_by_name("leaked_name", {}).ok is False
     assert conflicting.invocations == []
 
