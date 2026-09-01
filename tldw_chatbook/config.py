@@ -1857,6 +1857,7 @@ def _load_settings_uncached(
     normalized_destination_readers: dict[str, dict[str, Any]] = {}
     for section_name in (
         "media_reader",
+        "collections_reader",
         "conversations_reader",
         "notes_reader",
         "prompts_reader",
@@ -3325,6 +3326,11 @@ items_open = true
 custom_widths_enabled = false
 # Compatibility fallback for fresh profiles; matches LIBRARY_REFERENCE_WIDTH.
 library_width = 31
+items_width = 40
+
+[library.collections_reader]
+# Environment overrides use TLDW_LIBRARY_COLLECTIONS_READER_<KEY>.
+items_open = true
 items_width = 40
 
 [library.conversations_reader]

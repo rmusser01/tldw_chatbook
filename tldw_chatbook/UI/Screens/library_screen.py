@@ -3652,6 +3652,7 @@ class LibraryScreen(BaseAppScreen):
         (
             self._library_reader_shared_preferences,
             self._library_media_reader_preferences,
+            self._library_collections_reader_preferences,
             self._library_conversation_reader_preferences,
             self._library_notes_reader_preferences,
             self._library_file_notes_reader_preferences,
@@ -3667,13 +3668,6 @@ class LibraryScreen(BaseAppScreen):
         self._library_collections_more_open = False
         self._library_collections_confirming_hard_delete = False
         self._library_collections_legacy_recovery_rows = 0
-        self._library_collections_reader_preferences = AdaptiveReaderLayoutPreferences(
-            library_open=self._library_reader_shared_preferences.library_open,
-            custom_widths_enabled=(
-                self._library_reader_shared_preferences.custom_widths_enabled
-            ),
-            library_width=self._library_reader_shared_preferences.library_width,
-        )
         self._library_collections_reader_layout = resolve_adaptive_reader_layout(
             0,
             self._library_collections_reader_preferences,
@@ -3710,6 +3704,7 @@ class LibraryScreen(BaseAppScreen):
         library_pane_persistence_lock = asyncio.Lock()
         self._library_reader_persistence_generations = {
             "library": 0,
+            "collections_items": 0,
             "conversations_items": 0,
             "media_items": 0,
             "notes_items": 0,
@@ -3720,6 +3715,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_reader_dirty_persistence_authorities: set[str] = set()
         self._library_reader_durable_generations = {
             "library": 0,
+            "collections_items": 0,
             "conversations_items": 0,
             "media_items": 0,
             "notes_items": 0,
@@ -3729,6 +3725,7 @@ class LibraryScreen(BaseAppScreen):
         }
         self._library_reader_durable_preferences = {
             "library": self._library_conversation_reader_preferences.library_open,
+            "collections_items": self._library_collections_reader_preferences.items_open,
             "conversations_items": self._library_conversation_reader_preferences.items_open,
             "notes_items": self._library_notes_reader_preferences.items_open,
             "notes_file_items": self._library_file_notes_reader_preferences.items_open,
@@ -3736,6 +3733,10 @@ class LibraryScreen(BaseAppScreen):
             "skills_items": self._library_skills_reader_preferences.items_open,
         }
         self._library_conversation_reader_persistence_locks = {
+            "library": library_pane_persistence_lock,
+            "items": asyncio.Lock(),
+        }
+        self._library_collections_reader_persistence_locks = {
             "library": library_pane_persistence_lock,
             "items": asyncio.Lock(),
         }
@@ -7801,6 +7802,7 @@ class LibraryScreen(BaseAppScreen):
         AdaptiveReaderLayoutPreferences,
         AdaptiveReaderLayoutPreferences,
         AdaptiveReaderLayoutPreferences,
+        AdaptiveReaderLayoutPreferences,
     ]:
         """Normalize one shared reader snapshot plus destination Items choices."""
         app_config = getattr(self.app_instance, "app_config", None)
@@ -7850,6 +7852,7 @@ class LibraryScreen(BaseAppScreen):
         return (
             shared,
             destination_preferences("media_reader"),
+            destination_preferences("collections_reader"),
             destination_preferences("conversations_reader"),
             destination_preferences("notes_reader"),
             file_notes,
@@ -8345,6 +8348,26 @@ class LibraryScreen(BaseAppScreen):
             library_config[section_name] = section
         section[key] = value
 
+    def _mirror_library_collections_reader_preference(
+        self,
+        key: Literal["library_open", "items_open"],
+        value: bool,
+    ) -> None:
+        """Mirror one optimistic Collections pane choice into app config."""
+        app_config = getattr(self.app_instance, "app_config", None)
+        if not isinstance(app_config, dict):
+            return
+        library_config = app_config.setdefault("library", {})
+        if not isinstance(library_config, dict):
+            library_config = {}
+            app_config["library"] = library_config
+        section_name = "reader" if key == "library_open" else "collections_reader"
+        section = library_config.setdefault(section_name, {})
+        if not isinstance(section, dict):
+            section = {}
+            library_config[section_name] = section
+        section[key] = value
+
     def _mirror_library_notes_reader_preference(
         self,
         key: Literal["library_open", "items_open"],
@@ -8577,6 +8600,7 @@ class LibraryScreen(BaseAppScreen):
         authority = self._library_reader_persistence_key(destination, pane)
         preferences_attribute = {
             "media": "_library_media_reader_preferences",
+            "collections": "_library_collections_reader_preferences",
             "conversations": "_library_conversation_reader_preferences",
             "notes": "_library_notes_reader_preferences",
             "notes_files": "_library_file_notes_reader_preferences",
@@ -8585,6 +8609,7 @@ class LibraryScreen(BaseAppScreen):
         }[destination]
         locks = {
             "media": self._library_media_reader_persistence_locks,
+            "collections": self._library_collections_reader_persistence_locks,
             "conversations": self._library_conversation_reader_persistence_locks,
             "notes": self._library_notes_reader_persistence_locks,
             "notes_files": self._library_file_notes_reader_persistence_locks,
@@ -8609,6 +8634,7 @@ class LibraryScreen(BaseAppScreen):
         )
         mirror = {
             "media": self._mirror_library_media_reader_preference,
+            "collections": self._mirror_library_collections_reader_preference,
             "conversations": self._mirror_library_conversation_reader_preference,
             "notes": self._mirror_library_notes_reader_preference,
             "notes_files": self._mirror_library_file_notes_reader_preference,
@@ -8903,6 +8929,7 @@ class LibraryScreen(BaseAppScreen):
         (
             self._library_reader_shared_preferences,
             self._library_media_reader_preferences,
+            self._library_collections_reader_preferences,
             self._library_conversation_reader_preferences,
             self._library_notes_reader_preferences,
             self._library_file_notes_reader_preferences,
@@ -8911,6 +8938,7 @@ class LibraryScreen(BaseAppScreen):
         ) = self._load_library_reader_preference_snapshot()
         current_values = {
             "library": self._library_reader_shared_preferences.library_open,
+            "collections_items": self._library_collections_reader_preferences.items_open,
             "conversations_items": self._library_conversation_reader_preferences.items_open,
             "media_items": self._library_media_reader_preferences.items_open,
             "notes_items": self._library_notes_reader_preferences.items_open,
@@ -8928,6 +8956,7 @@ class LibraryScreen(BaseAppScreen):
         ] = (
             ("media", "library", "library"),
             ("media", "items", "media_items"),
+            ("collections", "items", "collections_items"),
             ("conversations", "items", "conversations_items"),
             ("notes", "items", "notes_items"),
             ("notes_files", "items", "notes_file_items"),
@@ -8951,6 +8980,7 @@ class LibraryScreen(BaseAppScreen):
                     self._library_reader_persistence_generations[authority]
                 )
         self._sync_library_media_reader_layout_from_shell()
+        self._sync_library_collections_reader_layout_from_shell()
         self._sync_library_conversation_reader_layout_from_shell()
         self._sync_library_notes_reader_layout_from_shell()
         self._sync_library_file_notes_reader_layout_from_shell()
@@ -9008,9 +9038,19 @@ class LibraryScreen(BaseAppScreen):
             key: Literal["library_open", "items_open"] = (
                 "library_open" if event.pane == "library" else "items_open"
             )
+            generation = self._claim_library_reader_persistence(
+                "collections", event.pane
+            )
             self._replace_library_reader_preference("collections", key, opening)
+            self._mirror_library_collections_reader_preference(key, opening)
             self._sync_library_reader_preference_layout(
                 "collections", key, event.pane if opening else None
+            )
+            self.run_worker(
+                self._persist_library_reader_preference(
+                    "collections", event.pane, opening, generation
+                ),
+                group=f"library_collections_reader_{event.pane}_persistence",
             )
             return
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:

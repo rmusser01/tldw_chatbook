@@ -182,6 +182,7 @@ def test_build_appearance_save_sections_preserves_unrelated_config():
                 "items_open": True,
                 "items_width": 40,
             },
+            "collections_reader": {"items_open": True, "items_width": 40},
             "conversations_reader": {"items_open": True, "items_width": 40},
             "notes_reader": {
                 "items_open": True,
@@ -396,6 +397,8 @@ def test_build_appearance_save_sections_deep_merges_shared_and_destinations():
             library_reader_library_width=32,
             library_media_items_open=True,
             library_media_items_width=56,
+            library_collections_items_open=False,
+            library_collections_items_width=44,
             library_conversations_items_open=False,
             library_conversations_items_width=48,
             library_notes_items_open=True,
@@ -423,6 +426,7 @@ def test_build_appearance_save_sections_deep_merges_shared_and_destinations():
             "items_open": True,
             "items_width": 56,
         },
+        "collections_reader": {"items_open": False, "items_width": 44},
         "conversations_reader": {"items_open": False, "items_width": 48},
         "notes_reader": {
             "future_notes": "preserved",

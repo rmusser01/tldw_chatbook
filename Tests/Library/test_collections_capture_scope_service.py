@@ -242,6 +242,35 @@ async def test_scope_switch_clears_snapshots_and_fences_late_results() -> None:
     assert scope.saved_search_snapshot is None
 
 
+@pytest.mark.asyncio
+async def test_scope_deactivate_clears_snapshots_and_fences_late_results() -> None:
+    authority = build_server_capture_authority("server-a", "user-a")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class DelayedBackend:
+        async def list_page(self, request: CapturePageRequest) -> CapturePage:
+            started.set()
+            await release.wait()
+            return CapturePage(request, (), 0, source_revision="old")
+
+    scope = CollectionsCaptureScopeService()
+    scope.activate(authority, DelayedBackend())
+    pending = asyncio.create_task(scope.list_page(CapturePageRequest(authority.key)))
+    await started.wait()
+    scope.deactivate()
+    release.set()
+
+    with pytest.raises(CollectionsCaptureError) as caught:
+        await pending
+
+    assert caught.value.reason == "stale_authority_result"
+    assert scope.active_authority is None
+    assert scope.page_snapshot is None
+    assert scope.detail_snapshot is None
+    assert scope.saved_search_snapshot is None
+
+
 def test_scope_rejects_backend_from_a_different_authority(tmp_path: Path) -> None:
     (tmp_path / "a").mkdir()
     (tmp_path / "b").mkdir()

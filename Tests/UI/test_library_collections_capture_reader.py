@@ -282,14 +282,28 @@ async def test_real_library_route_mounts_contextual_three_pane_reader_and_both_g
         shell.library_grip.press()
         await _wait_for_condition(
             pilot,
-            lambda: not shell.library.display and shell.items.region.width == 56,
+            lambda: (
+                not shell.library.display
+                and shell.items.region.width == 56
+                and screen._library_reader_durable_generations["library"] > 0
+            ),
             message="Collections Library pane did not collapse",
         )
 
+        items_generation = screen._library_reader_persistence_generations[
+            "collections_items"
+        ]
         shell.items_grip.press()
         await _wait_for_condition(
             pilot,
-            lambda: not shell.items.display,
+            lambda: (
+                not shell.items.display
+                and screen._library_reader_durable_generations[
+                    "collections_items"
+                ]
+                > items_generation
+            ),
             message="Collections Items pane did not collapse",
         )
+        assert app.app_config["library"]["collections_reader"]["items_open"] is False
         assert shell.work.is_mounted and shell.work.display

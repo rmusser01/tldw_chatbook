@@ -2206,6 +2206,7 @@ async def test_settings_appearance_library_reader_controls_round_trip_all_destin
             "items_open": True,
             "items_width": 40,
         },
+        "collections_reader": {"items_open": True, "items_width": 40},
         "conversations_reader": {"items_open": True, "items_width": 40},
         "notes_reader": {
             "items_open": True,

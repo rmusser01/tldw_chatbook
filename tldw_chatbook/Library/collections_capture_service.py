@@ -347,6 +347,14 @@ class LocalCollectionsCaptureService:
         if self._extraction_tasks:
             await asyncio.gather(*tuple(self._extraction_tasks))
 
+    async def cancel_extractions(self) -> None:
+        """Cancel and settle every extraction owned by this app lifetime."""
+        tasks = tuple(self._extraction_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     async def retry_extraction(self, identity: CaptureIdentity) -> CaptureActionResult:
         await self._require("retry_extraction")
         if self.extractor is None:
@@ -565,6 +573,16 @@ class CollectionsCaptureScopeService:
         self.page_snapshot = None
         self.detail_snapshot = None
         self.saved_search_snapshot = None
+
+    def deactivate(self) -> None:
+        """Fence the current authority and discard every owner-bound snapshot."""
+        self.active_authority = None
+        self._backend = None
+        self._generation += 1
+        self.page_snapshot = None
+        self.detail_snapshot = None
+        self.saved_search_snapshot = None
+        self._archive_status.clear()
 
     def _claim(self) -> tuple[int, str, CollectionsCaptureBackend]:
         if self.active_authority is None or self._backend is None:

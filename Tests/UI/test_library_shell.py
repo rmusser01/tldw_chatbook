@@ -5791,18 +5791,35 @@ def test_library_production_width_matrix_normalizes_persisted_custom_widths(
     app.app_config.setdefault("library", {})["reader"] = reader
     screen = LibraryScreen(app)
 
-    shared, media, conversations, notes, prompts, skills = (
+    shared, media, collections, conversations, notes, file_notes, prompts, skills = (
         screen._load_library_reader_preference_snapshot()
     )
 
     assert shared.library_width == expected_width
     assert {
         preferences.library_width
-        for preferences in (media, conversations, notes, prompts, skills)
+        for preferences in (
+            media,
+            collections,
+            conversations,
+            notes,
+            file_notes,
+            prompts,
+            skills,
+        )
     } == {expected_width}
     assert all(
         preferences.custom_widths_enabled
-        for preferences in (shared, media, conversations, notes, prompts, skills)
+        for preferences in (
+            shared,
+            media,
+            collections,
+            conversations,
+            notes,
+            file_notes,
+            prompts,
+            skills,
+        )
     )
 
 

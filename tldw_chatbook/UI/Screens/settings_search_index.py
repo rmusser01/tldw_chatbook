@@ -20,6 +20,7 @@ from .settings_config_models import SettingsCategoryId
 #: rows on the Appearance category (shared with settings_screen).
 LIBRARY_READER_DESTINATIONS = (
     ("media", "Media"),
+    ("collections", "Collections"),
     ("conversations", "Conversations"),
     ("notes", "Notes"),
     ("prompts", "Prompts"),

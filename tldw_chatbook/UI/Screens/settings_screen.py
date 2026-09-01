@@ -7419,6 +7419,8 @@ class SettingsScreen(BaseAppScreen):
             "library_reader_custom_widths_enabled",
             "library_reader_library_width",
             "library_media_items_width",
+            "library_collections_items_open",
+            "library_collections_items_width",
             "library_conversations_items_open",
             "library_conversations_items_width",
             "library_notes_items_open",
