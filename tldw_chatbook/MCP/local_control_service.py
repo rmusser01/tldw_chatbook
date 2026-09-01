@@ -43,16 +43,13 @@ _SPAWN_ENV_BASELINE_KEYS = (
 
 # task-1337 (plan Task 9): each descriptor-backed ``library_*`` tool resolves
 # to a read action owned by its Library item type. Media/Notes/Prompts/Skills/
-# Conversations reuse their registered local list/detail actions; Collections
-# use the dedicated local-only ``library.collections`` resource (never
-# ``collections.reading_list.*``).
+# Conversations reuse their registered local list/detail actions.
 _LIBRARY_ITEM_TYPE_ACTION_NAMESPACE = {
     "media": "media.reading",
     "note": "notes",
     "prompt": "prompts",
     "skill": "skills",
     "conversation": "chat",
-    "collection": "library.collections",
 }
 
 # chunking-agent-tools (Tasks 4-5, spec §6) + student-workflow (Task 1,

@@ -1204,6 +1204,14 @@ ConsoleRunLogModal {
     content-align: left middle;
 }
 
+.library-collections-scope-row:focus,
+#library-collections-more-saved-searches:focus {
+    background: $ds-input-focus-bg;
+    color: $ds-action-focus;
+    text-style: bold;
+    outline: none;
+}
+
 #library-collections-more-saved-searches {
     width: 100%;
     min-width: 0;
@@ -1269,6 +1277,13 @@ ConsoleRunLogModal {
     height: 3;
     min-height: 3;
     margin: 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+}
+
+#library-collections-filter:focus {
+    border: tall $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
 }
 
 #library-collections-items-scroll {
@@ -1299,6 +1314,28 @@ ConsoleRunLogModal {
 .library-collections-item-row:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
+    text-style: bold;
+}
+
+#library-collections-page-stale,
+#library-collections-page-error,
+#library-collections-page-loading,
+#library-collections-items-empty,
+#library-collections-reader-loading,
+#library-collections-reader-error,
+#library-collections-reader-empty {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+    color: $ds-text-muted;
+}
+
+#library-collections-page-error,
+#library-collections-reader-error,
+#library-collections-hard-delete-copy {
+    color: $ds-status-error;
 }
 
 #library-collections-page-range,
@@ -1318,6 +1355,7 @@ ConsoleRunLogModal {
     min-height: 1;
     text-style: bold;
     color: $ds-text-primary;
+    margin: 1 0 0 0;
 }
 
 #library-collections-read-body,
@@ -1327,6 +1365,8 @@ ConsoleRunLogModal {
     height: auto;
     min-height: 1;
     margin-top: 1;
+    padding-bottom: 1;
+    color: $ds-text-primary;
 }
 
 #library-collections-freeform-note {
@@ -1335,6 +1375,82 @@ ConsoleRunLogModal {
     height: 6;
     min-height: 4;
     margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+}
+
+#library-collections-freeform-note:focus {
+    border: tall $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
+}
+
+#library-collections-primary-toolbar {
+    margin-top: 1;
+    padding-bottom: 1;
+    border-bottom: solid $ds-grid-line;
+}
+
+#library-collections-mode-toolbar {
+    margin: 1 0 0 0;
+}
+
+#library-collections-primary-toolbar > Button:focus,
+#library-collections-mode-toolbar > Button:focus,
+#library-collections-page-toolbar > Button:focus,
+#library-collections-items-toolbar > Button:focus,
+#library-collections-archive-receipt > Button:focus {
+    background: $ds-input-focus-bg;
+    color: $ds-action-focus;
+    text-style: bold;
+    outline: none;
+}
+
+#library-collections-summarize,
+#library-collections-listen,
+#library-collections-save-offline,
+#library-collections-retry-extraction,
+#library-collections-hard-delete,
+#library-collections-legacy-recovery {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    margin: 0 1 0 0;
+    padding: 0 1;
+    border: none;
+}
+
+#library-collections-hard-delete-copy {
+    width: 100%;
+    height: auto;
+    margin: 1 0 0 0;
+    padding: 1;
+    border: tall $ds-status-error;
+    background: $ds-surface-raised;
+}
+
+#library-collections-freeform-note-heading,
+#library-collections-linked-notes-heading {
+    width: 100%;
+    height: auto;
+    margin-top: 1;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#library-collections-highlights-empty,
+#library-collections-linked-notes-empty,
+#library-collections-media-provenance {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+}
+
+#library-collections-archive-receipt {
+    margin-top: 1;
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
 }
 
 #library-conversations-reader-shell #library-canvas {
@@ -8115,136 +8231,6 @@ ListItem.personas-library-row.is-active.-highlight {
     color: $ds-focus-fg;
     text-style: bold underline;
     outline: none;
-}
-
-#library-collection-form Input {
-    height: 3;
-    min-height: 3;
-    padding: 0 1;
-    border: tall $ds-grid-line;
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
-}
-
-#library-collection-form Input:focus {
-    border: tall $ds-input-focus-accent;
-    outline: none;
-    background: $ds-input-focus-bg;
-    color: $ds-text-primary;
-    text-style: bold;
-}
-
-/* Collections keeps the pager fixed beneath an independently scrolling row
-   viewport. The outer workbench still owns the established list/detail split;
-   only the row stack scrolls, so page controls remain reachable at 100x30. */
-#library-collections-panel {
-    height: 100%;
-    min-height: 0;
-}
-
-#library-collections-workbench {
-    width: 100%;
-    height: 1fr;
-    min-height: 0;
-}
-
-#library-collections-list,
-#library-collection-detail {
-    width: 1fr;
-    min-width: 0;
-    height: 100%;
-    min-height: 0;
-}
-
-#library-collections-list {
-    overflow: hidden;
-}
-
-#library-collections-rows-scroll {
-    width: 100%;
-    min-width: 0;
-    height: 1fr;
-    min-height: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-
-#library-collection-detail {
-    margin-left: 1;
-    padding: 0 1;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-
-.library-collection-row {
-    width: 100%;
-    min-width: 0;
-}
-
-#library-collections-range,
-#library-collections-page,
-#library-collections-page-status {
-    width: 100%;
-    min-width: 0;
-    height: auto;
-    min-height: 1;
-}
-
-#library-collections-pager-actions {
-    width: 100%;
-    height: auto;
-    min-height: 1;
-    align: left middle;
-}
-
-#library-collections-pager-actions Button {
-    margin-right: 1;
-}
-
-#library-collection-actions {
-    height: 1;
-    min-height: 1;
-    margin-top: 1;
-    align: left middle;
-}
-
-#library-collection-actions Button {
-    height: 1;
-    min-height: 1;
-    margin-right: 1;
-    padding: 0 1;
-    border: none;
-    background: transparent;
-    color: $ds-text-primary;
-    content-align: left middle;
-    text-style: none;
-}
-
-#library-collection-actions Button:focus {
-    border: none;
-    background: transparent;
-    color: $ds-focus-fg;
-    outline: none;
-    text-style: bold underline;
-}
-
-/* task-4023 AC#1 (RC-07): the ID-scoped Button rule above (1,0,1)
-   outranks the shared `Button.library-source-action:disabled` escape
-   (0,2,1) for color/background, so this container needs its own
-   disabled variant at (1,1,1). Measured 2.30:1 before (the three
-   compounding dimmers over `$ds-text-primary`); `$ds-text-muted` on
-   this row's own surface clears the 3:1 floor while staying plainly
-   dimmer than the enabled `$ds-text-primary` label beside it. The
-   background stays transparent to match this row's resting/focus
-   convention -- the "○" label marker (library_disabled_action_label)
-   is the structural inert cue here. */
-#library-collection-actions Button:disabled {
-    opacity: 100%;
-    text-opacity: 100%;
-    border: none;
-    background: transparent;
-    color: $ds-text-muted;
-    text-style: none;
 }
 
 /* Regression fix: #library-canvas (this panel's parent) and this panel's

@@ -34,6 +34,7 @@ from .collections_capture_models import (
     ResolvedCaptureDetail,
     SavedCaptureSearch,
 )
+from .library_content_evidence import LibraryContentEvidence
 from .collections_capture_repository import CollectionsCaptureRepository
 from .collections_offline_store import CollectionsOfflineStore
 
@@ -607,6 +608,24 @@ class CollectionsCaptureScopeService:
         result = await self._invoke("list_page", request)
         self.page_snapshot = result
         return result
+
+    async def get_library_user_content_evidence(self) -> LibraryContentEvidence:
+        """Return bounded evidence from the active capture authority."""
+        authority = self.active_authority
+        if authority is None or self._backend is None:
+            return LibraryContentEvidence.UNKNOWN
+        try:
+            page = await self._invoke(
+                "list_page",
+                CapturePageRequest(authority.key, page=1),
+            )
+        except CollectionsCaptureError:
+            return LibraryContentEvidence.UNKNOWN
+        return (
+            LibraryContentEvidence.HAS_USER_CONTENT
+            if page.total
+            else LibraryContentEvidence.EMPTY
+        )
 
     async def get_detail(self, identity: CaptureIdentity) -> ResolvedCaptureDetail:
         generation, authority_key, backend = self._claim()

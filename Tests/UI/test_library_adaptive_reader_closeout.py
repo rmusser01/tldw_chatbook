@@ -33,6 +33,10 @@ from Tests.UI.test_library_shell import (
 from Tests.UI.test_library_skills_reader import _wire_skills
 from Tests.UI.test_destination_shells import StaticLibraryNotesScopeService
 from tldw_chatbook.Library.library_notes_tree_paging import NotesBranchKey
+from tldw_chatbook.Library.collections_capture_models import (
+    CapturePageRequest,
+    CaptureSaveRequest,
+)
 from tldw_chatbook.Notes.note_folder_models import (
     NoteFolder,
     NoteFolderChildPage,
@@ -45,7 +49,7 @@ from tldw_chatbook.Widgets.workbench_focus import _available_targets
 from tldw_chatbook.config import load_settings
 
 
-DESTINATIONS = ("media", "conversations", "notes", "prompts", "skills")
+DESTINATIONS = ("media", "collections", "conversations", "notes", "prompts", "skills")
 SIZES = ((160, 50), (120, 35), (100, 30), (80, 24))
 
 DESTINATION_CONTRACT = {
@@ -55,6 +59,13 @@ DESTINATION_CONTRACT = {
         "#library-media-row-1",
         "_library_media_reader_preferences",
         "_library_media_reader_layout",
+    ),
+    "collections": (
+        "#library-row-browse-collections",
+        "#library-collections-reader-shell",
+        "#library-collections-row-1",
+        "_library_collections_reader_preferences",
+        "_library_collections_reader_layout",
     ),
     "conversations": (
         "#library-row-browse-conversations",
@@ -260,6 +271,10 @@ def _instrument_resize_service_seams(monkeypatch, app) -> dict[str, int]:
         "notes": (app.notes_scope_service, ("list_notes", "get_note_detail")),
         "prompts": (app.prompt_scope_service, ("list_prompts", "get_prompt")),
         "skills": (app.skills_scope_service, ("get_context", "get_skill")),
+        "collections": (
+            app.collections_capture_scope_service,
+            ("list_page", "get_detail"),
+        ),
     }
     for owner, (service, names) in services.items():
         for name in names:
@@ -321,6 +336,20 @@ async def _open_destination(screen, pilot, destination: str):
     rail, shell_selector, second_selector, _preferences, _layout = DESTINATION_CONTRACT[
         destination
     ]
+    if destination == "collections":
+        scope = screen.app_instance.collections_capture_scope_service
+        authority = scope.active_authority
+        assert authority is not None
+        page = await scope.list_page(CapturePageRequest(authority.key))
+        for index in range(page.total, 2):
+            await scope.save_capture(
+                CaptureSaveRequest(
+                    authority.key,
+                    f"https://example.test/closeout-{index + 1}",
+                    title=f"Closeout capture {index + 1}",
+                    text_content=f"Capture body {index + 1}",
+                )
+            )
     mounted_shells = [
         candidate
         for contract in DESTINATION_CONTRACT.values()
@@ -358,23 +387,34 @@ async def _open_destination(screen, pilot, destination: str):
         rows = list(screen.query(".library-prompt-row"))
         assert len(rows) >= 2
         second = rows[1]
-    expected = str(
-        getattr(
-            second,
-            {
-                "media": "media_id",
-                "conversations": "conversation_id",
-                "notes": "note_id",
-                "prompts": "prompt_id",
-                "skills": "skill_name",
-            }[destination],
+    if destination == "collections":
+        expected = str(second.capture_identity.capture_id)
+    else:
+        expected = str(
+            getattr(
+                second,
+                {
+                    "media": "media_id",
+                    "conversations": "conversation_id",
+                    "notes": "note_id",
+                    "prompts": "prompt_id",
+                    "skills": "skill_name",
+                }[destination],
+            )
         )
-    )
     already_selected = {
         "media": lambda: (
             str(screen._library_media_reader_session.selected_id or "")
             == str(second.media_id)
             and bool(screen.query("#library-media-viewer-title"))
+        ),
+        "collections": lambda: (
+            screen._library_collections_capture_controller.state.selected_identity
+            == second.capture_identity
+            and screen._library_collections_capture_controller.state.loaded_detail
+            is not None
+            and screen._library_collections_capture_controller.state.loaded_detail.capture.identity
+            == second.capture_identity
         ),
         "conversations": lambda: (
             str(screen._library_conversation_reader_state.selected_id or "")
@@ -404,6 +444,21 @@ async def _open_destination(screen, pilot, destination: str):
             pilot,
             (f"#library-media-reader-mode-{screen._library_media_reader_session.mode}"),
         )
+    elif destination == "collections":
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_collections_capture_controller.state.selected_identity
+                == second.capture_identity
+                and screen._library_collections_capture_controller.state.loaded_detail
+                is not None
+                and screen._library_collections_capture_controller.state.loaded_detail.capture.identity
+                == second.capture_identity
+                and not screen._library_collections_capture_controller.state.detail_loading
+            ),
+            message="Collections second selection did not settle",
+        )
+        await _wait_for_selector(screen, pilot, "#library-collections-reader-title")
     elif destination == "conversations":
         await _wait_for_condition(
             pilot,
@@ -454,6 +509,9 @@ async def _open_destination(screen, pilot, destination: str):
         )
         await _wait_for_selector(screen, pilot, "#library-skill-mode-overview")
     if restore_closed_library:
+        # Collections repaints its reader while page/detail settlement lands;
+        # always operate on the current shell after that transition.
+        shell = screen.query_one(shell_selector)
         if not shell.effective_layout.library_open:
             shell.library_grip.press()
             await _wait_for_condition(
@@ -491,6 +549,13 @@ def _destination_state(screen, destination: str) -> tuple[object, ...]:
             screen._selected_media_id,
             screen._library_media_reader_session.loaded_id,
             screen._library_media_reader_session.mode,
+        )
+    elif destination == "collections":
+        state = screen._library_collections_capture_controller.state
+        semantic = (
+            state.selected_identity,
+            state.loaded_detail.capture.identity if state.loaded_detail else None,
+            screen._library_collections_reader_mode,
         )
     elif destination == "conversations":
         semantic = (
@@ -542,6 +607,26 @@ def _durable_live_oracle(
             "pending": state.pending_request,
             "loaded": state.loaded_id,
             "mode": state.mode,
+        }
+    elif destination == "collections":
+        state = screen._library_collections_capture_controller.state
+        record = {
+            "selected": (
+                state.selected_identity.capture_id
+                if state.selected_identity is not None
+                else None
+            ),
+            "pending": (
+                state.selected_identity.capture_id
+                if state.detail_loading and state.selected_identity is not None
+                else None
+            ),
+            "loaded": (
+                state.loaded_detail.capture.identity.capture_id
+                if state.loaded_detail is not None
+                else None
+            ),
+            "mode": screen._library_collections_reader_mode,
         }
     elif destination == "conversations":
         state = screen._library_conversation_reader_state
@@ -824,6 +909,7 @@ async def _exercise_closeout_preferences_restore_in_fresh_screen(
 ) -> tuple[dict[str, object], str, str]:
     expected = {
         "media": True,
+        "collections": True,
         "conversations": False,
         "notes": True,
         "prompts": False,
@@ -999,6 +1085,13 @@ async def _exercise_closeout_single_app_route_cycle(
                             ]
                         ),
                         message="Shared durable Library preference did not close",
+                    )
+                elif destination == "collections":
+                    screen.query_one("#library-collections-mode-info", Button).press()
+                    await _wait_for_condition(
+                        pilot,
+                        lambda: screen._library_collections_reader_mode == "info",
+                        message="Collections Info mode did not settle",
                     )
                 elif destination == "notes":
                     body = screen.query_one("#library-note-body", TextArea)

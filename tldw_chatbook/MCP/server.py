@@ -34,8 +34,8 @@ the retired `todo_write` tool is also absent.
 
 ## Exposed local Library tools (task-1337)
 
-The 24 descriptor-backed `library_*` tools (media/notes/prompts/skills/
-conversations/collections list+get+search, plus the chunking-agent-tools
+The 21 descriptor-backed `library_*` tools (media/notes/prompts/skills/
+conversations list+get+search, plus the chunking-agent-tools
 siblings: structure/chunk/spec-list/spec-save/re-chunk, and the note WRITE
 tool `library_save_note`) are part of the
 local MCP surface: they are locally served and contract-governed by
@@ -304,7 +304,7 @@ def build_local_library_tool_service(
     notes_scope_service: Any = None,
     policy_enforcer: Any = None,
 ) -> Any:
-    """Compose the six local Library backends into one shared synchronous service.
+    """Compose the five local Library backends into one shared synchronous service.
 
     Single construction site for ``LocalLibraryToolService`` on the local MCP
     surface (task-1337, plan Task 9): ``LocalMCPRuntimeDelegate`` calls this
@@ -347,7 +347,6 @@ def build_local_library_tool_service(
     from ..config import (
         CLI_APP_CLIENT_ID,
         get_chachanotes_db_path,
-        get_library_collections_db_path,
         get_user_data_dir,
     )
     from ..Library.local_library_tool_service import LocalLibraryToolService
@@ -412,18 +411,6 @@ def build_local_library_tool_service(
 
     _build("conversation", _build_conversations)
 
-    def _build_collections():
-        from ..DB.Library_Collections_DB import LibraryCollectionsDB
-        from ..Library.library_collections_service import (
-            LocalLibraryCollectionsService,
-        )
-
-        return LocalLibraryCollectionsService(
-            LibraryCollectionsDB(get_library_collections_db_path(), CLI_APP_CLIENT_ID)
-        )
-
-    _build("collection", _build_collections)
-
     def _build_media_chunk():
         from ..Chunking.chunking_interop_library import get_chunking_service
         from ..Library.local_media_chunk_tool_service import (
@@ -469,7 +456,6 @@ def build_local_library_tool_service(
         prompt_service=backends["prompt"],
         skills_service=backends["skill"],
         conversation_service=backends["conversation"],
-        collections_service=backends["collection"],
         media_chunk_service=backends["media_chunk"],
         # student-workflow (spec §4.3/§6): the note-save folder seam and the
         # writing note tool's service-level gate (the chunk-tools pattern).

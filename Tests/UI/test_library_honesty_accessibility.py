@@ -55,13 +55,6 @@ from tldw_chatbook.Widgets.Library.library_notes_canvas import (
 )
 from tldw_chatbook.Widgets.Library.library_media_canvas import LibraryMediaCanvas
 from tldw_chatbook.Widgets.Library.library_export_canvas import LibraryExportCanvas
-from tldw_chatbook.Widgets.Library.library_collections_panel import (
-    LibraryCollectionsPanel,
-)
-from tldw_chatbook.Library.library_collections_state import (
-    LibraryCollectionActionState,
-    LibraryCollectionsPanelState,
-)
 from tldw_chatbook.Library.library_export_scope import ExportScope
 from tldw_chatbook.Library.library_export_state import (
     LibraryExportFormState,
@@ -261,78 +254,6 @@ async def test_export_submit_disabled_carries_marker_and_keeps_reason():
         submit = pilot.app.query_one("#library-export-submit", Button)
         assert submit.disabled is False
         assert not str(submit.label).startswith(LIBRARY_DISABLED_ACTION_MARKER)
-
-
-def _collections_state(*, create_enabled: bool) -> LibraryCollectionsPanelState:
-    def action(widget_id: str, label: str, enabled: bool, reason: str):
-        return LibraryCollectionActionState(
-            widget_id=widget_id,
-            label=label,
-            enabled=enabled,
-            disabled_reason="" if enabled else reason,
-        )
-
-    return LibraryCollectionsPanelState(
-        status="empty",
-        collections=(),
-        selected_collection_id=None,
-        selected_collection=None,
-        empty_copy="No stored collection items are available locally yet.",
-        create_action=action(
-            "library-create-collection",
-            "Create Collection",
-            create_enabled,
-            "Enter a Collection name.",
-        ),
-        rename_action=action(
-            "library-rename-collection",
-            "Rename Collection",
-            False,
-            "Select a Collection before renaming it.",
-        ),
-        delete_action=action(
-            "library-delete-collection",
-            "Delete Collection",
-            False,
-            "Select a Collection before deleting it.",
-        ),
-    )
-
-
-class _CollectionsPanelApp(ConsolidatedCSSApp):
-    def __init__(self, state: LibraryCollectionsPanelState):
-        super().__init__()
-        self._state = state
-
-    def compose(self):
-        yield LibraryCollectionsPanel(self._state, id="library-collections-panel")
-
-
-@pytest.mark.asyncio
-async def test_collections_disabled_actions_carry_marker_enabled_do_not():
-    """RC-07: Collections' three form buttons measured 2.30:1 disabled with
-    colour as the only state carrier."""
-    async with _CollectionsPanelApp(
-        _collections_state(create_enabled=False)
-    ).run_test() as pilot:
-        for widget_id in (
-            "library-create-collection",
-            "library-rename-collection",
-            "library-delete-collection",
-        ):
-            button = pilot.app.query_one(f"#{widget_id}", Button)
-            assert button.disabled is True
-            assert str(button.label).startswith(f"{LIBRARY_DISABLED_ACTION_MARKER} "), (
-                widget_id
-            )
-            assert str(button.tooltip), widget_id  # reason at the control
-
-    async with _CollectionsPanelApp(
-        _collections_state(create_enabled=True)
-    ).run_test() as pilot:
-        create = pilot.app.query_one("#library-create-collection", Button)
-        assert create.disabled is False
-        assert not str(create.label).startswith(LIBRARY_DISABLED_ACTION_MARKER)
 
 
 def test_library_disabled_contrast_rules_live_in_source_and_bundle():
@@ -869,42 +790,6 @@ async def test_media_canvas_actions_share_one_toolbar_row():
         assert parent.has_class("ds-toolbar")
 
 
-@pytest.mark.asyncio
-async def test_selected_collection_row_carries_the_selected_marker():
-    """AC#5: the selected Collections row was colour-only (`is-active`);
-    every other Library list marks its selected row with a leading '▸ '."""
-    import dataclasses
-
-    from tldw_chatbook.Library.library_collections_state import (
-        LibraryCollectionSummary,
-    )
-
-    def summary(collection_id: str, name: str, selected: bool):
-        return LibraryCollectionSummary(
-            collection_id=collection_id,
-            name=name,
-            description="",
-            item_count=2,
-            source_authority="local",
-            sync_status="local-only",
-            sync_status_detail="",
-            sync_status_label_override="",
-            created_at="",
-            updated_at="",
-            selected=selected,
-        )
-
-    rows = (summary("c-1", "Research", True), summary("c-2", "Queue", False))
-    state = dataclasses.replace(
-        _collections_state(create_enabled=True), status="ready", collections=rows
-    )
-    async with _CollectionsPanelApp(state).run_test() as pilot:
-        selected = pilot.app.query_one("#library-collection-select-0", Button)
-        unselected = pilot.app.query_one("#library-collection-select-1", Button)
-        assert str(selected.label).startswith("▸ ")
-        assert not str(unselected.label).startswith("▸")
-
-
 # ---------------------------------------------------------------------------
 # AC#6 (RC-08): search honesty -- results visible at the point of action,
 # one query value across BOTH mounted inputs, executed-only Recents.
@@ -1137,17 +1022,14 @@ def test_viewer_type_line_names_rendered_markdown_honestly():
 
 
 @pytest.mark.asyncio
-async def test_escape_works_on_export_collections_and_staging_canvases():
-    """AC#7: Escape was inert on Export, Collections, and the Study
+async def test_escape_works_on_export_and_staging_canvases():
+    """AC#7: Escape was inert on Export and the Study
     staging canvas (and 'Export…' from within Media navigated away with
     no return path). Escape now: Export -> back to the canvas that opened
-    it (or the hub from the rail), Collections -> focus rail, staging ->
+    it (or the hub from the rail), while staging returns to the
     hub. The footer advertises each via the shared seam."""
-    from textual.widgets import Input as _Input
-
     from Tests.UI.test_product_maturity_phase39_library_collections import (
         DestinationHarness,
-        FakeLibraryCollectionsService,
         _active_destination_screen,
         _seed_library_sources,
         _wait_for_library_snapshot,
@@ -1161,7 +1043,6 @@ async def test_escape_works_on_export_collections_and_staging_canvases():
 
     app = _build_test_app()
     _seed_library_sources(app)
-    app.library_collections_service = FakeLibraryCollectionsService()
     host = DestinationHarness(app, "library")
 
     async with host.run_test(size=(170, 50)) as pilot:
@@ -1194,19 +1075,6 @@ async def test_escape_works_on_export_collections_and_staging_canvases():
                 break
             await pilot.pause(0.01)
         assert screen._library_selected_row_id == ""
-
-        # --- Collections: Escape is the list-canvas focus hop to the rail.
-        screen.query_one("#library-row-browse-collections", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-collections-panel")
-        shortcuts = dict(screen._library_footer_shortcuts_for_current_state())
-        assert shortcuts.get("esc") == "focus rail"
-        await pilot.press("escape")
-        for _ in range(300):
-            focused = screen.focused
-            if isinstance(focused, _Input) and focused.id == "library-search-input":
-                break
-            await pilot.pause(0.01)
-        assert getattr(screen.focused, "id", None) == "library-search-input"
 
         # --- Study staging canvas: Escape returns to the hub.
         screen.query_one("#library-row-create-study", Button).press()
@@ -1273,53 +1141,6 @@ async def test_row_toggle_patcher_rebuilds_marker_label_both_directions():
             f"{LIBRARY_DISABLED_ACTION_MARKER} Delete selected"
         )
         assert str(row_button.label).startswith("☐")
-
-
-@pytest.mark.asyncio
-async def test_collections_patcher_rebuilds_marker_label_both_directions():
-    """Mutation D's survival: `_refresh_collections_panel_action_state_widgets`
-    flips `.disabled` on the three form actions in place (no recompose), so
-    it must rebuild the "○" marker label alongside. Driven through the real
-    Input.Changed path on the mounted Library screen."""
-    from textual.widgets import Input
-
-    from Tests.UI.test_product_maturity_phase39_library_collections import (
-        DestinationHarness,
-        FakeLibraryCollectionsService,
-        _active_destination_screen,
-        _seed_library_sources,
-        _wait_for_library_snapshot,
-        _wait_for_selector,
-    )
-    from Tests.UI.app_factory import _build_test_app
-
-    app = _build_test_app()
-    _seed_library_sources(app)
-    app.library_collections_service = FakeLibraryCollectionsService()
-    host = DestinationHarness(app, "library")
-
-    async with host.run_test(size=(170, 50)) as pilot:
-        screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
-        screen.query_one("#library-row-browse-collections", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-collections-panel")
-
-        create_btn = screen.query_one("#library-create-collection", Button)
-        assert create_btn.disabled is True
-        assert str(create_btn.label).startswith(f"{LIBRARY_DISABLED_ACTION_MARKER} ")
-
-        name_input = screen.query_one("#library-collection-name-input", Input)
-        name_input.value = "Research"
-        await pilot.pause()
-        assert create_btn.disabled is False
-        assert str(create_btn.label) == "Create Collection"
-
-        name_input.value = ""
-        await pilot.pause()
-        assert create_btn.disabled is True
-        assert str(create_btn.label) == (
-            f"{LIBRARY_DISABLED_ACTION_MARKER} Create Collection"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -1420,7 +1241,6 @@ async def test_rail_entry_to_export_after_media_origin_does_not_claim_media():
     Escape lands on the hub, never Media."""
     from Tests.UI.test_product_maturity_phase39_library_collections import (
         DestinationHarness,
-        FakeLibraryCollectionsService,
         _active_destination_screen,
         _seed_library_sources,
         _wait_for_library_snapshot,
@@ -1434,7 +1254,6 @@ async def test_rail_entry_to_export_after_media_origin_does_not_claim_media():
 
     app = _build_test_app()
     _seed_library_sources(app)
-    app.library_collections_service = FakeLibraryCollectionsService()
     host = DestinationHarness(app, "library")
 
     async with host.run_test(size=(170, 50)) as pilot:
@@ -1449,8 +1268,8 @@ async def test_rail_entry_to_export_after_media_origin_does_not_claim_media():
         assert screen._library_export_origin_row_id == LIBRARY_ROW_BROWSE_MEDIA
 
         # Rail-switch AWAY (a plain route boundary, not Export's own back).
-        screen.query_one("#library-row-browse-collections", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-canvas")
 
         # Fresh rail entry into Export: the stale Media origin must be gone.
         screen.query_one(f"#library-row-{LIBRARY_ROW_INGEST_EXPORT}", Button).press()

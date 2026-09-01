@@ -80,9 +80,6 @@ from tldw_chatbook.Library.library_rail_state import (
     LibraryRailPreferences,
 )
 from tldw_chatbook.Utils.library_rail_width import OrdinaryRailStyleContract
-from tldw_chatbook.Library.library_collections_state import (
-    LibraryCollectionDeleteReceipt,
-)
 from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY,
     LibraryRagPanelState,
@@ -191,7 +188,6 @@ from Tests.UI.test_destination_shells import (
     StaticLibraryNotesScopeService,
     _link_library_items_to_active_workspace,
 )
-from Tests.UI.test_library_content_hub import StaticLibraryCollectionsService
 from Tests.UI.app_factory import _build_test_app as _build_tldw_test_app
 
 
@@ -1145,7 +1141,7 @@ class _LibraryEvidenceGates:
                     get_library_user_content_evidence=self._async_call(owner)
                 ),
             )
-        app.library_collections_service = SimpleNamespace(
+        app.collections_capture_scope_service = SimpleNamespace(
             get_library_user_content_evidence=self._sync_call
         )
 
@@ -2413,7 +2409,7 @@ async def test_library_starter_deep_link_opens_hidden_collection_or_note_route()
             await _wait_for_evidence_round(pilot, gates)
             assert screen._library_lifecycle is LibraryLifecycle.STARTER
             assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
-            assert screen.query_one("#library-collections-panel")
+            assert screen.query_one("#library-collections-reader-shell")
             assert not screen.query(f"#library-row-{LIBRARY_ROW_BROWSE_COLLECTIONS}")
     finally:
         gates.release_all()
@@ -4092,7 +4088,7 @@ async def test_ordinary_rail_restores_custom_owner_after_collapse_and_adaptive_r
             shell = screen.query_one(selector)
 
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
-        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+        await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
         restored = screen.query_one("#library-rail", LibraryRail)
         await _wait_for_condition(
             pilot,
@@ -4327,9 +4323,9 @@ async def test_library_ordinary_emergency_retains_bar_and_route_host() -> None:
         assert canvas.display is False
 
         screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_COLLECTIONS}").press()
-        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+        await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
         assert screen.query_one("#library-emergency-return") is bar
-        assert screen._library_entry_canvas_owner().id == "library-collections-panel"
+        assert screen._library_entry_canvas_owner().id == "library-collections-reader-shell"
         assert bar.display is True
         assert rail.display is False
         assert canvas.display is True
@@ -5006,149 +5002,6 @@ async def test_library_emergency_no_widget_pointer_does_not_invalidate(
 
 
 @pytest.mark.asyncio
-async def test_library_emergency_collection_mutation_syncs_return_truth() -> None:
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), notes=_two_notes())
-    host = LibraryProductionCSSHarness(app)
-    async with host.run_test(size=(63, 30)) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
-        bar = await _wait_for_selector(screen, pilot, "#library-emergency-return")
-        assert bar.disabled is False
-
-        assert screen._claim_library_collections_mutation() is True
-        assert bar.disabled is True
-        assert (
-            dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
-            is None
-        )
-
-        screen._release_library_collections_mutation()
-        await pilot.pause()
-        assert bar.disabled is False
-        assert (
-            dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
-            == "rail"
-        )
-
-
-@pytest.mark.asyncio
-async def test_library_emergency_real_collection_undo_releases_return_guard() -> None:
-    """The mounted Undo action immediately restores bar/footer/F1 truth."""
-
-    class RestoreService(StaticLibraryCollectionsService):
-        def restore_collection(self, collection_id: str) -> SimpleNamespace:
-            restored = SimpleNamespace(
-                collection_id=collection_id,
-                name="Restored Collection",
-                description="",
-                item_count=0,
-                source_authority="local",
-                sync_status="local-only",
-                created_at="2026-08-26T00:00:00Z",
-                updated_at="2026-08-26T00:00:00Z",
-            )
-            self.records = (*self.records, restored)
-            return restored
-
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), notes=_two_notes())
-    app.library_collections_service = RestoreService(())
-    host = LibraryProductionCSSHarness(app)
-    async with host.run_test(size=(63, 30)) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
-        await _wait_for_selector(screen, pilot, "#library-collections-panel")
-        screen._library_collection_delete_receipt = LibraryCollectionDeleteReceipt(
-            collection_id="restored-collection",
-            name="Restored Collection",
-        )
-        screen.refresh(recompose=True)
-        undo = await _wait_for_selector(
-            screen, pilot, "#library-collections-delete-undo"
-        )
-
-        undo.press()
-        await _wait_for_condition(
-            pilot,
-            lambda: screen._library_collection_delete_receipt is None,
-            message="Collection Undo did not complete",
-        )
-        await pilot.pause()
-
-        assert screen._library_collections_mutation_in_flight is False
-        assert (
-            screen.query_one(
-                "#library-emergency-return", LibraryEmergencyReturn
-            ).disabled
-            is False
-        )
-        assert (
-            dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
-            == "rail"
-        )
-        assert screen.check_action("library_emergency_return", ()) is True
-
-
-@pytest.mark.asyncio
-async def test_library_emergency_selecting_another_collection_clears_return_guard() -> (
-    None
-):
-    """A real row selection cancels pending deletion and repaints recovery."""
-    records = (
-        {
-            "collection_id": "collection-1",
-            "name": "First",
-            "description": "",
-            "item_count": 0,
-            "source_authority": "local",
-            "sync_status": "local-only",
-            "updated_at": "2026-08-26T00:00:00Z",
-        },
-        {
-            "collection_id": "collection-2",
-            "name": "Second",
-            "description": "",
-            "item_count": 0,
-            "source_authority": "local",
-            "sync_status": "local-only",
-            "updated_at": "2026-08-26T00:00:00Z",
-        },
-    )
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations(), notes=_two_notes())
-    app.library_collections_service = StaticLibraryCollectionsService(records)
-    host = LibraryProductionCSSHarness(app)
-    async with host.run_test(size=(63, 30)) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
-        await _wait_for_selector(screen, pilot, "#library-delete-collection")
-        await pilot.click("#library-delete-collection")
-        await _wait_for_selector(screen, pilot, "#library-confirm-delete-collection")
-        bar = screen.query_one("#library-emergency-return", LibraryEmergencyReturn)
-        assert bar.disabled is True
-
-        screen.query_one("#library-collection-select-1", Button).press()
-        await _wait_for_condition(
-            pilot,
-            lambda: screen._library_collections_selected_id == "collection-2",
-            message="Second Collection row was not selected",
-        )
-        await pilot.pause()
-
-        assert screen._library_collection_pending_delete_id == ""
-        assert bar.disabled is False
-        assert (
-            dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
-            == "rail"
-        )
-        assert screen.check_action("library_emergency_return", ()) is True
-
-
-@pytest.mark.asyncio
 async def test_library_emergency_ingest_consent_syncs_return_truth(
     monkeypatch, tmp_path
 ) -> None:
@@ -5326,7 +5179,7 @@ async def test_library_63_64_width_only_transition_does_no_non_layout_work(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("guard_kind", ("cancel", "destructive", "running"))
+@pytest.mark.parametrize("guard_kind", ("cancel", "running"))
 async def test_library_emergency_real_guards_keep_specific_action_authoritative(
     guard_kind: str, monkeypatch
 ) -> None:
@@ -5352,52 +5205,26 @@ async def test_library_emergency_real_guards_keep_specific_action_authoritative(
                 screen._library_export_form["destination"] = "/tmp/library-guard.zip"
                 screen.handle_library_export_submit(Button.Pressed(Button()))
                 await pilot.pause()
-        elif guard_kind == "destructive":
-            await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
-            await _wait_for_selector(screen, pilot, "#library-collections-panel")
-            screen._library_collections_selected_id = "collection-guard"
-            await screen.arm_library_collection_delete(Button.Pressed(Button()))
-            guarded_focus = await _wait_for_selector(
-                screen, pilot, "#library-confirm-delete-collection"
-            )
-            guarded_focus.focus()
-            await pilot.pause()
         eligibility = screen._library_emergency_return_eligibility()
         assert eligibility.visible and eligibility.guarded and not eligibility.enabled
         assert screen.check_action("library_emergency_return", ()) is False
-        if guard_kind == "destructive":
-            assert screen.check_action("library_list_focus_rail", ()) is False
         assert (
             dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
             != "rail"
         )
-        if guard_kind == "destructive":
-            assert (
-                dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
-                is None
-            )
         bar = screen.query_one("#library-emergency-return", LibraryEmergencyReturn)
         assert bar.disabled is True
         await pilot.click("#library-emergency-return")
         await pilot.pause()
         assert screen._library_emergency_stage == "canvas-only"
-        if guard_kind == "destructive":
-            screen.action_library_list_focus_rail()
-            await pilot.pause()
-            assert guarded_focus.has_focus
 
         screen.action_show_workbench_help()
         await pilot.pause()
         panel = host.screen
         assert isinstance(panel, WorkbenchHelpPanel)
         assert dict(panel.state.shortcuts).get("esc") != "rail"
-        if guard_kind == "destructive":
-            assert dict(panel.state.shortcuts).get("esc") is None
         await pilot.press("escape")
         await pilot.pause()
-        if guard_kind == "destructive":
-            assert host.screen is screen
-            assert guarded_focus.has_focus
         await pilot.press("escape")
         await pilot.pause()
         assert screen._library_emergency_stage == "canvas-only"
@@ -5417,10 +5244,6 @@ async def test_library_emergency_real_guards_keep_specific_action_authoritative(
                 dict(screen._library_footer_shortcuts_for_current_state()).get("esc")
                 == "rail"
             )
-        elif guard_kind == "destructive":
-            assert screen._library_collection_pending_delete_id == "collection-guard"
-            assert guarded_focus.display is True
-            assert guarded_focus.has_focus
 
 
 @pytest.mark.asyncio
@@ -5693,8 +5516,8 @@ async def test_library_production_width_matrix_ordinary(
     async with host.run_test(size=(terminal_width, 48)) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
-        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
         await pilot.pause()
         shell = screen.query_one("#library-shell-grid")
         rail = screen.query_one("#library-rail", LibraryRail)
@@ -5864,8 +5687,8 @@ async def test_library_production_width_matrix_custom_preferences(
         await _wait_for_library_shell(screen, pilot)
         persistence = AsyncMock(wraps=screen._persist_library_reader_preference)
         monkeypatch.setattr(screen, "_persist_library_reader_preference", persistence)
-        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
-        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
         shell = screen.query_one("#library-shell-grid")
         assert shell.content_region.width == expected_content_width
 
@@ -6071,15 +5894,15 @@ async def test_library_resize_geometry_high_frequency_does_no_non_layout_work(
     async with host.run_test(size=(235, 48)) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
-        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
         await screen.workers.wait_for_complete()
         await pilot.pause()
         rail = screen.query_one("#library-rail", LibraryRail)
         canvas = screen.query_one("#library-canvas")
         with monkeypatch.context() as resize_patches:
             probes = _task6_install_resize_probes(
-                screen, resize_patches, "_refresh_library_collections_snapshot"
+                screen, resize_patches, "_load_library_search_history"
             )
             for width, expected_rail in (
                 (88, 48),
@@ -16102,90 +15925,6 @@ async def test_library_shell_details_toggle_persists():
     assert sections.get("details_open") is True
 
 
-@pytest.mark.asyncio
-async def test_library_shell_collections_row_loads_seeded_records():
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations())
-    app.library_collections_service = StaticLibraryCollectionsService(
-        [
-            {
-                "collection_id": "collection-1",
-                "name": "Launch Evidence",
-                "description": "Sources for release review.",
-                "item_count": 3,
-                "source_authority": "local",
-                "sync_status": "local-only",
-                "updated_at": "2026-06-09T12:00:00Z",
-            }
-        ]
-    )
-    host = LibraryHarness(app)
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-
-        # Entering Collections via the rail row must load the snapshot with no
-        # prior create/rename action; the seeded record renders in the canvas.
-        screen.query_one("#library-row-browse-collections").press()
-        await _wait_for_condition(
-            pilot,
-            lambda: (
-                screen._library_collections_loaded
-                and bool(screen.query("#library-collection-select-0"))
-            ),
-            message="Seeded Collection snapshot never settled.",
-        )
-        select_button = screen.query_one("#library-collection-select-0", Button)
-
-        canvas = screen.query_one("#library-canvas")
-        assert canvas in select_button.ancestors
-        assert "Launch Evidence" in str(select_button.label)
-
-
-@pytest.mark.asyncio
-async def test_library_shell_collections_deeplink_loads_before_mount():
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations())
-    app.library_collections_service = StaticLibraryCollectionsService(
-        [
-            {
-                "collection_id": "collection-1",
-                "name": "Launch Evidence",
-                "description": "Sources for release review.",
-                "item_count": 3,
-                "source_authority": "local",
-                "sync_status": "local-only",
-                "updated_at": "2026-06-09T12:00:00Z",
-            }
-        ]
-    )
-    screen = LibraryScreen(app)
-
-    # Mirrors the real app.py ordering: handle_screen_navigation calls
-    # apply_navigation_context BEFORE switch_screen mounts the destination
-    # screen, so the screen is never mounted at this point.
-    assert screen.is_mounted is False
-    screen.apply_navigation_context({"mode": "collections"})
-
-    host = LibraryHarness(app, screen=screen)
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-
-        # Deep-linking straight into Collections (no prior rail-row press)
-        # must still load the snapshot; the seeded record renders in the
-        # canvas without requiring any additional user interaction.
-        select_button = await _wait_for_selector(
-            screen, pilot, "#library-collection-select-0"
-        )
-
-        canvas = screen.query_one("#library-canvas")
-        assert canvas in select_button.ancestors
-        assert "Launch Evidence" in str(select_button.label)
-
-
 @pytest.mark.parametrize("source_type", ["media", "notes", "conversations", "prompt"])
 def test_library_open_source_context_accepts_only_supported_exact_types(
     source_type: str,
@@ -25695,9 +25434,7 @@ def test_library_landing_continue_receipt_accepts_only_authoritative_source_scop
             SkillBrowseScope(query="python", sort="status", page=2),
         )
     elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
-        screen._library_collections_loaded = True
-        screen._library_collections_error = ""
-        screen._library_collections_selected_id = "PRIVATE-COLLECTION-ID"
+        screen._library_collections_requested_page = 1
     else:
         screen._library_rag_query = "retrieval"
         screen._library_rag_searched_query = "retrieval"

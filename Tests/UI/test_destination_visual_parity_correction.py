@@ -718,7 +718,7 @@ async def test_library_source_browser_collections_action_switches_to_collections
         await _wait_for_selector(library, pilot, "#library-row-browse-collections")
 
         library.query_one("#library-row-browse-collections", Button).press()
-        await _wait_for_selector(library, pilot, "#library-collections-panel")
+        await _wait_for_selector(library, pilot, "#library-collections-reader-shell")
 
         active_row = library.query_one("#library-row-browse-collections", Button)
         selected_row_id = getattr(library, "_library_selected_row_id")

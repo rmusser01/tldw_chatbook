@@ -1,13 +1,13 @@
 """Shared public contract for the direct Library tools (task-1337, ADR-030).
 
-Single source of truth for the `library_*` tool surface: descriptor table
+Single source of truth for the current `library_*` tool surface: descriptor table
 (names, descriptions, input schemas, item type, operation, service route),
 opaque stable-ID and continuation-cursor codecs, structured errors, page/text
 validation, and the 32 KiB serialized-result byte fitting. Both runtimes
 (Console `LibraryToolProvider` and local MCP registration/delegation) derive
 from this module so their contracts cannot drift.
 
-The table holds the 18 task-1337 tools plus the four media chunking tools
+The table holds the current read tools plus the four media chunking tools
 (chunking-agent-tools spec §4: structure, chunk fetch, spec list/save,
 re-chunk) and the note-save write tool (student-workflow spec §4).
 
@@ -28,7 +28,7 @@ from typing import Any
 
 # -- Public bounds (spec §3, §4, §6, §7) ----------------------------------------
 
-LIBRARY_ITEM_TYPES = ("media", "note", "prompt", "skill", "conversation", "collection")
+LIBRARY_ITEM_TYPES = ("media", "note", "prompt", "skill", "conversation")
 DEFAULT_PAGE_LIMIT = 20
 MAX_PAGE_LIMIT = 50
 DEFAULT_MAX_CHARS = 8_000
@@ -700,31 +700,6 @@ LIBRARY_TOOL_DESCRIPTORS: dict[str, LibraryToolDescriptor] = {
         _descriptor(
             "library_search_conversations", "conversation", "search",
             "Lexically search conversation titles, message text, and keywords (literal, case-insensitive).",
-            _search_schema(),
-        ),
-        # -- Collections ------------------------------------------------------
-        _descriptor(
-            "library_list_collections", "collection", "list",
-            "List your Library collections (bounded page, exact total).",
-            _list_schema(),
-        ),
-        _descriptor(
-            "library_get_collection", "collection", "get",
-            "Read one collection's metadata and a bounded page of direct members (exact member total; member content is never inlined) by opaque stable ID.",
-            _get_schema({
-                "limit": {
-                    "type": "integer",
-                    "default": DEFAULT_PAGE_LIMIT,
-                    "minimum": 1,
-                    "maximum": MAX_PAGE_LIMIT,
-                },
-                "offset": {"type": "integer", "default": 0, "minimum": 0},
-                "cursor": _cursor_property(),
-            }),
-        ),
-        _descriptor(
-            "library_search_collections", "collection", "search",
-            "Lexically search collection names, descriptions, and direct member titles (literal, case-insensitive; not recursive into member content).",
             _search_schema(),
         ),
     )

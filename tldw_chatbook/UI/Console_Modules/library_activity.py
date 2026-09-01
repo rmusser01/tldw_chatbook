@@ -150,9 +150,6 @@ class ConsoleLibraryActivityController:
             conversation_service=getattr(
                 app, "local_chat_conversation_service", None
             ),
-            collections_service=getattr(
-                app, "local_library_collections_service", None
-            ),
             media_chunk_service=media_chunk_service,
             notes_scope_service=getattr(app, "notes_scope_service", None),
             policy_enforcer=getattr(app, "service_policy_enforcer", None),

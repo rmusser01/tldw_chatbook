@@ -32,6 +32,7 @@ from tldw_chatbook.Library.collections_capture_service import (
     build_local_capture_authority,
     build_server_capture_authority,
 )
+from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
 
 
 def _clock_text(value: datetime) -> str:
@@ -105,6 +106,26 @@ def test_authority_keys_are_opaque_and_server_ignores_local_workspace(
         "private-b.db",
     ):
         assert private_value not in rendered
+
+
+@pytest.mark.asyncio
+async def test_capture_scope_owns_library_content_evidence(tmp_path: Path) -> None:
+    authority, database, _repository, service = _local_service(tmp_path)
+    scope = CollectionsCaptureScopeService()
+
+    assert await scope.get_library_user_content_evidence() is LibraryContentEvidence.UNKNOWN
+
+    scope.activate(authority, service)
+    assert await scope.get_library_user_content_evidence() is LibraryContentEvidence.EMPTY
+
+    await scope.save_capture(
+        CaptureSaveRequest(authority.key, "https://example.test/evidence")
+    )
+    assert (
+        await scope.get_library_user_content_evidence()
+        is LibraryContentEvidence.HAS_USER_CONTENT
+    )
+    database.close()
 
 
 @pytest.mark.asyncio

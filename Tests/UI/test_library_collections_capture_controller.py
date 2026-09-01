@@ -233,6 +233,34 @@ async def test_source_switch_clears_state_and_fences_late_page() -> None:
     assert controller.state.loaded_detail is None
 
 
+def test_adopt_active_authority_uses_app_owned_scope_without_reactivation() -> None:
+    scope = FakeCaptureScope()
+    scope.active_authority = AUTHORITY_A
+    controller = LibraryCollectionsCaptureController(scope)
+
+    assert controller.adopt_active_authority() is True
+    assert controller.state.authority_key == AUTHORITY_A.key
+    assert controller.state.page is None
+
+    generation = controller._generations.copy()
+    assert controller.adopt_active_authority() is False
+    assert controller._generations == generation
+
+    scope.active_authority = AUTHORITY_B
+    assert controller.adopt_active_authority() is True
+    assert controller.state.authority_key == AUTHORITY_B.key
+    assert controller.state.page is None
+
+
+def test_adopt_missing_active_authority_exposes_bounded_unavailable_state() -> None:
+    scope = FakeCaptureScope()
+    controller = LibraryCollectionsCaptureController(scope)
+
+    assert controller.adopt_active_authority() is True
+    assert controller.state.authority_key is None
+    assert controller.state.page_error == "capture_authority_unavailable"
+
+
 @pytest.mark.asyncio
 async def test_page_shrink_retries_last_page_once_and_applies_it() -> None:
     scope = FakeCaptureScope()

@@ -1,6 +1,6 @@
-"""Tests for the shared LocalLibraryToolService (task-1337, plan Task 5).
+"""Tests for the shared LocalLibraryToolService.
 
-The service is the single synchronous core behind the 18 direct Library
+The service is the single synchronous core behind the current direct Library
 tools. These tests use fake backends matching the real service signatures
 (keyword-only pagination, notes' leading user_id, async prompt/skill
 methods) plus real temporary databases for the cross-backend integration
@@ -20,11 +20,7 @@ import pytest
 
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError, InputError
-from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.Library import local_library_tool_service as service_module
-from tldw_chatbook.Library.library_collections_service import (
-    LocalLibraryCollectionsService,
-)
 from tldw_chatbook.Library.library_tool_contract import (
     LIBRARY_TOOL_DESCRIPTORS,
     MAX_RESULT_BYTES,
@@ -123,19 +119,6 @@ def _conversation_item(index, **overrides):
         "keywords": [],
         "keyword_total": 0,
         "keywords_truncated": False,
-    }
-    item.update(overrides)
-    return item
-
-
-def _collection_item(index, **overrides):
-    item = {
-        "collection_id": f"collection-{index}",
-        "name": f"Collection {index}",
-        "description": f"collection description {index}",
-        "item_count": index,
-        "created_at": "2026-08-01T00:00:00Z",
-        "updated_at": "2026-08-02T00:00:00Z",
     }
     item.update(overrides)
     return item
@@ -364,32 +347,6 @@ class FakeConversationService(_Recorded):
         return self._detail
 
 
-class FakeCollectionsService(_Recorded):
-    def __init__(self, *, items=(), total=0, detail=None):
-        super().__init__()
-        self._items = list(items)
-        self._total = total
-        self._detail = detail
-
-    def list_library_collections(self, *, limit, offset):
-        self._record("list_library_collections", {"limit": limit, "offset": offset})
-        return {"items": self._items, "total": self._total}
-
-    def search_library_collections(self, *, query, limit, offset):
-        self._record(
-            "search_library_collections",
-            {"query": query, "limit": limit, "offset": offset},
-        )
-        return {"items": self._items, "total": self._total}
-
-    def get_library_collection(self, collection_id, *, limit, offset):
-        self._record(
-            "get_library_collection",
-            {"collection_id": collection_id, "limit": limit, "offset": offset},
-        )
-        return self._detail
-
-
 def _backends(**overrides):
     backends = {
         "media_service": FakeMediaService(),
@@ -397,7 +354,6 @@ def _backends(**overrides):
         "prompt_service": FakePromptService(),
         "skills_service": FakeSkillsService(),
         "conversation_service": FakeConversationService(),
-        "collections_service": FakeCollectionsService(),
         "notes_user_id": "user-1",
     }
     backends.update(overrides)
@@ -417,10 +373,10 @@ def _error_code(result):
 # --------------------------------------------------------------------------
 
 
-def test_descriptor_table_covers_24_tools():
-    # 18 task-1337 tools + the 5 chunking-agent-tools siblings (spec §4)
+def test_descriptor_table_covers_21_tools():
+    # 15 current read tools + the 5 chunking-agent-tools siblings (spec §4)
     # + library_save_note (student-workflow spec §4).
-    assert len(LIBRARY_TOOL_DESCRIPTORS) == 24
+    assert len(LIBRARY_TOOL_DESCRIPTORS) == 21
 
 
 def test_unknown_tool_name_is_invalid_argument():
@@ -544,12 +500,6 @@ LIST_CASES = [
         "list_library_conversations",
         "conversation",
     ),
-    (
-        "library_list_collections",
-        "collections_service",
-        "list_library_collections",
-        "collection",
-    ),
 ]
 
 _ITEM_FACTORIES = {
@@ -558,7 +508,6 @@ _ITEM_FACTORIES = {
     "prompt": _prompt_item,
     "skill": _skill_item,
     "conversation": _conversation_item,
-    "collection": _collection_item,
 }
 
 _RAW_ID_KEYS = {
@@ -567,7 +516,6 @@ _RAW_ID_KEYS = {
     "prompt": "uuid",
     "skill": "name",
     "conversation": "id",
-    "collection": "collection_id",
 }
 
 
@@ -687,12 +635,6 @@ SEARCH_CASES = [
         "conversation_service",
         "search_library_conversations",
         "conversation",
-    ),
-    (
-        "library_search_collections",
-        "collections_service",
-        "search_library_collections",
-        "collection",
     ),
 ]
 
@@ -2352,92 +2294,6 @@ def test_get_conversation_missing_returns_not_found():
 
 
 # --------------------------------------------------------------------------
-# Get operations: collections (membership pages)
-# --------------------------------------------------------------------------
-
-
-def _collection_detail(members, *, total, offset=0):
-    has_more = offset + len(members) < total
-    return {
-        "collection_id": "collection-1",
-        "name": "Collection One",
-        "description": "d",
-        "created_at": "2026-08-01",
-        "updated_at": "2026-08-02",
-        "member_total": total,
-        "offset": offset,
-        "limit": 20,
-        "has_more": has_more,
-        "members": members,
-    }
-
-
-def _member(index, source_type="media"):
-    return {
-        "membership_id": f"mem-{index}",
-        "source_type": source_type,
-        "item_id": _public_id("media", f"media-uuid-{index}"),
-        "source_ref": None,
-        "title": f"Member {index}",
-        "title_truncated": False,
-    }
-
-
-def test_get_collection_member_page_and_cursor():
-    detail = _collection_detail([_member(1), _member(2)], total=3)
-    collections = FakeCollectionsService(detail=detail)
-    service = _service(collections_service=collections)
-    public = _public_id("collection", "collection-1")
-
-    result = service.invoke("library_get_collection", {"id": public, "limit": 2})
-
-    assert collections.calls[0][1] == {
-        "collection_id": "collection-1",
-        "limit": 2,
-        "offset": 0,
-    }
-    assert result["item"]["name"] == "Collection One"
-    assert result["member_total"] == 3
-    assert result["has_more"] is True
-    assert result["next_offset"] == 2
-    state = parse_cursor(result["next_cursor"])
-    assert state["off"] == 2
-    member = result["members"][0]
-    assert member["membership_id"] == "mem-1"
-    parse_public_id(member["item_id"], expected_type="media")
-
-    service.invoke(
-        "library_get_collection", {"id": public, "cursor": result["next_cursor"]}
-    )
-    assert collections.calls[-1][1]["offset"] == 2
-
-
-def test_get_collection_unsupported_member_has_opaque_ref():
-    member = _member(1, source_type="server-doc")
-    member["item_id"] = None
-    member["source_ref"] = "ref:c2VydmVyLWRvYzptLTE"
-    detail = _collection_detail([member], total=1)
-    service = _service(collections_service=FakeCollectionsService(detail=detail))
-
-    result = service.invoke(
-        "library_get_collection", {"id": _public_id("collection", "collection-1")}
-    )
-
-    returned = result["members"][0]
-    assert returned["item_id"] is None
-    assert returned["source_ref"] == "ref:c2VydmVyLWRvYzptLTE"
-    assert result["next_cursor"] is None
-
-
-def test_get_collection_missing_returns_not_found():
-    service = _service(collections_service=FakeCollectionsService(detail=None))
-    result = service.invoke(
-        "library_get_collection", {"id": _public_id("collection", "gone")}
-    )
-    assert _error_code(result) == "not_found"
-
-
-# --------------------------------------------------------------------------
 # Error mapping
 # --------------------------------------------------------------------------
 
@@ -2466,10 +2322,8 @@ def test_sqlite_failure_maps_to_scrubbed_storage_error():
 
 
 def test_filesystem_failure_maps_to_storage_error():
-    service = _service(
-        collections_service=_RaisingBackend(OSError("disk went away"))
-    )
-    result = service.invoke("library_get_collection", {"id": _public_id("collection", "c")})
+    service = _service(media_service=_RaisingBackend(OSError("disk went away")))
+    result = service.invoke("library_list_media", {})
     assert _error_code(result) == "storage_error"
 
 
@@ -2490,9 +2344,8 @@ def test_unexpected_failure_is_scrubbed():
         ("prompt_service", "library_list_prompts"),
         ("skills_service", "library_list_skills"),
         ("conversation_service", "library_list_conversations"),
-        ("collections_service", "library_list_collections"),
     ],
-    ids=["media", "notes", "prompts", "skills", "conversations", "collections"],
+    ids=["media", "notes", "prompts", "skills", "conversations"],
 )
 def test_every_missing_backend_maps_to_feature_unavailable(service_attr, tool_name):
     backends = _backends()
@@ -2716,80 +2569,6 @@ def test_real_conversation_long_message_continuation(chacha_db):
     assert second["next_cursor"] is None
 
 
-def _seed_real_legacy_collection(
-    tmp_path,
-    *,
-    collection_id: str,
-    name: str,
-    description: str = "",
-    members: tuple[tuple[str, str, str], ...],
-) -> LocalLibraryCollectionsService:
-    db = LibraryCollectionsDB(tmp_path / "library_collections.db")
-    with db.transaction() as connection:
-        connection.execute(
-            """
-            INSERT INTO library_collections (
-                collection_id, name, description, created_at, updated_at
-            )
-            VALUES (?, ?, ?, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
-            """,
-            (collection_id, name, description),
-        )
-        connection.executemany(
-            """
-            INSERT INTO library_collection_items (
-                membership_id,
-                collection_id,
-                source_type,
-                source_id,
-                title,
-                created_at
-            )
-            VALUES (?, ?, ?, ?, ?, '2026-08-01T00:00:00Z')
-            """,
-            [
-                (
-                    f"membership-{index}",
-                    collection_id,
-                    source_type,
-                    source_id,
-                    title,
-                )
-                for index, (source_type, source_id, title) in enumerate(members)
-            ],
-        )
-    return LocalLibraryCollectionsService(db)
-
-
-def test_real_collection_round_trip(tmp_path):
-    collection_id = "legacy-integration"
-    collections = _seed_real_legacy_collection(
-        tmp_path,
-        collection_id=collection_id,
-        name="Integration",
-        description="d",
-        members=(
-            ("media", "m-1", "member one"),
-            ("server-doc", "doc-1", "member two"),
-        ),
-    )
-    service = _service(collections_service=collections)
-
-    found = service.invoke("library_search_collections", {"query": "member one"})
-    assert found["total"] == 1
-    public = found["items"][0]["id"]
-
-    read = service.invoke("library_get_collection", {"id": public})
-    assert read["member_total"] == 2
-    # Members are ordered (created_at, membership_id); both were added in the
-    # same second, so the membership_id tiebreak makes positions arbitrary.
-    members = {member["source_type"]: member for member in read["members"]}
-    parse_public_id(members["media"]["item_id"], expected_type="media")
-    assert members["server-doc"]["item_id"] is None
-    assert members["server-doc"]["source_ref"]
-    collections.db.close()
-
-
 def test_real_gets_reject_wrong_type_and_unknown_ids(chacha_db):
     note_id = chacha_db.add_note("Typed", "body")
     service = _service(
@@ -2817,33 +2596,21 @@ def _walk(node):
             yield from _walk(value)
 
 
-def test_integration_outputs_carry_no_paths_bytes_or_blob_keys(chacha_db, tmp_path):
+def test_integration_outputs_carry_no_paths_bytes_or_blob_keys(chacha_db):
     note_id = chacha_db.add_note("Scan me", "scan body")
     conv_id = chacha_db.add_conversation({"title": "Scan conv"})
     chacha_db.add_message(
         {"conversation_id": conv_id, "sender": "user", "content": "scan"}
     )
-    collection_id = "legacy-scan"
-    collections = _seed_real_legacy_collection(
-        tmp_path,
-        collection_id=collection_id,
-        name="Scan",
-        members=(("note", note_id, "t"),),
-    )
     service = _service(
         notes_service=_NotesAdapter(chacha_db),
         conversation_service=ChatConversationService(chacha_db),
-        collections_service=collections,
     )
     results = [
         service.invoke("library_list_notes", {}),
         service.invoke("library_get_note", {"id": _public_id("note", note_id)}),
         service.invoke(
             "library_get_conversation", {"id": _public_id("conversation", conv_id)}
-        ),
-        service.invoke(
-            "library_get_collection",
-            {"id": _public_id("collection", collection_id)},
         ),
     ]
     for result in results:
@@ -2854,4 +2621,3 @@ def test_integration_outputs_carry_no_paths_bytes_or_blob_keys(chacha_db, tmp_pa
             assert "image" not in lowered
             if isinstance(value, str):
                 assert not value.startswith("/"), (key, value)
-    collections.db.close()

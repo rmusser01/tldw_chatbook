@@ -175,6 +175,34 @@ class LibraryCollectionsCaptureController:
             visible_archive_receipts=self._visible_receipts(authority.key),
         )
 
+    def adopt_active_authority(self) -> bool:
+        """Adopt the authority already activated by the app-owned scope.
+
+        Returns:
+            ``True`` when visible authority state changed and pending work was
+            invalidated, otherwise ``False``.
+        """
+        authority = self.scope_service.active_authority
+        authority_key = authority.key if authority is not None else None
+        unavailable = authority is None
+        if (
+            self.state.mounted
+            and self.state.authority_key == authority_key
+            and (self.state.page_error == "capture_authority_unavailable")
+            == unavailable
+        ):
+            return False
+        self._invalidate_all()
+        self.state = CollectionsCaptureControllerState(
+            mounted=True,
+            authority_key=authority_key,
+            page_error="capture_authority_unavailable" if unavailable else None,
+            visible_archive_receipts=(
+                self._visible_receipts(authority_key) if authority_key else ()
+            ),
+        )
+        return True
+
     def unmount(self) -> None:
         """Invalidate pending work and clear renderable authority data."""
         self._invalidate_all()

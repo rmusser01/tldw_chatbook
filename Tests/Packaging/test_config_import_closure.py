@@ -7,7 +7,7 @@ feature module that imports config. Before this guard, `config.py:1802`
 imported `Library.library_adaptive_reader_state` for one pure normalization
 function under a comment claiming the import was lazy. It was not: the
 `Library` package `__init__` chain pulled `library_collections_service ->
-library_collections_state -> Sync_Interop (29 modules) -> Chat (10) ->
+legacy Collections UI state (retired) -> Sync_Interop (29 modules) -> Chat (10) ->
 Skills_Interop (10) -> runtime_policy` through config load. Beyond the
 layering cost, that closed a LIVE import cycle: any module that imports
 `runtime_policy.bootstrap` BEFORE config (e.g.

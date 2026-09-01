@@ -1,6 +1,5 @@
 """Library destination widgets."""
 
-from .library_collections_panel import LibraryCollectionsPanel
 from .library_collections_capture_reader import (
     CollectionsCaptureReaderPresentation,
     CollectionsReaderMode,
@@ -115,7 +114,6 @@ __all__ = [
     "AdaptiveReaderShellResized",
     "LibraryAdaptiveReaderPaneGrip",
     "LibraryAdaptiveReaderShell",
-    "LibraryCollectionsPanel",
     "CollectionsCaptureReaderPresentation",
     "CollectionsReaderMode",
     "LibraryCollectionsItemsPane",

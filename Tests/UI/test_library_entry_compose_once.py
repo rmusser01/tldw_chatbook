@@ -14,7 +14,6 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
-from textual.widgets._input import Selection
 
 from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
@@ -32,9 +31,6 @@ from tldw_chatbook.Prompt_Management.prompt_scope_service import (
 from tldw_chatbook.UI.Library_Modules.library_prompt_browse_controller import (
     LibraryPromptBrowseController,
 )
-from tldw_chatbook.UI.Library_Modules.library_collections_browse_controller import (
-    LibraryCollectionsBrowseController,
-)
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import (
     LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS,
@@ -42,7 +38,6 @@ from tldw_chatbook.UI.Screens.library_screen import (
     LibraryScreen,
 )
 from tldw_chatbook.Library.library_shell_state import (
-    LIBRARY_ROW_BROWSE_COLLECTIONS,
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
@@ -53,7 +48,6 @@ from tldw_chatbook.Library.library_shell_state import (
 )
 from tldw_chatbook.Library.library_rail_state import LibraryLifecycle
 from tldw_chatbook.Widgets.Library import (
-    LibraryCollectionsPanel,
     LibraryConversationsCanvas,
     LibraryExportCanvas,
     LibraryLandingCanvas,
@@ -74,7 +68,6 @@ from Tests.UI.background_signals import (
     wait_for_background_signal,
     wait_for_signal,
 )
-from Tests.UI.test_library_content_hub import StaticLibraryCollectionsService
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
@@ -108,9 +101,6 @@ class _EntryWorkerCase:
 
 _ENTRY_WORKER_CASES = (
     _EntryWorkerCase("prompts", "#library-prompt-row-1", LibraryPromptsListCanvas),
-    _EntryWorkerCase(
-        "collections", "#library-collection-select-0", LibraryCollectionsPanel
-    ),
     _EntryWorkerCase("skills", "#library-skill-row-code-review", LibrarySkillsListCanvas),
     _EntryWorkerCase("notes", "#library-note-body", LibraryNotesCanvas),
     _EntryWorkerCase(
@@ -651,8 +641,6 @@ def _arrange_entry_worker_case(
                 "library_prompts_view": "list",
             }
         )
-    elif case.name == "collections":
-        screen.apply_navigation_context({"mode": "collections"})
     elif case.name == "skills":
         screen.restore_state({"library_selected_row_id": LIBRARY_ROW_BROWSE_SKILLS})
     elif case.name == "notes":
@@ -697,8 +685,6 @@ def _entry_worker_terminal(case: _EntryWorkerCase, screen: LibraryScreen) -> boo
             screen._library_prompt_browse_controller.result.status == "ready"
             and selector_ready
         )
-    if case.name == "collections":
-        return screen._library_collections_loaded and selector_ready
     if case.name == "skills":
         return screen._library_skills_trust_posture == "ready" and selector_ready
     if case.name in {"notes", "pending-notes"}:
@@ -732,19 +718,6 @@ async def test_automatic_entry_worker_composes_screen_once_and_routes_in_place(
         media=_two_media_items(),
     )
     prompt_id = _wire_entry_prompt_service(app, tmp_path / f"{case.name}-prompts.db")
-    app.library_collections_service = StaticLibraryCollectionsService(
-        [
-            {
-                "collection_id": "collection-1",
-                "name": "Launch Evidence",
-                "description": "Sources for release review.",
-                "item_count": 3,
-                "source_authority": "local",
-                "sync_status": "local-only",
-                "updated_at": "2026-08-13T10:00:00Z",
-            }
-        ]
-    )
     app.skills_scope_service = _FakeSkillsScopeService(
         available=[{"name": "code-review"}],
     )
@@ -773,19 +746,6 @@ async def test_automatic_entry_worker_composes_screen_once_and_routes_in_place(
             return await original_load(controller, *args, **kwargs)
 
         monkeypatch.setattr(LibraryPromptBrowseController, "_load", gated_prompt_load)
-    elif case.name == "collections":
-        original_load = LibraryCollectionsBrowseController._load
-
-        async def gated_collections_load(controller, *args, **kwargs):
-            started.set()
-            await release.wait()
-            return await original_load(controller, *args, **kwargs)
-
-        monkeypatch.setattr(
-            LibraryCollectionsBrowseController,
-            "_load",
-            gated_collections_load,
-        )
     elif case.name == "skills":
         original_load = LibraryScreen._load_library_skills_trust_posture
 
@@ -918,7 +878,6 @@ async def test_automatic_entry_worker_composes_screen_once_and_routes_in_place(
             release.set()
         painted_copy = {
             "prompts": "Entry prompt",
-            "collections": "Launch Evidence",
             "skills": "code-review",
             "notes": "Q3 retro",
             "media": "Interview Recording",
@@ -1578,268 +1537,7 @@ async def test_skills_posture_sync_composes_focus_with_render_completion(
 
 
 @pytest.mark.asyncio
-async def test_stale_collections_snapshot_cannot_project_after_route_switch() -> None:
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations())
-    app.library_collections_service = StaticLibraryCollectionsService([])
-    host = LibraryHarness(app)
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
-        await _wait_for_selector(screen, pilot, "#library-collections-panel")
-        started = threading.Event()
-        release = threading.Event()
-
-        def gated_collections(*, limit, offset):
-            started.set()
-            assert release.wait(timeout=10), "Collections snapshot gate was not released."
-            return {"items": [], "total": 0, "limit": limit, "offset": offset}
-
-        app.library_collections_service = SimpleNamespace(
-            list_library_collections=gated_collections
-        )
-        result = await screen._sync_collections_panel(refresh_snapshot=True)
-        await _wait_for_condition(
-            pilot,
-            started.is_set,
-            message="Collections snapshot did not reach its service gate.",
-        )
-        owner, focus = await _capture_new_conversations_route(screen, pilot)
-
-        release.set()
-        await screen.workers.wait_for_complete()
-
-        assert result is LibraryEntryReconcileResult.APPLIED
-        _assert_new_route_unchanged(screen, owner=owner, focus=focus)
-
-
-@pytest.mark.asyncio
-async def test_stale_collections_generation_cannot_project_on_the_same_route() -> None:
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations())
-    app.library_collections_service = StaticLibraryCollectionsService([])
-    screen = LibraryScreen(app)
-    screen.apply_navigation_context({"mode": "collections"})
-    host = LibraryHarness(app, screen=screen)
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        active_screen = _active_library_screen(host)
-        focus = await _wait_for_selector(
-            active_screen, pilot, "#library-collection-name-input"
-        )
-        await active_screen.workers.wait_for_complete()
-        await pilot.pause()
-        focus = active_screen.query_one("#library-collection-name-input")
-        owner = active_screen._library_entry_canvas_owner()
-        focus.focus()
-        await pilot.pause()
-        started = threading.Event()
-        release = threading.Event()
-
-        def gated_collections(*, limit, offset):
-            started.set()
-            assert release.wait(timeout=10), "Collections generation gate not released."
-            return {"items": [], "total": 0, "limit": limit, "offset": offset}
-
-        app.library_collections_service = SimpleNamespace(
-            list_library_collections=gated_collections
-        )
-        result = await active_screen._sync_collections_panel(refresh_snapshot=True)
-        await _wait_for_condition(
-            pilot,
-            started.is_set,
-            message="Collections generation test did not reach its gate.",
-        )
-        active_screen._library_collections_browse_controller.invalidate()
-        release.set()
-        await active_screen.workers.wait_for_complete()
-        await pilot.pause()
-        await pilot.pause()
-
-        assert result is LibraryEntryReconcileResult.APPLIED
-        assert active_screen._library_entry_canvas_owner() is owner
-        assert active_screen.focused is not None
-        assert active_screen.focused.id == focus.id
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("intervening_focus", [False, True], ids=["restore", "veto"])
-async def test_automatic_collections_result_preserves_input_semantics_unless_focus_moves(
-    monkeypatch: pytest.MonkeyPatch,
-    intervening_focus: bool,
-) -> None:
-    """Collections refresh restores one live Input but never overrides a later focus."""
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations())
-    app.library_collections_service = StaticLibraryCollectionsService([])
-    screen = LibraryScreen(app)
-    screen.apply_navigation_context({"mode": "collections"})
-    host = LibraryHarness(app, screen=screen)
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        active_screen = _active_library_screen(host)
-        await _wait_for_selector(
-            active_screen, pilot, "#library-collection-name-input"
-        )
-        await active_screen.workers.wait_for_complete()
-        await pilot.pause()
-        panel = active_screen.query_one(
-            "#library-collections-panel", LibraryCollectionsPanel
-        )
-        name_input = active_screen.query_one(
-            "#library-collection-name-input", Input
-        )
-        name_input.value = "Launch Evidence"
-        await pilot.pause()
-        name_input = active_screen.query_one(
-            "#library-collection-name-input", Input
-        )
-        name_input.focus()
-        await pilot.pause()
-        expected_selection = Selection(2, 9)
-        name_input.selection = expected_selection
-        await pilot.pause()
-
-        recompose_started = asyncio.Event()
-        release_recompose = asyncio.Event()
-        original_recompose = panel.recompose
-
-        async def gated_recompose() -> None:
-            recompose_started.set()
-            await release_recompose.wait()
-            await original_recompose()
-
-        monkeypatch.setattr(panel, "recompose", gated_recompose)
-        app.library_collections_service = StaticLibraryCollectionsService(
-            [
-                {
-                    "collection_id": "collection-1",
-                    "name": "Release Sources",
-                    "description": "Fresh automatic result.",
-                    "item_count": 1,
-                    "source_authority": "local",
-                    "sync_status": "local-only",
-                    "updated_at": "2026-08-13T10:00:00Z",
-                }
-            ]
-        )
-
-        if intervening_focus:
-            monkeypatch.setattr(panel, "refresh", lambda *args, **kwargs: panel)
-            result = await active_screen._sync_collections_panel(
-                refresh_snapshot=True
-            )
-            await _wait_for_condition(
-                pilot,
-                lambda: panel._post_recompose_callback is not None,
-                message="Collections projection did not queue its focus callback.",
-            )
-            callback = panel._post_recompose_callback
-            assert callback is not None
-            intervening_target = active_screen.query_one(
-                "#console-rail-section-toggle-library-details"
-            )
-            active_screen.set_focus(intervening_target)
-            panel._post_recompose_callback = None
-            callback()
-
-            assert result is LibraryEntryReconcileResult.APPLIED
-            assert active_screen.focused is intervening_target
-            return
-
-        sync_task = asyncio.create_task(
-            active_screen._sync_collections_panel(refresh_snapshot=True)
-        )
-        await asyncio.wait_for(
-            recompose_started.wait(),
-            timeout=10,
-        )
-        release_recompose.set()
-        result = await sync_task
-        await _wait_for_condition(
-            pilot,
-            lambda: bool(active_screen.query("#library-collection-select-0")),
-            message="Collections automatic result never rendered its row.",
-        )
-        await pilot.pause()
-
-        assert result is LibraryEntryReconcileResult.APPLIED
-        restored = active_screen.query_one(
-            "#library-collection-name-input", Input
-        )
-        assert restored.value == "Launch Evidence"
-        assert restored.disabled is False
-        assert active_screen.focused is restored
-        assert restored.selection == expected_selection
-        assert restored.cursor_position == expected_selection.end
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("intervening_focus", [False, True], ids=["restore", "veto"])
-async def test_coalesced_collections_sync_preserves_pending_input_semantics(
-    monkeypatch: pytest.MonkeyPatch,
-    intervening_focus: bool,
-) -> None:
-    """A capture-less second sync must retain the first sync's focus intent."""
-    app = _build_test_app()
-    _seed_conversations(app, _two_conversations())
-    app.library_collections_service = StaticLibraryCollectionsService([])
-    screen = LibraryScreen(app)
-    screen.apply_navigation_context({"mode": "collections"})
-    host = LibraryHarness(app, screen=screen)
-
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        active_screen = _active_library_screen(host)
-        await _wait_for_selector(
-            active_screen, pilot, "#library-collection-name-input"
-        )
-        await active_screen.workers.wait_for_complete()
-        await pilot.pause()
-        panel = active_screen.query_one(
-            "#library-collections-panel", LibraryCollectionsPanel
-        )
-        name_input = active_screen.query_one(
-            "#library-collection-name-input", Input
-        )
-        name_input.value = "Coalesced Evidence"
-        name_input.focus()
-        await pilot.pause()
-        expected_selection = Selection(3, 11)
-        name_input.selection = expected_selection
-        await pilot.pause()
-
-        monkeypatch.setattr(panel, "refresh", lambda *args, **kwargs: panel)
-        sync_kwargs = {
-            "name_value": "stale worker value",
-            "description_value": panel.description_value,
-            "delete_pending": panel.delete_pending,
-            "deferred_guard": lambda: True,
-        }
-        panel.sync_state(panel.state, **sync_kwargs)
-        assert active_screen.focused is None
-        panel.sync_state(panel.state, **sync_kwargs)
-
-        callback = panel._post_recompose_callback
-        assert callback is not None
-        if intervening_focus:
-            intervening_target = active_screen.query_one(
-                "#console-rail-section-toggle-library-details"
-            )
-            active_screen.set_focus(intervening_target)
-        panel._post_recompose_callback = None
-        callback()
-
-        if intervening_focus:
-            assert active_screen.focused is intervening_target
-        else:
-            assert active_screen.focused is name_input
-            assert name_input.value == "Coalesced Evidence"
-            assert name_input.selection == expected_selection
-            assert name_input.cursor_position == expected_selection.end
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["media", "export", "collections"])
+@pytest.mark.parametrize("surface", ["media", "export"])
 async def test_superseded_entry_result_converges_on_current_dirty_generation(
     surface: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -1873,32 +1571,6 @@ async def test_superseded_entry_result_converges_on_current_dirty_generation(
                 "library_media_view": "viewer",
             }
         )
-    elif surface == "collections":
-
-        def gated_collections(*, limit, offset):
-            started.set()
-            assert release.wait(timeout=10), "Collections gate was not released."
-            return {
-                "items": [
-                    {
-                    "collection_id": "collection-1",
-                    "name": "Dirty-generation sources",
-                    "description": "Must replace Loading.",
-                    "item_count": 1,
-                    "created_at": "2026-08-13T10:00:00Z",
-                    "updated_at": "2026-08-13T10:00:00Z",
-                    }
-                ],
-                "total": 1,
-                "limit": limit,
-                "offset": offset,
-            }
-
-        app.library_collections_service = SimpleNamespace(
-            list_library_collections=gated_collections
-        )
-        screen = LibraryScreen(app)
-        screen.apply_navigation_context({"mode": "collections"})
     else:
         _wire_entry_export_databases(app, tmp_path)
         original_compute = LibraryScreen._compute_library_export_counts
@@ -1949,11 +1621,6 @@ async def test_superseded_entry_result_converges_on_current_dirty_generation(
                         titles
                         and "Interview Recording"
                         in str(titles[0].renderable)
-                    )
-                if surface == "collections":
-                    titles = list(active_screen.query("#library-collections-title"))
-                    return bool(
-                        titles and "Collections (1)" in str(titles[0].renderable)
                     )
                 scope_lines = list(active_screen.query("#library-export-scope-line"))
                 return bool(

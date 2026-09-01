@@ -43,7 +43,6 @@ LIBRARY_RAG_SOURCE_TYPES: tuple[tuple[str, str], ...] = (
     ("conversations", "Conversations"),
     ("prompts", "Prompts"),
     ("workspaces", "Workspaces"),
-    ("collections", "Collections"),
 )
 # The one display-label vocabulary for raw source-type identifiers, shared
 # by the Sources toggles (`scope_toggle_label`, "✓ Notes"/"✓ Media (1)"),
@@ -54,8 +53,8 @@ LIBRARY_RAG_SOURCE_TYPES: tuple[tuple[str, str], ...] = (
 # one screen (controller amendment to Task 8, folded into RAG-32).
 _LIBRARY_RAG_SOURCE_TYPE_LABELS: Mapping[str, str] = dict(LIBRARY_RAG_SOURCE_TYPES)
 # The subset of LIBRARY_RAG_SOURCE_TYPES with a real per-source toggle in the
-# Search canvas scope region (B2): workspaces/collections have no retrieval
-# seam of their own yet, so they get no toggle row.
+# Search canvas scope region (B2): workspaces have no retrieval seam of their
+# own yet, so they get no toggle row. Capture search belongs inside Collections.
 LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES: tuple[str, ...] = (
     "notes",
     "media",
@@ -232,7 +231,7 @@ def canonical_library_open_source_type(value: Any) -> str:
 # rows before they land). That map used to omit "prompt"/"prompts" because
 # nothing on the rag path could emit one; TASK-15020/B2's prompts keyword
 # sub-leg does, so the two maps now agree on prompts as well, and this one
-# keeps the extra "workspace"/"collection" entries no retrieval path emits.
+# keeps the extra "workspace" entries no retrieval path emits.
 # Prompts still have no SEMANTIC seam -- that fact moved to
 # `_SEMANTICALLY_COVERABLE_SOURCE_TYPES`, which is about the vector index
 # rather than about canonicalization.
@@ -248,8 +247,6 @@ _SCOPE_SOURCE_TYPE_MAP = {
     "prompts": "prompts",
     "workspace": "workspaces",
     "workspaces": "workspaces",
-    "collection": "collections",
-    "collections": "collections",
 }
 
 
@@ -873,7 +870,6 @@ class LibraryRagScopeState:
         conversations: Any = 0,
         prompts: Any = 0,
         workspaces: Any = 0,
-        collections: Any = 0,
         selected: Sequence[str] | None = None,
         heading: str = "Source Scope: All local sources",
     ) -> "LibraryRagScopeState":
@@ -885,7 +881,6 @@ class LibraryRagScopeState:
             conversations: Available conversation source count.
             prompts: Available prompt source count.
             workspaces: Available workspace source count.
-            collections: Available collection source count.
             selected: Selected source type IDs. `None` selects all available sources;
                 an empty sequence represents an explicit empty selection.
             heading: User-facing source-scope heading.
@@ -900,7 +895,6 @@ class LibraryRagScopeState:
             "conversations": _coerce_non_negative_int(conversations),
             "prompts": _coerce_non_negative_int(prompts),
             "workspaces": _coerce_non_negative_int(workspaces),
-            "collections": _coerce_non_negative_int(collections),
         }
         available_source_types = {
             source_type for source_type, count in counts.items() if count > 0
@@ -983,7 +977,7 @@ def library_rag_scope_summary(scope: LibraryRagScopeState) -> str:
 
     Only sources with a real toggle row
     (`LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES` -- notes/media/conversations/
-    prompts; workspaces/collections have no retrieval seam of their own
+    prompts; workspaces have no retrieval seam of their own
     yet and are never user-togglable) are considered "available" here, so
     the strip never mentions a source the user has no control over.
 
@@ -2199,7 +2193,6 @@ class LibraryRagPanelState:
             conversations=counts.get("conversations", 0),
             prompts=counts.get("prompts", 0),
             workspaces=counts.get("workspaces", 0),
-            collections=counts.get("collections", 0),
             selected=selected_source_types,
         )
         query_state = LibraryRagQueryState.from_values(

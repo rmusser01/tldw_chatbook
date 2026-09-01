@@ -196,7 +196,6 @@ tldw_chatbook.Library.ingest_capabilities
 tldw_chatbook.Library.ingest_preflight
 tldw_chatbook.Library.ingest_types
 tldw_chatbook.Library.library_collections_service
-tldw_chatbook.Library.library_collections_state
 tldw_chatbook.Library.library_content_evidence
 tldw_chatbook.Library.library_expand_policy
 tldw_chatbook.Library.library_fts_query
