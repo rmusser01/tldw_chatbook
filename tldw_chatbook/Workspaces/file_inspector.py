@@ -742,13 +742,17 @@ def _display_parts(raw_parts: tuple[str, ...]) -> str:
     return "/".join(safe_filesystem_text(part) for part in raw_parts)
 
 
-def _safe_open_flags(*, directory: bool) -> int | None:
+def _safe_open_flags(*, directory: bool, nonblocking: bool = False) -> int | None:
     """Return no-follow descriptor flags or fail closed without support."""
     if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+        return None
+    if nonblocking and not hasattr(os, "O_NONBLOCK"):
         return None
     flags = os.O_RDONLY | os.O_NOFOLLOW
     if directory:
         flags |= os.O_DIRECTORY
+    if nonblocking:
+        flags |= os.O_NONBLOCK
     return flags
 
 
@@ -799,7 +803,10 @@ def _open_target_descriptor(
     try:
         for index, part in enumerate(raw_parts):
             is_final = index == len(raw_parts) - 1
-            flags = _safe_open_flags(directory=not is_final or expected_kind == "dir")
+            flags = _safe_open_flags(
+                directory=not is_final or expected_kind == "dir",
+                nonblocking=is_final and expected_kind == "file",
+            )
             if flags is None:
                 return None, None, "safe_descriptor_unavailable"
             try:
@@ -831,7 +838,7 @@ def _open_target_descriptor(
 
 def _open_regular_file(path: Path) -> tuple[int | None, FileRevision | None, str]:
     """Compatibility helper retained for callers outside this module."""
-    flags = _safe_open_flags(directory=False)
+    flags = _safe_open_flags(directory=False, nonblocking=True)
     if flags is None:
         return None, None, "safe_descriptor_unavailable"
     try:

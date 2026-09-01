@@ -377,6 +377,36 @@ def test_read_rejects_intermediate_directory_symlink_swap_after_root_open(
     assert result.text == ""
 
 
+@pytest.mark.parametrize("page_offset", (None, 100_000))
+def test_read_rejects_a_listed_file_swapped_to_fifo_without_blocking(
+    tmp_path: Path, page_offset: int | None
+) -> None:
+    """A listed regular file swapped to a FIFO must never hold a read worker."""
+    inspector, _registry_service, root, scope = _scope(tmp_path)
+    target = root / "listed.txt"
+    target.write_text("x" * 200_001, encoding="utf-8")
+    listing = inspector.list_directory(scope)
+    entry = next(item for item in listing.entries if item.raw_parts == ("listed.txt",))
+    target.unlink()
+    os.mkfifo(target)
+
+    completed = threading.Event()
+    outcome = []
+
+    def read_swapped_target() -> None:
+        outcome.append(inspector.read_file(scope, entry.raw_parts, page_offset=page_offset))
+        completed.set()
+
+    worker = threading.Thread(target=read_swapped_target, daemon=True)
+    worker.start()
+
+    assert completed.wait(1.0), "read opened a FIFO and blocked the worker"
+    worker.join(timeout=0.01)
+    assert worker.is_alive() is False
+    assert outcome[0].kind is FileReadKind.FAILED
+    assert outcome[0].error_code == "unsafe_target"
+
+
 def test_filter_streams_progress_and_returns_honest_unsearched_exclusion_state(
     tmp_path: Path,
 ) -> None:
