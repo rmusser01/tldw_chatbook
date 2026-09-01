@@ -329,6 +329,9 @@ class _StdioJSONRPCConnection:
         client_name: str,
         request_timeout_seconds: float = _REQUEST_TIMEOUT_SECONDS,
         on_transport_failure: Optional[Callable[[], Awaitable[None]]] = None,
+        server_request_dispatcher: Optional[
+            Callable[[str, Dict[str, Any]], Awaitable[Any]]
+        ] = None,
     ) -> None:
         self.process = process
         self.client_name = client_name
@@ -344,6 +347,9 @@ class _StdioJSONRPCConnection:
         self._reader_unavailable = False
         self._cleanup_complete = False
         self._on_transport_failure = on_transport_failure
+        # TASK-26029: optional handler for server-initiated sampling/elicitation
+        # requests. When None, such requests get method-not-found as before.
+        self._server_request_dispatcher = server_request_dispatcher
         self._transport_cleanup_task: Optional[asyncio.Task[None]] = None
         self._read_task = asyncio.create_task(self._read_loop())
         self._stderr_task = (
@@ -753,6 +759,40 @@ class _StdioJSONRPCConnection:
             )
             return
 
+        # TASK-26029: sampling/elicitation via the injected dispatcher. A
+        # dispatcher returns either a result mapping or a JsonRpcError; any
+        # exception becomes an internal-error response so the server never
+        # hangs waiting on a reply.
+        dispatcher = self._server_request_dispatcher
+        if dispatcher is not None:
+            params = payload.get("params")
+            if not isinstance(params, dict):
+                params = {}
+            try:
+                outcome = await dispatcher(method, params)
+            except Exception as exc:  # noqa: BLE001 - must always reply
+                logger.opt(exception=True).warning(
+                    "MCP server request handler failed for {}", method
+                )
+                await self._send_message(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {"code": -32603, "message": f"Internal error: {exc}"},
+                    }
+                )
+                return
+            error_payload = getattr(outcome, "to_payload", None)
+            if error_payload is not None and hasattr(outcome, "code"):
+                await self._send_message(
+                    {"jsonrpc": "2.0", "id": request_id, "error": outcome.to_payload()}
+                )
+            else:
+                await self._send_message(
+                    {"jsonrpc": "2.0", "id": request_id, "result": outcome}
+                )
+            return
+
         await self._send_message(
             {
                 "jsonrpc": "2.0",
@@ -811,6 +851,11 @@ class MCPClient:
         self.servers: Dict[str, Dict[str, Any]] = {}
         self._pending_connections: Dict[str, _PendingConnection] = {}
         self._connect_reservations: Dict[str, object] = {}
+        # TASK-26029: set by the app to enable server-initiated sampling/
+        # elicitation; None keeps the method-not-found behavior.
+        self._server_request_dispatcher: Optional[
+            Callable[[str, Dict[str, Any]], Awaitable[Any]]
+        ] = None
 
         logger.info("MCP Client '{}' initialized", name)
 
@@ -897,7 +942,11 @@ class MCPClient:
                         server_id, session=session, pending=pending
                     )
 
-            session = _StdioJSONRPCConnection(process, client_name=self.name)
+            session = _StdioJSONRPCConnection(
+                process,
+                client_name=self.name,
+                server_request_dispatcher=self._server_request_dispatcher,
+            )
             pending.session = session
             session._on_transport_failure = cleanup_failed_transport
             initialize_timeout = _remaining(
