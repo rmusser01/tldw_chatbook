@@ -950,3 +950,299 @@ async def test_sync_now_returns_error_outcome_on_server_error(tmp_path):
     assert "boom" in (outcome.error or "")
     state = db.get_sync_state("local") or {}
     assert state.get("sync_errors"), "the failure must still be recorded"
+
+
+# ----------------------------------------------------------------------
+# Automation definitions/results sync mirrors + review pushback
+# (schedules-handoff PR-3, task 4)
+# ----------------------------------------------------------------------
+
+
+@pytest.fixture
+def captured_logs():
+    """Collect loguru records emitted during the test."""
+    from loguru import logger
+
+    records: list[tuple[str, str]] = []
+    sink_id = logger.add(
+        lambda message: records.append(
+            (message.record["level"].name, message.record["message"])
+        ),
+        level="DEBUG",
+    )
+    yield records
+    logger.remove(sink_id)
+
+
+def _empty_reminders_client() -> AsyncMock:
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    return server_client
+
+
+def _definition_page(items, has_more=False):
+    return {"items": items, "total": len(items), "has_more": has_more}
+
+
+def _result_page(items, has_more=False):
+    return {"items": items, "total": len(items), "has_more": has_more}
+
+
+def _result_items(n, prefix="res"):
+    return [
+        {
+            "id": f"{prefix}-{i}",
+            "definition_id": "def-1",
+            "run_id": "run-1",
+            "kind": "finding",
+            "title": f"Result {i}",
+            "summary": "S",
+            "dedupe_key": f"key-{prefix}-{i}",
+            "review_state": "unread",
+            "created_at": "2026-08-30T09:00:00+00:00",
+            "updated_at": "2026-08-30T09:00:00+00:00",
+        }
+        for i in range(n)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sync_now_replays_review_mutation_and_clears_on_success(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    result_id = db.create_automation_result(
+        "server:1", "def-1", "run-1", "finding", "T", "S", "key-1"
+    )
+    db.record_pending_mutation(
+        result_id,
+        "automation_result_review",
+        "server:1",
+        {"server_result_id": "srv-res-1", "review_state": "dismissed"},
+    )
+
+    server_client = _empty_reminders_client()
+    server_client.review_automation_result.return_value = {"id": "srv-res-1"}
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.review_automation_result.assert_awaited_once_with(
+        "srv-res-1", "dismissed", review_note=None
+    )
+    assert db.get_pending_mutations("server:1", primitive="automation_result_review") == []
+
+
+@pytest.mark.asyncio
+async def test_sync_now_review_mutation_not_found_clears_it(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    result_id = db.create_automation_result(
+        "server:1", "def-1", "run-1", "finding", "T", "S", "key-1"
+    )
+    db.record_pending_mutation(
+        result_id,
+        "automation_result_review",
+        "server:1",
+        {"server_result_id": "srv-res-1", "review_state": "read"},
+    )
+
+    server_client = _empty_reminders_client()
+    server_client.review_automation_result.side_effect = ServerClientNotFoundError(
+        "retired"
+    )
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    assert db.get_pending_mutations("server:1", primitive="automation_result_review") == []
+    state = db.get_sync_state("server:1") or {}
+    assert not (state.get("sync_errors") or []), "a retired result is not a sync error"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_review_mutation_other_error_retains_it(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    result_id = db.create_automation_result(
+        "server:1", "def-1", "run-1", "finding", "T", "S", "key-1"
+    )
+    db.record_pending_mutation(
+        result_id,
+        "automation_result_review",
+        "server:1",
+        {"server_result_id": "srv-res-1", "review_state": "read"},
+    )
+
+    server_client = _empty_reminders_client()
+    server_client.review_automation_result.side_effect = ServerUnavailableError("offline")
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"  # the reminder phase itself still succeeded
+    pending = db.get_pending_mutations("server:1", primitive="automation_result_review")
+    assert len(pending) == 1, "the mutation must be left queued for retry"
+    state = db.get_sync_state("server:1") or {}
+    assert state.get("sync_errors"), "a genuine server failure must be recorded"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_pulls_and_upserts_definitions(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = _empty_reminders_client()
+    server_client.list_automation_definitions.return_value = _definition_page(
+        [{"id": "srv-def-1", "family": "recurring_question", "name": "Daily"}]
+    )
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    rows = db.list_automation_definitions(owner_id="server:1")
+    assert len(rows) == 1
+    assert rows[0]["server_id"] == "srv-def-1"
+    assert rows[0]["name"] == "Daily"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_pages_definitions_until_has_more_false(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = _empty_reminders_client()
+    server_client.list_automation_definitions.side_effect = [
+        _definition_page(
+            [{"id": f"srv-def-{i}", "family": "recurring_question", "name": f"D{i}"}
+             for i in range(50)],
+            has_more=True,
+        ),
+        _definition_page(
+            [{"id": "srv-def-50", "family": "recurring_question", "name": "D50"}],
+            has_more=False,
+        ),
+    ]
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    assert server_client.list_automation_definitions.await_count == 2
+    assert len(db.list_automation_definitions(owner_id="server:1")) == 51
+
+
+@pytest.mark.asyncio
+async def test_sync_now_pulls_and_upserts_results(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = _empty_reminders_client()
+    server_client.list_automation_results.return_value = _result_page(
+        _result_items(2)
+    )
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    rows = db.list_automation_results("server:1")
+    assert len(rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_sync_now_results_pull_stops_early_on_short_page(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = _empty_reminders_client()
+    server_client.list_automation_results.return_value = _result_page(
+        _result_items(3), has_more=True  # fewer than the 50-page size wins
+    )
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    await engine.sync_now()
+
+    assert server_client.list_automation_results.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_sync_now_results_pull_caps_at_max_pages_and_logs(tmp_path, captured_logs):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = _empty_reminders_client()
+    server_client.list_automation_results.side_effect = [
+        _result_page(_result_items(50, prefix=f"p{page}"), has_more=True)
+        for page in range(4)
+    ]
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    await engine.sync_now()
+
+    assert server_client.list_automation_results.await_count == 4  # _RESULTS_MAX_PAGES
+    assert len(db.list_automation_results("server:1", limit=1000)) == 200
+    assert any(
+        "cap" in message.lower() and level == "INFO" for level, message in captured_logs
+    )
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definitions_phase_failure_does_not_abort_results_phase(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = _empty_reminders_client()
+    server_client.list_automation_definitions.side_effect = ServerUnavailableError("down")
+    server_client.list_automation_results.return_value = _result_page(_result_items(1))
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"  # the reminder phase still succeeded
+    assert len(db.list_automation_results("server:1")) == 1
+    state = db.get_sync_state("server:1") or {}
+    assert state.get("sync_errors"), "the definitions-phase failure must be recorded"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definitions_policy_refusal_is_not_recorded_as_error(tmp_path):
+    from tldw_chatbook.Scheduling.services.server_client import (
+        ServerClientPolicyError,
+    )
+
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = _empty_reminders_client()
+    server_client.list_automation_definitions.side_effect = ServerClientPolicyError(
+        "requires server mode"
+    )
+    server_client.list_automation_results.return_value = _result_page(_result_items(1))
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    assert len(db.list_automation_results("server:1")) == 1  # later phase still ran
+    state = db.get_sync_state("server:1") or {}
+    assert not (state.get("sync_errors") or [])
+
+
+@pytest.mark.asyncio
+async def test_pull_gains_definitions_and_results_without_pushback(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    result_id = db.create_automation_result(
+        "server:1", "def-1", "run-1", "finding", "T", "S", "key-1"
+    )
+    db.record_pending_mutation(
+        result_id,
+        "automation_result_review",
+        "server:1",
+        {"server_result_id": "srv-res-1", "review_state": "dismissed"},
+    )
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    server_client.list_automation_definitions.return_value = _definition_page(
+        [{"id": "srv-def-1", "family": "recurring_question", "name": "Daily"}]
+    )
+    server_client.list_automation_results.return_value = _result_page(_result_items(1))
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    await engine.pull()
+
+    assert len(db.list_automation_definitions(owner_id="server:1")) == 1
+    # 2 rows: the pre-existing local-only result plus the server-pulled one.
+    rows = db.list_automation_results("server:1", limit=10)
+    assert len(rows) == 2
+    assert any(row["server_id"] == "res-0" for row in rows)
+    server_client.review_automation_result.assert_not_awaited()
+    # The pending review mutation is untouched -- pull() never pushes.
+    assert len(
+        db.get_pending_mutations("server:1", primitive="automation_result_review")
+    ) == 1

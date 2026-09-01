@@ -20,6 +20,24 @@ from tldw_chatbook.Scheduling.services.server_client import (
 _REMINDER_PRIMITIVE = "reminder_task"
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
+#: Reserved for the PR-5 definition-push primitive (create/update/lifecycle
+#: mutation replay) -- unused here since PR-3 ships only the definitions
+#: pull mirror, not a push path (schedules-handoff plan, task 4 deviation
+#: 1). Named now so the pending-mutation primitive namespace is settled.
+_DEFINITION_PRIMITIVE = "automation_definition"
+
+#: Matches ScheduledTasksDB._RESULT_REVIEW_PRIMITIVE -- pending mutations
+#: recorded when a local review is made on a server-mirrored result
+#: (Task 5) are replayed to the server here.
+_RESULT_REVIEW_PRIMITIVE = "automation_result_review"
+
+#: Page size for the results pull, and the bounded newest-pages walk
+#: (spec §5.2 limitation: the server's /results endpoint exposes no
+#: updated_at filter, so incremental sync is a bounded newest-N-pages
+#: walk rather than a true delta).
+_RESULTS_PAGE_SIZE = 50
+_RESULTS_MAX_PAGES = 4
+
 
 @dataclass(frozen=True)
 class SyncOutcome:
@@ -136,6 +154,14 @@ class SyncEngine:
             logger.exception(f"Sync pull transaction failed for {target_owner}: {exc}")
             self._record_sync_error(str(exc), target_owner)
 
+        # Read-only variant: the two automation mirrors, no pushback.
+        await self._run_phase(
+            target_owner, "Automation definitions pull", self._pull_definitions
+        )
+        await self._run_phase(
+            target_owner, "Automation results pull", self._pull_results
+        )
+
     async def sync_now(self, owner_id: str | None = None) -> SyncOutcome:
         target_owner = owner_id if owner_id is not None else self.owner_id
         if self.server_client is None:
@@ -232,13 +258,142 @@ class SyncEngine:
             logger.exception(f"Sync transaction failed for {target_owner}: {exc}")
             self._record_sync_error(str(exc), target_owner)
             return SyncOutcome("error", error=str(exc))
+
+        # Automation mirrors, appended after the reminder phase (task 4):
+        # each runs in its own containment shape so one phase's failure
+        # never blocks the phases after it. Pushback runs first so a
+        # fresh results mirror can't clobber a review the user just made
+        # locally (its own pending mutation is cleared before the pull
+        # below re-reads that same row).
+        await self._run_phase(
+            target_owner, "Automation review pushback", self._replay_review_mutations
+        )
+        await self._run_phase(
+            target_owner, "Automation definitions pull", self._pull_definitions
+        )
+        await self._run_phase(
+            target_owner, "Automation results pull", self._pull_results
+        )
+
         # staged_outcomes already includes the tombstone outcomes (see
-        # _network_phase), so it IS the pushed count.
+        # _network_phase), so it IS the pushed count. Automation
+        # definitions/results are mirrors, not reminder push/pull, so they
+        # are intentionally not folded into these counts (SyncOutcome's
+        # contract is documented as reminder-scoped).
         return SyncOutcome(
             "ok",
             pulled=len(pulled_items),
             pushed=len(staged_outcomes),
         )
+
+    async def _run_phase(
+        self, owner_id: str, label: str, phase: Any,
+    ) -> None:
+        """Run one self-contained sync phase, containing its own failure.
+
+        Mirrors the top-level pull()/sync_now() error discipline (task-2722):
+        a runtime-mode policy refusal is logged and treated as not
+        applicable, never persisted; any other error is recorded via
+        `_record_sync_error` and swallowed so the phases after this one
+        still run.
+        """
+        try:
+            await phase(owner_id)
+        except ServerClientPolicyError as exc:
+            logger.info(f"{label} not applicable for {owner_id}: {exc}")
+        except ServerClientError as exc:
+            self._record_sync_error(str(exc), owner_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(f"{label} failed for {owner_id}: {exc}")
+            self._record_sync_error(str(exc), owner_id)
+
+    async def _replay_review_mutations(self, owner_id: str) -> None:
+        """Replay pending `automation_result_review` mutations to the server.
+
+        Success and a 404 (the result was retired server-side) both clear
+        the mutation. Any other error is left in place -- and re-raised so
+        `_run_phase` records one sync error for the phase and stops
+        attempting further mutations this round, mirroring
+        `_push_mutation`'s "abort the whole push phase on a retryable
+        server error" discipline for reminders.
+        """
+        assert self.server_client is not None
+        mutations = self.db.get_pending_mutations(
+            owner_id, primitive=_RESULT_REVIEW_PRIMITIVE
+        )
+        for mutation in mutations:
+            payload = mutation.get("payload") or {}
+            server_result_id = payload.get("server_result_id")
+            if not server_result_id:
+                logger.warning(
+                    f"Pending automation_result_review mutation {mutation.get('id')} "
+                    "has no server_result_id; dropping (nothing to replay)"
+                )
+                self.db.delete_pending_mutation(mutation["id"])
+                continue
+            try:
+                await self.server_client.review_automation_result(
+                    server_result_id,
+                    payload.get("review_state"),
+                    review_note=payload.get("review_note"),
+                )
+            except ServerClientNotFoundError as exc:
+                logger.info(
+                    f"Automation result {server_result_id} retired server-side "
+                    f"({exc}); dropping its pending review mutation"
+                )
+            # Success or a confirmed retirement: the mutation is settled.
+            self.db.delete_pending_mutation(mutation["id"])
+
+    async def _pull_definitions(self, owner_id: str) -> dict[str, int]:
+        """Page the server's automation definitions and mirror them locally."""
+        assert self.server_client is not None
+        items: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            response = await self.server_client.list_automation_definitions(
+                limit=_RESULTS_PAGE_SIZE, offset=offset
+            )
+            if not isinstance(response, dict):
+                response = {}
+            page = list(response.get("items") or [])
+            items.extend(page)
+            offset += len(page)
+            if not page or not response.get("has_more"):
+                break
+        return self.db.upsert_automation_definitions_from_server(owner_id, items)
+
+    async def _pull_results(self, owner_id: str) -> dict[str, int]:
+        """Walk up to `_RESULTS_MAX_PAGES` newest pages of server results.
+
+        The server's /results endpoint exposes no `updated_at` filter
+        (verified at origin/dev), so this is a bounded newest-pages walk
+        rather than a true incremental pull (spec §5.2 limitation): review
+        drift older than the window waits for a later sync. Stops early
+        on a short page or `has_more=False`; logs (info) when the cap was
+        hit with more remaining, so a truncated pull is never silent.
+        """
+        assert self.server_client is not None
+        totals: dict[str, int] = {}
+        offset = 0
+        for _page_num in range(_RESULTS_MAX_PAGES):
+            response = await self.server_client.list_automation_results(
+                limit=_RESULTS_PAGE_SIZE, offset=offset
+            )
+            if not isinstance(response, dict):
+                response = {}
+            page = list(response.get("items") or [])
+            counts = self.db.upsert_automation_results_from_server(owner_id, page)
+            for key, value in counts.items():
+                totals[key] = totals.get(key, 0) + value
+            offset += len(page)
+            if len(page) < _RESULTS_PAGE_SIZE or not response.get("has_more"):
+                return totals
+        logger.info(
+            f"Automation results pull hit the {_RESULTS_MAX_PAGES}-page cap for "
+            f"{owner_id} with more results remaining server-side"
+        )
+        return totals
 
     async def _network_phase(
         self, owner_id: str
