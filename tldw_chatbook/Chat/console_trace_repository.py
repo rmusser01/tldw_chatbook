@@ -1389,6 +1389,60 @@ class ConsoleTraceRepository:
         ).fetchone()
         return None if row is None else SurfaceNodeRecord(*row)
 
+    def read_lineage_surface_nodes(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        segment_id: str,
+        start_sequence: int,
+        end_sequence: int,
+    ) -> tuple[SurfaceNodeRecord, ...]:
+        """Read physical nodes in one bounded fork-lineage range.
+
+        Args:
+            cursor: Caller-owned SQLite cursor.
+            segment_id: Leaf segment whose immutable ancestry is counted.
+            start_sequence: Inclusive range start.
+            end_sequence: Inclusive range end.
+
+        Returns:
+            Lineage-visible physical nodes ordered by sequence.
+
+        Raises:
+            ValueError: If the segment or range is malformed.
+        """
+
+        _nonempty(segment_id, "segment_id")
+        if (
+            type(start_sequence) is not int
+            or type(end_sequence) is not int
+            or start_sequence < 0
+            or end_sequence < start_sequence
+        ):
+            raise ValueError("sequence_range")
+        nodes: list[SurfaceNodeRecord] = []
+        for lineage_segment_id, through_sequence in self._segment_lineage(
+            cursor, segment_id
+        ):
+            upper_bound = (
+                end_sequence
+                if through_sequence is None
+                else min(end_sequence, through_sequence)
+            )
+            if upper_bound < start_sequence:
+                continue
+            rows = cursor.execute(
+                """SELECT node_id, segment_id, sequence, predecessor_node_id,
+                          component_kind, reference_kind, semantic_revision_id,
+                          artifact_id, omission_reason_code
+                     FROM console_trace_surface_nodes
+                    WHERE segment_id = ? AND sequence BETWEEN ? AND ?
+                    ORDER BY sequence""",
+                (lineage_segment_id, start_sequence, upper_bound),
+            ).fetchall()
+            nodes.extend(SurfaceNodeRecord(*row) for row in rows)
+        return tuple(sorted(nodes, key=lambda node: node.sequence))
+
     def get_surface_tail(
         self,
         cursor: sqlite3.Cursor,

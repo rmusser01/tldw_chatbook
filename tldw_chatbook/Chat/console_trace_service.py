@@ -2132,16 +2132,15 @@ class ConsoleTraceService:
                 for sequence, _key in active
             ):
                 raise ValueError("unsupported_surface_change")
-            surface_nodes = self._read_segment_surface_nodes(cursor, segment_id)
-            nodes_by_sequence = {node.sequence: node for node in surface_nodes}
-            start = self.repository.get_surface_node(
+            anchors = self.repository.read_lineage_surface_nodes(
                 cursor,
-                nodes_by_sequence[start_sequence].node_id,
+                segment_id=segment_id,
+                start_sequence=start_sequence,
+                end_sequence=end_sequence,
             )
-            end = self.repository.get_surface_node(
-                cursor,
-                nodes_by_sequence[end_sequence].node_id,
-            )
+            nodes_by_sequence = {node.sequence: node for node in anchors}
+            start = nodes_by_sequence.get(start_sequence)
+            end = nodes_by_sequence.get(end_sequence)
             if start is None or end is None or tail is None:
                 raise ValueError("surface_replacement_target_unavailable")
             replacement_range = VerifiedSurfaceReplacementRange(
@@ -2211,26 +2210,6 @@ class ConsoleTraceService:
             values=delta_values,
         )
         return admission, boundary
-
-    def _read_segment_surface_nodes(
-        self,
-        cursor: sqlite3.Cursor,
-        segment_id: str,
-    ) -> tuple[SurfaceNodeRecord, ...]:
-        """Read a segment's bounded pages for replacement anchor lookup."""
-
-        nodes: list[SurfaceNodeRecord] = []
-        continuation = None
-        while True:
-            page = self.repository.read_surface_nodes(
-                cursor,
-                segment_id,
-                after=continuation,
-            )
-            nodes.extend(page)
-            if page.next_cursor is None:
-                return tuple(nodes)
-            continuation = page.next_cursor
 
     def _bootstrap_surface_parent(
         self,
@@ -3979,23 +3958,27 @@ class ConsoleTraceService:
             raise ValueError("replacement_range_order")
         if descriptor_count != 1:
             raise ValueError("replacement_value")
-        start = self.repository.get_surface_node(cursor, plan.start_node_id)
-        end = self.repository.get_surface_node(cursor, plan.end_node_id)
+        nodes = self.repository.read_lineage_surface_nodes(
+            cursor,
+            segment_id=segment_id,
+            start_sequence=plan.start_sequence,
+            end_sequence=plan.end_sequence,
+        )
+        nodes_by_sequence = {node.sequence: node for node in nodes}
+        start = nodes_by_sequence.get(plan.start_sequence)
+        end = nodes_by_sequence.get(plan.end_sequence)
         if (
             start is None
             or end is None
-            or start.segment_id != segment_id
-            or end.segment_id != segment_id
+            or start.node_id != plan.start_node_id
+            or end.node_id != plan.end_node_id
             or start.sequence != plan.start_sequence
             or end.sequence != plan.end_sequence
         ):
             raise ValueError("replacement_range_mismatch")
-        count = cursor.execute(
-            """SELECT COUNT(*) FROM console_trace_surface_nodes
-                 WHERE segment_id = ? AND sequence BETWEEN ? AND ?""",
-            (segment_id, plan.start_sequence, plan.end_sequence),
-        ).fetchone()[0]
-        if count != plan.end_sequence - plan.start_sequence + 1:
+        if len(nodes_by_sequence) != len(nodes) or (
+            len(nodes) != plan.end_sequence - plan.start_sequence + 1
+        ):
             raise ValueError("replacement_range_noncontiguous")
 
     def _persist_header(

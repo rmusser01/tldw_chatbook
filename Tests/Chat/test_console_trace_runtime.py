@@ -432,4 +432,26 @@ async def test_production_factory_accepts_active_ancestor_revisions_on_nested_fo
             grandchild_message_id,
         ]
         assert calls[-1].owner_id == grandchild_owner.owner_id
+
+    summary = ProviderArtifactTraceProvenance(
+        TraceProvenanceSource.ACTIVE_REQUEST,
+        policy,
+    )
+    await dispatch(
+        [
+            {"role": "user", "content": "summary"},
+            {"role": "user", "content": "child"},
+            {"role": "user", "content": "grandchild"},
+        ],
+        [summary, child_revision, grandchild_revision],
+    )
+
+    with database.transaction() as cursor:
+        replacements = factory.repository.read_surface_replacements(
+            cursor,
+            grandchild_owner.root_segment_id,
+        )
+        assert len(replacements) == 1
+        assert replacements[0].replacement.start_sequence == 0
+        assert replacements[0].replacement.end_sequence == 0
     await gateway.aclose()
