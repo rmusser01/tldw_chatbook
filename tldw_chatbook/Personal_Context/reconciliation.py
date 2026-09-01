@@ -100,6 +100,15 @@ class CanonicalBootstrapSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class VersionConflict:
+    """Describe one record whose local and server versions differ.
+
+    Args:
+        decision_id: Stable identifier for the required user decision.
+        record_id: Canonical record identity shared by both versions.
+        local_version_id: Version currently stored on the device.
+        server_version_id: Version currently stored by the server.
+    """
+
     decision_id: str
     record_id: str
     local_version_id: str
@@ -108,6 +117,14 @@ class VersionConflict:
 
 @dataclass(frozen=True, slots=True)
 class KeyCollision:
+    """Describe two records competing for one kind-aware semantic identity.
+
+    Args:
+        decision_id: Stable identifier for the required user decision.
+        scope_id: Canonical scope containing the competing records.
+        record_ids: Sorted identities of the two competing records.
+    """
+
     decision_id: str
     scope_id: str
     record_ids: tuple[str, str]
@@ -265,7 +282,25 @@ def build_reconciliation_plan(
     required_quotas: Mapping[str, int] | None = None,
     plan_id: str | None = None,
 ) -> ReconciliationPlan:
-    """Compare exact canonical identities without persisting or returning content."""
+    """Compare exact canonical identities without persisting or returning content.
+
+    Args:
+        local_manifest: Current device profile manifest.
+        local_scopes: Current device scope heads.
+        local_records: Current device record heads.
+        local_proposals: Current device proposal heads.
+        remote: Cursor-bounded canonical server snapshot.
+        local_workspace_bindings: Validated device-local workspace bindings.
+        required_schema_version: Optional exact server schema requirement.
+        required_quotas: Optional minimum server quota values.
+        plan_id: Optional stable identity used when replaying a plan.
+
+    Returns:
+        Content-free reconciliation outcomes and required user decisions.
+
+    Raises:
+        ValueError: If either snapshot has invalid scope or binding structure.
+    """
 
     resolved_plan_id = plan_id or f"pc-link-plan-{uuid.uuid4()}"
     local_global = _global_scope(local_scopes, "local")
@@ -316,7 +351,7 @@ def build_reconciliation_plan(
     )
 
     collisions: list[KeyCollision] = []
-    local_occupants: dict[tuple[str, str, str], ProfileRecord] = {}
+    local_occupants: dict[tuple[str, str, str, str], ProfileRecord] = {}
     for original in local_records:
         local = mapped_local[original.record_id]
         if (
@@ -327,6 +362,7 @@ def build_reconciliation_plan(
             continue
         key = (
             local.scope_id,
+            local.kind.value,
             local.semantic_key.namespace,
             local.semantic_key.subject,
         )
@@ -336,6 +372,7 @@ def build_reconciliation_plan(
             continue
         key = (
             server.scope_id,
+            server.kind.value,
             server.semantic_key.namespace,
             server.semantic_key.subject,
         )
@@ -385,7 +422,11 @@ def build_reconciliation_plan(
     workspace_mapping_conflicts: list[WorkspaceMappingConflict] = []
     for local_scope_id in local_workspaces:
         local_by_key = {
-            (record.semantic_key.namespace, record.semantic_key.subject): record
+            (
+                record.kind.value,
+                record.semantic_key.namespace,
+                record.semantic_key.subject,
+            ): record
             for record in local_records
             if record.scope_id == local_scope_id
             and record.controls.sync_mode is SyncMode.SYNCABLE
@@ -401,7 +442,11 @@ def build_reconciliation_plan(
                 ):
                     continue
                 local = local_by_key.get(
-                    (server.semantic_key.namespace, server.semantic_key.subject)
+                    (
+                        server.kind.value,
+                        server.semantic_key.namespace,
+                        server.semantic_key.subject,
+                    )
                 )
                 if local is None or local.record_id == server.record_id:
                     continue

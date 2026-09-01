@@ -34,6 +34,7 @@ from tldw_profile_core import (
 from tldw_profile_core.canonical import canonical_json_bytes
 
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+from tldw_chatbook.DB.sql_validation import validate_identifier
 
 from .crypto import EncryptedEnvelope, EnvelopeCipher
 from .key_protector import (
@@ -52,6 +53,7 @@ _WRAP_NONCE_BYTES = 12
 _PEER_ENVELOPE = "chatbook-local-v1"
 MAX_UNRESOLVED_PROPOSALS = 200
 _COLLECTION_PAGE_SIZE = 128
+_REBASELINE_TABLES = ("local_runtime_policy", "local_scope_bindings")
 _FIRST_LINK_WRITE_PLAN: ContextVar[str | None] = ContextVar(
     "personal_context_first_link_write_plan", default=None
 )
@@ -95,6 +97,12 @@ class RecordCollisionError(RuntimeError):
     def __init__(self, record_id: str) -> None:
         self.record_id = record_id
         super().__init__("record_collision")
+
+
+def _validated_rebaseline_identifier(value: str, identifier_type: str) -> str:
+    if not validate_identifier(value, identifier_type):
+        raise RepositorySchemaError("Personal Context schema is incomplete.")
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -1670,7 +1678,7 @@ class PersonalContextRepository:
                 }
             )
 
-        active_occupants: dict[tuple[str, str, str], str] = {}
+        active_occupants: dict[tuple[str, str, str, str], str] = {}
         collision_candidates = [
             item
             for record_id, item in selected_local_records.items()
@@ -1685,6 +1693,7 @@ class PersonalContextRepository:
                 continue
             semantic = (
                 item.scope_id,
+                item.kind.value,
                 item.semantic_key.namespace,
                 item.semantic_key.subject,
             )
@@ -2005,12 +2014,25 @@ class PersonalContextRepository:
                         remote.manifest.current_version_id,
                     ),
                 )
-                for table in ("local_runtime_policy", "local_scope_bindings"):
+                for selected_table in _REBASELINE_TABLES:
+                    table = _validated_rebaseline_identifier(
+                        selected_table, "Personal Context rebaseline table"
+                    )
                     metadata = connection.execute(
                         f"SELECT * FROM {table}"
                     ).fetchall()
                     connection.execute(f"DELETE FROM {table}")
-                    columns = tuple(metadata[0].keys()) if metadata else ()
+                    columns = (
+                        tuple(
+                            _validated_rebaseline_identifier(
+                                column,
+                                "Personal Context rebaseline column",
+                            )
+                            for column in metadata[0].keys()
+                        )
+                        if metadata
+                        else ()
+                    )
                     for item in metadata:
                         if (
                             table == "local_scope_bindings"

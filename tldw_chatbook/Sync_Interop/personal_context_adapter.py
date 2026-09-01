@@ -64,7 +64,21 @@ class PersonalContextSyncAdapter:
         device_id: str,
         sync_head: Mapping[str, Any] | None = None,
     ) -> SyncV2Envelope:
-        """Convert one authenticated outbox snapshot into an exact envelope."""
+        """Convert one authenticated outbox snapshot into an exact envelope.
+
+        Args:
+            entry: Outbox entry carrying canonical object metadata.
+            body: Authenticated canonical object body.
+            dataset_id: Destination Personal Context dataset.
+            device_id: Device publishing the envelope.
+            sync_head: Optional last-known server head used for compare-and-set.
+
+        Returns:
+            Validated schema-v1 whole-object sync envelope.
+
+        Raises:
+            PersonalContextSyncValidationError: If identity or size validation fails.
+        """
 
         object_type, payload = _parse_body(entry.object_type, body)
         identity = _identity(object_type, payload)
@@ -108,7 +122,19 @@ class PersonalContextSyncAdapter:
         *,
         storage_key: bytes,
     ) -> SyncV2Envelope:
-        """Seal clear Personal Context content before generic Sync persistence."""
+        """Seal clear Personal Context content before generic Sync persistence.
+
+        Args:
+            envelope: Clear Personal Context envelope to stage locally.
+            storage_key: Dataset-bound 32-byte staging key.
+
+        Returns:
+            Equivalent envelope containing only encrypted staged payload data.
+
+        Raises:
+            PersonalContextSyncValidationError: If the envelope domain is invalid.
+            ValueError: If the storage key or payload cannot be encrypted.
+        """
 
         if not envelope.domain.startswith("personal_context."):
             raise PersonalContextSyncValidationError(
@@ -135,7 +161,19 @@ class PersonalContextSyncAdapter:
         *,
         storage_key: bytes,
     ) -> SyncV2Envelope:
-        """Authenticate and restore one locally staged Personal Context body."""
+        """Authenticate and restore one locally staged Personal Context body.
+
+        Args:
+            envelope: Locally staged encrypted Personal Context envelope.
+            storage_key: Dataset-bound 32-byte staging key.
+
+        Returns:
+            Equivalent envelope with its authenticated clear payload restored.
+
+        Raises:
+            PersonalContextSyncValidationError: If staging metadata or ciphertext fails
+                validation.
+        """
 
         marker = envelope.encryption_metadata.get(
             "personal_context_local_staging"
@@ -165,7 +203,19 @@ class PersonalContextSyncAdapter:
         return SyncV2Envelope.model_validate(values)
 
     def apply_inbound(self, envelope: SyncV2Envelope, *, service: Any) -> Any:
-        """Validate one pulled whole object and invoke only its owner service."""
+        """Validate one pulled whole object and invoke only its owner service.
+
+        Args:
+            envelope: Pulled Personal Context whole-object envelope.
+            service: Personal Context owner service receiving the validated object.
+
+        Returns:
+            The owner service's apply result.
+
+        Raises:
+            PersonalContextSyncValidationError: If schema, integrity, identity, or
+                payload validation fails.
+        """
 
         if (
             envelope.adapter_version != 1

@@ -5,6 +5,7 @@ import sqlite3
 import pytest
 from tldw_profile_core import (
     AgentVisibility,
+    ConstraintPayload,
     PreferencePayload,
     ProfileControls,
     ProfileManifest,
@@ -18,6 +19,8 @@ from tldw_profile_core import (
     SyncMode,
 )
 
+import tldw_chatbook.Personal_Context.repository as repository_module
+from tldw_chatbook.DB.sql_validation import validate_identifier
 from tldw_chatbook.Personal_Context.reconciliation import (
     CanonicalBootstrapSnapshot,
     build_reconciliation_plan,
@@ -98,6 +101,19 @@ def _record(
     )
 
 
+def _constraint_record(record: ProfileRecord) -> ProfileRecord:
+    return ProfileRecord.model_validate(
+        {
+            **record.model_dump(mode="python"),
+            "kind": "constraint",
+            "payload": ConstraintPayload(
+                subject=record.semantic_key.subject,
+                value="required",
+            ),
+        }
+    )
+
+
 def _snapshot(
     *,
     scopes: tuple[ProfileScope, ...],
@@ -174,6 +190,142 @@ def test_plan_is_content_free_read_only_and_requires_exact_collision_review() ->
     assert "concise" not in rendered
     assert "detailed" not in rendered
     assert "wrapped-private-material" not in rendered
+
+
+def test_plan_keeps_same_semantic_key_for_distinct_record_kinds() -> None:
+    local_global = _scope("profile-local", "scope-local-global", ScopeKind.GLOBAL)
+    remote_global = _scope(
+        "profile-server", "scope-server-global", ScopeKind.GLOBAL
+    )
+    local = _record(
+        "profile-local",
+        local_global.scope_id,
+        "record-preference",
+        subject="response.detail",
+        value="concise",
+        version="preference-v1",
+    )
+    remote = _constraint_record(
+        _record(
+            "profile-server",
+            remote_global.scope_id,
+            "record-constraint",
+            subject="response.detail",
+            value="ignored",
+            version="constraint-v1",
+        )
+    )
+
+    plan = build_reconciliation_plan(
+        local_manifest=_manifest("profile-local", "manifest-local"),
+        local_scopes=(local_global,),
+        local_records=(local,),
+        local_proposals=(),
+        remote=_snapshot(scopes=(remote_global,), records=(remote,)),
+        local_workspace_bindings={},
+    )
+
+    assert plan.key_collisions == ()
+
+
+def test_reviewed_apply_keeps_same_semantic_key_for_distinct_record_kinds(
+    tmp_path,
+) -> None:
+    repository = PersonalContextRepository(
+        tmp_path / "profile.db", key_protector=InMemoryProfileKeyProtector()
+    )
+    local_manifest = _manifest("profile-local", "manifest-local")
+    local_global = _scope("profile-local", "scope-local-global", ScopeKind.GLOBAL)
+    local = _record(
+        "profile-local",
+        local_global.scope_id,
+        "record-preference",
+        subject="response.detail",
+        value="concise",
+        version="preference-v1",
+    )
+    repository.create_profile_with_global_scope(local_manifest, local_global)
+    repository.commit_record_version(local, expected_version_id=None)
+    remote_global = _scope(
+        "profile-server", "scope-server-global", ScopeKind.GLOBAL
+    )
+    remote_record = _constraint_record(
+        _record(
+            "profile-server",
+            remote_global.scope_id,
+            "record-constraint",
+            subject="response.detail",
+            value="ignored",
+            version="constraint-v1",
+        )
+    )
+    remote = _snapshot(scopes=(remote_global,), records=(remote_record,))
+    plan = build_reconciliation_plan(
+        local_manifest=local_manifest,
+        local_scopes=(local_global,),
+        local_records=(local,),
+        local_proposals=(),
+        remote=remote,
+        local_workspace_bindings={},
+    )
+
+    _freeze(repository, plan)
+    repository.apply_reviewed_link(
+        plan=plan,
+        remote=remote,
+        decisions={},
+        integrity_key=b"s" * 32,
+    )
+
+    retained = {(record.kind.value, record.record_id) for record in repository.list_records()}
+    assert retained == {
+        ("preference", "record-preference"),
+        ("constraint", "record-constraint"),
+    }
+
+
+def test_workspace_mapping_keeps_same_semantic_key_for_distinct_record_kinds() -> None:
+    local_global = _scope("profile-local", "scope-local-global", ScopeKind.GLOBAL)
+    local_workspace = _scope(
+        "profile-local", "scope-local-workspace", ScopeKind.WORKSPACE
+    )
+    remote_global = _scope(
+        "profile-server", "scope-server-global", ScopeKind.GLOBAL
+    )
+    remote_workspace = _scope(
+        "profile-server", "scope-server-workspace", ScopeKind.WORKSPACE
+    )
+    local = _record(
+        "profile-local",
+        local_workspace.scope_id,
+        "record-preference",
+        subject="project.goal",
+        value="concise",
+        version="preference-v1",
+    )
+    remote = _constraint_record(
+        _record(
+            "profile-server",
+            remote_workspace.scope_id,
+            "record-constraint",
+            subject="project.goal",
+            value="ignored",
+            version="constraint-v1",
+        )
+    )
+
+    plan = build_reconciliation_plan(
+        local_manifest=_manifest("profile-local", "manifest-local"),
+        local_scopes=(local_global, local_workspace),
+        local_records=(local,),
+        local_proposals=(),
+        remote=_snapshot(
+            scopes=(remote_global, remote_workspace), records=(remote,)
+        ),
+        local_workspace_bindings={},
+    )
+
+    assert plan.workspace_mapping_conflicts == ()
 
 
 def test_plan_records_exact_content_free_contract_outcomes() -> None:
@@ -411,7 +563,20 @@ def test_plan_preallocates_new_workspace_identity_and_mapping_collisions() -> No
 def test_reviewed_apply_adopts_server_identity_and_rebaselines_every_artifact(
     tmp_path,
     proposal_factory,
+    monkeypatch,
 ) -> None:
+    validated_identifiers: list[tuple[str, str]] = []
+
+    def traced_validate_identifier(identifier: str, identifier_type: str) -> bool:
+        validated_identifiers.append((identifier, identifier_type))
+        return validate_identifier(identifier, identifier_type)
+
+    monkeypatch.setattr(
+        repository_module,
+        "validate_identifier",
+        traced_validate_identifier,
+        raising=False,
+    )
     protector = InMemoryProfileKeyProtector()
     repository = PersonalContextRepository(
         tmp_path / "profile.db", key_protector=protector
@@ -485,6 +650,9 @@ def test_reviewed_apply_adopts_server_identity_and_rebaselines_every_artifact(
         integrity_key=b"s" * 32,
     )
 
+    assert {identifier for identifier, _ in validated_identifiers}.issuperset(
+        {"local_runtime_policy", "local_scope_bindings"}
+    )
     assert result["rebaseline_version"] == old_material.key_version + 1
     assert result["reviewed_lineage"]
     assert repository.get_manifest() == remote.manifest
