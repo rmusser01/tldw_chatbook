@@ -1167,6 +1167,41 @@ async def test_shutdown_returns_at_its_wait_bound_when_cleanup_is_still_running(
     assert terminal.wait_for_cleanup(session_id, timeout_seconds=1)
 
 
+@pytest.mark.asyncio
+async def test_finalize_shutdown_closes_each_retained_backend_once_without_waiting() -> (
+    None
+):
+    cleanup_started = Event()
+    finish_cleanup = Event()
+
+    class FinalizableBackend(RecordingBackend):
+        def __init__(self) -> None:
+            super().__init__(on_cleanup=self._blocking_cleanup)
+            self.finalize_calls = 0
+
+        def _blocking_cleanup(self, _attempt: CleanupAttempt) -> CleanupProof:
+            cleanup_started.set()
+            assert finish_cleanup.wait(1)
+            return CleanupProof(True, True, True)
+
+        def finalize_shutdown(self) -> None:
+            self.finalize_calls += 1
+
+    backend = FinalizableBackend()
+    terminal = TerminalSessionManager(lambda: True, lambda: backend)
+    terminal.arm(acknowledge_disclosure=True)
+    session_id = create_running_session(terminal, "final-handle-close")
+
+    try:
+        assert await terminal.shutdown(deadline_seconds=0.01) is False
+        terminal.finalize_shutdown()
+        terminal.finalize_shutdown()
+        assert backend.finalize_calls == 1
+    finally:
+        finish_cleanup.set()
+    assert terminal.wait_for_cleanup(session_id, timeout_seconds=1)
+
+
 def test_managed_process_inventory_is_test_only_and_content_free() -> None:
     class InventoryBackend(RecordingBackend):
         def managed_process_inventory_for_tests(

@@ -278,6 +278,7 @@ class PosixTerminalBackend:
         self._input_pending = threading.Event()
         self._shell_reaped = threading.Event()
         self._monitor_stop = threading.Event()
+        self._shutdown_finalized = threading.Event()
         self._process: subprocess.Popen[bytes] | None = None
         self._provisional_process: subprocess.Popen[bytes] | None = None
         self._master_fd: int | None = None
@@ -320,6 +321,7 @@ class PosixTerminalBackend:
                 or self._provisional_process is not None
                 or self._master_fd is not None
                 or self._pre_admission_disposed
+                or self._shutdown_finalized.is_set()
             ):
                 raise RuntimeError("POSIX terminal startup failed")
         try:
@@ -375,9 +377,11 @@ class PosixTerminalBackend:
         unadmitted_reaped = False
         dispose_after_failure = False
         try:
+            self._raise_if_shutdown_finalized()
             with _SPAWN_LOCK:
                 with _stderr_context():
                     descriptors["master"], descriptors["slave"] = os.openpty()
+                    self._raise_if_shutdown_finalized()
                     _set_window_size(
                         int(descriptors["slave"]),
                         request.columns,
@@ -422,6 +426,7 @@ class PosixTerminalBackend:
                         pass_fds=pass_fds,
                         close_fds=True,
                     )
+                    self._raise_if_shutdown_finalized()
             for name in (
                 "slave",
                 "config_read",
@@ -448,6 +453,8 @@ class PosixTerminalBackend:
                 flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
                 fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
                 with self._state_lock:
+                    if self._shutdown_finalized.is_set():
+                        raise RuntimeError("POSIX terminal startup failed")
                     self._process = process
                     self._master_fd = master_fd
                     self._identity = identity
@@ -616,6 +623,22 @@ class PosixTerminalBackend:
             self._input_buffer.clear()
             self._input_pending.clear()
         self._input_pending.set()
+
+    def finalize_shutdown(self) -> None:
+        """Close remaining parent-owned handles without another wait."""
+        self._shutdown_finalized.set()
+        self.request_priority_close()
+        self._monitor_stop.set()
+        with self._io_lock:
+            with self._state_lock:
+                fd = self._master_fd
+                self._master_fd = None
+            _safe_close(fd)
+
+    def _raise_if_shutdown_finalized(self) -> None:
+        """Refuse allocation or publication after the final shutdown fence."""
+        if self._shutdown_finalized.is_set():
+            raise RuntimeError("POSIX terminal startup failed")
 
     def cleanup(self, attempt: CleanupAttempt) -> CleanupProof:
         """Run identity-safe cleanup under absolute ADR-099 boundaries.
