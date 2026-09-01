@@ -14,6 +14,7 @@ from pathlib import Path
 import posixpath
 import queue
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -158,45 +159,31 @@ class RawCliResult:
 # command word is hidden behind a variable. A determined adversary can
 # still evade a static floor; the approval card remains the real gate.
 
-#: Matches a token in command position: start of string or right after a
-#: separator (;, &&, ||, |, &, newline) or `sudo`/`env`.
-_CMD_POS = r"(?:^|[;&|\n]\s*|\bsudo\s+|\benv\s+)"
-
-_HARDLINE_RULES: tuple[tuple[str, "re.Pattern[str]"], ...] = (
-    (
-        "recursive-root-delete",
-        re.compile(
-            _CMD_POS
-            + r"\S+\s+(?:-[a-zA-Z]*[rR][a-zA-Z]*[fF][a-zA-Z]*"
-            + r"|-[a-zA-Z]*[fF][a-zA-Z]*[rR][a-zA-Z]*"
-            + r"|--recursive\s+--force|--force\s+--recursive)"
-            + r"\s+(?:/|/\*|~|~/|\$HOME)(?:\s|$|[;&|*])"
-        ),
-    ),
-    (
-        "filesystem-format",
-        re.compile(_CMD_POS + r"mkfs(?:\.[a-z0-9]+)?\b"),
-    ),
-    (
-        "dd-to-block-device",
-        re.compile(
-            _CMD_POS
-            + r"dd\b[^;&|]*\bof=/dev/(?:sd|hd|nvme|disk|mmcblk|vd|xvd|loop)"
-        ),
-    ),
-    (
-        "fork-bomb",
-        # a function that pipes into itself and backgrounds, then calls
-        # itself: the classic `:(){ :|:& };:` and named variants
-        re.compile(
-            r"(\S+)\s*\(\s*\)\s*\{[^}]*\1[^}]*\|[^}]*\1[^}]*&[^}]*\}\s*;\s*\1"
-        ),
-    ),
-    (
-        "system-shutdown",
-        re.compile(_CMD_POS + r"(?:shutdown|poweroff|halt|reboot|init\s+0)\b"),
-    ),
+#: Fork bomb: a function that pipes into itself and backgrounds, then calls
+#: itself (the classic ``:(){ :|:& };:`` and named variants). Matched on the
+#: RAW text because shlex cannot tokenize it -- and its pattern is specific
+#: enough to carry no false-positive risk.
+_FORK_BOMB_RE = re.compile(
+    r"(\S+)\s*\(\s*\)\s*\{[^}]*\1[^}]*\|[^}]*\1[^}]*&[^}]*\}\s*;\s*\1"
 )
+
+#: Block-device targets for a `dd of=` catastrophe. Includes rdisk (macOS
+#: raw disk -- this app's own platform), md/dm-/mapper (RAID/LVM).
+_DD_BLOCK_DEVICE_RE = re.compile(
+    r"^/dev/(?:sd|hd|nvme|disk|rdisk|mmcblk|vd|xvd|loop|md|dm-|mapper/)"
+)
+
+#: Catastrophic delete targets: filesystem root and home in their common
+#: literal and variable forms (shlex does not expand, so these stay literal).
+_HARDLINE_ROOT_TARGETS = frozenset({"/", "//", "/*", "~", "~/", "$HOME", "${HOME}"})
+
+#: Command wrappers whose leading occurrence is transparent to the floor.
+_HARDLINE_WRAPPERS = frozenset(
+    {"sudo", "env", "command", "nice", "nohup", "time", "doas", "exec"}
+)
+
+#: Runtime commands that shut the machine down when in command position.
+_SHUTDOWN_COMMANDS = frozenset({"shutdown", "poweroff", "halt", "reboot"})
 
 
 class RawCliHardlineViolation(ValueError):
@@ -214,22 +201,138 @@ class RawCliHardlineViolation(ValueError):
         )
 
 
-def _hardline_normalized(command: str) -> str:
-    """Strip trivial obfuscation: quotes, backslashes, padded whitespace."""
-    stripped = command.replace("\"", "").replace("'", "").replace("\\", "")
-    return " ".join(stripped.split())
+def _basename(token: str) -> str:
+    """Command basename without a path or variable-expansion prefix."""
+    return token.rsplit("/", 1)[-1]
+
+
+def _split_simple_commands(command: str) -> list[list[str]]:
+    """Tokenize with quote/escape awareness and split on UNQUOTED control
+    operators (``; | || & && newline``).
+
+    Uses shlex in POSIX mode with ``punctuation_chars`` so a control
+    operator INSIDE a quoted argument (``git commit -m "fix; reboot"``)
+    stays part of its token and never starts a new command -- the fix for
+    the quote-blind false positives. On a parse error (unbalanced quotes)
+    it falls back to a naive whitespace split, which for the floor's
+    purpose over-includes rather than under-includes.
+    """
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        tokens = command.split()
+    commands: list[list[str]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token and set(token) <= set(";|&\n"):
+            if current:
+                commands.append(current)
+                current = []
+        elif token in ("(", ")"):
+            # subshell grouping is transparent -- unwrap so `(rm -rf /)` is
+            # analyzed as `rm -rf /` rather than command word `(`.
+            continue
+        else:
+            current.append(token)
+    if current:
+        commands.append(current)
+    return commands
+
+
+def _strip_wrappers(tokens: list[str]) -> list[str]:
+    """Drop leading VAR=val assignments and sudo/env-style wrappers so the
+    real command word surfaces (`FOO=1 sudo rm ...` -> `rm ...`)."""
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", token):
+            index += 1
+        elif _basename(token) in _HARDLINE_WRAPPERS:
+            index += 1
+            # skip the wrapper's own short options (e.g. `sudo -n`).
+            # ponytail: a wrapper OPTION that takes an argument
+            # (`sudo -u root ...`) leaves that argument as the apparent
+            # command word, so `sudo -u root rm -rf /` slips this floor --
+            # a documented, accepted gap (the approval card is the real
+            # gate; parsing every wrapper's option arity is not worth it).
+            while index < len(tokens) and tokens[index].startswith("-"):
+                index += 1
+        else:
+            break
+    return tokens[index:]
+
+
+def _simple_command_violation(tokens: list[str]) -> str | None:
+    """The hardline rule one already-split simple command violates."""
+    tokens = _strip_wrappers(tokens)
+    if not tokens:
+        return None
+    command = tokens[0]
+    base = _basename(command)
+    args = tokens[1:]
+
+    # recursive-root-delete: `rm` (or a variable command word hiding it)
+    # with recursive AND force among the flags and a root target among the
+    # args. Anchored to rm-family so `cp -rf /` and `ls -laRF /` -- which
+    # do NOT delete -- are not floored (the false positives the old
+    # `\S+`-anchored regex produced).
+    is_rm = base == "rm"
+    is_variable_command = command.startswith("$") or command.startswith("${")
+    if is_rm or is_variable_command:
+        flag_letters = "".join(
+            token[1:]
+            for token in args
+            if token.startswith("-") and not token.startswith("--")
+        )
+        long_flags = {token for token in args if token.startswith("--")}
+        recursive = (
+            "r" in flag_letters
+            or "R" in flag_letters
+            or "--recursive" in long_flags
+        )
+        force = "f" in flag_letters or "--force" in long_flags
+        targets = {
+            token for token in args if not token.startswith("-") and token != "--"
+        }
+        if recursive and force and targets & _HARDLINE_ROOT_TARGETS:
+            return "recursive-root-delete"
+
+    if base == "mkfs" or base.startswith("mkfs."):
+        return "filesystem-format"
+
+    if base == "dd":
+        for token in args:
+            if token.startswith("of="):
+                if _DD_BLOCK_DEVICE_RE.match(token[3:]):
+                    return "dd-to-block-device"
+
+    if base in _SHUTDOWN_COMMANDS:
+        return "system-shutdown"
+    if base == "init" and any(arg in ("0", "6") for arg in args):
+        return "system-shutdown"
+    if base == "systemctl" and any(
+        arg in ("poweroff", "reboot", "halt") for arg in args
+    ):
+        return "system-shutdown"
+    return None
 
 
 def hardline_violation(command: str) -> str | None:
     """Name the hardline rule ``command`` violates, or ``None``.
 
-    Both the raw text and the obfuscation-normalized text are checked, so
-    quoting a flag apart (``rm -"rf" /``) changes nothing.
+    Tokenizes with quote/escape awareness (so `rm -\'r\'f /` and
+    `rm -"rf" /` collapse to `rm -rf /`, and a quoted `;` never splits a
+    command) and matches argument SHAPES per simple command. The fork bomb
+    is matched separately on the raw text since it is not shell-tokenizable.
     """
-    for text in (command, _hardline_normalized(command)):
-        for rule, pattern in _HARDLINE_RULES:
-            if pattern.search(text):
-                return rule
+    if _FORK_BOMB_RE.search(command):
+        return "fork-bomb"
+    for tokens in _split_simple_commands(command):
+        rule = _simple_command_violation(tokens)
+        if rule is not None:
+            return rule
     return None
 
 

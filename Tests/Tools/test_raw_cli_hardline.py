@@ -36,6 +36,15 @@ HARDLINE_CASES = [
     ("rm -rf ~", "recursive-root-delete"),
     ("rm -rf $HOME", "recursive-root-delete"),
     ("rm --recursive --force /", "recursive-root-delete"),
+    # review 2026-09-01: split flags + more root forms + variable command
+    ("rm -r -f /", "recursive-root-delete"),
+    ("rm -f -r /", "recursive-root-delete"),
+    ("rm -rf //", "recursive-root-delete"),
+    ("rm -rf -- /", "recursive-root-delete"),
+    ("FOO=1 rm -rf /", "recursive-root-delete"),
+    ("(rm -rf /)", "recursive-root-delete"),
+    ("$DELETER -rf /", "recursive-root-delete"),
+    ("rm -rf /; reboot", "recursive-root-delete"),
     # rule 2: filesystem format
     ("mkfs /dev/sda1", "filesystem-format"),
     ("mkfs.ext4 /dev/nvme0n1", "filesystem-format"),
@@ -44,6 +53,10 @@ HARDLINE_CASES = [
     ("dd if=/dev/zero of=/dev/sda", "dd-to-block-device"),
     ("dd if=image.iso of=/dev/disk2 bs=4m", "dd-to-block-device"),
     ("sudo dd of=/dev/nvme0n1 if=payload", "dd-to-block-device"),
+    # review: macOS raw-disk device + RAID/mapper were missing
+    ("dd if=/dev/zero of=/dev/rdisk2", "dd-to-block-device"),
+    ("dd of=/dev/md0 if=x", "dd-to-block-device"),
+    ("dd of=/dev/mapper/vg-root if=x", "dd-to-block-device"),
     # rule 4: fork bomb
     (":(){ :|:& };:", "fork-bomb"),
     (":() { : | : & } ; :", "fork-bomb"),
@@ -54,6 +67,11 @@ HARDLINE_CASES = [
     ("poweroff", "system-shutdown"),
     ("true; reboot", "system-shutdown"),
     ("sudo halt", "system-shutdown"),
+    # review: init runlevel + systemctl verb were missing
+    ("init 6", "system-shutdown"),
+    ("init 0", "system-shutdown"),
+    ("systemctl poweroff", "system-shutdown"),
+    ("sudo systemctl reboot", "system-shutdown"),
 ]
 
 ORDINARY_CASES = [
@@ -75,6 +93,18 @@ ORDINARY_CASES = [
     "grep -rf patterns.txt src/",
     "tar -cf halt.tar docs/",
     "echo 'never poweroff mid-write' >> notes.md",
+    # review 2026-09-01: quoted separators + non-rm recursive flags must pass
+    'git commit -m "fix crash; reboot handling"',
+    "git commit -m 'works & shutdown flow tested'",
+    "echo 'step1; halt if bad' >> runbook.md",
+    "git commit -m \"test; dd of=/dev/sda1 notes\"",
+    "ls -laRF /",
+    "cp -rf / /mnt/backup",
+    "ls -R /",
+    "find / -name '*.log'",
+    "systemctl status nginx",
+    "init_project.sh",
+    "dd if=/dev/zero of=disk.img bs=1M count=100",
 ]
 
 

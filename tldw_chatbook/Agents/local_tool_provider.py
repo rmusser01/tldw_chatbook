@@ -1332,6 +1332,12 @@ class LocalToolProvider:
             call_id=str(call_id or ""),
             effects=self._specs[name].approval_effects,
             execution_policy=self._specs[name].execution_policy,
+            # TASK-26012 review finding 3: exclude "allow_matching" -- the
+            # card would otherwise offer it (empty options => full set) but
+            # LocalToolProvider has no arg-rule path to consume it, so it
+            # would fail closed silently. Local tools keep the whole-tool
+            # choices only.
+            options=("approve_once", "approve_session", "always_allow", "deny"),
         )
         return gate, False
 

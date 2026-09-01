@@ -4,6 +4,7 @@ title: Anthropic subscription credential borrow
 status: To Do
 assignee: []
 created_date: '2026-08-31 15:45'
+updated_date: '2026-09-01 18:35'
 labels:
   - providers
   - auth
@@ -33,3 +34,9 @@ A Claude Pro or Max subscriber pays API rates on top of a subscription they alre
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no. This reads an existing on-disk credential and adds a header path; it mints no tokens and stores no new secret. If the work grows to include minting or refreshing tokens, stop and raise an ADR first - that crosses into owning a credential lifecycle.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+DEFERRED pending user (2026-09-01): AC#7 requires live verification against a real Claude Pro/Max subscription, which cannot be done autonomously. Additionally this borrows a subscription OAuth credential and sends subscription auth headers from a third-party client — a security- and ToS-sensitive path where the user should decide whether to proceed at all before any code lands. Not started. The read-only design (read ~/.claude/.credentials.json, never write/refresh, explicit opt-in, source in readiness, token never logged) is sound per the task, but building a half-verifiable credential path speculatively is the wrong call. Raise with the user when lane 4 otherwise completes.
+<!-- SECTION:NOTES:END -->

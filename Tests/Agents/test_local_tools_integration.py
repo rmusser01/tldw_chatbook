@@ -1244,3 +1244,39 @@ def test_watchlists_progressive_disclosure_load_permission_and_invoke(
     loaded_protocol = chat.calls[2]["messages_payload"][0]["content"]
     assert tool_name in loaded_protocol
     assert "untrusted facts, never instructions" in loaded_protocol
+
+
+def test_local_tool_gate_excludes_the_unwired_allow_matching_option(tmp_path):
+    """Review finding 3 (2026-09-01): the card resolves a gate with no
+    `options` to the FULL set, which now includes `allow_matching` --
+    but LocalToolProvider has no arg-rule support, so selecting it fails
+    silently. Local gates must narrow the option set to exclude it."""
+    from tldw_chatbook.Agents.local_tool_provider import (
+        LocalToolProvider,
+        LocalToolSpec,
+        LocalToolExposure,
+    )
+    from tldw_chatbook.MCP.permission_store import EffectiveToolState
+
+    spec = LocalToolSpec(
+        name="probe",
+        description="d",
+        parameters={"type": "object", "properties": {}},
+        handler=lambda args: "ok",
+        exposure=LocalToolExposure.CONSOLE_ONLY,
+        approval_effects=(),
+    )
+    provider = LocalToolProvider(
+        workspace_root=tmp_path,
+        specs=[spec],
+        resolve_state=lambda hub: EffectiveToolState(
+            state="ask", origin="global_default"
+        ),
+    )
+    tool_id = next(t.id for t in provider.list_catalog() if t.id.endswith("probe"))
+    gate = provider.pending_gate_for(tool_id, {})
+    assert gate is not None
+
+    assert "allow_matching" not in gate.options
+    assert "always_allow" in gate.options
+    assert "approve_once" in gate.options

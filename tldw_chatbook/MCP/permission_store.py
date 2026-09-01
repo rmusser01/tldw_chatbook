@@ -583,7 +583,6 @@ class MCPPermissionStore:
         """
         if definition_hash is None and server_key not in HASH_FREE_SERVER_KEYS:
             raise ValueError("definition_hash is required for an arg rule")
-        payload = self.load()
         self.ensure_profile(profile_id)
         payload = self.load()
         profile = payload.setdefault("profiles", {}).setdefault(profile_id, {})
@@ -977,6 +976,12 @@ def resolve_effective_state(
 def _canonical_args_json(args: Mapping[str, Any]) -> str:
     """One canonical rendering of a call's arguments for exact-match rules."""
     try:
+        # default=str is effectively dead: tool args arrive as JSON from the
+        # model and are always serializable. It exists only so a freak
+        # unserializable value canonicalizes to *something* rather than
+        # raising; two such values could collide, but neither reaches here
+        # in practice and a collision only ever WIDENS to a re-prompt (the
+        # rule is compared for equality, and the tool still executes).
         return json.dumps(dict(args), sort_keys=True, ensure_ascii=False, default=str)
     except Exception:  # noqa: BLE001 -- unserializable args never match a rule
         return ""
