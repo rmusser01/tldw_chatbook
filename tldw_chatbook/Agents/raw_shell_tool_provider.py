@@ -15,6 +15,7 @@ from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.raw_cli_executor import (
     RawCliHardlineViolation,
+    failure_hint,
     MAX_RAW_COMMAND_BYTES,
     MAX_RAW_TIMEOUT_SECONDS,
     RawCliRequest,
@@ -545,6 +546,15 @@ class RawShellToolProvider:
             f"stdout:\n{result.stdout_preview or '(no output)'}\n"
             f"stderr:\n{result.stderr_preview or '(no output)'}"
         )[:_MAX_MODEL_RESULT_CHARS]
+        # TASK-26006: one labeled recovery line for known failure shapes,
+        # APPENDED after the untouched output -- never on success, never
+        # more than one, absent for unrecognized failures.
+        hint = failure_hint(
+            result.exit_code,
+            f"{result.stdout_preview}\n{result.stderr_preview}",
+        )
+        if hint is not None:
+            detail = f"{detail}\n{hint}"
         if result.terminal_state == "exited" and result.exit_code == 0:
             return ToolResult(ok=True, content=detail)
         if result.terminal_state == "timed_out":

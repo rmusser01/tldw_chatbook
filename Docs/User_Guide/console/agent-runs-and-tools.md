@@ -1230,7 +1230,11 @@ Both paths are one-shot and non-interactive: shell profiles are disabled,
 standard input is closed, and no terminal or PTY is provided. Output streams
 into the Console, is bounded and sanitized, and follows the shared timeout,
 Stop, Disarm, and best-effort process-tree cleanup contract. Detached
-descendants may outlive cleanup. Model `shell_exec` results enter ordinary
+descendants may outlive cleanup. A non-zero exit whose output matches a known failure shape (command not
+found, permission denied, missing module, network refusal, …) gains one
+appended `[tool hint]` recovery line — the original output is never
+altered, and unrecognized failures return exactly as before. Model
+`shell_exec` results enter ordinary
 bounded agent tool history and local run logs; they do not create a
 `local_command` record. Generic diagnostics retain content-free execution
 metadata rather than command or output bodies.

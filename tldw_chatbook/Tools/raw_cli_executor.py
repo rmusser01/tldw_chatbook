@@ -233,6 +233,82 @@ def hardline_violation(command: str) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# TASK-26006: actionable failure hints. Data, not branching (AC#6): each row
+# is (compiled pattern, hint line). First match wins; hints apply only to
+# non-zero exits; the original output is never altered -- callers APPEND the
+# hint after it, labeled so it can never be mistaken for command output.
+
+FAILURE_HINT_TABLE: tuple[tuple["re.Pattern[str]", str], ...] = (
+    (
+        re.compile(r"command not found|is not recognized as an internal"),
+        "the command is not installed or not on PATH; check the spelling "
+        "or install it first",
+    ),
+    (
+        re.compile(r"[Pp]ermission denied"),
+        "permission was denied; check file ownership/mode -- the raw shell "
+        "runs as the app user with no sudo",
+    ),
+    (
+        re.compile(r"No such file or directory"),
+        "a path does not exist relative to the initial directory; verify "
+        "with ls or use an absolute path",
+    ),
+    (
+        re.compile(r"ModuleNotFoundError|ImportError: No module named"),
+        "a Python dependency is missing in this environment; install it or "
+        "run inside the right virtualenv",
+    ),
+    (
+        re.compile(
+            r"Connection refused|Could not resolve host|Network is unreachable"
+        ),
+        "the network call failed; check the host, port, and connectivity "
+        "before retrying",
+    ),
+    (
+        re.compile(r"not a git repository"),
+        "this directory is not inside a git repository; cd into one or "
+        "pass an explicit path",
+    ),
+    (
+        re.compile(r"syntax error near unexpected token|unbound variable"),
+        "the shell rejected the command's own syntax; check quoting and "
+        "variable expansions",
+    ),
+    (
+        re.compile(r"Address already in use"),
+        "the port is taken by another process; pick another port or stop "
+        "the process holding it",
+    ),
+)
+
+#: Prefix marking every hint as tool-generated (AC#4).
+FAILURE_HINT_PREFIX = "[tool hint]"
+
+
+def failure_hint(exit_code: int | None, output: str) -> str | None:
+    """One bounded, labeled recovery line for a known failure shape.
+
+    Args:
+        exit_code: The command's exit code; hints apply only when it is a
+            non-zero integer (AC#2).
+        output: Combined stdout/stderr text to match against.
+
+    Returns:
+        ``"[tool hint] ..."`` for the FIRST matching table row (AC#3), or
+        ``None`` -- unrecognized failures return exactly today's output
+        with nothing added (AC#5).
+    """
+    if not isinstance(exit_code, int) or exit_code == 0:
+        return None
+    for pattern, hint in FAILURE_HINT_TABLE:
+        if pattern.search(output):
+            return f"{FAILURE_HINT_PREFIX} {hint}"
+    return None
+
+
 def validate_raw_cli_request(request: RawCliRequest) -> RawCliRequest:
     """Validate and normalize a request crossing the executor boundary."""
     if request.caller not in ("user", "model"):

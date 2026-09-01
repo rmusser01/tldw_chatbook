@@ -119,3 +119,40 @@ def test_validation_boundary_refuses_before_any_permission_state(tmp_path: Path)
                 console_session_id="console-1",
             )
         )
+
+
+# --- TASK-26006: actionable failure hints -----------------------------------
+
+
+def test_failure_hint_maps_known_shapes_first_match_wins() -> None:
+    from tldw_chatbook.Tools.raw_cli_executor import failure_hint
+
+    hint = failure_hint(127, "bash: pyest: command not found")
+    assert hint is not None
+    assert hint.startswith("[tool hint]"), "must be marked tool-generated"
+    assert "PATH" in hint
+
+    # first match wins even when several shapes appear (AC#3)
+    combined = failure_hint(
+        1, "bash: x: command not found\nPermission denied"
+    )
+    assert combined is not None
+    assert "PATH" in combined
+    assert len(combined) < 300, "hints are bounded"
+
+
+def test_failure_hint_only_on_nonzero_exit() -> None:
+    from tldw_chatbook.Tools.raw_cli_executor import failure_hint
+
+    assert failure_hint(0, "command not found") is None
+    assert failure_hint(None, "command not found") is None
+    assert failure_hint(1, "some novel failure text") is None
+
+
+def test_failure_hint_table_is_data() -> None:
+    """AC#6: adding a shape is a table row, not control flow."""
+    from tldw_chatbook.Tools import raw_cli_executor
+
+    table = raw_cli_executor.FAILURE_HINT_TABLE
+    assert len(table) >= 6
+    assert all(len(row) == 2 for row in table)
