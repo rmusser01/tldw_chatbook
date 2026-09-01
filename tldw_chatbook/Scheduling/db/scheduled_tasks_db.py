@@ -28,6 +28,13 @@ class ScheduledTasksDB(BaseDB):
 
     _CURRENT_SCHEMA_VERSION = 4
 
+    #: Defensive cap on `list_armable_automation_definitions` -- mirrors the
+    #: Automations tab's `AUTOMATIONS_LOAD_MAX_ROWS` cap-500 precedent
+    #: (`UI/Screens/scheduling/schedules_workbench.py`). Not a design limit
+    #: on how many local automations may exist -- see the truncation
+    #: warning this method logs when the cap is hit.
+    _ARMABLE_DEFINITIONS_CAP = 500
+
     _REMINDER_TASK_COLUMNS = {
         "id",
         "server_id",
@@ -1097,6 +1104,58 @@ class ScheduledTasksDB(BaseDB):
             return self._rows_to_dicts(
                 cursor.fetchall(), json_fields=self._AUTOMATION_JSON_FIELDS
             )
+
+    def list_armable_automation_definitions(
+        self, owner_id: str = "local"
+    ) -> list[dict[str, Any]]:
+        """List local definitions ready to feed the scheduler queue (§7.2).
+
+        A row arms only when all four hold: ``family='recurring_question'``
+        (v1 -- the only executor registered), ``lifecycle='configured'``,
+        a real ``next_run_at``, and no transfer in flight
+        (``transfer_state IS NULL`` -- a definition mid-handoff to the
+        server is not this side's to run, spec §6). ``owner_id`` defaults
+        to ``"local"``: this is the accessor half of the defense-in-depth
+        pairing with `PriorityQueue`'s own `is_server_scoped_owner` guard
+        (slice 1) -- neither alone is trusted to keep a server-scoped
+        definition from arming locally.
+
+        The result is bounded to `_ARMABLE_DEFINITIONS_CAP` rows, ordered by
+        `next_run_at` ascending, so the soonest-due definitions are kept and
+        any overflow is the latest-scheduled tail. A `logger.warning` fires
+        when the cap is hit, since a truncated arm set must never fail
+        silently.
+
+        Args:
+            owner_id: Owner scope to arm for. Defaults to ``"local"``.
+
+        Returns:
+            Armable definition rows (as dicts), ordered by ``next_run_at``
+            ascending, capped at `_ARMABLE_DEFINITIONS_CAP` rows.
+        """
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                """
+                SELECT * FROM automation_definitions
+                WHERE family = 'recurring_question'
+                  AND lifecycle = 'configured'
+                  AND next_run_at IS NOT NULL
+                  AND transfer_state IS NULL
+                  AND owner_id = ?
+                ORDER BY next_run_at
+                LIMIT ?
+                """,
+                (owner_id, self._ARMABLE_DEFINITIONS_CAP),
+            )
+            rows = cursor.fetchall()
+            if len(rows) == self._ARMABLE_DEFINITIONS_CAP:
+                logger.warning(
+                    "list_armable_automation_definitions: armable set truncated "
+                    "at _ARMABLE_DEFINITIONS_CAP={} rows for owner_id={!r}",
+                    self._ARMABLE_DEFINITIONS_CAP,
+                    owner_id,
+                )
+            return self._rows_to_dicts(rows, json_fields=self._AUTOMATION_JSON_FIELDS)
 
     def update_automation_definition(self, definition_id: str, **kwargs: Any) -> bool:
         """Update automation-definition fields. Returns True if a row changed.

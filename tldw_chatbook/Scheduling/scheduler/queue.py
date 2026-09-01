@@ -63,9 +63,15 @@ class PriorityQueue:
         briefing jobs that have a ``next_run_at``, and sorts the combined list
         by ``next_run_at``.
 
+        Local automation definitions (schedules-handoff PR-2, Task 5) are
+        armed the same way: real DB rows, not a projection (spec §7.2) --
+        loaded unconditionally, each tagged ``"type": "automation_definition"``
+        so ``SchedulerLoop`` routes it to the registered handler.
+
         The ``now`` parameter is retained for back-compat and tests: when
         provided, only reminder tasks scheduled at or before ``now`` are loaded;
-        projections are still appended unconditionally.
+        projections and automation definitions are still appended
+        unconditionally.
         """
         if now is None:
             self._items = self.db.list_reminder_tasks(enabled=True)
@@ -74,10 +80,20 @@ class PriorityQueue:
         else:
             self._items = self.db.reminders_due_before(now)
 
+        for definition in self.db.list_armable_automation_definitions(
+            owner_id=_DEFAULT_OWNER_ID
+        ):
+            definition["type"] = "automation_definition"
+            self._items.append(definition)
+
         # ADR-077 decision 1 (single-owner execution): server-scoped rows
         # are the server's to execute. They are dropped at the queue seam
         # so no tick, reload, or load-path variant can ever dispatch one
         # locally -- their notifications arrive through the server feed.
+        # Automation-definition rows are included here too (defense in
+        # depth with `list_armable_automation_definitions`'s own
+        # `owner_id` filter above): neither guard alone is trusted to keep
+        # a server-scoped definition from arming locally.
         self._items = [
             item
             for item in self._items

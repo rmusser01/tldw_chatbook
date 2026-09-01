@@ -343,6 +343,64 @@ def test_queue_pop_due_skips_items_without_next_run_at(db):
     assert len(queue) == 0
 
 
+# ---------------------------------------------------------------------------
+# Automation-definition feed (schedules-handoff PR-2, Task 5)
+# ---------------------------------------------------------------------------
+
+
+def test_queue_arms_a_qualifying_automation_definition(db):
+    """A local, configured, due `recurring_question` definition is a real
+    queue row tagged `type="automation_definition"`, sorted alongside
+    everything else -- not a projection (spec §7.2)."""
+    def_id = db.create_automation_definition(
+        owner_id="local",
+        family="recurring_question",
+        name="Daily standup question",
+        next_run_at="2026-01-01T00:00:01+00:00",
+    )
+    _create_reminder(db, "Reminder", "2026-01-01T00:00:02+00:00")
+
+    queue = PriorityQueue(db)
+    queue.load()
+
+    assert len(queue) == 2
+    first = queue.peek()
+    assert first["id"] == def_id
+    assert first["type"] == "automation_definition"
+
+
+def test_queue_never_arms_a_transfer_pending_automation_definition(db):
+    def_id = db.create_automation_definition(
+        owner_id="local",
+        family="recurring_question",
+        name="Mid-handoff",
+        next_run_at="2026-01-01T00:00:01+00:00",
+    )
+    db.update_automation_definition(def_id, transfer_state="to_server_sent")
+
+    queue = PriorityQueue(db)
+    queue.load()
+
+    assert len(queue) == 0
+
+
+def test_queue_never_arms_a_server_scoped_automation_definition(db):
+    """Defense in depth (Task 5 brief): the queue-level `is_server_scoped_owner`
+    guard drops a server-owned definition even though the accessor's own
+    `owner_id="local"` filter already would have."""
+    db.create_automation_definition(
+        owner_id="server:42",
+        family="recurring_question",
+        name="Server-owned",
+        next_run_at="2026-01-01T00:00:01+00:00",
+    )
+
+    queue = PriorityQueue(db)
+    queue.load()
+
+    assert len(queue) == 0
+
+
 class _FakeWatchlistProjection(WatchlistProjection):
     """Projection stub that returns canned jobs without touching SubscriptionsDB."""
 
