@@ -10384,6 +10384,37 @@ check".
 
 ---
 
+## A mechanism assembled from verified links is still a hypothesis
+
+**Incident.** TASK-26835, 2026-09-01. Chasing the Console's paint stalls, I
+read five Textual internals in source — `call_after_refresh`, the Screen's
+idle handler, `Timer._run`, `App._end_batch`, `App._on_idle` — verified each
+individually, composed them into a "screen frozen until the next input event"
+mechanism, and filed a HIGH task describing it as "verified link by link".
+The reproduction test refuted it the same hour: a bare app recomposing under
+batch paints promptly, because two relays my derivation had missed
+(`Widget.refresh` → widget Idle → `_check_refresh` → `Update`/`Layout` posted
+to the screen) close the loop. A second composed theory — deferred callbacks
+waiting on an ambient tick — died the same way earlier that day.
+
+What settled it was neither derivation: instrumenting the LIVE app to sample
+the actual invariants (`batch_count`, timer paused/running, dirty count, which
+idle branch ran) every 10ms inside stall windows. The real mechanism was
+nested App-level batches held open 250-400ms by tray recompose cascades —
+observable directly as `screen.Idle guarded(batch=3)` and
+`STATE batch=2 dirty=71`, no assembly required.
+
+**What to do.** Source-reading tells you what CAN happen; only a failing
+reproduction or live-state sampling tells you what DOES. Write the failing
+repro BEFORE filing the mechanism as fact — it is also what stops you
+shipping a fix against it. When a composed mechanism spans more than two
+components, prefer instrumenting the running system to derivation: print the
+invariants the theory depends on and let the system disagree. And when the
+repro passes unpatched, say REFUTED in the record, loudly — the plausible
+version left standing costs the next person a day.
+
+---
+
 ## Sweep the files that ASSERT on your change, not the files you edited
 
 **Incident.** TASK-25715, 2026-08-31. Across seven batches of Console Context

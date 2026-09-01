@@ -166,3 +166,42 @@ tooltip/hover repaint. Clicks that legitimately paint nothing record as slow.
 **Ruled out:** the earlier suspicion that `call_after_refresh` waits for an
 ambient tick. `_on_idle` flushes callbacks directly when the screen is clean;
 the waits are batches and cascades, not a paused timer.
+
+## Fourth run (v6, live invariants): cause 1 fully attributed, fix targets exact
+
+Probe v6 sampled `batch_count`, the update-timer flag, dirty counts and the
+Idle branch every 10ms inside stall windows. Two shapes, directly observed:
+
+**The real freeze -- nested batches held open 250-400ms.** The 406ms tree
+click shows `screen.Idle guarded(batch=2, current=True)` at +107ms and
+`STATE batch=2 timer=PAUSED dirty=71 lay=1 rep=1` at +250ms, with widget
+mounts still landing at +261ms. The 325ms window reaches `batch=3`. Textual
+withholds ALL paints while any batch is open (by design); each tray/section
+recompose opens one, they nest, and the mount + CSS + reconcile storm runs
+INSIDE them. First paint = last batch closing. The earlier "frozen until next
+input" theory (TASK-26835) is refuted -- no input rescue is involved.
+
+**Not-a-bug shape, recorded so it is not chased:** several 215-273ms tree
+clicks show `dirty=0 cb=0 batch=0` for 26 straight ticks -- the app owed
+nothing; the click had no visible response and the eventual ~2.4KB paint was
+hover styling from the next mouse move. Probe framing artifact (window closes
+on first paint of ANY cause) plus, at most, a missing click acknowledgement.
+
+**Exact fix targets, in value order:**
+
+1. `tray.sync_state delta=conversation_browser` alone forces a FULL tray
+   recompose (observed directly). Browser-rows-only deltas should update the
+   browser section in place; the recompose (and its batch) disappears for
+   the most common tree/row interactions.
+2. One click recomposes BOTH tray instances (`console-workspaces-context`
+   AND `console-workspace-context`) back to back -- two nested batches, twice
+   the mounts, for one interaction.
+3. The `_run_scheduled_reconcile` x6 + `_schedule_recomposed_content_fit`
+   storm runs inside the batch window; coalescing it (one settled pass) or
+   letting it run after first paint shortens the batch either way.
+
+Also seen this run, small but real: the workspace-title `get_workspace`
+lookup (cause 3) sampled again at ~40ms across two stacks, and
+`_recompute_filesystem_binding_status` doing `pathlib.stat` on the main
+thread inside `build_console_workspace_state` (~20ms) -- filesystem I/O in a
+click-path state build.
