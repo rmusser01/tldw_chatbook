@@ -28,10 +28,22 @@ history is structurally provider-shaped, not just the outgoing request.**
 provider-shaped assistant turn — into the same history.
 
 Which branch applies is decided by `provider_supports_native_tools(api_endpoint)`
-(`Agents/native_tools.py:63`), currently true for **openai, anthropic, google,
-cohere** and false for every other provider.
+(`Agents/native_tools.py:63`), whose membership is the `NATIVE_TOOLS_PROVIDERS`
+frozenset: **anthropic, cohere, custom-openai-api, custom-openai-api-2,
+deepseek, google, groq, mistral, moonshot, openai, openrouter, qwencloud, zai**.
 
-So a mid-run switch from OpenAI to Groq hands the fence provider a history
+**Correction (2026-08-31):** an earlier draft named only "openai, anthropic,
+google, cohere" — read off the code comments, which document four native-tool
+migrations, rather than off the frozenset. The practical consequence is the
+opposite of reassuring: **every hosted API provider is native**, and the fence
+set is almost entirely LOCAL inference servers — aphrodite, koboldcpp,
+llama_cpp, mlx_lm, ollama, oobabooga, tabbyapi, vllm (plus huggingface and
+mistralai). The crossing this ADR exists for is therefore overwhelmingly
+*hosted → local*, and it cannot be exercised with an API key of any kind: an
+`sk-`-format key belongs to a native provider by definition. Verifying it live
+needs a local inference server running, or a huggingface token.
+
+So a mid-run switch from OpenAI to a local llama.cpp hands the fence provider a history
 containing `tool_calls` and `role:"tool"` messages it cannot interpret; the
 reverse hands a native provider fence-prefixed user text where it expects
 paired tool results. Neither fails loudly — they produce a confused model.
