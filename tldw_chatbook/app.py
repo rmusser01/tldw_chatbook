@@ -362,6 +362,7 @@ from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
 from tldw_chatbook.TTS.profile_types import ProfileRepositoryState
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+
 # TASK-21108: `TTS/voice_bundle_service` (1,857 lines) is imported
 # function-locally in `_ensure_tts_voice_bundle_service` -- the only place
 # that constructs it, on first use, long after first paint. The name below is
@@ -422,6 +423,7 @@ from .Notes.Notes_Library import NotesInteropService
 from .Notes.file_notes_git_service import build_file_notes_session_owner
 from .Notes.note_folder_repository import LocalNoteFolderRepository
 from .Notes.notes_scope_service import NotesScopeService, ScopeType
+
 # TASK-21108: `notes_sync_runtime` (and `notes_sync_legacy`, which the
 # TASK-21112 start gate reads) are imported inside
 # `_construct_notes_sync_runtime_owner`, the single place that needs them, so the
@@ -446,6 +448,7 @@ from .Actor_Packs.export import ActorPackExportService
 from .Actor_Packs.import_controller import ActorPackImportController
 from .Actor_Packs.importer import ActorPackImportError, ActorPackImportService
 from .Actor_Packs.repository import ActorPackRepository
+
 # Persona_Buddy is deliberately NOT imported at module scope (TASK-21103):
 # its controller drags Persona_Visual and PIL (1.28 s cold) onto the boot
 # path. See the lazy persona_buddy_controller property.
@@ -775,6 +778,8 @@ if TYPE_CHECKING:
     from tldw_chatbook.tldw_api import MCPUnifiedClient
 else:
     TerminalBackend = Any
+
+_PERSONAL_CONTEXT_SERVICE_BOOTSTRAP_LOCK = threading.Lock()
 
 API_IMPORTS_SUCCESSFUL = True
 
@@ -3483,9 +3488,7 @@ class LibraryIngestQueueMixin:
             operation = operation_store.get(operation_id)
         except Exception:
             operation = None
-        operation_source = getattr(
-            getattr(operation, "data_source", None), "value", ""
-        )
+        operation_source = getattr(getattr(operation, "data_source", None), "value", "")
         expected_origin = (
             operation_source if operation_source in {"local", "server"} else ""
         )
@@ -6100,10 +6103,9 @@ class LibraryIngestQueueMixin:
         context = get_context()
         profile_id = str(getattr(context, "active_server_id", "") or "").strip()
         principal_id = event_principal_id_from_active_context(context) or ""
-        if (
-            profile_id != getattr(operation, "server_profile_id", "")
-            or principal_id != getattr(operation, "principal_id", "")
-        ):
+        if profile_id != getattr(
+            operation, "server_profile_id", ""
+        ) or principal_id != getattr(operation, "principal_id", ""):
             raise ValueError(
                 "The captured Server workspace authority changed; restore it and retry."
             )
@@ -6158,9 +6160,12 @@ class LibraryIngestQueueMixin:
                 ingest_options=ingest_options,
                 research_source_operation_id=research_source_operation_id,
             )
-            return self.library_ingest_jobs.mark_failed(
-                job.job_id, error=str(exc), permanent=True
-            ) or job
+            return (
+                self.library_ingest_jobs.mark_failed(
+                    job.job_id, error=str(exc), permanent=True
+                )
+                or job
+            )
         self._dispatch_research_source_catalog_job(job.job_id)
         return job
 
@@ -6213,9 +6218,12 @@ class LibraryIngestQueueMixin:
                 ingest_options=ingest_options,
                 research_source_operation_id=research_source_operation_id,
             )
-            return self.library_ingest_jobs.mark_failed(
-                job.job_id, error=str(exc), permanent=True
-            ) or job
+            return (
+                self.library_ingest_jobs.mark_failed(
+                    job.job_id, error=str(exc), permanent=True
+                )
+                or job
+            )
         self._dispatch_research_source_catalog_job(job.job_id)
         return job
 
@@ -7107,31 +7115,28 @@ class TldwCli(
 
     # Shell shortcuts are keyed by stable destination ID so inserting a new
     # destination cannot transfer an existing shortcut to another screen.
-    BINDINGS = (
-        [
-            Binding("ctrl+q", "quit", "Quit App", show=True),
-            Binding("ctrl+p", "command_palette", "Palette Menu", show=True),
-            Binding("f1", "show_workbench_help", "Help", show=True),
-            Binding("f6", "focus_next_workbench_pane", "Next Pane", show=True),
-            Binding(
-                "ctrl+shift+f",
-                FOCUS_TOGGLE_PALETTE_ENTRY[1],
-                "Focus Mode",
-                show=False,
+    BINDINGS = [
+        Binding("ctrl+q", "quit", "Quit App", show=True),
+        Binding("ctrl+p", "command_palette", "Palette Menu", show=True),
+        Binding("f1", "show_workbench_help", "Help", show=True),
+        Binding("f6", "focus_next_workbench_pane", "Next Pane", show=True),
+        Binding(
+            "ctrl+shift+f",
+            FOCUS_TOGGLE_PALETTE_ENTRY[1],
+            "Focus Mode",
+            show=False,
+        ),
+    ] + [
+        Binding(
+            SHELL_DESTINATION_SHORTCUTS[destination.destination_id],
+            f"shell_destination({destination.destination_id!r})",
+            f"Go to {destination.accessible_label}",
+            show=SHELL_DESTINATION_SHORTCUTS[destination.destination_id].startswith(
+                "f"
             ),
-        ]
-        + [
-            Binding(
-                SHELL_DESTINATION_SHORTCUTS[destination.destination_id],
-                f"shell_destination({destination.destination_id!r})",
-                f"Go to {destination.accessible_label}",
-                show=SHELL_DESTINATION_SHORTCUTS[
-                    destination.destination_id
-                ].startswith("f"),
-            )
-            for destination in SHELL_DESTINATION_ORDER
-        ]
-    )
+        )
+        for destination in SHELL_DESTINATION_ORDER
+    ]
     COMMANDS = App.COMMANDS | {
         ThemeProvider,
         TabNavigationProvider,
@@ -7848,8 +7853,7 @@ class TldwCli(
             # which is the safe direction and is memoized.
             start_evidence=(
                 lambda settings=self.app_config, state_path=notes_sync_state_path: (
-                    legacy_sync_directory_configured(settings)
-                    or state_path.exists()
+                    legacy_sync_directory_configured(settings) or state_path.exists()
                 )
             ),
             watcher_interval_seconds=notes_sync_watcher_interval,
@@ -8228,7 +8232,9 @@ class TldwCli(
         """
         self._server_credential_store = store
         self._server_credential_store_unavailable_reason = (
-            store.message if isinstance(store, UnavailableServerCredentialStore) else None
+            store.message
+            if isinstance(store, UnavailableServerCredentialStore)
+            else None
         )
 
     @property
@@ -8551,11 +8557,7 @@ class TldwCli(
                     notify_unavailable=False,
                 )
             )
-            requeued = (
-                None
-                if operation_id
-                else self.retry_library_ingest_job(job_id)
-            )
+            requeued = None if operation_id else self.retry_library_ingest_job(job_id)
             if research_retry_requested:
                 basename = escape_markup(
                     Path(str(source.source_path)).name or str(source.source_path)
@@ -11205,6 +11207,143 @@ class TldwCli(
             return self._create_research_workspace_screen(screen_class)
         return screen_class(self)
 
+    def prepare_personal_context_interview_request(
+        self,
+        *,
+        kind: str,
+        mode: str = "fixed",
+        scope_id: str | None = None,
+        local_workspace_id: str | None = None,
+        workspace_label: str = "",
+        source: str | None = None,
+    ):
+        """Resolve one canonical scope without touching workspace ownership."""
+
+        from tldw_profile_core import ScopeKind
+
+        from .Personal_Context.interview_launch import ProfileInterviewLaunchRequest
+
+        if kind not in {"personal", "workspace"}:
+            raise ValueError("Unknown Personal Context interview kind.")
+        if mode not in {"fixed", "adaptive"}:
+            raise ValueError("Unknown Personal Context interview mode.")
+        if source not in {None, "setup", "workspace", "settings"}:
+            raise ValueError("Unknown Personal Context interview source.")
+        service = self.get_personal_context_service(retry_locked=True)
+        status = service.status()
+        if status.state.value == "absent":
+            service.create_profile()
+        elif status.state.value in {"locked", "removed"}:
+            raise ValueError("Personal Context is unavailable.")
+        scopes = service.list_scopes()
+        if scope_id is not None:
+            scope = next((item for item in scopes if item.scope_id == scope_id), None)
+            expected = ScopeKind.GLOBAL if kind == "personal" else ScopeKind.WORKSPACE
+            if scope is None or scope.kind is not expected:
+                raise ValueError("Personal Context scope does not match interview.")
+        elif kind == "personal":
+            scope = next(
+                (item for item in scopes if item.kind is ScopeKind.GLOBAL), None
+            )
+            if scope is None:
+                raise ValueError("Global Personal Context scope is unavailable.")
+        else:
+            local_workspace_id = str(local_workspace_id or "").strip()
+            if not local_workspace_id:
+                raise ValueError("Workspace interview requires a local workspace.")
+            bindings = service.list_workspace_bindings()
+            scope = next(
+                (
+                    item
+                    for item in scopes
+                    if item.kind is ScopeKind.WORKSPACE
+                    and bindings.get(item.scope_id, {}).get("local_workspace_id")
+                    == local_workspace_id
+                ),
+                None,
+            )
+            if scope is None:
+                scope = service.create_workspace_scope(
+                    local_workspace_id,
+                    workspace_label or "Workspace",
+                )
+        return ProfileInterviewLaunchRequest(
+            kind=kind,
+            scope_id=scope.scope_id,
+            local_workspace_id=local_workspace_id,
+            mode=mode,
+            source=source,
+        )
+
+    def build_personal_context_interview_screen(self, request):
+        """Build a fresh profile interview screen for one resolved request."""
+
+        from .Personal_Context.interview_launch import build_profile_interview_screen
+
+        return build_profile_interview_screen(self, request)
+
+    def launch_personal_context_interview(
+        self,
+        kind: str,
+        scope_id: str,
+        mode: str = "fixed",
+    ) -> None:
+        """Settings re-interview seam over the shared post-commit launcher."""
+
+        from .Personal_Context.interview_launch import (
+            launch_profile_interview_after_commit,
+        )
+
+        request = self.prepare_personal_context_interview_request(
+            kind=kind,
+            scope_id=scope_id,
+            mode=mode,
+            source="settings",
+        )
+        launch_profile_interview_after_commit(
+            self,
+            request,
+            lambda: TldwCli._reload_personal_context_settings_panel(self),
+        )
+
+    def _reload_personal_context_settings_panel(self) -> None:
+        """Reload the mounted My Profile panel after a re-interview returns."""
+
+        from .Widgets.Settings_Widgets.personal_context_panel import (
+            PersonalContextSettingsPanel,
+        )
+
+        try:
+            panel = self.query_one(
+                "#personal-context-settings-panel", PersonalContextSettingsPanel
+            )
+        except QueryError:
+            return
+        panel.load_records(retry_locked=True)
+
+    def get_personal_context_service(self, *, retry_locked: bool = False):
+        """Return the app-owned service, explicitly retrying a locked facade."""
+
+        service = getattr(self, "_personal_context_service", None)
+        status = getattr(service, "status", None)
+        if service is not None and not (
+            retry_locked and callable(status) and status().state == "locked"
+        ):
+            return service
+        with _PERSONAL_CONTEXT_SERVICE_BOOTSTRAP_LOCK:
+            service = getattr(self, "_personal_context_service", None)
+            status = getattr(service, "status", None)
+            if service is None or (
+                retry_locked and callable(status) and status().state == "locked"
+            ):
+                from .Personal_Context.bootstrap import (
+                    bootstrap_personal_context_service,
+                )
+
+                service = bootstrap_personal_context_service()
+                self._personal_context_service = service
+        return service
+
     def _create_research_workspace_screen(self, screen_class: type):
         """Late-bind the foundation to the currently active owner services."""
 
@@ -11252,9 +11391,7 @@ class TldwCli(
             overlay_store=overlay_store,
             operation_store=operation_store,
             association_scheduler=association_scheduler,
-            paste_staging_store=getattr(
-                self, "research_paste_staging_store", None
-            ),
+            paste_staging_store=getattr(self, "research_paste_staging_store", None),
         )
 
     async def _reconcile_research_quick_notes_startup(self) -> None:
@@ -13832,6 +13969,59 @@ class TldwCli(
             first_run.pop(key, None)
 
     def _handle_first_run_wizard_result(self, result: dict | None) -> None:
+        """Optionally chain personalization before the existing continuation."""
+
+        if type(result) is dict and result.get("offer_profile_interview") is True:
+            completed = result.get("completed")
+            exit_route = result.get("exit_route")
+            exit_context = result.get("exit_context")
+            eligible = completed is True and exit_route in {None, TAB_CHAT, TAB_HOME}
+            if exit_route is None:
+                eligible = eligible and exit_context is None
+            else:
+                eligible = eligible and (
+                    exit_context is None
+                    or (type(exit_context) is dict and not exit_context)
+                )
+            if eligible:
+
+                def continuation() -> None:
+                    TldwCli._continue_first_run_wizard_result(self, result)
+
+                try:
+                    request = self.prepare_personal_context_interview_request(
+                        kind="personal",
+                        mode="fixed",
+                        source="setup",
+                    )
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "First-run profile interview preparation failed"
+                    )
+                    notify = getattr(self, "notify", None)
+                    if callable(notify):
+                        try:
+                            notify(
+                                "Setup was saved, but profile personalization is unavailable.",
+                                severity="warning",
+                            )
+                        except Exception:
+                            logger.opt(exception=True).warning(
+                                "First-run profile failure notification failed"
+                            )
+                    continuation()
+                    return
+                from .Personal_Context.interview_launch import (
+                    launch_profile_interview_after_commit,
+                )
+
+                launch_profile_interview_after_commit(self, request, continuation)
+                return
+        TldwCli._continue_first_run_wizard_result(self, result)
+
+    def _continue_first_run_wizard_result(self, result: dict | None) -> None:
+        """Preserve the pre-interview first-run result handling byte-for-byte."""
+
         if type(result) is not dict:
             return  # cancelled / finish-later: recovery state handles next launch
         exit_route = result.get("exit_route")

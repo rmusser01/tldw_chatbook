@@ -7098,6 +7098,12 @@ class SummaryStep(SetupStep):
             yield Static(
                 "", id="setup-summary-footer", classes="setup-subtitle", markup=False
             )
+            yield Checkbox(
+                "Get to know you after setup",
+                False,
+                id="setup-profile-interview-offer",
+                compact=True,
+            )
         # The exit actions are a DIRECT child of the step (the .setup-step
         # scroll container), not of the scrolling .setup-summary Vertical:
         # Textual docks position against the container's visible frame and
@@ -7395,7 +7401,10 @@ class SummaryStep(SetupStep):
         return True, ""
 
     def get_step_data(self) -> Dict[str, Any]:
-        return {"exit_route": self.exit_route}
+        result: Dict[str, Any] = {"exit_route": self.exit_route}
+        if self.query_one("#setup-profile-interview-offer", Checkbox).value:
+            result["offer_profile_interview"] = True
+        return result
 
 
 class _ProviderSaveStatus(Static):
@@ -9666,6 +9675,7 @@ class SetupWizardContainer(WizardContainer):
     def _handle_complete(self, wizard_data: Dict[str, Any]) -> None:
         summary_data = wizard_data.get(wizard_state.STEP_SUMMARY, {})
         exit_route = summary_data.get("exit_route")
+        offer_profile_interview = summary_data.get("offer_profile_interview") is True
         # F-B fix: BaseWizard.complete_wizard() calls this callback
         # SYNCHRONOUSLY (self.on_complete(self.wizard_data)), and it is
         # itself invoked synchronously from _advance() -- which is the body
@@ -9686,10 +9696,16 @@ class SetupWizardContainer(WizardContainer):
         # comment) by using a dedicated group; do the same here rather than
         # relying on a scheduling accident.
         self.run_worker(
-            self._finalize(exit_route), exclusive=True, group="setup-wizard-finalize"
+            self._finalize(exit_route, offer_profile_interview),
+            exclusive=True,
+            group="setup-wizard-finalize",
         )
 
-    async def _finalize(self, exit_route: Optional[str]) -> None:
+    async def _finalize(
+        self,
+        exit_route: Optional[str],
+        offer_profile_interview: bool = False,
+    ) -> None:
         """F3 hardening: a second entry is a clean no-op.
 
         Checked here (not just inside ``_dismiss_screen``) so a duplicate
@@ -9714,7 +9730,10 @@ class SetupWizardContainer(WizardContainer):
         if exit_route == TAB_CHAT and not self._stage_console_first_chat_handoff():
             self._show_first_chat_handoff_error()
             return
-        self._dismiss_screen({"completed": True, "exit_route": exit_route})
+        result = {"completed": True, "exit_route": exit_route}
+        if offer_profile_interview:
+            result["offer_profile_interview"] = True
+        self._dismiss_screen(result)
 
     def _stage_console_first_chat_handoff(self) -> bool:
         """Stage a revision-fenced, secret-free target after setup commits."""

@@ -396,10 +396,23 @@ if TYPE_CHECKING:
     # Type-only: the create dialog is a shared modal imported locally at its
     # one call site (handle_workspace_create) to avoid a real import cycle.
     from ...Widgets.workspace_create_modal import WorkspaceCreateResult
+    from ...Widgets.Settings_Widgets.personal_context_panel import (
+        PersonalContextSettingsPanel,
+    )
     from .settings_network_defaults import SettingsNetworkTLS
 
 
 logger = logging.getLogger(__name__)
+
+
+def _personal_context_settings_panel_class() -> type["PersonalContextSettingsPanel"]:
+    """Load the profile settings implementation only when that category opens."""
+
+    from ...Widgets.Settings_Widgets.personal_context_panel import (
+        PersonalContextSettingsPanel,
+    )
+
+    return PersonalContextSettingsPanel
 
 
 def get_image_generation_config(*args: Any, **kwargs: Any) -> Any:
@@ -1680,6 +1693,20 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
             "arming applies only to this launch; raw secrets remain hidden",
         ),
     ),
+    SettingsCategoryId.PERSONAL_CONTEXT: (
+        (
+            "Affected data",
+            "the encrypted Personal Context Profile and peer-local agent controls",
+        ),
+        (
+            "Recovery",
+            "use encrypted Recovery Export before destructive local removal",
+        ),
+        (
+            "Boundary",
+            "Settings delegates every read and mutation to PersonalContextService",
+        ),
+    ),
     SettingsCategoryId.CONSOLE_BEHAVIOR: (
         (
             "Affected config",
@@ -2323,6 +2350,9 @@ class SettingsScreen(BaseAppScreen):
         ("a", "settings_rag_set_active", "Set active RAG profile"),
         ("c", "settings_rag_clone", "Clone RAG profile"),
         ("b", "settings_rag_backfill", "Backfill RAG index"),
+        ("e", "settings_personal_context_edit", "Edit profile record"),
+        ("d", "settings_personal_context_delete", "Delete profile record"),
+        ("x", "settings_personal_context_export", "Export profile"),
     ]
 
     #: Footer hint set — mirrors the show=True bindings the retired Textual
@@ -2359,6 +2389,8 @@ class SettingsScreen(BaseAppScreen):
             shortcuts.append(
                 ("t", SettingsScreen.TEST_ACTION_LABELS.get(category, "test category"))
             )
+        if category is SettingsCategoryId.PERSONAL_CONTEXT:
+            shortcuts.extend(SettingsScreen.PERSONAL_CONTEXT_SHORTCUTS)
         return tuple(shortcuts)
 
     #: task-1564: categories whose `t` binding performs a real test action --
@@ -2395,6 +2427,13 @@ class SettingsScreen(BaseAppScreen):
         ("a", "set active"),
         ("c", "clone"),
         ("b", "backfill"),
+    )
+
+    PERSONAL_CONTEXT_SHORTCUTS = (
+        ("a", "add record"),
+        ("e", "edit record"),
+        ("d", "delete record"),
+        ("x", "export profile"),
     )
 
     #: Task 6 review (Important): action names of the RAG profile-workflow
@@ -2461,11 +2500,12 @@ class SettingsScreen(BaseAppScreen):
         "Provider settings changed since the last test — re-run Test Provider."
     )
 
-    def __init__(self, app_instance, **kwargs):
+    def __init__(self, app_instance, *, personal_context_service=None, **kwargs):
         super().__init__(app_instance, "settings", **kwargs)
         self._console_capture_policy = runtime_capture_policy()
         self._console_capture_status = "Global exchange capture settings are active."
         self._console_capture_applying = False
+        self._personal_context_service_injection = personal_context_service
         self._settings_drafts: dict[SettingsCategoryId, SettingsDraft] = {}
         self._raw_cli_save_pending = False
         self._raw_cli_unlock_confirmation_pending = False
@@ -2951,7 +2991,8 @@ class SettingsScreen(BaseAppScreen):
                 (key, test_label if key == "t" else description)
                 for key, description in shortcuts
             )
-        if self._text_entry_focused():
+        text_entry_focused = self._text_entry_focused()
+        if text_entry_focused:
             # task-1560: s/r/t are real bindings and therefore inert while an
             # Input/TextArea consumes printable keys -- advertising the bare
             # key would be a silent no-op (the critique's Alex trap). Tell
@@ -2961,7 +3002,25 @@ class SettingsScreen(BaseAppScreen):
             )
         if self._active_category_id() is SettingsCategoryId.LIBRARY_RAG:
             shortcuts = shortcuts + self.LIBRARY_RAG_SHORTCUTS
+        if self._active_category_id() is SettingsCategoryId.PERSONAL_CONTEXT:
+            profile_shortcuts = self._active_personal_context_shortcuts()
+            if text_entry_focused:
+                profile_shortcuts = tuple(
+                    (f"Esc, {key}", description)
+                    for key, description in profile_shortcuts
+                )
+            shortcuts = shortcuts + profile_shortcuts
         return shortcuts
+
+    def _active_personal_context_shortcuts(self) -> tuple[tuple[str, str], ...]:
+        panel_class = _personal_context_settings_panel_class()
+        try:
+            panel = self.query_one(
+                "#personal-context-settings-panel", panel_class
+            )
+        except QueryError:
+            return ()
+        return panel.available_shortcuts()
 
     def _text_entry_focused(self) -> bool:
         """Whether a printable-key-consuming widget owns focus right now."""
@@ -3232,6 +3291,8 @@ class SettingsScreen(BaseAppScreen):
 
         summary = self._category_summary_by_id(category)
         shortcuts = self._category_footer_shortcuts(category)
+        if category is SettingsCategoryId.PERSONAL_CONTEXT:
+            shortcuts = self._active_personal_context_shortcuts()
         if category is SettingsCategoryId.LIBRARY_RAG:
             # Same gating the footer applies: a/c/b only act in LIBRARY_RAG.
             shortcuts = shortcuts + self.LIBRARY_RAG_SHORTCUTS
@@ -3537,6 +3598,12 @@ class SettingsScreen(BaseAppScreen):
                 "Guided",
             ),
             SettingsCategorySummary(
+                SettingsCategoryId.PERSONAL_CONTEXT,
+                "My Profile",
+                "Preferences, context, privacy controls, exports, and local removal.",
+                "Encrypted local",
+            ),
+            SettingsCategorySummary(
                 SettingsCategoryId.CONSOLE_BEHAVIOR,
                 "Console Behavior",
                 "Rail, composer, conversation memory, compaction, and chat-flow defaults.",
@@ -3696,6 +3763,7 @@ class SettingsScreen(BaseAppScreen):
                     SettingsCategoryId.WORKSPACES,
                     SettingsCategoryId.PRIVACY_SECURITY,
                     SettingsCategoryId.NETWORK,
+                    SettingsCategoryId.PERSONAL_CONTEXT,
                 ),
             ),
             (
@@ -4077,6 +4145,20 @@ class SettingsScreen(BaseAppScreen):
                 recovery_copy=(
                     "Choose 'Verify certificates (default)' and save to restore "
                     "verification, or repair [network] in Advanced Config."
+                ),
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.PERSONAL_CONTEXT,
+                owns_config_sections=("encrypted Personal Context database",),
+                reads_runtime_state_from=("PersonalContextService",),
+                writes_allowed=True,
+                runtime_owner="PersonalContextService",
+                boundary_copy=(
+                    "Settings can inspect and manage the local profile only through "
+                    "PersonalContextService."
+                ),
+                recovery_copy=(
+                    "Create an encrypted Recovery Export before removing the local copy."
                 ),
             ),
             SettingsOwnershipRecord(
@@ -6990,6 +7072,8 @@ class SettingsScreen(BaseAppScreen):
         """
         if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
             return "Draft — save with s"
+        if category is SettingsCategoryId.PERSONAL_CONTEXT:
+            return "Applies immediately"
         if category is SettingsCategoryId.IMAGE_GENERATION:
             return "Draft — save/revert below"
         if category is SettingsCategoryId.VIDEO_GENERATION:
@@ -7041,6 +7125,8 @@ class SettingsScreen(BaseAppScreen):
                 "Only the raw CLI unlock is editable; privacy posture and secrets "
                 "remain read-only and redacted."
             )
+        if category is SettingsCategoryId.PERSONAL_CONTEXT:
+            return "Encrypted local profile; record and authority actions apply immediately."
         if category is SettingsCategoryId.SPLASH_SCREEN:
             return "Splash changes take effect as you make them."
         if category is SettingsCategoryId.WORKSPACES:
@@ -16795,6 +16881,15 @@ class SettingsScreen(BaseAppScreen):
         category = SettingsCategoryId(self.active_category)
         if category is SettingsCategoryId.OVERVIEW:
             yield from self._render_overview_detail()
+        elif category is SettingsCategoryId.PERSONAL_CONTEXT:
+            panel_class = _personal_context_settings_panel_class()
+            service = self._personal_context_service_injection
+            if service is None:
+                service = self.app_instance.get_personal_context_service
+            yield panel_class(
+                service,
+                id="personal-context-settings-panel",
+            )
         elif category is SettingsCategoryId.PROVIDERS_MODELS:
             yield from self._render_provider_detail()
         elif category is SettingsCategoryId.SPEECH_TTS:
@@ -20470,22 +20565,7 @@ class SettingsScreen(BaseAppScreen):
         from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
 
         def _done(result: "WorkspaceCreateResult | None") -> None:
-            if result is None:
-                return
-            status_parts = [message for _folder, message in result.failed_folders]
-            if result.make_active:
-                try:
-                    registry.set_active_workspace(result.workspace_id)
-                except WorkspaceRegistryServiceError as exc:
-                    status_parts.append(str(exc))
-            self._settings_workspaces_result = "; ".join(status_parts)
-            self._refresh_settings_workspaces_pane()
-            if result.project_skills:
-                from tldw_chatbook.Widgets.project_skills_import_modal import (
-                    maybe_offer_project_skills_import,
-                )
-
-                maybe_offer_project_skills_import(self.app, result.project_skills)
+            self._handle_workspace_create_result(result)
 
         self.app.push_screen(
             WorkspaceCreateModal(
@@ -20494,6 +20574,50 @@ class SettingsScreen(BaseAppScreen):
             ),
             _done,
         )
+
+    def _handle_workspace_create_result(
+        self, result: "WorkspaceCreateResult | None"
+    ) -> None:
+        """Chain optional context before the established Settings refresh."""
+
+        if result is None:
+            return
+        if result.offer_profile_interview:
+            from ...Personal_Context.interview_launch import (
+                launch_workspace_profile_interview_after_commit,
+            )
+
+            launch_workspace_profile_interview_after_commit(
+                self.app_instance,
+                workspace_id=result.workspace_id,
+                workspace_label=result.name,
+                continuation=lambda: SettingsScreen._continue_workspace_create_result(
+                    self, result
+                ),
+            )
+            return
+        SettingsScreen._continue_workspace_create_result(self, result)
+
+    def _continue_workspace_create_result(
+        self, result: "WorkspaceCreateResult"
+    ) -> None:
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None:
+            return
+        status_parts = [message for _folder, message in result.failed_folders]
+        if result.make_active:
+            try:
+                registry.set_active_workspace(result.workspace_id)
+            except WorkspaceRegistryServiceError as exc:
+                status_parts.append(str(exc))
+        self._settings_workspaces_result = "; ".join(status_parts)
+        self._refresh_settings_workspaces_pane()
+        if result.project_skills:
+            from tldw_chatbook.Widgets.project_skills_import_modal import (
+                maybe_offer_project_skills_import,
+            )
+
+            maybe_offer_project_skills_import(self.app, result.project_skills)
 
     @on(Button.Pressed, "#settings-workspace-rename-apply")
     def handle_workspace_rename_apply(self, event: Button.Pressed) -> None:
@@ -24708,9 +24832,43 @@ class SettingsScreen(BaseAppScreen):
         """
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
+        if self._active_category_id() is SettingsCategoryId.PERSONAL_CONTEXT:
+            self._dispatch_personal_context_action("add_record")
+            return
         if self._active_category_id() is not SettingsCategoryId.LIBRARY_RAG:
             return
         self._trigger_library_rag_profile_set_active()
+
+    def _dispatch_personal_context_action(self, action_name: str) -> None:
+        """Route a category-scoped shortcut to the mounted profile panel."""
+
+        if self._active_category_id() is not SettingsCategoryId.PERSONAL_CONTEXT:
+            return
+        panel_class = _personal_context_settings_panel_class()
+        try:
+            panel = self.query_one(
+                "#personal-context-settings-panel", panel_class
+            )
+        except QueryError:
+            return
+        action = getattr(panel, f"action_{action_name}", None)
+        if callable(action):
+            action()
+
+    def action_settings_personal_context_edit(self) -> None:
+        if self._settings_text_entry_has_focus():
+            return
+        self._dispatch_personal_context_action("edit_record")
+
+    def action_settings_personal_context_delete(self) -> None:
+        if self._settings_text_entry_has_focus():
+            return
+        self._dispatch_personal_context_action("delete_record")
+
+    def action_settings_personal_context_export(self) -> None:
+        if self._settings_text_entry_has_focus():
+            return
+        self._dispatch_personal_context_action("export_profile")
 
     def action_settings_rag_clone(
         self, *, allow_text_entry_focus: bool = False

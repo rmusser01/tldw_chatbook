@@ -566,6 +566,14 @@ PROJECT_INSTRUCTION_ORIGIN = "project_instructions"
 PROJECT_INSTRUCTION_LABEL = "[Project instructions — untrusted repository context]"
 
 
+def append_personal_context(system_content: str, block: str) -> str:
+    """Append one pinned profile block without changing empty-profile bytes."""
+
+    if not block:
+        return system_content
+    return f"{system_content}\n\n{block}"
+
+
 class _ProjectInstructionPayloadError(RuntimeError):
     """Content-free terminal error for a staged row dropped by bounding."""
 
@@ -1964,6 +1972,9 @@ class AgentService:
         system_content = _append_workspace_context_note(
             system_content, config.workspace_context_note
         )
+        system_content = append_personal_context(
+            system_content, config.personal_context_block
+        )
         raw_payload = [{"role": "system", "content": system_content}, *messages]
         evict_enabled = log_active and self._run_log_evict_enabled
         min_recent_rounds = self._run_log_min_recent_rounds
@@ -2304,6 +2315,9 @@ class AgentService:
             # keeping the identity prompt first leaves detection unaffected.
             system_content = _append_workspace_context_note(
                 system_content, config.workspace_context_note
+            )
+            system_content = append_personal_context(
+                system_content, config.personal_context_block
             )
             # TASK-1272 (Phase 3): bound the SEND payload, never
             # `run_agent_loop`'s own `messages` -- that list is untouched,
@@ -4469,6 +4483,7 @@ class AgentService:
                 # (appended to its own prompt in call_model, after its identity
                 # prefix). Empty for the default workspace, so no change there.
                 workspace_context_note=config.workspace_context_note,
+                personal_context_block=config.personal_context_block,
                 response_reserve_tokens=config.response_reserve_tokens,
             )
             spawn_event_id = (
@@ -4879,6 +4894,8 @@ class AgentService:
                 budget=child_budget,
                 native_tools=config.native_tools,
                 workspace_context_note=config.workspace_context_note,
+                personal_context_block=config.personal_context_block,
+                response_reserve_tokens=config.response_reserve_tokens,
             )
             seed = [dict(m) for m in retained.messages]
             retained_steering = retained.steering_with_causes or tuple(

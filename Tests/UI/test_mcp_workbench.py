@@ -5185,7 +5185,11 @@ async def test_test_tool_repeated_cancellation_reclaims_abandoned_mint_and_tasks
                 if task.get_name().startswith("mcp-tool-test-preview-mint:")
                 and not task.done()
             ]
-            if not app.unified_mcp_service._previews and not live_mints:
+            if (
+                not app.unified_mcp_service._previews
+                and not live_mints
+                and not workbench._tool_test_reclaim_tasks
+            ):
                 break
             await pilot.pause()
 

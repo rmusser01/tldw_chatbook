@@ -13727,6 +13727,305 @@ StatCard:hover {
     height: 100%;
 }
 
+/* ===== MODULE: components/_settings_personal_context.tcss ===== */
+/* Canonical Settings > My Profile. Dense, text-labelled, narrow-safe controls. */
+
+#personal-context-settings-panel {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    padding: 0 1 1 1;
+}
+
+#personal-context-status {
+    width: auto;
+    height: 1;
+    margin: 0 0 1 0;
+    text-style: bold;
+}
+
+.personal-context-toolbar {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    layout: grid;
+    grid-size: 2;
+    grid-columns: 1fr 1fr;
+    grid-gutter: 0 1;
+    margin: 0 0 1 0;
+}
+
+.personal-context-toolbar Button {
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+}
+
+.personal-context-scope-row {
+    height: auto;
+    min-height: 3;
+}
+
+.personal-context-scope-row Select {
+    width: 1fr;
+    min-width: 12;
+}
+
+#personal-context-record-list {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    max-height: 10;
+    margin: 0 0 1 0;
+}
+
+.personal-context-record-row {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 3;
+    margin: 0;
+    text-align: left;
+}
+
+.personal-context-record-selected {
+    border-left: thick $accent;
+}
+
+#personal-context-editor {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    margin: 1 0;
+}
+
+#personal-context-editor Input,
+#personal-context-editor Select {
+    width: 100%;
+    min-width: 0;
+    margin: 0 0 1 0;
+}
+
+#personal-context-editor-error {
+    color: $error;
+    height: auto;
+    min-height: 1;
+}
+
+RecoveryPassphraseDialog {
+    align: center middle;
+}
+
+#personal-context-recovery-dialog {
+    width: 60;
+    max-width: 92%;
+    height: auto;
+    padding: 1 2;
+    border: thick $accent;
+    background: $surface;
+}
+
+#personal-context-recovery-dialog Input {
+    width: 100%;
+    margin: 0 0 1 0;
+}
+
+#personal-context-recovery-dialog .button-container {
+    width: 100%;
+    height: auto;
+    align: center middle;
+}
+
+#settings-workbench.settings-workbench-compact #personal-context-settings-panel {
+    padding: 0 0 1 0;
+}
+
+#settings-workbench.settings-workbench-compact .personal-context-toolbar {
+    grid-size: 1;
+    grid-columns: 1fr;
+    grid-gutter: 0;
+}
+
+#settings-workbench.settings-workbench-compact .personal-context-scope-row {
+    layout: vertical;
+}
+
+#settings-workbench.settings-workbench-compact .personal-context-scope-row .settings-input-label,
+#settings-workbench.settings-workbench-compact .personal-context-scope-row Select {
+    width: 100%;
+}
+
+/* ===== MODULE: components/_profile_interview.tcss ===== */
+/* Personal Context interview and deterministic final review. */
+
+ProfileInterviewScreen,
+ProfileInterviewCancelModal,
+PersonalContextReviewModal,
+PersonalContextProposalReviewModal {
+    align: center middle;
+    background: $background 70%;
+}
+
+#profile-interview-shell,
+#personal-context-review-modal,
+#profile-interview-cancel-modal {
+    min-width: 0;
+    border: round $surface-lighten-2;
+    background: $panel;
+    padding: 1 2;
+}
+
+#profile-interview-shell {
+    width: 76;
+    max-width: 96%;
+    height: 22;
+    max-height: 96%;
+}
+
+#personal-context-review-modal {
+    width: 96;
+    max-width: 96%;
+    height: 90%;
+    max-height: 30;
+}
+
+#profile-interview-cancel-modal {
+    width: 64;
+    max-width: 92%;
+    height: auto;
+    min-height: 14;
+}
+
+.profile-interview-title {
+    width: 100%;
+    height: 1;
+    margin: 0 0 1 0;
+    color: $accent;
+    text-style: bold;
+}
+
+.profile-interview-disclosure,
+.profile-interview-state,
+.profile-interview-progress,
+.profile-interview-copy {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+}
+
+.profile-interview-disclosure,
+.profile-interview-progress,
+.profile-interview-copy {
+    color: $text-muted;
+}
+
+.profile-interview-state {
+    background: $surface;
+    padding: 0 1;
+}
+
+#profile-interview-body,
+#personal-context-review-list {
+    width: 100%;
+    min-width: 0;
+    height: 1fr;
+}
+
+.profile-interview-question {
+    width: 100%;
+    height: auto;
+    min-height: 2;
+    margin: 0 0 1 0;
+    text-style: bold;
+}
+
+.profile-interview-error,
+.personal-context-review-warning {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    color: $warning;
+    background: $warning 10%;
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
+
+#profile-interview-answer,
+.personal-context-review-row Input,
+.personal-context-review-row Select,
+.personal-context-proposal-field {
+    width: 100%;
+    min-width: 0;
+    height: 3;
+    border: none;
+    border-left: solid $surface-lighten-2;
+    background: $surface-darken-1;
+    margin: 0 0 1 0;
+}
+
+#profile-interview-answer:focus,
+.personal-context-review-row Input:focus,
+.personal-context-review-row Select:focus,
+.personal-context-proposal-field:focus {
+    border-left: thick $accent;
+    background: $accent 10%;
+    text-style: bold;
+}
+
+.profile-interview-actions {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    layout: grid;
+    grid-size: 2;
+    grid-columns: 1fr 1fr;
+    grid-gutter: 0 1;
+    margin: 0 0 1 0;
+}
+
+.profile-interview-actions Button {
+    width: 100%;
+    min-width: 0;
+    height: 3;
+    margin: 0;
+}
+
+.profile-interview-cancel-actions {
+    width: 100%;
+    min-width: 0;
+    height: 3;
+}
+
+.profile-interview-cancel-actions Button {
+    width: 1fr;
+    min-width: 0;
+    height: 3;
+    margin: 0 1 0 0;
+}
+
+.personal-context-review-row {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    border-bottom: solid $surface-lighten-1;
+    padding: 0 1 1 1;
+    margin: 0 0 1 0;
+}
+
+.personal-context-review-row Checkbox {
+    width: 100%;
+    height: auto;
+    min-height: 3;
+    text-style: bold;
+}
+
+.personal-context-review-row Button {
+    width: 100%;
+    min-width: 0;
+    margin: 0 0 1 0;
+}
+
 /* ===== MODULE: components/_shared_components.tcss ===== */
 /* Shared UI component styles.
  *

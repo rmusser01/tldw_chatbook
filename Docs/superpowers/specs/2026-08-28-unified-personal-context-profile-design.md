@@ -12,15 +12,15 @@
 
 ```text
 ADR required: yes
-ADR path: backlog/decisions/099-personal-context-profile-authority-sync-and-encryption.md
+ADR path: backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md
 Reason: This design establishes a new encrypted data authority, schema and
 migration contract, Sync V2 domains and conflict policy, cross-runtime service
 boundary, agent permission model, and long-lived setup/settings UX.
 ```
 
-The ADR number is reserved by this design. Its uniqueness must be rechecked
-immediately before the ADR is created because this repository has concurrent
-decision work and historical duplicate numbers.
+ADR-102 was selected after sweeping local decisions, active worktrees, and
+fetched refs because this repository has concurrent decision work and
+historical duplicate numbers.
 
 ## Summary
 
@@ -982,7 +982,7 @@ repository-specific implementation slices.
 
 ### Phase 0 — Contract and decision
 
-- Create ADR-099 after rechecking the number.
+- Create ADR-102 after rechecking the number.
 - Publish Shared Core models, JSON Schema, fixtures, compatibility policy, and
   threat model.
 

@@ -438,6 +438,24 @@ commit (`github.sha`) and print `git rev-parse HEAD` in the job summary. Compare
 that recorded SHA with the intended branch head before treating results as
 evidence. A workflow may legitimately load its definition from one ref and test
 another, so the workflow name, step names, and dispatch ref are not sufficient.
+## Cancelling a Textual worker does not cancel its underlying thread
+
+**TASK-24406, 2026-08-30.** The Personal Context review modal originally ran
+its commit worker with ``exclusive=True`` and still allowed Escape, backdrop,
+and Close dismissal while the service call was blocked. A production-shaped
+test released the blocked call after dismissal and proved that the canonical
+profile mutation still completed: Textual cancelled the worker task, but it
+could not stop the thread already executing the synchronous commit. The hidden
+completion could leave durable data changed with no success or recovery state
+visible to the user.
+
+**What to do.** Treat an irreversible threaded operation as a modal state, not
+as a cancellable UI task. Before the canonical mutation, persist a compare-and-
+swap reservation such as ``committing``; freeze selection and edit controls;
+block Escape, backdrop, and Close dismissal; and expose a distinct
+outcome-unknown recovery state if rollback cannot restore the reserved draft.
+Verify with a production-shaped blocking test that tries every dismissal path,
+then releases the real thread and inspects durable state.
 
 ## A privacy assertion must inspect every default durable owner, not only the primary database
 
@@ -471,6 +489,26 @@ locator with a placeholder before the generic path detector ran. The real-seam p
 large safe non-file result plus an actual file result—exposed both errors. Durable
 sanitization must keep each owner's fidelity contract and must classify known file
 tools by tool identity, not only by content that an earlier boundary may have altered.
+
+## Privacy cleanup must preserve SQLite's concurrency contract
+
+**TASK-24723, 2026-08-30.** Terminal Personal Context proposals were correctly
+reduced to content-free receipts in their live rows, but an exact-byte inventory
+found the old encrypted payload and wrapped DEK still present in SQLite storage.
+The first correction forced ``journal_mode=DELETE`` together with
+``secure_delete=ON``. That made the byte inventory pass, but the existing
+production-shaped export snapshot tests then timed out or raised ``database is
+locked``: changing the journal mode had silently removed the WAL concurrency
+contract that lets writers proceed while an export holds a stable read snapshot.
+
+**What to do.** Keep WAL enabled when the repository's readers rely on snapshot
+concurrency. Use ``secure_delete=ON`` for freed database pages, attempt a
+zero-wait ``wal_checkpoint(TRUNCATE)`` after privacy-sensitive commits, and retry
+cleanup after an application-owned read snapshot closes. A reader may
+legitimately pin historical WAL frames until it finishes, so verify both halves
+of the contract: exact old ciphertext/DEK bytes disappear once the snapshot is
+released, and a writer still completes while the snapshot is open. A passing
+shredding test obtained by changing journal mode is not sufficient evidence.
 
 ---
 
@@ -6871,6 +6909,16 @@ using cancellation as admission control, and shield/join admitted thread work
 when an outer UI task is cancelled. Cancelling the awaitable is not evidence the
 thread stopped.
 
+**Recurred, TASK-24402 (2026-08-29).** My Profile reused one exclusive Textual
+worker group for authority changes and secure-removal actions. Review forced the
+cancelled worker's underlying thread to finish late: an old authority selection
+could overwrite a newer restrictive selection, and delayed key deletion could
+run after Start Fresh provisioned a new generation. The fix belongs below the
+UI worker boundary: runtime-policy writes carry the snapshot's expected version,
+and the service serializes the complete remove/finish/start lifecycle. Event-gated
+tests force the reversed completion order; ordinary sequential UI tests cannot
+prove this class of safety.
+
 ## `CREATE IF NOT EXISTS` can adopt foreign schema objects (TASK-19004, 2026-08-21)
 
 The first lasting-sync migration validated its required tables after running
@@ -10394,3 +10442,44 @@ the answer.
 **And be suspicious of your own machine.** Concurrent test runs raise flake rates
 for timing-sensitive UI tests, so failures observed while sweeps or other bisects
 are running deserve a quiet-machine re-check before they become findings.
+## Encrypted repository deletion must be tested with stale open instances (TASK-24400, 2026-08-29)
+
+**What happened.** The first Personal Context repository implementation passed
+single-instance key-destruction, reopen, transaction, and plaintext-canary
+tests. An independent review then kept a second repository instance open across
+destruction. That stale instance retained the old encryption and integrity keys
+in memory and could commit a fresh encrypted outbox object after the first
+instance had deleted every row and removed the protected key. The same review
+found a separate first-open race: key creation happened before SQLite schema
+ownership was serialized, so two processes could cache different keys while
+only the last protector write survived.
+
+**What to do.** Treat key custody, durable repository state, and cached process
+state as three separate participants. Serialize first key creation with a
+repository-owned write transaction and recheck schema ownership after taking
+the lock. For deletion, commit a durable generation/destroyed fence inside the
+same transaction that purges content, and check that fence inside every later
+mutation transaction. Test with two simultaneously open repository instances,
+not only close/reopen: a stale writer must either commit before the purge and be
+removed by it, or acquire the lock afterward and be rejected. Also inject a
+protector deletion failure and prove crypto-erasure can be retried without
+re-enabling writes.
+
+---
+
+## A valid questionnaire is not evidence its complete answer set can commit (TASK-24407, 2026-08-29)
+
+**What happened.** The workspace interview's production pack validated every
+question independently, but several questions reused broad topics such as
+`goal`, `working_context`, and `convention`. Proposal conversion reused those
+topics as semantic-key subjects, so answering the whole questionnaire produced
+duplicate keys and the atomic commit failed. Unit tests for individual answers
+and payload types stayed green; the failure appeared only when one test answered,
+reviewed, selected, and committed the complete production pack.
+
+**What to do.** Treat a questionnaire pack as one transactional input, not a
+bag of valid questions. Give each intended record a stable namespaced semantic
+subject, assert the generated semantic keys are unique, and run at least one
+end-to-end test that answers and commits every question in the real pack. This
+is especially important when a compact topic label also participates in record
+identity.

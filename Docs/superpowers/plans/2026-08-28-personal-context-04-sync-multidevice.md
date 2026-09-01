@@ -14,7 +14,7 @@
 
 ```text
 ADR required: yes
-ADR path: backlog/decisions/099-personal-context-profile-authority-sync-and-encryption.md
+ADR path: backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md
 Reason: This plan defines replication domains, conflict and cleanup policy,
 device expiry/rebootstrap, first-link ownership, and global purge convergence.
 ```
