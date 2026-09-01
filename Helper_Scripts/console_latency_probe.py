@@ -1,20 +1,23 @@
 """In-terminal Console latency probe (TASK-26834's baseline instrument).
 
-Runs the real app with three instruments attached:
+Runs the real app with four instruments attached:
 
-* every Click/Key is stamped at ``Screen._forward_event`` and its window
-  closes at the next ``_compositor_refresh`` -- interaction -> first paint;
+* every Click/Key is stamped at ``Screen._forward_event``; its window closes
+  at the next ``_compositor_refresh`` -- interaction -> first paint;
 * a daemon thread samples the MAIN thread's stack every 10ms while a window
   is open; stalls >100ms report the stacks that occupied them;
-* when the main thread is idle-in-select during a window, every OTHER
-  thread's stack is sampled too, so waiting is attributed, not just noticed.
+* when the main thread is idle-in-select, every OTHER thread is sampled too,
+  so waiting is attributed, not just noticed;
+* every ``set_timer``/``call_later``/``call_after_refresh`` issued inside a
+  window is recorded, so a stall with the whole process idle decomposes into
+  named scheduling hops (the SCHEDULING TIMELINE section).
 
 Run it in the terminal you actually use, poke the interactions that feel
-slow, quit with ctrl+q; the report prints on exit. Findings that produced
-this tool and how to read its output (including which idle-thread stacks
-are noise): TASK-26834. Known limitation: the window closes at the FIRST
-paint after the event, so an interaction that paints a cheap ack early
-under-reports its real answer.
+slow, quit with ctrl+q; the report prints on exit. How to read it -- including
+which idle-thread stacks are noise and the known framing artifact where a
+click with NO visible response records as slow -- is on TASK-26834. Window
+semantics: closes at the FIRST paint after the event, so early-ack
+interactions under-report; medians are optimistic, the tail is trustworthy.
 
 Usage: .venv/bin/python Helper_Scripts/console_latency_probe.py
 """
@@ -38,6 +41,8 @@ STATS = {
     "worker_stacks": collections.Counter(),  # what OTHER threads did while main waited
     "window_samples": [],
     "window_worker_samples": [],
+    "window_trace": [],
+    "slow_traces": [],
     "main_thread_id": None,
     "sampler_thread_id": None,
 }
@@ -133,6 +138,49 @@ def _install() -> None:
 
         LinuxDriver.write = write
 
+    # v4: while a window is open, record every scheduling call, so a wait
+    # with the whole process idle decomposes into named timer/deferred hops.
+    from textual.message_pump import MessagePump
+
+    def _cb_name(callback) -> str:
+        target = getattr(callback, "__func__", callback)
+        name = getattr(target, "__qualname__", None) or repr(target)
+        return name[:60]
+
+    def _trace(owner, api, detail) -> None:
+        with _LOCK:
+            p = STATS["pending"]
+            if p is None:
+                return
+            offset = (time.perf_counter() - p[1]) * 1000
+            STATS["window_trace"].append(
+                (offset, f"{api} {detail} by {type(owner).__name__}")
+            )
+
+    o_set_timer = MessagePump.set_timer
+
+    def set_timer(self, delay, callback=None, *a, **k):
+        _trace(self, "set_timer", f"{delay:.3f}s -> {_cb_name(callback)}")
+        return o_set_timer(self, delay, callback, *a, **k)
+
+    MessagePump.set_timer = set_timer
+
+    o_call_later = MessagePump.call_later
+
+    def call_later(self, callback, *a, **k):
+        _trace(self, "call_later", _cb_name(callback))
+        return o_call_later(self, callback, *a, **k)
+
+    MessagePump.call_later = call_later
+
+    o_car = MessagePump.call_after_refresh
+
+    def call_after_refresh(self, callback, *a, **k):
+        _trace(self, "call_after_refresh", _cb_name(callback))
+        return o_car(self, callback, *a, **k)
+
+    MessagePump.call_after_refresh = call_after_refresh
+
     o_forward = Screen._forward_event
 
     def forward(self, event):
@@ -150,6 +198,7 @@ def _install() -> None:
             with _LOCK:
                 STATS["pending"] = (label, time.perf_counter(), STATS["full"], STATS["bytes"])
                 STATS["window_samples"] = []
+                STATS["window_trace"] = []
         return o_forward(self, event)
 
     Screen._forward_event = forward
@@ -171,9 +220,16 @@ def _install() -> None:
                         STATS["stall_stacks"][stack] += 1
                     for stack in STATS["window_worker_samples"]:
                         STATS["worker_stacks"][stack] += 1
+                if dur >= 100:
+                    STATS["slow_traces"].append(
+                        (dur, label, list(STATS["window_trace"])[:40])
+                    )
+                    STATS["slow_traces"].sort(key=lambda e: -e[0])
+                    del STATS["slow_traces"][8:]
                 STATS["pending"] = None
                 STATS["window_samples"] = []
                 STATS["window_worker_samples"] = []
+                STATS["window_trace"] = []
         return r
 
     Screen._compositor_refresh = refresh
@@ -218,6 +274,17 @@ def _report() -> None:
             print(f"\n  ~{n * 10:>5d} ms total, {n} samples:")
             for line in stack:
                 print(f"      {line}")
+    if STATS["slow_traces"]:
+        print("\nSCHEDULING TIMELINE of the slowest windows")
+        print("(+ms after the input event; what was scheduled, by whom)")
+        for dur, label, trace in STATS["slow_traces"][:5]:
+            print(f"\n  {label[:52]}  ({dur:.0f} ms to first paint)")
+            if not trace:
+                print("      (nothing scheduled inside the window)")
+            for offset, line in trace[:14]:
+                print(f"      +{offset:7.1f} ms  {line}")
+            if len(trace) > 14:
+                print(f"      ... {len(trace) - 14} more")
     print("=" * 70)
 
 

@@ -114,3 +114,55 @@ under-report — median figures are optimistic, the tail is trustworthy.
 **Next instrument, if the timer-chain suspicion needs proof:** log
 `Timer.__init__`/`call_later`/`call_after_refresh` call sites with timestamps
 while a window is open, so a 300ms wait decomposes into named hops.
+
+## Third run (v4, scheduling timelines): cause 1 RESOLVED to the tray recompose batch
+
+The v4 probe recorded every `set_timer`/`call_later`/`call_after_refresh`
+issued inside each stall window. Slowest interactive clicks this run:
+`console-workspace-conversation-2` 557ms, `console-workspace-conversation-1`
+484ms — both full=0, i.e. no full redraw, just a LATE first paint.
+
+The conversation-row timeline names the whole chain, and each link was then
+verified in source:
+
+```
++  2.6ms  set_timer 0.200s -> remove_class            (Button press effect)
++  4.4ms  call_after_refresh _prepare_allocation_reconcile   ConsoleLeftRail
++ 27.7ms  call_after_refresh _schedule_recomposed_content_fit  x2  Tray
++ 27.8ms  call_after_refresh _run_scheduled_reconcile   _ContextBoundedSection
++ 33.5ms  call_after_refresh _schedule_recomposed_content_fit  x2  Tray
++ 90.9ms  call_after_refresh refresh_bindings
++127.4ms  call_after_refresh _run_scheduled_reconcile  x2
+... 26 more, first paint at +557ms
+```
+
+**Verified mechanism, link by link:**
+
+1. A row click changes tray state; `ConsoleWorkspaceContextTray` recomposes
+   unless `_can_skip_recompose` can PROVE the mounted DOM current (the guard
+   is deliberately conservative -- its own comments record that skipping
+   recompose broke collapse rendering, so "no proof" means full recompose).
+2. Textual's `Widget.recompose()` runs `async with self.batch()` --
+   **no compositor paints while the batch is open** (`_on_timer_update` and
+   `_on_idle` both skip under `app._batch_count`).
+3. The remount pays per-node CSS apply -- the 90-150ms `stylesheet.apply`
+   buckets sampled in every run -- plus the `call_after_refresh` reconcile
+   hops visible above, stretching the batch's wall time.
+4. First paint (including the selection highlight the user clicked FOR)
+   lands only when the batch closes: ~500ms of frozen screen per row click.
+
+Fix directions, in preference order: (a) make row selection an in-place
+update (toggle row classes) that never recomposes the tray; (b) teach
+`_can_skip_recompose` to prove selection-only changes; (c) at minimum, paint
+a selection ack before entering the recompose path.
+
+**Also resolved -- a probe framing artifact, recorded so it is not chased:**
+`click:console-workspace-tree` 354ms shows ONE deferral at +1ms then 341ms of
+nothing: a click with no visible response at all. `Screen._on_idle` invokes
+pending callbacks immediately when nothing is dirty, so the callback ran
+promptly; the "answering paint" that closed the window was an unrelated
+tooltip/hover repaint. Clicks that legitimately paint nothing record as slow.
+
+**Ruled out:** the earlier suspicion that `call_after_refresh` waits for an
+ambient tick. `_on_idle` flushes callbacks directly when the screen is clean;
+the waits are batches and cascades, not a paused timer.
