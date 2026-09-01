@@ -3135,6 +3135,10 @@ class ConsoleChatController:
         #: TASK-26000: same lifecycle as _active_steer_hooks, but the hook
         #: cuts the in-flight model response and re-runs the turn.
         self._active_redirect_hooks: dict[str, Callable[[str], str | None]] = {}
+        #: TASK-26019: the LAST prepared request's token accounting per
+        #: session -- captured at the send preflight (the same accounting
+        #: that built the request), read by the context breakdown surface.
+        self._context_accounting_by_session: dict[str, object] = {}
         self._active_capture_details: dict[str, CaptureDetail] = {}
         # Cost-ticker PR3: per-session cache-break/TTL ground truth for the
         # cost chip. All three are process-local and best-effort -- a missed
@@ -13098,6 +13102,15 @@ class ConsoleChatController:
             return "no active run to steer — plain messages queue for the next turn"
         return steer(text)
 
+    def context_breakdown_accounting(self, session_id: str):
+        """The LAST prepared request's accounting for one session, if any.
+
+        TASK-26019. Captured at the send preflight; None before the first
+        send of a session (the surface says so rather than estimating).
+        Reading it never triggers a model call (AC#5).
+        """
+        return self._context_accounting_by_session.get(session_id)
+
     def redirect_active_run(self, text: str) -> str | None:
         """Cut off the ACTIVE session's current model response and re-run the
         turn with ``text`` as a plain user correction.
@@ -18156,6 +18169,11 @@ class ConsoleChatController:
                 continuation_target=continuation_target,
             )
         capacity = prepared_before.capacity
+        # TASK-26019: this accounting IS the request's own (AC#2); the
+        # breakdown surface reads the latest copy, no re-estimation.
+        self._context_accounting_by_session[session_id] = (
+            prepared_before.accounting
+        )
         mandatory_tokens = (
             prepared_before.accounting.non_compactable_tokens
             - prepared_before.accounting.memory_tokens

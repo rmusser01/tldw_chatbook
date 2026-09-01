@@ -6068,12 +6068,18 @@ class ChatScreen(BaseAppScreen):
             )
         except (KeyError, ValueError):
             pass
+        accounting = None
+        try:
+            accounting = controller.context_breakdown_accounting(session_id)
+        except Exception:
+            accounting = None
         return build_console_context_control_state(
             settings=settings,
             estimate=estimate,
             overrides=overrides,
             global_overrides=global_overrides,
             active_memory=memory,
+            accounting=accounting,
             thinking_history_policy=(
                 store.session_thinking_history_policy(session_id)
                 if session_id is not None

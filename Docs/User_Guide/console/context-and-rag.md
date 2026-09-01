@@ -59,6 +59,22 @@ Where this page's controls live:
 
 ## Features & controls
 
+### Context breakdown by category
+
+The model popover's context block (Request / Conversation / Compaction rows)
+gains a **"Last request by category"** breakdown once a send has been
+prepared: System prompt, Tool schemas, Memory summary, Retrieved context
+(when trace capture is on — with capture off those tokens appear as an
+explicitly *unattributed* "Instructions & context" bucket rather than being
+silently folded into another category), Attachments, and Conversation. The
+figures are the request's own token accounting — the same cumulative counts
+that built the payload, never a separate estimate — so they always sum to
+the request total. Categories big enough to act on name their lever (e.g.
+Conversation → summarize older turns via `/rewind`; Attachments →
+`[agents] retire_stale_images`). Viewing the breakdown never triggers a
+model call, and an unverified model window keeps its "estimated" label.
+
+
 ### Reading long Context and Inspector sections
 
 Each open Context section keeps a complete reading body until it reaches its

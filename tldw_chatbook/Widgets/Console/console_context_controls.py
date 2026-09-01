@@ -8,7 +8,12 @@ store/controller while making the quick and full settings surfaces agree.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_prepared_request import (
+        ConsoleRequestTokenAccounting,
+    )
 
 from tldw_chatbook.Chat.console_context_compaction import (
     EffectiveMemoryKind,
@@ -85,6 +90,9 @@ class ConsoleContextControlState:
     thinking_history: ThinkingHistoryControlState = ThinkingHistoryControlState(
         "auto", "Auto"
     )
+    #: TASK-26019: named category rows from the LAST prepared request's
+    #: accounting; empty until a send has been prepared this session.
+    breakdown_rows: tuple["ContextBreakdownRow", ...] = ()
 
     @property
     def conversation_budget_tokens(self) -> int | None:
@@ -125,6 +133,94 @@ class ConsoleContextControlState:
         return f"{estimate_prefix}{used} / {budget} max tokens"
 
 
+@dataclass(frozen=True)
+class ContextBreakdownRow:
+    """One named slice of the request window (TASK-26019)."""
+
+    label: str
+    tokens: int
+    #: The action that shrinks this bucket, when one exists (AC#6).
+    hint: str = ""
+
+
+def build_context_breakdown(
+    accounting: "ConsoleRequestTokenAccounting",
+) -> tuple[ContextBreakdownRow, ...]:
+    """Partition the request accounting into named categories (TASK-26019).
+
+    Every figure is a difference of the SAME cumulative wire counts that
+    built the request (AC#2) and the rows sum exactly to
+    ``total_input_tokens``; nothing is re-estimated here. Zero rows are
+    dropped for scannability -- except the residual, which appears whenever
+    it is non-zero because hiding it would be silent folding (AC#3).
+    """
+    attachments = accounting.attachment_tokens
+    conversation = max(
+        0,
+        accounting.compactable_tokens
+        + accounting.active_request_tokens
+        - attachments,
+    )
+    rows: list[ContextBreakdownRow] = [
+        ContextBreakdownRow("System prompt", accounting.system_tokens),
+        ContextBreakdownRow(
+            "Tool schemas",
+            accounting.tool_schema_tokens,
+            hint="Disable unused tools in Settings",
+        ),
+        ContextBreakdownRow(
+            "Memory summary",
+            accounting.memory_tokens,
+            hint="Adjust compaction_summary_max_tokens",
+        ),
+    ]
+    if accounting.rag_attributed:
+        rows.append(
+            ContextBreakdownRow(
+                "Retrieved context",
+                accounting.rag_context_tokens,
+                hint="Narrow RAG scope or sources",
+            )
+        )
+        rows.append(
+            ContextBreakdownRow(
+                "Other instructions",
+                max(
+                    0,
+                    accounting.mandatory_tokens - accounting.rag_context_tokens,
+                ),
+            )
+        )
+    else:
+        # AC#3: capture is off, so RAG vs other instructions is unknowable
+        # -- say so instead of folding it into a named bucket.
+        rows.append(
+            ContextBreakdownRow(
+                "Instructions & context (unattributed)",
+                accounting.mandatory_tokens,
+                hint="Enable capture to attribute retrieved context",
+            )
+        )
+    rows.append(
+        ContextBreakdownRow(
+            "Attachments",
+            attachments,
+            hint="Enable [agents] retire_stale_images to reclaim old images",
+        )
+    )
+    rows.append(
+        ContextBreakdownRow(
+            "Conversation",
+            conversation,
+            hint="Summarize older turns (/rewind \u25b8 Summarize)",
+        )
+    )
+    residual = accounting.total_input_tokens - sum(row.tokens for row in rows)
+    if residual > 0:
+        rows.append(ContextBreakdownRow("Unattributed", residual))
+    return tuple(row for row in rows if row.tokens > 0)
+
+
 def build_console_context_control_state(
     *,
     settings: ConsoleSessionSettings,
@@ -141,6 +237,7 @@ def build_console_context_control_state(
     status_message: str = "",
     thinking_history_policy: object = None,
     thinking_history_effective_policy: EffectiveThinkingHistoryPolicy | None = None,
+    accounting: "ConsoleRequestTokenAccounting | None" = None,
 ) -> ConsoleContextControlState:
     """Build a UI snapshot from the current estimate and owned policy values.
 
@@ -219,6 +316,9 @@ def build_console_context_control_state(
             saved_policy=saved_thinking_policy,
             effective_label=effective_thinking_label,
             required_reason=required_reason,
+        ),
+        breakdown_rows=(
+            build_context_breakdown(accounting) if accounting is not None else ()
         ),
     )
 

@@ -485,6 +485,27 @@ class ConsoleModelPopover(
                     classes="console-popover-context-row",
                     markup=False,
                 )
+                # TASK-26019: named category rows from the LAST prepared
+                # request's own accounting -- present only after a send has
+                # been prepared, and viewing never triggers a model call.
+                if self._context_state.breakdown_rows:
+                    yield Static(
+                        "Last request by category:",
+                        id="console-popover-breakdown-header",
+                        classes="console-popover-context-row",
+                        markup=False,
+                    )
+                    for row_index, breakdown_row in enumerate(
+                        self._context_state.breakdown_rows
+                    ):
+                        hint = f"  — {breakdown_row.hint}" if breakdown_row.hint else ""
+                        yield Static(
+                            f"  {breakdown_row.label}: "
+                            f"{format_context_tokens(breakdown_row.tokens)}{hint}",
+                            id=f"console-popover-breakdown-{row_index}",
+                            classes="console-popover-context-row",
+                            markup=False,
+                        )
                 yield Static(
                     "Compaction    at "
                     f"{format_context_tokens(self._context_state.compaction_trigger_tokens)} tokens",
