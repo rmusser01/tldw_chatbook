@@ -1,6 +1,7 @@
 """Tests for Scheduling Pydantic models."""
 
 from datetime import datetime, timezone
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -10,10 +11,15 @@ from tldw_chatbook.Scheduling.models import (
     AutomationDefinition,
     AutomationFamily,
     AutomationPreview,
+    AutomationResult,
+    AutomationRun,
     Health,
     Lifecycle,
     PreviewStatus,
     ReminderTask,
+    ReviewState,
+    RunOutcome,
+    RunStatus,
     ScheduleKind,
     TaskStatus,
 )
@@ -247,3 +253,55 @@ def test_extra_fields_forbidden() -> None:
             summary="Summary",
             unknown_field="nope",
         )
+
+
+def test_run_status_matches_server_vocabulary_plus_timed_out():
+    assert {s.value for s in RunStatus} == {
+        "queued", "running", "completed", "failed",
+        "skipped", "cancelled", "timed_out",
+    }
+
+
+def test_run_outcome_and_review_state_match_server_literals():
+    assert {o.value for o in RunOutcome} == {
+        "finding", "no_match", "partial", "degraded", "none",
+    }
+    assert {r.value for r in ReviewState} == {"unread", "read", "dismissed"}
+
+
+def test_automation_run_defaults():
+    run = AutomationRun(
+        owner_id="local", definition_id="d1",
+        definition_version=1, trigger_reason="scheduled",
+    )
+    assert run.status == RunStatus.QUEUED
+    assert run.outcome == RunOutcome.NONE
+    assert run.schedule_slot is None
+
+
+def test_automation_result_defaults_to_unread():
+    result = AutomationResult(
+        owner_id="local", definition_id="d1", run_id="r1",
+        kind="finding", title="t", summary="s", dedupe_key="k",
+    )
+    assert result.review_state == ReviewState.UNREAD
+    assert result.answer_mode == "none"
+
+
+def test_definition_gains_parity_fields_with_defaults():
+    d = AutomationDefinition(family=AutomationFamily.RECURRING_QUESTION, name="n")
+    assert d.resolution_state == "open"
+    assert d.finding_policy == {"preset": "balanced_findings"}
+    assert d.retention_policy == {"mode": "default"}
+    assert d.next_run_at is None and d.transfer_state is None
+
+
+def test_preview_error_lists_hold_server_shaped_dicts():
+    p = AutomationPreview(
+        family=AutomationFamily.RECURRING_QUESTION,
+        validation_errors=[{"field": "config.scope", "code": "scope_empty",
+                            "message": "Scope must include at least one readable searchable source."}],
+        warnings=[{"code": "source_unavailable", "source": "chats"}],
+    )
+    assert p.validation_errors[0]["code"] == "scope_empty"
+    assert p.risk_class is None
