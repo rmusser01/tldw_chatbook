@@ -4665,3 +4665,95 @@ async def test_incapable_provider_uses_the_local_path_with_delegation_on() -> No
     assert result.terminal is CompactionTerminal.SUCCEEDED
     assert gateway.native_calls == 0
     assert gateway.calls == 1
+
+
+def test_micro_escalation_ruling_covers_every_gate() -> None:
+    """Review Critical #1 (2026-09-01): the escalation logic lived inline in
+    the controller, referenced ContextCompactionMode WITHOUT importing it,
+    and had zero coverage -- the flagship below-trigger path was a runtime
+    NameError. The ruling is now a pure function owned by THIS module, where
+    the names live and the gates are pinned:
+
+    - below-trigger + AUTOMATIC -> escalate, capped to one exchange
+    - naturally AUTOMATIC (above trigger) -> run, STILL capped (review #5:
+      a background pass never does the monolithic stall the docs disclaim)
+    - ASK mode -> None (AC#5: never silently bypassed)
+    - GENERATED_RANGE memory -> None (review #3: the range planner ignores
+      max_units; a micro pass must not trigger a whole-span reshape)
+    - OFF / no units / non-micro-eligible decisions -> None
+    """
+    from tldw_chatbook.Chat.console_context_compaction import (
+        resolve_micro_escalation,
+    )
+    from tldw_chatbook.Chat.console_context_policy import ContextCompactionMode
+
+    auto = ContextCompactionMode.AUTOMATIC
+
+    assert resolve_micro_escalation(
+        CompactionDecision.BELOW_TRIGGER,
+        units_present=True,
+        compaction_mode=auto,
+        effective_kind=EffectiveMemoryKind.RAW,
+    ) == (CompactionDecision.AUTOMATIC, True)
+
+    assert resolve_micro_escalation(
+        CompactionDecision.AUTOMATIC,
+        units_present=True,
+        compaction_mode=auto,
+        effective_kind=EffectiveMemoryKind.RAW,
+    ) == (CompactionDecision.AUTOMATIC, True)
+
+    assert (
+        resolve_micro_escalation(
+            CompactionDecision.BELOW_TRIGGER,
+            units_present=True,
+            compaction_mode=ContextCompactionMode.ASK,
+            effective_kind=EffectiveMemoryKind.RAW,
+        )
+        is None
+    )
+    assert (
+        resolve_micro_escalation(
+            CompactionDecision.ASK,
+            units_present=True,
+            compaction_mode=ContextCompactionMode.ASK,
+            effective_kind=EffectiveMemoryKind.RAW,
+        )
+        is None
+    )
+    assert (
+        resolve_micro_escalation(
+            CompactionDecision.BELOW_TRIGGER,
+            units_present=True,
+            compaction_mode=auto,
+            effective_kind=EffectiveMemoryKind.GENERATED_RANGE,
+        )
+        is None
+    )
+    assert (
+        resolve_micro_escalation(
+            CompactionDecision.AUTOMATIC,
+            units_present=True,
+            compaction_mode=auto,
+            effective_kind=EffectiveMemoryKind.GENERATED_RANGE,
+        )
+        is None
+    )
+    assert (
+        resolve_micro_escalation(
+            CompactionDecision.BELOW_TRIGGER,
+            units_present=False,
+            compaction_mode=auto,
+            effective_kind=EffectiveMemoryKind.RAW,
+        )
+        is None
+    )
+    assert (
+        resolve_micro_escalation(
+            CompactionDecision.OFF,
+            units_present=True,
+            compaction_mode=ContextCompactionMode.OFF,
+            effective_kind=EffectiveMemoryKind.RAW,
+        )
+        is None
+    )

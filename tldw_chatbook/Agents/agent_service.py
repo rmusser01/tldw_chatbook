@@ -2029,8 +2029,12 @@ class AgentService:
                     default=4000,
                     minimum=1,
                 ),
+                # Review #4: floor 16 = len("Tool result for ") -- a
+                # smaller head would destroy the fence-result prefix and
+                # let run-log eviction mistake a pruned result for the
+                # task row (the exact amnesia that module guards against).
                 head_chars=coerce_int_setting(
-                    _setting("prune_head_chars", 1000), default=1000, minimum=0
+                    _setting("prune_head_chars", 1000), default=1000, minimum=16
                 ),
                 min_reclaim_chars=coerce_int_setting(
                     _setting("prune_min_reclaim_chars", 8000),

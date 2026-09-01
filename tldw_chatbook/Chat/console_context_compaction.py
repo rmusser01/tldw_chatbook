@@ -56,6 +56,7 @@ from tldw_chatbook.Chat.console_prepared_request import (
 )
 from tldw_chatbook.Chat.console_provider_gateway import (
     AuxiliaryCompletionRequest,
+    AuxiliaryCompletionResult,
     ConsoleProviderGateway,
     ConsoleProviderResolution,
 )
@@ -471,6 +472,41 @@ def micro_compaction_due(counter: int, every: object) -> tuple[bool, int]:
     if advanced >= cadence:
         return True, 0
     return False, advanced
+
+
+def resolve_micro_escalation(
+    decision: CompactionDecision,
+    *,
+    units_present: bool,
+    compaction_mode: "ContextCompactionMode",
+    effective_kind: EffectiveMemoryKind,
+) -> tuple[CompactionDecision, bool] | None:
+    """Rule on one background micro-compaction pass (TASK-25910).
+
+    Owned by THIS module -- review Critical (2026-09-01): the inline
+    controller version referenced ``ContextCompactionMode`` without
+    importing it and shipped as a runtime NameError with zero coverage.
+
+    Returns ``(decision, capped)`` when the pass may proceed -- always
+    capped to the single oldest exchange, including the naturally-AUTOMATIC
+    above-trigger case (a background pass never runs the monolithic
+    compaction the cadence exists to amortize) -- or ``None`` for a silent
+    no-op: ASK mode (AC#5), OFF, no units, or a GENERATED_RANGE memory
+    (the range planner ignores ``max_units``; a micro pass must not
+    trigger a whole-span reshape in the background).
+    """
+    if not units_present:
+        return None
+    if compaction_mode is not ContextCompactionMode.AUTOMATIC:
+        return None
+    if effective_kind is EffectiveMemoryKind.GENERATED_RANGE:
+        return None
+    if decision in {
+        CompactionDecision.BELOW_TRIGGER,
+        CompactionDecision.AUTOMATIC,
+    }:
+        return CompactionDecision.AUTOMATIC, True
+    return None
 
 
 def manual_summary_preview(
@@ -2398,12 +2434,15 @@ class ConsoleCompactionService:
         if self._native_compaction_delegation:
             probe = getattr(self._gateway, "supports_native_compaction", None)
             native = getattr(self._gateway, "complete_native_compaction", None)
-            if callable(probe) and callable(native) and probe(resolution):
+            if callable(probe) and callable(native):
                 try:
-                    completion = await asyncio.wait_for(
-                        native(request), timeout=self._auxiliary_timeout
-                    )
-                    return completion, "provider_native"
+                    # Review #13: the probe sits INSIDE the try -- a raising
+                    # capability check must cost the fallback, not the attempt.
+                    if probe(resolution):
+                        completion = await asyncio.wait_for(
+                            native(request), timeout=self._auxiliary_timeout
+                        )
+                        return completion, "provider_native"
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:  # noqa: BLE001 -- AC#5 fallback

@@ -3413,7 +3413,7 @@ anthropic_enabled = true
 # with no LLM call. OFF by default; the thresholds below are the shipped
 # defaults when enabled. min_reclaim keeps prompt-cache breaks episodic.
 # prune_stale_tool_results = false
-# prune_keep_recent_turns = 4
+# prune_keep_recent_turns = 4   # counts ROUNDS at the agent seam (one model call + its results), not conversational turns
 # prune_min_result_chars = 4000
 # prune_head_chars = 1000
 # prune_min_reclaim_chars = 8000

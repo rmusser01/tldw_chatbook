@@ -146,6 +146,7 @@ from tldw_chatbook.Chat.console_context_compaction import (
     plan_compaction,
     manual_summary_preview,
     micro_compaction_due,
+    resolve_micro_escalation,
     sanitize_summary_focus,
     plan_manual_prefix,
     plan_manual_range,
@@ -3148,6 +3149,7 @@ class ConsoleChatController:
         #: a slow fold from stacking.
         self._micro_compaction_counters: dict[str, int] = {}
         self._micro_compaction_inflight: set[str] = set()
+        self._micro_compaction_tasks: dict[str, object] = {}
         # Read once at construction (the 26016 timeout-knob precedent, and
         # a per-completion get_cli_setting call would also exhaust every
         # test double with a finite side_effect list): cadence changes
@@ -17950,7 +17952,9 @@ class ConsoleChatController:
         never blocks anything here (fire-and-forget task on the running
         loop; off-loop callers simply skip the beat), and folds only when
         the configured cadence comes due. Cadence 0 (the default) is fully
-        off -- today's behavior exactly (AC#2).
+        off -- today's behavior exactly (AC#2). Known nuance (review #7):
+        a manual /rewind summarize also lands a COMPLETED transition and
+        ticks the counter -- one beat of cadence drift, accepted.
         """
         cadence = self._micro_compaction_cadence
         due, next_counter = micro_compaction_due(
@@ -17971,9 +17975,12 @@ class ConsoleChatController:
                 logger.opt(exception=True).debug("micro_compaction_failed")
             finally:
                 self._micro_compaction_inflight.discard(session_id)
+                self._micro_compaction_tasks.pop(session_id, None)
 
         self._micro_compaction_inflight.add(session_id)
-        loop.create_task(_run())
+        # Review #9: hold the reference (asyncio's documented GC hazard);
+        # dropped in _run's finally alongside the in-flight guard.
+        self._micro_compaction_tasks[session_id] = loop.create_task(_run())
 
     async def compact_context_now(
         self, session_id: str, *, micro: bool = False
@@ -17993,8 +18000,11 @@ class ConsoleChatController:
         if owner is None or owner.persisted_conversation_id is None:
             return False, "Send or save this conversation before compacting it."
         try:
+            # Review #2: the OWNING session's provider, never the viewed
+            # tab's -- a background micro fold can fire on a session the
+            # user has switched away from.
             resolution = await self._resolve_for_send_bounded(
-                self._provider_selection()
+                self._provider_selection_for_session(session_id)
             )
         except Exception:
             return False, "The active provider could not be prepared for compaction."
@@ -18288,22 +18298,21 @@ class ConsoleChatController:
             decision = CompactionDecision.NON_COMPACTABLE
         elif force_compaction and units:
             decision = CompactionDecision.AUTOMATIC
-        # TASK-25910: a micro pass escalates ONLY the below-trigger
-        # AUTOMATIC case, folding the single oldest exchange; ASK is never
-        # silently bypassed (AC#5) and any other decision is a silent
-        # no-op for a background pass.
+        # TASK-25910: the escalation ruling is a pure, pinned function in
+        # console_context_compaction (review Critical 2026-09-01: the
+        # inline version was an uncovered runtime NameError). Every micro
+        # pass is capped to the single oldest exchange or silently no-ops.
         micro_escalated = False
-        if (
-            micro_compaction
-            and units
-            and decision is CompactionDecision.BELOW_TRIGGER
-            and resolved.policy.compaction_mode
-            is ContextCompactionMode.AUTOMATIC
-        ):
-            decision = CompactionDecision.AUTOMATIC
-            micro_escalated = True
-        elif micro_compaction and decision is not CompactionDecision.AUTOMATIC:
-            return _flatten_preflight_messages(semantic), None
+        if micro_compaction:
+            ruling = resolve_micro_escalation(
+                decision,
+                units_present=bool(units),
+                compaction_mode=resolved.policy.compaction_mode,
+                effective_kind=effective.kind,
+            )
+            if ruling is None:
+                return _flatten_preflight_messages(semantic), None
+            decision, micro_escalated = ruling
         logger.info("console_context_policy_decision")
         if decision in {CompactionDecision.OFF, CompactionDecision.BELOW_TRIGGER}:
             return _flatten_preflight_messages(semantic), None
