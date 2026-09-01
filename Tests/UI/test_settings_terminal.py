@@ -149,6 +149,15 @@ async def test_terminal_control_uses_shared_unlock_and_an_independent_launch_arm
 
         terminal_button.press()
         await _wait_until(pilot, lambda: isinstance(host.screen, ConfirmationDialog))
+        dialog = host.screen
+        confirm_button = dialog.query_one("#confirm-button", Button)
+        await _wait_until(
+            pilot,
+            lambda: (
+                confirm_button.region.width > 0
+                and dialog.screen.region.contains_region(confirm_button.region)
+            ),
+        )
         assert await pilot.click("#confirm-button")
         await _wait_until(pilot, lambda: host.screen is screen)
 
