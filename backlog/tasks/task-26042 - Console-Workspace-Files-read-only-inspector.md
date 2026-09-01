@@ -27,7 +27,7 @@ Give Console users a safe way to inspect files from any visible named workspace 
 - [x] #4 Safe UTF-8 files are viewable, files over 200,000 decoded characters through 8 MiB use revision-pinned pages of at most 100,000 characters, and files over 8 MiB remain metadata-only.
 - [x] #5 Hostile filesystem names and unsafe file control text render as visible escaped text without markup or terminal injection while raw path identity remains separate and revalidated.
 - [x] #6 Back to Console, Escape, backdrop dismissal, resize, duplicate activation, generic Console attention, and graceful quit preserve the specified focus, state, privacy, and teardown behavior.
-- [ ] #7 Production-shaped Textual and live scratch evidence covers 80x24, 100x30, 120x40, and 160x50 layouts, non-active context preservation, paging, hostile text, privacy, and prohibited side effects.
+- [x] #7 Production-shaped Textual and live scratch evidence covers 80x24, 100x30, 120x40, and 160x50 layouts, non-active context preservation, paging, hostile text, privacy, and prohibited side effects.
 - [x] #8 List, read, and filter work is bounded, coalesced, cancellable where safe, stale-result resistant, and leaves no workers or transient modal resources after graceful teardown.
 <!-- AC:END -->
 
@@ -42,7 +42,7 @@ ADR required: yes\nADR path: backlog/decisions/079-workspace-file-inspector-dire
 - [ ] #1 All acceptance criteria are checked only after their behavior and prohibited side effects are evidenced.
 - [x] #2 The task is moved to In Progress before an Implementation Plan is added, and that plan records ADR required: yes, ADR-079, and the reason.
 - [x] #3 Targeted automated tests, relevant static checks, and git diff --check pass; a full suite is run only after explicit user approval.
-- [ ] #4 Production-shaped Textual evidence and an isolated live scratch verification cover the user-facing path and preserve unrelated Console and profile state.
+- [x] #4 Production-shaped Textual evidence and an isolated live scratch verification cover the user-facing path and preserve unrelated Console and profile state.
 - [x] #5 Relevant documentation and concise Implementation Notes identify the approach, trade-offs, files changed, verification, and any plan deviation.
 - [ ] #6 A self-review confirms security, privacy, accessibility, performance, licensing, task dependencies, and no unrelated regression before the task is set to Done.
 <!-- DOD:END -->
@@ -60,9 +60,19 @@ files, and redirected profile/config/data/registry-database content before
 and after modal navigation/dismissal. It revealed and fixed a compact-mount
 status-query race in the modal. ADR-079 remains applicable; no new ADR or
 lesson is required. Targeted verification is recorded in the Task 4 report.
-The Task 4 Textual harness evidence is not a substitute for the remaining true
-live-TUI scratch run, so AC #7 and Definition of Done #1/#4 are intentionally
-unchecked. The task remains In Progress pending that evidence and the required
-independent whole-slice review; Definition of Done #6 and the Done status are
-intentionally unchanged.
+The remaining gate was completed in a real `python -m tldw_chatbook.app`
+process under an isolated tmux PTY rooted at `/private/tmp/task-26042-live`.
+Terminal input opened both the active `Live Active` action and the grouped,
+non-active `Live Other` Files action; the latter continued to display `Console
+remains Live Active` while previewing `other-root`. The run covered escaped
+hostile names, literal filtering, 100,000-character UTF-8 paging, 160x50,
+120x40, 100x30, and 80x24 resizes, Escape and explicit-back dismissal, and
+Ctrl+Q teardown. Before/after SHA-256 fingerprints for both recursive roots and
+the disposable config, plus a logical digest of all workspace-registry tables,
+were identical; the visible active conversation/workspace and `Approvals: 0`
+also remained unchanged, and no tmux/app process remained. The automated
+four-size test was strengthened to fingerprint both workspace roots
+recursively and passes 4/4. AC #7 and Definition of Done #4 are now evidenced.
+The task remains In Progress only for the final independent whole-slice review
+and Definition of Done #1/#6; Done status is intentionally unchanged.
 <!-- SECTION:NOTES:END -->

@@ -37,17 +37,33 @@ class _StyledConsoleHarness(ConsoleHarness):
     CSS_PATH = str(ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss")
 
 
-def _scratch_tree_fingerprint(root: Path) -> tuple[tuple[str, str], ...]:
-    """Return a content fingerprint without exposing scratch file bodies."""
+def _scratch_tree_fingerprint(root: Path) -> tuple[tuple[str, str, str], ...]:
+    """Return a recursive, content-safe fingerprint without file bodies."""
     if not root.exists():
         return ()
-    return tuple(
-        (
-            str(item.relative_to(root)),
-            hashlib.sha256(item.read_bytes()).hexdigest(),
-        )
-        for item in sorted(root.rglob("*"))
-        if item.is_file()
+    entries: list[tuple[str, str, str]] = []
+    for item in sorted(root.rglob("*")):
+        relative = str(item.relative_to(root))
+        if item.is_symlink():
+            entries.append((relative, "symlink", os.readlink(item)))
+        elif item.is_dir():
+            entries.append((relative, "directory", ""))
+        elif item.is_file():
+            entries.append(
+                (relative, "file", hashlib.sha256(item.read_bytes()).hexdigest())
+            )
+        else:
+            entries.append((relative, "other", ""))
+    return tuple(entries)
+
+
+def _workspace_roots_fingerprint(
+    active_root: Path, other_root: Path
+) -> tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...]:
+    """Fingerprint both named workspace roots before and after a read-only visit."""
+    return (
+        ("active", _scratch_tree_fingerprint(active_root)),
+        ("other", _scratch_tree_fingerprint(other_root)),
     )
 
 
@@ -217,13 +233,13 @@ async def test_shipped_css_four_size_routes_keep_read_only_console_fingerprint(
     (active_root / hostile_name).write_text("hostile label only", encoding="utf-8")
     large_payload = "é" * 100_000 + "🙂" * 100_001
     (active_root / "large.txt").write_text(large_payload, encoding="utf-8")
+    (active_root / "nested").mkdir()
+    (active_root / "nested" / "unchanged.txt").write_text("nested active", encoding="utf-8")
+    (other_root / "nested").mkdir()
+    (other_root / "nested" / "unchanged.txt").write_text("nested other", encoding="utf-8")
     service.set_active_workspace("ws-active")
     initial_bindings = service.list_runtime_bindings("ws-active")
-    initial_files = {
-        item.relative_to(active_root): item.read_bytes()
-        for item in active_root.iterdir()
-        if item.is_file()
-    }
+    initial_workspace_trees = _workspace_roots_fingerprint(active_root, other_root)
     host = _StyledConsoleHarness(app)
 
     async with host.run_test(size=size) as pilot:
@@ -327,11 +343,7 @@ async def test_shipped_css_four_size_routes_keep_read_only_console_fingerprint(
         assert _console_fingerprint(console, app) == before
         assert _redirected_scratch_fingerprint(app) == scratch_before
         assert service.list_runtime_bindings("ws-active") == initial_bindings
-        assert {
-            item.relative_to(active_root): item.read_bytes()
-            for item in active_root.iterdir()
-            if item.is_file()
-        } == initial_files
+        assert _workspace_roots_fingerprint(active_root, other_root) == initial_workspace_trees
 
 
 @pytest.mark.asyncio
