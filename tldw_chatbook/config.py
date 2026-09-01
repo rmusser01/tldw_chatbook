@@ -18,6 +18,7 @@ if sys.version_info < (3, 11):
 else:
     import tomllib
 import os
+import time
 from pathlib import Path
 import toml
 import portalocker
@@ -5114,6 +5115,18 @@ except tomllib.TOMLDecodeError as e:
 # --- Primary Configuration Loading Logic for the CLI ---
 _CONFIG_CACHE: Optional[Dict[str, Any]] = None
 _CONFIG_CACHE_SOURCE: Optional[Path] = None
+#: TASK-26038: (mtime_ns, size) of the config file at its last successful
+#: load, and the last monotonic time we statted it. A THROTTLED inline
+#: metadata check on the read path picks up external edits without a
+#: filesystem watcher or a polling thread, while keeping TASK-21124's
+#: near-zero hot path (one stat per throttle window, not per read).
+_CONFIG_FILE_STAMP: Optional[tuple[int, int]] = None
+_CONFIG_STAT_CHECKED_MONOTONIC: float = 0.0
+#: How often (seconds) the read path may re-stat the file. An external edit
+#: is picked up on the next read after this window. Small enough to feel
+#: immediate, large enough that a burst of ~400 get_cli_setting calls in one
+#: render statts at most once.
+_CONFIG_STAT_THROTTLE_SECONDS: float = 1.0
 _FIRST_PROFILE_CREATED_THIS_SESSION = False
 
 
@@ -5199,6 +5212,7 @@ def _load_cli_config_bootstrap_unlocked(
 ) -> _ConfigBootstrapResult:
     global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE, _LAST_CONFIG_LOAD_FAILURE
     global _FIRST_PROFILE_CREATED_THIS_SESSION
+    global _CONFIG_FILE_STAMP, _CONFIG_STAT_CHECKED_MONOTONIC
     config_path = _get_effective_config_path()
     if (
         _CONFIG_CACHE is not None
@@ -5309,6 +5323,10 @@ def _load_cli_config_bootstrap_unlocked(
     if bootstrap_succeeded:
         _CONFIG_CACHE = loaded_config
         _CONFIG_CACHE_SOURCE = config_path
+        # TASK-26038: stamp the file we just loaded so a later external edit
+        # is detected, and reset the throttle so the next read re-checks.
+        _CONFIG_FILE_STAMP = _current_config_file_stamp(config_path)
+        _CONFIG_STAT_CHECKED_MONOTONIC = time.monotonic()
         # A later successful load (e.g. the user or the app repaired the
         # file) retires any previously recorded parse failure.
         _LAST_CONFIG_LOAD_FAILURE = None
@@ -5459,6 +5477,33 @@ def _config_write_lock(config_path: Path) -> Iterator[None]:
         yield
 
 
+def _current_config_file_stamp(config_path: Path) -> Optional[tuple[int, int]]:
+    """(mtime_ns, size) for the config file, or None when absent/unreadable."""
+    try:
+        st = os.stat(config_path)
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
+
+def _external_edit_detected(config_path: Path) -> bool:
+    """TASK-26038: THROTTLED check for an external edit since the last load.
+
+    Returns True (invalidating the cache) at most once per external change,
+    and stats at most once per ``_CONFIG_STAT_THROTTLE_SECONDS`` so the read
+    hot path keeps its near-zero cost. No thread, no watcher.
+    """
+    global _CONFIG_STAT_CHECKED_MONOTONIC
+    if _CONFIG_FILE_STAMP is None:
+        return False
+    now = time.monotonic()
+    if now - _CONFIG_STAT_CHECKED_MONOTONIC < _CONFIG_STAT_THROTTLE_SECONDS:
+        return False
+    _CONFIG_STAT_CHECKED_MONOTONIC = now
+    current = _current_config_file_stamp(config_path)
+    return current is not None and current != _CONFIG_FILE_STAMP
+
+
 def _load_cli_config_bootstrap(
     force_reload: bool = False,
 ) -> _ConfigBootstrapResult:
@@ -5513,21 +5558,32 @@ def _load_cli_config_bootstrap(
     copy semantics of `load_cli_config_and_ensure_existence` are unchanged.
     """
 
+    edit_detected = False
     if not force_reload:
         config_path = _get_effective_config_path()
         generation_before = _CONFIG_GENERATION
         cached_config = _CONFIG_CACHE
         cached_source = _CONFIG_CACHE_SOURCE
-        if (
+        base_hit = (
             cached_config is not None
             and cached_source == config_path
             and _CONFIG_CACHE is cached_config
             and _CONFIG_GENERATION == generation_before
-        ):
-            return _ConfigBootstrapResult(cached_config, True)
+        )
+        # TASK-26038: only stat when we would otherwise hit -- a miss already
+        # re-reads. The (throttled) check turns a hit into a forced re-read,
+        # never a false hit, so the lock-free soundness reasoning is intact.
+        if base_hit:
+            edit_detected = _external_edit_detected(config_path)
+            if not edit_detected:
+                return _ConfigBootstrapResult(cached_config, True)
 
     with _config_file_lock():
-        return _load_cli_config_bootstrap_unlocked(force_reload=force_reload)
+        # An external edit forces the locked path past its own cache fast
+        # path so the changed file is actually re-read (and re-stamped).
+        return _load_cli_config_bootstrap_unlocked(
+            force_reload=force_reload or edit_detected
+        )
 
 
 def _prepare_config_parent(config_path: Path) -> Path | None:
