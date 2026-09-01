@@ -13,6 +13,7 @@ from typing import Any, Callable, Mapping, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
+from tldw_chatbook.Subscriptions.html_text import readable_body_text
 
 from .collections_capture_models import (
     CAPTURE_PAGE_SIZE,
@@ -68,6 +69,20 @@ _STRIPPED_UPDATE_FIELDS = frozenset(
 )
 _CONTENT_UPDATE_FIELDS = frozenset(
     {"freeform_note", "text_content", "clean_html"}
+)
+_EXTRACTION_FAILURE_REASONS = frozenset(
+    {
+        "dependency_missing",
+        "empty_extraction",
+        "fetch_failed",
+        "invalid_url",
+        "network_error",
+        "redirect_limit",
+        "response_too_large",
+        "unsafe_url",
+        "unsupported_content",
+        "unknown",
+    }
 )
 
 
@@ -498,6 +513,158 @@ class CollectionsCaptureRepository:
                 raise CollectionsCaptureError("capture_update_failed")
             return detail
 
+    def claim_extraction(
+        self,
+        identity: CaptureIdentity,
+        *,
+        expected_revision: int,
+    ) -> CaptureDetail:
+        """Claim one queued capture for extraction."""
+        self._require_identity(identity)
+        expected_revision = self._expected_revision(expected_revision)
+        now = self._clock()
+        with self.db.transaction() as connection:
+            self._extraction_row(
+                connection,
+                identity,
+                expected_revision=expected_revision,
+                states={"queued"},
+            )
+            connection.execute(
+                "UPDATE collection_capture_items SET processing_state = 'processing', "
+                "last_fetch_error = NULL, updated_at = ?, revision = revision + 1 "
+                "WHERE authority_key = ? AND capture_id = ? AND revision = ? "
+                "AND processing_state = 'queued'",
+                (now, self.authority_key, identity.capture_id, expected_revision),
+            )
+            return self._written_detail(connection, identity)
+
+    def complete_extraction(
+        self,
+        identity: CaptureIdentity,
+        *,
+        expected_revision: int,
+        result: Mapping[str, Any],
+    ) -> CaptureDetail:
+        """Store extracted content as inert text and finish the active claim."""
+        self._require_identity(identity)
+        expected_revision = self._expected_revision(expected_revision)
+        if not isinstance(result, Mapping) or not isinstance(result.get("content"), str):
+            raise CollectionsCaptureError("invalid_extraction_result")
+        text_content = readable_body_text(result["content"]).strip()
+        if not text_content:
+            raise CollectionsCaptureError("empty_extraction_content")
+        now = self._clock()
+        with self.db.transaction() as connection:
+            row = self._extraction_row(
+                connection,
+                identity,
+                expected_revision=expected_revision,
+                states={"processing"},
+            )
+            title = self._inert_optional_extraction_text(
+                result.get("title"),
+                reason="invalid_extraction_title",
+            )
+            byline = self._inert_optional_extraction_text(
+                result.get("author"),
+                reason="invalid_extraction_author",
+            )
+            connection.execute(
+                "UPDATE collection_capture_items SET text_content = ?, clean_html = NULL, "
+                "title = ?, byline = ?, content_hash = ?, word_count = ?, "
+                "processing_state = 'ready', last_fetch_error = NULL, updated_at = ?, "
+                "revision = revision + 1 "
+                "WHERE authority_key = ? AND capture_id = ? AND revision = ? "
+                "AND processing_state = 'processing'",
+                (
+                    text_content,
+                    title or row["title"],
+                    byline or row["byline"],
+                    _content_hash(text_content, None),
+                    self._word_count(text_content),
+                    now,
+                    self.authority_key,
+                    identity.capture_id,
+                    expected_revision,
+                ),
+            )
+            return self._written_detail(connection, identity)
+
+    def fail_extraction(
+        self,
+        identity: CaptureIdentity,
+        *,
+        expected_revision: int,
+        reason: str,
+    ) -> CaptureDetail:
+        """Finish an active extraction with a bounded, content-free reason."""
+        self._require_identity(identity)
+        expected_revision = self._expected_revision(expected_revision)
+        if reason not in _EXTRACTION_FAILURE_REASONS:
+            raise CollectionsCaptureError("invalid_extraction_failure_reason")
+        now = self._clock()
+        with self.db.transaction() as connection:
+            self._extraction_row(
+                connection,
+                identity,
+                expected_revision=expected_revision,
+                states={"processing"},
+            )
+            connection.execute(
+                "UPDATE collection_capture_items SET processing_state = 'failed', "
+                "last_fetch_error = ?, updated_at = ?, revision = revision + 1 "
+                "WHERE authority_key = ? AND capture_id = ? AND revision = ? "
+                "AND processing_state = 'processing'",
+                (
+                    reason,
+                    now,
+                    self.authority_key,
+                    identity.capture_id,
+                    expected_revision,
+                ),
+            )
+            return self._written_detail(connection, identity)
+
+    def retry_extraction(
+        self,
+        identity: CaptureIdentity,
+        *,
+        expected_revision: int,
+    ) -> CaptureDetail:
+        """Requeue one failed or interrupted extraction without changing reading state."""
+        self._require_identity(identity)
+        expected_revision = self._expected_revision(expected_revision)
+        now = self._clock()
+        with self.db.transaction() as connection:
+            self._extraction_row(
+                connection,
+                identity,
+                expected_revision=expected_revision,
+                states={"failed", "interrupted"},
+            )
+            connection.execute(
+                "UPDATE collection_capture_items SET processing_state = 'queued', "
+                "last_fetch_error = NULL, updated_at = ?, revision = revision + 1 "
+                "WHERE authority_key = ? AND capture_id = ? AND revision = ? "
+                "AND processing_state IN ('failed', 'interrupted')",
+                (now, self.authority_key, identity.capture_id, expected_revision),
+            )
+            return self._written_detail(connection, identity)
+
+    def interrupt_stale_extractions(self) -> int:
+        """Mark this authority's abandoned processing rows interrupted at startup."""
+        now = self._clock()
+        with self.db.transaction() as connection:
+            cursor = connection.execute(
+                "UPDATE collection_capture_items SET processing_state = 'interrupted', "
+                "last_fetch_error = 'interrupted', updated_at = ?, revision = revision + 1 "
+                "WHERE authority_key = ? AND processing_state = 'processing' "
+                "AND purge_state IS NULL",
+                (now, self.authority_key),
+            )
+            return int(cursor.rowcount)
+
     def list_saved_searches(
         self,
         *,
@@ -851,6 +1018,36 @@ class CollectionsCaptureRepository:
             raise CollectionsCaptureError("capture_not_found")
         return row
 
+    def _extraction_row(
+        self,
+        connection: sqlite3.Connection,
+        identity: CaptureIdentity,
+        *,
+        expected_revision: int,
+        states: set[str],
+    ) -> sqlite3.Row:
+        row = self._active_item_row(connection, identity)
+        if int(row["revision"]) != expected_revision:
+            current = self._get_detail(connection, identity)
+            if current is None:
+                raise CollectionsCaptureError("capture_not_found")
+            raise CaptureConflictError(
+                CaptureConflict(identity, expected_revision, current)
+            )
+        if str(row["processing_state"]) not in states:
+            raise CollectionsCaptureError("invalid_extraction_state")
+        return row
+
+    def _written_detail(
+        self,
+        connection: sqlite3.Connection,
+        identity: CaptureIdentity,
+    ) -> CaptureDetail:
+        detail = self._get_detail(connection, identity)
+        if detail is None:
+            raise CollectionsCaptureError("capture_update_failed")
+        return detail
+
     def _get_detail(
         self,
         connection: sqlite3.Connection,
@@ -1050,6 +1247,14 @@ class CollectionsCaptureRepository:
         if text_content is None:
             return None
         return len(text_content.split())
+
+    @staticmethod
+    def _inert_optional_extraction_text(value: Any, *, reason: str) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise CollectionsCaptureError(reason)
+        return readable_body_text(value).strip() or None
 
     @staticmethod
     def _saved_search_name(name: str) -> str:
