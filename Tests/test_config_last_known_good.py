@@ -48,7 +48,8 @@ def test_parse_failure_after_a_good_load_serves_last_known_good(tmp_path, monkey
     failure = config_module.get_config_load_failure()
     assert failure is not None
     assert failure.path == target
-    # AC#2: the corrupt file is preserved aside, and the good file restored
+    # AC#2: the corrupt file is preserved aside (the good config is served
+    # from the in-memory last-known-good; nothing is rewritten to disk)
     aside = list(tmp_path.glob("config.toml.corrupt*"))
     assert aside, "the unparseable file must be preserved under a distinct name"
     assert aside[0].read_text() == _BAD
@@ -86,3 +87,37 @@ def test_recovery_after_the_file_is_fixed_clears_everything(tmp_path, monkeypatc
     assert fixed.succeeded is True
     assert fixed.config["general"]["users_name"] == "Bob"
     assert config_module.get_config_load_failure() is None
+
+
+def test_corrupt_file_is_preserved_once_not_every_read(tmp_path, monkeypatch):
+    """TASK-26036 (lane-7 review Important #2): a persistently-corrupt config
+    must be copied aside at most once, not on every read -- otherwise a live
+    TUI reading config hundreds of times per render accumulates a new
+    .corrupt-<stamp> file and a full file copy on every read."""
+    import shutil as _shutil
+    from tldw_chatbook import config as cfg
+
+    target = tmp_path / "config.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    _clear()
+    cfg._LAST_PRESERVED_CORRUPT_KEY = None
+
+    target.write_text('[general]\nusers_name = "Alice')  # unterminated -> corrupt
+
+    copies = {"n": 0}
+    real_copy = _shutil.copy2
+
+    def counting_copy(src, dst, *a, **k):
+        copies["n"] += 1
+        return real_copy(src, dst, *a, **k)
+
+    monkeypatch.setattr(cfg.shutil, "copy2", counting_copy)
+
+    for _ in range(5):
+        cfg._load_cli_config_bootstrap_unlocked(force_reload=True)
+
+    assert copies["n"] == 1, (
+        f"{copies['n']} copies of the same corrupt file; it must be preserved once"
+    )
+    asides = list(tmp_path.glob("config.toml.corrupt*"))
+    assert len(asides) == 1, f"expected one aside, got {len(asides)}"

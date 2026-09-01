@@ -398,6 +398,7 @@ from .config import (
     persist_cli_config_for_shutdown,
     set_encryption_password,
     get_config_load_failure,
+    get_config_schema_conflict,
 )
 from .Event_Handlers import worker_events
 from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
@@ -7311,6 +7312,11 @@ class TldwCli(
         # (including the resolved data directory silently becoming the
         # `default_user` profile) had no visible signal at all.
         self._config_load_failure = get_config_load_failure()
+        # TASK-26040 (lane-7 review Important #3): snapshot a newer-than-
+        # supported config schema version the loader detected. Served
+        # untouched (never mangled by a downgrade); surfaced once mounted,
+        # mirroring the parse-failure notification above.
+        self._config_schema_conflict = get_config_schema_conflict()
         # RAG-53 (task-7): advisory per-profile instance lock. The profile
         # (and thus its data dir) is final as soon as config is loaded --
         # earliest sound point for this. Detection only: never blocks,
@@ -13575,6 +13581,27 @@ class TldwCli(
             timeout=60,
         )
 
+    def _maybe_warn_config_schema_conflict(self) -> None:
+        """Warn (never block) when the config is from a newer app version.
+
+        TASK-26040 AC#5: a config carrying a schema version newer than this
+        build understands is served untouched rather than migrated (a
+        downgrade could silently drop keys). This surfaces the detected
+        conflict once the UI is up so the user knows why newer settings may
+        not take effect, mirroring `_maybe_warn_config_load_failure`.
+        """
+        conflict = getattr(self, "_config_schema_conflict", None)
+        if not conflict:
+            return
+        self.notify(
+            f"Your configuration was written by a newer version of this "
+            f"application and was left unchanged (not migrated). Some newer "
+            f"settings may not take effect until you upgrade. {conflict}",
+            title="Config is from a newer version",
+            severity="warning",
+            timeout=60,
+        )
+
     def _maybe_warn_second_instance(self) -> None:
         """Warn (never block) when another instance already holds this profile.
 
@@ -14065,6 +14092,7 @@ class TldwCli(
             self._maybe_offer_project_skills_import()
         try:
             self._maybe_warn_config_load_failure()
+            self._maybe_warn_config_schema_conflict()
         except Exception as e:
             logger.error(
                 "Config load failure warning failed (error_type=%s)",

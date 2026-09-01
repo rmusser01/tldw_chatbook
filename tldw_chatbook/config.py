@@ -5226,7 +5226,7 @@ def validate_config_keys(
                     if not _is_freeform_config_path(here):
                         _walk(value, ref_value, here)
                 continue
-            if _is_freeform_config_path(here) or _is_freeform_config_path(path):
+            if _is_freeform_config_path(here):
                 continue
             siblings = [k for k in ref.keys() if isinstance(k, str)]
             match = difflib.get_close_matches(key, siblings, n=1, cutoff=0.8)
@@ -5373,23 +5373,46 @@ def migrate_config_file_if_needed() -> Optional[Path]:
         return backup_path
 
 
+#: (path, mtime_ns, size) of the corrupt file most recently preserved aside,
+#: with the aside path. On a persistent parse failure the cache is never
+#: populated, so every read re-enters this path; without this dedup a live TUI
+#: would copy the same broken file and mint a new .corrupt-<stamp> on every
+#: read (lane-7 review Important #2). Only a genuinely changed corrupt file
+#: (the user edited it again, still broken) earns a fresh aside.
+_LAST_PRESERVED_CORRUPT_KEY: Optional[tuple[str, int, int]] = None
+_LAST_PRESERVED_CORRUPT_ASIDE: Optional[Path] = None
+
+
 def _preserve_corrupt_config_aside(config_path: Path) -> Optional[Path]:
     """Copy an unparseable config file aside so the user's edits survive.
 
     TASK-26036 AC#2. Best-effort: a failure to copy must never break the
     fallback path (the whole point is resilience), so any error is logged
-    and swallowed. Returns the aside path when a copy was made.
+    and swallowed. Deduplicated by the corrupt file's (mtime_ns, size) so a
+    persistently-broken file is preserved once, not on every read. Returns
+    the aside path (freshly made or the prior one for an unchanged file).
     """
+    global _LAST_PRESERVED_CORRUPT_KEY, _LAST_PRESERVED_CORRUPT_ASIDE
     try:
         source = Path(config_path)
         if not source.exists():
             return None
+        stat = source.stat()
+        key = (str(source), stat.st_mtime_ns, stat.st_size)
+        if (
+            key == _LAST_PRESERVED_CORRUPT_KEY
+            and _LAST_PRESERVED_CORRUPT_ASIDE is not None
+            and _LAST_PRESERVED_CORRUPT_ASIDE.exists()
+        ):
+            return _LAST_PRESERVED_CORRUPT_ASIDE
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
         aside = source.with_name(f"{source.name}.corrupt-{stamp}")
         shutil.copy2(source, aside)
         logger.warning(
             f"Preserved unparseable config {source} at {aside}"
         )
+        _LAST_PRESERVED_CORRUPT_KEY = key
+        _LAST_PRESERVED_CORRUPT_ASIDE = aside
         return aside
     except Exception as exc:  # noqa: BLE001 -- resilience path never raises
         logger.warning(f"Could not preserve corrupt config aside: {exc!r}")
@@ -5465,6 +5488,9 @@ def _load_cli_config_bootstrap_unlocked(
     )
     _CONFIG_CACHE = None
     _CONFIG_CACHE_SOURCE = None
+    # TASK-26040 (lane-7 review Minor): clear any prior schema conflict so a
+    # later parse-failure load does not retain a stale "newer version" warning.
+    _CONFIG_SCHEMA_CONFLICT = None
 
     # Start with the programmatic defaults defined in CONFIG_TOML_CONTENT
     loaded_config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
@@ -5976,6 +6002,7 @@ def _install_bootstrap_cache_from_raw(
     """
 
     global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE, _LAST_CONFIG_LOAD_FAILURE
+    global _CONFIG_FILE_STAMP, _CONFIG_STAT_CHECKED_MONOTONIC
 
     config_path = _get_effective_config_path()
     merged = deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, dict(raw_config))
@@ -5995,6 +6022,14 @@ def _install_bootstrap_cache_from_raw(
     _CONFIG_CACHE = loaded_config
     _CONFIG_CACHE_SOURCE = config_path
     _LAST_CONFIG_LOAD_FAILURE = None
+    # TASK-26038 (lane-7 review Important #1): stamp the file WE just wrote so a
+    # read after the stat-throttle window does not mistake our own write for an
+    # external edit and force a redundant locked re-read. This is the write-path
+    # twin of the stamp refresh in `_load_cli_config_bootstrap_unlocked`;
+    # refreshing only one twin left the TASK-21124 coalescing broken on the
+    # first read after every write.
+    _CONFIG_FILE_STAMP = _current_config_file_stamp(config_path)
+    _CONFIG_STAT_CHECKED_MONOTONIC = time.monotonic()
     return loaded_config
 
 

@@ -85,3 +85,39 @@ def test_manual_reload_still_works(tmp_path, monkeypatch):
     target.write_text('[general]\nusers_name = "Bob"\n')
     forced = config_module.load_cli_config_and_ensure_existence(force_reload=True)
     assert forced["general"]["users_name"] == "Bob"
+
+
+def test_self_write_is_not_a_phantom_external_edit_across_throttle(tmp_path, monkeypatch):
+    """TASK-26038 regression (lane-7 review Important #1): after the app writes
+    the config itself, a read occurring AFTER the stat-throttle window must NOT
+    treat its own write as an external edit and force a locked re-read. The
+    earlier test only read within the throttle window and missed this."""
+    target = tmp_path / "config.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    config_module._CONFIG_CACHE = None
+    config_module._CONFIG_CACHE_SOURCE = None
+    config_module._SETTINGS_CACHE = None
+    config_module._SETTINGS_CACHE_SOURCE = None
+    config_module._CONFIG_FILE_STAMP = None
+
+    config_module.load_settings(force_reload=True)
+    config_module.save_setting_to_cli_config("probe", "k", "v")
+
+    # simulate the throttle window having elapsed since the write
+    config_module._CONFIG_STAT_CHECKED_MONOTONIC = 0.0
+
+    real_open = config_module.open_private_binary
+    reads = {"n": 0}
+
+    def counting_open(path, *a, **k):
+        reads["n"] += 1
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr(config_module, "open_private_binary", counting_open)
+    config_module.get_cli_setting("general", "users_name")
+
+    assert reads["n"] == 0, (
+        f"{reads['n']} file re-read(s) after a self-write across the throttle "
+        "window; the app's own write must refresh the stamp so it is not seen "
+        "as an external edit"
+    )
