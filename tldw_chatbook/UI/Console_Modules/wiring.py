@@ -47,6 +47,7 @@ do not reintroduce a re-export in `chat_screen.py` to patch through.
 
 from collections.abc import Callable
 from pathlib import Path
+import threading
 from typing import Any, TYPE_CHECKING
 
 from textual.css.query import QueryError
@@ -58,6 +59,9 @@ from tldw_chatbook.Chat.console_fleet_attention import (
     fleet_unseen_conversation_ids,
 )
 from tldw_chatbook.Chat.console_runtime import leave_console_runtime
+from tldw_chatbook.Terminal.launch import discover_shell_choices
+from tldw_chatbook.Workspaces.models import RuntimeBindingStatus
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     ConsoleAutoSpeakCoordinator,
 )
@@ -67,6 +71,9 @@ from tldw_chatbook.Widgets.Console.console_speech_controls import (
 )
 from tldw_chatbook.Widgets.Console.console_feedback_comment_modal import (
     ConsoleFeedbackCommentModal,
+)
+from tldw_chatbook.Widgets.Console.console_terminal_workspace import (
+    ConsoleTerminalWorkspace,
 )
 
 from .agent import ConsoleAgentController
@@ -95,6 +102,7 @@ from .retrieval import ConsoleRetrievalController
 from .send_price import ConsoleSendPriceController
 from .session import ConsoleSessionController
 from .skill import ConsoleSkillController
+from .terminal import ConsoleTerminalController
 from .transcript import ConsoleChangeReviewProjection
 from .video import ConsoleVideoController
 from .workspace import (
@@ -382,9 +390,13 @@ def _raw_cli_persist_session_if_needed(
     return screen._ensure_console_chat_store().persist_session_if_needed(session_id)
 
 
-def _selected_console_local_root(screen: Any, session_id: str) -> Path | None:
+def _selected_console_local_root(
+    screen: Any,
+    session_id: str | None = None,
+) -> Path | None:
     """Resolve the session's selected local-folder binding, if still usable."""
     store = screen._ensure_console_chat_store()
+    session_id = session_id or store.active_session_id
     session = next(
         (item for item in store.sessions() if item.id == session_id),
         None,
@@ -399,6 +411,9 @@ def _selected_console_local_root(screen: Any, session_id: str) -> Path | None:
         return None
     try:
         binding = registry.get_runtime_binding(selected_id)
+        status = getattr(binding, "status", None)
+        if getattr(status, "value", status) != RuntimeBindingStatus.READY.value:
+            return None
         if str(getattr(binding, "workspace_id", "")) != str(session.workspace_id):
             return None
         kind = getattr(binding, "binding_kind", None)
@@ -408,6 +423,24 @@ def _selected_console_local_root(screen: Any, session_id: str) -> Path | None:
         return root if root.is_absolute() and root.exists() and root.is_dir() else None
     except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
         return None
+
+
+def _marshal_terminal_to_ui(screen: Any, callback: Callable[[], None]) -> None:
+    """Run manager notifications on Textual's thread without same-thread calls."""
+    if threading.get_ident() == getattr(screen.app_instance, "_thread_id", None):
+        screen.call_later(callback)
+        return
+    screen.app.call_from_thread(callback)
+
+
+async def _wait_for_terminal_screen_result(screen: Any, modal: Any) -> Any:
+    """Wait for a Terminal modal on the Textual app mounting this screen."""
+    worker = screen.run_worker(
+        screen.app.push_screen_wait(modal),
+        exclusive=False,
+        exit_on_error=False,
+    )
+    return await worker.wait()
 
 
 def build_console_controllers(
@@ -423,7 +456,7 @@ def build_console_controllers(
     `screen._skill`, `screen._workspace`, `screen._character`, `screen._fleet`,
     `screen._session`, `screen._dictation`, `screen._hands_free`,
     `screen._realtime`, `screen._message`, `screen._console_auto_speak`,
-    `screen._prompts`, `screen._agent`, `screen._raw_cli`,
+    `screen._prompts`, `screen._agent`, `screen._terminal`, `screen._raw_cli`,
     `screen._prompt_queue`, `screen._review_selection`, and
     `screen._send_price`. The order is documentation, not a constraint:
     every cross-controller dependency below is resolved at call time (see the
@@ -1638,6 +1671,26 @@ def build_console_controllers(
         sync_native_console_chat_ui_accessor=(
             lambda: screen._sync_native_console_chat_ui
         ),
+    )
+    screen._console_terminal_workspace = ConsoleTerminalWorkspace(
+        id="console-main-column"
+    )
+    screen._terminal = ConsoleTerminalController(
+        terminal_runtime=lambda: screen.app_instance.terminal_session_manager,
+        workspace_accessor=lambda: screen._console_terminal_workspace,
+        selected_local_root=lambda: _selected_console_local_root(screen),
+        account_home=lambda: Path.home(),
+        open_privacy_settings=lambda: screen._open_terminal_privacy_settings(),
+        confirm=lambda title, message: _wait_for_terminal_screen_result(
+            screen,
+            ConfirmationDialog(title=title, message=message),
+        ),
+        present_session_modal=lambda modal: _wait_for_terminal_screen_result(
+            screen, modal
+        ),
+        marshal_to_ui=lambda callback: _marshal_terminal_to_ui(screen, callback),
+        schedule_frame=lambda callback: screen.call_after_refresh(callback),
+        shell_choices=discover_shell_choices,
     )
     screen._raw_cli = ConsoleRawCliController(
         raw_cli_runtime=lambda: screen.app_instance.raw_cli_runtime,

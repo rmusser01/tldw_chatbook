@@ -8,11 +8,14 @@ from typing import Any
 
 import pytest
 from rich.text import Text
+from textual import on
 from textual.app import ComposeResult
 from textual.widgets import Button, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Terminal.contracts import (
+    MAX_COLUMNS,
+    MAX_ROWS,
     TERMINAL_DISCLOSURE_LINES,
     TerminalLaunchRequest,
     TerminalLifecycle,
@@ -38,6 +41,7 @@ from tldw_chatbook.Terminal.session_manager import (
 from tldw_chatbook.UI.Console_Modules.terminal import ConsoleTerminalController
 from tldw_chatbook.UI.Screens import settings_screen
 from tldw_chatbook.Widgets.Console.console_terminal_workspace import (
+    ConsoleTerminalResizeRequested,
     ConsoleTerminalWorkspace,
     TerminalViewport,
 )
@@ -108,9 +112,14 @@ class _WorkspaceApp(ConsolidatedCSSApp):
     def __init__(self, workspace: ConsoleTerminalWorkspace) -> None:
         super().__init__()
         self.workspace = workspace
+        self.resize_requests: list[ConsoleTerminalResizeRequested] = []
 
     def compose(self) -> ComposeResult:
         yield self.workspace
+
+    @on(ConsoleTerminalResizeRequested)
+    def _capture_resize(self, message: ConsoleTerminalResizeRequested) -> None:
+        self.resize_requests.append(message)
 
 
 @pytest.mark.asyncio
@@ -293,6 +302,71 @@ async def test_workspace_discloses_when_visible_allocation_is_clamped() -> None:
             workspace.query_one("#console-terminal-metadata", Static).renderable
         )
         assert "viewport capped at 300×120" in metadata
+
+
+@pytest.mark.parametrize(
+    ("dimension", "outside"),
+    [("width", MAX_COLUMNS + 1), ("height", MAX_ROWS + 1)],
+)
+@pytest.mark.asyncio
+async def test_workspace_updates_live_cap_indicator_across_painted_threshold(
+    dimension: str,
+    outside: int,
+) -> None:
+    selected = _session("one", "One")
+    workspace = ConsoleTerminalWorkspace(id="console-main-column")
+    workspace.project(
+        permitted=True,
+        armed=True,
+        view_state=TerminalViewState(
+            selected_session_id="one",
+            sessions=(selected,),
+        ),
+    )
+    app = _WorkspaceApp(workspace)
+
+    async with app.run_test(size=(400, 180)) as pilot:
+        viewport = workspace.query_one("#console-terminal-viewport", TerminalViewport)
+        viewport.styles.width = MAX_COLUMNS
+        viewport.styles.height = MAX_ROWS
+        await pilot.pause()
+        workspace.project(
+            permitted=True,
+            armed=True,
+            view_state=TerminalViewState(
+                selected_session_id="one",
+                sessions=(selected,),
+            ),
+        )
+        app.resize_requests.clear()
+        metadata = workspace.query_one("#console-terminal-metadata", Static)
+        assert "viewport capped" not in str(metadata.renderable)
+
+        setattr(viewport.styles, dimension, outside)
+        await pilot.pause()
+        assert getattr(viewport.size, dimension) == outside
+        assert "viewport capped at 300×120" in str(metadata.renderable)
+        outside_request = app.resize_requests[-1]
+        assert (outside_request.columns, outside_request.rows) == (
+            MAX_COLUMNS,
+            MAX_ROWS,
+        )
+        assert outside_request.clamped is True
+        assert getattr(outside_request, f"painted_{dimension}") == outside
+
+        setattr(
+            viewport.styles,
+            dimension,
+            MAX_COLUMNS if dimension == "width" else MAX_ROWS,
+        )
+        await pilot.pause()
+        assert "viewport capped" not in str(metadata.renderable)
+        inside_request = app.resize_requests[-1]
+        assert (inside_request.columns, inside_request.rows) == (
+            MAX_COLUMNS,
+            MAX_ROWS,
+        )
+        assert inside_request.clamped is False
 
 
 @pytest.mark.asyncio

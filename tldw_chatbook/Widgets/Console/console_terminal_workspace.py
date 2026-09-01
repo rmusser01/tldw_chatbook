@@ -33,6 +33,7 @@ from tldw_chatbook.Terminal.session_manager import (
 
 _GLOBAL_KEYS = frozenset({"ctrl+p", "ctrl+q", "f1", "f6"})
 _RELEASE_KEY = "ctrl+right_square_bracket"
+_WORKSPACE_GRID_COLUMNS = 6
 _FIXED_KEY_BYTES = {
     "tab": b"\t",
     "enter": b"\r",
@@ -72,6 +73,7 @@ class ConsoleTerminalInputRequested(Message):
 
 
 TerminalAction = Literal[
+    "return",
     "open-settings",
     "arm",
     "new",
@@ -91,6 +93,18 @@ class ConsoleTerminalActionRequested(Message):
         super().__init__()
         self.action = action
         self.session_id = session_id
+
+
+class ConsoleTerminalResizeRequested(Message):
+    """Report the viewport's final painted allocation to the screen controller."""
+
+    def __init__(self, width: int, height: int) -> None:
+        super().__init__()
+        self.painted_width = width
+        self.painted_height = height
+        self.clamped = width > MAX_COLUMNS or height > MAX_ROWS
+        self.columns = min(MAX_COLUMNS, max(MIN_COLUMNS, width or 80))
+        self.rows = min(MAX_ROWS, max(MIN_ROWS, height or 24))
 
 
 def terminal_key_bytes(key: str, character: str | None) -> bytes | None:
@@ -330,6 +344,17 @@ class TerminalViewport(Static):
         self.scroll_down()
         event.stop()
 
+    def on_resize(self) -> None:
+        """Report descendant-only layout changes using actual painted dimensions."""
+        request = ConsoleTerminalResizeRequested(self.size.width, self.size.height)
+        workspace = self._workspace()
+        if workspace is not None:
+            workspace.update_painted_allocation(
+                request.painted_width,
+                request.painted_height,
+            )
+        self.post_message(request)
+
     def _render_current(self) -> None:
         snapshot = self._snapshot
         if snapshot is None:
@@ -365,12 +390,17 @@ class TerminalViewport(Static):
         )
 
     def _notify_workspace(self) -> None:
+        workspace = self._workspace()
+        if workspace is not None:
+            workspace._sync_viewport_status()
+
+    def _workspace(self) -> ConsoleTerminalWorkspace | None:
         parent = self.parent
         while parent is not None:
             if isinstance(parent, ConsoleTerminalWorkspace):
-                parent._sync_viewport_status()
-                return
+                return parent
             parent = parent.parent
+        return None
 
 
 def _snapshot_delta(
@@ -397,6 +427,7 @@ class ConsoleTerminalWorkspace(Static):
         self._selected_session_id: str | None = None
         self._session_ids: tuple[str, ...] = ()
         self._controller_status = ""
+        self._painted_allocation: tuple[int, int] | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("", id="console-terminal-danger", markup=False)
@@ -413,6 +444,7 @@ class ConsoleTerminalWorkspace(Static):
         yield Button("Close", id="console-terminal-close")
         yield Button("Retry cleanup", id="console-terminal-retry")
         yield Button("Jump live", id="console-terminal-jump-live")
+        yield Button("Return to transcript", id="console-terminal-return")
         yield Static("", id="console-terminal-status", markup=False)
 
     def on_mount(self) -> None:
@@ -436,7 +468,9 @@ class ConsoleTerminalWorkspace(Static):
         return columns, rows
 
     def _terminal_allocation(self) -> tuple[int, int, bool]:
-        if self.is_mounted:
+        if self._painted_allocation is not None:
+            width, height = self._painted_allocation
+        elif self.is_mounted:
             viewport = self.query_one("#console-terminal-viewport", TerminalViewport)
             width, height = viewport.size.width, viewport.size.height
         else:
@@ -444,6 +478,19 @@ class ConsoleTerminalWorkspace(Static):
         columns = min(MAX_COLUMNS, max(MIN_COLUMNS, width or 80))
         rows = min(MAX_ROWS, max(MIN_ROWS, height or 24))
         return columns, rows, width > MAX_COLUMNS or height > MAX_ROWS
+
+    def update_painted_allocation(self, width: int, height: int) -> None:
+        """Refresh allocation-only metadata without changing manager state."""
+        self._painted_allocation = (width, height)
+        if not self.is_mounted:
+            return
+        selected = _selected_session(self._projection[2])
+        if (
+            selected is not None
+            and selected.projection.session_id != self._selected_session_id
+        ):
+            selected = None
+        self._sync_selected_metadata(selected)
 
     def jump_live(self) -> None:
         if self.is_mounted:
@@ -519,11 +566,31 @@ class ConsoleTerminalWorkspace(Static):
             selected.projection.session_id if selected is not None else None
         )
         self._project_selected(selected, armed=armed)
+        self._fill_control_rows()
+
+    def _fill_control_rows(self) -> None:
+        """Keep full-span content aligned after each partial control row."""
+        session_controls = [
+            self.query_one(f"#console-terminal-session-{index}", Button)
+            for index in range(MAX_SESSION_RECORDS)
+        ]
+        session_controls.append(self.query_one("#console-terminal-new", Button))
+        bottom_controls = [
+            self.query_one(f"#console-terminal-{name}", Button)
+            for name in ("rename", "focus", "close", "retry", "jump-live", "return")
+        ]
+        for controls in (session_controls, bottom_controls):
+            for control in controls:
+                control.styles.column_span = 1
+            visible = [control for control in controls if control.display]
+            if visible:
+                visible[-1].styles.column_span = (
+                    _WORKSPACE_GRID_COLUMNS - len(visible) + 1
+                )
 
     def _project_selected(
         self, selected: TerminalSessionView | None, *, armed: bool
     ) -> None:
-        metadata = self.query_one("#console-terminal-metadata", Static)
         viewport = self.query_one("#console-terminal-viewport", TerminalViewport)
         rename = self.query_one("#console-terminal-rename", Button)
         focus = self.query_one("#console-terminal-focus", Button)
@@ -540,11 +607,28 @@ class ConsoleTerminalWorkspace(Static):
         if selected is None:
             close.display = False
             retry.display = False
-            metadata.update("No terminal session selected.")
+            self._sync_selected_metadata(None)
             viewport.update(Text())
             self._sync_viewport_status()
             return
 
+        self._sync_selected_metadata(selected)
+        retry.display = has_cleanup_receipt
+        close.display = has_selected and not has_cleanup_receipt
+        viewport.project(
+            session_id=selected.projection.session_id,
+            snapshot=selected.screen,
+        )
+        self._sync_viewport_status()
+
+    def _sync_selected_metadata(
+        self,
+        selected: TerminalSessionView | None,
+    ) -> None:
+        metadata = self.query_one("#console-terminal-metadata", Static)
+        if selected is None:
+            metadata.update("No terminal session selected.")
+            return
         lifecycle = selected.projection.lifecycle
         metadata_text = (
             f"{selected.projection.name} · {lifecycle.value} · {selected.shell} · "
@@ -554,13 +638,6 @@ class ConsoleTerminalWorkspace(Static):
         if clamped:
             metadata_text += f" · viewport capped at {columns}×{rows}"
         metadata.update(metadata_text)
-        retry.display = has_cleanup_receipt
-        close.display = has_selected and not has_cleanup_receipt
-        viewport.project(
-            session_id=selected.projection.session_id,
-            snapshot=selected.screen,
-        )
-        self._sync_viewport_status()
 
     def _sync_viewport_status(self) -> None:
         if not self.is_mounted:
@@ -584,6 +661,7 @@ class ConsoleTerminalWorkspace(Static):
     def _request_action(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
         action_by_id: dict[str, TerminalAction] = {
+            "console-terminal-return": "return",
             "console-terminal-open-settings": "open-settings",
             "console-terminal-arm": "arm",
             "console-terminal-new": "new",

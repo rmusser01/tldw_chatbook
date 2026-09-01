@@ -222,6 +222,7 @@ from ...Chat.console_cost_tracker import (
 from ...Chat.console_exchange_capture import ExchangeCapture
 from ...Chat.console_trace_projection import ProjectedTraceCall
 from ...LLM_Calls.pricing_catalog import get_pricing_catalog
+from ...Terminal.contracts import TerminalLifecycle
 from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
     console_attachable_dictionaries,
     console_attached_dictionaries,
@@ -495,6 +496,12 @@ from ...Widgets.Console.console_speech_controls import (
 )
 from ...Widgets.Console.console_settings_modal import ConsoleSettingsResult
 from ...Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
+from ...Widgets.Console.console_terminal_workspace import (
+    ConsoleTerminalActionRequested,
+    ConsoleTerminalInputRequested,
+    ConsoleTerminalResizeRequested,
+    ConsoleTerminalWorkspace,
+)
 from ...Widgets.Console.console_context_controls import (
     ConsoleContextControlState,
     build_console_context_control_state,
@@ -2059,6 +2066,124 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         message.stop()
         await self._session._open_console_reaction_picker()
+
+    @on(ConsoleLeftRail.TerminalRequested)
+    def on_console_left_rail_terminal_requested(
+        self, message: ConsoleLeftRail.TerminalRequested
+    ) -> None:
+        """Route the visible rail entry through the guarded screen action."""
+        message.stop()
+        self.action_open_console_terminal()
+
+    def _open_terminal_privacy_settings(self) -> None:
+        """Route locked Terminal access to canonical Privacy & Security settings."""
+        self.post_message(
+            NavigateToScreen(
+                TAB_SETTINGS,
+                screen_context={
+                    "category": SettingsCategoryId.PRIVACY_SECURITY.value,
+                },
+            )
+        )
+
+    def action_open_console_terminal(self) -> None:
+        """Open the user-only center after enforcing launch permission."""
+        runtime = self.app_instance.terminal_session_manager
+        permitted = getattr(runtime, "permitted", False) is True
+        cleanup_visible = any(
+            projection.lifecycle is TerminalLifecycle.CLEANUP_UNPROVEN
+            for projection in runtime.projections()
+        )
+        if not permitted and not cleanup_visible:
+            self._open_terminal_privacy_settings()
+            return
+        if not self._terminal.open_workspace():
+            return
+        self._console_terminal_open = True
+        self.call_later(self._swap_console_center)
+
+    async def _swap_console_center(self) -> None:
+        """Replace only the mounted center child at its current grid position."""
+        try:
+            current = self.query_one("#console-main-column", Widget)
+            grid = self.query_one("#console-workspace-grid", Widget)
+        except QueryError:
+            return
+        replacement = self._build_console_center()
+        if replacement is current:
+            self.call_after_refresh(self._focus_open_console_terminal)
+            return
+        siblings = list(grid.children)
+        try:
+            next_sibling = siblings[siblings.index(current) + 1]
+        except (IndexError, ValueError):
+            return
+        replacement.styles.width = current.styles.width
+        replacement.styles.min_width = current.styles.min_width
+        replacement.styles.min_height = current.styles.min_height
+        await current.remove()
+        await grid.mount(replacement, before=next_sibling)
+        if self._console_terminal_open:
+            self.call_after_refresh(self._focus_open_console_terminal)
+        else:
+            self.call_after_refresh(
+                self._focus_console_workbench_target,
+                "console-transcript-surface",
+            )
+
+    def _focus_open_console_terminal(self) -> None:
+        """Focus the one useful Terminal control for its current authority state."""
+        try:
+            workspace = self.query_one("#console-main-column", ConsoleTerminalWorkspace)
+        except QueryError:
+            return
+        runtime = self.app_instance.terminal_session_manager
+        if getattr(runtime, "armed", False) is True:
+            if getattr(runtime, "selected_session_id", None) is not None:
+                workspace.focus_terminal()
+                return
+            target_id = "console-terminal-new"
+        else:
+            retry = workspace.query_one("#console-terminal-retry", Button)
+            target_id = (
+                "console-terminal-retry" if retry.display else "console-terminal-arm"
+            )
+        workspace.query_one(f"#{target_id}", Button).focus()
+
+    def _return_from_console_terminal(self) -> None:
+        """Detach only this view and restore the transcript center and focus."""
+        self._terminal.detach_workspace()
+        self._console_terminal_open = False
+        self.call_later(self._swap_console_center)
+
+    @on(ConsoleTerminalActionRequested)
+    async def on_console_terminal_action_requested(
+        self, message: ConsoleTerminalActionRequested
+    ) -> None:
+        """Route direct-user Terminal actions outside the model/tool pipeline."""
+        message.stop()
+        if message.action == "return":
+            self._return_from_console_terminal()
+            return
+        await self._terminal.handle_action(message.action, message.session_id)
+
+    @on(ConsoleTerminalInputRequested)
+    def on_console_terminal_input_requested(
+        self, message: ConsoleTerminalInputRequested
+    ) -> None:
+        """Forward freshly encoded viewport input only to the Terminal manager."""
+        message.stop()
+        self._terminal.send_key(message.data)
+
+    @on(ConsoleTerminalResizeRequested)
+    async def on_console_terminal_resize_requested(
+        self, message: ConsoleTerminalResizeRequested
+    ) -> None:
+        """Resize the PTY from the viewport's final painted allocation."""
+        message.stop()
+        if not self._console_terminal_open or not self._terminal.is_open:
+            return
+        await self._terminal.request_resize(message.columns, message.rows)
 
     @on(ConsoleInspectorSection.RowActivated)
     def on_console_agent_fleet_row_activated(
@@ -5615,6 +5740,7 @@ class ChatScreen(BaseAppScreen):
         self._console_agent_fleet_sync_scheduled = False
         self._console_rail_system_line_last: tuple[str, bool] | None = None
         self._console_rail_prune_dispatched = False
+        self._console_terminal_open = False
         # The six Console controllers -- their construction and every
         # named dependency they take -- moved verbatim to
         # `Console_Modules/wiring.py` (wave-4 console decomposition,
@@ -12736,6 +12862,42 @@ class ChatScreen(BaseAppScreen):
             # failure here (worst case a claim supersedes the result).
             return False
 
+    def _build_console_center(self) -> Widget:
+        """Build the current center without changing any surrounding shell chrome."""
+        if self._console_terminal_open:
+            return self._console_terminal_workspace
+        return ConsoleTranscriptRegion(
+            session_surface_builder=lambda: self._ensure_console_session_surface(),
+            recovery_message_builder=(
+                lambda: (
+                    self._ensure_console_chat_controller().provider_continuation_recovery_message()
+                )
+            ),
+            recovery_replay_available_builder=(
+                lambda: (
+                    self._ensure_console_chat_controller().provider_continuation_replay_available()
+                )
+            ),
+            on_recovery_action=(
+                lambda action, message_id, version: (
+                    self._ensure_console_chat_controller().recover_provider_continuation(
+                        action, message_id, version
+                    )
+                )
+            ),
+            trace_recovery_state_builder=(
+                lambda: trace_call_recovery_state(
+                    self._ensure_console_chat_controller().trace_call_recovery_preparation()
+                )
+            ),
+            on_trace_recovery_action=partial(
+                dispatch_trace_call_recovery_action,
+                self._ensure_console_chat_controller(),
+                on_started=self._start_console_transcript_sync_timer,
+                on_finished=self._sync_native_console_chat_ui,
+            ),
+        )
+
     def compose_content(self) -> ComposeResult:
         """Compose the chat content."""
         pending_launch = self._consume_pending_console_launch()
@@ -13012,43 +13174,10 @@ class ChatScreen(BaseAppScreen):
                     left_rail.styles.display = "none"
                 yield self._frame_console_region(left_rail, edges=("right",))
 
-                # A zero-arg builder, not a pre-built widget, for the same
-                # reason `character_avatar_widget_builder` above is one --
-                # Sizing stays here because it describes this pane among its siblings
-                # (3fr / 13fr / 4fr), exactly as both rails are wired.
-                main_column = ConsoleTranscriptRegion(
-                    session_surface_builder=(
-                        lambda: self._ensure_console_session_surface()
-                    ),
-                    recovery_message_builder=(
-                        lambda: (
-                            self._ensure_console_chat_controller().provider_continuation_recovery_message()
-                        )
-                    ),
-                    recovery_replay_available_builder=(
-                        lambda: (
-                            self._ensure_console_chat_controller().provider_continuation_replay_available()
-                        )
-                    ),
-                    on_recovery_action=(
-                        lambda action, message_id, version: (
-                            self._ensure_console_chat_controller().recover_provider_continuation(
-                                action, message_id, version
-                            )
-                        )
-                    ),
-                    trace_recovery_state_builder=(
-                        lambda: trace_call_recovery_state(
-                            self._ensure_console_chat_controller().trace_call_recovery_preparation()
-                        )
-                    ),
-                    on_trace_recovery_action=partial(
-                        dispatch_trace_call_recovery_action,
-                        self._ensure_console_chat_controller(),
-                        on_started=self._start_console_transcript_sync_timer,
-                        on_finished=self._sync_native_console_chat_ui,
-                    ),
-                )
+                # The zero-argument builder chooses Transcript or Terminal;
+                # sizing stays here because it describes this pane among its
+                # rail siblings (3fr / 13fr / 4fr).
+                main_column = self._build_console_center()
                 main_column.styles.width = "13fr"
                 # TASK-2154.1 (LY-09): below 84 the handles hide and the main
                 # minimum is waived. The default layout is transcript-only;
@@ -13518,6 +13647,7 @@ class ChatScreen(BaseAppScreen):
         # raise, and a raised exception must not strand an unpersisted
         # toggle-then-quit.
         await self._flush_sidebar_state_now()
+        self._terminal.detach_workspace()
         self._message.invalidate_console_speech_context()
         self._console_auto_speak.unmount()
         registry = self._image._h3_image_edit_registry()

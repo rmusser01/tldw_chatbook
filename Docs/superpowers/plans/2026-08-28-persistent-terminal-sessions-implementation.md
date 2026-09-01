@@ -1184,6 +1184,11 @@ git commit -m "feat: build console terminal workspace"
 
 ### Task 13: Integrate Terminal into Console rails, center routing, palette, and CSS
 
+> **Current-dev adaptation:** TASK-23199 retired the redundant Sessions rail
+> section after this plan was approved. Preserve the six bounded Context
+> sections and expose Terminal as a pinned Context-rail action outside the
+> bounded scroll body; do not recreate Sessions.
+
 **Files:**
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
 - Modify: `tldw_chatbook/UI/Console_Modules/wiring.py`
@@ -1199,23 +1204,23 @@ git commit -m "feat: build console terminal workspace"
 - Modify: `Tests/UI/test_css_bundle_sync_guard.py`
 - Create: `Tests/UI/test_console_terminal_integration.py`
 
-- [ ] **Step 1: Write controller-wiring and visible-entry RED tests**
+- [x] **Step 1: Write controller-wiring and visible-entry RED tests**
 
-Extend `test_console_controller_wiring.py` to require `build_console_controllers` to construct `screen._terminal` with late-bound accessors for `app_instance.terminal_session_manager`, the current session ID, `_selected_console_local_root`, account home, Settings routing, center recomposition, and focus. Then add a `TerminalRequested` message to `ConsoleLeftRail` and require one visible `Terminal` button inside the existing Sessions body. Require `Console: Open Terminal` in `ConsoleCommandProvider`. Both routes call one guarded screen action; no global shortcut is added.
+Extend `test_console_controller_wiring.py` to require `build_console_controllers` to construct `screen._terminal` with late-bound accessors for `app_instance.terminal_session_manager`, the current session ID, `_selected_console_local_root`, account home, Settings routing, center recomposition, and focus. Then add a `TerminalRequested` message to `ConsoleLeftRail` and require one visible pinned `Terminal` action outside the bounded Context scroll body. Require `Console: Open Terminal` in `ConsoleCommandProvider`. Both routes call one guarded screen action; no global shortcut is added.
 
-- [ ] **Step 2: Write center-routing and rail-preservation RED tests**
+- [x] **Step 2: Write center-routing and rail-preservation RED tests**
 
 When Terminal is closed, preserve the existing `ConsoleTranscriptRegion` IDs/nesting and geometry. When open, replace only the center `#console-main-column` content with `ConsoleTerminalWorkspace`; Context and Inspector rails, handles, header, control bar, and ordinary navigation stay mounted. Opening while locked shows the explicit route to canonical Privacy & Security Settings. Opening while unlocked/unarmed shows the Terminal Arm action and full first-arm disclosure. Neither path launches automatically, and cleanup receipts/Retry remain usable without unlocking or arming.
 
-- [ ] **Step 3: Write live navigation/remount RED tests**
+- [x] **Step 3: Write live navigation/remount RED tests**
 
 With a fake backend identity and real manager, create a session, emit output, switch conversation and app screen, return/reopen Terminal, and prove process/backend identity, parsed screen, current directory state, and session list survive. Recompose rails and center repeatedly; assert no restart, duplicate read loop, duplicate reaper, or close.
 
-- [ ] **Step 4: Write exact painted-geometry and focus RED tests**
+- [x] **Step 4: Write exact painted-geometry and focus RED tests**
 
 Mount the production hierarchy with app styles at standard, 100-column, and narrow widths. Assert the Terminal center receives the actual allocated pane dimensions capped at 300x120, exposes visible clamp state, and does not overflow the workspace grid. Verify focus transition from rail action to actions/viewport, Ctrl+] release, Tab walk, and return to transcript.
 
-- [ ] **Step 5: Verify RED**
+- [x] **Step 5: Verify RED**
 
 Run:
 
@@ -1230,11 +1235,11 @@ Run:
 
 Expected: every file collects and independently reaches its new entry, routing, geometry, or remount assertion while the minimal integration hooks still refuse. Existing transcript and rail assertions remain green; import, collection, or cross-file masking does not count.
 
-- [ ] **Step 6: Wire the thin Console integration**
+- [x] **Step 6: Wire the thin Console integration**
 
 Construct `screen._terminal` in `UI/Console_Modules/wiring.py::build_console_controllers`, alongside the centralized decomposed controller graph, using only late-bound accessors. Generalize the existing raw-CLI selected-root helper there and keep both consumers on that one seam. `chat_screen.py` handles the typed rail message/action and selects one zero-argument center builder only; do not construct the controller, move terminal lifecycle, or add backend branches there. The screen action opens the discoverable workspace and focuses the appropriate control; only explicit New launches.
 
-- [ ] **Step 7: Add source CSS and regenerate the bundle**
+- [x] **Step 7: Add source CSS and regenerate the bundle**
 
 Style the center workspace, session strip, safe viewport, clamp/new-output/status rows, receipt actions, and persistent red danger banner in `_agentic_terminal.tcss`. Preserve the existing 3fr/13fr/4fr sibling sizing and narrow-layout waivers. Regenerate—never hand-edit—the bundle:
 
@@ -1242,7 +1247,7 @@ Style the center workspace, session strip, safe viewport, clamp/new-output/statu
 ../../.venv/bin/python tldw_chatbook/css/build_css.py
 ```
 
-- [ ] **Step 8: Verify UI GREEN and CSS sync**
+- [x] **Step 8: Verify UI GREEN and CSS sync**
 
 Run:
 
@@ -1268,7 +1273,7 @@ git diff --check
 
 Expected: PASS and the CSS bundle reproduces exactly.
 
-- [ ] **Step 9: Commit the Console integration**
+- [x] **Step 9: Commit the Console integration**
 
 ```bash
 git add tldw_chatbook/UI/Screens/chat_screen.py \
@@ -1286,6 +1291,24 @@ git add tldw_chatbook/UI/Screens/chat_screen.py \
   Tests/UI/test_console_terminal_integration.py
 git commit -m "feat: expose persistent terminal in console"
 ```
+
+**Task 13 implementation note (2026-09-01):** The current Console keeps its
+six bounded Context sections and exposes Terminal through one pinned rail
+action plus the command palette. The guarded action swaps only the center
+column, preserves surrounding shell widgets, and routes locked or unarmed
+states through the existing permission and disclosure boundaries. The
+app-owned manager remains the sole lifecycle owner; Console wiring uses one
+late-bound ready-local-binding root seam shared with raw CLI. Painted viewport
+geometry drives bounded PTY resize and live cap metadata. Review also hardened
+vertical shrink behavior so displaced primary rows enter bounded scrollback,
+alternate rows remain isolated, dirty rows stay in range, duplicate resize is
+a no-op, and pending-wrap/margin state survives correctly. Targeted behavioral,
+CSS-sync, Ruff, diff, visual, specification, code-quality, and final reviews
+passed; unrelated deterministic failures were reproduced at the untouched
+Task 13 base. ADR required: yes. ADR path:
+`backlog/decisions/099-persistent-terminal-session-runtime-boundary.md`.
+Reason: this task directly implements the accepted runtime, authority, privacy,
+and resource boundary without changing it.
 
 ### Task 14: Prove the user-only privacy, logging, persistence, and tool boundary
 
@@ -1402,7 +1425,7 @@ On macOS/Linux, rerun normal close, parallel Disarm, global Shutdown, exact-shel
 
 Document:
 
-- entry from Sessions rail and command palette;
+- entry from the pinned Context-rail action and command palette;
 - New/Rename/Focus/Close/Retry/Jump live;
 - four-session and resource limits;
 - starting directory convenience versus no confinement;

@@ -215,6 +215,122 @@ def test_resize_updates_both_screens_and_preserves_each_cursor() -> None:
     assert len(primary.lines) == 4
 
 
+def test_shrinking_screen_preserves_visible_primary_content() -> None:
+    model = TerminalScreenModel(columns=80, rows=24)
+    model.feed(b"persisted-screen")
+    model.snapshot()
+
+    model.resize(columns=119, rows=22)
+
+    assert "persisted-screen" in model.visible_text()
+
+
+def test_shrinking_primary_keeps_cursor_anchored_row_order() -> None:
+    model = TerminalScreenModel(columns=10, rows=5)
+    model.feed(b"one\r\ntwo\r\nthree\r\nfour")
+
+    model.resize(columns=10, rows=3)
+
+    assert [line.text for line in model.snapshot().lines] == [
+        "two",
+        "three",
+        "four",
+    ]
+
+
+def test_shrinking_primary_retains_displaced_top_rows_in_scrollback() -> None:
+    model = TerminalScreenModel(columns=10, rows=5)
+    model.feed(b"one\r\ntwo\r\nthree\r\nfour\r\nfive")
+
+    model.resize(columns=10, rows=3)
+
+    shrunk = model.snapshot()
+    assert [line.text for line in shrunk.scrollback] == ["one", "two"]
+    assert [line.text for line in shrunk.lines] == ["three", "four", "five"]
+
+    model.resize(columns=10, rows=5)
+
+    expanded = model.snapshot()
+    assert [line.text for line in expanded.scrollback] == ["one", "two"]
+    assert [line.text for line in expanded.lines[:3]] == ["three", "four", "five"]
+
+
+def test_resize_dirty_lines_are_replaced_with_the_resized_viewport() -> None:
+    model = TerminalScreenModel(columns=10, rows=5)
+    model.feed(b"one\r\ntwo\r\nthree\r\nfour\r\nfive")
+
+    model.resize(columns=10, rows=3)
+
+    assert model.snapshot().dirty_lines == (1, 2, 3)
+
+
+def test_same_size_resize_preserves_pending_wrap() -> None:
+    model = TerminalScreenModel(columns=10, rows=2)
+    model.feed(b"1234567890")
+
+    model.resize(columns=10, rows=2)
+    model.feed(b"X")
+
+    assert [line.text for line in model.snapshot().lines] == ["1234567890", "X"]
+
+
+def test_width_shrink_preserves_pending_wrap_at_new_right_edge() -> None:
+    model = TerminalScreenModel(columns=10, rows=2)
+    model.feed(b"1234567890")
+
+    model.resize(columns=8, rows=2)
+    model.feed(b"X")
+
+    assert [line.text for line in model.snapshot().lines] == ["12345678", "X"]
+
+
+def test_same_size_resize_preserves_scroll_margins() -> None:
+    model = TerminalScreenModel(columns=10, rows=5)
+    model.feed(b"\x1b[2;4r")
+    margins = model._screens.primary.margins
+
+    model.resize(columns=10, rows=5)
+
+    assert margins == pyte.screens.Margins(1, 3)
+    assert model._screens.primary.margins == margins
+
+
+def test_shrinking_primary_preserves_blank_gaps_in_top_viewport() -> None:
+    model = TerminalScreenModel(columns=10, rows=5)
+    model.feed(b"top\x1b[3;1Hbottom")
+
+    model.resize(columns=10, rows=3)
+
+    assert [line.text for line in model.snapshot().lines] == ["top", "", "bottom"]
+
+
+def test_shrinking_clamps_primary_and_alternate_cursors_to_new_bounds() -> None:
+    model = TerminalScreenModel(columns=10, rows=5)
+    model.feed(b"\x1b[5;10H\x1b[?1049h\x1b[5;10H")
+
+    model.resize(columns=5, rows=2)
+
+    for screen in (model._screens.primary, model._screens.alternate):
+        assert 0 <= screen.cursor.y < 2
+        assert 0 <= screen.cursor.x <= 5
+
+
+def test_shrinking_preserves_primary_and_alternate_order_and_cursor() -> None:
+    model = TerminalScreenModel(columns=10, rows=5)
+    model.feed(b"P1\r\nP2\r\nP3\r\nP4")
+    model.feed(b"\x1b[?1049hA1\r\nA2\r\nA3\r\nA4")
+
+    model.resize(columns=10, rows=3)
+
+    alternate = model.snapshot()
+    assert [line.text for line in alternate.lines] == ["A2", "A3", "A4"]
+    assert alternate.cursor_row == 3
+    model.feed(b"\x1b[?1049l")
+    primary = model.snapshot()
+    assert [line.text for line in primary.lines] == ["P2", "P3", "P4"]
+    assert primary.cursor_row == 3
+
+
 def test_reset_from_alternate_screen_restores_coherent_primary_state() -> None:
     model = TerminalScreenModel(columns=20, rows=2)
     model.feed(b"primary\x1b[?1049halt\x1bc")
