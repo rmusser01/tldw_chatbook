@@ -2651,7 +2651,8 @@ class AgentService:
         return drain
 
     def _register_primary_mailbox(self, run_id: str):
-        """Create the run's mailbox; return its drain for LoopDeps.
+        """Create the run's mailbox; return its drain (tests use the return;
+        production wires LoopDeps from `_primary_drain_for` instead).
 
         Also fires `on_primary_steer_ready` with a bound steer callable, so
         the Console can steer without knowing the run id. Review M-4: called
@@ -5422,16 +5423,23 @@ class AgentService:
                 # observed registry closure, so they must report their own
                 # completions or the "fires after every tool call" contract
                 # is quietly false for exactly the calls users script.
-                skill_observation_started = self.clock()
+                # Gated for symmetry with the registry path's no-wrapper rule
+                # (review A-6): no observer, no clock reads.
+                if self.post_tool_dispatch is not None:
+                    skill_observation_started = self.clock()
 
-                def _observed_skill_result(result: ToolResult) -> ToolResult:
-                    self._fire_post_tool_dispatch(
-                        call,
-                        result,
-                        self.clock() - skill_observation_started,
-                        run_id,
-                    )
-                    return result
+                    def _observed_skill_result(result: ToolResult) -> ToolResult:
+                        self._fire_post_tool_dispatch(
+                            call,
+                            result,
+                            self.clock() - skill_observation_started,
+                            run_id,
+                        )
+                        return result
+                else:
+
+                    def _observed_skill_result(result: ToolResult) -> ToolResult:
+                        return result
 
                 # Task-12 review Finding 1: a skill tool must pass the SAME
                 # two-part gate as an ordinary catalog tool (mirrors

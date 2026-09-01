@@ -349,3 +349,76 @@ def test_mixed_turn_round_trip_is_structurally_stable():
     assert call is not None and call.name == "calculator"
     assert "Working on it." in visible
     assert twice[2]["content"].startswith(FENCE_TOOL_RESULT_PREFIX)
+
+
+# --- review A-1 (2026-08-31): content after the first fence must survive ----
+
+
+def test_no_result_marker_round_trips_without_dangling_tool_calls():
+    """A no-result call projects with a marker INSIDE the assistant message;
+    round-tripping back to native must not lose it -- the first version
+    parsed only up to the first fence close, yielding an assistant
+    `tool_calls` turn with NO role:"tool" follower, a shape OpenAI-compatible
+    backends reject outright. That failure sat on exactly the second fallback
+    hop -- the disaster-recovery path."""
+    native = [
+        {"role": "user", "content": "go"},
+        _native_call("call_orphan", "calculator", {"expression": "1+1"}),
+    ]
+
+    fence = project_history_for_protocol(native, native=False)
+    back = project_history_for_protocol(fence, native=True)
+
+    dangling = [
+        m for m in back
+        if m.get("tool_calls")
+        and not any(
+            r.get("role") == "tool"
+            and r.get("tool_call_id") == m["tool_calls"][0]["id"]
+            for r in back
+        )
+    ]
+    assert not dangling, (
+        "round-trip produced an assistant tool_calls turn with no paired "
+        "role:'tool' message -- providers 400 on this shape"
+    )
+
+
+def test_two_call_batch_round_trips_both_calls():
+    """2 calls in must be 2 calls out -- the first version dropped call b's
+    request entirely, making the model believe it never asked (the precise
+    failure ADR-110 decision 2's marker exists to prevent)."""
+    native = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "a",
+                    "type": "function",
+                    "function": {"name": "one", "arguments": "{}"},
+                },
+                {
+                    "id": "b",
+                    "type": "function",
+                    "function": {"name": "two", "arguments": "{}"},
+                },
+            ],
+        },
+        _native_result("a", "first"),
+        _native_result("b", "second"),
+    ]
+
+    fence = project_history_for_protocol(native, native=False)
+    back = project_history_for_protocol(fence, native=True)
+
+    names = [
+        entry["function"]["name"]
+        for m in back
+        for entry in (m.get("tool_calls") or ())
+    ]
+    assert sorted(names) == ["one", "two"], f"a call vanished: {names}"
+    tool_contents = sorted(
+        m["content"] for m in back if m.get("role") == "tool"
+    )
+    assert tool_contents == ["first", "second"]

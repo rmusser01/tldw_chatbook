@@ -18,12 +18,12 @@ Two properties matter more than elegance here:
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from .agent_models import FENCE_TOOL_RESULT_PREFIX
 
-#: Must match `agent_runtime.FENCE_OPEN`. Imported lazily in `_parse_fence` to
-#: keep this module free of a runtime import cycle.
+#: Must match `agent_runtime.FENCE_OPEN`.
 _FENCE_OPEN = "```tool_call"
 _FENCE_CLOSE = "```"
 
@@ -84,22 +84,6 @@ def _native_call_parts(message: dict) -> list[tuple[str, str, Any]]:
         raise ProjectionError("assistant turn declares tool_calls but carries none")
     return parts
 
-
-def _parse_fence(text: str) -> tuple[str, str, Any] | None:
-    """Parse a fence out of assistant text, or None for text/look-alikes.
-
-    Returns ``(visible_text, name, args)``. Review I-1 (2026-08-31): the first
-    version used the strict whole-text parser, which returns None for the
-    DOMINANT real shape -- narration followed by a fence -- because the loop
-    appends fence assistant turns verbatim, visible text included. Splitting
-    keeps the narration in ``content`` beside the projected ``tool_calls``.
-    """
-    from .agent_runtime import split_visible_text_and_tool_call
-
-    visible, call = split_visible_text_and_tool_call(text)
-    if call is None:
-        return None
-    return str(visible or "").strip(), call.name, call.args
 
 
 def _native_to_fence(messages: list[dict]) -> list[dict]:
@@ -186,31 +170,130 @@ def _fence_to_native(messages: list[dict]) -> list[dict]:
             continue
 
         if message.get("role") == "assistant":
-            parsed = _parse_fence(content)
-            if parsed is not None:
-                visible, name, arguments = parsed
-                call_id = f"proj_{len(projected)}_{name}"
-                pending.append((call_id, name))
+            segments = _segment_assistant_content(content)
+            if segments is not None:
+                visible, fence_calls, inline_results = segments
+                entries = []
+                emitted_results = []
+                for name, arguments in fence_calls:
+                    call_id = f"proj_{len(projected)}_{name}_{len(entries)}"
+                    entries.append(
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": json.dumps(arguments),
+                            },
+                        }
+                    )
+                    inline = _take_inline_result(inline_results, name)
+                    if inline is not None:
+                        # Review A-1: an inline result line -- including the
+                        # NO_RESULT_MARKER for a call whose result never
+                        # arrived -- must become the PAIRED role:"tool"
+                        # message. Leaving it as text produced an assistant
+                        # tool_calls turn with no follower, a shape
+                        # OpenAI-compatible backends reject outright, on
+                        # exactly the second fallback hop.
+                        emitted_results.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": call_id,
+                                "content": inline,
+                            }
+                        )
+                    else:
+                        pending.append((call_id, name))
                 projected.append(
                     {
                         "role": "assistant",
                         "content": visible,
-                        "tool_calls": [
-                            {
-                                "id": call_id,
-                                "type": "function",
-                                "function": {
-                                    "name": name,
-                                    "arguments": json.dumps(arguments),
-                                },
-                            }
-                        ],
+                        "tool_calls": entries,
                     }
                 )
+                projected.extend(emitted_results)
                 continue
 
         projected.append(dict(message))
     return projected
+
+
+#: Matches exactly the fence shape `_fence_text` emits and the loop's parser
+#: accepts. `tool_call` must be followed by the newline, so look-alike tags
+#: (```tool_calls, ```tool_call_schema) never match.
+_FENCE_BLOCK_RE = re.compile(
+    r"```tool_call\n(.*?)\n```", re.DOTALL
+)
+
+
+def _segment_assistant_content(
+    content: str,
+) -> tuple[str, list[tuple[str, Any]], list[tuple[str, str]]] | None:
+    """Split one fence-protocol assistant message into its parts.
+
+    Review A-1 (2026-08-31): the first implementation parsed only up to the
+    FIRST fence close and dropped everything after it -- a 2-call batch
+    round-tripped down to 1 call (the model believed it never asked), and the
+    no-result marker vanished. Everything after the first fence is now
+    processed: further fences join the same batch, `Tool result for` lines
+    become inline results, and any other narration folds into the visible
+    text so nothing is ever lost.
+
+    Returns:
+        ``(visible_text, [(name, arguments), ...], [(name, result), ...])``,
+        or None when the content carries no parseable fence at all.
+    """
+    matches = list(_FENCE_BLOCK_RE.finditer(content))
+    fence_calls: list[tuple[str, Any]] = []
+    valid_spans: list[tuple[int, int]] = []
+    for match in matches:
+        try:
+            payload = json.loads(match.group(1))
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        name = payload.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        fence_calls.append((name, payload.get("arguments", {})))
+        valid_spans.append(match.span())
+    if not fence_calls:
+        return None
+
+    # Everything outside the fence spans is narration or inline result lines.
+    outside: list[str] = []
+    cursor = 0
+    for start, end in valid_spans:
+        outside.append(content[cursor:start])
+        cursor = end
+    outside.append(content[cursor:])
+
+    visible_parts: list[str] = []
+    inline_results: list[tuple[str, str]] = []
+    for chunk in outside:
+        for line in chunk.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith(FENCE_TOOL_RESULT_PREFIX):
+                remainder = stripped[len(FENCE_TOOL_RESULT_PREFIX):]
+                name, _, result = remainder.partition(": ")
+                inline_results.append((name, result))
+            else:
+                visible_parts.append(stripped)
+    return "\n".join(visible_parts), fence_calls, inline_results
+
+
+def _take_inline_result(
+    inline_results: list[tuple[str, str]], name: str
+) -> str | None:
+    for index, (result_name, result) in enumerate(inline_results):
+        if result_name == name:
+            inline_results.pop(index)
+            return result
+    return None
 
 
 def _take_pending(pending: list[tuple[str, str]], name: str) -> str | None:
@@ -232,8 +315,15 @@ def project_history_for_protocol(
             (`native_tools.provider_supports_native_tools`).
 
     Returns:
-        A new list of the same length, in the same order. The input is never
-        mutated.
+        A new list, in the same order, never dropping a message. Length is
+        preserved with ONE exception: projecting TO native synthesizes the
+        paired ``role:"tool"`` message for a call whose result exists only as
+        an inline marker line -- providers require the pairing, and an
+        assistant ``tool_calls`` turn with no follower is rejected outright.
+        The loop's in-place switch is unaffected: at a real switch the
+        drain-boundary property guarantees every batch's results are already
+        appended, so no unpaired call can exist in the projected span. The
+        input is never mutated.
 
     Raises:
         ProjectionError: The history cannot be projected faithfully. The caller

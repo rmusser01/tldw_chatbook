@@ -5161,7 +5161,6 @@ class ConsoleChatController:
                 self._active_assistant_message_ids.pop(session_id, None)
                 self._active_cancel_events.pop(session_id, None)
                 self._active_steer_hooks.pop(session_id, None)
-                self._active_steer_hooks.pop(session_id, None)
                 self._stop_requested = False
         try:
             current = self.store.get_message(message.id)
@@ -18841,6 +18840,12 @@ class ConsoleChatController:
                 # A no-op for the direct path, whose own finally already
                 # popped its own cancel_event before returning.
                 self._active_cancel_events.pop(owner_id, None)
+                # Review A-4 (2026-08-31): without this, a COMPLETED run left
+                # a stale steer hook, so the next /steer refused with the
+                # misleading "that run is not running" instead of the
+                # intended "no active run to steer" -- and 26000's redirect
+                # hook will ride this same lifecycle.
+                self._active_steer_hooks.pop(owner_id, None)
                 self._active_capture_details.pop(owner_id, None)
 
     @staticmethod
@@ -21104,12 +21109,16 @@ class ConsoleChatController:
         placeholder = self._ensure_assistant_placeholder(
             assistant_message_id, session_id
         )
+        wrapup_summary = str(getattr(outcome, "final_text", "") or "").strip()
         if placeholder is not None:
             failed = self.store.mark_message_failed(assistant_message_id)
             self._record_run_assistant_message(run_id, failed)
-            self._append_failure_system_row(session_id, visible_copy)
+            row_copy = self._without_duplicated_summary(
+                visible_copy, wrapup_summary, failed.content
+            )
+            self._append_failure_system_row(session_id, row_copy)
             self._set_run_state(
-                ConsoleRunState(ConsoleRunStatus.FAILED, visible_copy),
+                ConsoleRunState(ConsoleRunStatus.FAILED, row_copy),
                 session_id=session_id,
             )
             return ConsoleSubmitResult(True, True, failed.content)
@@ -21119,7 +21128,12 @@ class ConsoleChatController:
             "pending",
             "streaming",
         }:
-            self.store.append_stream_chunk(runtime_written.id, f"\n\n{visible_copy}")
+            appended_copy = self._without_duplicated_summary(
+                visible_copy, wrapup_summary, runtime_written.content
+            )
+            self.store.append_stream_chunk(
+                runtime_written.id, f"\n\n{appended_copy}"
+            )
             failed = self.store.mark_message_failed(runtime_written.id)
         else:
             failed = self._append_failed_assistant(session_id, visible_copy)
@@ -21337,6 +21351,25 @@ class ConsoleChatController:
                 f"{reason or 'budget or loop limit reached'}.{suffix}"
             )
         return f"Agent run failed: {reason or outcome.status}."
+
+    @staticmethod
+    def _without_duplicated_summary(
+        visible_copy: str, summary: str, row_content: str
+    ) -> str:
+        """Drop the wrap-up-summary suffix when the row already shows it.
+
+        Review A-2 (2026-08-31): on streaming providers the budget wrap-up
+        call streams its summary into the assistant row BEFORE the finalizer
+        runs, and the visible copy now also carries it -- so the same text
+        appeared twice (or was appended into the very row that streamed it).
+        The suffix is kept only when the surviving row does NOT already
+        contain the summary, which is exactly the non-streaming case the
+        suffix exists for.
+        """
+        if not summary or summary not in (row_content or ""):
+            return visible_copy
+        deduped = visible_copy.replace(f"\n\n{summary}", "", 1)
+        return deduped if deduped.strip() else visible_copy
 
     def _presentation_context_for(self, session_id: str) -> ConsolePresentationContext:
         """Return one session's presentation context with a safe global fallback."""

@@ -1246,6 +1246,7 @@ def run_agent_loop(
         Skipped mid-continuation: a wrap-up request without the in-flight
         checkpoint would trip provider-continuation validation.
         """
+        nonlocal total_tokens
         add(STEP_ERROR, summary=f"{kind} budget exhausted")
         if continuation_checkpoint is not None or deps.should_cancel():
             return _outcome(RUN_STUCK)
@@ -1267,7 +1268,6 @@ def run_agent_loop(
                 if active_call_model_with_continuation is not None
                 else active_call_model(wrap_messages, ())
             )
-            nonlocal total_tokens
             total_tokens += getattr(wrap_turn, "tokens", 0) or 0
             summary_text = str(getattr(wrap_turn, "text", "") or "").strip()
             if summary_text:

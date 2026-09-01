@@ -216,3 +216,21 @@ def test_no_warning_below_the_fraction():
         for msgs, _ in seen
         for m in msgs
     )
+
+
+def test_the_wrapup_calls_tokens_are_metered():
+    """Review A-8: the wrap-up is a real model call; run spend must not
+    under-report it."""
+    outcome, _ = _drive(
+        [
+            ModelTurn(text=_fence(), tokens=10),
+            ModelTurn(text=_fence(args={"expression": "2"}), tokens=10),
+            ModelTurn(text="Summary.", tokens=7),
+        ],
+        RunBudget(max_model_turns=2),
+    )
+
+    assert outcome.status == RUN_STUCK
+    assert outcome.total_tokens == 27, (
+        f"wrap-up tokens missing from spend: {outcome.total_tokens}"
+    )

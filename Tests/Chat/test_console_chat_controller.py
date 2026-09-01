@@ -8891,3 +8891,34 @@ def test_empty_continuation_discard_reclaims_generation_runtime_owner(
     )
     assert store._generation_runtime_counts() == (0, 0, 0)
     db.close_connection()
+
+
+def test_wrapup_summary_suffix_dropped_when_the_row_already_streamed_it():
+    """Review A-2: streaming providers stream the wrap-up summary into the
+    row before the finalizer runs; the visible copy must not repeat it."""
+    copy = "Agent run stuck: wall-clock budget exhausted.\n\nSummary text here."
+
+    deduped = ConsoleChatController._without_duplicated_summary(
+        copy, "Summary text here.", "partial answer...\n\nSummary text here."
+    )
+
+    assert deduped == "Agent run stuck: wall-clock budget exhausted."
+
+
+def test_wrapup_summary_suffix_kept_for_non_streaming_rows():
+    copy = "Agent run stuck: wall-clock budget exhausted.\n\nSummary text here."
+
+    kept = ConsoleChatController._without_duplicated_summary(
+        copy, "Summary text here.", ""
+    )
+
+    assert kept == copy
+
+
+def test_empty_summary_never_alters_the_copy():
+    copy = "Agent run stuck: step budget exhausted."
+
+    assert (
+        ConsoleChatController._without_duplicated_summary(copy, "", "anything")
+        == copy
+    )
