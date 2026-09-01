@@ -9659,7 +9659,8 @@ class TldwCli(
 
         handlers: dict[str, Handler] = {
             "reminder": ReminderHandler(
-                dispatch_service=self.notification_dispatch_service
+                dispatch_service=self.notification_dispatch_service,
+                app_getter=lambda: self,
             ),
         }
         if watchlist_handler is not None:
