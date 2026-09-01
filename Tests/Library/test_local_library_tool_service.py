@@ -2716,19 +2716,62 @@ def test_real_conversation_long_message_continuation(chacha_db):
     assert second["next_cursor"] is None
 
 
+def _seed_real_legacy_collection(
+    tmp_path,
+    *,
+    collection_id: str,
+    name: str,
+    description: str = "",
+    members: tuple[tuple[str, str, str], ...],
+) -> LocalLibraryCollectionsService:
+    db = LibraryCollectionsDB(tmp_path / "library_collections.db")
+    with db.transaction() as connection:
+        connection.execute(
+            """
+            INSERT INTO library_collections (
+                collection_id, name, description, created_at, updated_at
+            )
+            VALUES (?, ?, ?, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+            """,
+            (collection_id, name, description),
+        )
+        connection.executemany(
+            """
+            INSERT INTO library_collection_items (
+                membership_id,
+                collection_id,
+                source_type,
+                source_id,
+                title,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, '2026-08-01T00:00:00Z')
+            """,
+            [
+                (
+                    f"membership-{index}",
+                    collection_id,
+                    source_type,
+                    source_id,
+                    title,
+                )
+                for index, (source_type, source_id, title) in enumerate(members)
+            ],
+        )
+    return LocalLibraryCollectionsService(db)
+
+
 def test_real_collection_round_trip(tmp_path):
-    collections = LocalLibraryCollectionsService(
-        LibraryCollectionsDB(tmp_path / "library_collections.db")
-    )
-    collection = collections.create_collection("Integration", description="d")
-    collections.add_item_to_collection(
-        collection.collection_id, source_type="media", source_id="m-1", title="member one"
-    )
-    collections.add_item_to_collection(
-        collection.collection_id,
-        source_type="server-doc",
-        source_id="doc-1",
-        title="member two",
+    collection_id = "legacy-integration"
+    collections = _seed_real_legacy_collection(
+        tmp_path,
+        collection_id=collection_id,
+        name="Integration",
+        description="d",
+        members=(
+            ("media", "m-1", "member one"),
+            ("server-doc", "doc-1", "member two"),
+        ),
     )
     service = _service(collections_service=collections)
 
@@ -2744,6 +2787,7 @@ def test_real_collection_round_trip(tmp_path):
     parse_public_id(members["media"]["item_id"], expected_type="media")
     assert members["server-doc"]["item_id"] is None
     assert members["server-doc"]["source_ref"]
+    collections.db.close()
 
 
 def test_real_gets_reject_wrong_type_and_unknown_ids(chacha_db):
@@ -2779,12 +2823,12 @@ def test_integration_outputs_carry_no_paths_bytes_or_blob_keys(chacha_db, tmp_pa
     chacha_db.add_message(
         {"conversation_id": conv_id, "sender": "user", "content": "scan"}
     )
-    collections = LocalLibraryCollectionsService(
-        LibraryCollectionsDB(tmp_path / "library_collections.db")
-    )
-    collection = collections.create_collection("Scan")
-    collections.add_item_to_collection(
-        collection.collection_id, source_type="note", source_id=note_id, title="t"
+    collection_id = "legacy-scan"
+    collections = _seed_real_legacy_collection(
+        tmp_path,
+        collection_id=collection_id,
+        name="Scan",
+        members=(("note", note_id, "t"),),
     )
     service = _service(
         notes_service=_NotesAdapter(chacha_db),
@@ -2799,7 +2843,7 @@ def test_integration_outputs_carry_no_paths_bytes_or_blob_keys(chacha_db, tmp_pa
         ),
         service.invoke(
             "library_get_collection",
-            {"id": _public_id("collection", collection.collection_id)},
+            {"id": _public_id("collection", collection_id)},
         ),
     ]
     for result in results:
@@ -2810,3 +2854,4 @@ def test_integration_outputs_carry_no_paths_bytes_or_blob_keys(chacha_db, tmp_pa
             assert "image" not in lowered
             if isinstance(value, str):
                 assert not value.startswith("/"), (key, value)
+    collections.db.close()

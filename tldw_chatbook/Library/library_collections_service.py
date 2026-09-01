@@ -17,12 +17,6 @@ from tldw_chatbook.Library.library_tool_contract import (
     make_public_id,
     normalize_display_text,
 )
-from tldw_chatbook.Library.library_collections_state import (
-    LIBRARY_COLLECTIONS_DESCRIPTION_MAX_LENGTH,
-    LIBRARY_COLLECTIONS_NAME_MAX_LENGTH,
-    _collection_name_validation,
-)
-from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 
 
 DEFAULT_LIBRARY_COLLECTIONS_LIST_LIMIT = 200
@@ -33,6 +27,16 @@ _STORAGE_FAILURE_MESSAGE = "Library Collections storage failed."
 
 class LibraryCollectionsServiceError(Exception):
     """Base exception for Library Collections service failures."""
+
+
+class LegacyCollectionsReadOnlyError(LibraryCollectionsServiceError):
+    """The superseded generic Collections tables are recovery-only."""
+
+    reason = "legacy_read_only"
+    recovery = "Use the legacy Collections inspector or JSON recovery export."
+
+    def __init__(self) -> None:
+        super().__init__(self.reason)
 
 
 class InvalidLibraryCollectionName(LibraryCollectionsServiceError):
@@ -95,7 +99,7 @@ class LibraryCollectionsService(Protocol):
         *,
         description: str = "",
     ) -> LibraryCollectionRecord:
-        """Create a local Library Collection."""
+        """Reject writes to the superseded generic Collections tables."""
 
     def rename_collection(
         self,
@@ -104,24 +108,23 @@ class LibraryCollectionsService(Protocol):
         *,
         description: str | None = None,
     ) -> LibraryCollectionRecord:
-        """Rename a local Library Collection."""
+        """Reject writes to the superseded generic Collections tables."""
 
     def delete_collection(self, collection_id: str) -> bool:
-        """Soft-delete a local Library Collection."""
+        """Reject writes to the superseded generic Collections tables."""
 
     def restore_collection(self, collection_id: str) -> LibraryCollectionRecord:
-        """Restore one soft-deleted local Library Collection.
+        """Reject writes to the superseded generic Collections tables."""
 
-        Args:
-            collection_id: Stable identifier of the deleted Collection.
-
-        Returns:
-            The restored Collection with its retained membership count.
-
-        Raises:
-            LibraryCollectionNotFound: If no deleted Collection matches the id.
-            LibraryCollectionsServiceError: If local persistence fails.
-        """
+    def add_item_to_collection(
+        self,
+        collection_id: str,
+        *,
+        source_type: str,
+        source_id: str,
+        title: str = "",
+    ) -> str:
+        """Reject writes to the superseded generic Collections tables."""
 
     def list_library_collections(self, *, limit: int = 20, offset: int = 0) -> dict:
         """Page active Collections with an exact total for Library agent tools.
@@ -266,36 +269,8 @@ class LocalLibraryCollectionsService:
         *,
         description: str = "",
     ) -> LibraryCollectionRecord:
-        safe_name = self._validate_name(name)
-        safe_description = self._validate_description(description)
-        self._ensure_unique_name(safe_name)
-        collection_id = self._id_factory()
-        now = self._now_factory()
-        try:
-            with self.db.transaction() as conn:
-                conn.execute(
-                    """
-                    INSERT INTO library_collections (
-                        collection_id,
-                        name,
-                        description,
-                        created_at,
-                        updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (collection_id, safe_name, safe_description, now, now),
-                )
-        except sqlite3.IntegrityError as exc:
-            raise DuplicateLibraryCollectionName(
-                f"Collection name already exists: {safe_name}"
-            ) from exc
-        except sqlite3.Error as exc:
-            raise LibraryCollectionsServiceError(_STORAGE_FAILURE_MESSAGE) from exc
-        collection = self.get_collection(collection_id)
-        if collection is None:
-            raise LibraryCollectionsServiceError("Collection creation failed.")
-        return collection
+        """Reject writes to the superseded generic Collections tables."""
+        raise LegacyCollectionsReadOnlyError
 
     def rename_collection(
         self,
@@ -304,110 +279,16 @@ class LocalLibraryCollectionsService:
         *,
         description: str | None = None,
     ) -> LibraryCollectionRecord:
-        existing = self.get_collection(collection_id)
-        if existing is None:
-            raise LibraryCollectionNotFound(collection_id)
-        safe_name = self._validate_name(name)
-        safe_description = (
-            existing.description
-            if description is None
-            else self._validate_description(description)
-        )
-        self._ensure_unique_name(safe_name, excluding_collection_id=collection_id)
-        now = self._now_factory()
-        try:
-            with self.db.transaction() as conn:
-                conn.execute(
-                    """
-                    UPDATE library_collections
-                    SET name = ?,
-                        description = ?,
-                        updated_at = ?
-                    WHERE collection_id = ?
-                        AND deleted_at IS NULL
-                    """,
-                    (safe_name, safe_description, now, collection_id),
-                )
-        except sqlite3.IntegrityError as exc:
-            raise DuplicateLibraryCollectionName(
-                f"Collection name already exists: {safe_name}"
-            ) from exc
-        except sqlite3.Error as exc:
-            raise LibraryCollectionsServiceError(_STORAGE_FAILURE_MESSAGE) from exc
-        collection = self.get_collection(collection_id)
-        if collection is None:
-            raise LibraryCollectionNotFound(collection_id)
-        return collection
+        """Reject writes to the superseded generic Collections tables."""
+        raise LegacyCollectionsReadOnlyError
 
     def delete_collection(self, collection_id: str) -> bool:
-        now = self._now_factory()
-        try:
-            with self.db.transaction() as conn:
-                cursor = conn.execute(
-                    """
-                    UPDATE library_collections
-                    SET deleted_at = ?,
-                        updated_at = ?
-                    WHERE collection_id = ?
-                        AND deleted_at IS NULL
-                    """,
-                    (now, now, collection_id),
-                )
-        except sqlite3.Error as exc:
-            raise LibraryCollectionsServiceError(_STORAGE_FAILURE_MESSAGE) from exc
-        return cursor.rowcount > 0
+        """Reject writes to the superseded generic Collections tables."""
+        raise LegacyCollectionsReadOnlyError
 
     def restore_collection(self, collection_id: str) -> LibraryCollectionRecord:
-        """Restore one soft-deleted Collection without changing membership.
-
-        Args:
-            collection_id: Stable identifier of the deleted Collection.
-
-        Returns:
-            The restored Collection with its retained membership count.
-
-        Raises:
-            LibraryCollectionNotFound: If no deleted Collection matches the id.
-            LibraryCollectionsServiceError: If local persistence fails.
-        """
-        now = self._now_factory()
-        try:
-            with self.db.transaction() as conn:
-                cursor = conn.execute(
-                    """
-                    UPDATE library_collections
-                    SET deleted_at = NULL,
-                        updated_at = ?
-                    WHERE collection_id = ?
-                        AND deleted_at IS NOT NULL
-                    """,
-                    (now, collection_id),
-                )
-                if cursor.rowcount < 1:
-                    raise LibraryCollectionNotFound(collection_id)
-                row = conn.execute(
-                    """
-                    SELECT
-                        collection.collection_id,
-                        collection.name,
-                        collection.description,
-                        collection.created_at,
-                        collection.updated_at,
-                        COUNT(item.membership_id) AS item_count
-                    FROM library_collections AS collection
-                    LEFT JOIN library_collection_items AS item
-                        ON item.collection_id = collection.collection_id
-                    WHERE collection.deleted_at IS NULL
-                        AND collection.collection_id = ?
-                    GROUP BY collection.collection_id
-                    """,
-                    (collection_id,),
-                ).fetchone()
-        except sqlite3.Error as exc:
-            raise LibraryCollectionsServiceError(_STORAGE_FAILURE_MESSAGE) from exc
-        if row is None:
-            raise LibraryCollectionNotFound(collection_id)
-        return _record_from_row(row)
+        """Reject writes to the superseded generic Collections tables."""
+        raise LegacyCollectionsReadOnlyError
 
     def add_item_to_collection(
         self,
@@ -417,42 +298,8 @@ class LocalLibraryCollectionsService:
         source_id: str,
         title: str = "",
     ) -> str:
-        if self.get_collection(collection_id) is None:
-            raise LibraryCollectionNotFound(collection_id)
-        safe_source_type = _validate_required_value(source_type, "source_type")
-        safe_source_id = _validate_required_value(source_id, "source_id")
-        safe_title = _collapse_text(title)[:500]
-        membership_id = self._id_factory()
-        try:
-            with self.db.transaction() as conn:
-                conn.execute(
-                    """
-                    INSERT INTO library_collection_items (
-                        membership_id,
-                        collection_id,
-                        source_type,
-                        source_id,
-                        title,
-                        created_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        membership_id,
-                        collection_id,
-                        safe_source_type,
-                        safe_source_id,
-                        safe_title,
-                        self._now_factory(),
-                    ),
-                )
-        except sqlite3.IntegrityError as exc:
-            raise DuplicateLibraryCollectionItem(
-                "Source item already belongs to this Collection."
-            ) from exc
-        except sqlite3.Error as exc:
-            raise LibraryCollectionsServiceError(_STORAGE_FAILURE_MESSAGE) from exc
-        return membership_id
+        """Reject writes to the superseded generic Collections tables."""
+        raise LegacyCollectionsReadOnlyError
 
     # --- Library read seams (task-1337, plan Task 4) ---
     #
@@ -750,70 +597,6 @@ class LocalLibraryCollectionsService:
             "members": members,
         }
 
-    def _validate_name(self, value: str) -> str:
-        name, reason = _collection_name_validation(value)
-        if reason:
-            raise InvalidLibraryCollectionName(reason)
-        return name
-
-    def _validate_description(self, value: str) -> str:
-        description = _collapse_text(value)
-        if len(description) > LIBRARY_COLLECTIONS_DESCRIPTION_MAX_LENGTH:
-            raise InvalidLibraryCollectionDescription(
-                "Collection descriptions must be 500 characters or fewer."
-            )
-        if not validate_text_input(
-            description,
-            max_length=LIBRARY_COLLECTIONS_DESCRIPTION_MAX_LENGTH,
-            allow_html=False,
-        ):
-            raise InvalidLibraryCollectionDescription(
-                "Enter a safe Collection description."
-            )
-        description = sanitize_string(
-            description,
-            max_length=LIBRARY_COLLECTIONS_DESCRIPTION_MAX_LENGTH,
-        )
-        description = _collapse_text(description)
-        if not validate_text_input(
-            description,
-            max_length=LIBRARY_COLLECTIONS_DESCRIPTION_MAX_LENGTH,
-            allow_html=False,
-        ):
-            raise InvalidLibraryCollectionDescription(
-                "Enter a safe Collection description."
-            )
-        return description
-
-    def _ensure_unique_name(
-        self,
-        name: str,
-        *,
-        excluding_collection_id: str | None = None,
-    ) -> None:
-        try:
-            with self.db.connection() as conn:
-                query = """
-                    SELECT collection_id, deleted_at
-                    FROM library_collections
-                    WHERE name = ? COLLATE NOCASE
-                """
-                params: list[str] = [name]
-                if excluding_collection_id:
-                    query += " AND collection_id != ?"
-                    params.append(excluding_collection_id)
-                row = conn.execute(query, tuple(params)).fetchone()
-        except sqlite3.Error as exc:
-            raise LibraryCollectionsServiceError(_STORAGE_FAILURE_MESSAGE) from exc
-
-        if row is None:
-            return
-        if row["deleted_at"] is not None:
-            raise DuplicateLibraryCollectionName(
-                "A deleted Collection already used this name."
-            )
-        raise DuplicateLibraryCollectionName(f"Collection name already exists: {name}")
-
 
 def _record_from_row(row) -> LibraryCollectionRecord:
     return LibraryCollectionRecord(
@@ -835,10 +618,6 @@ def _utc_now() -> str:
         .isoformat()
         .replace("+00:00", "Z")
     )
-
-
-def _collapse_text(value: str) -> str:
-    return " ".join(str(value or "").strip().split())
 
 
 def _validate_list_limit(limit: int) -> int:
@@ -876,15 +655,6 @@ def _validate_collection_id(collection_id: str) -> str:
             "collection_id must be stable non-blank text of at most 200 characters."
         )
     return collection_id
-
-
-def _validate_required_value(value: str, field_name: str) -> str:
-    collapsed = _collapse_text(value)
-    if not collapsed:
-        raise LibraryCollectionsServiceError(f"{field_name} is required.")
-    if len(collapsed) > LIBRARY_COLLECTIONS_NAME_MAX_LENGTH:
-        raise LibraryCollectionsServiceError(f"{field_name} is too long.")
-    return collapsed
 
 
 def _library_collection_item(row) -> dict:

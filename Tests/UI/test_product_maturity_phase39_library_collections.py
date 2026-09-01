@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from itertools import count
 import time
 from types import SimpleNamespace
 
@@ -858,15 +857,26 @@ async def test_library_collection_empty_stale_page_keeps_retry_visible() -> None
 
 
 @pytest.mark.asyncio
-async def test_library_collections_isolated_sqlite_mutation_walkthrough(tmp_path) -> None:
-    identifier = count(1)
+async def test_library_collections_isolated_sqlite_is_read_only(tmp_path) -> None:
     delegate = LocalLibraryCollectionsService(
         LibraryCollectionsDB(tmp_path / "collections-live.db"),
-        id_factory=lambda: f"collection-{next(identifier):02d}",
         now_factory=lambda: "2026-05-08T04:00:00Z",
     )
-    for index in range(1, 46):
-        delegate.create_collection(f"Collection {index:02d}")
+    with delegate.db.transaction() as connection:
+        connection.executemany(
+            "INSERT INTO library_collections (collection_id, name, description, "
+            "created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, NULL)",
+            (
+                (
+                    f"collection-{index:02d}",
+                    f"Collection {index:02d}",
+                    "",
+                    "2026-05-08T04:00:00Z",
+                    "2026-05-08T04:00:00Z",
+                )
+                for index in range(1, 46)
+            ),
+        )
     service = RecordingLibraryCollectionsService(delegate)
     app = _build_test_app()
     _seed_library_sources(app)
@@ -880,49 +890,20 @@ async def test_library_collections_isolated_sqlite_mutation_walkthrough(tmp_path
         await _wait_for_text(screen, pilot, "1-20 of 45")
 
         name_input = screen.query_one("#library-collection-name-input", Input)
-        name_input.value = "Aardvark"
+        name_input.value = "Blocked write"
         await pilot.pause()
         screen.query_one("#library-create-collection", Button).press()
-        await _wait_for_text(screen, pilot, "1-20 of 46")
-        assert "Selected: Aardvark" in _visible_text(screen)
-
-        screen.query_one("#library-collection-name-input", Input).value = "Zulu"
         await pilot.pause()
-        screen.query_one("#library-rename-collection", Button).press()
-        await _wait_for_text(screen, pilot, "41-46 of 46")
-        assert "Selected: Zulu" in _visible_text(screen)
-
-        screen.query_one("#library-delete-collection", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-confirm-delete-collection")
-        screen.query_one("#library-confirm-delete-collection", Button).press()
-        await _wait_for_text(screen, pilot, "41-45 of 45")
-        assert delegate.get_collection("collection-46") is None
-
-        screen.query_one("#library-collections-delete-undo", Button).press()
-        await _wait_for_text(screen, pilot, "41-46 of 46")
-        assert delegate.get_collection("collection-46") is not None
-        assert "Selected: Zulu" in _visible_text(screen)
-
-        service.fail_locator_once = True
-        screen.query_one("#library-collection-name-input", Input).value = (
-            "Failure Known"
-        )
         await pilot.pause()
-        screen.query_one("#library-create-collection", Button).press()
-        await _wait_for_text(screen, pilot, "Collections changed; retry")
-        assert delegate.get_collection("collection-47") is not None
-        assert screen.query_one("#library-create-collection", Button).disabled
 
-        screen.query_one("#library-collections-retry", Button).press()
-        await _wait_for_text(screen, pilot, "41-47 of 47")
-        assert "Selected: Failure Known" in _visible_text(screen)
-        assert service.locator_calls == [
-            ("collection-46", {"limit": 20}),
-            ("collection-46", {"limit": 20}),
-            ("collection-46", {"limit": 20}),
-            ("collection-47", {"limit": 20}),
-            ("collection-47", {"limit": 20}),
-        ]
+        page = delegate.list_library_collections(limit=20, offset=0)
+        assert page["total"] == 45
+        assert screen._library_collections_browse_controller.freshness == "fresh"
+        assert screen._library_collection_name_input == "Blocked write"
+        assert screen._library_collections_mutation_in_flight is False
+        assert "1-20 of 45" in _visible_text(screen)
+
+    delegate.db.close()
 
 
 @pytest.mark.asyncio
