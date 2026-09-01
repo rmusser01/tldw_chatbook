@@ -2638,7 +2638,24 @@ async def test_active_reveal_queue_retains_only_identity_across_target_and_rail_
 
         rail.activate_section("model", request_reconcile=False)
         rail._queue_pending_active_reveal()
-        callback, args = callbacks.pop(0)
+        # TASK-25715 finding 2, resolved 2026-09-01: pop(0) here assumed the
+        # reveal callback is first in the capture list, but activate_section
+        # can schedule _prepare_allocation_reconcile ahead of it (probe
+        # evidence: on failing runs pop(0) returned the reconcile with the
+        # reveal still queued behind it). Invoking the reconcile by hand
+        # after rail.remove() then crashed on the rail-body query -- a flake
+        # whose rate tracked unrelated scheduling changes (~1/60 before the
+        # TASK-25888/26836 refresh reshaping, ~1/2 after). Select the reveal
+        # by IDENTITY; the schedule order of its neighbours is not this
+        # test's contract.
+        reveal_index = next(
+            index
+            for index, (candidate, _args) in enumerate(callbacks)
+            if getattr(candidate, "__qualname__", "").endswith(
+                "._reveal_active_section"
+            )
+        )
+        callback, args = callbacks.pop(reveal_index)
         assert not _contains_widget_reference(args)
         await rail.remove()
         callback(*args)
