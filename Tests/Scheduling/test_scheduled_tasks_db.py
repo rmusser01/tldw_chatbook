@@ -652,3 +652,73 @@ def test_record_sync_error_appends_and_caps(tmp_path):
     assert len(state["sync_errors"]) == 10
     assert state["sync_errors"][-1]["message"] == "error 11"
     assert state["sync_errors"][0]["message"] == "error 2"
+
+
+# ----------------------------------------------------------------------
+# Automation runs
+# ----------------------------------------------------------------------
+
+
+def _mk_db(tmp_path):
+    return ScheduledTasksDB(str(tmp_path / "s.db"), client_id="t")
+
+
+def test_create_run_and_slot_dedupe(tmp_path):
+    db = _mk_db(tmp_path)
+    first = db.create_automation_run(
+        "local", "d1", 1, "scheduled",
+        status="running", schedule_slot="2026-09-01T09:00:00+00:00",
+    )
+    assert first is not None
+    duplicate = db.create_automation_run(
+        "local", "d1", 1, "scheduled",
+        status="running", schedule_slot="2026-09-01T09:00:00+00:00",
+    )
+    assert duplicate is None  # deduped, not raised
+    two_manuals = [
+        db.create_automation_run("local", "d1", 1, "manual", status="running")
+        for _ in range(2)
+    ]
+    assert all(two_manuals)  # NULL slots never collide
+
+
+def test_update_and_list_runs(tmp_path):
+    db = _mk_db(tmp_path)
+    run_id = db.create_automation_run("local", "d1", 1, "manual", status="running")
+    assert db.update_automation_run(
+        run_id, status="completed", outcome="finding",
+        run_summary={"note": "ok"},
+    )
+    rows = db.list_automation_runs("local", definition_id="d1")
+    assert rows[0]["status"] == "completed"
+    assert rows[0]["run_summary"] == {"note": "ok"}  # JSON round-trips
+
+
+def test_prune_keeps_newest_200_per_definition(tmp_path):
+    db = _mk_db(tmp_path)
+    for i in range(205):
+        db.create_automation_run(
+            "local", "d1", 1, "scheduled",
+            status="completed", schedule_slot=f"slot-{i:04d}",
+        )
+    rows = db.list_automation_runs("local", definition_id="d1", limit=500)
+    assert len(rows) == 200
+    slots = {r["schedule_slot"] for r in rows}
+    assert "slot-0204" in slots and "slot-0000" not in slots
+
+
+def test_reconcile_marks_stale_running_as_interrupted(tmp_path):
+    db = _mk_db(tmp_path)
+    run_id = db.create_automation_run("local", "d1", 1, "manual", status="running")
+    # Backdate created_at past the cutoff.
+    with closing(db._get_connection()) as conn:
+        conn.execute(
+            "UPDATE automation_runs SET created_at = ? WHERE id = ?",
+            ("2020-01-01T00:00:00+00:00", run_id),
+        )
+        conn.commit()
+    reconciled = db.reconcile_stale_automation_runs(older_than_seconds=3600)
+    assert reconciled == 1
+    row = db.list_automation_runs("local", definition_id="d1")[0]
+    assert row["status"] == "failed"
+    assert row["failure_reason"] == {"code": "interrupted"}

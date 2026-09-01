@@ -11,7 +11,7 @@ import json
 import sqlite3
 import uuid
 from contextlib import closing, contextmanager
-from datetime import date, datetime, timezone, tzinfo
+from datetime import date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import Any, Iterator, Optional, Union, cast
 from zoneinfo import ZoneInfo
@@ -118,6 +118,19 @@ class ScheduledTasksDB(BaseDB):
     _AUDIT_JSON_FIELDS = {
         "before",
         "after",
+    }
+
+    _RUNS_RETAINED_PER_DEFINITION = 200
+
+    _AUTOMATION_RUN_COLUMNS = {
+        "server_id", "status", "outcome", "schedule_slot",
+        "scope_snapshot", "finding_policy_snapshot", "rag_request_snapshot",
+        "run_summary", "evidence_summary", "failure_reason",
+        "updated_at", "started_at", "ended_at",
+    }
+    _AUTOMATION_RUN_JSON_FIELDS = {
+        "scope_snapshot", "finding_policy_snapshot", "rag_request_snapshot",
+        "run_summary", "evidence_summary", "failure_reason",
     }
 
     _DATETIME_FIELDS = {
@@ -1150,6 +1163,162 @@ class ScheduledTasksDB(BaseDB):
             f"Created automation audit event {event_id} for definition {definition_id}"
         )
         return event_id
+
+    # ------------------------------------------------------------------
+    # Automation runs
+    # ------------------------------------------------------------------
+
+    def create_automation_run(
+        self,
+        owner_id: str,
+        definition_id: str,
+        definition_version: int,
+        trigger_reason: str,
+        **kwargs: Any,
+    ) -> str | None:
+        """Insert a run; return its id, or None when the slot deduped it.
+
+        Also prunes the definition's runs to the newest
+        ``_RUNS_RETAINED_PER_DEFINITION`` (spec §4.1): an
+        every-15-minutes definition would otherwise write ~35k rows/year.
+        """
+        self._validate_kwargs(kwargs, self._AUTOMATION_RUN_COLUMNS, "automation run")
+        run_id = str(uuid.uuid4())
+        now_iso = self._to_utc_iso(datetime.now(timezone.utc))
+        fields: dict[str, Any] = {
+            "id": run_id,
+            "owner_id": owner_id,
+            "definition_id": definition_id,
+            "definition_version": definition_version,
+            "trigger_reason": trigger_reason,
+            "status": "queued",
+            "outcome": "none",
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        }
+        for key, value in kwargs.items():
+            if value is None:
+                continue
+            if key in self._AUTOMATION_RUN_JSON_FIELDS:
+                fields[key] = json.dumps(value)
+            elif isinstance(value, datetime):
+                fields[key] = self._to_utc_iso(value)
+            else:
+                fields[key] = value
+        columns = ", ".join(fields)
+        placeholders = ", ".join("?" for _ in fields)
+        with self.transaction() as conn:
+            try:
+                conn.execute(
+                    f"INSERT INTO automation_runs ({columns}) VALUES ({placeholders})",
+                    list(fields.values()),
+                )
+            except sqlite3.IntegrityError:
+                # The (definition, version, slot) UNIQUE fired: this slot
+                # already ran. Dedupe is a result, not an error.
+                return None
+            conn.execute(
+                """
+                DELETE FROM automation_runs
+                WHERE definition_id = ? AND id NOT IN (
+                    SELECT id FROM automation_runs
+                    WHERE definition_id = ?
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT ?
+                )
+                """,
+                (definition_id, definition_id, self._RUNS_RETAINED_PER_DEFINITION),
+            )
+        return run_id
+
+    def update_automation_run(self, run_id: str, **kwargs: Any) -> bool:
+        """Update automation-run fields. Returns True if a row changed."""
+        if not kwargs:
+            return False
+
+        self._validate_kwargs(kwargs, self._AUTOMATION_RUN_COLUMNS, "automation run")
+
+        updates: list[str] = []
+        params: list[Any] = []
+
+        for key, value in kwargs.items():
+            if key in self._AUTOMATION_RUN_JSON_FIELDS:
+                updates.append(f"{key} = ?")
+                params.append(self._to_json(value))
+            elif isinstance(value, datetime):
+                updates.append(f"{key} = ?")
+                params.append(self._to_utc_iso(value))
+            else:
+                updates.append(f"{key} = ?")
+                params.append(value)
+
+        self._validate_sql_identifiers([key.split(" ", 1)[0] for key in updates])
+        updates.append("updated_at = ?")
+        params.append(self._to_utc_iso(datetime.now(timezone.utc)))
+        params.append(run_id)
+
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                f"UPDATE automation_runs SET {', '.join(updates)} WHERE id = ?",
+                params,
+            )
+            return cursor.rowcount > 0
+
+    def list_automation_runs(
+        self,
+        owner_id: str,
+        definition_id: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List automation runs for an owner, newest first.
+
+        Optionally filtered to a single definition; paginated via
+        ``limit``/``offset``.
+        """
+        conditions = ["owner_id = ?"]
+        params: list[Any] = [owner_id]
+
+        if definition_id is not None:
+            conditions.append("definition_id = ?")
+            params.append(definition_id)
+
+        where_clause = f"WHERE {' AND '.join(conditions)}"
+        params.extend([limit, offset])
+
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                f"SELECT * FROM automation_runs {where_clause} "
+                "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                params,
+            )
+            return self._rows_to_dicts(
+                cursor.fetchall(), json_fields=self._AUTOMATION_RUN_JSON_FIELDS
+            )
+
+    def reconcile_stale_automation_runs(self, older_than_seconds: float) -> int:
+        """Mark queued/running runs older than the cutoff as interrupted.
+
+        Called at scheduler start (spec §4.1): an app killed mid-run must
+        not leave a phantom in-flight run.
+        """
+        cutoff = self._to_utc_iso(
+            datetime.now(timezone.utc) - timedelta(seconds=older_than_seconds)
+        )
+        now_iso = self._to_utc_iso(datetime.now(timezone.utc))
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE automation_runs
+                SET status = 'failed',
+                    failure_reason = ?,
+                    ended_at = ?,
+                    updated_at = ?
+                WHERE status IN ('queued', 'running') AND created_at < ?
+                """,
+                (json.dumps({"code": "interrupted"}), now_iso, now_iso, cutoff),
+            )
+            return cursor.rowcount
 
     # ------------------------------------------------------------------
     # Sync helpers
