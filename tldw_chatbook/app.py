@@ -10289,6 +10289,14 @@ class TldwCli(
                 handler_timeout_seconds=get_cli_setting(
                     "scheduling", "handler_timeout_seconds", HANDLER_TIMEOUT_SECONDS
                 ),
+                # task-18937/Finding D precedent (`on_queue_changed` above):
+                # a schedule advance written here would otherwise sit
+                # unseen by the live queue until its periodic ~30-minute
+                # reload. Same lazy-getattr discipline -- `scheduler_loop`
+                # is constructed after `self.scheduling_service`, so this
+                # lambda must not resolve it eagerly.
+                on_queue_changed=lambda: getattr(self, "scheduler_loop", None)
+                and self.scheduler_loop.request_reload(),
             )
             self._automation_definition_handler = handler
         return handler

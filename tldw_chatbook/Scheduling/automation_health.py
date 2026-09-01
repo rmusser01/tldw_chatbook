@@ -36,8 +36,10 @@ def compute_local_health(app: Any, definition_row: dict) -> tuple[str, str]:
     Checks, in order:
 
     1. `capability_unavailable` -- `app.library_rag_search_service` is
-       absent or `None` (the `recurring_question` family's only retrieval
-       seam today).
+       absent, `None`, or does not expose a callable `search` (the
+       `recurring_question` family's only retrieval seam today; a service
+       object without a callable `search` is not actually usable, however
+       present the attribute is).
     2. `permission_required` -- `resolve_execution_target` resolves no
        `provider` at any of its layers (definition `input`, `[scheduling]`
        config, or the Library RAG answer-provider default).
@@ -58,7 +60,8 @@ def compute_local_health(app: Any, definition_row: dict) -> tuple[str, str]:
     """
     global resolve_execution_target
 
-    if getattr(app, "library_rag_search_service", None) is None:
+    service = getattr(app, "library_rag_search_service", None)
+    if service is None or not callable(getattr(service, "search", None)):
         return Health.CAPABILITY_UNAVAILABLE.value, _CAPABILITY_UNAVAILABLE_REASON
 
     if resolve_execution_target is None:

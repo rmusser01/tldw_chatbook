@@ -132,6 +132,55 @@ async def test_question_empty_returns_degraded_without_calling_retrieval(monkeyp
     assert called is False
 
 
+# --- scope errors: non-retryable refusal, never unscoped fallback (Finding B) --
+
+
+@pytest.mark.asyncio
+async def test_unsupported_scope_mode_returns_degraded_without_calling_retrieval(monkeypatch):
+    called = False
+
+    async def fake_search(app, request):
+        nonlocal called
+        called = True
+        return LibraryRagSearchOutcome(status="ready", results=(_row(),))
+
+    monkeypatch.setattr(automation_execution, "run_library_rag_search", fake_search)
+    outcome = await execute_recurring_question(
+        _FakeApp(),
+        _definition_row(config={"scope": {"mode": "bogus_mode"}}),
+    )
+    assert outcome.outcome == "degraded"
+    assert outcome.answer_mode == "none"
+    assert outcome.failure_reason["code"] == "unsupported"
+    assert outcome.failure_reason["errors"] == [
+        {
+            "field": "config.scope.mode",
+            "code": "unsupported",
+            "message": "Unsupported scope mode: bogus_mode",
+        }
+    ]
+    assert called is False
+
+
+@pytest.mark.asyncio
+async def test_empty_resolved_scope_returns_degraded_without_calling_retrieval(monkeypatch):
+    called = False
+
+    async def fake_search(app, request):
+        nonlocal called
+        called = True
+        return LibraryRagSearchOutcome(status="ready", results=(_row(),))
+
+    monkeypatch.setattr(automation_execution, "run_library_rag_search", fake_search)
+    outcome = await execute_recurring_question(
+        _FakeApp(),
+        _definition_row(config={"scope": {"mode": "sources", "sources": ["not_a_real_source"]}}),
+    )
+    assert outcome.outcome == "degraded"
+    assert outcome.failure_reason["code"] == "scope_empty"
+    assert called is False
+
+
 # --- the six-row classification ladder ---------------------------------------
 
 

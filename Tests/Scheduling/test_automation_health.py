@@ -40,8 +40,14 @@ def test_capability_unavailable_when_rag_service_is_none():
     assert reason
 
 
+def _fake_search_service() -> SimpleNamespace:
+    """A minimal stand-in with a callable `search` -- what a real
+    `LibraryLocalRagSearchService` (or any capable seam) actually exposes."""
+    return SimpleNamespace(search=lambda *args, **kwargs: None)
+
+
 def test_permission_required_when_no_provider_resolves(monkeypatch):
-    app = SimpleNamespace(library_rag_search_service=object())
+    app = SimpleNamespace(library_rag_search_service=_fake_search_service())
     monkeypatch.setattr(
         automation_health,
         "resolve_execution_target",
@@ -55,7 +61,7 @@ def test_permission_required_when_no_provider_resolves(monkeypatch):
 
 
 def test_ready_when_rag_service_present_and_provider_resolves(monkeypatch):
-    app = SimpleNamespace(library_rag_search_service=object())
+    app = SimpleNamespace(library_rag_search_service=_fake_search_service())
     monkeypatch.setattr(
         automation_health,
         "resolve_execution_target",
@@ -81,3 +87,22 @@ def test_capability_check_short_circuits_before_resolving_provider(monkeypatch):
     health, _reason = automation_health.compute_local_health(app, DEFINITION_ROW)
 
     assert health == "capability_unavailable"
+
+
+def test_capability_unavailable_when_service_has_no_callable_search(monkeypatch):
+    """Finding H: a `library_rag_search_service` that is present but does
+    not expose a callable `search` (e.g. a stub/misconfigured object) is
+    not a capable seam -- it must not be reported `ready` or
+    `permission_required`, either of which would tell a caller it is safe
+    to dispatch."""
+    app = SimpleNamespace(library_rag_search_service=object())
+
+    def _boom(row):
+        raise AssertionError("resolve_execution_target must not be called")
+
+    monkeypatch.setattr(automation_health, "resolve_execution_target", _boom)
+
+    health, reason = automation_health.compute_local_health(app, DEFINITION_ROW)
+
+    assert health == "capability_unavailable"
+    assert reason

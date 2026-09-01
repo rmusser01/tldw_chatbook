@@ -125,6 +125,7 @@ class AutomationDefinitionHandler:
         dispatch_service: "NotificationDispatchService | None" = None,
         handler_timeout_seconds: float | None = None,
         executors: dict[str, Executor] | None = None,
+        on_queue_changed: Callable[[], None] | None = None,
     ) -> None:
         """Initialize the handler.
 
@@ -148,10 +149,20 @@ class AutomationDefinitionHandler:
                 `execute_recurring_question` -- so `agent_task` can add a
                 second entry later without touching this handler's shape.
                 Tests inject fakes here directly.
+            on_queue_changed: Called (guarded, never fails the dispatch)
+                after a successful schedule advance in `_dispatch` and
+                after `run_now`'s dispatch (`SchedulingService.
+                on_queue_changed` seam precedent) -- the in-memory queue
+                only reloads periodically (~30 min), so without this an
+                advanced `next_run_at` would not reach the live queue
+                until that reload, and an every-15-min definition would
+                run every 30 (Finding D). `None` (the default) makes it a
+                no-op.
         """
         self.db = db
         self.app_getter = app_getter
         self.dispatch_service = dispatch_service
+        self.on_queue_changed = on_queue_changed
         self.handler_timeout_seconds = coerce_positive_float(
             handler_timeout_seconds
             if handler_timeout_seconds is not None
@@ -247,13 +258,15 @@ class AutomationDefinitionHandler:
             )
             return None
 
-        return await self._dispatch(
+        run_id = await self._dispatch(
             definition_row,
             executor=executor,
             trigger_reason="manual",
             schedule_slot=None,
             advance_schedule=False,
         )
+        self._notify_queue_changed()
+        return run_id
 
     async def _dispatch(
         self,
@@ -348,13 +361,47 @@ class AutomationDefinitionHandler:
 
             if advance_schedule:
                 schedule = task.get("schedule")
-                await asyncio.to_thread(
-                    self.db.update_automation_definition,
-                    definition_id,
-                    next_run_at=compute_next_run_at(
-                        schedule if isinstance(schedule, dict) else {}, now=now
-                    ),
-                )
+                try:
+                    await asyncio.to_thread(
+                        self.db.update_automation_definition,
+                        definition_id,
+                        next_run_at=compute_next_run_at(
+                            schedule if isinstance(schedule, dict) else {}, now=now
+                        ),
+                    )
+                except Exception as exc:  # noqa: BLE001 - must not wedge the definition
+                    # The `running` row already exists but the schedule
+                    # could not be advanced: letting this propagate would
+                    # strand that row at `running` forever (the claim is
+                    # released by the `finally` below either way, but
+                    # nothing would ever mark the run terminal, and the
+                    # next dispatch of this same still-unadvanced slot
+                    # would just hit the UNIQUE and dedupe -- Finding C).
+                    # Best-effort terminalize instead, and never spawn.
+                    logger.warning(
+                        f"Automation definition {definition_id!r} schedule "
+                        f"advance failed after run {run_id!r} was claimed: "
+                        f"{type(exc).__name__}"
+                    )
+                    try:
+                        await asyncio.to_thread(
+                            self.db.update_automation_run,
+                            run_id,
+                            status="failed",
+                            outcome="degraded",
+                            ended_at=datetime.now(timezone.utc),
+                            failure_reason={
+                                "code": "advance_error",
+                                "error_type": type(exc).__name__,
+                            },
+                        )
+                    except Exception:  # noqa: BLE001 - the DB may be the broken thing
+                        pass
+                    return None
+                # Advance succeeded: push the new `next_run_at` to the live
+                # queue now rather than waiting for its periodic reload
+                # (Finding D).
+                self._notify_queue_changed()
 
             spawned = asyncio.create_task(
                 self._run(executor, task, run_id=run_id, definition_id=definition_id, owner_id=owner_id),
@@ -536,6 +583,24 @@ class AutomationDefinitionHandler:
             )
         finally:
             self._claimed.discard(definition_id)
+
+    def _notify_queue_changed(self) -> None:
+        """Invoke `on_queue_changed`, tolerating a broken callback.
+
+        Same containment discipline as `SchedulingService.
+        _notify_queue_changed`: a wiring failure here must never fail the
+        dispatch that triggered it.
+        """
+        if self.on_queue_changed is None:
+            return
+        try:
+            self.on_queue_changed()
+        except Exception:  # noqa: BLE001 - callback failure is not the caller's
+            logger.exception(
+                "AutomationDefinitionHandler on_queue_changed callback "
+                "failed; the dispatch itself succeeded and the scheduler "
+                "queue will reload on its periodic interval."
+            )
 
     def _notify(
         self,

@@ -29,12 +29,20 @@ SUPPORTED_SCOPE_FIELDS = {
     "advanced_filters",
 }
 
-# Maps server source names onto the retrieval engine vocabulary
-# (the `rag_service` docstring's own vocabulary).
-_ENGINE_SOURCE_TYPE_MAP = {
+# Maps server source names onto the LIBRARY service's vocabulary
+# (`library_local_rag_search_service.py`'s `search()`, this module's only
+# real consumer via `automation_execution.py` -> `LibraryRagSearchRequest.
+# source_types`). The Library speaks plurals -- `media`, `notes`,
+# `conversations`, `prompts` (see that module's `_ENGINE_KEYWORD_SOURCE_
+# TYPES` comment block) -- which is a different vocabulary than the
+# retrieval ENGINE's own singular `rag_service` spelling
+# (`media`/`note`/`conversation`); the Library service translates between
+# the two internally, so this map must stay in the Library's vocabulary,
+# not the engine's.
+_LIBRARY_SOURCE_TYPE_MAP = {
     "media_db": "media",
-    "notes": "note",
-    "chats": "conversation",
+    "notes": "notes",
+    "chats": "conversations",
 }
 
 
@@ -133,8 +141,8 @@ def _scope_empty_error() -> dict[str, str]:
     }
 
 
-def engine_source_types(normalized_scope: dict[str, Any]) -> tuple[str, ...]:
-    """Map a normalized scope's source names onto retrieval engine source types.
+def library_source_types(normalized_scope: dict[str, Any]) -> tuple[str, ...]:
+    """Map a normalized scope's source names onto Library service source types.
 
     Reads `resolved_sources` (all-library mode) or `sources` (sources mode).
     Unknown source names are skipped rather than raised.
@@ -144,8 +152,9 @@ def engine_source_types(normalized_scope: dict[str, Any]) -> tuple[str, ...]:
             `normalize_recurring_question_scope`.
 
     Returns:
-        A tuple of retrieval-engine source-type strings (e.g. `"media"`,
-        `"note"`, `"conversation"`), in the order the source names appeared.
+        A tuple of `LibraryLocalRagSearchService.search()` source-type
+        strings (e.g. `"media"`, `"notes"`, `"conversations"`), in the
+        order the source names appeared.
     """
     names = normalized_scope.get("resolved_sources") or normalized_scope.get("sources") or []
-    return tuple(_ENGINE_SOURCE_TYPE_MAP[name] for name in names if name in _ENGINE_SOURCE_TYPE_MAP)
+    return tuple(_LIBRARY_SOURCE_TYPE_MAP[name] for name in names if name in _LIBRARY_SOURCE_TYPE_MAP)

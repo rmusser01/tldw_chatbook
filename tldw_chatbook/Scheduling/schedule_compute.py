@@ -37,10 +37,6 @@ def _naive_as_utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 
-def _machine_timezone() -> Any:
-    return datetime.now().astimezone().tzinfo or timezone.utc
-
-
 def _resolve_timezone(name: Any, *, default: Any) -> Any:
     if not name:
         return default
@@ -87,16 +83,53 @@ def _compute_interval(schedule: dict[str, Any], now: datetime) -> datetime | Non
     return now + timedelta(seconds=every_seconds)
 
 
+def _local_now_for_schedule(schedule: dict[str, Any], now: datetime) -> datetime:
+    """Local "now" to build daily/weekly candidates from.
+
+    An explicit IANA ``timezone`` resolves through ``ZoneInfo`` as before
+    (fold-aware, DST-correct for that zone). With no explicit timezone
+    (Finding E), this returns a NAIVE local wall-clock value instead of
+    localizing through a single fixed-offset snapshot (the old
+    ``_machine_timezone()``, which memoized ``datetime.now().astimezone()
+    .tzinfo`` -- wrong across a DST boundary, since every computed
+    candidate got that one snapshot's offset regardless of the
+    candidate's own date). A naive datetime's own ``.astimezone()`` (see
+    ``_localize_after`` below) instead resolves the platform's local rule
+    per the date it actually carries.
+    """
+    explicit_tz_name = schedule.get("timezone")
+    if explicit_tz_name:
+        return now.astimezone(_resolve_timezone(explicit_tz_name, default=timezone.utc))
+    return now.astimezone().replace(tzinfo=None)
+
+
+def _localize_after(candidate: datetime, now: datetime, period: timedelta) -> datetime:
+    """Localize ``candidate`` (aware or naive-local) to UTC.
+
+    Guards against DST fall-back computing a past instant (Finding F):
+    Python's aware-datetime arithmetic always resets ``fold`` to 0 on its
+    result (documented behavior), which can silently flip a
+    correctly-resolved second-occurrence (``fold=1``) candidate to the
+    first occurrence's interpretation after a ``candidate += timedelta``
+    -- up to an hour earlier than intended. If the localized result is
+    not strictly after ``now``, advance one more ``period`` (a day or a
+    week) and recompute rather than ever handing back a stale slot.
+    """
+    result = candidate.astimezone(timezone.utc)
+    if result <= now:
+        result = (candidate + period).astimezone(timezone.utc)
+    return result
+
+
 def _compute_daily(schedule: dict[str, Any], now: datetime) -> datetime | None:
     tod = _parse_time_of_day(schedule.get("time_of_day"))
     if tod is None:
         return None
-    tz = _resolve_timezone(schedule.get("timezone"), default=_machine_timezone())
-    local_now = now.astimezone(tz)
+    local_now = _local_now_for_schedule(schedule, now)
     candidate = local_now.replace(hour=tod.hour, minute=tod.minute, second=0, microsecond=0)
     if candidate <= local_now:
         candidate += timedelta(days=1)
-    return candidate.astimezone(timezone.utc)
+    return _localize_after(candidate, now, timedelta(days=1))
 
 
 def _compute_weekly(schedule: dict[str, Any], now: datetime) -> datetime | None:
@@ -104,14 +137,13 @@ def _compute_weekly(schedule: dict[str, Any], now: datetime) -> datetime | None:
     weekday = schedule.get("weekday")
     if tod is None or isinstance(weekday, bool) or not isinstance(weekday, int) or not (0 <= weekday <= 6):
         return None
-    tz = _resolve_timezone(schedule.get("timezone"), default=_machine_timezone())
-    local_now = now.astimezone(tz)
+    local_now = _local_now_for_schedule(schedule, now)
     candidate = local_now.replace(hour=tod.hour, minute=tod.minute, second=0, microsecond=0)
     days_ahead = (weekday - candidate.weekday()) % 7
     candidate += timedelta(days=days_ahead)
     if candidate <= local_now:
         candidate += timedelta(days=7)
-    return candidate.astimezone(timezone.utc)
+    return _localize_after(candidate, now, timedelta(days=7))
 
 
 def _compute_cron(schedule: dict[str, Any], now: datetime) -> datetime | None:
@@ -145,6 +177,13 @@ def compute_next_run_at(schedule: dict[str, Any], *, now: datetime) -> datetime 
     any invalid/junk schedule -- this never raises, since a bad row must
     not take down the queue.
 
+    Nonexistent local times (the spring-forward gap -- e.g. a ``daily``/
+    ``weekly`` ``time_of_day`` that falls in the hour skipped when clocks
+    jump forward) resolve FORWARD per ``zoneinfo``/PEP 495 fold semantics:
+    02:30 becomes 03:30 that same day, matching common cron behavior. This
+    is deliberate and unchanged (Finding G) -- not a case this function
+    treats as invalid or shifts to a different day.
+
     Args:
         schedule: A schedule dict with a ``kind`` key (one of
             ``_KIND_COMPUTERS``: ``one_time``, ``interval``, ``daily``,
@@ -168,5 +207,17 @@ def compute_next_run_at(schedule: dict[str, Any], *, now: datetime) -> datetime 
 
 
 def schedule_slot_for(next_run: datetime) -> str:
-    """Canonical UTC ISO string used as a run's ``schedule_slot``."""
+    """Canonical UTC ISO string used as a run's ``schedule_slot``.
+
+    Args:
+        next_run: The next scheduled run time. Every caller in this
+            codebase passes an aware datetime (this module's own
+            computers always return one); a naive value here would be
+            interpreted as system-local time by ``astimezone()``, not UTC.
+
+    Returns:
+        ``next_run`` converted to UTC and rendered as an ISO 8601 string --
+        the value stored as a run's ``schedule_slot`` and used in its
+        ``(definition_id, definition_version, schedule_slot)`` UNIQUE.
+    """
     return next_run.astimezone(timezone.utc).isoformat()

@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..config import coerce_int_setting, get_cli_setting
-from .recurring_question_scope import engine_source_types, normalize_recurring_question_scope
+from .recurring_question_scope import library_source_types, normalize_recurring_question_scope
 from ..Library.library_rag_answer_service import (
     ANSWER_STATUS_READY,
     LibraryRagAnswer,
@@ -216,7 +216,9 @@ def _evidence_summary(
     }
 
 
-def _degraded(*, failure_code: str, evidence_summary: dict) -> ExecutionOutcome:
+def _degraded(
+    *, failure_code: str, evidence_summary: dict, failure_reason: dict | None = None
+) -> ExecutionOutcome:
     return ExecutionOutcome(
         outcome="degraded",
         title="",
@@ -226,7 +228,7 @@ def _degraded(*, failure_code: str, evidence_summary: dict) -> ExecutionOutcome:
         confidence={},
         source_refs=[],
         evidence_summary=evidence_summary,
-        failure_reason={"code": failure_code},
+        failure_reason=failure_reason if failure_reason is not None else {"code": failure_code},
     )
 
 
@@ -403,8 +405,26 @@ async def execute_recurring_question(app: Any, definition_row: dict) -> Executio
     if generation_mode not in _VALID_GENERATION_MODES:
         generation_mode = "optional"
 
-    normalized_scope, _errors, _warnings = normalize_recurring_question_scope(config.get("scope"))
-    source_types = engine_source_types(normalized_scope)
+    normalized_scope, scope_errors, _warnings = normalize_recurring_question_scope(config.get("scope"))
+    if scope_errors:
+        # Server parity: an unsupported scope mode/field or an empty
+        # resolved scope (`scope_empty`) is a non-retryable refusal, not a
+        # signal to fall back to unscoped (everything) retrieval -- the
+        # opposite of what a scoped definition asked for (Finding B).
+        return _degraded(
+            failure_code=scope_errors[0].get("code", "scope_invalid"),
+            evidence_summary=_evidence_summary(
+                result_count=0,
+                answer_present=False,
+                retrieval_status="",
+                generation_status="",
+            ),
+            failure_reason={
+                "code": scope_errors[0].get("code", "scope_invalid"),
+                "errors": scope_errors,
+            },
+        )
+    source_types = library_source_types(normalized_scope)
 
     top_k, high_confidence_only = _resolve_finding_policy(row.get("finding_policy"))
 

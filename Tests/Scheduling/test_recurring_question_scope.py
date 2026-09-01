@@ -1,7 +1,7 @@
 from tldw_chatbook.Scheduling.recurring_question_scope import (
     DEFAULT_SEARCHABLE_SOURCES,
     SUPPORTED_SCOPE_FIELDS,
-    engine_source_types,
+    library_source_types,
     normalize_recurring_question_scope,
 )
 
@@ -81,18 +81,33 @@ def test_supported_scope_fields_matches_server_set():
     }
 
 
-def test_engine_source_types_maps_all_searchable_library_mode():
-    result = engine_source_types(
+def test_library_source_types_maps_all_searchable_library_mode():
+    result = library_source_types(
         {"mode": "all_searchable_library", "resolved_sources": ["media_db", "notes", "chats"]}
     )
-    assert result == ("media", "note", "conversation")
+    assert result == ("media", "notes", "conversations")
 
 
-def test_engine_source_types_maps_sources_mode():
-    result = engine_source_types({"mode": "sources", "sources": ["chats", "media_db"]})
-    assert result == ("conversation", "media")
+def test_library_source_types_maps_sources_mode():
+    result = library_source_types({"mode": "sources", "sources": ["chats", "media_db"]})
+    assert result == ("conversations", "media")
 
 
-def test_engine_source_types_skips_unknown_names():
-    result = engine_source_types({"mode": "sources", "sources": ["notes", "mystery_source"]})
-    assert result == ("note",)
+def test_library_source_types_skips_unknown_names():
+    result = library_source_types({"mode": "sources", "sources": ["notes", "mystery_source"]})
+    assert result == ("notes",)
+
+
+def test_library_source_types_map_is_a_subset_of_the_library_service_fts_servable_types():
+    """Drift guard (Finding A): `library_source_types` maps into the
+    LIBRARY service's vocabulary, not the retrieval engine's. If the
+    Library service's servable source-type set ever changes, this test
+    must break instead of silently unmapping a source name.
+    """
+    from tldw_chatbook.Library.library_local_rag_search_service import (
+        _FTS_SERVABLE_SOURCE_TYPES,
+    )
+    from tldw_chatbook.Scheduling.recurring_question_scope import _LIBRARY_SOURCE_TYPE_MAP
+
+    for library_source_type in _LIBRARY_SOURCE_TYPE_MAP.values():
+        assert library_source_type in _FTS_SERVABLE_SOURCE_TYPES

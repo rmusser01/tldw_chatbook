@@ -103,6 +103,27 @@ class _RaiseOnceOnUpdateThenDelegate:
         return getattr(self._db, name)
 
 
+class _RaiseOnceOnUpdateDefinitionThenDelegate:
+    """Wraps a real `ScheduledTasksDB`; the first `update_automation_definition`
+    call (the schedule advance) raises, every call after delegates to the
+    real accessor. Everything else passes straight through via
+    `__getattr__`."""
+
+    def __init__(self, db: ScheduledTasksDB, *, exc: Exception) -> None:
+        self._db = db
+        self._exc = exc
+        self._raised = False
+
+    def update_automation_definition(self, *args: Any, **kwargs: Any) -> Any:
+        if not self._raised:
+            self._raised = True
+            raise self._exc
+        return self._db.update_automation_definition(*args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._db, name)
+
+
 def _make_definition(db: ScheduledTasksDB, **overrides: Any) -> dict[str, Any]:
     kwargs: dict[str, Any] = dict(
         owner_id="local",
@@ -335,6 +356,81 @@ async def test_schedule_is_advanced_before_the_executor_completes(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_on_queue_changed_fires_once_after_a_successful_scheduled_advance(
+    tmp_path,
+):
+    """Finding D: the in-memory queue only reloads periodically (~30 min);
+    without a callback, a schedule advance written to the DB by `handle`
+    would not reach the live queue until that periodic reload -- an
+    every-15-min definition would then run every 30. `on_queue_changed`
+    closes that gap; it must fire exactly once per successful scheduled
+    dispatch, and a broken callback must never fail the dispatch."""
+    db = _make_db(tmp_path)
+    row = _make_definition(db)
+    calls: list[int] = []
+
+    async def fake_executor(app, definition_row):
+        return _FakeOutcome(outcome="finding")
+
+    handler = AutomationDefinitionHandler(
+        db=db,
+        executors={"recurring_question": fake_executor},
+        on_queue_changed=lambda: calls.append(1),
+    )
+
+    await handler.handle(row)
+    await _drain(handler)
+
+    assert calls == [1]
+
+
+@pytest.mark.asyncio
+async def test_on_queue_changed_broken_callback_does_not_fail_the_dispatch(tmp_path):
+    db = _make_db(tmp_path)
+    row = _make_definition(db)
+
+    def boom() -> None:
+        raise RuntimeError("callback is broken")
+
+    async def fake_executor(app, definition_row):
+        return _FakeOutcome(outcome="finding")
+
+    handler = AutomationDefinitionHandler(
+        db=db,
+        executors={"recurring_question": fake_executor},
+        on_queue_changed=boom,
+    )
+
+    run_id = await handler.handle(row)  # must not raise
+    await _drain(handler)
+
+    runs = db.list_automation_runs("local", definition_id=row["id"])
+    assert runs[0]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_on_queue_changed_fires_after_run_now_dispatch(tmp_path):
+    db = _make_db(tmp_path)
+    row = _make_definition(db)
+    calls: list[int] = []
+
+    async def fake_executor(app, definition_row):
+        return _FakeOutcome(outcome="finding")
+
+    handler = AutomationDefinitionHandler(
+        db=db,
+        executors={"recurring_question": fake_executor},
+        on_queue_changed=lambda: calls.append(1),
+    )
+
+    run_id = await handler.run_now(row)
+    assert run_id is not None
+    await _drain(handler)
+
+    assert calls == [1]
+
+
+@pytest.mark.asyncio
 async def test_notification_policy_on_failure_false_suppresses_the_notification(
     tmp_path,
 ):
@@ -507,6 +603,57 @@ async def test_a_db_error_inserting_the_running_row_does_not_strand_the_claim(
     assert len(runs) == 1
     assert runs[0]["status"] == "completed"
     assert not any(r["status"] == "skipped" for r in runs)
+
+
+@pytest.mark.asyncio
+async def test_advance_schedule_failure_terminalizes_the_run_and_releases_the_claim(
+    tmp_path,
+):
+    """Finding C: if `update_automation_definition` (the schedule advance)
+    raises after the `running` row was already inserted, the run must not
+    be left stranded at `running` forever with the claim also stuck (the
+    wedge) -- it must be best-effort terminalized as `failed`/`degraded`
+    without spawning the executor, and the claim must be released so a
+    later dispatch for a different slot proceeds normally."""
+    db = _make_db(tmp_path)
+    row = _make_definition(db)
+    flaky = _RaiseOnceOnUpdateDefinitionThenDelegate(
+        db, exc=sqlite3.OperationalError("database is locked")
+    )
+    called: list[int] = []
+
+    async def fake_executor(app, definition_row):
+        called.append(1)
+        return _FakeOutcome(outcome="finding")
+
+    handler = AutomationDefinitionHandler(
+        db=flaky, executors={"recurring_question": fake_executor}
+    )
+
+    await handler.handle(row)  # advance raises -- must not raise out, must not spawn
+
+    assert called == []  # the executor was never spawned
+    assert handler._claimed == set()  # the claim was released
+    assert handler._pending == set()  # nothing was spawned
+
+    runs = db.list_automation_runs("local", definition_id=row["id"])
+    assert len(runs) == 1
+    assert runs[0]["status"] == "failed"
+    assert runs[0]["outcome"] == "degraded"
+    assert runs[0]["failure_reason"]["code"] == "advance_error"
+
+    # A subsequent dispatch for a DIFFERENT slot (the flaky wrapper only
+    # raises once) proceeds normally -- the handler itself is not wedged.
+    row2 = dict(row)
+    row2["next_run_at"] = "2026-01-02T00:00:00+00:00"
+    await handler.handle(row2)
+    await _drain(handler)
+
+    assert called == [1]
+    runs = db.list_automation_runs("local", definition_id=row["id"])
+    assert len(runs) == 2
+    statuses = sorted(r["status"] for r in runs)
+    assert statuses == ["completed", "failed"]
 
 
 @pytest.mark.asyncio
