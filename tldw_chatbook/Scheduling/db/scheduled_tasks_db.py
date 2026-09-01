@@ -1157,11 +1157,16 @@ class ScheduledTasksDB(BaseDB):
                 )
             return self._rows_to_dicts(rows, json_fields=self._AUTOMATION_JSON_FIELDS)
 
-    def update_automation_definition(self, definition_id: str, **kwargs: Any) -> bool:
+    def update_automation_definition(
+        self, definition_id: str, *, bump_version: bool = True, **kwargs: Any
+    ) -> bool:
         """Update automation-definition fields. Returns True if a row changed.
 
         The ``version`` column is automatically incremented for optimistic
-        locking; any ``version`` value supplied in kwargs is ignored.
+        locking; any ``version`` value supplied in kwargs is ignored. Pass
+        ``bump_version=False`` for a non-edit update (e.g. the scheduler's
+        `next_run_at` advance) so version churn doesn't pollute conflict
+        detection -- PR-2 final-review parking note.
         """
         if not kwargs:
             return False
@@ -1191,7 +1196,8 @@ class ScheduledTasksDB(BaseDB):
             return False
 
         self._validate_sql_identifiers([key.split(" ", 1)[0] for key in updates])
-        updates.append("version = version + 1")
+        if bump_version:
+            updates.append("version = version + 1")
         updates.append("updated_at = ?")
         params.append(self._to_utc_iso(datetime.now(timezone.utc)))
         params.append(definition_id)

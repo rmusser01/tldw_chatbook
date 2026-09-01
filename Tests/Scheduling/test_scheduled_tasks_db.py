@@ -631,6 +631,38 @@ def test_update_automation_definition_empty_kwargs_returns_false(
     assert db.update_automation_definition(def_id) is False
 
 
+def test_update_automation_definition_bump_version_false_skips_increment(
+    db: ScheduledTasksDB,
+) -> None:
+    """PR-2 parked item: a schedule advance (`next_run_at` only) is not an
+    edit -- `bump_version=False` must leave `version` unchanged, while the
+    default (`bump_version=True`) keeps bumping it for real edits."""
+    def_id = db.create_automation_definition(
+        owner_id="local",
+        family="recurring_question",
+        name="Original",
+        schedule={"kind": "cron", "expression": "0 9 * * *"},
+    )
+
+    advanced = db.update_automation_definition(
+        def_id,
+        bump_version=False,
+        next_run_at=_utc(2026, 1, 2),
+    )
+    assert advanced is True
+
+    row = db.get_automation_definition(def_id)
+    assert row is not None
+    assert row["version"] == 1
+
+    edited = db.update_automation_definition(def_id, name="Updated")
+    assert edited is True
+
+    row = db.get_automation_definition(def_id)
+    assert row is not None
+    assert row["version"] == 2
+
+
 def test_delete_automation_definition(db: ScheduledTasksDB) -> None:
     def_id = db.create_automation_definition(
         owner_id="local", family="recurring_question", name="To delete"
