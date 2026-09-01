@@ -26,7 +26,7 @@ Titles, compaction and other side work run on the user's main chat model. Verifi
 - [x] #2 With no auxiliary model configured, behavior is exactly as today
 - [x] #3 Auxiliary selection falls back to the main model when the configured auxiliary is unavailable or unconfigured, rather than failing the side task
 - [x] #4 Auxiliary usage and cost are attributed separately in accounting so the saving is measurable
-- [ ] #5 The auxiliary model never handles user-visible chat turns - asserted by a test over the audited endpoint set
+- [x] #5 The auxiliary model never handles user-visible chat turns - asserted by a test over the audited endpoint set
 - [x] #6 Sensitive auxiliary endpoints continue to honor the existing audit constraints when routed to a different provider
 <!-- AC:END -->
 
