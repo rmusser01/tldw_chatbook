@@ -192,6 +192,25 @@ because it reads the widget rather than the painted screen. A DOM assertion and
 a screenshot assertion on the same row disagree, and the disagreement is the
 bug. AC #3 moves to TASK-25887 with the full probe.
 
+## Fourth finding (2026-08-31, TASK-25888 sweep): a second flake, heavier on dev
+
+`test_console_workspace_context_rail.py::test_console_workspace_context_renders_active_workspace`
+fails on `assert len(console.query("#console-new-workspace-conversation")) == 1`
+(0 == 1) -- the workspace tray's new-conversation button not yet mounted when
+queried. Measured alone with `-p no:randomly`:
+
+| Tree | Result |
+|---|---|
+| pristine `origin/dev` | **3 passed / 9 failed of 12** |
+| TASK-25888 branch | 4 passed / 2 failed of 6 |
+
+Determinism was checked at both ends BEFORE attribution (the lesson from
+finding 2), so no bisect was run over it: it is a flake, pre-existing, and
+markedly worse on dev than on the branch. Earlier full-file runs of this file
+(46/46, twice) hid it -- preceding tests evidently warm whatever timing it
+races. No owner assigned here; recorded so the next sweep does not re-derive
+it.
+
 ## Notes
 
 Filed in the same spirit as TASK-15512. `origin/dev` had by this point absorbed

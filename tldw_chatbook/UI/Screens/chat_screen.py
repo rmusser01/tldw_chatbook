@@ -10477,27 +10477,54 @@ class ChatScreen(BaseAppScreen):
                 not rail_state.right_open and not rail_state.single_pane,
             ),
         )
+        # TASK-25888: track whether this sync moves PANE-level geometry --
+        # a rail or handle actually shown/hidden, or the main column minimum
+        # actually changing. Ground truth is read from the DOM rather than a
+        # shadow variable, so a sync that re-applies the current state never
+        # miscounts as a change.
+        pane_changed = False
         for selector, visible in targets:
             try:
                 widget = self.query_one(selector)
             except QueryError:
                 continue
+            if widget.display is not visible:
+                pane_changed = True
             widget.styles.display = "block" if visible else "none"
             widget.display = visible
             self._sync_console_rail_descendant_visibility(widget, visible)
 
+        main_min_width = (
+            0 if rail_state.single_pane or rail_state.compact_override else 56
+        )
         try:
             main_column = self.query_one("#console-main-column")
         except QueryError:
             pass
         else:
             # Mirror compose-time geometry: these state flags waive the main
-            # minimum during a live rail-visibility sync.
-            main_column.styles.min_width = (
-                0 if rail_state.single_pane or rail_state.compact_override else 56
-            )
+            # minimum during a live rail-visibility sync. Compare through the
+            # styles object (before/after the write) so the unit-carrying
+            # Scalar, not a raw int, decides whether anything moved.
+            min_width_before = main_column.styles.min_width
+            main_column.styles.min_width = main_min_width
+            if main_column.styles.min_width != min_width_before:
+                pane_changed = True
 
-        self.refresh(layout=True)
+        # TASK-25888: scope the repaint to what actually moved. The
+        # unconditional whole-screen refresh(layout=True) here cost ~61ms of
+        # relayout plus ~39ms of full render per click on this ~500-widget
+        # screen, and 54-62KB of terminal output -- for a SECTION toggle,
+        # whose geometry changes entirely inside one rail. Only a pane-level
+        # change resizes the main column and needs the screen pass.
+        if pane_changed:
+            self.refresh(layout=True)
+        else:
+            for selector in ("#console-left-rail", "#console-right-rail"):
+                try:
+                    self.query_one(selector).refresh(layout=True)
+                except QueryError:
+                    continue
         self._request_console_context_allocation_reconcile()
 
     def _sync_console_rail_visibility_if_changed(
