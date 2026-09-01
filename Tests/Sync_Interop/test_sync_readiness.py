@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from tldw_chatbook.Sync_Interop.sync_readiness import (
+    PERSONAL_CONTEXT_SYNC_DOMAINS,
     SyncDomainEligibility,
     SyncEligibilityRegistry,
     build_sync_readiness_report,
+    personal_context_sync_readiness,
 )
+from tldw_chatbook.tldw_api.sync_schemas import SyncV2CapabilitiesResponse
 from tldw_chatbook.runtime_policy.server_parity_models import SyncReadinessReport
 
 
@@ -92,3 +95,26 @@ def test_readiness_preserves_workspace_boundaries_per_report() -> None:
 
     assert workspace_a.workspace_id == "workspace-a"
     assert workspace_b.workspace_id == "workspace-b"
+
+
+def test_personal_context_failure_does_not_change_existing_domain_readiness() -> None:
+    capabilities = SyncV2CapabilitiesResponse.model_validate(
+        {
+            "domains": [*PERSONAL_CONTEXT_SYNC_DOMAINS, "notes.note"],
+            "personal_context": None,
+        }
+    )
+    registry = SyncEligibilityRegistry(
+        [SyncDomainEligibility(domain="notes", sync_eligible=True)]
+    )
+
+    personal_context = personal_context_sync_readiness(capabilities)
+    notes = build_sync_readiness_report(
+        domain="notes",
+        server_profile_id="server-a",
+        workspace_id=None,
+        registry=registry,
+    )
+
+    assert personal_context.write_enabled is False
+    assert notes.sync_eligible is True

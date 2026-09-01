@@ -16888,6 +16888,12 @@ class SettingsScreen(BaseAppScreen):
                 service = self.app_instance.get_personal_context_service
             yield panel_class(
                 service,
+                interview_launcher=getattr(
+                    self.app_instance, "launch_personal_context_interview", None
+                ),
+                link_launcher=getattr(
+                    self.app_instance, "launch_personal_context_link", None
+                ),
                 id="personal-context-settings-panel",
             )
         elif category is SettingsCategoryId.PROVIDERS_MODELS:

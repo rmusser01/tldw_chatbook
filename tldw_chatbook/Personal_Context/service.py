@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -375,6 +375,155 @@ class PersonalContextService:
         repository.create_profile_with_global_scope(manifest, scope)
         return manifest
 
+    def apply_sync_object(
+        self,
+        *,
+        domain: str,
+        value: ProfileManifest
+        | ProfileScope
+        | ProfileRecord
+        | ProfileProposal
+        | Mapping[str, Any],
+        actor_type: str,
+        actor_id: str | None,
+        base_object_hash: str | None = None,
+    ) -> ProfileManifest | ProfileScope | ProfileRecord | ProfileProposal | Mapping[str, Any]:
+        """Apply one adapter-authenticated whole object without outbox echo."""
+
+        del base_object_hash
+        if actor_type != "sync" or not isinstance(actor_id, str) or not actor_id:
+            raise PermissionError("Personal Context sync actor is invalid.")
+        try:
+            if domain == "personal_context.manifest":
+                manifest = ProfileManifest.model_validate(value)
+                current = self.get_manifest()
+                if manifest == current:
+                    return current
+                if manifest.profile_id != current.profile_id:
+                    raise ProfileConflictError("Personal Context profile changed.")
+                self._repo().commit_manifest_version(
+                    manifest,
+                    expected_version_id=current.current_version_id,
+                )
+                return manifest
+
+            manifest = self.get_manifest()
+            if domain == "personal_context.scope":
+                scope = ProfileScope.model_validate(value)
+                if scope.profile_id != manifest.profile_id:
+                    raise ProfileConflictError("Personal Context profile changed.")
+                current_scope = self._repo().get_scope(scope.scope_id)
+                if scope == current_scope:
+                    return scope
+                if current_scope is not None and (
+                    scope.kind is not current_scope.kind
+                    or scope.created_at != current_scope.created_at
+                    or scope.updated_at < current_scope.updated_at
+                    or scope.version_id == current_scope.version_id
+                ):
+                    raise ProfileConflictError("Personal Context scope changed.")
+                if (
+                    current_scope is None
+                    and scope.kind is ScopeKind.GLOBAL
+                    and any(
+                        candidate.kind is ScopeKind.GLOBAL
+                        for candidate in self._repo().list_scopes()
+                    )
+                ):
+                    raise ProfileConflictError("Personal Context global scope changed.")
+                self._repo().commit_scope(
+                    scope,
+                    expected_version_id=(
+                        None if current_scope is None else current_scope.version_id
+                    ),
+                )
+                return scope
+
+            if domain == "personal_context.record":
+                record = ProfileRecord.model_validate(value)
+                if record.profile_id != manifest.profile_id:
+                    raise ProfileConflictError("Personal Context profile changed.")
+                scope = self._repo().get_scope(record.scope_id)
+                if scope is None or scope.profile_id != manifest.profile_id:
+                    raise ProfileConflictError("Personal Context scope changed.")
+                if record.controls.sync_mode is SyncMode.DEVICE_ONLY:
+                    raise ValueError("Device-only records cannot synchronize.")
+                current_record = self._repo().get_record(record.record_id)
+                if record == current_record:
+                    return record
+                expected_version = (
+                    None if current_record is None else current_record.version_id
+                )
+                orphan_tombstone = (
+                    current_record is None
+                    and record.state is RecordState.DELETED
+                    and record.payload is None
+                    and record.parent_version_id is not None
+                )
+                if record.parent_version_id != expected_version and not orphan_tombstone:
+                    raise ProfileConflictError("Personal Context record changed.")
+                if current_record is not None and (
+                    current_record.state is RecordState.DELETED
+                    or record.scope_id != current_record.scope_id
+                    or record.kind is not current_record.kind
+                    or record.created_at != current_record.created_at
+                    or record.updated_at < current_record.updated_at
+                    or record.version_id == current_record.version_id
+                ):
+                    raise ProfileConflictError("Personal Context record changed.")
+                self._require_no_collision(
+                    record,
+                    excluding_record_id=(
+                        None if current_record is None else current_record.record_id
+                    ),
+                )
+                self._repo().commit_record_version(
+                    record,
+                    expected_version_id=expected_version,
+                    outbox_body=None,
+                    allow_orphan_tombstone=orphan_tombstone,
+                )
+                return record
+
+            if domain == "personal_context.proposal":
+                proposal = ProfileProposal.model_validate(value)
+                if proposal.profile_id != manifest.profile_id:
+                    raise ProfileConflictError("Personal Context profile changed.")
+                if (
+                    proposal.state is ProposalState.PENDING
+                    and proposal.proposed_record is not None
+                    and proposal.proposed_record.controls.sync_mode
+                    is SyncMode.DEVICE_ONLY
+                ):
+                    raise ValueError("Device-only proposals cannot synchronize.")
+                scope = self._repo().get_scope(proposal.scope_id)
+                if scope is None or scope.profile_id != manifest.profile_id:
+                    raise ProfileConflictError("Personal Context scope changed.")
+                current_proposal = self._repo().get_proposal(proposal.proposal_id)
+                if proposal == current_proposal:
+                    return proposal
+                if current_proposal is None and proposal.state is ProposalState.PENDING:
+                    self._repo().commit_proposal(proposal, enqueue_outbox=False)
+                else:
+                    self._repo().commit_synced_proposal(proposal)
+                return proposal
+
+            if domain == "personal_context.purge":
+                barrier = dict(value)
+                if (
+                    set(barrier)
+                    != {"schema_version", "profile_id", "purge_generation"}
+                    or barrier.get("schema_version") != 1
+                    or barrier.get("profile_id") != manifest.profile_id
+                ):
+                    raise ProfileConflictError("Personal Context purge changed.")
+                if barrier.get("purge_generation") == manifest.purge_generation:
+                    return barrier
+                raise ProfileConflictError("Personal Context purge requires rebootstrap.")
+        except ConcurrentProfileUpdateError as exc:
+            raise ProfileConflictError("Personal Context changed concurrently.") from exc
+        raise ValueError("Unsupported Personal Context Sync domain.")
+
     def start_fresh_profile(self) -> ProfileManifest:
         """Create a new profile only after an explicit local-removal transition."""
 
@@ -413,6 +562,153 @@ class PersonalContextService:
         if manifest is None:
             raise ValueError("Personal Context profile is absent.")
         return manifest
+
+    def first_link_snapshot(
+        self,
+    ) -> tuple[
+        ProfileManifest,
+        tuple[ProfileScope, ...],
+        tuple[ProfileRecord, ...],
+        tuple[ProfileProposal, ...],
+        dict[str, dict[str, Any]],
+    ]:
+        """Return canonical local heads and peer-local mappings for read-only planning."""
+
+        repository = self._repo()
+        return (
+            self.get_manifest(),
+            tuple(repository.list_scopes()),
+            tuple(repository.list_records()),
+            tuple(repository.list_proposals()),
+            repository.list_validated_scope_bindings(),
+        )
+
+    def apply_reviewed_link(self, **kwargs: Any) -> dict[str, Any]:
+        """Apply one explicit first-link decision set through the canonical owner."""
+
+        return self._repo().apply_reviewed_link(**kwargs)
+
+    def acquire_first_link_freeze(
+        self, *, plan_id: str, snapshot_token: str
+    ) -> None:
+        """Block normal mutations for one exact first-link review snapshot."""
+
+        self._repo().acquire_first_link_freeze(
+            plan_id=plan_id,
+            snapshot_token=snapshot_token,
+        )
+
+    def release_first_link_freeze(self, *, plan_id: str) -> bool:
+        """Release the exact review freeze after cancel or convergence."""
+
+        return self._repo().release_first_link_freeze(plan_id=plan_id)
+
+    def first_link_freeze_plan_id(self) -> str | None:
+        """Return the content-free durable review owner during restart repair."""
+
+        return self._repo().first_link_freeze_plan_id()
+
+    def first_link_rebaseline_commit_plan_id(self) -> str | None:
+        """Return the content-free durable rebaseline-marker owner, if any."""
+
+        return self._repo().first_link_rebaseline_commit_plan_id()
+
+    def first_link_reconciliation_writes(self, *, plan_id: str):
+        """Authorize the private confirming pull to update canonical heads."""
+
+        return self._repo().first_link_reconciliation_writes(plan_id=plan_id)
+
+    def first_link_rebaseline_version(self) -> int:
+        """Return the authenticated key generation after interrupted-link recovery."""
+
+        return self._repo().current_key_version()
+
+    def first_link_apply_recovery_state(self, **kwargs: Any) -> tuple[str, int | None]:
+        """Read exact content-free interrupted-apply evidence."""
+
+        return self._repo().first_link_apply_recovery_state(**kwargs)
+
+    def clear_first_link_rebaseline_commit(self, **kwargs: Any) -> bool:
+        """Clear the exact rebaseline marker after terminal artifact cleanup."""
+
+        return self._repo().clear_first_link_rebaseline_commit(**kwargs)
+
+    def authenticate_legacy_first_link_rebaseline_commit(
+        self,
+        *,
+        plan_id: str,
+        target_profile_id: str,
+        target_integrity_key_id: str,
+        target_key_record_id: str,
+        target_purge_generation: int,
+        rebaseline_version: int,
+        staged_integrity_key: bytes,
+    ) -> bool:
+        """Bind an exact v7 marker after staged and active key authentication."""
+
+        if not isinstance(target_key_record_id, str) or not target_key_record_id:
+            return False
+        if not self._repo().active_integrity_key_matches(staged_integrity_key):
+            return False
+        manifest = self.get_manifest()
+        if (
+            manifest.profile_id != target_profile_id
+            or manifest.purge_generation != target_purge_generation
+            or self.first_link_rebaseline_version() != rebaseline_version
+        ):
+            return False
+        return self._repo().bind_legacy_first_link_rebaseline_commit(
+            plan_id=plan_id,
+            target_profile_id=target_profile_id,
+            target_integrity_key_id=target_integrity_key_id,
+            target_key_record_id=target_key_record_id,
+            target_purge_generation=target_purge_generation,
+            rebaseline_version=rebaseline_version,
+        )
+
+    def legacy_first_link_rebaseline_commit_matches(self, **kwargs: Any) -> bool:
+        """Return whether an exact v7 marker needs authenticated key binding."""
+
+        return self._repo().legacy_first_link_rebaseline_commit_matches(**kwargs)
+
+    def first_link_sync_heads(self) -> dict[str, dict[str, str]]:
+        """Return content-free eligible canonical heads for link confirmation."""
+
+        return self._repo().first_link_sync_heads()
+
+    def first_link_reviewed_lineage(self) -> list[list[str]]:
+        """Return exact content-free reviewed heads and retained history."""
+
+        return self._repo().first_link_reviewed_lineage()
+
+    def build_personal_context_sync_adapter(self, integrity_key_id: str):
+        """Build an adapter from active protected keys without exposing key bytes."""
+
+        from tldw_chatbook.Sync_Interop.personal_context_adapter import (
+            PersonalContextSyncAdapter,
+        )
+
+        return PersonalContextSyncAdapter(
+            integrity_key=self._repo()._require_keys().integrity_key,
+            integrity_key_id=integrity_key_id,
+        )
+
+    def build_personal_context_outbox_dispatcher(
+        self, *, state_repository: Any, integrity_key_id: str
+    ):
+        """Compose the exact canonical outbox owner with its active adapter."""
+
+        from tldw_chatbook.Sync_Interop.personal_context_dispatcher import (
+            PersonalContextOutboxDispatcher,
+        )
+
+        from .sync_outbox import ProfileSyncOutbox
+
+        return PersonalContextOutboxDispatcher(
+            profile_outbox=ProfileSyncOutbox(self._repo()),
+            state_repository=state_repository,
+            adapter=self.build_personal_context_sync_adapter(integrity_key_id),
+        )
 
     def list_scopes(self) -> tuple[ProfileScope, ...]:
         return tuple(self._repo().list_scopes())
@@ -501,6 +797,7 @@ class PersonalContextService:
         if (
             scope.kind is ScopeKind.WORKSPACE
             and scope.scope_id not in self.list_workspace_bindings()
+            and not self._repo().is_scope_explicitly_unlinked(scope.scope_id)
         ):
             raise ValueError("Workspace scope must be mapped before mutation.")
 

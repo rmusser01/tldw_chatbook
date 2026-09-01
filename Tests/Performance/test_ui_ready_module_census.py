@@ -145,6 +145,7 @@ ABSENT_AT_READY_MODULES = (
     # ADR-090: the external-summary LLM graph is approval-time work.
     "tldw_chatbook.Chat.permission_summary_service",
     "tldw_chatbook.Agents.profile_tool_provider",
+    "tldw_chatbook.Sync_Interop.personal_context_adapter",
     # TASK-23113.7: normalization is idle maintenance. Its adapter and worker
     # import graph must stay outside the first-interactive-frame window even
     # on slow runners where mount settling continues after ``_ui_ready``.

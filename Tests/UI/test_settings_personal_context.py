@@ -50,6 +50,7 @@ from tldw_chatbook.Personal_Context.service import (
 )
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
 from tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel import (
     PersonalContextSettingsPanel,
@@ -297,6 +298,7 @@ def test_my_profile_is_registered_in_data_privacy_and_settings_contracts() -> No
     assert "Encrypted local profile" in screen._category_state_scope_text(
         SettingsCategoryId.PERSONAL_CONTEXT
     )
+    assert callable(getattr(TldwCli, "launch_personal_context_link", None))
 
 
 def test_profile_detail_compose_does_not_resolve_app_service() -> None:
@@ -545,6 +547,27 @@ async def test_missing_interview_launcher_reports_content_safe_unavailable_state
                 "warning",
             )
         ]
+
+
+@pytest.mark.asyncio
+async def test_link_action_is_exposed_only_on_canonical_profile_panel() -> None:
+    launched: list[str] = []
+    panel = PersonalContextSettingsPanel(
+        _ProfileServiceStub(_ready_snapshot()),
+        link_launcher=lambda: launched.append("link"),
+    )
+
+    class _PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    host = _PanelHost()
+    async with host.run_test(size=(100, 34)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.click("#personal-context-link-server")
+        await pilot.pause()
+
+        assert launched == ["link"]
 
 
 @pytest.mark.asyncio

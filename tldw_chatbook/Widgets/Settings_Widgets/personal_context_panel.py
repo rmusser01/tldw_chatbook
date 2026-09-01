@@ -168,6 +168,7 @@ class PersonalContextSettingsPanel(Vertical):
         self,
         service: PersonalContextService | Callable[..., PersonalContextService],
         interview_launcher: Callable[[str, str, str], Any] | None = None,
+        link_launcher: Callable[[], Any] | None = None,
         **kwargs: Any,
     ) -> None:
         kwargs.setdefault("id", "personal-context-settings-panel")
@@ -181,6 +182,7 @@ class PersonalContextSettingsPanel(Vertical):
             self._service = service
             self._service_factory = None
         self._interview_launcher = interview_launcher
+        self._link_launcher = link_launcher
         self._load_generation = 0
 
     def on_mount(self) -> None:
@@ -444,6 +446,22 @@ class PersonalContextSettingsPanel(Vertical):
         if interview_target is None:
             yield Static(
                 "Select a linked global or workspace scope to run an interview.",
+                classes="settings-inline-guidance",
+            )
+
+        yield Static("Server sync", classes="destination-section")
+        yield Static(
+            "Review profile, collision, and workspace outcomes before linking to your home server.",
+            classes="settings-inline-guidance",
+        )
+        yield Button(
+            "Link to home server",
+            id="personal-context-link-server",
+            disabled=not self._link_launcher_available(),
+        )
+        if not self._link_launcher_available():
+            yield Static(
+                "Profile linking is unavailable until an authenticated home server is active.",
                 classes="settings-inline-guidance",
             )
 
@@ -722,6 +740,8 @@ class PersonalContextSettingsPanel(Vertical):
             self._start_recovery_export()
         elif button_id == "personal-context-run-interview":
             self.action_run_interview()
+        elif button_id == "personal-context-link-server":
+            self.action_link_server()
         elif button_id.startswith("personal-context-proposal-"):
             self._review_proposal_index(button_id)
         elif button_id.startswith("personal-context-record-"):
@@ -957,6 +977,34 @@ class PersonalContextSettingsPanel(Vertical):
             self.notify(
                 "Interview setup is unavailable in this Settings session.",
                 severity="warning",
+            )
+
+    def _link_launcher_available(self) -> bool:
+        if callable(self._link_launcher):
+            return True
+        try:
+            return callable(getattr(self.app, "launch_personal_context_link", None))
+        except Exception:
+            return False
+
+    def action_link_server(self) -> None:
+        """Open the app-owned reviewed first-link flow."""
+
+        launcher = self._link_launcher
+        if launcher is None:
+            launcher = getattr(self.app, "launch_personal_context_link", None)
+        if not callable(launcher):
+            self.notify(
+                "Profile linking requires an authenticated home server.",
+                severity="warning",
+            )
+            return
+        try:
+            launcher()
+        except Exception:
+            self.notify(
+                "Profile linking could not start. Check the active server and try again.",
+                severity="error",
             )
 
     def action_edit_record(self) -> None:

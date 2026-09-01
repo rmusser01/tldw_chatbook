@@ -1,8 +1,38 @@
 """P2: SyncV2Envelope supports the M1 superset additively (legacy still works)."""
 
 import pytest
+from pydantic import ValidationError
 
 from tldw_chatbook.tldw_api import SyncV2Envelope
+
+
+def _envelope_with_entity_version(entity_version: object) -> SyncV2Envelope:
+    return SyncV2Envelope.model_validate(
+        {
+            "client_envelope_id": "c",
+            "dataset_id": "ds",
+            "domain": "personal_context.purge",
+            "object_id": "profile-1",
+            "operation": "tombstone",
+            "payload_hash": "hmac-sha256-v1:test",
+            "entity_version": entity_version,
+        }
+    )
+
+
+@pytest.mark.parametrize(("value", "expected_type"), [("version-1", str), (1, int)])
+def test_entity_version_preserves_wire_type(value: object, expected_type: type) -> None:
+    envelope = _envelope_with_entity_version(value)
+
+    assert envelope.entity_version == value
+    assert type(envelope.entity_version) is expected_type
+    assert type(envelope.model_dump(mode="json")["entity_version"]) is expected_type
+
+
+@pytest.mark.parametrize("value", [True, 1.0])
+def test_entity_version_rejects_coercible_non_wire_types(value: object) -> None:
+    with pytest.raises(ValidationError):
+        _envelope_with_entity_version(value)
 
 
 def test_m1_notes_envelope_round_trips_canonical_fields():
