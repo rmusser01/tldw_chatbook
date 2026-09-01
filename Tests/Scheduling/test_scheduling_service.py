@@ -778,6 +778,30 @@ async def test_review_automation_result_server_mirrored_records_pending_mutation
 
 
 @pytest.mark.asyncio
+async def test_review_automation_result_records_mutation_under_row_owner(db):
+    """F1 (task-23105-review): the row's own owner_id is authoritative.
+
+    The workbench can toggle the service's active owner independently of
+    which owner a given result row belongs to -- recording the pending
+    mutation under ``self.owner_id`` would strand it where the row's real
+    owner never sees it via ``get_pending_mutations``.
+    """
+    result_id = db.create_automation_result(
+        "server:1", "def-1", "run-1", "finding", "T", "S", "key-1",
+        server_id="srv-res-1",
+    )
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    ok = await svc.review_automation_result(result_id, "dismissed", "noise")
+
+    assert ok is True
+    pending = db.get_pending_mutations("server:1", primitive="automation_result_review")
+    assert len(pending) == 1
+    assert pending[0]["local_id"] == result_id
+    assert db.get_pending_mutations("local", primitive="automation_result_review") == []
+
+
+@pytest.mark.asyncio
 async def test_review_automation_result_rejects_unknown_review_state(db):
     result_id = db.create_automation_result(
         "local", "def-1", "run-1", "finding", "T", "S", "key-1"

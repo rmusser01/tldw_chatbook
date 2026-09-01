@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any
 
@@ -31,12 +31,14 @@ _DEFINITION_PRIMITIVE = "automation_definition"
 #: (Task 5) are replayed to the server here.
 _RESULT_REVIEW_PRIMITIVE = "automation_result_review"
 
-#: Page size for the results pull, and the bounded newest-pages walk
-#: (spec §5.2 limitation: the server's /results endpoint exposes no
-#: updated_at filter, so incremental sync is a bounded newest-N-pages
-#: walk rather than a true delta).
+#: Page size for the results/definitions pulls, and the bounded
+#: newest-pages walk both phases use (spec §5.2 limitation: the server's
+#: /results endpoint exposes no updated_at filter, so incremental sync is
+#: a bounded newest-N-pages walk rather than a true delta; the
+#: definitions pull shares the same cap so an unbounded `while True` can
+#: never spin forever against a misbehaving server).
 _RESULTS_PAGE_SIZE = 50
-_RESULTS_MAX_PAGES = 4
+_SYNC_MAX_PAGES = 4
 
 
 @dataclass(frozen=True)
@@ -107,12 +109,18 @@ class SyncEngine:
         # round 1 #1): a reminder network/transaction failure says nothing
         # about the automation endpoints, and each phase below is already
         # independently error-contained via `_run_phase`.
-        await self._run_phase(
+        _, definitions_counts = await self._run_phase(
             target_owner, "Automation definitions pull", self._pull_definitions
         )
-        await self._run_phase(
+        if definitions_counts:
+            logger.info(
+                f"Automation definitions pull for {target_owner}: {definitions_counts}"
+            )
+        _, results_counts = await self._run_phase(
             target_owner, "Automation results pull", self._pull_results
         )
+        if results_counts:
+            logger.info(f"Automation results pull for {target_owner}: {results_counts}")
 
     async def _pull_reminders(self, target_owner: str) -> None:
         """The reminder-only half of `pull()` (original body, unchanged)."""
@@ -186,19 +194,43 @@ class SyncEngine:
         # first so a fresh results mirror can't clobber a review the user
         # just made locally (its own pending mutation is cleared before the
         # pull below re-reads that same row).
-        await self._run_phase(
+        phase_errors: list[str] = []
+
+        error, counts = await self._run_phase(
             target_owner, "Automation review pushback", self._replay_review_mutations
         )
-        await self._run_phase(
+        if error:
+            phase_errors.append(error)
+        if counts:
+            logger.info(f"Automation review pushback for {target_owner}: {counts}")
+
+        error, counts = await self._run_phase(
             target_owner, "Automation definitions pull", self._pull_definitions
         )
-        await self._run_phase(
+        if error:
+            phase_errors.append(error)
+        if counts:
+            logger.info(f"Automation definitions pull for {target_owner}: {counts}")
+
+        error, counts = await self._run_phase(
             target_owner, "Automation results pull", self._pull_results
         )
+        if error:
+            phase_errors.append(error)
+        if counts:
+            logger.info(f"Automation results pull for {target_owner}: {counts}")
 
         # The reminder phase's own outcome/status semantics are preserved
-        # unchanged (`_sync_reminders` is the original method body) -- only
-        # the control flow changed so the automation phases above always run.
+        # unchanged (`_sync_reminders` is the original method body) when it
+        # already failed or was not applicable. But an "ok" reminder phase
+        # sitting beside a failed automation phase used to report clean --
+        # the exact dishonesty task-23105 fixed for reminders (F2): surface
+        # the first automation-phase error so the caller doesn't toast
+        # success next to a fresh error badge. Results/definitions already
+        # pulled by an earlier phase this round are not rolled back.
+        if reminder_outcome.status == "ok" and phase_errors:
+            return replace(reminder_outcome, status="error", error=phase_errors[0])
+
         return reminder_outcome
 
     async def _sync_reminders(self, target_owner: str) -> SyncOutcome:
@@ -308,7 +340,7 @@ class SyncEngine:
 
     async def _run_phase(
         self, owner_id: str, label: str, phase: Any,
-    ) -> None:
+    ) -> tuple[str | None, dict[str, int] | None]:
         """Run one self-contained sync phase, containing its own failure.
 
         Mirrors the top-level pull()/sync_now() error discipline (task-2722):
@@ -316,16 +348,29 @@ class SyncEngine:
         applicable, never persisted; any other error is recorded via
         `_record_sync_error` and swallowed so the phases after this one
         still run.
+
+        Returns:
+            A ``(error, counts)`` tuple. ``error`` is ``None`` on success
+            or a policy refusal (not an error); otherwise the message that
+            was also recorded via `_record_sync_error`. ``counts`` is the
+            phase's own return value (an upsert-count dict) on success, or
+            ``None`` when the phase raised or returned nothing -- callers
+            use it so a truncated/failed phase never silently discards
+            what did land (F2/F8).
         """
         try:
-            await phase(owner_id)
+            counts = await phase(owner_id)
+            return None, counts
         except ServerClientPolicyError as exc:
             logger.info(f"{label} not applicable for {owner_id}: {exc}")
+            return None, None
         except ServerClientError as exc:
             self._record_sync_error(str(exc), owner_id)
+            return str(exc), None
         except Exception as exc:  # noqa: BLE001
             logger.exception(f"{label} failed for {owner_id}: {exc}")
             self._record_sync_error(str(exc), owner_id)
+            return str(exc), None
 
     async def _replay_review_mutations(self, owner_id: str) -> None:
         """Replay pending `automation_result_review` mutations to the server.
@@ -366,16 +411,19 @@ class SyncEngine:
             self.db.delete_pending_mutation(mutation["id"])
 
     async def _pull_definitions(self, owner_id: str) -> dict[str, int]:
-        """Page the server's automation definitions, upserting page by page.
+        """Page up to `_SYNC_MAX_PAGES` of the server's automation definitions.
 
         Upserted per page (not batched to the end) so a later page's
         failure still leaves earlier pages' rows mirrored -- the same
         partial-progress-survives-a-failure shape as `_pull_results`.
+        Stops early on an empty page or `has_more=False`; logs (info) when
+        the cap was hit with more remaining, so a truncated pull is never
+        silent (F4: this was an unbounded `while True` against the server).
         """
         assert self.server_client is not None
         totals: dict[str, int] = {}
         offset = 0
-        while True:
+        for _page_num in range(_SYNC_MAX_PAGES):
             response = await self.server_client.list_automation_definitions(
                 limit=_RESULTS_PAGE_SIZE, offset=offset
             )
@@ -388,9 +436,14 @@ class SyncEngine:
             offset += len(page)
             if not page or not response.get("has_more"):
                 return totals
+        logger.info(
+            f"Automation definitions pull hit the {_SYNC_MAX_PAGES}-page cap for "
+            f"{owner_id} with more definitions remaining server-side"
+        )
+        return totals
 
     async def _pull_results(self, owner_id: str) -> dict[str, int]:
-        """Walk up to `_RESULTS_MAX_PAGES` newest pages of server results.
+        """Walk up to `_SYNC_MAX_PAGES` newest pages of server results.
 
         The server's /results endpoint exposes no `updated_at` filter
         (verified at origin/dev), so this is a bounded newest-pages walk
@@ -402,7 +455,7 @@ class SyncEngine:
         assert self.server_client is not None
         totals: dict[str, int] = {}
         offset = 0
-        for _page_num in range(_RESULTS_MAX_PAGES):
+        for _page_num in range(_SYNC_MAX_PAGES):
             response = await self.server_client.list_automation_results(
                 limit=_RESULTS_PAGE_SIZE, offset=offset
             )
@@ -416,7 +469,7 @@ class SyncEngine:
             if len(page) < _RESULTS_PAGE_SIZE or not response.get("has_more"):
                 return totals
         logger.info(
-            f"Automation results pull hit the {_RESULTS_MAX_PAGES}-page cap for "
+            f"Automation results pull hit the {_SYNC_MAX_PAGES}-page cap for "
             f"{owner_id} with more results remaining server-side"
         )
         return totals

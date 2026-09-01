@@ -514,6 +514,12 @@ class SchedulingService:
         ``automation_result_review`` pending mutation carrying the SERVER
         result id -- so ``SyncEngine._replay_review_mutations`` can push it
         without a local join (spec §5.1's payload-not-reference rule).
+        The mutation is recorded under the ROW's own ``owner_id`` (falling
+        back to ``self.owner_id`` only if the row has none) since the
+        workbench can toggle the service's active owner independently of
+        which owner a given result row belongs to -- recording under
+        ``self.owner_id`` would strand the mutation where
+        ``get_pending_mutations`` for the row's real owner never sees it.
         Never notifies the queue: results don't arm anything the scheduler
         dispatches.
 
@@ -551,10 +557,12 @@ class SchedulingService:
 
         server_id = row.get("server_id")
         if server_id:
-            self.db.record_pending_mutation(
+            mutation_owner = row.get("owner_id") or self.owner_id
+            await asyncio.to_thread(
+                self.db.record_pending_mutation,
                 result_id,
                 _RESULT_REVIEW_PRIMITIVE,
-                self.owner_id,
+                mutation_owner,
                 {
                     "server_result_id": server_id,
                     "review_state": review_state,

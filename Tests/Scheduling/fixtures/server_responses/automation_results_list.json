@@ -33,7 +33,7 @@
       "owner_id": "server:42",
       "definition_id": "def_01J5RHPQWXYZ1234567890CD",
       "run_id": "run_01J5RHPQWXYZ1234567890CD",
-      "kind": "digest",
+      "kind": "failure",
       "title": "Weekly library digest",
       "summary": "10 new items ingested into the library this week.",
       "answer": null,

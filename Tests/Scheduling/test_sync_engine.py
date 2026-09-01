@@ -1078,7 +1078,11 @@ async def test_sync_now_review_mutation_other_error_retains_it(tmp_path):
 
     outcome = await engine.sync_now()
 
-    assert outcome.status == "ok"  # the reminder phase itself still succeeded
+    # task-23105-review F2: the reminder phase itself succeeded, but a
+    # pushback phase failed -- that must surface as an error outcome, not
+    # a clean "ok" beside a fresh error badge.
+    assert outcome.status == "error"
+    assert "offline" in (outcome.error or "")
     pending = db.get_pending_mutations("server:1", primitive="automation_result_review")
     assert len(pending) == 1, "the mutation must be left queued for retry"
     state = db.get_sync_state("server:1") or {}
@@ -1128,6 +1132,33 @@ async def test_sync_now_pages_definitions_until_has_more_false(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_sync_now_definitions_pull_caps_at_max_pages_and_logs(
+    tmp_path, captured_logs
+):
+    """F4: the definitions pull was an unbounded `while True` -- a server
+    that always claims `has_more=True` must not spin forever."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = _empty_reminders_client()
+    server_client.list_automation_definitions.side_effect = [
+        _definition_page(
+            [{"id": f"srv-def-p{page}-{i}", "family": "recurring_question",
+              "name": f"D{page}-{i}"} for i in range(50)],
+            has_more=True,
+        )
+        for page in range(10)
+    ]
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    await engine.sync_now()
+
+    assert server_client.list_automation_definitions.await_count == 4  # _SYNC_MAX_PAGES
+    assert len(db.list_automation_definitions(owner_id="server:1")) == 200
+    assert any(
+        "cap" in message.lower() and level == "INFO" for level, message in captured_logs
+    )
+
+
+@pytest.mark.asyncio
 async def test_sync_now_pulls_and_upserts_results(tmp_path):
     db = ScheduledTasksDB(tmp_path / "db.db")
     server_client = _empty_reminders_client()
@@ -1169,7 +1200,7 @@ async def test_sync_now_results_pull_caps_at_max_pages_and_logs(tmp_path, captur
 
     await engine.sync_now()
 
-    assert server_client.list_automation_results.await_count == 4  # _RESULTS_MAX_PAGES
+    assert server_client.list_automation_results.await_count == 4  # _SYNC_MAX_PAGES
     assert len(db.list_automation_results("server:1", limit=1000)) == 200
     assert any(
         "cap" in message.lower() and level == "INFO" for level, message in captured_logs
@@ -1186,7 +1217,13 @@ async def test_sync_now_definitions_phase_failure_does_not_abort_results_phase(t
 
     outcome = await engine.sync_now()
 
-    assert outcome.status == "ok"  # the reminder phase still succeeded
+    # task-23105-review F2: a failed automation phase must surface as an
+    # error outcome even though the reminder phase (and the later results
+    # phase) still ran to completion -- results are still pulled, but the
+    # workbench must not toast "Sync completed" next to a fresh error
+    # badge (the controller ruled the prior "ok" pin a plan artifact).
+    assert outcome.status == "error"
+    assert "down" in (outcome.error or "")
     assert len(db.list_automation_results("server:1")) == 1
     state = db.get_sync_state("server:1") or {}
     assert state.get("sync_errors"), "the definitions-phase failure must be recorded"
