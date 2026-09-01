@@ -114,3 +114,85 @@ def test_on_primary_redirect_ready_hands_working_callables():
     service._unregister_primary_mailbox("run-1")
     assert captured["redirect"]("gone") is not None
     assert captured["probe"]() is False
+
+
+def test_mid_continuation_calls_suppress_the_stream_cut():
+    """Review F1: cutting a model call made WITH an in-flight continuation
+    checkpoint truncates a chain the provider persists -- the loop then
+    classifies it as a continuation-contract violation and errors the RUN.
+    The abort probe must read False for exactly those calls (redirect
+    degrades to steering there), and recover afterwards."""
+    from tldw_chatbook.Agents.agent_models import AgentConfig, RunBudget
+    from tldw_chatbook.Chat.provider_continuation import (
+        ContinuationCall,
+        ContinuationRound,
+        ProviderContinuationCheckpoint,
+    )
+
+    probe_during_call = {}
+
+    def fake_chat(**kwargs):
+        probe_during_call["value"] = captured["probe"]()
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    captured = {}
+
+    def ready(redirect_fn, abort_probe):
+        captured["redirect"] = redirect_fn
+        captured["probe"] = abort_probe
+
+    service = _service(chat_call=fake_chat, on_primary_redirect_ready=ready)
+    service._register_primary_mailbox("run-1")
+    assert captured["redirect"]("go the other way") is None
+    assert captured["probe"]() is True
+
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        provider="llama_cpp",
+        budget=RunBudget(max_steps=10),
+    )
+    call_model = service._make_call_model(
+        config,
+        "llama_cpp",
+        [],
+        continuation_owner_key="native_id",
+        continuation_owner_message_id="owner-1",
+        run_id="run-1",
+    )
+    checkpoint = ProviderContinuationCheckpoint(
+        schema_version=1,
+        checkpoint_revision=1,
+        provider="deepseek",
+        protocol="responses",
+        model="m",
+        api_base_url="https://api.example.test/v1",
+        state="active",
+        rounds=(
+            ContinuationRound(
+                assistant_content="",
+                reasoning_blocks=("private",),
+                calls=(
+                    ContinuationCall(
+                        call_id="c1",
+                        name="calculator",
+                        arguments="{}",
+                        state="pending",
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    call_model([{"role": "user", "content": "x"}], (), checkpoint)
+    assert probe_during_call["value"] is False, (
+        "the stream cut was live during a mid-continuation call"
+    )
+    # suppression is scoped to the call -- afterwards the pending redirect
+    # is visible again (it will be consumed by the next drain instead)
+    assert captured["probe"]() is True
+
+    call_model([{"role": "user", "content": "x"}], (), None)
+    assert probe_during_call["value"] is True, (
+        "a plain call (no checkpoint) must keep the cut armed"
+    )

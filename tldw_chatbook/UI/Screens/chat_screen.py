@@ -15527,7 +15527,7 @@ class ChatScreen(BaseAppScreen):
         # restores the stash, so the command would sit in the composer and
         # one habitual extra Enter would redirect the run twice.
         self._clear_console_composer_draft()
-        self.app_instance.notify("Redirected — re-running the turn.")
+        self.app_instance.notify("Redirect sent — correcting the running turn.")
         return True
 
     async def handle_console_redirect_generation(
@@ -15554,7 +15554,7 @@ class ChatScreen(BaseAppScreen):
             )
             return
         self._clear_console_composer_draft()
-        self.app_instance.notify("Redirected — re-running the turn.")
+        self.app_instance.notify("Redirect sent — correcting the running turn.")
 
     async def _console_command_rewind(self, parse: CommandParse) -> bool:
         """Open the `/rewind` menu over the active session's prior USER prompts.

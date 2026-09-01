@@ -3053,6 +3053,13 @@ class _StreamingModelAdapter:
             # ProviderToolCalls sentinel arrived must be reset the same way.
             if tool_call is not None or native_calls:
                 self._store.reset_stream_content(self._assistant_message_id)
+            elif self._primary_stream_abort():
+                # TASK-26000 review F2: this prose turn was cut by a
+                # redirect and the re-asked turn will stream into the SAME
+                # message -- without a separator the transcript glues
+                # "...theRight — ..." together. The loop drains the redirect
+                # only after this call returns, so the flag is still up here.
+                self._store.append_stream_chunk(self._assistant_message_id, "\n\n")
         message: dict = {"content": gate.full_text}
         if native_calls:
             message["tool_calls"] = native_calls

@@ -1805,6 +1805,14 @@ class AgentService:
         # one source of truth for both the stream predicate and the loop's
         # has_pending_redirect probe.
         self._primary_redirect_flags: dict[str, threading.Event] = {}
+        # Review F1: run ids whose CURRENT model call rides an in-flight
+        # provider-continuation checkpoint. The bridge's abort probe reads
+        # False for them -- cutting such a call truncates a chain the
+        # provider persists, which the loop must classify as a
+        # continuation-contract violation (RUN_ERROR). The redirect
+        # degrades to steering instead. Plain set, no lock: single writer
+        # (the run's own worker thread), racing readers just poll again.
+        self._primary_cut_suppress: set[str] = set()
         self.before_tool_dispatch = before_tool_dispatch
         # C1 (probe-verified security regression, pre-merge review of the
         # Phase 5 chat bridge): an optional, generically-shaped seam a
@@ -2291,6 +2299,7 @@ class AgentService:
         staged_delivery: dict[str, InstructionDeliveryReceipt] | None = None,
         on_context_assembled: Callable[[tuple[str, ...]], None] | None = None,
         first_request_fits: bool = True,
+        run_id: str | None = None,
     ):
         native = config.native_tools and provider_supports_native_tools(api_endpoint)
         initial_context_checked = False
@@ -2518,13 +2527,22 @@ class AgentService:
                 except Exception:  # noqa: BLE001 — capture never fails a request
                     logger.warning("agent_context_capture_failed")
                 context_observed = True
-            resp = self.chat_call(
-                api_endpoint=api_endpoint,
-                messages_payload=payload,
-                streaming=False,
-                model=config.model,
-                **call_kwargs,
-            )
+            # Review F1: while a checkpointed call is on the wire the
+            # redirect stream-cut is disarmed (see _primary_cut_suppress).
+            suppress_cut = current_continuation is not None and run_id is not None
+            if suppress_cut:
+                self._primary_cut_suppress.add(run_id)
+            try:
+                resp = self.chat_call(
+                    api_endpoint=api_endpoint,
+                    messages_payload=payload,
+                    streaming=False,
+                    model=config.model,
+                    **call_kwargs,
+                )
+            finally:
+                if suppress_cut:
+                    self._primary_cut_suppress.discard(run_id)
             text = _response_text(resp)
             # TASK-18603: cache-aware. Identical to the flat sum whenever
             # this turn read nothing from a prompt cache.
@@ -2733,7 +2751,13 @@ class AgentService:
             try:
                 self.on_primary_redirect_ready(
                     lambda text: self.redirect_primary(run_id, text),
-                    lambda: self._primary_redirect_pending(run_id),
+                    # Review F1: mid-continuation calls suppress the cut --
+                    # the redirect entry stays queued and degrades to the
+                    # next steering drain instead of corrupting the chain.
+                    lambda: (
+                        self._primary_redirect_pending(run_id)
+                        and run_id not in self._primary_cut_suppress
+                    ),
                 )
             except Exception:  # noqa: BLE001 -- a broken observer costs nothing
                 logger.opt(exception=True).debug(
@@ -6109,6 +6133,7 @@ class AgentService:
             continuation_groups,
             continuation_owner_key,
             continuation_owner_message_id,
+            run_id=run_id,
             trusted_role=trusted_guidance_role,
             project_instruction_context=project_context,
             chain_id=chain_id,
@@ -6156,6 +6181,7 @@ class AgentService:
                     continuation_groups,
                     continuation_owner_key,
                     continuation_owner_message_id,
+                    run_id=run_id,
                     trusted_role=trusted_guidance_role,
                     project_instruction_context=project_context,
                     chain_id=chain_id,
@@ -6308,6 +6334,18 @@ class AgentService:
                 entries.extend(
                     (source, text, None) for source, text in drain_mailbox()
                 )
+            # Review F5 (defensive): today this closure is wired for
+            # subagents only, but if seeded causal steering is ever extended
+            # to a primary, a drain that bypassed _primary_drain_for would
+            # leave the abort flag up forever -- every re-ask cut until
+            # EMPTY_TURN_LIMIT. Clearing here keeps the invariant "a drain
+            # that consumed a redirect entry lowers the flag" wiring-proof.
+            if any(
+                source == STEERING_SOURCE_REDIRECT for source, _t, _c in entries
+            ):
+                flag = self._primary_redirect_flags.get(run_id)
+                if flag is not None:
+                    flag.clear()
             return entries
 
         # TASK-25903: the drain closure is safe before the mailbox exists

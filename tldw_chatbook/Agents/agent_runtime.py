@@ -278,6 +278,28 @@ def split_visible_text_and_tool_call(text: str) -> tuple[str, ToolCall | None]:
         start = idx + len(FENCE_OPEN)
 
 
+def strip_trailing_open_fence(text: str) -> str:
+    """Drop a TRAILING unterminated tool-call fence from cut-off text.
+
+    TASK-26000 review F4: a stream aborted mid-fence leaves ``FENCE_OPEN``
+    plus partial JSON with no closing fence. Shipping that as assistant
+    context baits the model into resuming the call the user just cancelled.
+    Only the dangling-open case is truncated: a look-alike tag
+    (```tool_call_schema in prose) has a non-line-end character right after
+    the tag and stays; a CLOSED fence (parseable or not) stays -- the
+    caller's ``split_visible_text_and_tool_call`` already decided its fate.
+    """
+    idx = text.rfind(FENCE_OPEN)
+    if idx == -1:
+        return text
+    after = text[idx + len(FENCE_OPEN) :]
+    if after[:1] not in ("", "\n", "\r"):
+        return text
+    if _FENCE_CLOSE in after.lstrip("\r\n"):
+        return text
+    return text[:idx].rstrip()
+
+
 def stream_prefix_verdict(prefix: str) -> str:
     """Sniff a stream's first tokens: tool_call, text, or undecided.
 
@@ -1669,6 +1691,19 @@ def run_agent_loop(
                 entries = []
             if entries:
                 visible, _cut_fence = split_visible_text_and_tool_call(turn.text)
+                visible = strip_trailing_open_fence(visible)
+                # Review F3: the redirected model turn never reaches the
+                # STEP_MODEL block below (`continue` skips it), so without
+                # this the cut partial would survive ONLY inside `messages`.
+                trace(
+                    STEP_STEERING,
+                    summary=(
+                        "Turn redirected by user; "
+                        f"{len(visible.strip())} chars of partial retained"
+                    ),
+                    status="redirected",
+                    sensitivity="diagnostic",
+                )
                 if visible.strip():
                     # AC#3: the partial the user watched stream stays in
                     # context; the fence (a call the user just cancelled)

@@ -316,3 +316,61 @@ def test_no_redirect_probe_means_byte_identical_behaviour():
 
     assert outcome.status == RUN_DONE
     assert outcome.final_text == "fine"
+
+
+def test_a_dangling_open_fence_in_the_partial_is_truncated():
+    """Review F4: a stream cut mid-fence leaves an unterminated
+    ```tool_call region; shipping that half-JSON as assistant context baits
+    the model into resuming the cancelled call."""
+    mailbox = _Mailbox()
+    histories = []
+    remaining = [
+        ModelTurn(
+            text='about to compute\n```tool_call\n{"name": "calculator", "argu'
+        ),
+        ModelTurn(text="redirected answer"),
+    ]
+
+    def call_model(messages, active):
+        histories.append([dict(m) for m in messages])
+        if len(histories) == 1:
+            mailbox.post(STEERING_SOURCE_REDIRECT, "don't compute")
+        return remaining.pop(0)
+
+    outcome = run_agent_loop(
+        _cfg(),
+        [{"role": "user", "content": "go"}],
+        [],
+        _deps(call_model, mailbox),
+    )
+
+    assert outcome.status == RUN_DONE
+    joined = " | ".join(str(m.get("content", "")) for m in histories[1])
+    assert "about to compute" in joined
+    assert "```tool_call" not in joined, "dangling fence leaked into context"
+
+
+def test_a_lookalike_fence_tag_in_prose_is_not_truncated():
+    """The truncation must not eat legit prose that merely mentions the
+    fence tag (```tool_calls schema discussion etc.)."""
+    mailbox = _Mailbox()
+    histories = []
+    prose = "the ```tool_call_schema``` format uses JSON"
+    remaining = [
+        ModelTurn(text=prose),
+        ModelTurn(text="done"),
+    ]
+
+    def call_model(messages, active):
+        histories.append([dict(m) for m in messages])
+        if len(histories) == 1:
+            mailbox.post(STEERING_SOURCE_REDIRECT, "different topic")
+        return remaining.pop(0)
+
+    outcome = run_agent_loop(
+        _cfg(), [{"role": "user", "content": "go"}], [], _deps(call_model, mailbox)
+    )
+
+    assert outcome.status == RUN_DONE
+    joined = " | ".join(str(m.get("content", "")) for m in histories[1])
+    assert prose in joined, "look-alike tag prose was eaten by the truncation"
