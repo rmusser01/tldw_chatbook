@@ -11,6 +11,7 @@ import pytest
 from loguru import logger
 
 from tldw_chatbook.Chat.console_context_compaction import (
+    DEFAULT_COMPACTION_AUXILIARY_TIMEOUT_SECONDS,
     COMPACTION_INPUT_CLOSE,
     COMPACTION_INPUT_OPEN,
     CompactionAdmission,
@@ -4139,3 +4140,90 @@ def test_reset_all_invalidates_an_outstanding_exact_undo_token() -> None:
     assert expired[0].active is False
     assert controller.undo_context_memory_reset(*token) is False
     assert repository.undo_calls == []
+
+
+@pytest.mark.asyncio
+async def test_hung_auxiliary_call_times_out_distinctly_and_leaves_memory_intact() -> None:
+    """TASK-26016: the auxiliary call was unbounded -- a hung summarizer
+    blocked the send that triggered it forever. The timeout must finish the
+    ledger as TIMED_OUT (not FAILED-as-model-error, not CANCELLED), return
+    the ordinary FAILED terminal so CompactionFailureBehavior applies, and
+    write no memory."""
+    repository = _Repository()
+    gateway = _Gateway(text="never delivered")
+    gateway.release = asyncio.Event()  # never set: the provider hangs
+    service = ConsoleCompactionService(
+        repository, gateway, auxiliary_timeout_seconds=0.05
+    )
+    plan, prompt, prefix, admission, commit = _transaction_inputs()
+
+    result = await service.compact(
+        admission=admission,
+        branch_commit=commit,
+        plan=plan,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_main=_prepare,
+        prefix_messages=prefix,
+    )
+
+    assert result.terminal is CompactionTerminal.FAILED
+    assert result.reason == "auxiliary_timed_out"
+    assert repository.memories == []
+    assert repository.commits == []
+    assert len(repository.finishes) == 1
+    assert repository.finishes[0][1]["status"] is AuxiliaryAttemptStatus.TIMED_OUT
+
+
+@pytest.mark.asyncio
+async def test_outer_cancellation_still_finishes_cancelled_not_timed_out() -> None:
+    """Stop/teardown during compaction is a CANCELLATION -- the timeout must
+    not absorb it into the timed-out state (AC#2's other direction)."""
+    repository = _Repository()
+    gateway = _Gateway(text="never delivered")
+    gateway.started = asyncio.Event()
+    gateway.release = asyncio.Event()
+    service = ConsoleCompactionService(
+        repository, gateway, auxiliary_timeout_seconds=30.0
+    )
+    plan, prompt, prefix, admission, commit = _transaction_inputs()
+
+    task = asyncio.ensure_future(
+        service.compact(
+            admission=admission,
+            branch_commit=commit,
+            plan=plan,
+            resolution=_resolution(),
+            prompt=prompt,
+            current_admission=lambda: admission,
+            prepare_main=_prepare,
+            prefix_messages=prefix,
+        )
+    )
+    await gateway.started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert len(repository.finishes) == 1
+    assert repository.finishes[0][1]["status"] is AuxiliaryAttemptStatus.CANCELLED
+
+
+def test_auxiliary_timeout_coercion_never_goes_unbounded() -> None:
+    """None / zero / negative / junk all land on the documented default --
+    the call is never unbounded again."""
+    repository = _Repository()
+    gateway = _Gateway()
+    for bad in (None, 0, -5, "junk", float("nan")):
+        service = ConsoleCompactionService(
+            repository, gateway, auxiliary_timeout_seconds=bad
+        )
+        assert (
+            service._auxiliary_timeout
+            == DEFAULT_COMPACTION_AUXILIARY_TIMEOUT_SECONDS
+        )
+    service = ConsoleCompactionService(
+        repository, gateway, auxiliary_timeout_seconds=45
+    )
+    assert service._auxiliary_timeout == 45.0

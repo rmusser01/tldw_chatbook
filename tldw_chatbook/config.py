@@ -3232,6 +3232,7 @@ compaction_representation = "text_summary"  # text_summary, visual_transcript, h
 compaction_trigger_ratio = 0.80
 compaction_target_ratio = 0.55
 compaction_summary_max_tokens = 1024
+compaction_auxiliary_timeout_seconds = 120  # wall-clock bound on the summarizer call; invalid/<=0 falls back to 120
 compaction_failure_behavior = "stop_and_ask"  # stop_and_ask, omit_older_context
 compaction_carry_forward_mode = "memory_with_recent_turns"  # memory_with_recent_turns, memory_with_latest_exchange
 # Confinement root for the fs_*/git_* agent tools (ADR-032). Empty = the app's

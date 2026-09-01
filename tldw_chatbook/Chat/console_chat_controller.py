@@ -2825,7 +2825,13 @@ class ConsoleChatController:
                     persistence_db_present=True,
                 ).warning("console_context_repository_init_failed")
         self._compaction_service = (
-            ConsoleCompactionService(self._context_repository, provider_gateway)
+            ConsoleCompactionService(
+                self._context_repository,
+                provider_gateway,
+                auxiliary_timeout_seconds=get_cli_setting(
+                    "console", "compaction_auxiliary_timeout_seconds", None
+                ),
+            )
             if self._context_repository is not None
             and callable(getattr(provider_gateway, "complete_auxiliary", None))
             else None

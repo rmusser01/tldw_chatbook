@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
 import json
 import re
 import time
@@ -69,6 +70,12 @@ from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
 
 
 COMPACTION_PROMPT_ID = "console.rewind_summarize"
+
+#: TASK-26016: wall-clock bound on the auxiliary summarizer call. The send
+#: that triggered compaction waits on this call, so it must never be
+#: unbounded; a hung provider previously blocked the composer forever.
+#: Override via ``[console] compaction_auxiliary_timeout_seconds``.
+DEFAULT_COMPACTION_AUXILIARY_TIMEOUT_SECONDS = 120.0
 COMPACTION_PROMPT_REVISION = 1
 COMPACTION_INPUT_OPEN = '<chatbook_compaction_input version="1">'
 COMPACTION_INPUT_CLOSE = "</chatbook_compaction_input>"
@@ -1634,12 +1641,24 @@ class ConsoleCompactionService:
         *,
         now: Callable[[], datetime] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
+        auxiliary_timeout_seconds: object = None,
     ) -> None:
         self._repository = repository
         self._gateway = gateway
         self._now = now or (lambda: datetime.now(timezone.utc))
         self._monotonic = monotonic
         self._locks: dict[str, asyncio.Lock] = {}
+        # Fail-closed coercion: None / non-numeric / non-finite / <= 0 all
+        # land on the documented default -- the auxiliary call is never
+        # unbounded again (TASK-26016).
+        timeout = DEFAULT_COMPACTION_AUXILIARY_TIMEOUT_SECONDS
+        try:
+            candidate = float(auxiliary_timeout_seconds)  # type: ignore[arg-type]
+            if math.isfinite(candidate) and candidate > 0:
+                timeout = candidate
+        except (TypeError, ValueError):
+            pass
+        self._auxiliary_timeout = timeout
 
     async def summarize_manual(
         self,
@@ -1929,22 +1948,45 @@ class ConsoleCompactionService:
             logger.info("console_compaction_auxiliary_started")
             started_tick = self._monotonic()
             try:
-                completion = await self._gateway.complete_auxiliary(
-                    AuxiliaryCompletionRequest(
-                        resolution=resolution,
-                        messages=plan.auxiliary_messages,
-                        response_format=None,
-                        max_output_tokens=plan.requested_output_cap,
+                completion = await asyncio.wait_for(
+                    self._gateway.complete_auxiliary(
+                        AuxiliaryCompletionRequest(
+                            resolution=resolution,
+                            messages=plan.auxiliary_messages,
+                            response_format=None,
+                            max_output_tokens=plan.requested_output_cap,
+                        ),
+                        route=ConsoleRequestRoute.AUTO_COMPACTION,
                     ),
-                    route=ConsoleRequestRoute.AUTO_COMPACTION,
+                    timeout=self._auxiliary_timeout,
                 )
             except asyncio.CancelledError:
+                # An OUTER cancel (stop/teardown). wait_for re-raises it as
+                # CancelledError, while an elapsed timeout surfaces as
+                # TimeoutError below -- the two stay distinct (AC#2).
                 self._finish(
                     operation_id,
                     AuxiliaryAttemptStatus.CANCELLED,
                     started_tick,
                 )
                 raise
+            except TimeoutError:
+                # TASK-26016: no memory was written (the commit happens
+                # after completion), so the prior memory state is intact and
+                # the ordinary FAILED terminal routes into
+                # CompactionFailureBehavior (AC#3/AC#4).
+                self._finish(
+                    operation_id,
+                    AuxiliaryAttemptStatus.TIMED_OUT,
+                    started_tick,
+                )
+                logger.warning(
+                    "console_compaction_auxiliary_timed_out timeout_s={}",
+                    self._auxiliary_timeout,
+                )
+                return CompactionTransactionResult(
+                    CompactionTerminal.FAILED, reason="auxiliary_timed_out"
+                )
             except Exception:
                 self._finish(
                     operation_id,
