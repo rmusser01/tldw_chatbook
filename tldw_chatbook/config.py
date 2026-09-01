@@ -10,6 +10,7 @@ from contextlib import ExitStack, contextmanager
 import importlib.util
 import json
 import sys
+import difflib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -32,6 +33,7 @@ from typing import (
     Mapping,
     NamedTuple,
     Optional,
+    Sequence,
     TYPE_CHECKING,
     Iterator,
 )
@@ -5139,6 +5141,115 @@ def first_profile_created_this_session() -> bool:
         otherwise ``False``.
     """
     return _FIRST_PROFILE_CREATED_THIS_SESSION
+
+
+# --- TASK-26039: advisory unknown/deprecated config-key validation ---
+
+#: Dotted section prefixes whose sub-keys are legitimately user-defined, so
+#: unknown-key reporting must stay silent under them (AC#6). Kept conservative
+#: -- only genuinely dynamic-keyed sections -- so real typos elsewhere still
+#: surface. Each entry is a tuple path prefix.
+_FREEFORM_CONFIG_PREFIXES: tuple[tuple[str, ...], ...] = (
+    ("api_settings",),          # provider configs incl. user-added custom providers
+    ("providers",),             # provider display sections + model lists
+    ("model_capabilities", "models"),    # arbitrary model names
+    ("model_capabilities", "patterns"),  # arbitrary model-name patterns
+    ("SearchEngines",),         # per-engine configs
+    ("Prompts",),               # user prompt content
+    ("prompts",),
+)
+
+#: Keys/sections known to be renamed or removed, mapped to their replacement
+#: dotted path (AC#3). A user path equal to a key here, or nested under it, is
+#: reported as deprecated (naming the replacement) instead of unknown.
+_DEPRECATED_CONFIG_KEYS: Dict[str, str] = {
+    # Legacy provider keys: `[API] <provider>_api_key` was superseded by the
+    # `[api_settings.<provider>] api_key` table (still honored as the lowest
+    # -precedence fallback -- see _normalize_legacy_provider_api_key).
+    "API": "api_settings",
+}
+
+
+@dataclass(frozen=True)
+class ConfigKeyFinding:
+    """One advisory config-key finding."""
+
+    path: str                       # dotted path, e.g. "general.focus_mdoe"
+    kind: str                       # "unknown" | "deprecated"
+    suggestion: Optional[str] = None  # near-miss key or replacement path
+
+
+def _is_freeform_config_path(path: tuple[str, ...]) -> bool:
+    return any(
+        len(path) >= len(prefix) and path[: len(prefix)] == prefix
+        for prefix in _FREEFORM_CONFIG_PREFIXES
+    )
+
+
+def _deprecated_config_replacement(path: tuple[str, ...]) -> Optional[str]:
+    """Return the replacement dotted path if ``path`` is (under) a deprecated key."""
+    for i in range(1, len(path) + 1):
+        prefix = ".".join(path[:i])
+        replacement = _DEPRECATED_CONFIG_KEYS.get(prefix)
+        if replacement is not None:
+            tail = path[i:]
+            return ".".join((replacement, *tail)) if tail else replacement
+    return None
+
+
+def validate_config_keys(
+    user_config: Mapping[str, Any],
+    reference: Optional[Mapping[str, Any]] = None,
+) -> list[ConfigKeyFinding]:
+    """Report keys present in ``user_config`` that no code reads (TASK-26039).
+
+    Advisory only -- the caller never rejects the config. A key absent from the
+    ``reference`` shape (the programmatic defaults) is ``unknown``; a near miss
+    against a sibling reference key carries that suggestion (AC#2); a key known
+    to be renamed is ``deprecated`` with its replacement (AC#3); nested tables
+    are covered (AC#5); user-extensible sections are exempt (AC#6).
+    """
+    if reference is None:
+        reference = DEFAULT_CONFIG_FROM_TOML
+    findings: list[ConfigKeyFinding] = []
+
+    def _walk(user: Mapping[str, Any], ref: Mapping[str, Any], path: tuple[str, ...]):
+        for key, value in user.items():
+            here = (*path, key)
+            replacement = _deprecated_config_replacement(here)
+            if replacement is not None:
+                findings.append(ConfigKeyFinding(".".join(here), "deprecated", replacement))
+                continue
+            if key in ref:
+                ref_value = ref[key]
+                if isinstance(value, Mapping) and isinstance(ref_value, Mapping):
+                    if not _is_freeform_config_path(here):
+                        _walk(value, ref_value, here)
+                continue
+            if _is_freeform_config_path(here) or _is_freeform_config_path(path):
+                continue
+            siblings = [k for k in ref.keys() if isinstance(k, str)]
+            match = difflib.get_close_matches(key, siblings, n=1, cutoff=0.8)
+            suggestion = ".".join((*path, match[0])) if match else None
+            findings.append(ConfigKeyFinding(".".join(here), "unknown", suggestion))
+
+    _walk(user_config, reference, ())
+    return findings
+
+
+def format_config_key_report(findings: Sequence[ConfigKeyFinding]) -> str:
+    """Render key findings as a short advisory block (empty string when none)."""
+    if not findings:
+        return ""
+    lines: list[str] = []
+    for f in findings:
+        if f.kind == "deprecated":
+            lines.append(f"deprecated key '{f.path}' -> use '{f.suggestion}'")
+        elif f.suggestion:
+            lines.append(f"unknown key '{f.path}' (did you mean '{f.suggestion}'?)")
+        else:
+            lines.append(f"unknown key '{f.path}' (no code reads it)")
+    return "Advisory: " + "; ".join(lines)
 
 
 #: TASK-26040: the config file's schema version. Bumped when a numbered
