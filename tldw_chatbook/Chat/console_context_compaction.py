@@ -1780,6 +1780,7 @@ class ConsoleCompactionService:
         now: Callable[[], datetime] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         auxiliary_timeout_seconds: object = None,
+        native_compaction_delegation: object = None,
     ) -> None:
         self._repository = repository
         self._gateway = gateway
@@ -1800,6 +1801,12 @@ class ConsoleCompactionService:
         except (TypeError, ValueError):
             pass
         self._auxiliary_timeout = timeout
+        # TASK-26021: opt-in delegation to a provider's server-side
+        # compaction. Fail-closed: anything but an explicit truthy value is
+        # OFF, and even ON only applies when the gateway actually advertises
+        # the capability for the resolution (no bridged provider does today
+        # -- this is the seam a future gateway capability flips).
+        self._native_compaction_delegation = native_compaction_delegation is True
 
     async def summarize_manual(
         self,
@@ -1857,21 +1864,16 @@ class ConsoleCompactionService:
             used_focus_fallback = False
             summary = ""
             completion = None
+            summary_engine = "local"
             for attempt_index, attempt_messages in enumerate(message_attempts):
                 # Same executor-thread ceiling as compact()'s bound above;
                 # additionally a FOCUSED plan may spend up to 2x the bound
                 # (steered + unsteered attempts each get the full timeout).
                 try:
-                    completion = await asyncio.wait_for(
-                        self._gateway.complete_auxiliary(
-                            AuxiliaryCompletionRequest(
-                                resolution=resolution,
-                                messages=attempt_messages,
-                                response_format=None,
-                                max_output_tokens=plan.requested_output_cap,
-                            )
-                        ),
-                        timeout=self._auxiliary_timeout,
+                    completion, summary_engine = await self._summary_completion(
+                        resolution=resolution,
+                        messages=attempt_messages,
+                        max_output_tokens=plan.requested_output_cap,
                     )
                 except asyncio.CancelledError:
                     self._finish(
@@ -2040,6 +2042,16 @@ class ConsoleCompactionService:
                         ]
                         if plan.focus_topic
                         else []
+                    )
+                    + (
+                        [
+                            {
+                                "kind": "compaction_engine",
+                                "engine": "provider_native",
+                            }
+                        ]
+                        if summary_engine == "provider_native"
+                        else []
                     ),
                     sort_keys=True,
                 ),
@@ -2148,18 +2160,13 @@ class ConsoleCompactionService:
             # released -- the user-facing wedge is fixed. Upgrade path: cap
             # the provider HTTP timeout at/below this bound for auxiliary
             # calls in the gateway.
+            summary_engine = "local"
             try:
-                completion = await asyncio.wait_for(
-                    self._gateway.complete_auxiliary(
-                        AuxiliaryCompletionRequest(
-                            resolution=resolution,
-                            messages=plan.auxiliary_messages,
-                            response_format=None,
-                            max_output_tokens=plan.requested_output_cap,
-                        ),
-                        route=ConsoleRequestRoute.AUTO_COMPACTION,
-                    ),
-                    timeout=self._auxiliary_timeout,
+                completion, summary_engine = await self._summary_completion(
+                    resolution=resolution,
+                    messages=plan.auxiliary_messages,
+                    max_output_tokens=plan.requested_output_cap,
+                    route=ConsoleRequestRoute.AUTO_COMPACTION,
                 )
             except asyncio.CancelledError:
                 # An OUTER cancel (stop/teardown). wait_for re-raises it as
@@ -2307,7 +2314,17 @@ class ConsoleCompactionService:
                 prompt_revision=prompt.revision,
                 prompt_digest=prompt.digest,
                 selected_units_json=json.dumps(
-                    plan.selected_units_provenance,
+                    list(plan.selected_units_provenance)
+                    + (
+                        [
+                            {
+                                "kind": "compaction_engine",
+                                "engine": "provider_native",
+                            }
+                        ]
+                        if summary_engine == "provider_native"
+                        else []
+                    ),
                     sort_keys=True,
                 ),
                 input_tokens=plan.estimated_input_tokens,
@@ -2354,6 +2371,53 @@ class ConsoleCompactionService:
                 CompactionTerminal.SUCCEEDED,
                 memory=record,
             )
+
+    async def _summary_completion(
+        self,
+        *,
+        resolution: ConsoleProviderResolution,
+        messages: tuple[Mapping[str, Any], ...],
+        max_output_tokens: int,
+        route: "ConsoleRequestRoute | None" = None,
+    ) -> tuple[AuxiliaryCompletionResult, str]:
+        """One bounded summary completion; provider-native when delegated.
+
+        TASK-26021. Native replaces ONLY the completion step -- every
+        validation, admission fence, and record write stays on the caller's
+        existing path (AC#2). A native failure of any kind (timeout
+        included) falls back to the local auxiliary call (AC#5); only an
+        outer cancellation propagates. Returns the completion and the
+        engine that produced it ("provider_native" | "local").
+        """
+        request = AuxiliaryCompletionRequest(
+            resolution=resolution,
+            messages=messages,
+            response_format=None,
+            max_output_tokens=max_output_tokens,
+        )
+        if self._native_compaction_delegation:
+            probe = getattr(self._gateway, "supports_native_compaction", None)
+            native = getattr(self._gateway, "complete_native_compaction", None)
+            if callable(probe) and callable(native) and probe(resolution):
+                try:
+                    completion = await asyncio.wait_for(
+                        native(request), timeout=self._auxiliary_timeout
+                    )
+                    return completion, "provider_native"
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 -- AC#5 fallback
+                    logger.warning(
+                        "console_native_compaction_failed error_type={}; "
+                        "falling back to the local auxiliary call",
+                        type(exc).__name__,
+                    )
+        kwargs = {} if route is None else {"route": route}
+        completion = await asyncio.wait_for(
+            self._gateway.complete_auxiliary(request, **kwargs),
+            timeout=self._auxiliary_timeout,
+        )
+        return completion, "local"
 
     def _finish(
         self,

@@ -4525,3 +4525,143 @@ def test_micro_compaction_cadence_counter() -> None:
     assert micro_compaction_due(2, 3) == (True, 0)
     # junk cadence coerces to off
     assert micro_compaction_due(2, -4) == (False, 0)
+
+
+# --- TASK-26021: provider-native compaction delegation ----------------------
+
+
+class _NativeGateway(_Gateway):
+    """A gateway advertising server-side compaction."""
+
+    def __init__(self, *, native_text="Native summary.", capable=True, **kwargs):
+        super().__init__(**kwargs)
+        self.native_text = native_text
+        self.capable = capable
+        self.native_calls = 0
+        self.native_error: Exception | None = None
+
+    def supports_native_compaction(self, resolution) -> bool:
+        return self.capable
+
+    async def complete_native_compaction(self, request):
+        self.native_calls += 1
+        if self.native_error is not None:
+            raise self.native_error
+        return AuxiliaryCompletionResult(
+            provider="openai",
+            model="gpt-test",
+            text=self.native_text,
+            usage=ProviderUsage(
+                uncached_input=10,
+                output=2,
+                provider="openai",
+                model="gpt-test",
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_delegation_off_by_default_never_touches_the_native_endpoint() -> None:
+    """AC#6/#3: the default is the existing local path, byte-identical."""
+    repository = _Repository()
+    gateway = _NativeGateway(text="Local summary.")
+    service = ConsoleCompactionService(repository, gateway)
+    plan, prompt, admission = _manual_transaction_inputs()
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.SUCCEEDED
+    assert gateway.native_calls == 0
+    assert gateway.calls == 1
+    assert result.memory.summary_text == "Local summary."
+
+
+@pytest.mark.asyncio
+async def test_delegated_native_compaction_commits_through_the_same_path() -> None:
+    """AC#1/#2/#4: native replaces ONLY the completion step; validation,
+    admission and the record shape are the local path's, and the record
+    says which engine produced it."""
+    repository = _Repository()
+    gateway = _NativeGateway(native_text="Native summary.")
+    service = ConsoleCompactionService(
+        repository, gateway, native_compaction_delegation=True
+    )
+    plan, prompt, admission = _manual_transaction_inputs()
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.SUCCEEDED
+    assert gateway.native_calls == 1
+    assert gateway.calls == 0
+    assert result.memory.summary_text == "Native summary."
+    provenance = json.loads(result.memory.selected_units_json)
+    engines = [row for row in provenance if row.get("kind") == "compaction_engine"]
+    assert engines == [{"kind": "compaction_engine", "engine": "provider_native"}]
+    assert repository.finishes[0][1]["status"] is AuxiliaryAttemptStatus.SUCCEEDED
+
+
+@pytest.mark.asyncio
+async def test_native_failure_falls_back_to_the_local_path() -> None:
+    """AC#5: a native error costs nothing but the try."""
+    repository = _Repository()
+    gateway = _NativeGateway(text="Local summary.")
+    gateway.native_error = RuntimeError("native endpoint down")
+    service = ConsoleCompactionService(
+        repository, gateway, native_compaction_delegation=True
+    )
+    plan, prompt, admission = _manual_transaction_inputs()
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.SUCCEEDED
+    assert gateway.native_calls == 1
+    assert gateway.calls == 1
+    assert result.memory.summary_text == "Local summary."
+    provenance = json.loads(result.memory.selected_units_json)
+    assert not any(
+        row.get("kind") == "compaction_engine" for row in provenance
+    ), "a fallback commit must not claim the native engine"
+
+
+@pytest.mark.asyncio
+async def test_incapable_provider_uses_the_local_path_with_delegation_on() -> None:
+    repository = _Repository()
+    gateway = _NativeGateway(text="Local summary.", capable=False)
+    service = ConsoleCompactionService(
+        repository, gateway, native_compaction_delegation=True
+    )
+    plan, prompt, admission = _manual_transaction_inputs()
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.SUCCEEDED
+    assert gateway.native_calls == 0
+    assert gateway.calls == 1

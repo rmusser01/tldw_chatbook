@@ -74,6 +74,19 @@ turns the feature off entirely. Each fold rewrites the memory row, which
 breaks the provider prompt cache from that row onward — the cadence bounds
 that to 1 in N turns.
 
+### Provider-native compaction (opt-in seam)
+
+`[console] compaction_native_delegation = true` lets compaction delegate the
+summary call to a provider's server-side compaction where the gateway
+advertises the capability — **no bridged provider does yet**, so today this
+is a forward seam: with it on, behavior is identical until a provider gains
+the capability. When native compaction does run, only the completion step is
+delegated — validation, admission, and the memory record are the local
+path's — the record's provenance carries a `compaction_engine:
+provider_native` marker so you can tell which path produced a summary, and
+any native failure falls back to the local summarizer call instead of
+failing the send.
+
 ### Context breakdown by category
 
 The model popover's context block (Request / Conversation / Compaction rows)

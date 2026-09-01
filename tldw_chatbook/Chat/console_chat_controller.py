@@ -2849,6 +2849,9 @@ class ConsoleChatController:
                 auxiliary_timeout_seconds=get_cli_setting(
                     "console", "compaction_auxiliary_timeout_seconds", None
                 ),
+                native_compaction_delegation=get_cli_setting(
+                    "console", "compaction_native_delegation", False
+                ),
             )
             if self._context_repository is not None
             and callable(getattr(provider_gateway, "complete_auxiliary", None))
