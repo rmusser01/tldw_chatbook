@@ -53,13 +53,14 @@ arithmetic remains `M=99`, `B=64`, `C=77`, `C-B=16`, `B-C=3`, and `H=61`;
 `F_closeout=1,738`. The exhaustive current comparison is
 `historical_still_current=44`, `historical_no_longer_current=17`,
 `shared_ancestor_debt=1,603`, and `current_line_drift=319`, represented by 2,096
-stable identities and 83 conflict-safe batches. Cleanup records remain absent.
+stable identities and 83 conflict-safe batches. At this pre-record authority-cut
+capture, cleanup records remained absent.
 
 The refreshed current/common raw SHA-256 values are
 `f888cf9351f1c41f66fb98b4ec218c9268beb9b23295037320f725cec567ae10`
 and `c34c5fe9d8e3154c3450f1cf28d4c9a6f1f631feb4735296fc6b891af5de1b15`;
-the lineage, replay-cache, manifest, PR snapshot, materializer, frozen producer,
-checker, allocator, and renderer SHA-256 values are respectively
+the lineage, replay-cache, pre-record manifest, PR snapshot, materializer, frozen
+producer, checker, allocator, and renderer SHA-256 values are respectively
 `b9f9876d438b4b6770e84013c515ae54791b14f0e740de67283fb3de20f655a6`,
 `0026dce1124fb3e9fc027dca785101c76a77b63882deac9e1951d5ce2d46a1df`,
 `0f1a8ca2652e7537628c82885f5d5d0cb4421189c31255bb0f05648991083022`,
@@ -69,6 +70,10 @@ checker, allocator, and renderer SHA-256 values are respectively
 `a003aee74e01c2729136e244474f1fac08a06ae9ee9331752f56d1bfbffe9e79`,
 `6d7559449c35cd6db3dca31dbbdb510efbb45d1dc0a96c4f01f59c6a8461403b`,
 and `4a08b6a5a9a8b12926ab9417bc330a4e94eb60c3b4afe88226ef232e2653a17a`.
+After Task 5, the canonical manifest contains 83 cleanup records allocated as
+`TASK-26933` through `TASK-27015`, with `TASK-27015` as the final record. Its
+post-record SHA-256 is
+`ded7288d8580367842110dd1a9e79976dc9c00663361251bb9212ca717cea0b9`.
 The cache-cold temporal replay checked 319 ledgers and 1,272 candidates: 736
 failing, 533 clean, and three transient syntax-invalid states. The ownership
 capture inspected all 13 open PRs at `2026-08-31T17:40:01Z`; exact
