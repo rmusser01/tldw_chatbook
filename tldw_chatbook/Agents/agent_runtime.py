@@ -912,6 +912,21 @@ def _effective_review_verdict(
 #: honest failure (review minor, 2026-08-31).
 EMPTY_TURN_LIMIT = 2
 
+#: TASK-26001: the one-time approach-warning and the exhaustion wrap-up ask.
+#: The warning is APPENDED to the newest tool-result message -- appending to
+#: the last message leaves every earlier byte identical, so the provider-side
+#: prompt-cache prefix survives; a synthetic user turn would both break it and
+#: put words in the user's mouth.
+BUDGET_WARNING_TEMPLATE = (
+    "\n\n[budget notice: this run has used over {percent}% of its {kind} "
+    "budget — finish up or summarize your progress soon.]"
+)
+BUDGET_WRAPUP_INSTRUCTION = (
+    "The run's {kind} budget is exhausted and no more tool calls are "
+    "possible. In one short reply, summarize what was accomplished, what "
+    "remains unfinished, and any partial results worth keeping."
+)
+
 #: Backoff shape for transient model failures (TASK-25901). The attempt COUNT
 #: is per-run config (`RunBudget.max_model_retries`); this is only the delay
 #: curve.
@@ -986,6 +1001,7 @@ def run_agent_loop(
         list(deps.fallback.candidates) if deps.fallback is not None else []
     )
     active_provider = config.provider or "unknown"
+    budget_warning_delivered = False
     #: TASK-25901: transient-failure retries used so far in THIS run. Counted
     #: per run rather than per turn: a provider failing every turn is a failing
     #: provider, and should stop the run rather than pay the budget down twice.
@@ -1207,6 +1223,97 @@ def run_agent_loop(
                 if canonical.state == "pending":
                     restored_calls.append(call)
 
+    def _budget_fractions() -> dict:
+        used = {}
+        if budget.max_model_turns:
+            used["model-turn"] = model_turns / budget.max_model_turns
+        if budget.max_steps:
+            used["step"] = budget_steps / budget.max_steps
+        if budget.max_wall_seconds:
+            used["wall-clock"] = (deps.clock() - started) / budget.max_wall_seconds
+        if budget.max_total_tokens:
+            used["token"] = total_tokens / budget.max_total_tokens
+        return used
+
+    def _exhausted(kind: str):
+        """One tools-stripped summary call, then an honest RUN_STUCK.
+
+        TASK-26001. The error step is recorded FIRST so an exhausted run stays
+        distinguishable from success whatever the wrap-up does (AC#6). The
+        wrap-up is a single call with no tool schemas -- any tool call in its
+        response is ignored, so it cannot loop or spawn (AC#4) -- and a failure
+        inside it costs only the summary, never the honest termination (AC#5).
+        Skipped mid-continuation: a wrap-up request without the in-flight
+        checkpoint would trip provider-continuation validation.
+        """
+        add(STEP_ERROR, summary=f"{kind} budget exhausted")
+        if continuation_checkpoint is not None or deps.should_cancel():
+            return _outcome(RUN_STUCK)
+        try:
+            # The COHERENT prefix, not raw `messages`: a step-budget
+            # exhaustion can land mid-batch, where raw history ends inside a
+            # half-answered native tool_calls pair -- exactly the shape that
+            # poisons a provider call (the fleet-continuation coherence
+            # property caught this in the first implementation).
+            wrap_messages = list(messages[:coherent_len])
+            wrap_messages.append(
+                {
+                    "role": "user",
+                    "content": BUDGET_WRAPUP_INSTRUCTION.format(kind=kind),
+                }
+            )
+            wrap_turn = (
+                active_call_model_with_continuation(wrap_messages, (), None)
+                if active_call_model_with_continuation is not None
+                else active_call_model(wrap_messages, ())
+            )
+            summary_text = str(getattr(wrap_turn, "text", "") or "").strip()
+            if summary_text:
+                return _outcome(RUN_STUCK, final_text=summary_text)
+        except Exception:  # noqa: BLE001 -- the summary is best-effort
+            trace(
+                STEP_MODEL_ERROR,
+                summary="Budget wrap-up call failed; terminating without one",
+                status="failed",
+                field_states={"payload": "omitted"},
+                sensitivity="diagnostic",
+            )
+        return _outcome(RUN_STUCK)
+
+    def _maybe_deliver_budget_warning() -> None:
+        """Tell the model ONCE, cache-safely, that the budget is running out.
+
+        Only ever attaches to the newest message and only when that message is
+        a tool result (native ``role:"tool"`` or the fence-protocol user-role
+        result) -- appending to the last message keeps every earlier byte
+        identical, so the provider prompt-cache prefix is preserved (AC#2),
+        and no synthetic user turn is inserted (AC#1). When the newest message
+        is not a tool result the delivery simply waits for the next iteration.
+        """
+        nonlocal budget_warning_delivered
+        if budget_warning_delivered or not messages:
+            return
+        fractions = _budget_fractions()
+        if not fractions:
+            return
+        kind, fraction = max(fractions.items(), key=lambda kv: kv[1])
+        if fraction < budget.budget_warning_fraction:
+            return
+        newest = messages[-1]
+        if not isinstance(newest, dict):
+            return
+        content = str(newest.get("content") or "")
+        is_tool_result = newest.get("role") == "tool" or (
+            newest.get("role") == "user"
+            and content.startswith(FENCE_TOOL_RESULT_PREFIX)
+        )
+        if not is_tool_result:
+            return
+        newest["content"] = content + BUDGET_WARNING_TEMPLATE.format(
+            percent=int(fraction * 100), kind=kind
+        )
+        budget_warning_delivered = True
+
     while True:
         if deps.should_cancel():
             trace(
@@ -1218,17 +1325,14 @@ def run_agent_loop(
             )
             return _outcome(RUN_CANCELLED)
         if budget_steps >= budget.max_steps:
-            add(STEP_ERROR, summary="step budget exhausted")
-            return _outcome(RUN_STUCK)
+            return _exhausted("step")
         if model_turns >= budget.max_model_turns:
-            add(STEP_ERROR, summary="model-turn budget exhausted")
-            return _outcome(RUN_STUCK)
+            return _exhausted("model-turn")
         if deps.clock() - started > budget.max_wall_seconds:
-            add(STEP_ERROR, summary="wall-clock budget exhausted")
-            return _outcome(RUN_STUCK)
+            return _exhausted("wall-clock")
         if budget.max_total_tokens and total_tokens >= budget.max_total_tokens:
-            add(STEP_ERROR, summary="token budget exhausted")
-            return _outcome(RUN_STUCK)
+            return _exhausted("token")
+        _maybe_deliver_budget_warning()
 
         restoring_batch = restored_calls is not None and bool(restored_calls)
         ephemeral_continuation = False

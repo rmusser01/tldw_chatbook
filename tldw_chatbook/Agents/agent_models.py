@@ -403,6 +403,10 @@ class RunBudget:
     #: behaviour exactly (raise on the first failure). Terminal errors ignore
     #: this entirely -- they are never retried at any setting.
     max_model_retries: int = 2
+    #: TASK-26001: fraction of any budget dimension at which the model is told
+    #: once to start wrapping up. The notice rides the newest tool result --
+    #: never a synthetic user turn -- so the prompt-cache prefix stays intact.
+    budget_warning_fraction: float = 0.8
 
     def __post_init__(self) -> None:
         if self.max_steps > MAX_RUN_CONTROL_STEPS:
