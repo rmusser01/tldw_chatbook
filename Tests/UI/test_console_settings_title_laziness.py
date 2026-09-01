@@ -1,6 +1,6 @@
 """The settings path must not query the Workspace DB for a title it discards.
 
-TASK-26837 (TASK-26834 cause 3). Sampled on the main thread in three separate
+TASK-26839 (TASK-26834 cause 3). Sampled on the main thread in three separate
 in-terminal probe runs (30-60ms buckets):
 
     registry_service.get_workspace
@@ -88,7 +88,7 @@ async def test_settings_with_an_active_session_never_queries_the_registry():
         assert counter.calls == 0, (
             f"{counter.calls} get_workspace round-trips for 5 settings reads "
             "with an active session -- ensure_session discards the title, so "
-            "computing it is a pure main-thread SQLite tax (TASK-26837)"
+            "computing it is a pure main-thread SQLite tax (TASK-26839)"
         )
 
 

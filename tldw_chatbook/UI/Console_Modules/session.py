@@ -3151,7 +3151,7 @@ class ConsoleSessionController:
         ):
             return defaults
         workspace_id = store.workspace_context.active_workspace_id
-        # TASK-26837: `ensure_session` uses `title` only when it CREATES a
+        # TASK-26839: `ensure_session` uses `title` only when it CREATES a
         # session; with one active the argument is discarded. Deriving the
         # workspace title is a synchronous registry `get_workspace` SQLite
         # query, and this method runs on every provider/model display

@@ -1,5 +1,5 @@
 ---
-id: TASK-26837
+id: TASK-26839
 title: Console settings path queries the Workspace DB for a title it discards
 status: Done
 assignee: []
@@ -58,3 +58,16 @@ Sweep: 152 passed across 5 session-surface files; the 3
 Files: `tldw_chatbook/UI/Console_Modules/session.py` (one call site),
 `Tests/UI/test_console_settings_title_laziness.py` (new).
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+This task previously held id TASK-26837, colliding with the older
+"Provider-setup-can-report-a-successful-connection-test-yet-write-no-
+api_settings-block" task that arrived on dev first while this one was still
+in flight on its branch. Per the owner rule decided 2026-08-21 in TASK-19601
+(**older id keeps it; the younger task renumbers with a provenance note,
+regardless of Done status**), it renumbered to TASK-26839. Citations to
+TASK-26837 in this branch's commit message, in PR #2291's body, and in
+`Tests/UI/test_console_settings_title_laziness.py` and `session.py` comments
+written before the renumber refer to THIS task; the other TASK-26837 holder
+is the older arrival and keeps the id.
