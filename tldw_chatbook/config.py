@@ -3416,6 +3416,12 @@ anthropic_enabled = true
 # prune_head_chars = 1000
 # prune_min_reclaim_chars = 8000
 #
+# TASK-25912: replace image payloads in OLDER turns of the agent send
+# payload with text placeholders (~1600 tokens back per image). The
+# stored conversation is untouched. OFF by default.
+# retire_stale_images = false
+# retire_images_keep_recent_turns = 4
+#
 # Whether a background sub-agent finishing after its turn WAKES its
 # supervisor so it can act on the result (an injected, clearly machine-
 # marked notice -- never user input, never approval). false still records

@@ -377,6 +377,92 @@ def prune_stale_tool_results(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class StaleImageSettings:
+    """Knobs for stale-image retirement (TASK-25912)."""
+
+    #: The most recent N turn groups keep their images (AC#2).
+    keep_recent_turns: int = 4
+
+
+@dataclass(frozen=True, slots=True)
+class StaleImageStats:
+    """What one retirement pass did."""
+
+    retired_images: int = 0
+
+
+def _image_placeholder(part: dict[str, Any]) -> dict[str, Any]:
+    url = ""
+    image_url = part.get("image_url")
+    if isinstance(image_url, dict):
+        url = str(image_url.get("url", ""))
+    elif isinstance(image_url, str):
+        url = image_url
+    mime = ""
+    if url.startswith("data:"):
+        mime = url[5:].split(";", 1)[0].split(",", 1)[0]
+    label = mime or str(part.get("type", "image"))
+    return {
+        "type": "text",
+        "text": (
+            f"[image ({label}) retired from older context to save tokens; "
+            "the stored conversation still has it]"
+        ),
+    }
+
+
+def retire_stale_images(
+    messages: list[dict[str, Any]],
+    *,
+    settings: StaleImageSettings,
+    is_turn_boundary: Callable[[dict[str, Any]], bool] | None = None,
+) -> tuple[list[dict[str, Any]], StaleImageStats]:
+    """Replace image parts in STALE rows with naming text placeholders.
+
+    TASK-25912. Affects only the prospective SEND payload -- changed rows
+    are copies, so the stored conversation (AC#4) and the caller's list are
+    untouched; the identity object returns when nothing qualified. Rows in
+    the most recent ``keep_recent_turns`` groups keep their images (AC#2).
+    Token accounting reflects the reclaim automatically because counting
+    runs on the retired payload (AC#3).
+    """
+    turns = _group_turns(messages, is_boundary=is_turn_boundary)
+    keep_from = max(0, len(turns) - max(0, settings.keep_recent_turns))
+    replacements: dict[int, dict[str, Any]] = {}
+    retired = 0
+    index = 0
+    for turn_index, turn in enumerate(turns):
+        for message in turn:
+            content = message.get("content")
+            if turn_index < keep_from and isinstance(content, list):
+                image_parts = [
+                    part
+                    for part in content
+                    if isinstance(part, dict) and part.get("type") != "text"
+                ]
+                if image_parts:
+                    replacements[index] = {
+                        **message,
+                        "content": [
+                            _image_placeholder(part)
+                            if isinstance(part, dict)
+                            and part.get("type") != "text"
+                            else part
+                            for part in content
+                        ],
+                    }
+                    retired += len(image_parts)
+            index += 1
+    if not replacements:
+        return messages, StaleImageStats()
+    updated = [
+        replacements.get(row_index, message)
+        for row_index, message in enumerate(messages)
+    ]
+    return updated, StaleImageStats(retired_images=retired)
+
+
 def bound_messages_to_window(
     messages: list[dict[str, Any]],
     *,

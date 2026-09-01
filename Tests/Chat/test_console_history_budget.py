@@ -1,8 +1,10 @@
 """Unit tests for the Console history token-budget trimmer."""
 
 from tldw_chatbook.Chat.console_history_budget import (
+    StaleImageSettings,
     ToolResultPruneSettings,
     prune_stale_tool_results,
+    retire_stale_images,
     DEFAULT_RESPONSE_RESERVATION,
     bound_messages_to_window,
     count_console_messages_tokens,
@@ -365,3 +367,82 @@ def test_prune_is_idempotent_on_already_pruned_rows() -> None:
     assert stats1.pruned_rows == 2
     assert second is first, "second pass must be a no-op"
     assert stats2.pruned_rows == 0
+
+
+# --- TASK-25912: stale-image retirement -------------------------------------
+
+
+def _turns_with_image_rows():
+    """Four turns; turns 1 and 2 carry an image part, turn 4 does too."""
+    def image_row(index):
+        return {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": f"look at this {index}"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,AAAA"},
+                },
+            ],
+        }
+
+    rows = []
+    for index in range(1, 5):
+        rows.append(
+            image_row(index)
+            if index in (1, 2, 4)
+            else {"role": "user", "content": f"prompt {index}"}
+        )
+        rows.append({"role": "assistant", "content": f"answer {index}"})
+    return rows
+
+
+def test_retire_replaces_old_images_with_a_naming_placeholder() -> None:
+    rows = _turns_with_image_rows()
+    retired, stats = retire_stale_images(
+        rows, settings=StaleImageSettings(keep_recent_turns=2)
+    )
+
+    assert stats.retired_images == 2
+    first = retired[0]["content"]
+    assert all(part.get("type") == "text" for part in first)
+    placeholder = first[-1]["text"]
+    assert "image" in placeholder and "retired" in placeholder
+    assert "image/png" in placeholder, "placeholder must name what was there"
+    assert first[0]["text"] == "look at this 1", "text parts survive"
+    # input rows never mutated (AC#4: stored conversation unchanged)
+    assert rows[0]["content"][1]["type"] == "image_url"
+
+
+def test_retire_keeps_recent_turn_images() -> None:
+    rows = _turns_with_image_rows()
+    retired, stats = retire_stale_images(
+        rows, settings=StaleImageSettings(keep_recent_turns=2)
+    )
+
+    recent = retired[-2]["content"]
+    assert any(part.get("type") == "image_url" for part in recent), (
+        "an in-progress visual task lost its image"
+    )
+
+
+def test_retire_reduces_the_token_count() -> None:
+    """AC#3: the accounting reflects the reclaim."""
+    rows = _turns_with_image_rows()
+    retired, _stats = retire_stale_images(
+        rows, settings=StaleImageSettings(keep_recent_turns=2)
+    )
+
+    before = count_console_messages_tokens(rows, "gpt-4o")
+    after = count_console_messages_tokens(retired, "gpt-4o")
+    assert after < before
+
+
+def test_retire_with_nothing_stale_is_an_identity() -> None:
+    rows = _turns_with_image_rows()
+    retired, stats = retire_stale_images(
+        rows, settings=StaleImageSettings(keep_recent_turns=10)
+    )
+
+    assert retired is rows
+    assert stats.retired_images == 0

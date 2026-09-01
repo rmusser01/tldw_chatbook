@@ -28,8 +28,10 @@ if TYPE_CHECKING:
     from .run_log import RunLogWriter
 
 from tldw_chatbook.Chat.console_history_budget import (
+    StaleImageSettings,
     ToolResultPruneSettings,
     prune_stale_tool_results,
+    retire_stale_images,
     ProviderContinuationSidecar,
     provider_continuation_owner_groups,
 )
@@ -1718,6 +1720,9 @@ class AgentService:
         # TASK-25911: explicit prune settings override config resolution
         # (None = resolve from [agents] config; the config default is OFF).
         tool_result_pruning: "ToolResultPruneSettings | None" = None,
+        # TASK-25912: same override pattern; None = resolve from config
+        # ([agents] retire_stale_images, default OFF).
+        stale_image_retirement: "StaleImageSettings | None" = None,
         review_state_scope: Callable[[str], "contextlib.AbstractContextManager"]
         | None = None,
         install_skill_tool: Callable[[str], ToolResult] | None = None,
@@ -2035,6 +2040,20 @@ class AgentService:
             )
         else:
             self._tool_result_pruning = None
+        if stale_image_retirement is not None:
+            self._stale_image_retirement = stale_image_retirement
+        elif coerce_bool_setting(
+            _setting("retire_stale_images", False), default=False
+        ):
+            self._stale_image_retirement = StaleImageSettings(
+                keep_recent_turns=coerce_int_setting(
+                    _setting("retire_images_keep_recent_turns", 4),
+                    default=4,
+                    minimum=1,
+                ),
+            )
+        else:
+            self._stale_image_retirement = None
         self._run_log_evict_enabled = bool(
             run_log_request_plan.eviction_enabled if run_log_request_plan else False
         )
@@ -2329,20 +2348,36 @@ class AgentService:
         protocol-aware round boundary keeps native pairs whole across the
         recency fence.
         """
-        if self._tool_result_pruning is None:
+        if (
+            self._tool_result_pruning is None
+            and self._stale_image_retirement is None
+        ):
             return payload
-        pruned, stats = prune_stale_tool_results(
-            payload,
-            settings=self._tool_result_pruning,
-            is_turn_boundary=_make_round_boundary(native=native),
-        )
-        if stats.pruned_rows:
-            logger.info(
-                "tool_result_prune rows={} chars_removed={}",
-                stats.pruned_rows,
-                stats.chars_removed,
+        boundary = _make_round_boundary(native=native)
+        if self._tool_result_pruning is not None:
+            payload, stats = prune_stale_tool_results(
+                payload,
+                settings=self._tool_result_pruning,
+                is_turn_boundary=boundary,
             )
-        return pruned
+            if stats.pruned_rows:
+                logger.info(
+                    "tool_result_prune rows={} chars_removed={}",
+                    stats.pruned_rows,
+                    stats.chars_removed,
+                )
+        if self._stale_image_retirement is not None:
+            payload, image_stats = retire_stale_images(
+                payload,
+                settings=self._stale_image_retirement,
+                is_turn_boundary=boundary,
+            )
+            if image_stats.retired_images:
+                logger.info(
+                    "stale_image_retirement images={}",
+                    image_stats.retired_images,
+                )
+        return payload
 
     def _make_call_model(
         self,

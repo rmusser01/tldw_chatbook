@@ -102,3 +102,75 @@ def test_default_service_sends_the_payload_untouched() -> None:
     tool_rows = [row for row in sent["payload"] if row.get("role") == "tool"]
     assert len(tool_rows[0]["content"]) == 6000
     assert "pruned" not in tool_rows[0]["content"]
+
+
+def _history_with_image_rows():
+    rows = []
+    for index in range(1, 5):
+        rows.append(
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": f"see {index}"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,AAAA"},
+                    },
+                ],
+            }
+            if index in (1, 4)
+            else {"role": "user", "content": f"prompt {index}"}
+        )
+        rows.append({"role": "assistant", "content": f"answer {index}"})
+    return rows
+
+
+def test_configured_image_retirement_reaches_the_wire_payload() -> None:
+    """TASK-25912: same seam as pruning, own gate."""
+    from tldw_chatbook.Chat.console_history_budget import StaleImageSettings
+
+    sent = {}
+
+    def fake_chat(**kwargs):
+        sent["payload"] = kwargs["messages_payload"]
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    service = _service(
+        chat_call=fake_chat,
+        stale_image_retirement=StaleImageSettings(keep_recent_turns=2),
+    )
+    history = _history_with_image_rows()
+    _call_model(service)(history, ())
+
+    list_rows = [
+        row for row in sent["payload"] if isinstance(row.get("content"), list)
+    ]
+    assert len(list_rows) == 2
+    old, recent = list_rows
+    assert all(part["type"] == "text" for part in old["content"]), (
+        "old image not retired"
+    )
+    assert any(part.get("type") == "image_url" for part in recent["content"]), (
+        "recent image lost"
+    )
+    # AC#4: the caller's history object is untouched
+    assert history[0]["content"][1]["type"] == "image_url"
+
+
+def test_default_service_keeps_all_images() -> None:
+    sent = {}
+
+    def fake_chat(**kwargs):
+        sent["payload"] = kwargs["messages_payload"]
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    service = _service(chat_call=fake_chat)
+    _call_model(service)(_history_with_image_rows(), ())
+
+    list_rows = [
+        row for row in sent["payload"] if isinstance(row.get("content"), list)
+    ]
+    assert all(
+        any(part.get("type") == "image_url" for part in row["content"])
+        for row in list_rows
+    )
