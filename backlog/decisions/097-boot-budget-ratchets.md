@@ -19,6 +19,11 @@ of breach:
 | boot CSS bytes (`Tests/Performance/test_boot_css_byte_budget.py`) | `MAX_BOOT_PARSED_CSS_BYTES` | 860,000 | 842,236 | 854,720 (headroom 5,280) |
 | screen pre-import payload (`Tests/Performance/test_screen_preimport_payload_budget.py`) | `MAX_PASS_ADDED_MODULES` / `MAX_PASS_ADDED_LOC` / `MAX_SINGLE_ROUTE_ADDED_LOC` | 500 / 380,000 / 145,000 | 481 / 368,814 | 488 / 374,697 / 137,494 |
 
+**The `limit` column above is as of adoption (2026-08-28) and is not
+maintained in place.** `MAX_TLDW_MODULES_AT_UI_READY` has since moved to
+**972**; every change to a limit is recorded in the exception ledger below,
+which is the authoritative record. The other four limits are unchanged.
+
 The import-weight breach in that last column was repaid by TASK-23112 (646,
 headroom 14) — see "Standing breach at adoption" below. Measured on dev
 `473e7c9298` at the same time, the other three read 968/970 (headroom **2**),
@@ -103,7 +108,19 @@ commit, with the owner's explicit sign-off recorded in the PR.
 
 | date | guard | constant | old → new | named cause | owner sign-off |
 |---|---|---|---|---|---|
-| — | — | — | — | *(none granted yet)* | — |
+| 2026-08-29 | `_ui_ready` census | `MAX_TLDW_MODULES_AT_UI_READY` | 970 → 972 | `tls_trust` | Owner commit `6fac5dbf95`, "perf: raise ui-ready census ratchet 970->972 for tls_trust (PR #2223, ADR-097 deliberate refresh)" |
+
+Row added retroactively on 2026-08-31 (TASK-25813), found while taking the
+ratchet baseline for the 2026-08-30 holistic review. **The decision was the
+owner's and was made deliberately** — the commit names the cause and cites
+this ADR. What was missing is only the row this ADR requires in the same
+commit, so the ledger read *"(none granted yet)"* while a raise had in fact
+occurred. It is transcribed from the commit, not re-decided here.
+
+The other four constants were audited at the same time and are unchanged
+from this ADR's table: `MAX_TLDW_MODULE_COUNT` 660,
+`MAX_BOOT_PARSED_CSS_BYTES` 860,000, `MAX_PASS_ADDED_MODULES` 500,
+`MAX_PASS_ADDED_LOC` 380,000, `MAX_SINGLE_ROUTE_ADDED_LOC` 145,000.
 
 ## Standing breach at adoption (not an exception — a debt) — REPAID
 
