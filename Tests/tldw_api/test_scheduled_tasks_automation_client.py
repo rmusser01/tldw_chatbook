@@ -291,7 +291,14 @@ async def test_preview_definition_posts_to_previews_route(monkeypatch):
     mocked = AsyncMock(return_value=case["response"])
     monkeypatch.setattr(client, "_request", mocked)
 
-    request = ScheduledTaskPreviewCreateRequest(**case["request"])
+    # The fixture's `request` half models the local preview port's payload
+    # (where `visibility_policy` is `Any`-typed and sent as an explicit
+    # `null`), not the server's wire schema -- the wire schema types it as a
+    # plain non-nullable `dict[str, Any]` defaulting to `{}` per
+    # automation_endpoints.md, so drop that key here and let the model
+    # default apply instead of feeding the fixture's `null` into it.
+    request_payload = {k: v for k, v in case["request"].items() if k != "visibility_policy"}
+    request = ScheduledTaskPreviewCreateRequest(**request_payload)
     result = await client.preview_scheduled_task_definition(request)
 
     assert mocked.await_args.args[:2] == (
@@ -300,8 +307,9 @@ async def test_preview_definition_posts_to_previews_route(monkeypatch):
     )
     assert mocked.await_args.kwargs["json_data"]["family"] == "recurring_question"
     assert mocked.await_args.kwargs["json_data"]["name"] == "Daily stand-up summary"
-    # visibility_policy was null in the fixture request -- exclude_none drops it.
-    assert "visibility_policy" not in mocked.await_args.kwargs["json_data"]
+    # visibility_policy defaults to {} per the endpoints doc -- present
+    # (exclude_none only drops explicit None, not an empty-dict default).
+    assert mocked.await_args.kwargs["json_data"]["visibility_policy"] == {}
 
     assert isinstance(result, ScheduledTaskPreview)
     assert result.status == "valid"

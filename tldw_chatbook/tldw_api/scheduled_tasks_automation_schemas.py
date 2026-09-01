@@ -61,10 +61,6 @@ class ScheduledTaskPreviewCreateRequest(BaseModel):
 
     Mirrors the server's ``ScheduledTaskPreviewCreateRequest`` (see
     ``Tests/Scheduling/fixtures/server_responses/automation_endpoints.md``).
-    ``visibility_policy`` is nullable (not just default-``{}``) -- the local
-    preview port's ``_normalize_visibility_policy`` (``automation_preview.py``)
-    treats it as ``Any`` (string/dict/``None``), and the Task 1 fixture's
-    request payloads send it as an explicit ``null``.
     """
 
     mode: str = "create"
@@ -76,7 +72,7 @@ class ScheduledTaskPreviewCreateRequest(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
     input: dict[str, Any] = Field(default_factory=dict)
     schedule: dict[str, Any] = Field(default_factory=dict)
-    visibility_policy: dict[str, Any] | None = None
+    visibility_policy: dict[str, Any] = Field(default_factory=dict)
     notification_policy: dict[str, Any] = Field(default_factory=dict)
     approval_policy: dict[str, Any] = Field(default_factory=dict)
 

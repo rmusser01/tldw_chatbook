@@ -537,6 +537,12 @@ class SchedulingServerClient:
     ) -> dict[str, Any]:
         """Apply a consumed update-mode preview to an existing definition.
 
+        Retryable: a retried PATCH after an unobserved success fails clean
+        rather than double-applying anything -- the preview is already
+        consumed, so the replay gets the server's preview-already-consumed
+        409 back, which maps to ``ServerClientValidationError`` instead of
+        silently re-patching.
+
         Args:
             definition_id: The definition to update.
             preview_id: The valid update-mode preview to consume.
