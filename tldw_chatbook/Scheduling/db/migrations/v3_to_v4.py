@@ -150,6 +150,13 @@ def rollback(db: _MigrationCapableDB) -> None:
     with closing(db._get_connection()) as conn:
         conn.execute("DROP TABLE IF EXISTS automation_runs")
         conn.execute("DROP TABLE IF EXISTS automation_results")
+        # DROP TABLE above already took idx_automation_runs_* and
+        # idx_automation_results_* with it. This index lives on
+        # automation_definitions itself, so it must go before the
+        # next_run_at column it references is dropped below.
+        conn.execute(
+            "DROP INDEX IF EXISTS idx_automation_definitions_owner_next_run"
+        )
         def_cols = {
             row[1]
             for row in conn.execute("PRAGMA table_info(automation_definitions)")

@@ -118,3 +118,30 @@ def test_v4_preserves_existing_rows_and_is_idempotent(tmp_path):
     row = db.get_reminder_task(task_id)
     assert row is not None and row["title"] == "keep me"
     assert db.get_schema_version() == 4
+
+
+def test_v4_migrate_then_rollback_round_trips_to_v3(tmp_path):
+    from tldw_chatbook.Scheduling.db.migrations.v3_to_v4 import migrate, rollback
+
+    db = ScheduledTasksDB(str(tmp_path / "s.db"), client_id="t")
+    migrate(db)  # already applied by construction; idempotent no-op
+
+    rollback(db)
+
+    assert db.get_schema_version() == 3
+    with closing(db._get_connection()) as conn:
+        def_cols = {r[1] for r in conn.execute("PRAGMA table_info(automation_definitions)")}
+        rem_cols = {r[1] for r in conn.execute("PRAGMA table_info(reminder_tasks)")}
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+    assert def_cols.isdisjoint({
+        "disabled_lock_kind", "disabled_reason", "resolution_state",
+        "resolved_at", "resolved_by", "resolved_result_id",
+        "finding_policy", "retention_policy", "next_run_at", "transfer_state",
+    })
+    assert "transfer_state" not in rem_cols
+    assert {"automation_runs", "automation_results"}.isdisjoint(tables)
