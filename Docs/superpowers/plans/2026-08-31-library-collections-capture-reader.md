@@ -145,6 +145,11 @@ connection through every backend call:
 
 ```python
 with self.transaction() as connection:
+    if self.backend_type == BackendType.POSTGRESQL:
+        self.backend.execute(
+            "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
+            connection=connection,
+        )
     total = self.backend.execute(
         count_query,
         tuple(params),
@@ -162,8 +167,10 @@ with self.transaction() as connection:
 ```
 
 Add the optional `connection` parameter only to the existing focused tag helper and forward it to
-its current backend call. Do not create a second transaction abstraction or change the endpoint
-schema.
+its current backend call. SQLite's explicit transaction already pins the read snapshot; PostgreSQL's
+default `READ COMMITTED` does not, so request `REPEATABLE READ READ ONLY` as the first statement in
+the existing transaction and cover that branch with a backend-proxy regression. Do not create a
+second transaction abstraction or change the endpoint schema.
 
 - [ ] **Step 4: Run focused server paging tests**
 
@@ -1069,8 +1076,8 @@ Library open/width/custom opt-in; defaults are fixed 40 with custom widths disab
 collapse never persists; source-neutral preferences survive source switches. Assert Local authority
 uses the resolved profile and configured existing `library_collections_db_path`; Server uses current
 profile/principal; workspace changes do not rewire Server. Assert startup interruption recovery and
-bounded offline scavenging run off-loop, and teardown invalidates/cancels work. Assert Media and
-Media provenance resolution delegates to
+bounded offline scavenging run off-loop, and teardown invalidates/cancels work. Assert Media
+provenance resolution delegates to
 `media_reading_scope_service.get_backing_media_item()` with the stored backing Media ID—not the
 Reading capture ID—and Note reference resolution delegates to
 `notes_scope_service.get_note_detail()` with the capture's Local/Server authority. Assert Server
