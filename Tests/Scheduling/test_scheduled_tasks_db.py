@@ -1,10 +1,12 @@
 """Tests for ScheduledTasksDB CRUD operations."""
 
 import json
+import sqlite3
 import tempfile
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -1187,6 +1189,95 @@ def test_upsert_results_pending_review_mutation_blocks_update(tmp_path):
     row = db.list_automation_results("server:42")[0]
     # The local unpushed review outranks the mirror until it replays.
     assert row["review_state"] == "unread"
+
+
+def test_upsert_results_pending_mutation_recorded_mid_loop_still_blocks_update(tmp_path):
+    """Qodo TOCTOU finding: the pending-mutation guard used to snapshot
+    ``get_pending_mutations()`` ONCE before the write transaction even
+    opened. A review recorded concurrently (the review service writes via
+    ``to_thread`` while this upsert runs on the event loop) after that
+    snapshot but before the loop reached the row would be invisible to
+    the stale snapshot -- clobbering a review whose own pending mutation
+    genuinely existed by the time this row's write happened.
+
+    This test proves the fix (a per-row SELECT inside the same write
+    transaction, immediately before that row's own UPDATE) by inserting
+    row 2's pending mutation, via a separate real connection, DURING this
+    very upsert call -- timed to land right as row 1 is being processed,
+    i.e. strictly after any pre-loop snapshot would have been taken. The
+    old snapshot-based guard would have missed it; the new per-row check
+    catches it.
+    """
+    db = _mk_db(tmp_path)
+    db.upsert_automation_results_from_server(
+        "server:42",
+        [
+            _result_item(id="srv-res-1", dedupe_key="key-1"),
+            _result_item(id="srv-res-2", dedupe_key="key-2"),
+        ],
+    )
+    rows_by_server_id = {
+        row["server_id"]: row["id"] for row in db.list_automation_results("server:42")
+    }
+    local_id_2 = rows_by_server_id["srv-res-2"]
+
+    # sqlite3.Connection is an immutable C type -- its bound methods can't
+    # be monkeypatched directly. `set_trace_callback` is the supported hook
+    # for observing every SQL statement a connection runs, so it's used
+    # here to detect the exact moment ("SELECT id FROM automation_results",
+    # row 1's existence check) at which the OLD code's pre-loop snapshot
+    # would already have been taken and gone stale.
+    real_get_connection = ScheduledTasksDB._get_connection
+    injected = {"done": False}
+
+    def _get_connection_with_injector(self):
+        conn = real_get_connection(self)
+
+        def _on_statement(sql):
+            if injected["done"] or "SELECT id FROM automation_results" not in sql:
+                return
+            injected["done"] = True
+            # Simulate the review service's concurrent to_thread write
+            # landing mid-loop: a totally separate connection records row
+            # 2's pending review mutation right now, before this upsert
+            # call has reached row 2.
+            side_conn = sqlite3.connect(str(tmp_path / "s.db"))
+            try:
+                side_conn.execute(
+                    "INSERT INTO pending_mutations "
+                    "(local_id, primitive, owner_id, payload, created_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (local_id_2, "automation_result_review", "server:42", "{}",
+                     "2026-09-01T00:00:00+00:00"),
+                )
+                side_conn.commit()
+            finally:
+                side_conn.close()
+
+        conn.set_trace_callback(_on_statement)
+        return conn
+
+    with mock.patch.object(
+        ScheduledTasksDB, "_get_connection", _get_connection_with_injector
+    ):
+        counts = db.upsert_automation_results_from_server(
+            "server:42",
+            [
+                _result_item(id="srv-res-1", review_state="read", reviewed_by="user:42"),
+                _result_item(id="srv-res-2", review_state="read", reviewed_by="user:42"),
+            ],
+        )
+
+    assert injected["done"], "the spy never saw the expected SELECT -- test setup is stale"
+    assert counts == {"inserted": 0, "updated": 1, "skipped_dedupe": 0}
+    rows_by_server_id = {
+        row["server_id"]: row for row in db.list_automation_results("server:42")
+    }
+    # Row 1 had no pending mutation at any point -- it updates normally.
+    assert rows_by_server_id["srv-res-1"]["review_state"] == "read"
+    # Row 2's mutation was recorded mid-loop, after any pre-loop snapshot
+    # would have run -- the per-row in-transaction check still catches it.
+    assert rows_by_server_id["srv-res-2"]["review_state"] == "unread"
 
 
 def test_upsert_results_dedupe_conflict_with_local_row_is_skipped(tmp_path):

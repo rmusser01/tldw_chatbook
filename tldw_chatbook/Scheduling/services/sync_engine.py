@@ -196,13 +196,23 @@ class SyncEngine:
         # pull below re-reads that same row).
         phase_errors: list[str] = []
 
-        error, counts = await self._run_phase(
+        error, pushed_review_ids = await self._run_phase(
             target_owner, "Automation review pushback", self._replay_review_mutations
         )
         if error:
             phase_errors.append(error)
-        if counts:
-            logger.info(f"Automation review pushback for {target_owner}: {counts}")
+        if pushed_review_ids:
+            logger.info(
+                f"Automation review pushback for {target_owner}: "
+                f"pushed {len(pushed_review_ids)} review(s)"
+            )
+        # Task 5 same-cycle echo (Qodo finding): thread the server_result_ids
+        # just replayed above into this SAME results pull as
+        # `skip_review_server_ids` -- their pending mutation is already gone
+        # by now, so the pull's own pending-mutation guard can't stop a
+        # server payload that still echoes the pre-review state (write/
+        # read-path lag) from reverting the review that was just pushed.
+        skip_review_server_ids = frozenset(pushed_review_ids or ())
 
         error, counts = await self._run_phase(
             target_owner, "Automation definitions pull", self._pull_definitions
@@ -213,7 +223,10 @@ class SyncEngine:
             logger.info(f"Automation definitions pull for {target_owner}: {counts}")
 
         error, counts = await self._run_phase(
-            target_owner, "Automation results pull", self._pull_results
+            target_owner,
+            "Automation results pull",
+            self._pull_results,
+            skip_review_server_ids=skip_review_server_ids,
         )
         if error:
             phase_errors.append(error)
@@ -346,28 +359,31 @@ class SyncEngine:
         )
 
     async def _run_phase(
-        self, owner_id: str, label: str, phase: Any,
-    ) -> tuple[str | None, dict[str, int] | None]:
+        self, owner_id: str, label: str, phase: Any, **phase_kwargs: Any,
+    ) -> tuple[str | None, Any | None]:
         """Run one self-contained sync phase, containing its own failure.
 
         Mirrors the top-level pull()/sync_now() error discipline (task-2722):
         a runtime-mode policy refusal is logged and treated as not
         applicable, never persisted; any other error is recorded via
         `_record_sync_error` and swallowed so the phases after this one
-        still run.
+        still run. ``phase_kwargs`` are forwarded to ``phase`` after the
+        positional ``owner_id`` (e.g. `_pull_results`'s
+        `skip_review_server_ids`).
 
         Returns:
-            A ``(error, counts)`` tuple. ``error`` is ``None`` on success
+            A ``(error, result)`` tuple. ``error`` is ``None`` on success
             or a policy refusal (not an error); otherwise the message that
-            was also recorded via `_record_sync_error`. ``counts`` is the
-            phase's own return value (an upsert-count dict) on success, or
+            was also recorded via `_record_sync_error`. ``result`` is the
+            phase's own return value (an upsert-count dict, or the
+            pushed-review-ids set for the pushback phase) on success, or
             ``None`` when the phase raised or returned nothing -- callers
             use it so a truncated/failed phase never silently discards
             what did land (F2/F8).
         """
         try:
-            counts = await phase(owner_id)
-            return None, counts
+            result = await phase(owner_id, **phase_kwargs)
+            return None, result
         except ServerClientPolicyError as exc:
             logger.info(f"{label} not applicable for {owner_id}: {exc}")
             return None, None
@@ -379,7 +395,7 @@ class SyncEngine:
             self._record_sync_error(str(exc), owner_id)
             return str(exc), None
 
-    async def _replay_review_mutations(self, owner_id: str) -> None:
+    async def _replay_review_mutations(self, owner_id: str) -> frozenset[str]:
         """Replay pending `automation_result_review` mutations to the server.
 
         Success and a 404 (the result was retired server-side) both clear
@@ -388,11 +404,21 @@ class SyncEngine:
         attempting further mutations this round, mirroring
         `_push_mutation`'s "abort the whole push phase on a retryable
         server error" discipline for reminders.
+
+        Returns:
+            The ``server_result_id``s settled this cycle (pushed
+            successfully or confirmed retired). `sync_now` feeds this set
+            into the results pull as `skip_review_server_ids` so a stale
+            same-cycle echo of these rows' pre-review state can't revert
+            what was just pushed (Task 5 same-cycle echo, Qodo finding) --
+            see the design comment on
+            `ScheduledTasksDB.upsert_automation_results_from_server`.
         """
         assert self.server_client is not None
         mutations = self.db.get_pending_mutations(
             owner_id, primitive=_RESULT_REVIEW_PRIMITIVE
         )
+        pushed_server_ids: set[str] = set()
         for mutation in mutations:
             payload = mutation.get("payload") or {}
             server_result_id = payload.get("server_result_id")
@@ -416,6 +442,8 @@ class SyncEngine:
                 )
             # Success or a confirmed retirement: the mutation is settled.
             self.db.delete_pending_mutation(mutation["id"])
+            pushed_server_ids.add(server_result_id)
+        return frozenset(pushed_server_ids)
 
     async def _pull_definitions(self, owner_id: str) -> dict[str, int]:
         """Page up to `_SYNC_MAX_PAGES` of the server's automation definitions.
@@ -449,7 +477,11 @@ class SyncEngine:
         )
         return totals
 
-    async def _pull_results(self, owner_id: str) -> dict[str, int]:
+    async def _pull_results(
+        self,
+        owner_id: str,
+        skip_review_server_ids: frozenset[str] = frozenset(),
+    ) -> dict[str, int]:
         """Walk up to `_SYNC_MAX_PAGES` newest pages of server results.
 
         The server's /results endpoint exposes no `updated_at` filter
@@ -458,6 +490,10 @@ class SyncEngine:
         drift older than the window waits for a later sync. Stops early
         on a short page or `has_more=False`; logs (info) when the cap was
         hit with more remaining, so a truncated pull is never silent.
+
+        ``skip_review_server_ids`` (Task 5 same-cycle echo) is forwarded
+        unchanged to every page's upsert call -- see the design comment on
+        `ScheduledTasksDB.upsert_automation_results_from_server`.
         """
         assert self.server_client is not None
         totals: dict[str, int] = {}
@@ -469,7 +505,9 @@ class SyncEngine:
             if not isinstance(response, dict):
                 response = {}
             page = list(response.get("items") or [])
-            counts = self.db.upsert_automation_results_from_server(owner_id, page)
+            counts = self.db.upsert_automation_results_from_server(
+                owner_id, page, skip_review_server_ids=skip_review_server_ids
+            )
             for key, value in counts.items():
                 totals[key] = totals.get(key, 0) + value
             offset += len(page)

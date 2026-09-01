@@ -68,6 +68,26 @@ class _FakeAutomationServerClient:
         return {"id": result_id, "review_state": review_state}
 
 
+class _StaleEchoServerClient(_FakeAutomationServerClient):
+    """Push succeeds but ``list_automation_results`` doesn't reflect it.
+
+    Simulates a server whose write and its own read path haven't caught
+    up within the same round trip (Task 5 same-cycle echo, Qodo finding):
+    ``review_automation_result`` reports success and records the call, but
+    deliberately does NOT mutate ``self._item`` the way the base fake
+    does -- so ``list_automation_results`` keeps echoing the pre-push
+    ("unread") state for the rest of the SAME sync cycle.
+    """
+
+    async def review_automation_result(
+        self, result_id: str, review_state: str, *, review_note: str | None = None
+    ) -> dict:
+        self.review_calls.append((result_id, review_state, review_note))
+        if self.push_should_fail:
+            raise ServerUnavailableError("offline")
+        return {"id": result_id, "review_state": review_state}
+
+
 @pytest.fixture
 def db(tmp_path):
     database = ScheduledTasksDB(tmp_path / "scheduled_tasks.db")
@@ -133,3 +153,39 @@ async def test_failed_pushback_keeps_local_review_and_pending_mutation(db):
     pending = db.get_pending_mutations(owner, primitive="automation_result_review")
     assert len(pending) == 1, "the mutation must be retained for retry"
     assert db.get_automation_result(local_id)["review_state"] == "dismissed"
+
+
+@pytest.mark.asyncio
+async def test_same_cycle_stale_results_pull_does_not_revert_just_pushed_review(db):
+    """Task 5 same-cycle echo (Qodo finding).
+
+    Unlike the round-trip test above, the push here succeeds (clearing the
+    mutation) but the SAME sync's own results pull still echoes the
+    pre-push state -- ``_StaleEchoServerClient`` never updates its held
+    item, simulating a server whose write and read path haven't converged
+    within one round trip. Without the pushed-this-cycle skip set, that
+    stale payload would silently revert the review the user just made,
+    and once the row falls out of the bounded newest-pages pull window no
+    later sync would ever fix it.
+    """
+    item = _load_result_item()
+    owner = item["owner_id"]
+    server_client = _StaleEchoServerClient(item)
+    svc = SchedulingService(db=db, server_client=server_client, runtime_source=owner)
+
+    await svc.sync_now()
+    local_id = db.list_automation_results(owner)[0]["id"]
+    await svc.review_automation_result(local_id, "dismissed", "handled")
+
+    # Second sync: pushback succeeds and clears the mutation, but the
+    # fake's results page -- pulled in this SAME sync_now() call -- still
+    # reports the pre-review "unread" state.
+    await svc.sync_now()
+
+    assert server_client.review_calls == [(item["id"], "dismissed", "handled")]
+    assert db.get_pending_mutations(owner, primitive="automation_result_review") == []
+    refreshed = db.get_automation_result(local_id)
+    assert refreshed["review_state"] == "dismissed", (
+        "the same-cycle stale echo must not revert the review just pushed"
+    )
+    assert refreshed["review_note"] == "handled"

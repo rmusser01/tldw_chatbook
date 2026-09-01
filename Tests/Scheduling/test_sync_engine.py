@@ -1090,6 +1090,62 @@ async def test_sync_now_review_mutation_other_error_retains_it(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_sync_now_skips_review_fields_for_just_pushed_result_this_cycle(tmp_path):
+    """Task 5 same-cycle echo (Qodo finding): `_replay_review_mutations`'
+    pushed `server_result_id`s must thread into `_pull_results` as
+    `skip_review_server_ids`. By the time this SAME sync's results pull
+    runs, the pending mutation the pushback phase just cleared is already
+    gone, so the pending-mutation guard alone can no longer protect this
+    row. Without the pushed-this-cycle skip set, a results page that
+    still echoes the pre-review server state (server write/read-path lag)
+    would revert the review that was just pushed.
+    """
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = _empty_reminders_client()
+
+    # First sync: seed a server-mirrored, unread result locally.
+    stale_item = _result_items(1)[0]
+    server_client.list_automation_results.return_value = _result_page([stale_item])
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+    await engine.sync_now()
+    local_id = db.list_automation_results("server:1")[0]["id"]
+
+    # Review it locally with a pending mutation queued, mirroring what
+    # SchedulingService.review_automation_result does.
+    db.update_result_review(
+        local_id, "dismissed", "handled", "user:1",
+        pending_mutation={
+            "local_id": local_id,
+            "primitive": "automation_result_review",
+            "owner_id": "server:1",
+            "payload": {
+                "server_result_id": stale_item["id"],
+                "review_state": "dismissed",
+                "review_note": "handled",
+            },
+        },
+    )
+
+    # Second sync: pushback succeeds (mutation cleared), but the results
+    # page mock is left UNCHANGED -- still reporting "unread" -- to
+    # simulate the server's own read path lagging its just-committed write
+    # within this same round trip.
+    server_client.review_automation_result.return_value = {"id": stale_item["id"]}
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.review_automation_result.assert_awaited_once_with(
+        stale_item["id"], "dismissed", review_note="handled"
+    )
+    assert db.get_pending_mutations("server:1", primitive="automation_result_review") == []
+    refreshed = db.get_automation_result(local_id)
+    assert refreshed["review_state"] == "dismissed", (
+        "the same-cycle stale echo must not revert the review just pushed"
+    )
+    assert refreshed["review_note"] == "handled"
+
+
+@pytest.mark.asyncio
 async def test_sync_now_pulls_and_upserts_definitions(tmp_path):
     db = ScheduledTasksDB(tmp_path / "db.db")
     server_client = _empty_reminders_client()

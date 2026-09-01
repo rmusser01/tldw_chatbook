@@ -1545,7 +1545,15 @@ class ScheduledTasksDB(BaseDB):
             return int(row[0]) if row else 0
 
     def get_automation_result(self, result_id: str) -> Optional[dict[str, Any]]:
-        """Fetch an automation result by local id."""
+        """Fetch an automation result by local id.
+
+        Args:
+            result_id: Local ``automation_results.id`` to look up.
+
+        Returns:
+            The result row as a dict (JSON fields already decoded), or
+            ``None`` if no row matches ``result_id``.
+        """
         with closing(self._get_connection()) as conn:
             cursor = conn.execute(
                 "SELECT * FROM automation_results WHERE id = ?", (result_id,)
@@ -1723,7 +1731,11 @@ class ScheduledTasksDB(BaseDB):
         return serialized
 
     def upsert_automation_results_from_server(
-        self, owner_id: str, items: list[dict[str, Any]]
+        self,
+        owner_id: str,
+        items: list[dict[str, Any]],
+        *,
+        skip_review_server_ids: frozenset[str] = frozenset(),
     ) -> dict[str, int]:
         """Server-wins mirror of scheduled-task results pulled from the server.
 
@@ -1739,12 +1751,35 @@ class ScheduledTasksDB(BaseDB):
         collision.
 
         Present -> update ONLY the review fields (``review_state``,
-        ``reviewed_at``, ``reviewed_by``, ``review_note``, ``updated_at``),
-        and only when no pending ``automation_result_review`` mutation is
-        queued for that row: an unpushed local review outranks the mirror
-        until SyncEngine's pushback phase (which runs before this pull)
-        has replayed it -- otherwise a stale server payload would clobber
-        a review the user just made.
+        ``reviewed_at``, ``reviewed_by``, ``review_note``, ``updated_at``).
+        Two guard layers decide whether that update actually happens
+        (Qodo TOCTOU/same-cycle-echo review):
+
+        1. Pending-mutation guard (unpushed reviews): a per-row
+           ``pending_mutations`` SELECT is run INSIDE this same write
+           transaction, immediately before the row's own UPDATE -- not
+           snapshotted once before the loop starts, which left a window
+           for a concurrently-recorded review (the review service writes
+           via ``to_thread`` while this upsert runs on the event loop) to
+           land between the snapshot and this row's write and then get
+           clobbered by a stale server payload despite its own mutation
+           existing. An unpushed local review outranks the mirror until
+           SyncEngine's pushback phase (which runs before this pull) has
+           replayed it.
+        2. Pushed-this-cycle guard (just-pushed reviews): ``server_id in
+           skip_review_server_ids`` skips rows SyncEngine's pushback phase
+           already replayed THIS sync cycle. Their pending mutation is
+           already gone by the time this pull runs, so guard 1 can't see
+           them -- without this second layer, a same-cycle results page
+           that still echoes the pre-review server state (server write/
+           read-path lag) would revert the review that was just pushed,
+           and once the row ages out of the bounded newest-pages pull
+           window, no later sync would ever correct it.
+
+        The residual exposure after both layers is only a server that
+        lies about its own committed writes (reports success on push,
+        then immediately echoes different data back on pull) -- not
+        something a client-side guard can detect.
 
         Returns:
             ``{"inserted": n, "updated": n, "skipped_dedupe": n}``.
@@ -1752,12 +1787,6 @@ class ScheduledTasksDB(BaseDB):
         inserted = 0
         updated = 0
         skipped_dedupe = 0
-        pending_local_ids = {
-            mutation["local_id"]
-            for mutation in self.get_pending_mutations(
-                owner_id, primitive=self._RESULT_REVIEW_PRIMITIVE
-            )
-        }
         with self.transaction() as conn:
             for item in items:
                 server_id = item.get("id")
@@ -1810,14 +1839,25 @@ class ScheduledTasksDB(BaseDB):
                         continue
                     inserted += 1
                 else:
-                    if existing["id"] in pending_local_ids:
+                    if server_id in skip_review_server_ids:
+                        # Guard 2 (pushed-this-cycle): just replayed by
+                        # this same sync's pushback phase -- see the
+                        # design comment on this method.
                         continue
-                    # Once the mutation above is gone (pushback just
-                    # replayed it), a same-round-trip results page that
-                    # echoes the pre-review state can still overwrite this
-                    # row -- unguarded by design (review round 1 #4,
-                    # Medium/attempt-bounded): a stale echo self-heals on
-                    # the next sync once the server catches up.
+                    has_pending_review = conn.execute(
+                        """
+                        SELECT 1 FROM pending_mutations
+                        WHERE local_id = ? AND primitive = ? AND owner_id = ?
+                        LIMIT 1
+                        """,
+                        (existing["id"], self._RESULT_REVIEW_PRIMITIVE, owner_id),
+                    ).fetchone()
+                    if has_pending_review is not None:
+                        # Guard 1 (pending-mutation): checked here, inside
+                        # this row's own write transaction, not via a
+                        # snapshot taken before the loop started -- see
+                        # the design comment on this method.
+                        continue
                     review_fields = {
                         key: item[key]
                         for key in self._AUTOMATION_RESULT_REVIEW_FIELDS
