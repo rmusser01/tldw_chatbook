@@ -397,6 +397,134 @@ def test_save_outcome_rejects_contradictory_authority(outcome) -> None:
             ),
             "invalid_content_text",
         ),
+        (
+            lambda: CaptureSummary(
+                CaptureIdentity("local:alpha", "capture-1"),
+                "https://example.org/capture-1",
+                published_at={"year": 2026},  # type: ignore[arg-type]
+            ),
+            "invalid_published_at",
+        ),
+        (
+            lambda: CaptureSummary(
+                CaptureIdentity("local:alpha", "capture-1"),
+                "https://example.org/capture-1",
+                last_fetch_error=["private"],  # type: ignore[arg-type]
+            ),
+            "invalid_fetch_error",
+        ),
+        (
+            lambda: CaptureSummary(
+                CaptureIdentity("local:alpha", "capture-1"),
+                "https://example.org/capture-1",
+                created_at={"year": 2026},  # type: ignore[arg-type]
+            ),
+            "invalid_created_at",
+        ),
+        (
+            lambda: CaptureSummary(
+                CaptureIdentity("local:alpha", "capture-1"),
+                "https://example.org/capture-1",
+                updated_at=["2026-09-01"],  # type: ignore[arg-type]
+            ),
+            "invalid_updated_at",
+        ),
+        (
+            lambda: CaptureSummary(
+                CaptureIdentity("local:alpha", "capture-1"),
+                "https://example.org/capture-1",
+                read_at={"year": 2026},  # type: ignore[arg-type]
+            ),
+            "invalid_read_at",
+        ),
+        (
+            lambda: CaptureOfflineCopy(
+                CaptureIdentity("local:alpha", "capture-1"),
+                "file-1",
+                "ready",
+                content_hash={"algorithm": "sha256"},  # type: ignore[arg-type]
+            ),
+            "invalid_content_hash",
+        ),
+        (
+            lambda: CaptureOfflineCopy(
+                CaptureIdentity("local:alpha", "capture-1"),
+                "file-1",
+                "ready",
+                media_type=["text/html"],  # type: ignore[arg-type]
+            ),
+            "invalid_media_type",
+        ),
+        (
+            lambda: CaptureOfflineCopy(
+                CaptureIdentity("local:alpha", "capture-1"),
+                "file-1",
+                "failed",
+                failure_reason={"private": "detail"},  # type: ignore[arg-type]
+            ),
+            "invalid_failure_reason",
+        ),
+        (
+            lambda: SavedCaptureSearch(
+                "local:alpha",
+                "search-1",
+                "Saved",
+                CapturePageRequest("local:alpha"),
+                {"year": 2026},  # type: ignore[arg-type]
+                "2026-09-01",
+                1,
+            ),
+            "invalid_created_at",
+        ),
+        (
+            lambda: SavedCaptureSearch(
+                "local:alpha",
+                "search-1",
+                "Saved",
+                CapturePageRequest("local:alpha"),
+                "2026-09-01",
+                ["2026-09-01"],  # type: ignore[arg-type]
+                1,
+            ),
+            "invalid_updated_at",
+        ),
+        (
+            lambda: CaptureHighlight(
+                CaptureIdentity("local:alpha", "capture-1"),
+                "highlight-1",
+                "quote",
+                None,
+                None,
+                False,
+                {"year": 2026},  # type: ignore[arg-type]
+                "2026-09-01",
+                1,
+            ),
+            "invalid_created_at",
+        ),
+        (
+            lambda: CaptureHighlight(
+                CaptureIdentity("local:alpha", "capture-1"),
+                "highlight-1",
+                "quote",
+                None,
+                None,
+                False,
+                "2026-09-01",
+                ["2026-09-01"],  # type: ignore[arg-type]
+                1,
+            ),
+            "invalid_updated_at",
+        ),
+        (
+            lambda: CaptureNoteLink(
+                CaptureIdentity("local:alpha", "capture-1"),
+                "link-1",
+                ExternalNoteReference("notes:alpha", "note-1"),
+                {"year": 2026},  # type: ignore[arg-type]
+            ),
+            "invalid_created_at",
+        ),
     ],
 )
 def test_public_contracts_fail_closed_on_malformed_fields(factory, reason: str) -> None:

@@ -84,6 +84,13 @@ def _optional_content(value: Any, reason: str) -> str | None:
     return value
 
 
+def _content(value: Any, reason: str) -> str:
+    """Validate required string content without changing it."""
+    if not isinstance(value, str):
+        raise CollectionsCaptureError(reason)
+    return value
+
+
 def _positive_int(value: Any, reason: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise CollectionsCaptureError(reason)
@@ -281,6 +288,11 @@ class CaptureSummary:
         object.__setattr__(
             self, "summary", _optional_text(self.summary, "invalid_summary")
         )
+        object.__setattr__(
+            self,
+            "published_at",
+            _optional_text(self.published_at, "invalid_published_at"),
+        )
         status = _nonempty(self.status, "invalid_status").casefold()
         if status not in CAPTURE_STATUSES:
             raise CollectionsCaptureError("invalid_status")
@@ -296,6 +308,20 @@ class CaptureSummary:
         object.__setattr__(self, "status", status)
         object.__setattr__(self, "processing_state", processing_state)
         object.__setattr__(self, "tags", _normalize_display_tags(self.tags))
+        object.__setattr__(
+            self,
+            "last_fetch_error",
+            _optional_text(self.last_fetch_error, "invalid_fetch_error"),
+        )
+        object.__setattr__(
+            self, "created_at", _content(self.created_at, "invalid_created_at")
+        )
+        object.__setattr__(
+            self, "updated_at", _content(self.updated_at, "invalid_updated_at")
+        )
+        object.__setattr__(
+            self, "read_at", _optional_text(self.read_at, "invalid_read_at")
+        )
         object.__setattr__(self, "revision", _positive_int(self.revision, "invalid_revision"))
 
 
@@ -334,6 +360,19 @@ class CaptureOfflineCopy:
             isinstance(self.size, bool) or not isinstance(self.size, int) or self.size < 0
         ):
             raise CollectionsCaptureError("invalid_offline_copy_size")
+        object.__setattr__(
+            self,
+            "content_hash",
+            _optional_text(self.content_hash, "invalid_content_hash"),
+        )
+        object.__setattr__(
+            self, "media_type", _optional_text(self.media_type, "invalid_media_type")
+        )
+        object.__setattr__(
+            self,
+            "failure_reason",
+            _optional_text(self.failure_reason, "invalid_failure_reason"),
+        )
         object.__setattr__(self, "revision", _positive_int(self.revision, "invalid_revision"))
 
 
@@ -561,6 +600,12 @@ class SavedCaptureSearch:
             raise CollectionsCaptureError("invalid_saved_search_request")
         if self.request.authority_key != authority_key:
             raise CollectionsCaptureError("saved_search_authority_mismatch")
+        object.__setattr__(
+            self, "created_at", _content(self.created_at, "invalid_created_at")
+        )
+        object.__setattr__(
+            self, "updated_at", _content(self.updated_at, "invalid_updated_at")
+        )
         object.__setattr__(self, "revision", _positive_int(self.revision, "invalid_revision"))
 
 
@@ -643,6 +688,12 @@ class CaptureHighlight:
         )
         if not isinstance(self.detached, bool):
             raise CollectionsCaptureError("invalid_highlight_state")
+        object.__setattr__(
+            self, "created_at", _content(self.created_at, "invalid_created_at")
+        )
+        object.__setattr__(
+            self, "updated_at", _content(self.updated_at, "invalid_updated_at")
+        )
         object.__setattr__(self, "revision", _positive_int(self.revision, "invalid_revision"))
 
 
@@ -673,6 +724,9 @@ class CaptureNoteLink:
         object.__setattr__(self, "link_id", _nonempty(self.link_id, "invalid_note_link_id"))
         if not isinstance(self.note_reference, ExternalNoteReference):
             raise CollectionsCaptureError("invalid_note_reference")
+        object.__setattr__(
+            self, "created_at", _content(self.created_at, "invalid_created_at")
+        )
 
 
 @dataclass(frozen=True)
