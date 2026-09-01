@@ -37,6 +37,15 @@ if TYPE_CHECKING:
         TerminalOutputActor,
     )
     from .screen_model import TerminalScreenSnapshot
+else:
+    TerminalBackend = Any
+    InputOfferResult = Any
+    OutputOfferResult = Any
+    ParserTurnResult = Any
+    TerminalInputActor = Any
+    TerminalInputEvent = Any
+    TerminalOutputActor = Any
+    TerminalScreenSnapshot = Any
 
 
 @dataclass(frozen=True, slots=True)

@@ -39,7 +39,17 @@ if TYPE_CHECKING:
 
 
 def __getattr__(name: str) -> Any:
-    """Load the backend protocol only for callers that request it."""
+    """Load the backend protocol only for callers that request it.
+
+    Args:
+        name: Package attribute requested by the caller.
+
+    Returns:
+        The lazily imported :class:`TerminalBackend` protocol.
+
+    Raises:
+        AttributeError: If ``name`` is not a supported lazy package export.
+    """
 
     if name == "TerminalBackend":
         from .backend import TerminalBackend

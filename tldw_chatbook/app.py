@@ -221,8 +221,6 @@ from tldw_chatbook.Chat.server_chat_conversation_service import (
     ServerChatConversationService,
 )
 from tldw_chatbook.Terminal.session_manager import TerminalSessionManager  # noqa: E402
-if TYPE_CHECKING:  # pragma: no cover - typing only
-    from tldw_chatbook.Terminal.backend import TerminalBackend
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import (
     DatabaseError as MediaDatabaseError,
@@ -769,11 +767,14 @@ from tldw_chatbook.Audio_Services_Interop import (  # noqa: E402
 from .Evals.eval_orchestrator import EvaluationOrchestrator  # noqa: E402
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Terminal.backend import TerminalBackend
     from tldw_chatbook.Model_Artifacts.service import ArtifactRef
     from tldw_chatbook.LLM_Provider_Catalog.model_discovery_disk_cache import (
         ModelCatalogDiskStore,
     )
     from tldw_chatbook.tldw_api import MCPUnifiedClient
+else:
+    TerminalBackend = Any
 
 API_IMPORTS_SUCCESSFUL = True
 

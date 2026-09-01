@@ -12,7 +12,7 @@ import json
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Literal, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar
 
 from loguru import logger
 
@@ -23,6 +23,8 @@ from tldw_chatbook.Chat.console_exchange_capture import (
 )
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
+else:
+    TraceViewerProfile = Any
 
 
 @dataclass(frozen=True, slots=True)

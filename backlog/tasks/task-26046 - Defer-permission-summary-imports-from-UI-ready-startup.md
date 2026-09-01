@@ -4,7 +4,7 @@ title: Defer permission-summary imports from UI-ready startup
 status: Done
 assignee: []
 created_date: '2026-09-01 02:24'
-updated_date: '2026-09-01 02:50'
+updated_date: '2026-09-01 02:58'
 labels: []
 dependencies: []
 ---
@@ -31,5 +31,5 @@ Restore the existing UI-ready module ceiling after permission-request summaries 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Deferred permission-summary, terminal support, trace disclosure, and briefing TTS helpers from UI-ready startup; added focused lazy-boundary coverage; verified the 972-module macOS ceiling, removed the two Linux-only eager TTS modules identified by CI, and passed focused behavior, inspector, terminal, briefing-audio, performance, lint, compile, diff, and diagnostic inventory checks. ADR required: no; implements ADR-090 and ADR-097.
+Deferred permission-summary, terminal support, trace disclosure, and briefing TTS helpers from UI-ready startup; added focused lazy-boundary coverage; preserved runtime type-hint resolution with non-eager Any fallbacks; documented the lazy export hook; verified supported and unsupported TerminalBackend export behavior; kept the 972-module macOS ceiling; removed the two Linux-only eager TTS modules identified by CI; and passed focused behavior, inspector, terminal, briefing-audio, performance, lint, compile, diff, and diagnostic inventory checks. One batched Textual timing test timed out under load and passed immediately in isolation (4.15s). ADR required: no; implements ADR-090 and ADR-097.
 <!-- SECTION:NOTES:END -->

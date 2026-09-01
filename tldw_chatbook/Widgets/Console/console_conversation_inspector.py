@@ -121,6 +121,8 @@ from tldw_chatbook.Widgets.Console.console_project_instructions import (
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
+else:
+    TraceViewerProfile = Any
 
 MODAL_ID = "console-inspector-modal"
 CLOSE_BUTTON_ID = "console-inspector-close"
