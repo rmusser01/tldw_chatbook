@@ -43,7 +43,13 @@ _STATUS = {
 
 
 class ConsoleTraceNativeReader:
-    """Read message-associated calls from the normalized production ledger."""
+    """Read message-associated calls from the normalized production ledger.
+
+    Args:
+        database: Transaction-owning Chat database.
+        repository: Optional shared normalized trace repository.
+        service: Optional shared trace reconstruction service.
+    """
 
     def __init__(
         self,
@@ -78,31 +84,18 @@ class ConsoleTraceNativeReader:
                 return ()
             conversation_id = str(row[0])
             result: list[NormalizedTraceCall] = []
-            for call in self.repository.read_conversation_call_lineage(
-                cursor, conversation_id
+            for call in self.repository.iter_message_call_lineage(
+                cursor,
+                conversation_id,
+                message_id,
             ):
-                if call.route_identity == "legacy_snapshot" or call.state not in _STATUS:
-                    continue
-                if not self._belongs_to_message(cursor, call, message_id):
+                if (
+                    call.route_identity == "legacy_snapshot"
+                    or call.state not in _STATUS
+                ):
                     continue
                 result.append(self._reconstruct_call(cursor, call))
             return tuple(result)
-
-    def _belongs_to_message(
-        self,
-        cursor: Any,
-        call: TraceCallRecord,
-        message_id: str,
-    ) -> bool:
-        if call.turn_id == message_id:
-            return True
-        response = self.repository.get_response_link(cursor, call.call_id)
-        if response is None or response.semantic_revision_id is None:
-            return False
-        revision = self.repository.get_semantic_revision(
-            cursor, response.semantic_revision_id
-        )
-        return revision is not None and revision.source_message_id == message_id
 
     def _reconstruct_call(
         self,

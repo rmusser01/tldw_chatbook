@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from tldw_chatbook.Chat.console_prepared_request import (
@@ -14,6 +15,7 @@ from tldw_chatbook.Chat.console_prepared_request import (
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
+    ConsoleProviderStreamSignals,
 )
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
@@ -194,6 +196,141 @@ async def test_production_factory_persists_append_only_calls_through_real_gatewa
         assert cursor.execute("SELECT COUNT(*) FROM message_exchanges").fetchone()[0] == 0
     assert len(calls) == 2
     await gateway.aclose()
+
+
+@pytest.mark.asyncio
+async def test_dual_write_legacy_capture_reuses_normalized_call_identity(
+    tmp_path,
+    make_database,
+) -> None:
+    database = make_database(tmp_path / "trace-dual-write.sqlite", "trace-dual")
+    conversation_id = database.add_conversation({"title": "dual write"})
+    assert conversation_id is not None
+    _message_id, revision = _saved_message(database, conversation_id, "question")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    factory = ConsoleTraceBoundaryFactory(database)
+    signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
+
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **_kwargs: {
+            "choices": [{"message": {"content": "answer"}}]
+        },
+        trace_call_boundary_factory=factory,
+    )
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-test",
+        ready=True,
+        execution_key="openai",
+        api_key="secret",
+        streaming=False,
+    )
+    prepared = gateway.prepare_chat_request(
+        resolution,
+        _semantic_request(
+            [{"role": "user", "content": "question"}],
+            [revision],
+            policy,
+        ),
+        route=ConsoleRequestRoute.FRESH,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+
+    assert [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            prepared,
+            signals=signals,
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+    ] == ["answer"]
+
+    with database.transaction() as cursor:
+        normalized = factory.repository.read_conversation_call_lineage(
+            cursor,
+            conversation_id,
+        )
+    legacy = signals.exchange_captures()
+    assert len(normalized) == len(legacy) == 1
+    assert (legacy[0].run_tag, legacy[0].seq) == (
+        normalized[0].run_id,
+        normalized[0].call_sequence,
+    )
+    await gateway.aclose()
+
+
+@pytest.mark.asyncio
+async def test_dual_write_llamacpp_fallback_reuses_both_normalized_identities(
+    tmp_path,
+    make_database,
+) -> None:
+    database = make_database(
+        tmp_path / "trace-dual-write-fallback.sqlite",
+        "trace-dual-fallback",
+    )
+    conversation_id = database.add_conversation({"title": "dual fallback"})
+    assert conversation_id is not None
+    _message_id, revision = _saved_message(database, conversation_id, "question")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    factory = ConsoleTraceBoundaryFactory(database)
+    signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if b'"stream":true' in request.content:
+            return httpx.Response(200, text="")
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "fallback"}}]},
+        )
+
+    resolution = ConsoleProviderResolution(
+        provider="llama_cpp",
+        base_url="http://localhost:8080",
+        model="local-model",
+        ready=True,
+        execution_key="llama_cpp",
+        streaming=True,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        gateway = ConsoleProviderGateway(
+            http_client=client,
+            trace_call_boundary_factory=factory,
+        )
+        prepared = gateway.prepare_chat_request(
+            resolution,
+            _semantic_request(
+                [{"role": "user", "content": "question"}],
+                [revision],
+                policy,
+            ),
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+
+        assert [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                prepared,
+                signals=signals,
+                route=ConsoleRequestRoute.FRESH,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ] == ["fallback"]
+
+    with database.transaction() as cursor:
+        normalized = factory.repository.read_conversation_call_lineage(
+            cursor,
+            conversation_id,
+        )
+    legacy = signals.exchange_captures()
+    assert len(normalized) == len(legacy) == 2
+    assert {(item.run_tag, item.seq) for item in legacy} == {
+        (item.run_id, item.call_sequence) for item in normalized
+    }
 
 
 @pytest.mark.asyncio

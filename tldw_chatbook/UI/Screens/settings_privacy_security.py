@@ -46,6 +46,12 @@ class SettingsPrivacyPosture:
         skill_trust_status: Redacted local skill trust aggregate status.
         skill_trust_keyring_convenience_enabled: Whether keyring convenience is enabled.
         skill_trust_reduced_rollback_protection: Whether rollback protection is reduced.
+        trace_capture_enabled: Whether future Console calls require durable capture.
+        trace_pii_masking_enabled: Whether configured trace PII masking is active.
+        trace_viewer_profile: Default redacted trace viewer profile.
+        trace_normalized_writes_enabled: Whether normalized trace writes are enabled.
+        trace_normalized_reads_enabled: Whether normalized trace reads are enabled.
+        trace_legacy_writes_enabled: Whether legacy compatibility writes are enabled.
     """
 
     encryption_enabled: bool

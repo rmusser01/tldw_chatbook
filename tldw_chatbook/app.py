@@ -6887,6 +6887,125 @@ def _build_notes_scope_service(
     )
 
 
+def _active_notes_sync_server_profile_id(app: Any) -> str:
+    """Return the authoritative server profile eligible for Notes Sync.
+
+    Args:
+        app: Application composition owner.
+
+    Returns:
+        Active server profile identity, or an empty string for local runtime.
+    """
+
+    runtime_state = getattr(getattr(app, "runtime_policy", None), "state", None)
+    server_is_authoritative = runtime_state is None or (
+        getattr(runtime_state, "active_source", None) == "server"
+    )
+    if not server_is_authoritative:
+        return ""
+    return str(
+        getattr(app, "active_server_id", None)
+        or getattr(runtime_state, "active_server_id", None)
+        or ""
+    ).strip()
+
+
+class _DeferredNotesSyncFacade:
+    """Load deferred Notes organization wiring on first real collaborator use.
+
+    Args:
+        app: Application composition owner.
+        target_path: Attribute path to the real collaborator after wiring.
+        lock: Shared re-entrant lock for the facade group.
+    """
+
+    def __init__(
+        self,
+        app: Any,
+        target_path: tuple[str, ...],
+        lock: Any,
+    ) -> None:
+        self._app = app
+        self._target_path = target_path
+        self._lock = lock
+
+    def _target(self) -> Any:
+        with self._lock:
+            _wire_notes_sync_services(self._app)
+            target = self._app
+            for attribute in self._target_path:
+                target = getattr(target, attribute, None)
+            if target is None or target is self:
+                raise RuntimeError("notes_organization_sync_unavailable")
+            return target
+
+    def __getattr__(self, attribute: str) -> Any:
+        return getattr(self._target(), attribute)
+
+
+def _install_deferred_notes_sync_facades(app: Any) -> bool:
+    """Protect the post-ready delay with first-use Notes Sync wiring.
+
+    Args:
+        app: Application composition owner whose collaborators are deferred.
+
+    Returns:
+        True when deferred facades are installed or already active.
+    """
+
+    if not _active_notes_sync_server_profile_id(app):
+        return False
+    notes_scope_service = getattr(app, "notes_scope_service", None)
+    if (
+        getattr(app, "chachanotes_db", None) is None
+        or getattr(app, "sync_state_repository", None) is None
+        or notes_scope_service is None
+    ):
+        return False
+    current = getattr(app, "notes_organization_sync_service", None)
+    if current is not None:
+        return isinstance(current, _DeferredNotesSyncFacade)
+
+    lock = threading.RLock()
+    repository = _DeferredNotesSyncFacade(
+        app,
+        ("notes_organization_repository",),
+        lock,
+    )
+    service = _DeferredNotesSyncFacade(
+        app,
+        ("notes_organization_sync_service",),
+        lock,
+    )
+    producer = _DeferredNotesSyncFacade(
+        app,
+        ("notes_scope_service", "sync_v2_notes_producer"),
+        lock,
+    )
+    app.notes_organization_repository = repository
+    app.notes_organization_sync_service = service
+    notes_scope_service.sync_v2_notes_producer = producer
+    notes_scope_service.organization_sync_service = service
+    local_notes = getattr(notes_scope_service, "local_notes_service", None)
+    if local_notes is not None:
+        local_notes.organization_sync_service = service
+    local_chat = getattr(app, "local_chat_conversation_service", None)
+    if local_chat is not None:
+        local_chat.organization_sync_service = service
+    local_first = getattr(app, "local_first_sync_service", None)
+    if local_first is not None:
+        local_first.notes_organization_repository = repository
+        local_first.notes_organization_sync_service = service
+    restore = getattr(app, "sync_restore_service", None)
+    if restore is not None:
+        restore.notes_organization_repository = repository
+    manual = getattr(app, "manual_sync_control_service", None)
+    if manual is not None:
+        manual.notes_organization_sync_service = service
+        manual.notes_repository = repository
+    return True
+
+
 def _wire_notes_sync_services(app: Any) -> None:
     """Finish Notes Sync composition after both SQLite owners exist."""
 
@@ -6904,19 +7023,7 @@ def _wire_notes_sync_services(app: Any) -> None:
     notes_db = getattr(app, "chachanotes_db", None)
     state_repository = getattr(app, "sync_state_repository", None)
     notes_scope_service = getattr(app, "notes_scope_service", None)
-    runtime_state = getattr(getattr(app, "runtime_policy", None), "state", None)
-    server_is_authoritative = runtime_state is None or (
-        getattr(runtime_state, "active_source", None) == "server"
-    )
-    active_server_profile_id = (
-        str(
-            getattr(app, "active_server_id", None)
-            or getattr(runtime_state, "active_server_id", None)
-            or ""
-        ).strip()
-        if server_is_authoritative
-        else ""
-    )
+    active_server_profile_id = _active_notes_sync_server_profile_id(app)
     if not active_server_profile_id:
         app.notes_organization_repository = None
         app.notes_organization_sync_service = None
@@ -6950,6 +7057,8 @@ def _wire_notes_sync_services(app: Any) -> None:
     if notes_db is None or state_repository is None or notes_scope_service is None:
         return
     repository = getattr(app, "notes_organization_repository", None)
+    if isinstance(repository, _DeferredNotesSyncFacade):
+        repository = None
     if (
         repository is None
         or getattr(repository, "db", None) is not notes_db
@@ -15300,6 +15409,7 @@ class TldwCli(
         # delay expire while the remaining synchronous setup below it was
         # still running, so its import graph could win the race against the
         # first-interactive-frame census on slower starts.
+        _install_deferred_notes_sync_facades(self)
         self.set_timer(
             DEFERRED_NOTES_ORGANIZATION_WIRING_DELAY_SECONDS,
             self._deferred_wire_notes_sync_services,

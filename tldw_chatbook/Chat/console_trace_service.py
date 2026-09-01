@@ -2046,16 +2046,36 @@ class ConsoleTraceService:
         return tuple(ordered)
 
     def current_surface_checkpoint(
-        self, segment_id: str, *, expected_head_id: str | None = None
+        self,
+        segment_id: str,
+        *,
+        expected_head_id: str | None = None,
+        expected_route: str | None = None,
     ) -> object | None:
-        """Return the transient checkpoint for the service's current segment head."""
+        """Return the transient checkpoint for the current head and route.
+
+        Args:
+            segment_id: Segment whose in-process checkpoint is requested.
+            expected_head_id: Optional durable head the checkpoint must match.
+            expected_route: Optional provider route the checkpoint must match.
+
+        Returns:
+            The matching opaque checkpoint, or ``None`` when reconstruction is
+            required for the requested head or route.
+        """
 
         projection = self._surface_ref_cache.get(segment_id)
         if projection is None or (
             expected_head_id is not None and projection.head_id != expected_head_id
         ):
             return None
-        return projection.checkpoint
+        checkpoint = projection.checkpoint
+        parent = self._parent_capabilities.get(id(checkpoint))
+        if expected_route is not None and (
+            parent is None or parent.route != expected_route
+        ):
+            return None
+        return checkpoint
 
     def prepare_current_surface_delta(
         self,
@@ -2201,6 +2221,7 @@ class ConsoleTraceService:
         checkpoint = self.current_surface_checkpoint(
             segment_id,
             expected_head_id=predecessor,
+            expected_route=route_identity,
         )
         bootstrap = checkpoint is None and predecessor is not None
         admitted = descriptors[admitted_from:admitted_to]

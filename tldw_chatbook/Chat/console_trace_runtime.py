@@ -4,17 +4,20 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
 from tldw_chatbook.Chat.console_trace_models import new_opaque_id
 from tldw_chatbook.Chat.console_trace_provenance import (
+    ConsoleRequestRoute,
     DerivedTraceProvenance,
     ProviderRequestProvenance,
     RequestRouteTraceProvenance,
     SavedRevisionTraceProvenance,
     TraceProvenance,
     frozen_policy_from_provenance,
+    request_route_provenance,
 )
 from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
 from tldw_chatbook.Chat.console_trace_service import (
@@ -44,6 +47,11 @@ class ConsoleTraceBoundaryFactory:
     One process-wide instance owns the service surface capability cache. The
     database remains authoritative; the cache only avoids replaying unchanged
     provider values when extending a live segment.
+
+    Args:
+        database: Transaction-owning Chat database.
+        repository: Optional shared normalized trace repository.
+        service: Optional shared trace service.
     """
 
     def __init__(
@@ -97,8 +105,22 @@ class ConsoleTraceBoundaryFactory:
         if route_record is None:
             raise ValueError("trace_route_unavailable")
         route_identity = route_record.route.value
-        if route is not None and getattr(route, "value", None) != route_identity:
-            raise ValueError("trace_route_mismatch")
+        requested_route = getattr(route, "value", None)
+        if requested_route is not None and requested_route != route_identity:
+            if route is not ConsoleRequestRoute.LLAMA_FALLBACK:
+                raise ValueError("trace_route_mismatch")
+            fallback_route = request_route_provenance(route)
+            provenance = replace(
+                provenance,
+                metadata=tuple(
+                    fallback_route
+                    if type(item) is RequestRouteTraceProvenance
+                    else item
+                    for item in provenance.metadata
+                ),
+            )
+            route_record = fallback_route
+            route_identity = fallback_route.route.value
         message_revision_ids = tuple(
             revision_id
             for descriptor in provenance.messages_payload

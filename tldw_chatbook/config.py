@@ -6674,7 +6674,18 @@ def apply_settings_mutation_to_cli_config(
 
 @dataclass(frozen=True, slots=True)
 class RuntimeCapturePolicy:
-    """Canonical process projection for future Console capture admission."""
+    """Canonical process projection for future Console capture admission.
+
+    Attributes:
+        enabled: Whether future Console calls require durable trace capture.
+        detail: Admission-frozen trace capture detail.
+        generation: Monotonic policy publication generation.
+        pii_redaction_enabled: Whether configured PII masking is active.
+        viewer_profile: Default redacted viewer profile.
+        normalized_writes_enabled: Whether new normalized calls may be written.
+        normalized_reads_enabled: Whether normalized calls participate in reads.
+        legacy_writes_enabled: Whether compatibility snapshots are also written.
+    """
 
     enabled: bool
     detail: CaptureDetail

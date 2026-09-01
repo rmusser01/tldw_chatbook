@@ -15,6 +15,7 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     ExchangeCapture,
     capture_from_storage,
 )
+
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
 else:
@@ -377,7 +378,11 @@ class ConsoleTraceProjection:
 
     @property
     def normalized_reads_enabled(self) -> bool:
-        """Whether the injected normalized reader participates in reads."""
+        """Whether the injected normalized reader participates in reads.
+
+        Returns:
+            True when normalized reads are enabled and a reader is available.
+        """
 
         return self._gate_enabled(
             self._normalized_reads_enabled

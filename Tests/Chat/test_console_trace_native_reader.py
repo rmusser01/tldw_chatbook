@@ -13,6 +13,24 @@ from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
+class _MessageLineageRepository(ConsoleTraceRepository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.requested_message_ids: list[str] = []
+
+    def read_conversation_call_lineage(self, cursor, conversation_id):
+        del cursor, conversation_id
+        raise AssertionError("native reads must not load the whole conversation")
+
+    def iter_message_call_lineage(self, cursor, conversation_id, message_id):
+        self.requested_message_ids.append(message_id)
+        yield from super().iter_message_call_lineage(
+            cursor,
+            conversation_id,
+            message_id,
+        )
+
+
 @pytest.fixture
 def database(tmp_path):
     db = CharactersRAGDB(tmp_path / "native-trace-reader.sqlite", "native-reader")
@@ -48,7 +66,7 @@ def _message(
 def test_native_reader_reconstructs_production_route_call_for_assistant_message(
     database: CharactersRAGDB,
 ) -> None:
-    repository = ConsoleTraceRepository()
+    repository = _MessageLineageRepository()
     conversation_id = database.add_conversation({"title": "native reader"})
     assert conversation_id is not None
     user_id, user_revision = _message(
@@ -166,6 +184,7 @@ def test_native_reader_reconstructs_production_route_call_for_assistant_message(
         {"role": "user", "content": "question"}
     ]
     assert native.capture.response == {"role": "assistant", "content": "answer"}
+    assert repository.requested_message_ids == [assistant_id]
 
 
 def test_native_reader_ignores_legacy_snapshot_routes(

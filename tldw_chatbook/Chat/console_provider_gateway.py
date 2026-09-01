@@ -740,10 +740,14 @@ class ConsoleProviderStreamSignals:
                 flight = self._active_exchanges.pop(token, None)
                 if flight is None:
                     return
+                run_tag = flight.get("trace_run_tag")
+                sequence = flight.get("trace_sequence")
                 self.completed_exchanges.append(
                     _flight_capture(
-                        self.run_tag,
-                        len(self.completed_exchanges),
+                        run_tag if type(run_tag) is str and run_tag else self.run_tag,
+                        sequence
+                        if type(sequence) is int and sequence >= 0
+                        else len(self.completed_exchanges),
                         flight,
                         status,
                         usage_payload,
@@ -759,9 +763,17 @@ class ConsoleProviderStreamSignals:
         with self._exchange_lock:
             captures = list(self.completed_exchanges)
             for flight in self._active_exchanges.values():
+                run_tag = flight.get("trace_run_tag")
+                sequence = flight.get("trace_sequence")
                 captures.append(
                     _flight_capture(
-                        self.run_tag, len(captures), flight, "stopped", None
+                        run_tag if type(run_tag) is str and run_tag else self.run_tag,
+                        sequence
+                        if type(sequence) is int and sequence >= 0
+                        else len(captures),
+                        flight,
+                        "stopped",
+                        None,
                     )
                 )
             return captures
@@ -775,6 +787,8 @@ class ConsoleProviderCallSignals:
     _token: object = field(default_factory=object, init=False, repr=False)
     _usage_payload: dict[str, Any] | None = field(default=None, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
+    _trace_run_tag: str | None = field(default=None, init=False, repr=False)
+    _trace_sequence: int | None = field(default=None, init=False, repr=False)
     _usage_lock: threading.Lock = field(
         default_factory=threading.Lock,
         init=False,
@@ -816,6 +830,33 @@ class ConsoleProviderCallSignals:
     def capture_detail(self) -> CaptureDetail:
         """Return the admission-frozen detail shared by this run."""
         return self._aggregate.capture_detail
+
+    def bind_trace_capture_identity(self, run_tag: str, sequence: int) -> None:
+        """Bind a legacy shadow capture to its normalized durable call.
+
+        Args:
+            run_tag: Normalized provider-run identity.
+            sequence: Normalized call sequence within that run.
+
+        Raises:
+            TypeError: If either identity component has the wrong type.
+            ValueError: If the identity is empty, negative, or conflicts with
+                an identity already bound to this call-scoped signal.
+        """
+
+        if type(run_tag) is not str:
+            raise TypeError("run_tag")
+        if not run_tag:
+            raise ValueError("run_tag")
+        if type(sequence) is not int:
+            raise TypeError("sequence")
+        if sequence < 0:
+            raise ValueError("sequence")
+        identity = (run_tag, sequence)
+        existing = (self._trace_run_tag, self._trace_sequence)
+        if existing != (None, None) and existing != identity:
+            raise ValueError("trace_capture_identity_conflict")
+        self._trace_run_tag, self._trace_sequence = identity
 
     def mark_synthetic_fallback(self) -> None:
         """Mark synthetic fallback usage on the aggregate signal, and flag
@@ -952,6 +993,8 @@ class ConsoleProviderCallSignals:
                 "pii_redaction_enabled": self._aggregate.pii_redaction_enabled,
                 "capture_budget": capture_budget or CaptureBudget(),
                 "created_at": datetime.now(timezone.utc).isoformat(),
+                "trace_run_tag": self._trace_run_tag,
+                "trace_sequence": self._trace_sequence,
             },
         )
 
@@ -1606,6 +1649,24 @@ def _mark_trace_response_started(boundary: object | None) -> None:
         logger.warning("trace_response_checkpoint_failed: {}", type(exc).__name__)
 
 
+def _bind_legacy_capture_to_trace_call(
+    signals: ConsoleProviderCallSignals | None,
+    boundary: object | None,
+) -> None:
+    """Best-effort bind one legacy shadow capture to a normalized call."""
+
+    if signals is None or boundary is None:
+        return
+    identity = getattr(boundary, "identity", None)
+    try:
+        signals.bind_trace_capture_identity(
+            getattr(identity, "run_id"),
+            getattr(identity, "call_sequence"),
+        )
+    except Exception as exc:
+        logger.warning("trace_capture_identity_bind_failed: {}", type(exc).__name__)
+
+
 async def _settle_trace_response(
     boundary: object | None,
     items: Sequence[ProviderStreamItem],
@@ -2121,6 +2182,10 @@ class ConsoleProviderGateway:
         trace_call_boundary_factory: Optional hard-off normalized-writer seam.
             When supplied, each Capture-On call must reserve and commit
             ``dispatch_started`` before adapter entry.
+        normalized_writes_enabled: Callable rollout gate for normalized trace
+            reservations. Capture-On dispatch fails closed when disabled.
+        trace_compatibility_metrics: Optional content-free compatibility metric
+            recorder used while normalized and legacy paths overlap.
     """
 
     deferred_dispatch_boundary = True
@@ -2216,6 +2281,9 @@ class ConsoleProviderGateway:
         the independent normalized-write rollout gate must also be enabled.
         Capture-On dispatch without either condition is refused before the
         adapter; callers that choose capture mode consult this property first.
+
+        Returns:
+            True when normalized capture can reserve durable provider calls.
         """
 
         return self._trace_call_boundary_factory is not None and bool(
@@ -3968,6 +4036,10 @@ class ConsoleProviderGateway:
                     effective_resolution,
                     route,
                 )
+                _bind_legacy_capture_to_trace_call(
+                    call_signals,
+                    trace_call_boundary,
+                )
             else:
                 capture_off_admission = self._capture_off_admission(route)
             if resolution.provider in {"llama_cpp", "local_llamacpp"}:
@@ -4238,6 +4310,10 @@ class ConsoleProviderGateway:
                     ):
                         return
                     retry_signals = signals.new_usage_call()
+                    _bind_legacy_capture_to_trace_call(
+                        retry_signals,
+                        trace_call_boundary,
+                    )
                     budget = CaptureBudget()
                     capture_request, omitted = build_request_capture(
                         {"model": resolution.model},
@@ -4298,16 +4374,16 @@ class ConsoleProviderGateway:
                         effective_resolution,
                         streaming=False,
                     )
+                    fallback_provenance = self._provenance_for_route(
+                        prepared.provenance,
+                        ConsoleRequestRoute.LLAMA_FALLBACK,
+                    )
                     fallback_boundary = self._reserve_trace_call(
                         prepared,
                         fallback_resolution,
                         ConsoleRequestRoute.LLAMA_FALLBACK,
                     )
                     trace_call_boundary = fallback_boundary
-                    fallback_provenance = self._provenance_for_route(
-                        prepared.provenance,
-                        ConsoleRequestRoute.LLAMA_FALLBACK,
-                    )
                     fallback_kwargs = self._trace_surface_kwargs(
                         fallback_boundary,
                         self._chat_api_kwargs_from_prepared(

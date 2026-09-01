@@ -6,13 +6,13 @@ completes a transaction, so trace writes compose with the caller's Chat mutation
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
 import hashlib
 import json
 import math
 import re
 import sqlite3
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal, TypeAlias, cast
 
@@ -29,13 +29,14 @@ from tldw_chatbook.Chat.console_trace_models import (
 )
 from tldw_chatbook.Chat.console_trace_redaction import (
     CREDENTIAL_SANITIZER_UNAVAILABLE,
-    PIIRedactionSpan,
     CredentialSanitizer,
+    PIIRedactionSpan,
     merge_pii_spans,
 )
 
 _TOKEN = re.compile(r"[a-z][a-z0-9]*(?:[_-][a-z0-9]+)*\Z", re.ASCII)
 _TOKEN_MAX = 64
+MESSAGE_CALL_LINEAGE_BATCH_SIZE = 128
 TraceEventType: TypeAlias = Literal[
     "turn_boundary",
     "call_boundary",
@@ -745,6 +746,91 @@ class ConsoleTraceRepository:
                     raise RuntimeError("trace_lineage_call_unavailable")
                 calls.append(call)
         return tuple(calls)
+
+    def iter_message_call_lineage(
+        self,
+        cursor: sqlite3.Cursor,
+        conversation_id: str,
+        message_id: str,
+    ) -> Iterator[TraceCallRecord]:
+        """Yield only calls associated with one message in bounded SQL pages.
+
+        Args:
+            cursor: Caller-owned transaction cursor.
+            conversation_id: Durable conversation whose attached lineage is read.
+            message_id: Selected request or response message identity.
+
+        Yields:
+            Matching trace calls in root-to-leaf event order.
+
+        Raises:
+            RuntimeError: If a referenced lineage call cannot be reconstructed.
+        """
+
+        owner_row = cursor.execute(
+            """SELECT owner_id, conversation_id, root_segment_id, attached,
+                      detached_at FROM console_trace_owners
+                 WHERE conversation_id = ? AND attached = 1""",
+            (conversation_id,),
+        ).fetchone()
+        if owner_row is None:
+            return
+        owner = self._owner(owner_row)
+        for segment_id, through_sequence in self._segment_lineage(
+            cursor,
+            owner.root_segment_id,
+        ):
+            last_sequence = -1
+            last_call_id = ""
+            while True:
+                params: list[object] = [
+                    segment_id,
+                    message_id,
+                    message_id,
+                    last_sequence,
+                    last_sequence,
+                    last_call_id,
+                ]
+                boundary_clause = ""
+                if through_sequence is not None:
+                    boundary_clause = " AND first_sequence <= ?"
+                    params.append(through_sequence)
+                params.append(MESSAGE_CALL_LINEAGE_BATCH_SIZE)
+                rows = cursor.execute(
+                    """WITH matching AS (
+                           SELECT call.call_id,
+                                  MIN(event.sequence) AS first_sequence
+                             FROM console_trace_calls AS call
+                             JOIN console_trace_events AS event
+                               ON event.call_id = call.call_id
+                        LEFT JOIN console_trace_response_links AS response
+                               ON response.call_id = call.call_id
+                        LEFT JOIN console_trace_semantic_revisions AS revision
+                               ON revision.revision_id = response.semantic_revision_id
+                            WHERE call.segment_id = ?
+                              AND (call.turn_id = ?
+                                   OR revision.source_message_id = ?)
+                         GROUP BY call.call_id
+                       )
+                       SELECT call_id, first_sequence
+                         FROM matching
+                        WHERE (first_sequence > ?
+                               OR (first_sequence = ? AND call_id > ?))"""
+                    + boundary_clause
+                    + " ORDER BY first_sequence, call_id LIMIT ?",
+                    tuple(params),
+                ).fetchall()
+                if not rows:
+                    break
+                for row in rows:
+                    call = self.get_call(cursor, row[0])
+                    if call is None:
+                        raise RuntimeError("trace_lineage_call_unavailable")
+                    yield call
+                if len(rows) < MESSAGE_CALL_LINEAGE_BATCH_SIZE:
+                    break
+                last_call_id = str(rows[-1][0])
+                last_sequence = int(rows[-1][1])
 
     def _segment_lineage(
         self,
