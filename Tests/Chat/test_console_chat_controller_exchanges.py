@@ -1465,8 +1465,11 @@ def test_kill_switch_string_true_enables_capture(monkeypatch):
         ),
     )
 
+    policy = config_module.runtime_capture_policy()
     signals = controller._new_run_stream_signals()
 
+    assert policy.enabled is True
+    assert policy.legacy_writes_enabled is True
     assert signals.exchange_capture_enabled is True
 
 
