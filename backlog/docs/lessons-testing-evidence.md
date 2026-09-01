@@ -10518,3 +10518,96 @@ profiler attached. Report worker-thread work as concurrent, and prove its
 main-thread tax by stubbing it, not by reading cumtime. And when a fix is
 claimed to make something faster, measure the quantity the user feels —
 blocking time, bytes written — with the same instrument on both trees.
+
+---
+
+---
+
+## A deterministic artifact is indistinguishable from a real effect by repetition
+
+**Incident (2026-08-30 holistic perf review, TASK-25811, retracted).** A probe
+reported that a Console -> Library switch spends **71% of its style work on the
+screen being LEFT** — 1,107 applies of 1,577. It reproduced *to the call* across
+three runs (332 / 389 / 1,577 / 384 every time). Reproducibility was cited as the
+reason to trust it, a root cause was written up, a task was filed, and the finding
+was committed and pushed.
+
+It was an artifact. `switch_screen` posts `ScreenResume` to the **new** screen and
+`post_message` is asynchronous. The navigation helper returned as soon as
+`app.screen` changed — before that message drained — so every measurement window
+opened with the **previous** navigation's resume still queued and counted it
+against the switch under test. The screen it named as "being left" was simply the
+screen that had just become current.
+
+Draining messages before each window:
+
+| window | resumes seen | applies | on "outgoing" |
+|---|---|---:|---:|
+| not settled | ChatScreen **and** LibraryScreen | 1,274 | 913 (72%) |
+| settled | LibraryScreen only | 289 | **1 (0%)** |
+
+Node counts also rose (207 -> 265) once settled: the unsettled runs were measuring
+screens **mid-construction**.
+
+**The rule.** Repetition tests for *noise*, not for *bias*. A window that always
+straddles the same two activities always mis-attributes the same way, and looks
+rock solid doing it. To test a measurement's validity you must **change the
+measurement**, not repeat it: settle the system, move the window boundaries, or
+measure the same quantity by an independent route. If three runs agree exactly and
+the number is surprising, suspect the window before believing the finding.
+
+The 2026-08-29 review had already recorded "a measurement window containing two
+activities cannot attribute cost to either". It was quoted in the same document's
+method notes and then violated three sections later — knowing the trap is not the
+same as checking for it.
+
+## Measure parse and boot costs in a COLD SUBPROCESS
+
+**Incident (same review, TASK-25812).** An in-app probe timed a fresh
+`Stylesheet` parsing the 671 KB boot bundle at **0.48 ms** — 1.4 GB/s, which no
+Python tokenizer achieves. Clearing the two module-level caches that could be
+found (`textual.css.parse.parse_selectors`, `is_id_selector`) did not change it.
+The same content in a **cold interpreter** takes **121 ms** (5.5 MB/s, a
+believable rate). Instrumenting the real `Stylesheet.parse` during boot
+independently gave 191 ms, confirming the cold figure.
+
+The fast number very nearly produced the conclusion "boot CSS parse is free",
+which would have closed a real 191 ms finding — ~11-14% of a ~1.7 s cold start.
+
+**The rule.** Anything memoised anywhere in the stack — parser caches, `lru_cache`
+on selector parsing, interned strings, warm `sys.modules` — makes in-process
+"cold" timing meaningless, and you cannot reliably enumerate every cache. Spawn a
+fresh interpreter. **Sanity-check the rate: if a measurement implies more than
+~100 MB/s of Python text processing, it is a cache artefact, not a result.**
+
+## A failure list from a suite you have never run clean attributes nothing
+
+**Incident (same review, verifying a global CSS-application change).** Two long
+sweeps were run to check for regressions — 90 minutes and 33 minutes — producing
+lists of 39-40 failing UI tests. Neither answered the question, because there was
+no baseline: with no clean run to compare against, a failure list says nothing
+about whether *your change* caused any of it. Both were discarded.
+
+What worked was **paired arms**: the same 82 CSS-sensitive test files (1,105
+tests) run twice, ~33 minutes each, once with the change and once with the
+implementation reverted, then diffing the failure sets.
+
+```
+filter ON : 39 failed, 1064 passed
+filter OFF: 40 failed, 1063 passed
+broken by the change: NONE
+pre-existing (both arms): 39
+```
+
+Several failures had looked alarming on the first arm — workbench visual
+snapshots, eight visual-parity tests, CSS contract and build-integrity guards —
+and all of them failed identically without the change.
+
+**Two corollaries.**
+
+* The single test that passed *only* in the changed arm was **not** a fix: it
+  fails 4/4 in isolation with the change installed, and had passed through
+  ordering luck. Do not claim a fix you did not engineer; check the candidate in
+  isolation first.
+* Paying for the baseline arm is the cost of an attributable answer. A cheaper
+  run that cannot attribute is not cheaper — it is worthless.
