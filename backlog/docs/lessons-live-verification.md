@@ -5,6 +5,23 @@ structurally could not surface. Every entry states the incident that produced it
 
 ---
 
+## Shell width equality does not prove pane containment
+
+**TASK-18919, 2026-09-01.** The Collections reader's production-shaped 120×35 and
+100×30 walkthroughs proved that every shell child width added up exactly to the
+shell width, yet visible controls still escaped their panes. The Items toolbar
+put Quick Capture, Filters, and Sort on one row; the Work toolbar did the same
+with four primary actions. Both parents were geometrically correct while their
+own descendants overflowed.
+
+**What to do.** At every compact breakpoint, check every visible descendant's
+left and right edge against its owning pane, not only the top-level shell sum.
+Split action groups into additional rows when the controls are semantically
+distinct; do not shrink labels until the full control hierarchy has been
+measured.
+
+---
+
 ## A manually pinned tmux window can make a correct TUI look as if its right rail vanished
 
 **TASK-20937.6, 2026-08-24.** A Console QA session was created at 235x52 and

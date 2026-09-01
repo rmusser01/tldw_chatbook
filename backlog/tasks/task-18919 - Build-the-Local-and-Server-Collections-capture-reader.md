@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-15 02:52'
-updated_date: '2026-09-01 06:33'
+updated_date: '2026-09-01 15:03'
 labels:
   - library
   - collections
@@ -75,3 +75,18 @@ ADR required: yes
 ADR path: `backlog/decisions/107-collections-capture-authority-and-legacy-boundary.md`
 
 Reason: TASK-18919 changes durable Collections storage, source authority, migration, service, and legacy-data boundaries.
+
+## Verification Checkpoint (2026-09-01)
+
+The isolated Local production-shaped walkthrough is complete with 45 captures at 160×50, 120×35,
+100×30, and 80×24. It covers exact paging, collapse/restore and reclaimed Items width, F6 focus,
+Quick Capture commit-before-extract, controlled failure and Retry, all Work modes, archive/Undo,
+offline hard-delete cleanup, and complete legacy inspection/export. The focused mounted/live gate
+passes 29 tests, the complete capture feature/live gate passes 206, and the production-shaped
+cross-reader gate passes 490; detailed evidence is in
+`Docs/superpowers/reviews/2026-08-31-library-collections-live-verification.md`.
+
+The enabled-Server walkthrough is blocked because the configured profile's docs-info endpoint is
+unreachable (`APIConnectionError`). No Server data was mutated and no capability bypass was used.
+The task remains In Progress until a reachable deployment attests exact
+`hasReadingSnapshotPagesV1: true` and the required Server walkthrough passes.

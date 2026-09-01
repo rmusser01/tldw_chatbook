@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+from dataclasses import replace
+from pathlib import Path
+
 from textual.containers import Vertical
 from textual.widgets import Button, Input, Static, TextArea
 
@@ -25,12 +30,17 @@ from tldw_chatbook.Library.collections_capture_models import (
     CaptureNoteLink,
     CapturePage,
     CapturePageRequest,
+    CaptureSaveRequest,
+    CaptureSaveOutcome,
     CaptureSummary,
     ExternalMediaReference,
     ExternalNoteReference,
     ExternalReferenceAvailability,
     ResolvedCaptureDetail,
     SavedCaptureSearch,
+)
+from tldw_chatbook.Library.collections_capture_service import (
+    LocalCollectionsCaptureService,
 )
 from tldw_chatbook.UI.Library_Modules.library_collections_capture_controller import (
     CaptureArchiveReceipt,
@@ -48,6 +58,40 @@ from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
 
 
 AUTHORITY = "local:test-authority"
+
+
+def _seed_legacy_records(db, *, count: int) -> None:
+    with db.transaction() as connection:
+        connection.executemany(
+            "INSERT INTO library_collections (collection_id, name, description, "
+            "created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                (
+                    f"legacy-{index:03d}",
+                    f"Legacy collection {index:03d}",
+                    "Recovery fixture",
+                    "2026-08-01T00:00:00Z",
+                    "2026-08-01T00:00:00Z",
+                    None,
+                )
+                for index in range(count)
+            ),
+        )
+        connection.executemany(
+            "INSERT INTO library_collection_items (membership_id, collection_id, "
+            "source_type, source_id, title, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                (
+                    f"membership-{index:03d}",
+                    f"legacy-{index:03d}",
+                    "note",
+                    f"note-{index:03d}",
+                    f"Legacy member {index:03d}",
+                    "2026-08-01T00:00:00Z",
+                )
+                for index in range(count)
+            ),
+        )
 
 
 def _identity(value: str) -> CaptureIdentity:
@@ -102,6 +146,7 @@ def _capabilities(*supported: str) -> CaptureCapabilities:
 
 
 def _presentation(**overrides) -> CollectionsCaptureReaderPresentation:
+    selected_matches_loaded = bool(overrides.pop("selected_matches_loaded", False))
     request = CapturePageRequest(AUTHORITY, statuses=("reading",))
     selected = _summary("b", title="Selected capture B")
     loaded = _detail()
@@ -130,6 +175,13 @@ def _presentation(**overrides) -> CollectionsCaptureReaderPresentation:
             CaptureArchiveReceipt(loaded.identity, "reading", 2, 1.0),
         ),
     )
+    if selected_matches_loaded:
+        state = replace(
+            state,
+            selected_identity=loaded.identity,
+            detail_loading=False,
+            page_stale=False,
+        )
     searches = (
         SavedCaptureSearch(
             AUTHORITY,
@@ -218,6 +270,77 @@ async def test_items_keep_capture_controls_rows_and_stale_recovery_reachable() -
         assert "Selected · loading" in painted
 
 
+async def test_capture_and_filter_disclosures_mount_complete_editable_controls() -> None:
+    app = _ReaderApp(
+        _presentation(
+            quick_capture_open=True,
+            filters_open=True,
+            action_status="Saved locally; extraction continues in the background.",
+        )
+    )
+
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+
+        assert app.query_one("#library-collections-capture-url", Input)
+        assert app.query_one("#library-collections-capture-title", Input)
+        assert app.query_one("#library-collections-capture-tags", Input)
+        assert app.query_one("#library-collections-capture-note", TextArea)
+        assert app.query_one("#library-collections-capture-save", Button)
+        assert app.query_one("#library-collections-capture-cancel", Button)
+        assert app.query_one("#library-collections-filter-domain", Input)
+        assert app.query_one("#library-collections-filter-tags", Input)
+        assert app.query_one("#library-collections-filter-date-from", Input)
+        assert app.query_one("#library-collections-filter-date-to", Input)
+        assert app.query_one("#library-collections-filters-apply", Button)
+        assert app.query_one("#library-collections-filters-clear", Button)
+        assert "extraction continues" in str(
+            app.query_one("#library-collections-action-status", Static).renderable
+        )
+
+
+async def test_unknown_server_save_keeps_draft_and_requires_explicit_retry() -> None:
+    app = _ReaderApp(
+        _presentation(
+            quick_capture_open=True,
+            quick_capture_url="https://example.test/uncertain",
+            quick_capture_title="Uncertain capture",
+            quick_capture_tags="saved, server",
+            quick_capture_note="Keep this draft.",
+            save_outcome_unknown=True,
+            confirming_save_retry=True,
+            quick_capture_saving=True,
+        )
+    )
+
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+
+        assert app.query_one("#library-collections-capture-url", Input).value == (
+            "https://example.test/uncertain"
+        )
+        assert app.query_one("#library-collections-capture-note", TextArea).text == (
+            "Keep this draft."
+        )
+        assert "Refresh before retrying" in str(
+            app.query_one("#library-collections-capture-unknown", Static).renderable
+        )
+        assert "clear Favorite" in str(
+            app.query_one(
+                "#library-collections-capture-retry-warning", Static
+            ).renderable
+        )
+        assert app.query_one(
+            "#library-collections-capture-refresh", Button
+        ).disabled
+        assert app.query_one(
+            "#library-collections-capture-retry-confirm", Button
+        ).disabled
+        assert app.query_one(
+            "#library-collections-capture-retry-back", Button
+        ).disabled
+
+
 async def test_work_keeps_selected_loaded_truth_and_distinct_note_models() -> None:
     app = _ReaderApp(_presentation())
 
@@ -244,6 +367,46 @@ async def test_work_keeps_selected_loaded_truth_and_distinct_note_models() -> No
         assert app.query_one("#library-collections-legacy-recovery", Button)
         assert "summarize unavailable" in str(
             app.query_one("#library-collections-summarize", Button).tooltip
+        )
+
+
+async def test_supported_annotation_and_overflow_actions_have_reachable_results() -> None:
+    app = _ReaderApp(
+        _presentation(
+            capabilities=_capabilities(
+                "browse",
+                "capture",
+                "update",
+                "highlights",
+                "archive",
+                "offline_copy",
+                "summarize",
+                "listen",
+                "hard_delete",
+            ),
+            mode="highlights",
+            more_open=True,
+            confirming_hard_delete=False,
+            action_status="Summary ready.",
+            action_content="A bounded generated summary.",
+            selected_matches_loaded=True,
+        )
+    )
+
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+
+        assert app.query_one("#library-collections-highlight-quote", TextArea)
+        assert app.query_one("#library-collections-highlight-note", Input)
+        assert app.query_one("#library-collections-highlight-save", Button)
+        assert app.query_one("#library-collections-summarize", Button).disabled is False
+        assert app.query_one("#library-collections-listen", Button).disabled is False
+        assert app.query_one("#library-collections-save-offline", Button).disabled is False
+        assert "Summary ready" in str(
+            app.query_one("#library-collections-action-status", Static).renderable
+        )
+        assert "bounded generated summary" in str(
+            app.query_one("#library-collections-action-content", Static).renderable
         )
 
 
@@ -307,3 +470,336 @@ async def test_real_library_route_mounts_contextual_three_pane_reader_and_both_g
         )
         assert app.app_config["library"]["collections_reader"]["items_open"] is False
         assert shell.work.is_mounted and shell.work.display
+
+
+async def test_real_library_route_quick_capture_persists_and_selects_capture() -> None:
+    app = _build_test_app()
+    host = LibraryHarness(app)
+    scope = app.collections_capture_scope_service
+    authority = scope.active_authority
+    assert authority is not None
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
+
+        screen.query_one("#library-collections-quick-capture", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-capture-url")
+        screen.query_one("#library-collections-capture-url", Input).value = (
+            "https://example.test/new-capture"
+        )
+        screen.query_one("#library-collections-capture-title", Input).value = (
+            "Saved from the reader"
+        )
+        screen.query_one("#library-collections-capture-tags", Input).value = (
+            "research, later"
+        )
+        screen.query_one("#library-collections-capture-note", TextArea).text = (
+            "A local capture note."
+        )
+        screen.query_one("#library-collections-capture-save", Button).press()
+
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(
+                screen._library_collections_capture_controller
+                and screen._library_collections_capture_controller.state.loaded_detail
+                and screen._library_collections_capture_controller.state.loaded_detail.capture.title
+                == "Saved from the reader"
+            ),
+            message="Quick Capture did not persist and select the new capture",
+        )
+        detail = screen._library_collections_capture_controller.state.loaded_detail
+        assert detail is not None
+        assert detail.capture.identity.authority_key == authority.key
+        assert detail.capture.tags == ("later", "research")
+        assert detail.capture.freeform_note == "A local capture note."
+        assert "Saved locally" in str(
+            screen.query_one("#library-collections-action-status", Static).renderable
+        )
+
+
+async def test_unknown_quick_capture_preserves_draft_and_does_not_auto_retry(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    scope = app.collections_capture_scope_service
+    calls: list[CaptureSaveRequest] = []
+
+    async def unknown_save(request: CaptureSaveRequest) -> CaptureSaveOutcome:
+        calls.append(request)
+        return CaptureSaveOutcome(None, None, outcome_unknown=True)
+
+    monkeypatch.setattr(scope, "save_capture", unknown_save)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
+        screen.query_one("#library-collections-quick-capture", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-capture-url")
+        screen.query_one("#library-collections-capture-url", Input).value = (
+            "https://example.test/uncertain-save"
+        )
+        screen.query_one("#library-collections-capture-title", Input).value = (
+            "Uncertain save"
+        )
+        screen.query_one("#library-collections-capture-note", TextArea).text = (
+            "Do not lose this draft."
+        )
+        screen.query_one("#library-collections-capture-save", Button).press()
+
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_collections_save_outcome_unknown,
+            message="Unknown save state did not settle",
+        )
+        await _wait_for_selector(screen, pilot, "#library-collections-capture-refresh")
+        assert len(calls) == 1
+        assert screen.query_one("#library-collections-capture-url", Input).value == (
+            "https://example.test/uncertain-save"
+        )
+        assert screen.query_one("#library-collections-capture-note", TextArea).text == (
+            "Do not lose this draft."
+        )
+
+        screen.query_one("#library-collections-capture-save", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_collections_confirming_save_retry,
+            message="Explicit retry warning did not open",
+        )
+        assert len(calls) == 1
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#library-collections-capture-retry-confirm",
+        )
+        screen.query_one(
+            "#library-collections-capture-retry-confirm", Button
+        ).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: len(calls) == 2,
+            message="Confirmed retry did not issue exactly one new save",
+        )
+
+
+async def test_real_local_capture_actions_persist_reader_results() -> None:
+    app = _build_test_app()
+    scope = app.collections_capture_scope_service
+    authority = app.local_collections_capture_authority
+    assert authority is not None
+    service = LocalCollectionsCaptureService(
+        authority,
+        app.collections_capture_repository,
+        offline_store=app.collections_offline_store,
+        summarizer=lambda detail: f"Summary of {detail.title}",
+        listener=lambda detail: f"audio:{detail.identity.capture_id}",
+    )
+    app.local_collections_capture_service = service
+    scope.activate(authority, service)
+    await scope.save_capture(
+        CaptureSaveRequest(
+            authority.key,
+            "https://example.test/action-capture",
+            title="Action capture",
+            text_content="A useful body for action coverage.",
+        )
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-reader-title")
+
+        screen.query_one("#library-collections-more", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-summarize")
+        screen.query_one("#library-collections-summarize", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_collections_action_content
+            == "Summary of Action capture",
+            message="Summarize result did not reach the reader",
+        )
+        await _wait_for_selector(screen, pilot, "#library-collections-listen")
+        screen.query_one("#library-collections-listen", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_collections_action_status == "Audio is ready.",
+            message="Listen result did not reach the reader",
+        )
+        await _wait_for_selector(screen, pilot, "#library-collections-save-offline")
+        screen.query_one("#library-collections-save-offline", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(
+                screen._library_collections_capture_controller.state.loaded_detail
+                and screen._library_collections_capture_controller.state.loaded_detail.capture.offline_copy
+            ),
+            message="Offline copy was not reflected in loaded detail",
+        )
+
+        await _wait_for_selector(screen, pilot, "#library-collections-mode-highlights")
+        screen.query_one("#library-collections-mode-highlights", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-highlight-quote")
+        screen.query_one("#library-collections-highlight-quote", TextArea).text = (
+            "A useful body"
+        )
+        screen.query_one("#library-collections-highlight-note", Input).value = (
+            "Remember this"
+        )
+        screen.query_one("#library-collections-highlight-save", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: len(screen._library_collections_highlights) == 1,
+            message="Highlight was not persisted",
+        )
+
+        screen.query_one("#library-collections-mode-notes", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-freeform-note")
+        screen.query_one("#library-collections-freeform-note", TextArea).text = (
+            "Updated capture note"
+        )
+        screen.query_one("#library-collections-freeform-note-save", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(
+                screen._library_collections_capture_controller.state.loaded_detail
+                and screen._library_collections_capture_controller.state.loaded_detail.capture.freeform_note
+                == "Updated capture note"
+            ),
+            message="Capture note was not persisted",
+        )
+        await _wait_for_selector(screen, pilot, "#library-collections-linked-note-id")
+        screen.query_one("#library-collections-linked-note-id", Input).value = "note-7"
+        screen.query_one("#library-collections-linked-note-save", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(
+                screen._library_collections_capture_controller.state.loaded_detail
+                and screen._library_collections_capture_controller.state.loaded_detail.note_links
+            ),
+            message="Linked Note was not reflected in the reader",
+        )
+
+
+async def test_summarize_result_is_discarded_after_selecting_another_capture(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    scope = app.collections_capture_scope_service
+    authority = scope.active_authority
+    assert authority is not None
+    first = await scope.save_capture(
+        CaptureSaveRequest(
+            authority.key,
+            "https://example.test/stale-summary-first",
+            title="First capture",
+            text_content="First body.",
+        )
+    )
+    second = await scope.save_capture(
+        CaptureSaveRequest(
+            authority.key,
+            "https://example.test/stale-summary-second",
+            title="Second capture",
+            text_content="Second body.",
+        )
+    )
+    assert first.capture is not None
+    assert second.capture is not None
+    service = app.local_collections_capture_service
+    service.summarizer = lambda detail: f"Summary of {detail.title}"
+    summarize = scope.summarize
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def delayed_summary(identity: CaptureIdentity):
+        started.set()
+        await release.wait()
+        return await summarize(identity)
+
+    monkeypatch.setattr(scope, "summarize", delayed_summary)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-reader-title")
+
+        controller = screen._library_collections_capture_controller
+        assert controller is not None
+        loaded = controller.state.loaded_detail
+        assert loaded is not None
+        source = loaded.capture.identity
+        target = (
+            second.capture.identity
+            if source == first.capture.identity
+            else first.capture.identity
+        )
+
+        screen.query_one("#library-collections-more", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-summarize")
+        screen.query_one("#library-collections-summarize", Button).press()
+        await asyncio.wait_for(started.wait(), timeout=2)
+
+        await screen._select_library_collection_capture(target)
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(
+                controller.state.loaded_detail
+                and controller.state.loaded_detail.capture.identity == target
+            ),
+            message="The replacement capture did not load",
+        )
+        release.set()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_collections_action_content == ""
+        assert screen._library_collections_action_status == ""
+
+
+async def test_legacy_recovery_inspector_and_export_reach_every_page(
+    tmp_path: Path,
+) -> None:
+    app = _build_test_app()
+    _seed_legacy_records(app.local_library_collections_db, count=45)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
+        await _wait_for_selector(screen, pilot, "#library-collections-legacy-recovery")
+        screen.query_one("#library-collections-legacy-recovery", Button).press()
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#library-collections-legacy-recovery-content",
+        )
+        content = str(
+            screen.query_one(
+                "#library-collections-legacy-recovery-content", Static
+            ).renderable
+        )
+        assert "Collections: 45 total · showing 20" in content
+        assert "Memberships: 45 total · showing 20" in content
+
+        destination = tmp_path / "legacy-recovery.json"
+        await screen._export_library_collection_legacy_recovery(destination)
+        payload = json.loads(destination.read_text(encoding="utf-8"))
+        assert len(payload["collections"]) == 45
+        assert len(payload["memberships"]) == 45
+        assert screen._library_collections_action_status == (
+            "Legacy recovery export complete."
+        )

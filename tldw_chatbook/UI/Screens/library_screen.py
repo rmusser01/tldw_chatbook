@@ -87,9 +87,14 @@ from ...Library.export_progress import (
     format_export_progress_line,
 )
 from ...Library.collections_capture_models import (
+    CAPTURE_SORTS,
     CaptureCapabilities,
+    CaptureHighlight,
+    CaptureIdentity,
     CapturePageRequest,
+    CaptureSaveRequest,
     CollectionsCaptureError,
+    ExternalNoteReference,
     SavedCaptureSearch,
 )
 from ...Library.library_content_evidence import (
@@ -3654,9 +3659,23 @@ class LibraryScreen(BaseAppScreen):
         self._library_collections_active_scope = "all"
         self._library_collections_requested_page = 1
         self._library_collections_reader_mode: CollectionsReaderMode = "read"
+        self._library_collections_highlights: tuple[CaptureHighlight, ...] = ()
+        self._library_collections_quick_capture_open = False
+        self._library_collections_quick_capture_url = ""
+        self._library_collections_quick_capture_title = ""
+        self._library_collections_quick_capture_tags = ""
+        self._library_collections_quick_capture_note = ""
+        self._library_collections_save_outcome_unknown = False
+        self._library_collections_confirming_save_retry = False
+        self._library_collections_quick_capture_saving = False
+        self._library_collections_filters_open = False
         self._library_collections_more_open = False
         self._library_collections_confirming_hard_delete = False
         self._library_collections_legacy_recovery_rows = 0
+        self._library_collections_legacy_recovery_open = False
+        self._library_collections_legacy_recovery_lines: tuple[str, ...] = ()
+        self._library_collections_action_status = ""
+        self._library_collections_action_content = ""
         self._library_collections_reader_layout = resolve_adaptive_reader_layout(
             0,
             self._library_collections_reader_preferences,
@@ -15478,11 +15497,27 @@ class LibraryScreen(BaseAppScreen):
             active_scope=self._library_collections_active_scope,
             authority_label="Server" if active_source == "server" else "Local",
             mode=self._library_collections_reader_mode,
+            highlights=self._library_collections_highlights,
+            quick_capture_open=self._library_collections_quick_capture_open,
+            quick_capture_url=self._library_collections_quick_capture_url,
+            quick_capture_title=self._library_collections_quick_capture_title,
+            quick_capture_tags=self._library_collections_quick_capture_tags,
+            quick_capture_note=self._library_collections_quick_capture_note,
+            save_outcome_unknown=self._library_collections_save_outcome_unknown,
+            confirming_save_retry=(
+                self._library_collections_confirming_save_retry
+            ),
+            quick_capture_saving=self._library_collections_quick_capture_saving,
+            filters_open=self._library_collections_filters_open,
             more_open=self._library_collections_more_open,
             confirming_hard_delete=(
                 self._library_collections_confirming_hard_delete
             ),
             legacy_recovery_rows=self._library_collections_legacy_recovery_rows,
+            legacy_recovery_open=self._library_collections_legacy_recovery_open,
+            legacy_recovery_lines=self._library_collections_legacy_recovery_lines,
+            action_status=self._library_collections_action_status,
+            action_content=self._library_collections_action_content,
         )
 
     def _workspace_handoff_summary_label(
@@ -43389,10 +43424,21 @@ class LibraryScreen(BaseAppScreen):
     async def select_library_collection_capture(self, event: Button.Pressed) -> None:
         """Select a capture immediately and settle its detail request."""
         event.stop()
-        controller = self._library_collections_capture_controller
         identity = getattr(event.button, "capture_identity", None)
-        if controller is None or identity is None:
+        if identity is None:
             return
+        await self._select_library_collection_capture(identity)
+
+    async def _select_library_collection_capture(
+        self,
+        identity: CaptureIdentity,
+    ) -> None:
+        """Select one identity and clear results owned by the prior selection."""
+        controller = self._library_collections_capture_controller
+        if controller is None:
+            return
+        self._library_collections_action_status = ""
+        self._library_collections_action_content = ""
         try:
             await self._run_library_collections_capture_transition(
                 controller.select_item(identity)
@@ -43447,9 +43493,11 @@ class LibraryScreen(BaseAppScreen):
         """Apply the literal capture filter as a fresh authoritative page."""
         event.stop()
         controller = self._library_collections_capture_controller
-        request = self._library_collections_capture_request(
-            page=1,
-            search=event.value,
+        current = controller.state.requested_scope if controller is not None else None
+        request = (
+            dataclasses.replace(current, search=event.value, page=1)
+            if current is not None
+            else self._library_collections_capture_request(page=1, search=event.value)
         )
         if controller is None or request is None:
             return
@@ -43461,6 +43509,332 @@ class LibraryScreen(BaseAppScreen):
             await self._run_library_collections_capture_transition(
                 controller.load_selected_now()
             )
+
+    @on(Button.Pressed, "#library-collections-quick-capture")
+    def toggle_library_collection_quick_capture(
+        self, event: Button.Pressed
+    ) -> None:
+        """Open or close the compact capture form in the Items pane."""
+        event.stop()
+        self._library_collections_quick_capture_open = (
+            not self._library_collections_quick_capture_open
+        )
+        if not self._library_collections_quick_capture_open:
+            self._reset_library_collection_quick_capture_draft()
+        self._refresh_library_collections_capture_reader()
+
+    def _capture_library_collection_quick_capture_draft(self) -> None:
+        """Retain mounted form values across reader recomposition."""
+        self._library_collections_quick_capture_url = self.query_one(
+            "#library-collections-capture-url", Input
+        ).value
+        self._library_collections_quick_capture_title = self.query_one(
+            "#library-collections-capture-title", Input
+        ).value
+        self._library_collections_quick_capture_tags = self.query_one(
+            "#library-collections-capture-tags", Input
+        ).value
+        self._library_collections_quick_capture_note = self.query_one(
+            "#library-collections-capture-note", TextArea
+        ).text
+
+    def _reset_library_collection_quick_capture_draft(self) -> None:
+        """Clear the capture draft and any uncertain-save confirmation state."""
+        self._library_collections_quick_capture_url = ""
+        self._library_collections_quick_capture_title = ""
+        self._library_collections_quick_capture_tags = ""
+        self._library_collections_quick_capture_note = ""
+        self._library_collections_save_outcome_unknown = False
+        self._library_collections_confirming_save_retry = False
+        self._library_collections_quick_capture_saving = False
+
+    @on(Button.Pressed, "#library-collections-capture-cancel")
+    def cancel_library_collection_quick_capture(
+        self, event: Button.Pressed
+    ) -> None:
+        event.stop()
+        self._library_collections_quick_capture_open = False
+        self._reset_library_collection_quick_capture_draft()
+        self._refresh_library_collections_capture_reader()
+
+    @on(Button.Pressed, "#library-collections-capture-save")
+    async def save_library_collection_quick_capture(
+        self, event: Button.Pressed
+    ) -> None:
+        """Persist a URL through the active capture authority and select it."""
+        event.stop()
+        if self._library_collections_quick_capture_saving:
+            return
+        self._capture_library_collection_quick_capture_draft()
+        if self._library_collections_save_outcome_unknown:
+            self._library_collections_confirming_save_retry = True
+            self._library_collections_action_status = (
+                "Confirm retry only after checking the refreshed capture list."
+            )
+            self._refresh_library_collections_capture_reader()
+            return
+        await self._submit_library_collection_quick_capture()
+
+    @on(Button.Pressed, "#library-collections-capture-retry-confirm")
+    async def retry_library_collection_quick_capture(
+        self, event: Button.Pressed
+    ) -> None:
+        """Issue one explicit retry after an indeterminate Server response."""
+        event.stop()
+        if self._library_collections_quick_capture_saving:
+            return
+        self._capture_library_collection_quick_capture_draft()
+        await self._submit_library_collection_quick_capture()
+
+    @on(Button.Pressed, "#library-collections-capture-retry-back")
+    def cancel_library_collection_quick_capture_retry(
+        self, event: Button.Pressed
+    ) -> None:
+        """Return to the retained draft without issuing another save."""
+        event.stop()
+        self._capture_library_collection_quick_capture_draft()
+        self._library_collections_confirming_save_retry = False
+        self._refresh_library_collections_capture_reader()
+
+    @on(Button.Pressed, "#library-collections-capture-refresh")
+    async def refresh_library_collection_quick_capture(
+        self, event: Button.Pressed
+    ) -> None:
+        """Refresh authority state while retaining an indeterminate save draft."""
+        event.stop()
+        self._capture_library_collection_quick_capture_draft()
+        controller = self._library_collections_capture_controller
+        if controller is None or controller.state.authority_key is None:
+            return
+        request = controller.state.requested_scope
+        if request is None:
+            request = self._library_collections_capture_request(
+                page=self._library_collections_requested_page
+            )
+        if request is None:
+            return
+        await self._run_library_collections_capture_transition(
+            controller.load_page(request)
+        )
+        if controller.state.selected_identity is not None:
+            await self._run_library_collections_capture_transition(
+                controller.load_selected_now()
+            )
+        self._library_collections_action_status = (
+            "Capture list refreshed. Confirm whether the URL is present before retrying."
+        )
+        self._refresh_library_collections_capture_reader()
+
+    async def _submit_library_collection_quick_capture(self) -> None:
+        """Submit the retained capture draft exactly once."""
+        controller = self._library_collections_capture_controller
+        if controller is None or controller.state.authority_key is None:
+            return
+        url = self._library_collections_quick_capture_url.strip()
+        if not validate_url(url):
+            self._library_collections_action_status = (
+                "Enter a valid http or https URL before saving."
+            )
+            self._notify_library_collections_warning(
+                self._library_collections_action_status
+            )
+            self._refresh_library_collections_capture_reader()
+            return
+        title = self._library_collections_quick_capture_title.strip()
+        tags = tuple(
+            part.strip()
+            for part in self._library_collections_quick_capture_tags.split(",")
+            if part.strip()
+        )
+        note = self._library_collections_quick_capture_note
+        self._library_collections_quick_capture_saving = True
+        self._library_collections_action_status = "Saving capture…"
+        self._library_collections_action_content = ""
+        self._refresh_library_collections_capture_reader()
+        try:
+            outcome = await controller.scope_service.save_capture(
+                CaptureSaveRequest(
+                    controller.state.authority_key,
+                    url,
+                    title=title or None,
+                    tags=tags,
+                    freeform_note=note or None,
+                )
+            )
+        except CollectionsCaptureError as exc:
+            self._library_collections_quick_capture_saving = False
+            self._library_collections_action_status = (
+                f"Capture was not saved: {exc.reason.replace('_', ' ')}."
+            )
+            self._notify_library_collections_warning(exc.reason)
+            self._refresh_library_collections_capture_reader()
+            return
+        except Exception:
+            self._library_collections_quick_capture_saving = False
+            self._library_collections_action_status = "Capture was not saved."
+            self._notify_library_collections_warning("capture_save_failed")
+            self._refresh_library_collections_capture_reader()
+            return
+        if outcome.outcome_unknown:
+            self._library_collections_quick_capture_saving = False
+            self._library_collections_save_outcome_unknown = True
+            self._library_collections_confirming_save_retry = False
+            self._library_collections_action_status = (
+                "Save outcome unknown. Refresh before retrying."
+            )
+            self._refresh_library_collections_capture_reader()
+            return
+
+        authority = controller.scope_service.active_authority
+        owner = "locally" if authority is not None and authority.kind == "local" else "to Server"
+        self._library_collections_action_status = (
+            f"Saved {owner}; extraction continues in the background."
+            if outcome.extraction_pending
+            else f"Saved {owner}."
+        )
+        self._library_collections_quick_capture_open = False
+        self._reset_library_collection_quick_capture_draft()
+        request = self._library_collections_capture_request(page=1)
+        if request is None:
+            self._refresh_library_collections_capture_reader()
+            return
+        self._library_collections_requested_page = 1
+        await self._run_library_collections_capture_transition(
+            controller.load_page(request)
+        )
+        if (
+            outcome.capture is not None
+            and controller.state.page is not None
+            and outcome.capture.identity
+            in {item.identity for item in controller.state.page.items}
+        ):
+            await self._run_library_collections_capture_transition(
+                controller.select_item(outcome.capture.identity)
+            )
+        elif controller.state.selected_identity is not None:
+            await self._run_library_collections_capture_transition(
+                controller.load_selected_now()
+            )
+
+    @on(Button.Pressed, "#library-collections-filters")
+    def toggle_library_collection_capture_filters(
+        self, event: Button.Pressed
+    ) -> None:
+        event.stop()
+        self._library_collections_filters_open = (
+            not self._library_collections_filters_open
+        )
+        self._refresh_library_collections_capture_reader()
+
+    def _library_collection_capture_filter_request(
+        self, *, clear: bool = False
+    ) -> CapturePageRequest | None:
+        """Build one validated filter disclosure request from mounted inputs."""
+        controller = self._library_collections_capture_controller
+        current = controller.state.requested_scope if controller is not None else None
+        if current is None:
+            return self._library_collections_capture_request(page=1)
+        if clear:
+            return dataclasses.replace(
+                current,
+                domain=None,
+                tags=(),
+                date_from=None,
+                date_to=None,
+                page=1,
+            )
+        domain = self.query_one(
+            "#library-collections-filter-domain", Input
+        ).value.strip()
+        tags = tuple(
+            part.strip()
+            for part in self.query_one(
+                "#library-collections-filter-tags", Input
+            ).value.split(",")
+            if part.strip()
+        )
+        date_from = self.query_one(
+            "#library-collections-filter-date-from", Input
+        ).value.strip()
+        date_to = self.query_one(
+            "#library-collections-filter-date-to", Input
+        ).value.strip()
+        for value in (date_from, date_to):
+            if value:
+                try:
+                    datetime.strptime(value, "%Y-%m-%d")
+                except ValueError as exc:
+                    raise CollectionsCaptureError("invalid_filter_date") from exc
+        return dataclasses.replace(
+            current,
+            domain=domain or None,
+            tags=tags,
+            date_from=date_from or None,
+            date_to=date_to or None,
+            page=1,
+        )
+
+    async def _apply_library_collection_capture_request(
+        self, request: CapturePageRequest
+    ) -> None:
+        """Apply a page-one request and settle its selected reader detail."""
+        controller = self._library_collections_capture_controller
+        if controller is None:
+            return
+        self._library_collections_requested_page = request.page
+        await self._run_library_collections_capture_transition(
+            controller.load_page(request)
+        )
+        if controller.state.selected_identity is not None:
+            await self._run_library_collections_capture_transition(
+                controller.load_selected_now()
+            )
+
+    @on(Button.Pressed, "#library-collections-filters-apply")
+    async def apply_library_collection_capture_filters(
+        self, event: Button.Pressed
+    ) -> None:
+        event.stop()
+        try:
+            request = self._library_collection_capture_filter_request()
+        except CollectionsCaptureError as exc:
+            self._library_collections_action_status = (
+                "Use dates in YYYY-MM-DD order, with From no later than To."
+            )
+            self._notify_library_collections_warning(exc.reason)
+            self._refresh_library_collections_capture_reader()
+            return
+        if request is not None:
+            await self._apply_library_collection_capture_request(request)
+
+    @on(Button.Pressed, "#library-collections-filters-clear")
+    async def clear_library_collection_capture_filters(
+        self, event: Button.Pressed
+    ) -> None:
+        event.stop()
+        request = self._library_collection_capture_filter_request(clear=True)
+        if request is not None:
+            await self._apply_library_collection_capture_request(request)
+
+    @on(Button.Pressed, "#library-collections-sort")
+    async def cycle_library_collection_capture_sort(
+        self, event: Button.Pressed
+    ) -> None:
+        """Cycle supported sorts, omitting relevance without a search query."""
+        event.stop()
+        controller = self._library_collections_capture_controller
+        current = controller.state.requested_scope if controller is not None else None
+        if current is None:
+            return
+        sorts = tuple(
+            value
+            for value in CAPTURE_SORTS
+            if value != "relevance" or current.search
+        )
+        next_sort = sorts[(sorts.index(current.sort) + 1) % len(sorts)]
+        await self._apply_library_collection_capture_request(
+            dataclasses.replace(current, sort=next_sort, page=1)
+        )
 
     @on(Input.Changed, "#library-rag-query-input")
     async def update_library_rag_query(self, event: Input.Changed) -> None:
@@ -43791,12 +44165,16 @@ class LibraryScreen(BaseAppScreen):
         "#library-collections-mode-read, #library-collections-mode-highlights, "
         "#library-collections-mode-notes, #library-collections-mode-info",
     )
-    def set_library_collection_capture_mode(self, event: Button.Pressed) -> None:
+    async def set_library_collection_capture_mode(
+        self, event: Button.Pressed
+    ) -> None:
         """Keep one reader mode active across capture traversal."""
         event.stop()
         mode = (event.button.id or "").removeprefix("library-collections-mode-")
         if mode in {"read", "highlights", "notes", "info"}:
             self._library_collections_reader_mode = mode
+            if mode == "highlights":
+                await self._load_library_collection_capture_highlights()
             self._refresh_library_collections_capture_reader()
 
     @on(Button.Pressed, "#library-collections-more")
@@ -43810,19 +44188,394 @@ class LibraryScreen(BaseAppScreen):
         self._library_collections_confirming_hard_delete = False
         self._refresh_library_collections_capture_reader()
 
+    @on(Button.Pressed, "#library-collections-legacy-recovery")
+    async def inspect_library_collection_legacy_recovery(
+        self, event: Button.Pressed
+    ) -> None:
+        """Load bounded read-only previews of untouched generic Collections."""
+        event.stop()
+        recovery = getattr(
+            self.app_instance, "collections_legacy_recovery_service", None
+        )
+        if recovery is None:
+            return
+        self._library_collections_more_open = True
+        self._library_collections_legacy_recovery_open = True
+        self._library_collections_action_status = "Loading legacy recovery data…"
+        self._refresh_library_collections_capture_reader()
+        try:
+            collections, memberships = await asyncio.gather(
+                asyncio.to_thread(recovery.list_collections, page=1, size=20),
+                asyncio.to_thread(recovery.list_memberships, page=1, size=20),
+            )
+        except Exception as exc:
+            reason = str(getattr(exc, "reason", "legacy_recovery_failed"))
+            self._library_collections_action_status = (
+                f"Legacy recovery could not be loaded: {reason.replace('_', ' ')}."
+            )
+            self._library_collections_legacy_recovery_lines = ()
+            self._refresh_library_collections_capture_reader()
+            return
+        lines = [
+            f"Collections: {collections.total} total · showing {len(collections.items)}",
+            *(f"• {item.name}" for item in collections.items),
+            f"Memberships: {memberships.total} total · showing {len(memberships.items)}",
+            *(f"• {item.title}" for item in memberships.items),
+            (
+                "Export safety: verified private publication"
+                if recovery.export_publication_posture
+                == "verified_private_parent_dirfd"
+                else "Export safety: platform guarantees are unverified"
+            ),
+        ]
+        self._library_collections_legacy_recovery_lines = tuple(lines)
+        self._library_collections_action_status = (
+            "Legacy data is read-only. Export includes every page."
+        )
+        self._refresh_library_collections_capture_reader()
+
+    @on(Button.Pressed, "#library-collections-legacy-recovery-close")
+    def close_library_collection_legacy_recovery(
+        self, event: Button.Pressed
+    ) -> None:
+        event.stop()
+        self._library_collections_legacy_recovery_open = False
+        self._library_collections_legacy_recovery_lines = ()
+        self._refresh_library_collections_capture_reader()
+
+    @on(Button.Pressed, "#library-collections-legacy-recovery-export")
+    async def choose_library_collection_legacy_recovery_export(
+        self, event: Button.Pressed
+    ) -> None:
+        """Choose a destination for a complete coherent legacy JSON export."""
+        event.stop()
+        await self.app.push_screen(
+            FileSave(
+                location=str(Path.home()),
+                title="Export Legacy Collections Recovery",
+                default_file="legacy-collections-recovery.json",
+            ),
+            callback=lambda path: self.call_after_refresh(
+                self._export_library_collection_legacy_recovery, path
+            ),
+        )
+
+    async def _export_library_collection_legacy_recovery(
+        self, selected_path: Path | None
+    ) -> None:
+        """Validate and publish a complete recovery snapshot off the UI loop."""
+        if selected_path is None:
+            return
+        recovery = getattr(
+            self.app_instance, "collections_legacy_recovery_service", None
+        )
+        if recovery is None:
+            return
+        try:
+            destination = validate_path_simple(
+                selected_path,
+                require_exists=False,
+            )
+            if destination.suffix.casefold() != ".json":
+                destination = destination.with_suffix(".json")
+            overwrite_identity = None
+            if destination.exists():
+                metadata = destination.lstat()
+                overwrite_identity = (metadata.st_dev, metadata.st_ino)
+            await asyncio.to_thread(
+                recovery.export_json,
+                destination,
+                overwrite_identity=overwrite_identity,
+            )
+        except Exception as exc:
+            reason = str(getattr(exc, "reason", "legacy_export_failed"))
+            self._library_collections_action_status = (
+                f"Legacy export failed: {reason.replace('_', ' ')}."
+            )
+            self._notify_library_collections_warning(reason)
+        else:
+            self._library_collections_action_status = (
+                "Legacy recovery export complete."
+            )
+        self._refresh_library_collections_capture_reader()
+
     async def _update_selected_library_collection_capture(
         self,
         changes: Mapping[str, Any],
-    ) -> None:
+    ) -> bool:
         controller = self._library_collections_capture_controller
         if controller is None:
-            return
+            return False
         try:
-            await self._run_library_collections_capture_transition(
+            return await self._run_library_collections_capture_transition(
                 controller.update_selected(changes)
             )
         except CollectionsCaptureError as exc:
             self._notify_library_collections_warning(exc.reason)
+            return False
+
+    def _library_collection_loaded_capture(self):
+        """Return the current identity-safe capture detail, or ``None``."""
+        controller = self._library_collections_capture_controller
+        if (
+            controller is None
+            or controller.state.loaded_detail is None
+            or not controller.state.identity_actions_enabled
+        ):
+            return None
+        return controller.state.loaded_detail.capture
+
+    def _library_collection_capture_is_current(
+        self, identity: CaptureIdentity
+    ) -> bool:
+        """Return whether an asynchronous result still belongs to the reader."""
+        capture = self._library_collection_loaded_capture()
+        return capture is not None and capture.identity == identity
+
+    async def _load_library_collection_capture_highlights(self) -> None:
+        """Load highlight state for the identity currently safe to mutate."""
+        controller = self._library_collections_capture_controller
+        capture = self._library_collection_loaded_capture()
+        if controller is None or capture is None:
+            self._library_collections_highlights = ()
+            return
+        identity = capture.identity
+        try:
+            highlights = await controller.scope_service.list_highlights(identity)
+        except CollectionsCaptureError as exc:
+            if not self._library_collection_capture_is_current(identity):
+                return
+            self._library_collections_highlights = ()
+            self._notify_library_collections_warning(exc.reason)
+            return
+        if not self._library_collection_capture_is_current(identity):
+            return
+        self._library_collections_highlights = highlights
+
+    @on(Button.Pressed, "#library-collections-highlight-save")
+    async def save_library_collection_capture_highlight(
+        self, event: Button.Pressed
+    ) -> None:
+        event.stop()
+        controller = self._library_collections_capture_controller
+        capture = self._library_collection_loaded_capture()
+        if controller is None or capture is None:
+            return
+        quote = self.query_one(
+            "#library-collections-highlight-quote", TextArea
+        ).text
+        note = self.query_one(
+            "#library-collections-highlight-note", Input
+        ).value
+        try:
+            await controller.scope_service.save_highlight(
+                capture.identity,
+                quote=quote,
+                note=note or None,
+            )
+            if not self._library_collection_capture_is_current(capture.identity):
+                return
+            self._library_collections_highlights = (
+                await controller.scope_service.list_highlights(capture.identity)
+            )
+        except CollectionsCaptureError as exc:
+            if not self._library_collection_capture_is_current(capture.identity):
+                return
+            self._notify_library_collections_warning(exc.reason)
+            self._library_collections_action_status = (
+                f"Highlight was not saved: {exc.reason.replace('_', ' ')}."
+            )
+        else:
+            if not self._library_collection_capture_is_current(capture.identity):
+                return
+            self._library_collections_action_status = "Highlight saved."
+            self._library_collections_action_content = ""
+        self._refresh_library_collections_capture_reader()
+
+    @on(Button.Pressed, ".library-collections-highlight-delete")
+    async def delete_library_collection_capture_highlight(
+        self, event: Button.Pressed
+    ) -> None:
+        event.stop()
+        controller = self._library_collections_capture_controller
+        capture = self._library_collection_loaded_capture()
+        highlight_id = getattr(event.button, "highlight_id", "")
+        if controller is None or capture is None or not highlight_id:
+            return
+        try:
+            await controller.scope_service.delete_highlight(
+                capture.identity,
+                highlight_id,
+            )
+            if not self._library_collection_capture_is_current(capture.identity):
+                return
+            self._library_collections_highlights = (
+                await controller.scope_service.list_highlights(capture.identity)
+            )
+        except CollectionsCaptureError as exc:
+            if not self._library_collection_capture_is_current(capture.identity):
+                return
+            self._notify_library_collections_warning(exc.reason)
+            return
+        if not self._library_collection_capture_is_current(capture.identity):
+            return
+        self._library_collections_action_status = "Highlight deleted."
+        self._library_collections_action_content = ""
+        self._refresh_library_collections_capture_reader()
+
+    @on(Button.Pressed, "#library-collections-freeform-note-save")
+    async def save_library_collection_capture_note(
+        self, event: Button.Pressed
+    ) -> None:
+        event.stop()
+        note = self.query_one(
+            "#library-collections-freeform-note", TextArea
+        ).text
+        capture = self._library_collection_loaded_capture()
+        if capture is None:
+            return
+        if await self._update_selected_library_collection_capture(
+            {"freeform_note": note}
+        ) and self._library_collection_capture_is_current(capture.identity):
+            self._library_collections_action_status = "Capture note saved."
+            self._library_collections_action_content = ""
+            self._refresh_library_collections_capture_reader()
+
+    @on(Button.Pressed, "#library-collections-linked-note-save")
+    async def link_library_collection_capture_note(
+        self, event: Button.Pressed
+    ) -> None:
+        event.stop()
+        controller = self._library_collections_capture_controller
+        capture = self._library_collection_loaded_capture()
+        if controller is None or capture is None:
+            return
+        note_id = self.query_one(
+            "#library-collections-linked-note-id", Input
+        ).value.strip()
+        if not note_id:
+            self._notify_library_collections_warning("Enter a Note ID to link.")
+            return
+        try:
+            await controller.scope_service.link_note(
+                capture.identity,
+                ExternalNoteReference(capture.identity.authority_key, note_id),
+            )
+            if not self._library_collection_capture_is_current(capture.identity):
+                return
+            await self._run_library_collections_capture_transition(
+                controller.refresh_selected_detail()
+            )
+        except CollectionsCaptureError as exc:
+            if not self._library_collection_capture_is_current(capture.identity):
+                return
+            self._notify_library_collections_warning(exc.reason)
+            return
+        if not self._library_collection_capture_is_current(capture.identity):
+            return
+        self._library_collections_action_status = f"Linked Note {note_id}."
+        self._library_collections_action_content = ""
+        self._refresh_library_collections_capture_reader()
+
+    @on(Button.Pressed, ".library-collections-linked-note-unlink")
+    async def unlink_library_collection_capture_note(
+        self, event: Button.Pressed
+    ) -> None:
+        event.stop()
+        controller = self._library_collections_capture_controller
+        capture = self._library_collection_loaded_capture()
+        link_id = getattr(event.button, "link_id", "")
+        if controller is None or capture is None or not link_id:
+            return
+        try:
+            await controller.scope_service.unlink_note(capture.identity, link_id)
+            if not self._library_collection_capture_is_current(capture.identity):
+                return
+            await self._run_library_collections_capture_transition(
+                controller.refresh_selected_detail()
+            )
+        except CollectionsCaptureError as exc:
+            if not self._library_collection_capture_is_current(capture.identity):
+                return
+            self._notify_library_collections_warning(exc.reason)
+            return
+        if not self._library_collection_capture_is_current(capture.identity):
+            return
+        self._library_collections_action_status = "Linked Note removed."
+        self._library_collections_action_content = ""
+        self._refresh_library_collections_capture_reader()
+
+    async def _run_library_collection_capture_content_action(
+        self, action: str
+    ) -> None:
+        """Run one capability-gated result action for the loaded capture."""
+        controller = self._library_collections_capture_controller
+        capture = self._library_collection_loaded_capture()
+        if controller is None or capture is None:
+            return
+        identity = capture.identity
+        labels = {
+            "summarize": "Summary",
+            "listen": "Audio",
+            "save_offline_copy": "Offline copy",
+        }
+        label = labels[action]
+        self._library_collections_action_status = f"{label} in progress…"
+        self._library_collections_action_content = ""
+        self._refresh_library_collections_capture_reader()
+        try:
+            result = await getattr(controller.scope_service, action)(identity)
+        except CollectionsCaptureError as exc:
+            current = self._library_collection_loaded_capture()
+            if current is None or current.identity != identity:
+                return
+            self._library_collections_action_status = (
+                f"{label} failed: {exc.reason.replace('_', ' ')}."
+            )
+            self._notify_library_collections_warning(exc.reason)
+            self._refresh_library_collections_capture_reader()
+            return
+        current = self._library_collection_loaded_capture()
+        if current is None or current.identity != identity:
+            return
+        if action == "summarize":
+            self._library_collections_action_status = "Summary ready."
+            self._library_collections_action_content = result.text or ""
+        elif action == "listen":
+            self._library_collections_action_status = "Audio is ready."
+            self._library_collections_action_content = ""
+        else:
+            await self._run_library_collections_capture_transition(
+                controller.refresh_selected_detail()
+            )
+            if not self._library_collection_capture_is_current(identity):
+                return
+            self._library_collections_action_status = "Offline copy saved."
+            self._library_collections_action_content = ""
+        self._refresh_library_collections_capture_reader()
+
+    @on(Button.Pressed, "#library-collections-summarize")
+    async def summarize_library_collection_capture(
+        self, event: Button.Pressed
+    ) -> None:
+        event.stop()
+        await self._run_library_collection_capture_content_action("summarize")
+
+    @on(Button.Pressed, "#library-collections-listen")
+    async def listen_to_library_collection_capture(
+        self, event: Button.Pressed
+    ) -> None:
+        event.stop()
+        await self._run_library_collection_capture_content_action("listen")
+
+    @on(Button.Pressed, "#library-collections-save-offline")
+    async def save_library_collection_capture_offline(
+        self, event: Button.Pressed
+    ) -> None:
+        event.stop()
+        await self._run_library_collection_capture_content_action(
+            "save_offline_copy"
+        )
 
     @on(Button.Pressed, "#library-collections-mark-read")
     async def mark_library_collection_capture_read(

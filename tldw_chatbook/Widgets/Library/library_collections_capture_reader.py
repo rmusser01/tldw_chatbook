@@ -85,6 +85,22 @@ class LibraryCollectionsItemButton(Button):
         self.capture_identity = capture_identity
 
 
+class LibraryCollectionsHighlightButton(Button):
+    """Highlight action carrying its source-owned identifier."""
+
+    def __init__(self, *args: Any, highlight_id: str, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.highlight_id = highlight_id
+
+
+class LibraryCollectionsNoteLinkButton(Button):
+    """Linked-Note action carrying its source-owned link identifier."""
+
+    def __init__(self, *args: Any, link_id: str, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.link_id = link_id
+
+
 @dataclass(frozen=True)
 class CollectionsCaptureReaderPresentation:
     """Complete immutable render input for the three Collections panes."""
@@ -97,9 +113,22 @@ class CollectionsCaptureReaderPresentation:
     authority_label: str = "Local"
     mode: CollectionsReaderMode = "read"
     highlights: tuple[CaptureHighlight, ...] = ()
+    quick_capture_open: bool = False
+    quick_capture_url: str = ""
+    quick_capture_title: str = ""
+    quick_capture_tags: str = ""
+    quick_capture_note: str = ""
+    save_outcome_unknown: bool = False
+    confirming_save_retry: bool = False
+    quick_capture_saving: bool = False
+    filters_open: bool = False
     more_open: bool = False
     confirming_hard_delete: bool = False
     legacy_recovery_rows: int = 0
+    legacy_recovery_open: bool = False
+    legacy_recovery_lines: tuple[str, ...] = ()
+    action_status: str = ""
+    action_content: str = ""
 
     def capability(self, action: str) -> tuple[bool, str]:
         """Return enabled state and a truthful reason for one action."""
@@ -220,12 +249,116 @@ class LibraryCollectionsItemsPane(Vertical):
                 id="library-collections-filters",
                 compact=True,
             )
+        with Horizontal(classes="ds-toolbar", id="library-collections-sort-toolbar"):
             sort = state.requested_scope.sort if state.requested_scope else "saved_desc"
             yield Button(
                 f"Sort: {sort.replace('_', ' ')}",
                 id="library-collections-sort",
                 compact=True,
             )
+        if self.presentation.quick_capture_open:
+            with Vertical(id="library-collections-quick-capture-form"):
+                yield Input(
+                    value=self.presentation.quick_capture_url,
+                    placeholder="https://example.com/article",
+                    id="library-collections-capture-url",
+                )
+                yield Input(
+                    value=self.presentation.quick_capture_title,
+                    placeholder="Title (optional)",
+                    id="library-collections-capture-title",
+                )
+                yield Input(
+                    value=self.presentation.quick_capture_tags,
+                    placeholder="Tags, comma separated (optional)",
+                    id="library-collections-capture-tags",
+                )
+                yield TextArea(
+                    self.presentation.quick_capture_note,
+                    id="library-collections-capture-note",
+                )
+                if self.presentation.save_outcome_unknown:
+                    yield Static(
+                        "Save outcome unknown. Refresh before retrying.",
+                        id="library-collections-capture-unknown",
+                        markup=False,
+                    )
+                    yield Button(
+                        "Refresh capture list",
+                        id="library-collections-capture-refresh",
+                        compact=True,
+                        disabled=self.presentation.quick_capture_saving,
+                    )
+                if self.presentation.confirming_save_retry:
+                    yield Static(
+                        "Retrying against the current Server may reapply Saved status "
+                        "and clear Favorite on an existing canonical URL.",
+                        id="library-collections-capture-retry-warning",
+                        markup=False,
+                    )
+                with Horizontal(classes="ds-toolbar"):
+                    yield Button(
+                        (
+                            "Saving…"
+                            if self.presentation.quick_capture_saving
+                            else "Retry anyway"
+                            if self.presentation.confirming_save_retry
+                            else "Retry save…"
+                            if self.presentation.save_outcome_unknown
+                            else "Save capture"
+                        ),
+                        id=(
+                            "library-collections-capture-retry-confirm"
+                            if self.presentation.confirming_save_retry
+                            else "library-collections-capture-save"
+                        ),
+                        compact=True,
+                        disabled=self.presentation.quick_capture_saving,
+                    )
+                    yield Button(
+                        "Back" if self.presentation.confirming_save_retry else "Cancel",
+                        id=(
+                            "library-collections-capture-retry-back"
+                            if self.presentation.confirming_save_retry
+                            else "library-collections-capture-cancel"
+                        ),
+                        compact=True,
+                        disabled=self.presentation.quick_capture_saving,
+                    )
+        if self.presentation.filters_open:
+            request = state.requested_scope
+            with Vertical(id="library-collections-filters-form"):
+                yield Input(
+                    value=(request.domain or "") if request is not None else "",
+                    placeholder="Domain",
+                    id="library-collections-filter-domain",
+                )
+                yield Input(
+                    value=", ".join(request.tags) if request is not None else "",
+                    placeholder="Tags, comma separated",
+                    id="library-collections-filter-tags",
+                )
+                yield Input(
+                    value=(request.date_from or "") if request is not None else "",
+                    placeholder="From date (YYYY-MM-DD)",
+                    id="library-collections-filter-date-from",
+                )
+                yield Input(
+                    value=(request.date_to or "") if request is not None else "",
+                    placeholder="To date (YYYY-MM-DD)",
+                    id="library-collections-filter-date-to",
+                )
+                with Horizontal(classes="ds-toolbar"):
+                    yield Button(
+                        "Apply filters",
+                        id="library-collections-filters-apply",
+                        compact=True,
+                    )
+                    yield Button(
+                        "Clear",
+                        id="library-collections-filters-clear",
+                        compact=True,
+                    )
         yield Input(
             value=state.requested_scope.search if state.requested_scope else "",
             placeholder="Filter captures",
@@ -367,6 +500,24 @@ def _action_button(
     )
 
 
+def _open_original_button(
+    presentation: CollectionsCaptureReaderPresentation,
+) -> Button:
+    """Build the identity-gated Open Original action in either toolbar."""
+    enabled = presentation.state.identity_actions_enabled
+    return Button(
+        "Open Original",
+        id="library-collections-open-original",
+        compact=True,
+        disabled=not enabled,
+        tooltip=(
+            "Open the capture's original URL."
+            if enabled
+            else "Wait until the selected capture is loaded and current."
+        ),
+    )
+
+
 class LibraryCollectionsWorkPane(VerticalScroll):
     """Permanent reading-first Work region for one loaded capture."""
 
@@ -399,6 +550,19 @@ class LibraryCollectionsWorkPane(VerticalScroll):
                 markup=False,
             )
             yield Button("Retry", id="library-collections-reader-retry", compact=True)
+        if self.presentation.action_status:
+            yield Static(
+                self.presentation.action_status,
+                id="library-collections-action-status",
+                classes="destination-purpose",
+                markup=False,
+            )
+        if self.presentation.action_content:
+            yield Static(
+                self.presentation.action_content,
+                id="library-collections-action-content",
+                markup=False,
+            )
 
         resolved = state.loaded_detail
         if resolved is None:
@@ -408,6 +572,17 @@ class LibraryCollectionsWorkPane(VerticalScroll):
                 classes="destination-purpose",
                 markup=False,
             )
+            if self.presentation.legacy_recovery_rows:
+                supported, reason = self.presentation.capability("legacy_recovery")
+                yield Button(
+                    f"Legacy Collections data… ({self.presentation.legacy_recovery_rows})",
+                    id="library-collections-legacy-recovery",
+                    compact=True,
+                    disabled=not supported,
+                    tooltip=reason or "Inspect and export preserved legacy data.",
+                )
+            if self.presentation.legacy_recovery_open:
+                yield from self._compose_legacy_recovery()
             return
         capture = resolved.capture
         yield Static(
@@ -450,17 +625,11 @@ class LibraryCollectionsWorkPane(VerticalScroll):
                 "Move to Archive",
                 button_id="library-collections-archive",
             )
-            yield Button(
-                "Open Original",
-                id="library-collections-open-original",
-                compact=True,
-                disabled=not state.identity_actions_enabled,
-                tooltip=(
-                    "Open the capture's original URL."
-                    if state.identity_actions_enabled
-                    else "Wait until the selected capture is loaded and current."
-                ),
-            )
+        with Horizontal(
+            classes="ds-toolbar",
+            id="library-collections-secondary-toolbar",
+        ):
+            yield _open_original_button(self.presentation)
             yield Button(
                 "More",
                 id="library-collections-more",
@@ -566,9 +735,56 @@ class LibraryCollectionsWorkPane(VerticalScroll):
                 disabled=not legacy_supported,
                 tooltip=legacy_reason or "Inspect and export preserved legacy data.",
             )
+        if self.presentation.legacy_recovery_open:
+            yield from self._compose_legacy_recovery()
+
+    def _compose_legacy_recovery(self) -> ComposeResult:
+        """Render the bounded inspector and complete-export action."""
+        yield Static(
+            "Legacy Collections · read-only recovery",
+            id="library-collections-legacy-recovery-heading",
+            markup=False,
+        )
+        yield Static(
+            "\n".join(self.presentation.legacy_recovery_lines)
+            or "No legacy records are available.",
+            id="library-collections-legacy-recovery-content",
+            markup=False,
+        )
+        with Horizontal(classes="ds-toolbar"):
+            yield Button(
+                "Export complete JSON…",
+                id="library-collections-legacy-recovery-export",
+                compact=True,
+            )
+            yield Button(
+                "Close inspector",
+                id="library-collections-legacy-recovery-close",
+                compact=True,
+            )
 
     def _compose_highlights(self) -> ComposeResult:
         """Render active and detached capture-owned highlights."""
+        supported, reason = self.presentation.capability("highlights")
+        enabled = supported and self.presentation.state.identity_actions_enabled
+        yield TextArea(
+            "",
+            id="library-collections-highlight-quote",
+            disabled=not enabled,
+            tooltip=reason or "Quote to keep with this capture.",
+        )
+        yield Input(
+            placeholder="Highlight note (optional)",
+            id="library-collections-highlight-note",
+            disabled=not enabled,
+        )
+        yield Button(
+            library_disabled_action_label("Add highlight", not enabled),
+            id="library-collections-highlight-save",
+            compact=True,
+            disabled=not enabled,
+            tooltip=reason or "Save this highlight.",
+        )
         if not self.presentation.highlights:
             yield Static(
                 "No highlights for this capture.",
@@ -584,11 +800,25 @@ class LibraryCollectionsWorkPane(VerticalScroll):
                 id=f"library-collections-highlight-{_widget_id(highlight.highlight_id)}",
                 markup=False,
             )
+            yield LibraryCollectionsHighlightButton(
+                "Delete highlight",
+                id=f"library-collections-highlight-delete-{_widget_id(highlight.highlight_id)}",
+                classes="library-collections-highlight-delete",
+                compact=True,
+                disabled=not enabled,
+                highlight_id=highlight.highlight_id,
+            )
 
     def _compose_notes(self) -> ComposeResult:
         """Keep the capture note and Linked Notes visibly distinct."""
         resolved = self.presentation.state.loaded_detail
         assert resolved is not None
+        linked_enabled, linked_reason = self.presentation.capability("linked_notes")
+        linked_enabled = (
+            linked_enabled and self.presentation.state.identity_actions_enabled
+        )
+        if not self.presentation.state.identity_actions_enabled:
+            linked_reason = "Wait until the selected capture is loaded and current."
         yield Static("Capture note", id="library-collections-freeform-note-heading", markup=False)
         yield TextArea(
             resolved.capture.freeform_note or "",
@@ -597,6 +827,12 @@ class LibraryCollectionsWorkPane(VerticalScroll):
                 not self.presentation.capability("update")[0]
                 or not self.presentation.state.identity_actions_enabled
             ),
+        )
+        yield _action_button(
+            self.presentation,
+            "update",
+            "Save capture note",
+            button_id="library-collections-freeform-note-save",
         )
         yield Static(
             "Linked Notes",
@@ -609,7 +845,6 @@ class LibraryCollectionsWorkPane(VerticalScroll):
                 id="library-collections-linked-notes-empty",
                 markup=False,
             )
-            return
         for link, availability in resolved.note_links:
             status = (
                 "Available"
@@ -621,6 +856,27 @@ class LibraryCollectionsWorkPane(VerticalScroll):
                 id=f"library-collections-linked-note-{_widget_id(link.link_id)}",
                 markup=False,
             )
+            yield LibraryCollectionsNoteLinkButton(
+                "Unlink",
+                id=f"library-collections-linked-note-unlink-{_widget_id(link.link_id)}",
+                classes="library-collections-linked-note-unlink",
+                compact=True,
+                disabled=not linked_enabled,
+                link_id=link.link_id,
+            )
+        yield Input(
+            placeholder="Note ID",
+            id="library-collections-linked-note-id",
+            disabled=not linked_enabled,
+            tooltip=linked_reason or "Link a Note by its exact ID.",
+        )
+        yield Button(
+            library_disabled_action_label("Link Note", not linked_enabled),
+            id="library-collections-linked-note-save",
+            compact=True,
+            disabled=not linked_enabled,
+            tooltip=linked_reason or "Link this capture to the Note.",
+        )
 
     def _compose_info(self) -> ComposeResult:
         """Render capture metadata and external-reference provenance."""
@@ -659,7 +915,9 @@ class LibraryCollectionsWorkPane(VerticalScroll):
 __all__ = [
     "CollectionsCaptureReaderPresentation",
     "CollectionsReaderMode",
+    "LibraryCollectionsHighlightButton",
     "LibraryCollectionsItemsPane",
     "LibraryCollectionsScopeRows",
+    "LibraryCollectionsNoteLinkButton",
     "LibraryCollectionsWorkPane",
 ]

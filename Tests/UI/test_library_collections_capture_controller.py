@@ -460,3 +460,59 @@ async def test_unmount_invalidates_detail_and_extraction_completions() -> None:
 
     assert await extraction_pending is False
     assert extraction_controller.state.mounted is False
+
+
+@pytest.mark.asyncio
+async def test_retry_extraction_refreshes_the_loaded_detail() -> None:
+    scope = FakeCaptureScope()
+    request = CapturePageRequest(AUTHORITY_A.key)
+    scope.pages.append(_page(request, (1,), 1, revision="failed-page"))
+    scope.details[_identity(1)] = _resolved(
+        1,
+        processing_state="failed",
+        last_fetch_error="extract_failed",
+    )
+    controller = LibraryCollectionsCaptureController(scope)
+    controller.activate(AUTHORITY_A, object())
+    await controller.load_page(request)
+    await controller.load_selected_now()
+
+    def finish_retry() -> CaptureActionResult:
+        scope.details[_identity(1)] = _resolved(
+            1,
+            revision=2,
+            processing_state="ready",
+            last_fetch_error=None,
+        )
+        return CaptureActionResult(_identity(1), True)
+
+    scope.extraction = finish_retry
+    scope.pages.append(_page(request, (1,), 1, revision="ready-page"))
+
+    assert await controller.retry_extraction() is True
+    assert controller.state.loaded_detail is not None
+    assert controller.state.loaded_detail.capture.processing_state == "ready"
+    assert controller.state.loaded_detail.capture.revision == 2
+
+
+@pytest.mark.asyncio
+async def test_reselecting_loaded_capture_refreshes_background_extraction_state() -> None:
+    scope = FakeCaptureScope()
+    request = CapturePageRequest(AUTHORITY_A.key)
+    scope.pages.append(_page(request, (1,), 1))
+    scope.details[_identity(1)] = _resolved(1, processing_state="processing")
+    controller = LibraryCollectionsCaptureController(scope, detail_settle_seconds=0)
+    controller.activate(AUTHORITY_A, object())
+    await controller.load_page(request)
+    await controller.load_selected_now()
+    scope.details[_identity(1)] = _resolved(
+        1,
+        revision=2,
+        processing_state="failed",
+        last_fetch_error="unknown",
+    )
+
+    assert await controller.select_item(_identity(1)) is True
+    assert controller.state.loaded_detail is not None
+    assert controller.state.loaded_detail.capture.processing_state == "failed"
+    assert controller.state.loaded_detail.capture.revision == 2

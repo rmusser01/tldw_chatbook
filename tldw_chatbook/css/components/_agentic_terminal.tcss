@@ -1261,8 +1261,10 @@ ConsoleRunLogModal {
 }
 
 #library-collections-items-toolbar > Button,
+#library-collections-sort-toolbar > Button,
 #library-collections-page-toolbar > Button,
 #library-collections-primary-toolbar > Button,
+#library-collections-secondary-toolbar > Button,
 #library-collections-mode-toolbar > Button,
 #library-collections-archive-receipt > Button {
     width: auto;
@@ -1282,6 +1284,63 @@ ConsoleRunLogModal {
 }
 
 #library-collections-filter:focus {
+    border: tall $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
+}
+
+#library-collections-quick-capture-form,
+#library-collections-filters-form {
+    width: 100%;
+    height: auto;
+    margin: 0 0 1 0;
+    padding: 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+}
+
+#library-collections-capture-url,
+#library-collections-capture-title,
+#library-collections-capture-tags,
+#library-collections-filter-domain,
+#library-collections-filter-tags,
+#library-collections-filter-date-from,
+#library-collections-filter-date-to,
+#library-collections-highlight-quote,
+#library-collections-highlight-note,
+#library-collections-linked-note-id {
+    width: 100%;
+    min-width: 0;
+    margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-panel;
+}
+
+#library-collections-highlight-quote {
+    height: 5;
+    min-height: 3;
+}
+
+#library-collections-capture-note {
+    width: 100%;
+    min-width: 0;
+    height: 5;
+    min-height: 3;
+    margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-panel;
+}
+
+#library-collections-capture-url:focus,
+#library-collections-capture-title:focus,
+#library-collections-capture-tags:focus,
+#library-collections-capture-note:focus,
+#library-collections-filter-domain:focus,
+#library-collections-filter-tags:focus,
+#library-collections-filter-date-from:focus,
+#library-collections-filter-date-to:focus,
+#library-collections-highlight-quote:focus,
+#library-collections-highlight-note:focus,
+#library-collections-linked-note-id:focus {
     border: tall $ds-input-focus-accent;
     background: $ds-input-focus-bg;
 }
@@ -1395,9 +1454,11 @@ ConsoleRunLogModal {
 }
 
 #library-collections-primary-toolbar > Button:focus,
+#library-collections-secondary-toolbar > Button:focus,
 #library-collections-mode-toolbar > Button:focus,
 #library-collections-page-toolbar > Button:focus,
 #library-collections-items-toolbar > Button:focus,
+#library-collections-sort-toolbar > Button:focus,
 #library-collections-archive-receipt > Button:focus {
     background: $ds-input-focus-bg;
     color: $ds-action-focus;
@@ -1410,7 +1471,21 @@ ConsoleRunLogModal {
 #library-collections-save-offline,
 #library-collections-retry-extraction,
 #library-collections-hard-delete,
-#library-collections-legacy-recovery {
+#library-collections-legacy-recovery,
+#library-collections-capture-save,
+#library-collections-capture-cancel,
+#library-collections-capture-refresh,
+#library-collections-capture-retry-confirm,
+#library-collections-capture-retry-back,
+#library-collections-filters-apply,
+#library-collections-filters-clear,
+#library-collections-highlight-save,
+#library-collections-freeform-note-save,
+#library-collections-linked-note-save,
+#library-collections-legacy-recovery-export,
+#library-collections-legacy-recovery-close,
+.library-collections-highlight-delete,
+.library-collections-linked-note-unlink {
     width: auto;
     min-width: 0;
     height: 1;
@@ -1418,6 +1493,68 @@ ConsoleRunLogModal {
     margin: 0 1 0 0;
     padding: 0 1;
     border: none;
+}
+
+#library-collections-capture-save:focus,
+#library-collections-capture-cancel:focus,
+#library-collections-capture-refresh:focus,
+#library-collections-capture-retry-confirm:focus,
+#library-collections-capture-retry-back:focus,
+#library-collections-filters-apply:focus,
+#library-collections-filters-clear:focus,
+#library-collections-highlight-save:focus,
+#library-collections-freeform-note-save:focus,
+#library-collections-linked-note-save:focus,
+#library-collections-legacy-recovery-export:focus,
+#library-collections-legacy-recovery-close:focus,
+.library-collections-highlight-delete:focus,
+.library-collections-linked-note-unlink:focus {
+    background: $ds-input-focus-bg;
+    color: $ds-action-focus;
+    text-style: bold;
+    outline: none;
+}
+
+#library-collections-action-status,
+#library-collections-action-content,
+#library-collections-capture-unknown,
+#library-collections-capture-retry-warning,
+#library-collections-legacy-recovery-heading,
+#library-collections-legacy-recovery-content,
+.library-collections-highlight-entry,
+.library-collections-linked-note-entry {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+}
+
+#library-collections-action-status,
+#library-collections-legacy-recovery-heading {
+    margin-top: 1;
+    text-style: bold;
+}
+
+#library-collections-capture-unknown,
+#library-collections-capture-retry-warning {
+    margin: 0 0 1 0;
+    color: $ds-status-warning;
+    text-style: bold;
+}
+
+#library-collections-action-content,
+#library-collections-legacy-recovery-content {
+    margin: 0 0 1 0;
+    color: $ds-text-muted;
+}
+
+#library-collections-legacy-recovery-inspector {
+    width: 100%;
+    height: auto;
+    margin-top: 1;
+    padding: 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
 }
 
 #library-collections-hard-delete-copy {

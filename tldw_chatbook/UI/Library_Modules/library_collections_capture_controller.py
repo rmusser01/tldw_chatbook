@@ -370,8 +370,7 @@ class LibraryCollectionsCaptureController:
         self._validate_selectable(identity)
         fence = self._begin_detail(identity)
         if self._loaded_identity() == identity:
-            self.state = replace(self.state, detail_loading=False)
-            return True
+            return await self._load_detail(identity, fence)
         await self._sleep(self.detail_settle_seconds)
         if not self._is_current("detail", fence):
             return False
@@ -387,6 +386,15 @@ class LibraryCollectionsCaptureController:
         if self._loaded_identity() == identity:
             self.state = replace(self.state, detail_loading=False)
             return True
+        return await self._load_detail(identity, fence)
+
+    async def refresh_selected_detail(self) -> bool:
+        """Reload the selected capture even when that identity is already shown."""
+        identity = self.state.selected_identity
+        if identity is None:
+            raise CollectionsCaptureError("capture_selection_unavailable")
+        self._validate_selectable(identity)
+        fence = self._begin_detail(identity)
         return await self._load_detail(identity, fence)
 
     def _begin_detail(self, identity: CaptureIdentity) -> CaptureRequestFence:
@@ -653,6 +661,11 @@ class LibraryCollectionsCaptureController:
             extraction_error=None,
         )
         await self._refresh_after_mutation()
+        if (
+            self._is_current("extraction", fence)
+            and self.state.selected_identity == identity
+        ):
+            await self.refresh_selected_detail()
         return True
 
     def _visible_receipts(

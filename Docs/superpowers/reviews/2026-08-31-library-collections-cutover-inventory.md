@@ -4,11 +4,13 @@
 
 **ADR:** `backlog/decisions/107-collections-capture-authority-and-legacy-boundary.md`
 
-**Checkpoint:** Task 14 cutover implemented; isolated live verification remains
+**Checkpoint:** Task 14 cutover implemented; Task 15 Local verification passed and enabled-Server
+verification is blocked by the unreachable configured deployment
 
 This inventory records the completed generic-container Collections cutover. No old operation is
 redirected to a capture operation: captures use capture-specific identities, contracts, services,
-and UI ownership. The remaining work is the isolated Local/Server live walkthrough in Task 15.
+and UI ownership. The Local half of Task 15 is complete. The enabled-Server half remains required
+and was stopped at the docs-info gate without a bypass or mutation.
 
 | Surface | Current symbol / selector | Cutover result | Verification |
 | --- | --- | --- | --- |
@@ -71,3 +73,22 @@ The following remain outside this cutover and must not be renamed or removed by 
   to Task 15.
 - The combined focused capture, cutover, policy, MCP, and live-closeout gate passed 945 tests; the
   pre-import payload ratchet also passed at 487/500 modules and 376,166/380,000 LOC.
+
+## Task 15 live-verification checkpoint
+
+- The isolated Local production-shaped walkthrough passed with 45 captures at 160×50, 120×35,
+  100×30, and 80×24. It covers exact 20/20/5 paging, every optional-pane posture, reclaimed Items
+  width, resize restoration, F6 traversal, Quick Capture commit-before-extract, controlled failure
+  and Retry, all four Work modes, archive/Undo, offline hard-delete cleanup, and complete 45-row /
+  45-membership legacy export.
+- The focused controller/reader/live gate passes 29 tests, the complete capture feature/live gate
+  passes 206, and the production-shaped cross-reader gate passes 490. Details are recorded in
+  `2026-08-31-library-collections-live-verification.md`.
+- Production-shaped containment checks found and corrected compact Items and Work toolbar overflow;
+  they now verify every visible descendant remains inside its owning pane.
+- Unknown Server-save behavior is mounted-test verified without contacting Server: the draft is
+  retained, refresh is offered first, retry is not automatic, and the explicit retry warning
+  describes possible Saved/Favorite default reapplication.
+- The configured Server profile could not reach docs-info (`APIConnectionError`), so exact
+  `hasReadingSnapshotPagesV1: true` was not attested. The Server walkthrough did not run and no
+  Server data was mutated. TASK-18919 remains In Progress.
