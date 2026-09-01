@@ -1102,6 +1102,68 @@ def test_upsert_definitions_skips_item_missing_id(tmp_path):
     assert db.list_automation_definitions(owner_id="server:42") == []
 
 
+# ----------------------------------------------------------------------
+# adopt_server_definition_identity (schedules-handoff PR-4, task 3)
+# ----------------------------------------------------------------------
+
+
+def test_adopt_server_definition_identity_sets_server_id_and_fields(tmp_path):
+    db = _mk_db(tmp_path)
+    local_id = db.create_automation_definition(
+        "server:42", "recurring_question", "Draft name"
+    )
+
+    adopted = db.adopt_server_definition_identity(
+        local_id,
+        {
+            "id": "srv-def-9",
+            "name": "Server-confirmed name",
+            "lifecycle": "configured",
+            "schedule": {"kind": "cron", "expression": "0 9 * * 1-5"},
+        },
+    )
+
+    assert adopted is True
+    row = db.get_automation_definition(local_id)
+    assert row["server_id"] == "srv-def-9"
+    assert row["name"] == "Server-confirmed name"
+    assert row["schedule"] == {"kind": "cron", "expression": "0 9 * * 1-5"}
+
+
+def test_adopt_server_definition_identity_never_clears_local_transfer_state(tmp_path):
+    """Same §6 parked-finding rule as the pull-mirror upsert."""
+    db = _mk_db(tmp_path)
+    local_id = db.create_automation_definition(
+        "server:42", "recurring_question", "Draft"
+    )
+    db.update_automation_definition(local_id, transfer_state="pending_pull")
+
+    db.adopt_server_definition_identity(
+        local_id, {"id": "srv-def-1", "transfer_state": "server_side_value"}
+    )
+
+    row = db.get_automation_definition(local_id)
+    assert row["transfer_state"] == "pending_pull"
+
+
+def test_adopt_server_definition_identity_missing_server_id_returns_false(tmp_path):
+    db = _mk_db(tmp_path)
+    local_id = db.create_automation_definition(
+        "server:42", "recurring_question", "Draft"
+    )
+    assert db.adopt_server_definition_identity(local_id, {"name": "No id"}) is False
+    row = db.get_automation_definition(local_id)
+    assert row["server_id"] is None
+
+
+def test_adopt_server_definition_identity_unknown_local_id_returns_false(tmp_path):
+    db = _mk_db(tmp_path)
+    assert (
+        db.adopt_server_definition_identity("does-not-exist", {"id": "srv-def-1"})
+        is False
+    )
+
+
 def _result_item(**overrides):
     item = {
         "id": "srv-res-1",

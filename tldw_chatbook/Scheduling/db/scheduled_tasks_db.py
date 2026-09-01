@@ -1730,6 +1730,54 @@ class ScheduledTasksDB(BaseDB):
                 serialized[key] = value
         return serialized
 
+    def adopt_server_definition_identity(
+        self, local_id: str, server_item: dict[str, Any]
+    ) -> bool:
+        """Adopt a server identity onto a local row after a create/update push.
+
+        Called by `SyncEngine`'s definition push replay (Task 3) right
+        after a `create`/`update` mutation succeeds: sets `server_id` and
+        applies every server-wins field from `server_item` (the create/
+        update response echo) in ONE transaction, same field set and
+        `transfer_state` exclusion as `upsert_automation_definitions_from_
+        server`'s existing-row branch -- but keyed by the local row
+        directly (``id = local_id``) since the caller already knows which
+        local row this mutation came from, rather than matching by
+        ``(owner_id, server_id)``.
+
+        Args:
+            local_id: The local definition row that pushed the mutation.
+            server_item: The definition row echoed back by the server's
+                create/update response.
+
+        Returns:
+            ``True`` if a local row was found and updated, ``False``
+            otherwise (e.g. the row was deleted locally in the meantime).
+        """
+        server_id = server_item.get("id")
+        if not server_id:
+            return False
+
+        fields: dict[str, Any] = {
+            key: server_item[key]
+            for key in self._AUTOMATION_DEFINITION_COLUMNS
+            if key in server_item and key not in {"id", "server_id", "owner_id"}
+        }
+        # §6 parked finding, same as the pull-mirror upsert: transfer_state
+        # is a local-only marker a server echo must never overwrite.
+        fields.pop("transfer_state", None)
+        fields["server_id"] = server_id
+
+        serialized = self._serialize_definition_fields(fields)
+        self._validate_sql_identifiers(list(serialized.keys()))
+        updates = ", ".join(f"{key} = ?" for key in serialized)
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                f"UPDATE automation_definitions SET {updates} WHERE id = ?",
+                [*serialized.values(), local_id],
+            )
+            return cursor.rowcount > 0
+
     def upsert_automation_results_from_server(
         self,
         owner_id: str,
