@@ -61,6 +61,11 @@ LATENESS_CAUSE_STALLED = "stalled"
 class SchedulerLoop:
     """Polls the scheduled-task database and dispatches due tasks."""
 
+    #: TASK-26026: task types that get a durable per-dispatch run ledger.
+    #: Watchlists already have their own (local_watchlist_runs); these two
+    #: are the handlers that lacked one.
+    _LEDGER_TASK_TYPES = frozenset({"reminder", "briefing_job"})
+
     def __init__(
         self,
         db: Any,
@@ -293,6 +298,13 @@ class SchedulerLoop:
         try:
             await self._reload_queue()
             self.report_configuration()
+            # TASK-26026: before dispatching anything, fail any run rows left
+            # `running` by a prior process exit (AC#4) and prune history to
+            # its retention bound (AC#3). Runs before the poll loop starts,
+            # so no live run of THIS process can be wrongly failed -- no row
+            # boundary needed (unlike the watchlist sweep, which runs
+            # alongside live work). Never lets maintenance break startup.
+            await self._reconcile_and_prune_run_ledger()
             while self.running:
                 reload_event = self._reload_event
                 if reload_event is None:
@@ -382,6 +394,22 @@ class SchedulerLoop:
             ),
         )
 
+    async def _reconcile_and_prune_run_ledger(self) -> None:
+        """Startup maintenance for the TASK-26026 run ledger. Never raises."""
+        if not hasattr(self.db, "fail_interrupted_task_runs"):
+            return
+        try:
+            failed = await asyncio.to_thread(
+                self.db.fail_interrupted_task_runs, now=self.clock()
+            )
+            if failed:
+                logger.info(
+                    "run-ledger reconcile: failed {n} interrupted run(s)", n=failed
+                )
+            await asyncio.to_thread(self.db.prune_task_runs)
+        except Exception:  # noqa: BLE001 -- maintenance never breaks startup
+            logger.opt(exception=True).debug("run-ledger maintenance failed")
+
     async def _dispatch_due(self, now: datetime) -> None:
         """Dispatch everything due at ``now`` (the tick's frozen clock)."""
         due = self.queue.pop_due(now)
@@ -444,6 +472,10 @@ class SchedulerLoop:
         task_id = task.get("id")
         if scheduled:
             self._report_lateness_cause(task, task_type, now)
+        # TASK-26026: open a durable run row for ledgered types (excluding
+        # server-scoped rows, whose history is server-authoritative per
+        # ADR-077 -- AC#6). Never lets a ledger write break dispatch.
+        run_id = await self._begin_run_ledger(task, task_type, task_id, now)
         timeout = self._effective_timeout_seconds(task)
         timed_out = False
         try:
@@ -464,11 +496,14 @@ class SchedulerLoop:
                 task_id=task_id,
                 timeout=timeout,
             )
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "{task_type} handler failed for task {task_id}",
                 task_type=task_type,
                 task_id=task_id,
+            )
+            await self._finish_run_ledger(
+                run_id, "failed", now, error=f"{type(exc).__name__}: {exc}"
             )
             if task_type == "reminder" and task_id:
                 await asyncio.to_thread(
@@ -480,6 +515,12 @@ class SchedulerLoop:
                 )
             return False
 
+        await self._finish_run_ledger(
+            run_id,
+            "timed_out" if timed_out else "completed",
+            now,
+            error="handler cancelled at execution deadline" if timed_out else None,
+        )
         if task_type == "reminder" and task_id:
             await asyncio.to_thread(
                 self.db.mark_reminder_dispatched,
@@ -490,6 +531,38 @@ class SchedulerLoop:
                 timed_out=timed_out,
             )
         return not timed_out
+
+    async def _begin_run_ledger(
+        self, task: dict[str, Any], task_type: str, task_id: Any, now: datetime
+    ) -> int | None:
+        """Open a run-ledger row for a ledgered, non-server-scoped task."""
+        if (
+            task_type not in self._LEDGER_TASK_TYPES
+            or not task_id
+            or is_server_scoped_owner(task.get("owner_id"))
+            or not hasattr(self.db, "begin_task_run")
+        ):
+            return None
+        try:
+            return await asyncio.to_thread(
+                self.db.begin_task_run, str(task_id), task_type, now
+            )
+        except Exception:  # noqa: BLE001 -- the ledger never breaks dispatch
+            logger.opt(exception=True).debug("run-ledger begin failed")
+            return None
+
+    async def _finish_run_ledger(
+        self, run_id: int | None, status: str, now: datetime, *, error: str | None
+    ) -> None:
+        """Close a run-ledger row with its terminal status."""
+        if run_id is None or not hasattr(self.db, "finish_task_run"):
+            return
+        try:
+            await asyncio.to_thread(
+                self.db.finish_task_run, run_id, status, now, error=error
+            )
+        except Exception:  # noqa: BLE001 -- the ledger never breaks dispatch
+            logger.opt(exception=True).debug("run-ledger finish failed")
 
     def _report_lateness_cause(
         self, task: dict[str, Any], task_type: str, now: datetime

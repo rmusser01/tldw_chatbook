@@ -36,7 +36,7 @@ def test_get_scheduled_tasks_db_path_returns_path():
 def test_get_schema_version(db: ScheduledTasksDB) -> None:
     # v2 added missed_count (task-18937); v3 adds timeout_seconds
     # (task-18939).
-    assert db.get_schema_version() == 3
+    assert db.get_schema_version() == 4
 
 
 def test_create_and_get_reminder_task(db: ScheduledTasksDB) -> None:

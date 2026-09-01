@@ -549,6 +549,22 @@ class SchedulesWorkbench(BaseAppScreen):
         """Update the detail pane when the user highlights a task row."""
         self._update_detail_for_index(event.cursor_row)
 
+    def _run_history_for(self, task_id) -> list:
+        """TASK-26026: the selected task's durable run history, newest first.
+
+        Fail-safe: a missing service/method or a read error yields an empty
+        history rather than breaking the detail pane.
+        """
+        service = self._scheduling_service
+        db = getattr(service, "db", None)
+        reader = getattr(db, "list_task_runs", None)
+        if not callable(reader):
+            return []
+        try:
+            return list(reader(str(task_id), limit=8))
+        except Exception:  # noqa: BLE001 -- history read never breaks the pane
+            return []
+
     def _update_detail_for_index(self, index: int) -> None:
         """Render task details in the detail and inspector panes."""
         if not (0 <= index < len(self._visible_tasks)):
@@ -561,7 +577,9 @@ class SchedulesWorkbench(BaseAppScreen):
 
         task = self._visible_tasks[index]
         self._selected_task_id = task.id
-        self.query_one("#scheduling-task-detail", TaskDetail).set_task(task)
+        self.query_one("#scheduling-task-detail", TaskDetail).set_task(
+            task, run_history=self._run_history_for(task.id)
+        )
         self.query_one("#scheduling-task-inspector", TaskInspector).set_task(task)
 
     async def _refresh_console_context(self) -> None:

@@ -26,7 +26,7 @@ from tldw_chatbook.DB.sql_validation import validate_identifier
 class ScheduledTasksDB(BaseDB):
     """Database operations for scheduled tasks and reminders."""
 
-    _CURRENT_SCHEMA_VERSION = 3
+    _CURRENT_SCHEMA_VERSION = 4
 
     _REMINDER_TASK_COLUMNS = {
         "id",
@@ -191,10 +191,14 @@ class ScheduledTasksDB(BaseDB):
         from tldw_chatbook.Scheduling.db.migrations.v2_to_v3 import (
             migrate as migrate_v2_to_v3,
         )
+        from tldw_chatbook.Scheduling.db.migrations.v3_to_v4 import (
+            migrate as migrate_v3_to_v4,
+        )
 
         migrate_v0_to_v1(self)
         migrate_v1_to_v2(self)
         migrate_v2_to_v3(self)
+        migrate_v3_to_v4(self)
 
     def get_schema_version(self) -> int:
         """Return the currently recorded schema version."""
@@ -768,6 +772,119 @@ class ScheduledTasksDB(BaseDB):
             return self._rows_to_dicts(
                 cursor.fetchall(), json_fields=self._REMINDER_JSON_FIELDS
             )
+
+    # -- TASK-26026: durable per-dispatch run ledger --------------------
+
+    #: Retention default -- rows kept per task before pruning. A documented
+    #: bound so the ledger cannot grow without limit (AC#3).
+    DEFAULT_RUN_HISTORY_PER_TASK = 50
+
+    #: The non-terminal status a reconcile sweep fails on next start (AC#4).
+    _RUNNING_RUN_STATUS = "running"
+
+    def begin_task_run(
+        self, task_id: str, task_type: str, started_at: datetime
+    ) -> int:
+        """Record the start of one dispatch; returns the run row id.
+
+        The row is left in ``running`` until ``finish_task_run`` writes a
+        terminal status -- an app exit mid-dispatch therefore leaves a
+        ``running`` row that startup reconciliation fails (AC#4).
+        """
+        now_iso = self._to_utc_iso(started_at)
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "INSERT INTO scheduled_task_runs "
+                "(task_id, task_type, status, started_at, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    str(task_id),
+                    str(task_type),
+                    self._RUNNING_RUN_STATUS,
+                    now_iso,
+                    now_iso,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def finish_task_run(
+        self,
+        run_id: int,
+        status: str,
+        finished_at: datetime,
+        *,
+        error: Optional[str] = None,
+    ) -> None:
+        """Write a run's terminal status/finish/error."""
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE scheduled_task_runs "
+                "SET status = ?, finished_at = ?, error_msg = ? "
+                "WHERE id = ?",
+                (
+                    str(status),
+                    self._to_utc_iso(finished_at),
+                    (str(error)[:1000] if error is not None else None),
+                    int(run_id),
+                ),
+            )
+
+    def list_task_runs(
+        self, task_id: str, *, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """Return a task's run history, newest first (AC#2)."""
+        with closing(self._get_connection()) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM scheduled_task_runs WHERE task_id = ? "
+                "ORDER BY id DESC LIMIT ?",
+                (str(task_id), int(limit)),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def prune_task_runs(
+        self, *, keep_per_task: int = DEFAULT_RUN_HISTORY_PER_TASK
+    ) -> int:
+        """Delete all but the newest ``keep_per_task`` runs per task (AC#3).
+
+        Returns how many rows were removed.
+        """
+        keep = max(0, int(keep_per_task))
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "DELETE FROM scheduled_task_runs WHERE id IN ("
+                "  SELECT id FROM ("
+                "    SELECT id, ROW_NUMBER() OVER ("
+                "      PARTITION BY task_id ORDER BY id DESC"
+                "    ) AS rn FROM scheduled_task_runs"
+                "  ) WHERE rn > ?"
+                ")",
+                (keep,),
+            )
+            return int(cursor.rowcount)
+
+    def fail_interrupted_task_runs(self, *, now: datetime) -> int:
+        """Fail every ``running`` row on startup (AC#4).
+
+        An unfinished run means the app exited mid-dispatch; a terminal
+        ``failed`` with a finish time is more honest than a row stuck
+        ``running`` forever. Finished history is untouched.
+        """
+        now_iso = self._to_utc_iso(now)
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE scheduled_task_runs "
+                "SET status = 'failed', "
+                "    finished_at = COALESCE(finished_at, ?), "
+                "    error_msg = COALESCE(error_msg, ?) "
+                "WHERE status = ?",
+                (
+                    now_iso,
+                    "interrupted by application exit",
+                    self._RUNNING_RUN_STATUS,
+                ),
+            )
+            return int(cursor.rowcount)
 
     def mark_reminder_dispatched(
         self,

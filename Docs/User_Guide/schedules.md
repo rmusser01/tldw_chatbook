@@ -56,6 +56,17 @@ interval, so a deliberately long interval is not mistaken for a stall. The
 signal is durable (a small heartbeat file), so a stalled or dead loop is
 distinguishable from an idle one even across a restart.
 
+## Run history
+
+The **Task Detail** pane now shows a durable **Recent runs** list for
+reminders and briefings — not just the latest outcome. Each dispatch
+records its own row (start time, status, and any error), so run N-1 is
+recoverable rather than overwritten. History is capped per task (the newest
+50 runs are kept), a run interrupted by an app exit is reconciled to
+*failed* on next start rather than left hanging, and server-scoped tasks
+keep their history server-authoritative (per ADR-077) rather than
+duplicating it locally. The existing missed-fire accounting is unchanged.
+
 ## Creating a scheduled task
 
 Press **c** to open the create form. The form scrolls when the terminal

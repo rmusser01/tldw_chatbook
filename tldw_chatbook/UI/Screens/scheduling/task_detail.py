@@ -186,6 +186,25 @@ def _format_last_run(task: ReminderTask | ScheduledTask | None) -> str:
     return f"{task.last_run_at.strftime('%Y-%m-%d %H:%M')} {_format_timezone(task.last_run_at)}"
 
 
+def format_run_history(runs) -> str:
+    """TASK-26026: a compact multi-line run history, newest first.
+
+    ``runs`` is the ``list_task_runs`` shape (dicts with status/started_at/
+    error_msg). Empty/None reads as "No runs recorded yet" -- distinct from
+    a task that has a last_status but no ledger rows (a pre-ledger task).
+    """
+    if not runs:
+        return "No runs recorded yet"
+    lines = []
+    for run in runs[:8]:
+        started = str(run.get("started_at") or "?")[:16].replace("T", " ")
+        status = str(run.get("status") or "?")
+        error = run.get("error_msg")
+        suffix = f" — {str(error)[:80]}" if error else ""
+        lines.append(f"{started}  {status}{suffix}")
+    return "\n".join(lines)
+
+
 def _humanize_cron(cron: str | None, timezone: str | None = None) -> str:
     """Summarize a cron expression in plain English."""
     if not cron:
@@ -461,6 +480,16 @@ class TaskDetail(Vertical):
                 id="scheduling-task-detail-missed",
                 classes="scheduling-detail-missed",
             )
+            # TASK-26026: durable per-dispatch run history -- the whole
+            # point is that run N-1 is recoverable, not just the latest.
+            yield Static(
+                "Recent runs:", classes="scheduling-detail-label"
+            )
+            yield Static(
+                "No runs recorded yet",
+                id="scheduling-task-detail-run-history",
+                classes="scheduling-detail-value",
+            )
             # task-23106: rows managed by other systems say so, and where
             # to edit them, instead of silently hiding the action row.
             yield Static(
@@ -576,7 +605,11 @@ class TaskDetail(Vertical):
             self.post_message(DeleteTaskRequested(self._current_task))
 
     def set_task(
-        self, task: ReminderTask | ScheduledTask | None, *, queue_empty: bool = False
+        self,
+        task: ReminderTask | ScheduledTask | None,
+        *,
+        queue_empty: bool = False,
+        run_history=None,
     ) -> None:
         """Update the detail view for the given task (or clear it)."""
         self._current_task = task
@@ -657,6 +690,9 @@ class TaskDetail(Vertical):
         )
         self._update_static("scheduling-task-detail-next-run", _format_next_run(task))
         self._update_missed_notice(task)
+        self._update_static(
+            "scheduling-task-detail-run-history", format_run_history(run_history)
+        )
 
         status = _task_status(task)
         badge = self.query_one("#scheduling-task-status-badge", Static)

@@ -44,12 +44,13 @@ def _table_names(conn: sqlite3.Connection) -> set[str]:
 
 def test_migration_v0_to_v1(tmp_path):
     # A fresh ScheduledTasksDB runs the full chain: v0 -> v1 -> v2 -> v3
-    # (v2 = missed_count, task-18937; v3 = timeout_seconds, task-18939).
-    # The individual hops are covered in test_missed_fire.py and
-    # test_handler_timeout.py; what this pins is that a fresh database
-    # reaches the current version end-to-end.
+    # -> v4 (v2 = missed_count, task-18937; v3 = timeout_seconds,
+    # task-18939; v4 = scheduled_task_runs ledger, task-26026). The
+    # individual hops are covered in test_missed_fire.py,
+    # test_handler_timeout.py and test_task_run_ledger.py; what this pins
+    # is that a fresh database reaches the current version end-to-end.
     db = ScheduledTasksDB(tmp_path / "test.db")
-    assert db.get_schema_version() == 3
+    assert db.get_schema_version() == 4
 
 
 def test_migration_v0_to_v1_directly(tmp_path):
@@ -67,7 +68,7 @@ def test_migration_v0_to_v1_directly(tmp_path):
 
 def test_migration_v0_to_v1_to_v0_rollback(tmp_path):
     db = ScheduledTasksDB(tmp_path / "test.db")
-    assert db.get_schema_version() == 3
+    assert db.get_schema_version() == 4
 
     v0_to_v1.rollback(db)
 
