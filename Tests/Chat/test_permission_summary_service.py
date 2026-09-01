@@ -62,6 +62,10 @@ def test_never_raises_on_junk_config():
 
 
 def test_explicit_api_key_and_system_prompt_override(monkeypatch):
+    # Qodo review #2: an env/config-resolved credential outranks the
+    # section's explicit key (env-before-config); the explicit key only
+    # applies when no resolved credential exists (see the combined test
+    # below for activation).
     _ready(monkeypatch)
     out = svc.resolve_permission_summary(
         _config(
@@ -73,7 +77,7 @@ def test_explicit_api_key_and_system_prompt_override(monkeypatch):
             }
         )
     )
-    assert out.api_key == "explicit"
+    assert out.api_key == "k"
     assert out.system_prompt == "custom"
 
 
@@ -108,6 +112,67 @@ def test_tail_keeps_user_assistant_text_only_and_budgeted():
     assert [m["role"] for m in tail] == ["assistant", "user"]
     assert tail[-1]["content"] == "newest"
     assert sum(len(m["content"]) for m in tail) <= 100 + len("middle")
+
+
+def test_tail_hard_caps_an_oversized_newest_message():
+    # Qodo review #5: one giant message must never egress whole -- the
+    # per-message clip bounds the tail absolutely.
+    tail = build_messages_tail(
+        [{"role": "user", "content": "A" * 500 + "B" * 500}], 100
+    )
+    assert len(tail) == 1
+    content = tail[0]["content"]
+    assert len(content) == 100
+    assert content.startswith("\N{HORIZONTAL ELLIPSIS}") and content.endswith("B")
+
+
+def test_prompt_tool_section_is_aggregate_capped():
+    # Qodo review #8: a large batch cannot egress an unbounded tool block.
+    rows = [
+        {
+            "tool_name": f"tool_{i}",
+            "server_label": "Local",
+            "description": "D" * 400,
+            "arguments_summary": '{"x":"' + "a" * 100 + '"}',
+        }
+        for i in range(100)
+    ]
+    msgs = build_summary_messages([], rows, "SYS")
+    body = msgs[1]["content"]
+    tools_block = body.split("Tool calls awaiting approval:\n", 1)[1]
+    tools_block = tools_block.rsplit("\n\nSummarize", 1)[0]
+    assert len(tools_block) <= 6000 + 200  # cap + one trailing omission note
+    assert "omitted for brevity" in tools_block
+
+
+def test_explicit_key_activates_and_resolved_key_wins(monkeypatch):
+    # Qodo review #9: a feature-specific key alone must activate; Qodo
+    # review #2: an env/config-resolved key still outranks the section key.
+    monkeypatch.setattr(
+        svc,
+        "get_provider_readiness",
+        lambda provider, config, environ=None: SimpleNamespace(
+            ready=False, api_key=None
+        ),
+    )
+    out = svc.resolve_permission_summary(
+        _config({"mode": "always", "provider": "OpenAI", "api_key": "explicit"})
+    )
+    assert out.active is True
+    assert out.api_key == "explicit"
+
+    monkeypatch.setattr(
+        svc,
+        "get_provider_readiness",
+        lambda provider, config, environ=None: SimpleNamespace(
+            ready=True, api_key="env-resolved"
+        ),
+    )
+    out = svc.resolve_permission_summary(
+        _config({"mode": "always", "provider": "OpenAI", "api_key": "explicit"})
+    )
+    assert out.active is True
+    assert out.api_key == "env-resolved"
 
 
 def test_pending_calls_info_redacts_arguments():
@@ -174,3 +239,15 @@ def test_settings_payload_validates_mode():
         "mode": "fallback", "provider": "OpenAI", "model": "gpt-4o-mini"
     }
     assert permission_summary_settings_payload("nonsense", "", "")["mode"] == "off"
+
+
+def test_settings_payload_caps_user_typed_identifiers():
+    # Qodo review #4: pasted blobs cannot reach the config file or a prompt.
+    from tldw_chatbook.Chat.permission_summary_service import (
+        SETTINGS_VALUE_MAX_CHARS,
+        permission_summary_settings_payload,
+    )
+
+    out = permission_summary_settings_payload("off", "P" * 500, "M" * 500)
+    assert out["provider"] == "P" * SETTINGS_VALUE_MAX_CHARS
+    assert out["model"] == "M" * SETTINGS_VALUE_MAX_CHARS

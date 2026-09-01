@@ -789,6 +789,12 @@ class ChatApprovalCard(Container):
         prior round must never land on the current card -- and never
         re-runs ``set_batch``, so per-row Selects and in-progress decisions
         are untouched.
+
+        Args:
+            round_id: The approval round the summary belongs to; dropped
+                unless it equals this card's current round id.
+            text: The advisory summary text; clipped and control-stripped
+                by ``format_context_line`` before rendering.
         """
         if round_id is None or self._batch_round_id != round_id:
             return

@@ -12,6 +12,7 @@ from typing import Any, Callable, Optional
 
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call, chat_reply_text
 from tldw_chatbook.Chat.approval_display import (
+    TOOL_DESCRIPTION_CAPTURE_CAP,
     format_context_line,
     summarize_arguments,
 )
@@ -106,14 +107,20 @@ def resolve_permission_summary(
     if not dispatch:
         return base
     readiness = get_provider_readiness(provider, config, environ=environ)
-    if not readiness.ready:
-        return base
+    # Qodo review #9: a feature-specific explicit key is itself credential
+    # intent -- it may activate the summarizer even when the provider's
+    # general configuration has no key (readiness not ready). Qodo review
+    # #2: the resolved key still wins over the config-file section key
+    # (env-before-config precedence), so a stale committed key can never
+    # shadow an environment credential.
     explicit_key = str(section.get("api_key") or "").strip()
+    if not (readiness.ready or explicit_key):
+        return base
     return replace(
         base,
         active=True,
         dispatch_name=dispatch,
-        api_key=explicit_key or readiness.api_key,
+        api_key=readiness.api_key or explicit_key or None,
     )
 
 
@@ -127,13 +134,15 @@ def build_messages_tail(
 
     ADR-090 egress bound: user/assistant visible text ONLY -- tool results,
     system messages, and anything else never egress. Newest messages are
-    kept; the oldest are dropped first once the budget is exceeded (one
-    newest message may exceed the budget by itself -- it is kept, bounded
-    by being a single message).
+    kept; the oldest are dropped first once the budget is exceeded. Every
+    retained message is HARD-capped at ``tail_max_chars`` (Qodo review #5):
+    a single oversized message -- e.g. a giant paste -- must never egress
+    whole, so the budget bounds the tail absolutely, not just relative to
+    the message count.
 
     Args:
         messages: ``{"role", "content"}`` projections of stored messages.
-        tail_max_chars: Character budget for the kept tail.
+        tail_max_chars: Character budget for the kept tail and per-message cap.
 
     Returns:
         The kept tail, oldest-first.
@@ -146,6 +155,8 @@ def build_messages_tail(
         text = str(message.get("content") or "").strip()
         if not text:
             continue
+        if len(text) > tail_max_chars:
+            text = "\N{HORIZONTAL ELLIPSIS}" + text[-(tail_max_chars - 1):]
         if kept and total + len(text) > tail_max_chars:
             break
         kept.append({"role": str(message["role"]), "content": text})
@@ -173,11 +184,20 @@ def pending_calls_info_from_payload(
             {
                 "tool_name": str(row.get("tool_name") or row.get("llm_name") or ""),
                 "server_label": str(row.get("server_label") or ""),
-                "description": str(row.get("description") or "")[:300],
+                "description": str(row.get("description") or "")[
+                    :TOOL_DESCRIPTION_CAPTURE_CAP
+                ],
                 "arguments_summary": summarize_arguments(row.get("arguments")),
             }
         )
     return out
+
+
+#: Qodo review #8: aggregate cap on the tool section of the summarizer
+#: prompt. Per-row caps (descriptions, redacted argument summaries) bound
+#: each row, but a large batch could still egress unboundedly in total --
+#: the whole point of the ADR-090 bounded-egress design.
+TOOL_PROMPT_MAX_CHARS = 6000
 
 
 def build_summary_messages(
@@ -193,18 +213,31 @@ def build_summary_messages(
         system_prompt: The neutral instruction prompt.
 
     Returns:
-        A system+user ``messages_payload`` for ``chat_api_call``.
+        A system+user ``messages_payload`` for ``chat_api_call`. The tool
+        section is aggregate-capped at :data:`TOOL_PROMPT_MAX_CHARS`; rows
+        beyond the cap are omitted with a count note.
     """
     convo = "\n".join(f"[{m['role']}] {m['content']}" for m in tail)
     # NOTE: brief's own success test passes a minimal ``{"tool_name": ...}``
     # row; direct subscripts raised KeyError there, so read with ``.get()``
     # (byte-identical rendering for the full rows this module builds).
-    tools = "\n".join(
-        f"- Tool: {row.get('tool_name', '')} ({row.get('server_label', '')})\n"
-        f"  Description: {row.get('description', '')}\n"
-        f"  Arguments: {row.get('arguments_summary', '')}"
-        for row in pending_calls_info
-    )
+    rendered_rows: list[str] = []
+    omitted = 0
+    used = 0
+    for row in pending_calls_info:
+        line = (
+            f"- Tool: {row.get('tool_name', '')} ({row.get('server_label', '')})\n"
+            f"  Description: {row.get('description', '')}\n"
+            f"  Arguments: {row.get('arguments_summary', '')}"
+        )
+        if used + len(line) > TOOL_PROMPT_MAX_CHARS and rendered_rows:
+            omitted = len(pending_calls_info) - len(rendered_rows)
+            break
+        rendered_rows.append(line)
+        used += len(line)
+    tools = "\n".join(rendered_rows)
+    if omitted:
+        tools += f"\n- ({omitted} more pending call(s) omitted for brevity)"
     user = (
         "Recent conversation (user and assistant text only):\n"
         f"{convo}\n\n"
@@ -258,6 +291,12 @@ def summarize_pending_round(
     return format_context_line(text) or None
 
 
+#: Qodo review #4: cap for user-typed settings identifiers -- long enough
+#: for any real provider/model name, short enough that a pasted blob can
+#: never reach the config file or a prompt.
+SETTINGS_VALUE_MAX_CHARS = 128
+
+
 def permission_summary_settings_payload(
     mode: str, provider: str, model: str
 ) -> dict[str, str]:
@@ -265,8 +304,9 @@ def permission_summary_settings_payload(
 
     Args:
         mode: Raw mode input; invalid values degrade to "off".
-        provider: Raw provider input, stripped.
-        model: Raw model input, stripped.
+        provider: Raw provider input, stripped and capped (Qodo review #4:
+            a boundary check on user-typed config identifiers).
+        model: Raw model input, stripped and capped.
 
     Returns:
         The ``[permission_summary]`` sub-dict for config persistence.
@@ -276,8 +316,8 @@ def permission_summary_settings_payload(
         cleaned = "off"
     return {
         "mode": cleaned,
-        "provider": str(provider or "").strip(),
-        "model": str(model or "").strip(),
+        "provider": str(provider or "").strip()[:SETTINGS_VALUE_MAX_CHARS],
+        "model": str(model or "").strip()[:SETTINGS_VALUE_MAX_CHARS],
     }
 
 

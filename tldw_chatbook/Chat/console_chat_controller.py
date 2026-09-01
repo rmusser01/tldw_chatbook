@@ -36,6 +36,10 @@ import weakref
 from loguru import logger
 from rich.markup import escape as escape_markup
 
+from tldw_chatbook.Chat.approval_display import (
+    TOOL_DESCRIPTION_CAPTURE_CAP,
+    summarize_arguments,
+)
 from tldw_chatbook.Character_Chat.emote_directives import (
     CharacterEmoteAssetReference,
     CharacterEmoteRunSnapshot,
@@ -1876,7 +1880,9 @@ def build_tool_review_hook(
                     # path, where the runtime falls back to the name.
                     call_id=str(getattr(call, "call_id", "") or ""),
                     rationale=str(getattr(call, "rationale", "") or ""),
-                    description=str(getattr(tool, "description", "") or "")[:300],
+                    description=str(getattr(tool, "description", "") or "")[
+                        :TOOL_DESCRIPTION_CAPTURE_CAP
+                    ],
                     reason="risk_floored" if state.risk_floored else "ask",
                     options=("approve_once", "approve_session", "deny"),
                     # TASK-1231/F3 AC2: pre-flight the roots check for the
@@ -2077,6 +2083,10 @@ def build_local_review_hook(
                 call.name,
                 call.args,
                 str(getattr(call, "call_id", "") or ""),
+                # Qodo review #10: the local owner must receive the call's
+                # advisory rationale like the MCP and builtin owners do, or
+                # every local approval row renders without model context.
+                rationale=str(getattr(call, "rationale", "") or ""),
                 run_id=run_id,
             )
             if gate is not None:

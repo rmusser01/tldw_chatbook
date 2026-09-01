@@ -54,6 +54,7 @@ from loguru import logger
 # so the module stays off the UI-ready census path.
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
+from tldw_chatbook.Chat.approval_display import TOOL_DESCRIPTION_CAPTURE_CAP
 from tldw_chatbook.MCP.execution_log import APPROVED_SESSION_DECISION
 from tldw_chatbook.MCP.hub_tool_catalog import (
     HubTool,
@@ -658,7 +659,9 @@ class MCPToolProvider:
             # the defect the per-call re-key fixed for built-in tools.
             call_id=call_id,
             rationale=rationale,
-            description=str(getattr(tool, "description", "") or "")[:300],
+            description=str(getattr(tool, "description", "") or "")[
+                :TOOL_DESCRIPTION_CAPTURE_CAP
+            ],
             reason=_pending_reason(state),
         )
 

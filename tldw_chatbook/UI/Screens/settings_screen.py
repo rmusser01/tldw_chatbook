@@ -5072,6 +5072,13 @@ class SettingsScreen(BaseAppScreen):
         except Exception:
             logger.warning("Failed to persist status_chips_position.")
 
+    #: Qodo review #11: generation guard for the instant-apply
+    #: permission-summary writes. Each dispatch stamps a token; a worker
+    #: whose token is no longer the latest skips its write, so an older
+    #: full-section snapshot can never overwrite a newer edit when two
+    #: threaded saves race (per-keystroke Input.Changed).
+    _permission_summary_persist_generation: int = 0
+
     def _persist_permission_summary_settings(self) -> None:
         """Persist the permission-summary trio to ``[permission_summary]`` (ADR-090).
 
@@ -5101,11 +5108,16 @@ class SettingsScreen(BaseAppScreen):
             == self._saved_permission_summary_payload()
         ):
             return
-        self._persist_permission_summary_section_values(section_values)
+        self._permission_summary_persist_generation += 1
+        self._persist_permission_summary_section_values(
+            section_values, self._permission_summary_persist_generation
+        )
 
     @work(thread=True)
     def _persist_permission_summary_section_values(
-        self, section_values: dict[str, dict[str, object]]
+        self,
+        section_values: dict[str, dict[str, object]],
+        generation: int = 0,
     ) -> None:
         """Write ``[permission_summary]`` off the event loop (task-15470 shape).
 
@@ -5115,8 +5127,12 @@ class SettingsScreen(BaseAppScreen):
         ``@work(thread=True)`` worker is fatal to the app by default.
         ``save_settings_to_cli_config`` merges keys, so advanced
         ``[permission_summary]`` keys (api_key, system_prompt, budgets) are
-        preserved.
+        preserved. ``generation`` is the dispatch-time token (Qodo review
+        #11): a worker whose token has been superseded by a newer dispatch
+        skips the write, so out-of-order completion cannot lose updates.
         """
+        if generation != self._permission_summary_persist_generation:
+            return
         try:
             save_settings_to_cli_config(section_values)
         except Exception:

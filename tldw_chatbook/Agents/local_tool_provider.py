@@ -31,6 +31,7 @@ from typing import (
 
 from loguru import logger
 
+from tldw_chatbook.Chat.approval_display import TOOL_DESCRIPTION_CAPTURE_CAP
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.local_runtime_delegate import PERMISSION_STATE_UNRESOLVED_CLAUSE
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
@@ -1297,7 +1298,9 @@ class LocalToolProvider:
                 else args
             ),
             rationale=rationale,
-            description=str(getattr(spec, "description", "") or "")[:300],
+            description=str(getattr(spec, "description", "") or "")[
+                :TOOL_DESCRIPTION_CAPTURE_CAP
+            ],
             reason=reason,
             call_id=str(call_id or ""),
             effects=self._specs[name].approval_effects,
