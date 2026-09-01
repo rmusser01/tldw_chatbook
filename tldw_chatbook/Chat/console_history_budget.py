@@ -263,6 +263,120 @@ def _group_turns(
     return turns
 
 
+#: TASK-25911: marker every prune note carries -- both the reader-facing
+#: statement of what was removed (AC#1) and the idempotency sentinel (a row
+#: already carrying it is never pruned again).
+TOOL_RESULT_PRUNE_MARKER = "[tool output pruned:"
+
+#: The fence-protocol tool-result row prefix (mirrors
+#: ``Agents.agent_models.FENCE_TOOL_RESULT_PREFIX``; duplicated as a plain
+#: string so this Chat-layer module does not import from Agents).
+_FENCE_RESULT_PREFIX = "Tool result for "
+
+
+@dataclass(frozen=True, slots=True)
+class ToolResultPruneSettings:
+    """Knobs for deterministic stale tool-result pruning (TASK-25911).
+
+    No LLM call anywhere (AC#2): pruning is a pure string truncation with
+    an in-place note stating what was removed.
+    """
+
+    #: The most recent N turn groups are never pruned (AC#4).
+    keep_recent_turns: int = 4
+    #: Only results LARGER than this many chars are candidates.
+    min_result_chars: int = 4000
+    #: How much of a pruned result's head survives.
+    head_chars: int = 1000
+    #: Total reclaim below this is not worth a prompt-cache break (AC#3).
+    min_reclaim_chars: int = 8000
+
+
+@dataclass(frozen=True, slots=True)
+class ToolResultPruneStats:
+    """What one prune pass did -- the accounting surface (AC#5)."""
+
+    pruned_rows: int = 0
+    chars_removed: int = 0
+
+
+def _is_tool_result_row(message: dict[str, Any]) -> bool:
+    content = message.get("content")
+    if not isinstance(content, str):
+        return False
+    role = message.get("role")
+    if role == "tool":
+        return True
+    return role == "user" and content.startswith(_FENCE_RESULT_PREFIX)
+
+
+def prune_stale_tool_results(
+    messages: list[dict[str, Any]],
+    *,
+    settings: ToolResultPruneSettings,
+    is_turn_boundary: Callable[[dict[str, Any]], bool] | None = None,
+) -> tuple[list[dict[str, Any]], ToolResultPruneStats]:
+    """Shrink large STALE tool results in place; whole turns stay (TASK-25911).
+
+    Deterministic and LLM-free: each candidate keeps a bounded head plus a
+    note stating exactly how much was removed. Rows inside the most recent
+    ``keep_recent_turns`` groups are untouched, and a pass that would
+    reclaim less than ``min_reclaim_chars`` returns the INPUT LIST OBJECT
+    unchanged -- the prompt-cache break is only paid when the win is real.
+
+    Args:
+        messages: The prospective send payload (never mutated; changed rows
+            are copies, unchanged rows are shared).
+        settings: The prune knobs.
+        is_turn_boundary: Turn-grouping predicate, exactly as
+            ``bound_messages_to_window`` takes it -- an agent payload MUST
+            pass its protocol-aware round boundary or a native pair could
+            straddle the recency fence.
+
+    Returns:
+        ``(payload, stats)`` -- the same list object with zero stats when
+        nothing qualified.
+    """
+    turns = _group_turns(messages, is_boundary=is_turn_boundary)
+    keep_from = max(0, len(turns) - max(0, settings.keep_recent_turns))
+    head = max(0, settings.head_chars)
+    # A row must be strictly larger than BOTH floors -- a head_chars set
+    # above min_result_chars must never produce a negative "reclaim".
+    size_floor = max(settings.min_result_chars, head)
+    candidates: list[tuple[int, dict[str, Any]]] = []
+    index = 0
+    for turn_index, turn in enumerate(turns):
+        for message in turn:
+            if (
+                turn_index < keep_from
+                and _is_tool_result_row(message)
+                and len(message["content"]) > max(0, size_floor)
+                and TOOL_RESULT_PRUNE_MARKER not in message["content"]
+            ):
+                candidates.append((index, message))
+            index += 1
+    total_removable = sum(
+        len(message["content"]) - head for _i, message in candidates
+    )
+    if not candidates or total_removable < max(0, settings.min_reclaim_chars):
+        return messages, ToolResultPruneStats()
+    pruned = list(messages)
+    removed_total = 0
+    for row_index, message in candidates:
+        content = message["content"]
+        removed = len(content) - head
+        removed_total += removed
+        note = (
+            f"\n{TOOL_RESULT_PRUNE_MARKER} kept first {head:,} of "
+            f"{len(content):,} chars; {removed:,} chars removed to fit "
+            "context]"
+        )
+        pruned[row_index] = {**message, "content": content[:head] + note}
+    return pruned, ToolResultPruneStats(
+        pruned_rows=len(candidates), chars_removed=removed_total
+    )
+
+
 def bound_messages_to_window(
     messages: list[dict[str, Any]],
     *,

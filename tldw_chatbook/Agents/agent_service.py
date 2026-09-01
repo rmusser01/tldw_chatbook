@@ -28,6 +28,8 @@ if TYPE_CHECKING:
     from .run_log import RunLogWriter
 
 from tldw_chatbook.Chat.console_history_budget import (
+    ToolResultPruneSettings,
+    prune_stale_tool_results,
     ProviderContinuationSidecar,
     provider_continuation_owner_groups,
 )
@@ -128,10 +130,12 @@ from .native_tools import (
 )
 from .run_context import CurrentRunActor, use_run_actor, use_tool_call_id
 from .run_log import _setting
+from tldw_chatbook.config import coerce_bool_setting, coerce_int_setting
 from .run_log_eviction import (
     DEFAULT_MIN_RECENT_ROUNDS,
     RUN_LOG_EVICT_ENABLED_KEY,
     RUN_LOG_EVICT_MIN_RECENT_ROUNDS_KEY,
+    _make_round_boundary,
     bound_history_for_send,
     coerce_min_recent_rounds,
 )
@@ -1711,6 +1715,9 @@ class AgentService:
             ]
             | None
         ) = None,
+        # TASK-25911: explicit prune settings override config resolution
+        # (None = resolve from [agents] config; the config default is OFF).
+        tool_result_pruning: "ToolResultPruneSettings | None" = None,
         review_state_scope: Callable[[str], "contextlib.AbstractContextManager"]
         | None = None,
         install_skill_tool: Callable[[str], ToolResult] | None = None,
@@ -1999,6 +2006,35 @@ class AgentService:
         self._run_log_requested = bool(
             run_log_request_plan.requested if run_log_request_plan else False
         )
+        # TASK-25911: deterministic stale tool-result pruning, applied to
+        # the send payload before run-log eviction. None = disabled (the
+        # config default) = today's behavior exactly (AC#6). An explicit
+        # constructor value overrides config, mirroring RunLogWriter.
+        if tool_result_pruning is not None:
+            self._tool_result_pruning = tool_result_pruning
+        elif coerce_bool_setting(
+            _setting("prune_stale_tool_results", False), default=False
+        ):
+            self._tool_result_pruning = ToolResultPruneSettings(
+                keep_recent_turns=coerce_int_setting(
+                    _setting("prune_keep_recent_turns", 4), default=4, minimum=1
+                ),
+                min_result_chars=coerce_int_setting(
+                    _setting("prune_min_result_chars", 4000),
+                    default=4000,
+                    minimum=1,
+                ),
+                head_chars=coerce_int_setting(
+                    _setting("prune_head_chars", 1000), default=1000, minimum=0
+                ),
+                min_reclaim_chars=coerce_int_setting(
+                    _setting("prune_min_reclaim_chars", 8000),
+                    default=8000,
+                    minimum=0,
+                ),
+            )
+        else:
+            self._tool_result_pruning = None
         self._run_log_evict_enabled = bool(
             run_log_request_plan.eviction_enabled if run_log_request_plan else False
         )
@@ -2062,6 +2098,7 @@ class AgentService:
             system_content, config.workspace_context_note
         )
         raw_payload = [{"role": "system", "content": system_content}, *messages]
+        raw_payload = self._prune_send_payload(raw_payload, native=native)
         evict_enabled = log_active and self._run_log_evict_enabled
         min_recent_rounds = self._run_log_min_recent_rounds
         payload = bound_history_for_send(
@@ -2282,6 +2319,31 @@ class AgentService:
             ).ready
         )
 
+    def _prune_send_payload(
+        self, payload: list[dict], *, native: bool
+    ) -> list[dict]:
+        """TASK-25911: shrink large stale tool results before eviction.
+
+        Deterministic, LLM-free, and OFF unless configured. The stats log
+        line is the accounting surface (AC#5) beside the in-row notes; the
+        protocol-aware round boundary keeps native pairs whole across the
+        recency fence.
+        """
+        if self._tool_result_pruning is None:
+            return payload
+        pruned, stats = prune_stale_tool_results(
+            payload,
+            settings=self._tool_result_pruning,
+            is_turn_boundary=_make_round_boundary(native=native),
+        )
+        if stats.pruned_rows:
+            logger.info(
+                "tool_result_prune rows={} chars_removed={}",
+                stats.pruned_rows,
+                stats.chars_removed,
+            )
+        return pruned
+
     def _make_call_model(
         self,
         config: AgentConfig,
@@ -2456,6 +2518,7 @@ class AgentService:
             raw_payload = [
                 {"role": "system", "content": system_content}
             ] + payload_messages
+            raw_payload = self._prune_send_payload(raw_payload, native=native)
             gateway_prepares_continuation = bool(
                 effective_groups and self.prepare_provider_continuation_request
             )

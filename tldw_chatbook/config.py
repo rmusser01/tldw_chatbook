@@ -3406,6 +3406,16 @@ anthropic_enabled = true
 # already in flight.
 # child_max_wall_seconds = 1800.0
 #
+# TASK-25911: deterministic stale tool-result pruning on the agent send
+# payload -- big old tool outputs shrink to a bounded head plus a note,
+# with no LLM call. OFF by default; the thresholds below are the shipped
+# defaults when enabled. min_reclaim keeps prompt-cache breaks episodic.
+# prune_stale_tool_results = false
+# prune_keep_recent_turns = 4
+# prune_min_result_chars = 4000
+# prune_head_chars = 1000
+# prune_min_reclaim_chars = 8000
+#
 # Whether a background sub-agent finishing after its turn WAKES its
 # supervisor so it can act on the result (an injected, clearly machine-
 # marked notice -- never user input, never approval). false still records
