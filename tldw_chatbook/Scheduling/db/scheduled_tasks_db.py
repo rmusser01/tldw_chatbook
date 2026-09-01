@@ -1767,6 +1767,12 @@ class ScheduledTasksDB(BaseDB):
                 else:
                     if existing["id"] in pending_local_ids:
                         continue
+                    # Once the mutation above is gone (pushback just
+                    # replayed it), a same-round-trip results page that
+                    # echoes the pre-review state can still overwrite this
+                    # row -- unguarded by design (review round 1 #4,
+                    # Medium/attempt-bounded): a stale echo self-heals on
+                    # the next sync once the server catches up.
                     review_fields = {
                         key: item[key]
                         for key in self._AUTOMATION_RESULT_REVIEW_FIELDS

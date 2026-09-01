@@ -100,7 +100,24 @@ class SyncEngine:
         target_owner = owner_id if owner_id is not None else self.owner_id
         if self.server_client is None:
             return
+
+        await self._pull_reminders(target_owner)
+
+        # Automation mirrors run regardless of reminder-phase health (review
+        # round 1 #1): a reminder network/transaction failure says nothing
+        # about the automation endpoints, and each phase below is already
+        # independently error-contained via `_run_phase`.
+        await self._run_phase(
+            target_owner, "Automation definitions pull", self._pull_definitions
+        )
+        await self._run_phase(
+            target_owner, "Automation results pull", self._pull_results
+        )
+
+    async def _pull_reminders(self, target_owner: str) -> None:
+        """The reminder-only half of `pull()` (original body, unchanged)."""
         client = self.server_client
+        assert client is not None
 
         try:
             response = await client.list_reminders()
@@ -154,7 +171,24 @@ class SyncEngine:
             logger.exception(f"Sync pull transaction failed for {target_owner}: {exc}")
             self._record_sync_error(str(exc), target_owner)
 
-        # Read-only variant: the two automation mirrors, no pushback.
+    async def sync_now(self, owner_id: str | None = None) -> SyncOutcome:
+        target_owner = owner_id if owner_id is not None else self.owner_id
+        if self.server_client is None:
+            return SyncOutcome("not_applicable")
+
+        reminder_outcome = await self._sync_reminders(target_owner)
+
+        # Automation mirrors, appended after the reminder phase (task 4) and
+        # run REGARDLESS of the reminder phase's own outcome (review round 1
+        # #1): a reminder network/transaction failure says nothing about the
+        # automation endpoints, and each phase below is already
+        # independently error-contained via `_run_phase`. Pushback runs
+        # first so a fresh results mirror can't clobber a review the user
+        # just made locally (its own pending mutation is cleared before the
+        # pull below re-reads that same row).
+        await self._run_phase(
+            target_owner, "Automation review pushback", self._replay_review_mutations
+        )
         await self._run_phase(
             target_owner, "Automation definitions pull", self._pull_definitions
         )
@@ -162,11 +196,13 @@ class SyncEngine:
             target_owner, "Automation results pull", self._pull_results
         )
 
-    async def sync_now(self, owner_id: str | None = None) -> SyncOutcome:
-        target_owner = owner_id if owner_id is not None else self.owner_id
-        if self.server_client is None:
-            return SyncOutcome("not_applicable")
+        # The reminder phase's own outcome/status semantics are preserved
+        # unchanged (`_sync_reminders` is the original method body) -- only
+        # the control flow changed so the automation phases above always run.
+        return reminder_outcome
 
+    async def _sync_reminders(self, target_owner: str) -> SyncOutcome:
+        """The reminder-only half of `sync_now()` (original body, unchanged)."""
         try:
             (
                 pulled_items,
@@ -259,22 +295,6 @@ class SyncEngine:
             self._record_sync_error(str(exc), target_owner)
             return SyncOutcome("error", error=str(exc))
 
-        # Automation mirrors, appended after the reminder phase (task 4):
-        # each runs in its own containment shape so one phase's failure
-        # never blocks the phases after it. Pushback runs first so a
-        # fresh results mirror can't clobber a review the user just made
-        # locally (its own pending mutation is cleared before the pull
-        # below re-reads that same row).
-        await self._run_phase(
-            target_owner, "Automation review pushback", self._replay_review_mutations
-        )
-        await self._run_phase(
-            target_owner, "Automation definitions pull", self._pull_definitions
-        )
-        await self._run_phase(
-            target_owner, "Automation results pull", self._pull_results
-        )
-
         # staged_outcomes already includes the tombstone outcomes (see
         # _network_phase), so it IS the pushed count. Automation
         # definitions/results are mirrors, not reminder push/pull, so they
@@ -346,9 +366,14 @@ class SyncEngine:
             self.db.delete_pending_mutation(mutation["id"])
 
     async def _pull_definitions(self, owner_id: str) -> dict[str, int]:
-        """Page the server's automation definitions and mirror them locally."""
+        """Page the server's automation definitions, upserting page by page.
+
+        Upserted per page (not batched to the end) so a later page's
+        failure still leaves earlier pages' rows mirrored -- the same
+        partial-progress-survives-a-failure shape as `_pull_results`.
+        """
         assert self.server_client is not None
-        items: list[dict[str, Any]] = []
+        totals: dict[str, int] = {}
         offset = 0
         while True:
             response = await self.server_client.list_automation_definitions(
@@ -357,11 +382,12 @@ class SyncEngine:
             if not isinstance(response, dict):
                 response = {}
             page = list(response.get("items") or [])
-            items.extend(page)
+            counts = self.db.upsert_automation_definitions_from_server(owner_id, page)
+            for key, value in counts.items():
+                totals[key] = totals.get(key, 0) + value
             offset += len(page)
             if not page or not response.get("has_more"):
-                break
-        return self.db.upsert_automation_definitions_from_server(owner_id, items)
+                return totals
 
     async def _pull_results(self, owner_id: str) -> dict[str, int]:
         """Walk up to `_RESULTS_MAX_PAGES` newest pages of server results.

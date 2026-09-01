@@ -942,6 +942,7 @@ def test_review_transitions_and_unread_count(tmp_path):
     assert db.update_result_review(rid, "read", reviewed_by="local")
     assert db.count_unread_results("local") == 1
     assert db.list_automation_results("local", review_state="read")[0]["id"] == rid
+    assert not db.update_result_review("missing", "dismissed")
 
 
 # ----------------------------------------------------------------------
@@ -1154,4 +1155,3 @@ def test_upsert_results_skips_item_missing_id(tmp_path):
     counts = db.upsert_automation_results_from_server("server:42", [item])
     assert counts == {"inserted": 0, "updated": 0, "skipped_dedupe": 0}
     assert db.list_automation_results("server:42") == []
-    assert not db.update_result_review("missing", "dismissed")

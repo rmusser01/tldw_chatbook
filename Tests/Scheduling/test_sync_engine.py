@@ -1246,3 +1246,89 @@ async def test_pull_gains_definitions_and_results_without_pushback(tmp_path):
     assert len(
         db.get_pending_mutations("server:1", primitive="automation_result_review")
     ) == 1
+
+
+# --- review round 1 #1: reminder-phase failures must not short-circuit the
+# automation phases in either entry point --------------------------------
+
+
+def _break_apply_pulled_reminders(db: ScheduledTasksDB, message: str = "boom") -> None:
+    """Force the reminder DB-transaction phase to fail (test-only)."""
+
+    def _raise(*_args, **_kwargs):
+        raise RuntimeError(message)
+
+    db._apply_pulled_reminders = _raise  # type: ignore[method-assign]
+
+
+@pytest.mark.asyncio
+async def test_pull_reminder_network_failure_still_pulls_automation_results(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = AsyncMock()
+    server_client.list_reminders.side_effect = ServerUnavailableError("down")
+    server_client.list_automation_results.return_value = _result_page(_result_items(1))
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    await engine.pull()
+
+    assert len(db.list_automation_results("server:1")) == 1
+    state = db.get_sync_state("server:1") or {}
+    assert state.get("sync_errors"), "the reminder network failure must still be recorded"
+
+
+@pytest.mark.asyncio
+async def test_pull_reminder_transaction_failure_still_pulls_automation_results(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    _break_apply_pulled_reminders(db)
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {
+        "items": [{"id": "srv-1", "title": "A"}]
+    }
+    server_client.list_automation_results.return_value = _result_page(_result_items(1))
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    await engine.pull()
+
+    assert len(db.list_automation_results("server:1")) == 1
+    state = db.get_sync_state("server:1") or {}
+    assert state.get(
+        "sync_errors"
+    ), "the reminder transaction failure must still be recorded"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_reminder_network_failure_still_pulls_automation_results(
+    tmp_path,
+):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = AsyncMock()
+    server_client.list_reminders.side_effect = ServerUnavailableError("down")
+    server_client.list_automation_results.return_value = _result_page(_result_items(1))
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    # The reminder phase's own outcome/status semantics are unchanged.
+    assert outcome.status == "error"
+    assert "down" in (outcome.error or "")
+    assert len(db.list_automation_results("server:1")) == 1
+
+
+@pytest.mark.asyncio
+async def test_sync_now_reminder_transaction_failure_still_pulls_automation_results(
+    tmp_path,
+):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    _break_apply_pulled_reminders(db)
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {
+        "items": [{"id": "srv-1", "title": "A"}]
+    }
+    server_client.list_automation_results.return_value = _result_page(_result_items(1))
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "error"
+    assert "boom" in (outcome.error or "")
+    assert len(db.list_automation_results("server:1")) == 1
