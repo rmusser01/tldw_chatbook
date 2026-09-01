@@ -1,11 +1,11 @@
 ---
 id: TASK-26000
 title: Characterize current-dev inherited Ruff formatter drift
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-30 15:39'
-updated_date: '2026-08-30 16:22'
+updated_date: '2026-09-01 18:51'
 labels:
   - maintenance
   - formatting
@@ -27,10 +27,10 @@ TASK-22514 proved that its closeout introduced no Ruff formatter regressions whi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A pinned current `origin/dev` census records every Python file failing the repository-supported Ruff format check.
-- [ ] #2 The current census is compared with the 61-file TASK-22514 historical residue and every difference is explained.
-- [ ] #3 A mechanically checked batch manifest assigns every current failure exactly once to one atomic cleanup record; every record requires behavior preservation, and one final record requires an explicit repository-wide zero-exit Ruff format check after its lower-ID dependencies.
-- [ ] #4 TASK-26000 changes no Python source; `git diff --check` over its recorded task boundary and `Tests/CI/test_backlog_task_id_uniqueness.py` pass.
+- [x] #1 A pinned current `origin/dev` census records every Python file failing the repository-supported Ruff format check.
+- [x] #2 The current census is compared with the 61-file TASK-22514 historical residue and every difference is explained.
+- [x] #3 A mechanically checked batch manifest assigns every current failure exactly once to one atomic cleanup record; every record requires behavior preservation, and one final record requires an explicit repository-wide zero-exit Ruff format check after its lower-ID dependencies.
+- [x] #4 TASK-26000 changes no Python source; `git diff --check` over its recorded task boundary and `Tests/CI/test_backlog_task_id_uniqueness.py` pass.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -162,6 +162,71 @@ Current post-failure/Task 7 materializer and allocator hashes are
 `2e456e41bdd2b4f357d181a32b91efdfd07060c33a8f23cc1622d3ef8a4bd432`.
 <!-- SECTION:PLAN:END -->
 
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+- Completed the immutable Ruff formatter characterization at task base/current pin
+  `e555df102c950c29beed5e7119f433d35eee1f3c`, common ancestor
+  `f0e8961222fe1a7a3ac7566f7f78142e717358f3`, and historical
+  base/pre-closeout/closeout pins `31ed49bb368f54211d6482599e00a5c1340f80b2`,
+  `1f4f72ac5ff02f5237a4946745e82e8932cd41cf`, and
+  `642b1c782fe6c066a781314dae669a55b05b62ad`. The canonical manifest SHA-256 is
+  `ded7288d8580367842110dd1a9e79976dc9c00663361251bb9212ca717cea0b9`.
+- Historical comparison passed with `M=99`, `B=64`, `C=77`, `C-B=16`, `B-C=3`,
+  and `H=61`. The formatter censuses recorded `F_closeout=1,738`,
+  `F_common=1,746`, and current failures `=1,966`, classified exactly as
+  `historical_still_current=44`, `historical_no_longer_current=17`,
+  `shared_ancestor_debt=1,603`, and `current_line_drift=319`, with zero blockers.
+- Assigned every current failure exactly once across 83 stable batches and created
+  83 cleanup records with contiguous IDs `TASK-26933` through `TASK-27015`.
+  The exact stable label set is the 83-label list recorded in the Implementation
+  Plan above, beginning `ruff-active-pr-1655`, including the final lower-ID-dependent
+  `ruff-root-ci-architecture-final` batch, and ending `ruff-workspaces-runtime`.
+  Every record requires behavior preservation; only `TASK-27015` owns the future
+  clean Git-tracked repository-wide Ruff zero-exit gate. None of the cleanup records
+  was marked Done by this characterization.
+- Authenticated validators passed the 20-case census self-test, both manifest
+  positive phases plus 34 deterministic corrupt-manifest mutations, the 40-case
+  allocation scanner self-test, and the 9-case cleanup-renderer self-test. The
+  corrected five-file private suite passed 200 tests. The first Task 7 scan exposed
+  a false `E_ALLOCATION_MOVED` after unrelated external `TASK-26834` appeared; the
+  approved lifecycle correction now preserves a complete authenticated record map
+  while retaining exact self-claim and genuine collision checks. TDD red/green
+  evidence and two independent correction reviews passed, and the frozen final
+  allocation audit received an additional independent read-only APPROVED review.
+- Canonical closeout evidence:
+  `task26000_final_allocation_audit_sha256=b8eaee92a6c61ed5bc09426f8494a858ddab82163c16e52ba542e606f4ea561f`;
+  `task26000_final_manifest_pin=e555df102c950c29beed5e7119f433d35eee1f3c`;
+  `task26000_final_observed_origin_dev=053d2667ab6bdb477d8e952256bcf5ce7381f986`;
+  `task26000_final_origin_dev_ancestry=fast_forward_descendant`. The first successful
+  canonical `raw/allocation-closeout-rescan.json` is retained under
+  `/tmp/task26000.b0z8M0/` through review and integration, has empty captured stderr,
+  preserves all 83 IDs, and is the final remote observation; no fetch followed it.
+- Final point-in-time manifest replay passed with 83 cleanup records, 83 batches,
+  1,966 current failures, category counts `M/B/C/H=99/64/77/61`, and zero blockers.
+  `Tests/CI/test_backlog_task_id_uniqueness.py` passed all three targeted tests; the
+  remaining output was the known pytest temporary-directory cleanup warning.
+  `git diff --check` over the recorded task boundary passed, the Python-path diff is
+  empty, and no repository-wide Ruff cleanup was claimed or run by TASK-26000.
+- ADR required: no. ADR path: N/A. This task records evidence and behavior-preserving
+  cleanup contracts without changing runtime, storage, security, dependency, or
+  cross-module architecture. No new lessons file was added because the allocator
+  lifecycle incident and its regression coverage are already captured in the
+  approved design and plan.
+
+## Renumbering provenance
+
+This formatter characterization task renumbered from `TASK-24653` to
+`TASK-26000` under TASK-19601. The older holder,
+`backlog/tasks/task-24653 - Network-TLS-trust-policy-corp-DPI.md` (Network TLS
+trust policy (corp DPI)), keeps `TASK-24653`: it was created on 2026-08-29 22:51,
+while this formatter task was created on 2026-08-30 15:39. Per the owner rule, the
+younger task renumbers regardless of status. Only citations within the pre-renumber
+formatter commit range `1d2cd6bec1..dceb79f19f` and the pre-renumber versions of
+this task record, its design, and its plan refer to this formatter task; unrelated
+historical `TASK-24653` citations retain their own local meaning.
+<!-- SECTION:NOTES:END -->
+
 ### Task 1 Repin Record (2026-08-30)
 
 - Recorded base/current pin `c2f64f690bf4a712b604a1a1db348398df932f36` advanced to `ceac56e06eda4d3d2995a2f5ac8010a7a1821ed2`.
@@ -261,15 +326,3 @@ Current post-failure/Task 7 materializer and allocator hashes are
   strict-NUL, and atomic-output cases.
   `F_closeout & project(M, closeout) == project(H, closeout)` passed with exactly
   61 projected identities.
-
-## Renumbering provenance
-
-This formatter characterization task renumbered from `TASK-24653` to
-`TASK-26000` under TASK-19601. The older holder,
-`backlog/tasks/task-24653 - Network-TLS-trust-policy-corp-DPI.md` (Network TLS
-trust policy (corp DPI)), keeps `TASK-24653`: it was created on 2026-08-29 22:51,
-while this formatter task was created on 2026-08-30 15:39. Per the owner rule, the
-younger task renumbers regardless of status. Only citations within the pre-renumber
-formatter commit range `1d2cd6bec1..dceb79f19f` and the pre-renumber versions of
-this task record, its design, and its plan refer to this formatter task; unrelated
-historical `TASK-24653` citations retain their own local meaning.
