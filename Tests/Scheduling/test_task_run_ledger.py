@@ -18,8 +18,9 @@ def db(tmp_path):
     return ScheduledTasksDB(tmp_path / "runs.db")
 
 
-def test_migration_lands_on_version_4(db):
-    assert db.get_schema_version() == 4
+def test_migration_lands_on_version_5(db):
+    # v4 = run ledger (this task), v5 = incidents (TASK-26027)
+    assert db.get_schema_version() == 5
 
 
 def test_begin_and_finish_records_a_terminal_run(db):

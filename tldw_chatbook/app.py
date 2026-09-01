@@ -9614,6 +9614,11 @@ class TldwCli(
                 chachanotes_db_getter=lambda: getattr(self, "chachanotes_db", None),
                 dispatch_service=self.notification_dispatch_service,
                 notification_app_getter=lambda: self,
+                # TASK-26027: group repeat brief failures into one incident
+                # (the ScheduledTasks DB owns the durable state machine).
+                incident_recorder=getattr(
+                    self.scheduling_service, "db", None
+                ),
             )
 
         # task-19561: shutdown has to be able to reach the generations this

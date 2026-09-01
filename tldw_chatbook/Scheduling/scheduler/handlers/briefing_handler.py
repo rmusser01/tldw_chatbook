@@ -100,6 +100,7 @@ class BriefingJobHandler:
         chachanotes_db_getter: Callable[[], CharactersRAGDB | None] | None = None,
         dispatch_service: Any | None = None,
         notification_app_getter: Callable[[], Any | None] | None = None,
+        incident_recorder: Any | None = None,
     ) -> None:
         """Initialize the handler.
 
@@ -148,6 +149,12 @@ class BriefingJobHandler:
         self._chachanotes_db_getter = chachanotes_db_getter
         self.dispatch_service = dispatch_service
         self._notification_app_getter = notification_app_getter
+        # TASK-26027: optional failure-incident recorder. None keeps
+        # today's behavior (every failure notifies). When present it
+        # groups repeat failures of one watchlist's brief by error
+        # signature and suppresses re-notification for a grouped/acked
+        # incident; a success closes the incident.
+        self._incident_recorder = incident_recorder
         #: Strong references to spawned generation tasks, keyed by nothing
         #: in particular -- a plain set, discarded from on completion. See
         #: the class docstring for why this exists at all.
@@ -341,7 +348,9 @@ class BriefingJobHandler:
                 f"failed outside the service's own handling: "
                 f"{type(exc).__name__}"
             )
-            await self._notify_error(watchlist_id)
+            await self._notify_error(
+                watchlist_id, signature=f"{type(exc).__name__}: {exc}"
+            )
         else:
             await self._auto_keep(result)
             await self._notify_result(watchlist_id, result)
@@ -444,6 +453,10 @@ class BriefingJobHandler:
             status = str(result.get("status") or "")
             if status not in (STATUS_COMPLETE, STATUS_EMPTY, STATUS_FAILED):
                 return
+            # TASK-26027 AC#4: a completed brief resolves any open incident
+            # for this watchlist, so a later recurrence alerts afresh.
+            if status == STATUS_COMPLETE:
+                self._close_incident(watchlist_id)
             name = await asyncio.to_thread(self._watchlist_name, watchlist_id)
             briefing_id = result.get("id")
             if status == STATUS_COMPLETE:
@@ -480,9 +493,58 @@ class BriefingJobHandler:
                 f"{watchlist_id} failed: {type(exc).__name__}"
             )
 
-    async def _notify_error(self, watchlist_id: int) -> None:
-        """Dispatch one attention notification for a crashed generation."""
+    def _should_notify_failure(
+        self, watchlist_id: int, signature: str | None
+    ) -> bool:
+        """Record the failure incident and decide whether to notify (26027)."""
+        recorder = self._incident_recorder
+        if recorder is None or signature is None:
+            return True
+        try:
+            from datetime import datetime, timezone
+
+            from tldw_chatbook.Scheduling.task_incidents import (
+                normalize_error_signature,
+            )
+
+            _incident_id, should_notify = recorder.record_task_failure(
+                f"briefing:{watchlist_id}",
+                "briefing_job",
+                normalize_error_signature(signature),
+                datetime.now(timezone.utc),
+            )
+            return bool(should_notify)
+        except Exception:  # noqa: BLE001 -- incident failure never blocks alerting
+            logger.opt(exception=True).debug("incident record_failure failed")
+            return True
+
+    def _close_incident(self, watchlist_id: int) -> None:
+        """Resolve any open incident for this watchlist on success (26027)."""
+        recorder = self._incident_recorder
+        if recorder is None:
+            return
+        try:
+            from datetime import datetime, timezone
+
+            recorder.record_task_success(
+                f"briefing:{watchlist_id}", datetime.now(timezone.utc)
+            )
+        except Exception:  # noqa: BLE001 -- never blocks the success path
+            logger.opt(exception=True).debug("incident record_success failed")
+
+    async def _notify_error(
+        self, watchlist_id: int, signature: str | None = None
+    ) -> None:
+        """Dispatch one attention notification for a crashed generation.
+
+        TASK-26027: when an incident recorder is wired and a signature is
+        given, a repeat of the same failure (grouped or acknowledged) is
+        recorded but NOT re-notified -- only the first of a signature, or a
+        recurrence after a resolving success, alerts.
+        """
         if self.dispatch_service is None:
+            return
+        if not self._should_notify_failure(watchlist_id, signature):
             return
         try:
             name = await asyncio.to_thread(self._watchlist_name, watchlist_id)

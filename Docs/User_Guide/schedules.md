@@ -56,6 +56,18 @@ interval, so a deliberately long interval is not mistaken for a stall. The
 signal is durable (a small heartbeat file), so a stalled or dead loop is
 distinguishable from an idle one even across a restart.
 
+## Repeated-failure incidents
+
+A briefing that fails the same way over and over no longer floods you with
+identical notifications. Repeated failures of one watchlist's brief that
+share a normalized error signature (timestamps, ids, paths, and numbers are
+stripped so cosmetic variation doesn't defeat grouping) are grouped into a
+single durable **incident** — only the first failure of a signature alerts;
+the rest are recorded silently. A different error opens its own incident. A
+successful run resolves the incident, so a later recurrence alerts afresh.
+Incidents survive restarts, and acknowledging one suppresses its
+notifications only — it never disables the task or removes it from the queue.
+
 ## Run history
 
 The **Task Detail** pane now shows a durable **Recent runs** list for

@@ -26,7 +26,7 @@ from tldw_chatbook.DB.sql_validation import validate_identifier
 class ScheduledTasksDB(BaseDB):
     """Database operations for scheduled tasks and reminders."""
 
-    _CURRENT_SCHEMA_VERSION = 4
+    _CURRENT_SCHEMA_VERSION = 5
 
     _REMINDER_TASK_COLUMNS = {
         "id",
@@ -194,11 +194,15 @@ class ScheduledTasksDB(BaseDB):
         from tldw_chatbook.Scheduling.db.migrations.v3_to_v4 import (
             migrate as migrate_v3_to_v4,
         )
+        from tldw_chatbook.Scheduling.db.migrations.v4_to_v5 import (
+            migrate as migrate_v4_to_v5,
+        )
 
         migrate_v0_to_v1(self)
         migrate_v1_to_v2(self)
         migrate_v2_to_v3(self)
         migrate_v3_to_v4(self)
+        migrate_v4_to_v5(self)
 
     def get_schema_version(self) -> int:
         """Return the currently recorded schema version."""
@@ -885,6 +889,82 @@ class ScheduledTasksDB(BaseDB):
                 ),
             )
             return int(cursor.rowcount)
+
+    # -- TASK-26027: durable failure incidents ---------------------------
+
+    def record_task_failure(
+        self, task_id: str, task_type: str, signature: str, now: datetime
+    ) -> tuple[int, bool]:
+        """Group a failure into an incident; return (incident_id, should_notify).
+
+        A new (task_id, signature) opens an ``alerting`` incident and
+        notifies (AC#1). A repeat of an already-open incident (alerting OR
+        acknowledged) bumps its count and does NOT re-notify -- grouped
+        (AC#1/#2). A different signature opens its own incident (AC#3).
+        """
+        now_iso = self._to_utc_iso(now)
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT id FROM task_incidents "
+                "WHERE task_id = ? AND signature = ? AND status != 'closed' "
+                "LIMIT 1",
+                (str(task_id), str(signature)),
+            ).fetchone()
+            if row is not None:
+                incident_id = int(row[0])
+                conn.execute(
+                    "UPDATE task_incidents "
+                    "SET occurrence_count = occurrence_count + 1, "
+                    "    last_seen_at = ? WHERE id = ?",
+                    (now_iso, incident_id),
+                )
+                return incident_id, False
+            cursor = conn.execute(
+                "INSERT INTO task_incidents "
+                "(task_id, task_type, signature, status, occurrence_count, "
+                " first_seen_at, last_seen_at) "
+                "VALUES (?, ?, ?, 'alerting', 1, ?, ?)",
+                (str(task_id), str(task_type), str(signature), now_iso, now_iso),
+            )
+            return int(cursor.lastrowid), True
+
+    def record_task_success(self, task_id: str, now: datetime) -> int:
+        """Close every open incident for a task; return how many closed (AC#4)."""
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE task_incidents "
+                "SET status = 'closed', closed_at = ? "
+                "WHERE task_id = ? AND status != 'closed'",
+                (self._to_utc_iso(now), str(task_id)),
+            )
+            return int(cursor.rowcount)
+
+    def acknowledge_incident(self, incident_id: int, now: datetime) -> None:
+        """Acknowledge one incident: suppress further notifications only.
+
+        Never disables the task or removes it from the queue (AC#7) -- this
+        touches only the incident row.
+        """
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE task_incidents "
+                "SET status = 'acknowledged', acknowledged_at = ? "
+                "WHERE id = ? AND status = 'alerting'",
+                (self._to_utc_iso(now), int(incident_id)),
+            )
+
+    def list_task_incidents(
+        self, task_id: str, *, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Return a task's incidents, newest first (AC-visibility)."""
+        with closing(self._get_connection()) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM task_incidents WHERE task_id = ? "
+                "ORDER BY id DESC LIMIT ?",
+                (str(task_id), int(limit)),
+            ).fetchall()
+            return [dict(row) for row in rows]
 
     def mark_reminder_dispatched(
         self,
