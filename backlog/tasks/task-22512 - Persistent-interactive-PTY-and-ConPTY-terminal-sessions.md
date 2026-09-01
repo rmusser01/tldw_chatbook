@@ -1,10 +1,10 @@
 ---
 id: TASK-22512
 title: Persistent interactive PTY and ConPTY terminal sessions
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-27 05:01'
-updated_date: '2026-08-28 00:00'
+updated_date: '2026-09-01 22:38'
 labels:
   - console
   - terminal
@@ -17,7 +17,8 @@ references:
   - backlog/decisions/099-persistent-terminal-session-runtime-boundary.md
   - Docs/superpowers/specs/2026-08-26-raw-and-virtual-cli-design.md
   - Docs/superpowers/specs/2026-08-28-persistent-terminal-sessions-design.md
-  - Docs/superpowers/plans/2026-08-28-persistent-terminal-sessions-implementation.md
+  - >-
+    Docs/superpowers/plans/2026-08-28-persistent-terminal-sessions-implementation.md
 priority: medium
 ---
 
@@ -59,6 +60,7 @@ Reason: ADR-099 establishes the long-lived PTY/ConPTY ownership, parser and depe
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Implemented the ADR-099 persistent Terminal as an app-global, user-only runtime
 that remains separate from one-shot raw CLI and model `shell_exec`. The manager
 owns admitted POSIX PTYs, one runtime bridge and authoritative reaper per
@@ -85,3 +87,4 @@ ADR required: yes.
 ADR: `backlog/decisions/099-persistent-terminal-session-runtime-boundary.md`.
 Evidence:
 `Docs/superpowers/reviews/evidence/task-22512/dependency-qualification.md`.
+<!-- SECTION:NOTES:END -->

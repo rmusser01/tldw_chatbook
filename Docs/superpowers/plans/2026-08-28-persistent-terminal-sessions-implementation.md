@@ -1480,7 +1480,7 @@ Then run the reachable focused suites:
 Expected: PASS. Windows checks prove unavailability and dependency absence; no
 native Windows backend test or support claim is part of the current delivery.
 
-- [ ] **Step 6: Run static and generated-artifact checks**
+- [x] **Step 6: Run static and generated-artifact checks**
 
 Run:
 
@@ -1566,11 +1566,11 @@ Read the complete diff. Confirm:
 - no nested-program mouse support slipped into v1;
 - no config key for `terminal_armed` exists.
 
-- [ ] **Step 9: Complete task hygiene only after all evidence is green**
+- [x] **Step 9: Complete task hygiene only after all evidence is green**
 
 Edit the five-digit task file directly: check AC #1-#8 and #10, add concise `## Implementation Notes`, link ADR-099 and the qualification artifact, record focused/native verification, and set frontmatter status to `Done`. Add a lesson only if an incident produced reusable evidence; do not invent one.
 
-- [ ] **Step 10: Commit closeout**
+- [x] **Step 10: Commit closeout**
 
 ```bash
 git add Docs/User_Guide/console/sessions-tabs-workspaces.md \
