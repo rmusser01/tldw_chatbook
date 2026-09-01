@@ -9,9 +9,13 @@ methods are sync and worker-thread safe; no Textual/event-loop imports.
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import hashlib
 import json
+import os
+import re
+import tempfile
 import threading
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
@@ -28,6 +32,8 @@ from typing import (
     Sequence,
     TypedDict,
 )
+
+from uuid import uuid4
 
 from loguru import logger
 
@@ -324,6 +330,92 @@ def _fit_result(text: str) -> str:
     return raw[:_MAX_RESULT_BYTES].decode("utf-8", errors="ignore") + "\n… [truncated]"
 
 
+# TASK-25904: spill machinery. When a spill home exists (the Console scratch
+# root doubles as it -- fs_read already resolves inside it, so the model can
+# read the tail back with no new grant), an oversized result is written IN
+# FULL to a restricted file and the model receives a bounded preview naming
+# the pre-truncation size and the relative read-back path. Retention bound:
+# spill files live inside the scratch root and share its lifecycle -- the
+# scratch lease's own cleanup is the documented retention.
+
+_SPILL_DIR_NAME = "tool-spill"
+#: A run whose cumulative INLINE output passes this starts spilling even
+#: under the per-result ceiling (AC#5) -- big results are exactly the ones
+#: that move to disk.
+_AGGREGATE_INLINE_BUDGET_BYTES = 256 * 1024
+#: Results at or below this never spill on aggregate pressure (a stream of
+#: tiny results should not become a stream of files).
+_SPILL_FLOOR_BYTES = 4 * 1024
+
+
+def _write_spill(spill_dir: Path, invocation_id: str, text: str) -> Path:
+    """Atomically write one full result with restrictive permissions."""
+    spill_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    safe_id = re.sub(r"[^A-Za-z0-9_.-]", "-", invocation_id)[:60] or "call"
+    final = spill_dir / f"{safe_id}-{uuid4().hex[:8]}.txt"
+    fd, tmp_name = tempfile.mkstemp(dir=spill_dir, prefix=".spill-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.chmod(tmp_name, 0o600)
+        os.replace(tmp_name, final)
+    except Exception:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
+    return final
+
+
+def _fit_or_spill_result(
+    text: str,
+    *,
+    spill_dir: Path | None,
+    invocation_id: str,
+    redaction_root: Path | None = None,
+    force_spill: bool = False,
+) -> str:
+    """Bound one result: inline when small, spill-with-preview when huge.
+
+    Args:
+        text: The tool's full output.
+        spill_dir: Where full outputs may be written; ``None`` reproduces
+            the pre-spill truncation byte-for-byte (AC#6 for standalone
+            providers).
+        invocation_id: Names the spill file after the call.
+        redaction_root: When the spill dir lives under this root, the
+            preview's read-back path is rendered relative to it so the
+            opaque absolute locator never reaches the model.
+        force_spill: Spill even under the per-result ceiling (the AC#5
+            aggregate-budget path); small results still stay inline via
+            the caller's floor check.
+
+    Returns:
+        The exact input when under the ceiling (and not forced), a preview
+        plus read-back pointer when spilled, or today's truncation when no
+        spill home exists or the write fails.
+    """
+    raw = text.encode("utf-8")
+    if len(raw) <= _MAX_RESULT_BYTES and not force_spill:
+        return text
+    if spill_dir is not None:
+        try:
+            path = _write_spill(spill_dir, invocation_id, text)
+            display: Path | str = path
+            base = redaction_root or spill_dir.parent
+            with contextlib.suppress(ValueError):
+                display = path.relative_to(base)
+            preview = raw[:_MAX_RESULT_BYTES].decode("utf-8", errors="ignore")
+            return (
+                f"{preview}\n… [output truncated: {len(raw):,} bytes total; "
+                f"full output saved to {display} — read the rest with fs_read]"
+            )
+        except Exception:  # noqa: BLE001 -- a failed spill degrades to truncation
+            logger.warning("tool output spill failed; falling back to truncation")
+    if len(raw) <= _MAX_RESULT_BYTES:
+        return text
+    return raw[:_MAX_RESULT_BYTES].decode("utf-8", errors="ignore") + "\n… [truncated]"
+
+
 def _workspace_execution_error_result(
     error: WorkspaceToolExecutionError,
     *,
@@ -561,6 +653,15 @@ class LocalToolProvider:
             if result_redaction_root is not None
             else None
         )
+        # TASK-25904: the scratch root doubles as the spill home -- fs_read
+        # already resolves inside it, so read-back needs no new grant.
+        self._spill_dir = (
+            self._result_redaction_root / _SPILL_DIR_NAME
+            if self._result_redaction_root is not None
+            else None
+        )
+        self._spill_lock = threading.Lock()
+        self._inline_bytes_by_run: dict[str, int] = {}
         self._promotion_snapshotter = promotion_snapshotter
         self._promotion_revalidator = promotion_revalidator
         self._promotion_stamps: dict[tuple[str, str, str], str] = {}
@@ -1309,11 +1410,12 @@ class LocalToolProvider:
                     )
                     return ToolResult(
                         ok=True,
-                        content=_fit_result(
+                        content=self._bounded_result(
                             redact_root_locator(
                                 selected_spec.handler(clean_args),
                                 redaction_root,
-                            )
+                            ),
+                            invocation_id=name,
                         ),
                     )
                 except WorkspaceToolExecutionError as exc:
@@ -1535,6 +1637,35 @@ class LocalToolProvider:
         except Exception as error:  # noqa: BLE001 - provider protocol boundary
             return ToolResult(ok=False, error=str(error)[:_MAX_ERROR_CHARS])
         return ToolResult(ok=True, content=_fit_result(content))
+
+    def _bounded_result(self, text: str, *, invocation_id: str) -> str:
+        """TASK-25904: fit one result, spilling when huge or over the
+        run's aggregate inline budget (AC#5 -- once a run's returned
+        output passes the budget, large results move to disk; small ones
+        stay inline via the floor)."""
+        raw_len = len(text.encode("utf-8"))
+        run_id = current_run_id() or ""
+        force = False
+        if self._spill_dir is not None and run_id:
+            with self._spill_lock:
+                used = self._inline_bytes_by_run.get(run_id, 0)
+            force = (
+                used + raw_len > _AGGREGATE_INLINE_BUDGET_BYTES
+                and raw_len > _SPILL_FLOOR_BYTES
+            )
+        fitted = _fit_or_spill_result(
+            text,
+            spill_dir=self._spill_dir,
+            invocation_id=invocation_id,
+            redaction_root=self._result_redaction_root,
+            force_spill=force,
+        )
+        if self._spill_dir is not None and run_id:
+            with self._spill_lock:
+                self._inline_bytes_by_run[run_id] = self._inline_bytes_by_run.get(
+                    run_id, 0
+                ) + len(fitted.encode("utf-8"))
+        return fitted
 
     def _root_is_valid(self) -> bool:
         """Never raise while revalidating an optional selected-root guard."""

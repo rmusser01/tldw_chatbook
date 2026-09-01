@@ -1215,6 +1215,16 @@ separate identities. A session grant may cover later calls in that same live
 Console session, but it is held in process memory only and is cleared by
 Disarm, locking raw CLI, shutdown, or restart.
 
+Oversized local tool results no longer lose their tail: in Console runs
+(where a private scratch root exists) a result over the 32 KiB ceiling is
+written **in full** to a restricted file under the scratch's `tool-spill/`
+directory — atomically, `0600`, sharing the scratch lifecycle as its
+retention bound — and the model receives the usual 32 KiB preview plus the
+pre-truncation size and a relative path it can hand straight to `fs_read`.
+Once a run's cumulative returned output passes an aggregate budget
+(256 KiB), results above a 4 KiB floor spill even under the ceiling.
+Standalone providers without a scratch root keep today's truncation exactly.
+
 For ordinary MCP/catalog tools, the approval card offers **Always allow
 this exact input** alongside the existing choices: it saves an allow scoped
 to exactly the arguments displayed on the card — the same tool called with
