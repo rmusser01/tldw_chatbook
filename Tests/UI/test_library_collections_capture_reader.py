@@ -521,6 +521,57 @@ async def test_real_library_route_quick_capture_persists_and_selects_capture() -
         )
 
 
+async def test_quick_capture_draft_survives_background_reader_recompose() -> None:
+    """An unrelated reader refresh must not erase an in-progress capture."""
+    app = _build_test_app()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
+        screen.query_one("#library-collections-quick-capture", Button).press()
+        original_url = await _wait_for_selector(
+            screen, pilot, "#library-collections-capture-url"
+        )
+        original_url.value = "https://example.test/draft-in-progress"
+        screen.query_one("#library-collections-capture-title", Input).value = (
+            "Draft title"
+        )
+        screen.query_one("#library-collections-capture-tags", Input).value = (
+            "research, later"
+        )
+        screen.query_one("#library-collections-capture-note", TextArea).text = (
+            "Draft note"
+        )
+        await pilot.pause()
+
+        screen._refresh_library_collections_capture_reader()
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(
+                screen.query("#library-collections-capture-url")
+                and screen.query_one("#library-collections-capture-url")
+                is not original_url
+            ),
+            message="Quick Capture form did not recompose",
+        )
+
+        assert screen.query_one("#library-collections-capture-url", Input).value == (
+            "https://example.test/draft-in-progress"
+        )
+        assert screen.query_one("#library-collections-capture-title", Input).value == (
+            "Draft title"
+        )
+        assert screen.query_one("#library-collections-capture-tags", Input).value == (
+            "research, later"
+        )
+        assert screen.query_one("#library-collections-capture-note", TextArea).text == (
+            "Draft note"
+        )
+
+
 async def test_unknown_quick_capture_preserves_draft_and_does_not_auto_retry(
     monkeypatch,
 ) -> None:

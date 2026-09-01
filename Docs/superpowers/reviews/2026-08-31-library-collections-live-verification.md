@@ -14,10 +14,13 @@
   profile/data root and a real on-disk Collections database seeded with 45 captures. Its resolved
   database-path fingerprint matched before and after the walkthrough; no private path is retained
   in this record.
-- **Server authority: BLOCKED.** The configured Server profile and credential were present, but the
-  docs-info prerequisite was unreachable with `APIConnectionError`. No Server data was read or
-  mutated, no capability bypass was attempted, and `hasReadingSnapshotPagesV1: true` could not be
-  attested. TASK-18919 therefore remains **In Progress**.
+- **Server authority: PASS.** An isolated loopback tldw_server profile advertised exact
+  `hasReadingSnapshotPagesV1: true` through the versioned docs-info endpoint. The mounted reader
+  then completed the 45-plus-capture source-replacement, paging, geometry, focus, mode, workspace,
+  save, archive/Undo, and controlled-unknown-save walkthrough without bypassing capabilities.
+- **Integration status: pending prerequisite merge.** The walkthrough found and corrected a
+  SQLite schema-memo defect in the open tldw_server prerequisite PR. TASK-18919 remains
+  **In Progress** until that updated prerequisite is merged.
 
 ## Local walkthrough evidence
 
@@ -48,6 +51,25 @@ The run also verified:
 - simulated unknown Server-save UI behavior: the draft remains visible, no automatic retry occurs,
   the user is told to refresh first, and only the explicit warning confirmation issues one retry.
 
+## Server walkthrough evidence
+
+The enabled-Server live test used a disposable loopback profile and test principal. Local contained
+exactly 3 captures while Server contained 45 captures before the mounted save and 46 afterward;
+switching authority replaced the dataset rather than merging either identity space.
+
+The run verified:
+
+- exact docs-info attestation and capability reasons, including fail-closed unavailable actions;
+- coherent pages of 20, 20, and 5 rows before the mounted save;
+- 160×50, 120×35, 100×30, and 80×24 geometry, reclaimed Items width, Work expansion, descendant
+  containment, and F6 Work focus;
+- Read, Highlights, Notes, and Info modes;
+- a Local workspace switch that left the active Server authority and dataset unchanged;
+- one confirmed Quick Capture through the mounted UI, followed by archive and Undo;
+- a controlled unknown save outcome that retained its complete draft, issued no automatic retry,
+  required explicit warning confirmation, and allowed Back and Cancel without another request; and
+- switching back to Local restored only the original 3 Local captures.
+
 ## Findings corrected during the walkthrough
 
 1. The Items toolbar could overflow a compact pane even while the shell's child widths summed
@@ -62,20 +84,28 @@ The run also verified:
 5. An indeterminate Server save could lose its draft or invite an accidental retry. The reader now
    retains the draft, exposes Refresh first, and requires a second explicit confirmation with the
    current Server default-reapplication warning.
+6. The real versioned docs-info response does not contain the invented `api_version` field used by
+   the original capability gate. The gate now trusts the versioned endpoint boundary and still
+   requires exact snapshot attestation for browse.
+7. The Server's Collections schema memo indexed SQLite mapping rows positionally, so verification
+   failed and replayed the complete schema bootstrap for every database adapter. It now reads the
+   named `name` field, with a regression proving the second adapter skips bootstrap.
+8. Background reader recomposition could erase text already entered into Quick Capture. Input and
+   note changes now update the retained draft immediately, with a mounted regression covering all
+   fields.
 
 ## Automated evidence
 
 - Focused controller, mounted reader, and Local live walkthrough: **29 passed**.
 - Complete capture feature and Local live gate: **206 passed**.
 - Production-shaped cross-reader closeout after the final save-recovery hardening: **490 passed**.
+- Final Local/Server service, configuration, mounted-reader, and enabled live gate: **61 passed**.
+- tldw_server SQLite schema-memo regression gate: **2 passed**.
 - Static validation covers the edited Python modules, CSS regeneration, bytecode compilation, and
   whitespace/error checks.
 
-## Remaining completion gate
+## Remaining integration gate
 
-Run the enabled-Server walkthrough only when docs-info is reachable and advertises exact
-`hasReadingSnapshotPagesV1: true`. Then seed/use an isolated principal with more than 40 captures,
-repeat all four sizes and pages 1–3, verify authoritative capture content, capability reasons,
-archive/Undo, source replacement, workspace non-effect, confirmed and controlled-unknown saves,
-and switch back to Local. Until that succeeds, acceptance criteria 4, 9, and 10 are not closed and
-the task must not be marked Done.
+Commit and merge the SQLite schema-memo correction into the open tldw_server prerequisite PR #2851.
+The implementation and required Local/Server walkthrough evidence are otherwise complete; do not
+mark TASK-18919 Done until that cross-repository prerequisite has landed.

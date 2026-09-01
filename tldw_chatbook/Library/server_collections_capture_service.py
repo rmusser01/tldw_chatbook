@@ -116,7 +116,7 @@ class ServerCollectionsCaptureService:
         self.client = client
         self.docs_info_provider = docs_info_provider
         self._credential_fingerprint = credential_fingerprint
-        self._capability_context: tuple[str, str, str, str] | None = None
+        self._capability_context: tuple[str, str, str] | None = None
         self._capability_overrides: dict[str, CaptureCapability] = {}
         self._saved_search_revisions: dict[str, int] = {}
 
@@ -140,7 +140,6 @@ class ServerCollectionsCaptureService:
                 }
             )
         capabilities = docs.get("capabilities")
-        api_version = str(docs.get("api_version", "")).strip()
         capability_snapshot = json.dumps(
             capabilities,
             sort_keys=True,
@@ -150,7 +149,6 @@ class ServerCollectionsCaptureService:
         context = (
             self.authority.key,
             self._credential_fingerprint,
-            api_version,
             capability_snapshot,
         )
         if context != self._capability_context:
@@ -160,7 +158,6 @@ class ServerCollectionsCaptureService:
             isinstance(capabilities, Mapping)
             and capabilities.get("hasReadingSnapshotPagesV1") is True
         )
-        api_v1 = api_version == "1"
         base_supported = {
             "browse",
             "capture",
@@ -173,12 +170,12 @@ class ServerCollectionsCaptureService:
         }
         values: dict[str, CaptureCapability] = {}
         for action in CAPTURE_CAPABILITY_NAMES:
-            if not api_v1:
-                capability = CaptureCapability(
-                    CapabilityState.UNSUPPORTED,
-                    "server_reading_api_unavailable",
-                )
-            elif action == "browse" and not snapshot_pages:
+            # ``docs_info_provider`` calls the versioned
+            # ``/api/v1/config/docs-info`` endpoint. Its public response has
+            # never contained a separate ``api_version`` field, so requiring
+            # one would disable every real Server while mock fixtures pass.
+            # Browse remains fail-closed on the exact snapshot attestation.
+            if action == "browse" and not snapshot_pages:
                 capability = CaptureCapability(
                     CapabilityState.UNSUPPORTED,
                     "server_page_snapshot_unavailable",

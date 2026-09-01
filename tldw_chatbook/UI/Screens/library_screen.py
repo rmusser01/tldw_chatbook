@@ -43538,6 +43538,37 @@ class LibraryScreen(BaseAppScreen):
             "#library-collections-capture-note", TextArea
         ).text
 
+    @on(
+        Input.Changed,
+        "#library-collections-capture-url, #library-collections-capture-title, "
+        "#library-collections-capture-tags",
+    )
+    def retain_library_collection_quick_capture_input(
+        self, event: Input.Changed
+    ) -> None:
+        """Retain an in-progress capture when unrelated state recomposes."""
+        attributes = {
+            "library-collections-capture-url": (
+                "_library_collections_quick_capture_url"
+            ),
+            "library-collections-capture-title": (
+                "_library_collections_quick_capture_title"
+            ),
+            "library-collections-capture-tags": (
+                "_library_collections_quick_capture_tags"
+            ),
+        }
+        attribute = attributes.get(event.input.id or "")
+        if attribute is not None:
+            setattr(self, attribute, event.value)
+
+    @on(TextArea.Changed, "#library-collections-capture-note")
+    def retain_library_collection_quick_capture_note(
+        self, event: TextArea.Changed
+    ) -> None:
+        """Retain the capture note across unrelated reader recomposition."""
+        self._library_collections_quick_capture_note = event.text_area.text
+
     def _reset_library_collection_quick_capture_draft(self) -> None:
         """Clear the capture draft and any uncertain-save confirmation state."""
         self._library_collections_quick_capture_url = ""

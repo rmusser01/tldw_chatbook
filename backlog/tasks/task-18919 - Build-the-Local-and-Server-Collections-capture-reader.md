@@ -46,16 +46,16 @@ Replace Chatbook's stale generic-container interpretation of Collections with th
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Collections is presented as the capture and reading feature area—not as an arbitrary folder, cross-source membership container, or Library item type—and capture-to-Media links remain optional provenance rather than identity.
-- [ ] #2 One capture-specific scope service selects either a dedicated local capture repository or the authenticated tldw_server Reading List API; switching authority replaces the dataset, identities are qualified by Local profile/database or Server profile/principal, local workspace changes do not repartition Server captures, and Local and Server records are never merged.
-- [ ] #3 The Collections destination uses the shared Library, Items, and Work reader topology: capture scopes and saved searches live in Library, exact bounded capture rows live in Items, and the selected capture's clean reader lives in Work; Library and Items are independently collapsible and reclaimed width expands Items toward its comfort cap before flowing to Work.
-- [ ] #4 Search, status, favorite, tag, domain, date, and supported sort scope are applied before deterministic 20-row paging; Local count and rows share one snapshot, Server browse requires the existing server operation to provide the same snapshot and advertise exact hasReadingSnapshotPagesV1=true through docs-info, the active scope has an exact coherent total, and tags or domains are not presented as complete facets without aggregate support.
-- [ ] #5 The Work reader renders trustworthy capture provenance and readable text or sanitized HTML through Read, Highlights, Notes, and Info modes, while separating the capture's freeform note from linked Notes records.
-- [ ] #6 Local Quick Capture durably commits before background extraction and preserves omitted state on retry; current Server Quick Capture truthfully waits for its authoritative synchronous response, never auto-retries an unknown outcome, warns that explicit retry may reapply defaults, and no confirmed save is reclassified as failed by a follow-up read.
-- [ ] #7 An approved ADR defines authority-qualified identity, additive schema-v3 local storage with future-version refusal and process-safe extraction leases, canonical-URL upsert, optimistic revisions, safe migration, cross-database references, transactionally quota-reserved and restart-reconciled private offline files, and a mandatory reachable coherent-snapshot JSON recovery export for untouched legacy generic Collections records.
-- [ ] #8 Server capabilities are unknown, supported, or unsupported per profile, principal, and advertised capability snapshot; only positively established status, favorite, tags, notes, highlights, summarize, listen, archive, offline-copy, delete, and recovery actions are enabled, unavailable actions carry explicit reasons, and destructive actions follow ADR-055.
-- [ ] #9 Loading, empty, extraction, interrupted, stale, conflict, Retry, detail/back, focus, collapse/restore, exact pure-resolver geometry, and measured-shell 160x50, 120x35, 100x30, and 80x24 walkthroughs match the shared adaptive Library reader conventions without horizontal overflow.
-- [ ] #10 Shared Local/Server contract tests, the server count/page concurrent-writer fix plus docs-info attestation, service and mounted Textual regressions, migration, managed-file and security tests, production-shaped cross-reader suites, and isolated Local plus enabled-Server live walkthroughs with more than 40 captures verify the complete design.
+- [x] #1 Collections is presented as the capture and reading feature area—not as an arbitrary folder, cross-source membership container, or Library item type—and capture-to-Media links remain optional provenance rather than identity.
+- [x] #2 One capture-specific scope service selects either a dedicated local capture repository or the authenticated tldw_server Reading List API; switching authority replaces the dataset, identities are qualified by Local profile/database or Server profile/principal, local workspace changes do not repartition Server captures, and Local and Server records are never merged.
+- [x] #3 The Collections destination uses the shared Library, Items, and Work reader topology: capture scopes and saved searches live in Library, exact bounded capture rows live in Items, and the selected capture's clean reader lives in Work; Library and Items are independently collapsible and reclaimed width expands Items toward its comfort cap before flowing to Work.
+- [x] #4 Search, status, favorite, tag, domain, date, and supported sort scope are applied before deterministic 20-row paging; Local count and rows share one snapshot, Server browse requires the existing server operation to provide the same snapshot and advertise exact hasReadingSnapshotPagesV1=true through docs-info, the active scope has an exact coherent total, and tags or domains are not presented as complete facets without aggregate support.
+- [x] #5 The Work reader renders trustworthy capture provenance and readable text or sanitized HTML through Read, Highlights, Notes, and Info modes, while separating the capture's freeform note from linked Notes records.
+- [x] #6 Local Quick Capture durably commits before background extraction and preserves omitted state on retry; current Server Quick Capture truthfully waits for its authoritative synchronous response, never auto-retries an unknown outcome, warns that explicit retry may reapply defaults, and no confirmed save is reclassified as failed by a follow-up read.
+- [x] #7 An approved ADR defines authority-qualified identity, additive schema-v3 local storage with future-version refusal and process-safe extraction leases, canonical-URL upsert, optimistic revisions, safe migration, cross-database references, transactionally quota-reserved and restart-reconciled private offline files, and a mandatory reachable coherent-snapshot JSON recovery export for untouched legacy generic Collections records.
+- [x] #8 Server capabilities are unknown, supported, or unsupported per profile, principal, and advertised capability snapshot; only positively established status, favorite, tags, notes, highlights, summarize, listen, archive, offline-copy, delete, and recovery actions are enabled, unavailable actions carry explicit reasons, and destructive actions follow ADR-055.
+- [x] #9 Loading, empty, extraction, interrupted, stale, conflict, Retry, detail/back, focus, collapse/restore, exact pure-resolver geometry, and measured-shell 160x50, 120x35, 100x30, and 80x24 walkthroughs match the shared adaptive Library reader conventions without horizontal overflow.
+- [x] #10 Shared Local/Server contract tests, the server count/page concurrent-writer fix plus docs-info attestation, service and mounted Textual regressions, migration, managed-file and security tests, production-shaped cross-reader suites, and isolated Local plus enabled-Server live walkthroughs with more than 40 captures verify the complete design.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -76,17 +76,27 @@ ADR path: `backlog/decisions/107-collections-capture-authority-and-legacy-bounda
 
 Reason: TASK-18919 changes durable Collections storage, source authority, migration, service, and legacy-data boundaries.
 
-## Verification Checkpoint (2026-09-01)
+## Implementation Notes
 
-The isolated Local production-shaped walkthrough is complete with 45 captures at 160×50, 120×35,
-100×30, and 80×24. It covers exact paging, collapse/restore and reclaimed Items width, F6 focus,
-Quick Capture commit-before-extract, controlled failure and Retry, all Work modes, archive/Undo,
-offline hard-delete cleanup, and complete legacy inspection/export. The focused mounted/live gate
-passes 29 tests, the complete capture feature/live gate passes 206, and the production-shaped
-cross-reader gate passes 490; detailed evidence is in
-`Docs/superpowers/reviews/2026-08-31-library-collections-live-verification.md`.
+Replaced generic Collections with an authority-qualified capture domain backed by additive Local
+schema-v3 storage and the authenticated Server Reading List API. The shared adaptive reader now
+owns exact scopes and paging, Quick Capture, trustworthy Read/Highlights/Notes/Info content,
+capability-gated actions, archive/Undo, private offline files, and complete legacy recovery without
+conflating captures with Media or local workspaces.
 
-The enabled-Server walkthrough is blocked because the configured profile's docs-info endpoint is
-unreachable (`APIConnectionError`). No Server data was mutated and no capability bypass was used.
-The task remains In Progress until a reachable deployment attests exact
-`hasReadingSnapshotPagesV1: true` and the required Server walkthrough passes.
+The approved ADR records the durable authority, identity, storage, migration, and legacy boundary.
+Local and enabled-Server production-shaped walkthroughs cover source replacement, exact pages,
+all collapse postures, reclaimed Items width, F6 focus, all four required terminal sizes, confirmed
+and controlled-unknown saves, archive/Undo, and return to Local. Integration testing additionally
+corrected the real docs-info response contract, retained Quick Capture drafts across recomposition,
+and found a tldw_server SQLite schema-memo defect now covered in its prerequisite branch. Detailed
+evidence is in `Docs/superpowers/reviews/2026-08-31-library-collections-live-verification.md`.
+
+ADR required: yes
+
+ADR path: `backlog/decisions/107-collections-capture-authority-and-legacy-boundary.md`
+
+Reason: TASK-18919 changes durable Collections storage, source authority, migration, service, and
+legacy-data boundaries.
+
+TASK-18919 remains In Progress only until the updated tldw_server prerequisite PR #2851 lands.

@@ -171,6 +171,20 @@ async def test_server_browse_requires_exact_snapshot_attestation(
 
 
 @pytest.mark.asyncio
+async def test_live_docs_info_shape_does_not_require_an_invented_api_version() -> None:
+    """The versioned docs-info endpoint has no ``api_version`` response field."""
+    _authority, service = _service(
+        FakeReadingClient(),
+        {"capabilities": {"hasReadingSnapshotPagesV1": True}},
+    )
+
+    observed = await service.capabilities()
+
+    assert observed.for_action("browse").state is CapabilityState.SUPPORTED
+    assert observed.for_action("capture").state is CapabilityState.SUPPORTED
+
+
+@pytest.mark.asyncio
 async def test_server_maps_fixed_pages_and_source_neutral_sorts() -> None:
     client = FakeReadingClient()
     authority, service = _service(
