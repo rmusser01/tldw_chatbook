@@ -221,6 +221,16 @@ deterministic and pre-existing, not a flake and not from the tray work. Looks
 like session-settings provider derivation drift after a workspace switch;
 left for its owner, recorded here so the next sweep does not re-derive it.
 
+## Sixth finding (2026-09-01, TASK-26839 sweep): three composer reds on dev
+
+`test_console_command_composer.py` fails identically on pristine `origin/dev`
+and on the TASK-26839 branch (whole file, `-p no:randomly`):
+`test_raw_cli_collapsed_state_retains_danger_label_and_one_row_geometry`,
+`test_console_unknown_command_second_unmodified_enter_sends_as_text`,
+`test_console_collapsed_paste_starting_with_slash_sends_normally` --
+3 failed / 100 passed both trees. Pre-existing, owner unknown, recorded so
+the next sweep does not re-derive them.
+
 ## Notes
 
 Filed in the same spirit as TASK-15512. `origin/dev` had by this point absorbed
