@@ -495,6 +495,20 @@ $ds-library-source-browser-width: 31;
     text-style: bold underline;
 }
 
+/* task-2856 AC1/AC4: entering the Media list now parks real DOM focus on
+   the first row and Up/Down move it between rows -- previously this class
+   had no dedicated ``:focus`` rule at all and fell back to the generic
+   ``*:focus{outline:solid}`` (core/_reset.tcss). Same readable contract
+   ``.library-media-row-selected`` above already uses; `outline: none`
+   suppresses the generic fallback so this is the only cue (never
+   `outline: heavy`, which eats a compact row's label -- round-3 lesson). */
+.library-media-row:focus, .library-media-trash-row:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
+}
+
 .library-notes-row {
     width: 100%;
     min-width: 0;
@@ -660,6 +674,30 @@ $ds-library-source-browser-width: 31;
     background: $ds-surface-raised;
     color: $ds-text-primary;
     border: none;
+}
+
+/* task-4023 AC#1 (RC-07): Legible Disabled (TASK-1801/DESIGN.md) for the
+   Library's action buttons. Measured live before this rule: select-mode
+   bulk buttons 1.39:1, the empty-list Select toggle 1.45:1, Collections'
+   three form actions 2.30:1 -- all far under the product's 3:1
+   disabled-label floor, because THREE dimmers compound (the theme's
+   `text-disabled: auto 38%`, Textual Button's own `bold dim` + `color:
+   auto 50%`, and _buttons.tcss's `Button:disabled { opacity: 50% }`).
+   Same recipe as the composer-menu and prompt-history-restore escapes:
+   neutralise every layer, state a colour that clears 3:1 on its own
+   background, and let the darkened surface carry "inert". Disabled also
+   carries a non-colour "○" label marker (library_shell_state.
+   library_disabled_action_label) so colour is never the sole carrier.
+   App tier on purpose -- widget DEFAULT_CSS cannot override Textual's own
+   Button:disabled styling (same tier, widget wins); (0,2,1) specificity
+   beats _buttons.tcss's `Button:disabled` (0,1,1) per property. */
+Button.library-canvas-action:disabled,
+Button.library-source-action:disabled {
+    opacity: 100%;
+    text-opacity: 100%;
+    text-style: none;
+    color: $ds-text-muted;
+    background: $surface-darken-1;
 }
 
 /* task-3302 (MI-05): keyboard focus on these compact 1-row buttons was
@@ -2505,6 +2543,24 @@ with stray left-edge border fragments), and padding 0 1 so the full
 Button.library-rag-recovery-action:focus {
     outline-left: heavy $ds-focus-accent;
     outline-right: heavy $ds-focus-accent;
+}
+
+/* Legible Disabled (TASK-1801/DESIGN.md), the task-4023 RC-07 Library
+ * recipe: three dimmers compound on a disabled Button (the theme's
+ * `text-disabled: auto 38%`, Textual's own `bold dim` + `color:
+ * auto 50%`, and _buttons.tcss's `Button:disabled { opacity: 50% }`).
+ * The re-chunk run disables this button for its whole batch, so the
+ * label must stay readable next to the live "Re-chunking…" summary
+ * line. Neutralise every layer, state a colour, let the darkened
+ * surface carry "inert" -- same selectors/specificity as the
+ * `Button.library-canvas-action:disabled` escape. */
+Button.library-rag-recovery-action:disabled,
+Button.library-rag-recovery-action:disabled:hover {
+    opacity: 100%;
+    text-opacity: 100%;
+    text-style: none;
+    color: $ds-text-muted;
+    background: $surface-darken-1;
 }
 
 .library-rag-console-action {

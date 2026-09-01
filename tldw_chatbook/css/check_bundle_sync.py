@@ -125,8 +125,14 @@ def main() -> int:
             print(f"::error::CSS bundle could not be rebuilt: {exc}")
             return 1
         rebuilt = rebuilt_path.read_text(encoding="utf-8")
+        # Symmetric with the committed side's None-for-missing: the agentic
+        # split legitimately writes nothing when its module is absent from a
+        # partial/scratch tree (build_agentic_split skips), and an unguarded
+        # read_text would turn that into a raw FileNotFoundError instead of
+        # the ::error:: comparison below (Qodo #2281).
         rebuilt_defaults = [
-            path.read_text(encoding="utf-8") for path in rebuilt_defaults_paths
+            path.read_text(encoding="utf-8") if path.is_file() else None
+            for path in rebuilt_defaults_paths
         ]
 
     failed = False

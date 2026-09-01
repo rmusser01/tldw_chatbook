@@ -325,6 +325,30 @@ AGENTIC_SPLIT_SHEETS = {
 #: that pins it) rather than weakening the classifier.
 AGENTIC_SPLIT_PINNED_TOKENS = {
     "settings-input-label",
+    # The `console-*` DESIGN VOCABULARY (Qodo review of PR #2281, finding 1):
+    # these carry a legacy Console prefix but are composed app-wide -- Evals,
+    # MCP, Lab, Personas, Library and the shared destination rail all yield
+    # them. The first cross-surface audit missed every one of these because
+    # it filtered ABSOLUTE paths for the substring "console" and the
+    # worktree directory was named console-inspect-burndown, so every path
+    # matched "home" and the console audit was vacuous. Re-audited with
+    # repo-relative paths; compose sites per token are in the PR record.
+    "console-action-primary",
+    "console-action-secondary",
+    "console-action-subdued",
+    "console-modal-header",
+    "console-rail-collapse-button",
+    "console-rail-handle",
+    "console-rail-handle-badge",
+    "console-rail-handle-button",
+    "console-rail-handle-button-vertical",
+    "console-rail-handle-vertical",
+    "console-rail-header",
+    "console-rail-section-header",
+    "console-rail-section-title",
+    "console-rail-section-toggle",
+    "console-rail-title",
+    "console-workspace-action",
 }
 
 _SPLIT_HEADER = """/* ========================================
@@ -395,10 +419,11 @@ def _unit_owner(unit: str) -> str | None:
     no block (a tail comment) or whose tokens span owners stays in the
     bundle.
     """
-    brace = unit.find("{")
+    stripped = _COMMENT_RE.sub("", unit)
+    brace = stripped.find("{")
     if brace == -1:
         return None
-    selector = _COMMENT_RE.sub("", unit[:brace])
+    selector = stripped[:brace]
     owners = set()
     for token in _SELECTOR_TOKEN_RE.findall(selector):
         if token in AGENTIC_SPLIT_PINNED_TOKENS:
@@ -417,11 +442,19 @@ def _unit_owner(unit: str) -> str | None:
 
 
 def _unit_selector_set(unit: str) -> set[str]:
-    """Whitespace-normalised selectors of a unit, comma members separately."""
-    brace = unit.find("{")
+    """Whitespace-normalised selectors of a unit, comma members separately.
+
+    Comments are stripped BEFORE locating the block's brace: a comment
+    containing ``{`` ahead of the rule otherwise wins ``find("{")`` and the
+    "selector" becomes comment prose (caught by the splitter's unit tests --
+    the affected block was silently pinned to the bundle with garbage
+    selector bookkeeping).
+    """
+    stripped = _COMMENT_RE.sub("", unit)
+    brace = stripped.find("{")
     if brace == -1:
         return set()
-    selector = _COMMENT_RE.sub("", unit[:brace])
+    selector = stripped[:brace]
     return {
         " ".join(part.split())
         for part in selector.split(",")
@@ -429,11 +462,51 @@ def _unit_selector_set(unit: str) -> set[str]:
     }
 
 
-def split_agentic_terminal(text: str) -> tuple[str, dict[str, str]]:
+def _later_module_selectors(css_dir: Path | None) -> set[str]:
+    """Selectors of every ``CSS_MODULES`` entry AFTER the agentic module.
+
+    A moved block parses after the whole bundle, so an equal-specificity
+    selector in a LATER module (features, utilities -- the latter documented
+    as able to "override anything") would lose a tie it used to win. These
+    selectors seed the demotion pass below so the protection is enforced at
+    every build rather than by a one-time review audit.
+
+    Args:
+        css_dir: Root of the modular stylesheets, or ``None`` when the
+            caller has no tree (pure-text unit tests) -- then no cross-module
+            selectors are known and only the intra-module pass applies.
+
+    Returns:
+        Whitespace-normalised selectors, comma members separately.
+    """
+    if css_dir is None:
+        return set()
+    selectors: set[str] = set()
+    seen_agentic = False
+    for module in CSS_MODULES:
+        if module == AGENTIC_SPLIT_MODULE:
+            seen_agentic = True
+            continue
+        if not seen_agentic:
+            continue
+        source = css_dir / module
+        if not source.is_file():
+            continue
+        for unit in _split_top_level_units(source.read_text(encoding="utf-8")):
+            selectors |= _unit_selector_set(unit)
+    return selectors
+
+
+def split_agentic_terminal(
+    text: str, css_dir: Path | None = None
+) -> tuple[str, dict[str, str]]:
     """Split the agentic-terminal module into a bundle remainder + sheets.
 
     Args:
         text: The full source text of ``AGENTIC_SPLIT_MODULE``.
+        css_dir: Root of the modular stylesheets, used to seed the
+            cascade-order demotion with LATER modules' selectors. ``None``
+            limits demotion to intra-module ordering (unit tests).
 
     Returns:
         ``(remainder, {owner: moved_css})``. Concatenating the remainder and
@@ -459,10 +532,13 @@ def split_agentic_terminal(text: str) -> tuple[str, dict[str, str]]:
     # tokens), and kept-before-moved pairs keep their relative order, so
     # this is the only inversion the split can create within the module.
     unit_selectors = [_unit_selector_set(unit) for unit in units]
+    later_modules = _later_module_selectors(css_dir)
     changed = True
     while changed:
         changed = False
-        kept_later: set[str] = set()
+        # Seeded with LATER modules' selectors (Qodo #2281 finding: the
+        # intra-module pass alone was blind to features/utilities ties).
+        kept_later: set[str] = set(later_modules)
         for index in range(len(units) - 1, -1, -1):
             if owners[index] is not None and unit_selectors[index] & kept_later:
                 owners[index] = None
@@ -530,7 +606,7 @@ def build_agentic_split(css_dir: Path, output_dir: Path) -> None:
         print("Agentic split skipped: module not in this build")
         return
     text = source.read_text(encoding="utf-8")
-    _, moved = split_agentic_terminal(text)
+    _, moved = split_agentic_terminal(text, css_dir=css_dir)
     preamble = _agentic_variables_preamble(css_dir)
     for owner, filename in AGENTIC_SPLIT_SHEETS.items():
         content = _SPLIT_HEADER.format(owner=owner) + preamble + moved[owner]
@@ -586,7 +662,7 @@ def build_css(css_dir: Path, output_file: Path) -> None:
             # per-screen sheets `build_agentic_split` writes, parsed on
             # first visit to the owning screen instead of before first
             # paint.
-            content, _ = split_agentic_terminal(content)
+            content, _ = split_agentic_terminal(content, css_dir=css_dir)
 
         # Add module separator
         combined_css.append(f"\n/* ===== MODULE: {module} ===== */\n")
@@ -764,7 +840,11 @@ def main():
     # Output file
     output_file = css_dir / "tldw_cli_modular.tcss"
 
-    # Build the CSS
+    # Build the CSS. The split sheets are written FIRST, deliberately
+    # (Qodo #2281): if any later builder fails mid-run, new sheets beside
+    # the old fat bundle merely duplicate the moved rules, while a new
+    # remainder bundle beside old sheets would silently DROP them.
+    build_agentic_split(css_dir, css_dir)
     build_css(css_dir, output_file)
     build_widget_defaults(
         css_dir,
@@ -776,7 +856,6 @@ def main():
         css_dir / SCREEN_CSS_SELF_FILENAME,
         css_dir / SCREEN_CSS_SCOPED_FILENAME,
     )
-    build_agentic_split(css_dir, css_dir)
     # Qodo finding on PR #1831 (build race): the sheets above were built
     # from one read of the sources and write_build_manifest re-reads them;
     # an edit between those reads would record NEW content in the manifest

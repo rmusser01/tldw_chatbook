@@ -975,6 +975,26 @@ Button.settings-category-group-toggle:focus {
     margin: 0;
 }
 
+/* _conversations.tcss's bare `Checkbox { width: 100%; height: 2; }` is an
+   unscoped TYPE selector that reaches every Checkbox app-wide (verified
+   live: region.width computed to the ROW's full width, overlapping/
+   clipping the marker and Test button that come after it in the SAME
+   row) -- override both Enabled checkboxes (one per backend row) and the
+   standalone "Context LLM enabled" checkbox back to a natural, single-
+   line size within this panel specifically; never touching that shared
+   global rule, which other screens may rely on. The backend-row Checkbox
+   also drops its horizontal padding (unlike the roomier standalone
+   context_llm_enabled one) -- same narrow-terminal column budget as the
+   Button rule above. */
+.settings-imagegen-backend-row Checkbox {
+    width: auto;
+    height: 1;
+    min-height: 1;
+    margin-bottom: 0;
+    border: none;
+    padding: 0;
+}
+
 
 
 #settings-imagegen-context_llm_enabled {

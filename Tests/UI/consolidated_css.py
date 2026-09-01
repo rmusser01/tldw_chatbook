@@ -63,6 +63,10 @@ def app_css_text() -> str:
     For text-level contracts ("this rule is styled somewhere the app
     loads"). Asserting on the bundle alone re-encodes the pre-split
     packaging, which TASK-25812 deliberately changed.
+
+    Returns:
+        The concatenated text of every path in ``APP_STYLESHEETS``, joined
+        with newlines, in load order.
     """
     return "\n".join(
         path.read_text(encoding="utf-8") for path in APP_STYLESHEETS

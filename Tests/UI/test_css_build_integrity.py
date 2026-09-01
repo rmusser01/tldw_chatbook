@@ -382,19 +382,27 @@ def test_library_notes_compact_source_module_is_exactly_bundled() -> None:
     fails loudly, which is this test's entire purpose.
     """
     source = _AGENTIC_SOURCE.read_text(encoding="utf-8")
-    remainder, moved = css_builder.split_agentic_terminal(source)
+    remainder, _ = css_builder.split_agentic_terminal(source, css_dir=_CSS_ROOT)
     bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
 
     assert (
         _bundled_module(bundle, "components/_agentic_terminal.tcss")
         == remainder.strip()
     )
-    for owner, filename in css_builder.AGENTIC_SPLIT_SHEETS.items():
-        sheet = (_CSS_ROOT / filename).read_text(encoding="utf-8")
-        assert sheet.rstrip().endswith(moved[owner].rstrip()), (
-            f"{filename} does not end with the {owner} blocks split from "
-            "the source module -- regenerate with build_css.py"
-        )
+    # EXACT equality against a fresh rebuild, not endswith: a suffix check
+    # accepts stale or hand-inserted CSS ahead of the expected tail (Qodo
+    # #2281), which is precisely the drift this test exists to refuse.
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as rebuilt_dir:
+        css_builder.build_agentic_split(_CSS_ROOT, Path(rebuilt_dir))
+        for filename in css_builder.AGENTIC_SPLIT_SHEETS.values():
+            committed = (_CSS_ROOT / filename).read_text(encoding="utf-8")
+            rebuilt = (Path(rebuilt_dir) / filename).read_text(encoding="utf-8")
+            assert committed == rebuilt, (
+                f"{filename} differs from a fresh build_agentic_split -- "
+                "regenerate with build_css.py and commit the result"
+            )
 
 
 def test_console_bounded_sections_have_no_legacy_fractional_css_owner() -> None:
@@ -654,3 +662,109 @@ def test_settings_category_rules_have_source_and_bundle_integrity() -> None:
 
         group_title = _rule_body(css, ".settings-category-group-title")
         assert "margin: 0;" in group_title
+
+
+# --- TASK-25812: split_agentic_terminal unit contracts (Qodo #2281 #3) ------
+
+
+def test_split_partition_is_lossless_and_ownership_is_conservative() -> None:
+    """The splitter's classification rules, each on a minimal input.
+
+    A block moves only when EVERY id/class token belongs to exactly one
+    owner; anything ambiguous stays. These are the shapes that decide
+    whether a rule silently vanishes from a surface, so each gets a named
+    case rather than trusting the full-file run to cover them.
+    """
+    css = (
+        "/* header comment { brace inside comment } */\n"
+        ".console-thing { color: red; }\n"
+        ".library-thing > Button { color: blue; }\n"
+        ".console-thing .library-thing { color: green; }\n"
+        "Button { color: white; }\n"
+        ".ds-panel .console-thing { color: black; }\n"
+        ".settings-input-label { color: grey; }\n"
+        "#settings-only { padding: 1; }\n"
+        "/* tail comment */\n"
+    )
+    remainder, moved = css_builder.split_agentic_terminal(css)
+
+    # Lossless: every byte lands in exactly one output.
+    reassembled = sorted(
+        remainder.splitlines()
+        + [line for text in moved.values() for line in text.splitlines()]
+    )
+    assert reassembled == sorted(css.splitlines())
+
+    assert ".console-thing { color: red; }" in moved["console"]
+    assert ".library-thing > Button" in moved["library"]
+    assert "#settings-only" in moved["settings"]
+    # Multi-owner selector stays.
+    assert ".console-thing .library-thing" in remainder
+    # Bare TYPE subject stays.
+    assert "Button { color: white; }" in remainder
+    # A non-owner token anywhere pins the block to the bundle.
+    assert ".ds-panel .console-thing" in remainder
+    # Pinned cross-surface vocabulary stays even though it prefix-matches.
+    assert ".settings-input-label" in remainder
+    # Comments (including braces inside them) travel with the next block.
+    assert "brace inside comment" in remainder + moved["console"]
+
+
+def test_split_demotes_moved_blocks_that_later_kept_blocks_tie_with() -> None:
+    """Intra-module cascade-order safety, both directions.
+
+    A moved block parses after the whole bundle. A KEPT block later in the
+    module that shares its selector used to win the tie by source order and
+    would now lose it -- so the moved block must be demoted. A kept block
+    EARLIER keeps its relative order and must not cause demotion.
+    """
+    # A tie needs the SAME selector (equal specificity); the incident case
+    # was a comma group carrying the moved rule's exact selector.
+    css = (
+        ".console-a { color: red; }\n"
+        ".mixed-tok, .console-a { color: blue; }\n"  # kept, LATER, exact tie
+        ".console-b { color: green; }\n"
+    )
+    remainder, moved = css_builder.split_agentic_terminal(css)
+    assert ".console-a { color: red; }" in remainder, (
+        "moved block sharing a selector with a LATER kept block must be "
+        "demoted or it wins a cascade tie it used to lose"
+    )
+    assert ".console-b" in moved["console"]
+
+    css2 = (
+        ".mixed-tok, .console-c { color: blue; }\n"  # kept, EARLIER
+        ".console-c { color: red; }\n"
+    )
+    remainder2, moved2 = css_builder.split_agentic_terminal(css2)
+    assert ".console-c { color: red; }" in moved2["console"], (
+        "a kept block EARLIER in the module preserves relative order and "
+        "must not force a demotion"
+    )
+
+
+def test_split_demotion_sees_later_modules(tmp_path: Path) -> None:
+    """Cross-module cascade-order safety (Qodo #2281 #8).
+
+    A selector collision with a module AFTER the agentic one in
+    CSS_MODULES (features, utilities) must demote the moved block: those
+    modules used to win the tie by bundle order and a screen sheet would
+    now beat them.
+    """
+    css_dir = tmp_path / "css"
+    (css_dir / "utilities").mkdir(parents=True)
+    (css_dir / "utilities" / "_overrides.tcss").write_text(
+        ".console-x { color: white; }\n", encoding="utf-8"
+    )
+    css = ".console-x { color: red; }\n.console-y { color: green; }\n"
+
+    remainder, moved = css_builder.split_agentic_terminal(css, css_dir=css_dir)
+    assert ".console-x" in remainder, (
+        "a moved block colliding with a LATER module's selector must be "
+        "demoted -- utilities exist to override anything"
+    )
+    assert ".console-y" in moved["console"]
+
+    # Without a tree, only the intra-module pass applies.
+    remainder_none, moved_none = css_builder.split_agentic_terminal(css)
+    assert ".console-x" in moved_none["console"]
