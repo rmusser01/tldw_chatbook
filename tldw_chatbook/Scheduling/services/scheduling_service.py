@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 from croniter import croniter
 from loguru import logger
 
+from tldw_chatbook.Scheduling.automation_health import compute_local_health
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind, ScheduledTask
 from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
@@ -69,6 +70,8 @@ class SchedulingService:
         watchlist_projection: WatchlistProjection | None = None,
         briefing_projection: BriefingProjection | None = None,
         on_queue_changed: Callable[[], None] | None = None,
+        app_getter: Callable[[], Any] | None = None,
+        automation_handler_getter: Callable[[], Any] | None = None,
     ) -> None:
         self.db = db
         self.server_client = server_client or SchedulingServerClient()
@@ -77,6 +80,21 @@ class SchedulingService:
         self.watchlist_projection = watchlist_projection
         self.briefing_projection = briefing_projection
         self.sync_engine = SyncEngine(db, self.server_client, self.owner_id)
+        #: Zero-arg getter for the running app, used by
+        #: ``run_automation_now`` to compute read-time health
+        #: (``compute_local_health``). Late-binding like
+        #: ``on_queue_changed`` below: the app wires this to ``lambda:
+        #: self`` at construction time, before ``self`` itself is fully
+        #: built out.
+        self.app_getter = app_getter
+        #: Zero-arg getter for the (lazily constructed, memoized)
+        #: ``AutomationDefinitionHandler``. Injected rather than imported
+        #: directly -- this module must not import the handler module
+        #: (ADR-097 boot-census rule) -- and resolved fresh per call so a
+        #: manual run reuses the SAME handler instance (and its
+        #: ``_claimed``/``_pending`` overlap-guard state) as the scheduled
+        #: dispatch path.
+        self.automation_handler_getter = automation_handler_getter
         #: Called after any reminder mutation that can change what the
         #: scheduler should dispatch (create/update/delete, local or
         #: server-persisted). The app wires this to
@@ -381,6 +399,95 @@ class SchedulingService:
         if row is None or not succeeded:
             return None
         return self._row_to_reminder(row)
+
+    async def run_automation_now(self, definition_id: str) -> dict[str, Any] | None:
+        """Dispatch a local automation definition immediately (manual run).
+
+        The service seam for the workbench's Run-now action on
+        `automation_definition` rows (schedules-handoff PR-2 Task 6):
+        delegates to ``AutomationDefinitionHandler.run_now`` -- the SAME
+        claim/spawn machinery ``handle`` (the scheduled dispatch path)
+        uses, with ``trigger_reason="manual"`` and no schedule slot -- so
+        a manual run reuses the identical overlap guard and never
+        double-executes against a concurrent scheduled run, and never
+        advances the definition's next scheduled occurrence.
+
+        Refuses (returns ``None``, reason logged) without dispatching for,
+        in order: no automation handler wired (mirrors
+        ``run_reminder_now``'s honest refusal when no loop is available),
+        a server-scoped owner (ADR-077 decision 1: the server executes
+        those), a ``lifecycle`` outside ``{configured, paused}``, a
+        pending transfer (``transfer_state`` not ``NULL``), or a
+        read-time health other than ``"ready"`` (``compute_local_health``
+        -- never the possibly-stale ``health`` column).
+
+        Args:
+            definition_id: The definition's local id.
+
+        Returns:
+            ``None`` on refusal or when the definition does not exist.
+            On success, ``{"run_id": ..., "deduped": bool}``: ``run_id``
+            is ``None`` and ``deduped`` is ``True`` when the handler's own
+            overlap claim declined the run (a run was already in flight
+            for this definition) -- that is still a "success" from this
+            method's own refusal checks above, just a no-op dispatch.
+        """
+        if self.automation_handler_getter is None:
+            logger.warning(
+                "Manual automation run refused for definition {definition_id}: "
+                "no automation handler available",
+                definition_id=definition_id,
+            )
+            return None
+
+        row = self.db.get_automation_definition(definition_id)
+        if row is None:
+            return None
+
+        # ADR-077 decision 1: server-scoped rows are executed by the
+        # server (same guard `run_reminder_now` applies to reminders).
+        from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
+
+        if is_server_scoped_owner(row.get("owner_id")):
+            logger.warning(
+                "Manual automation run refused for definition {definition_id}: "
+                "server-scoped (executed by the server per ADR-077)",
+                definition_id=definition_id,
+            )
+            return None
+
+        if row.get("lifecycle") not in ("configured", "paused"):
+            logger.warning(
+                "Manual automation run refused for definition {definition_id}: "
+                "lifecycle {lifecycle!r} is not configured/paused",
+                definition_id=definition_id,
+                lifecycle=row.get("lifecycle"),
+            )
+            return None
+
+        if row.get("transfer_state") is not None:
+            logger.warning(
+                "Manual automation run refused for definition {definition_id}: "
+                "a transfer is in progress",
+                definition_id=definition_id,
+            )
+            return None
+
+        app = self.app_getter() if self.app_getter is not None else None
+        health, reason = compute_local_health(app, row)
+        if health != "ready":
+            logger.warning(
+                "Manual automation run refused for definition {definition_id}: "
+                "health is {health!r} ({reason})",
+                definition_id=definition_id,
+                health=health,
+                reason=reason,
+            )
+            return None
+
+        handler = self.automation_handler_getter()
+        run_id = await handler.run_now(row)
+        return {"run_id": run_id, "deduped": run_id is None}
 
     def _use_server(self) -> bool:
         """Return True when server operations should be attempted."""

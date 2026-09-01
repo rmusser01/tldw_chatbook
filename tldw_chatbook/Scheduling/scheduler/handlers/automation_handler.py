@@ -200,16 +200,92 @@ class AutomationDefinitionHandler:
                 f"next_run_at; skipping dispatch."
             )
             return
-        # Computed up front (not literally step 3, spec numbering
-        # notwithstanding): the overlap-claim skip row below needs it too.
         slot = schedule_slot_for(next_run)
+
+        await self._dispatch(
+            task,
+            executor=executor,
+            trigger_reason="scheduled",
+            schedule_slot=slot,
+            advance_schedule=True,
+        )
+
+    async def run_now(self, definition_row: dict[str, Any]) -> str | None:
+        """Dispatch one definition immediately (manual "Run now", Task 6).
+
+        Reuses `handle`'s claim/spawn machinery via `_dispatch`, with
+        `trigger_reason="manual"` and `schedule_slot=None` -- manual runs
+        never slot-collide (NULL is distinct from every other value in the
+        run's `(definition_id, definition_version, schedule_slot)`
+        UNIQUE, so a manual run never dedupes against, or is deduped by, a
+        scheduled one) -- and no schedule advance: a manual run does not
+        consume or move the definition's next scheduled occurrence.
+
+        The service seam (`SchedulingService.run_automation_now`) has
+        already applied the owner/lifecycle/transfer/health refusals
+        before calling this; the only refusal left here is the same
+        overlap claim `handle` itself enforces.
+
+        Args:
+            definition_row: The definition row, shaped like `handle`'s
+                `task` argument (a `"next_run_at"` is not required -- a
+                manual run needs no slot).
+
+        Returns:
+            The new run's id, or `None` when a run was already claimed for
+            this definition -- the skip is recorded exactly as `handle`'s
+            own overlap guard records it (`status="skipped"`,
+            `trigger_reason="manual"`).
+        """
+        definition_id = definition_row.get("id")
+        family = definition_row.get("family")
+        executor = self.executors.get(family)
+        if executor is None:
+            logger.warning(
+                f"No executor registered for automation family {family!r} "
+                f"(definition {definition_id!r}); skipping manual dispatch."
+            )
+            return None
+
+        return await self._dispatch(
+            definition_row,
+            executor=executor,
+            trigger_reason="manual",
+            schedule_slot=None,
+            advance_schedule=False,
+        )
+
+    async def _dispatch(
+        self,
+        task: dict[str, Any],
+        *,
+        executor: Executor,
+        trigger_reason: str,
+        schedule_slot: str | None,
+        advance_schedule: bool,
+    ) -> str | None:
+        """Claim, insert the `running` row, spawn the run -- the shared post-claim body.
+
+        Extracted from `handle` (Task 6): `handle` calls this with
+        `trigger_reason="scheduled"`, a real `schedule_slot`, and
+        `advance_schedule=True`; `run_now` calls it with
+        `trigger_reason="manual"`, `schedule_slot=None`, and
+        `advance_schedule=False`. See the class docstring's "Claim guard"
+        for the exact window `_claimed` covers.
+
+        Returns the new run's id, or `None` when the definition already
+        has a run claimed (a `skipped` row is written first, exactly as
+        the pre-extraction `handle` wrote it) or the slot's UNIQUE deduped
+        the insert.
+        """
+        definition_id = task.get("id")
         owner_id = task.get("owner_id") or "local"
         version = task.get("version") or 1
 
         if definition_id in self._claimed:
-            # Not an error: the interval fired again before the previous
-            # run finished. The claim -- held by that still-running
-            # execution -- is the refusal.
+            # Not an error: another dispatch (scheduled or manual) fired
+            # before the previous run finished. The claim -- held by that
+            # still-running execution -- is the refusal.
             logger.info(
                 f"Skipping automation definition {definition_id!r}: a run "
                 f"is already in flight for it."
@@ -219,11 +295,11 @@ class AutomationDefinitionHandler:
                 owner_id,
                 definition_id,
                 version,
-                "scheduled",
+                trigger_reason,
                 status="skipped",
                 outcome="none",
                 schedule_slot=None,
-                run_summary={"skipped": "overlap", "claimed_slot": slot},
+                run_summary={"skipped": "overlap", "claimed_slot": schedule_slot},
             )
             self._notify(
                 task,
@@ -235,7 +311,7 @@ class AutomationDefinitionHandler:
                     f"was already in progress."
                 ),
             )
-            return
+            return None
 
         self._claimed.add(definition_id)
         # From here to the successful spawn below, `_run`'s own `finally`
@@ -257,9 +333,9 @@ class AutomationDefinitionHandler:
                 owner_id,
                 definition_id,
                 version,
-                "scheduled",
+                trigger_reason,
                 status="running",
-                schedule_slot=slot,
+                schedule_slot=schedule_slot,
                 started_at=now,
                 scope_snapshot=config.get("scope") if isinstance(config, dict) else None,
                 finding_policy_snapshot=task.get("finding_policy"),
@@ -268,16 +344,17 @@ class AutomationDefinitionHandler:
                 # The (definition, version, slot) UNIQUE fired: this slot
                 # already ran. Dedupe is a result, not an error -- nothing
                 # else to do; the finally below releases the claim.
-                return
+                return None
 
-            schedule = task.get("schedule")
-            await asyncio.to_thread(
-                self.db.update_automation_definition,
-                definition_id,
-                next_run_at=compute_next_run_at(
-                    schedule if isinstance(schedule, dict) else {}, now=now
-                ),
-            )
+            if advance_schedule:
+                schedule = task.get("schedule")
+                await asyncio.to_thread(
+                    self.db.update_automation_definition,
+                    definition_id,
+                    next_run_at=compute_next_run_at(
+                        schedule if isinstance(schedule, dict) else {}, now=now
+                    ),
+                )
 
             spawned = asyncio.create_task(
                 self._run(executor, task, run_id=run_id, definition_id=definition_id, owner_id=owner_id),
@@ -286,6 +363,7 @@ class AutomationDefinitionHandler:
             self._pending.add(spawned)
             spawned.add_done_callback(self._pending.discard)
             claim_released_by_spawn = True
+            return run_id
         finally:
             if not claim_released_by_spawn:
                 self._claimed.discard(definition_id)

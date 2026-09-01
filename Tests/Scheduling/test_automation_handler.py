@@ -339,6 +339,122 @@ async def test_notification_policy_on_failure_false_suppresses_the_notification(
 
 
 @pytest.mark.asyncio
+async def test_run_now_writes_manual_trigger_reason_null_slot_no_advance(tmp_path):
+    """Task 6: manual dispatch writes trigger_reason="manual", slot=None,
+    and leaves the definition's next_run_at untouched (no schedule advance)."""
+    db = _make_db(tmp_path)
+    row = _make_definition(db)
+
+    async def fake_executor(app, definition_row):
+        return _FakeOutcome(outcome="finding")
+
+    handler = AutomationDefinitionHandler(
+        db=db, executors={"recurring_question": fake_executor}
+    )
+
+    run_id = await handler.run_now(row)
+    assert run_id is not None
+
+    runs = db.list_automation_runs("local", definition_id=row["id"])
+    assert len(runs) == 1
+    assert runs[0]["id"] == run_id
+    assert runs[0]["trigger_reason"] == "manual"
+    assert runs[0]["schedule_slot"] is None
+    assert runs[0]["status"] == "running"
+
+    # No schedule advance: next_run_at is exactly what it was before.
+    updated = db.get_automation_definition(row["id"])
+    assert updated is not None
+    assert updated["next_run_at"] == row["next_run_at"]
+
+    await _drain(handler)
+    runs = db.list_automation_runs("local", definition_id=row["id"])
+    assert runs[0]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_run_now_does_not_slot_collide_with_a_scheduled_run(tmp_path):
+    """NULL schedule_slot is distinct in the UNIQUE: manual runs never dedupe
+    against, or get deduped by, a scheduled run for the same definition."""
+    db = _make_db(tmp_path)
+    row = _make_definition(db)
+    calls: list[str] = []
+
+    async def fake_executor(app, definition_row):
+        calls.append("run")
+        return _FakeOutcome(outcome="finding")
+
+    handler = AutomationDefinitionHandler(
+        db=db, executors={"recurring_question": fake_executor}
+    )
+
+    await handler.handle(row)  # scheduled dispatch, claims + releases
+    await _drain(handler)
+    assert len(db.list_automation_runs("local", definition_id=row["id"])) == 1
+
+    run_id = await handler.run_now(row)  # manual dispatch, same slot moment
+    await _drain(handler)
+
+    assert run_id is not None
+    runs = db.list_automation_runs("local", definition_id=row["id"])
+    assert len(runs) == 2
+    assert calls == ["run", "run"]
+
+
+@pytest.mark.asyncio
+async def test_run_now_claim_refused_records_skipped_row_with_manual_reason(
+    tmp_path,
+):
+    """A run already claimed (scheduled or manual) refuses a manual run the
+    same way `handle`'s own overlap guard does: one skipped row, no second
+    execution."""
+    db = _make_db(tmp_path)
+    row = _make_definition(db)
+    gate = asyncio.Event()
+    calls: list[int] = []
+
+    async def gated_executor(app, definition_row):
+        calls.append(1)
+        await gate.wait()
+        return _FakeOutcome(outcome="finding")
+
+    handler = AutomationDefinitionHandler(
+        db=db, executors={"recurring_question": gated_executor}
+    )
+
+    await handler.handle(row)  # spawns and claims definition_id
+    run_id = await handler.run_now(row)  # sees the claim; skipped, no spawn
+    assert run_id is None
+
+    gate.set()
+    await _drain(handler)
+
+    assert calls == [1]  # the executor was never invoked a second time
+
+    runs = db.list_automation_runs("local", definition_id=row["id"])
+    assert len(runs) == 2
+    statuses = sorted(r["status"] for r in runs)
+    assert statuses == ["completed", "skipped"]
+
+    skipped = next(r for r in runs if r["status"] == "skipped")
+    assert skipped["trigger_reason"] == "manual"
+    assert skipped["schedule_slot"] is None
+    assert skipped["run_summary"] == {"skipped": "overlap", "claimed_slot": None}
+
+
+@pytest.mark.asyncio
+async def test_run_now_no_executor_for_family_returns_none(tmp_path):
+    db = _make_db(tmp_path)
+    row = _make_definition(db, family="agent_task")
+    handler = AutomationDefinitionHandler(db=db, executors={})
+
+    run_id = await handler.run_now(row)
+
+    assert run_id is None
+    assert db.list_automation_runs("local", definition_id=row["id"]) == []
+
+
+@pytest.mark.asyncio
 async def test_a_db_error_inserting_the_running_row_does_not_strand_the_claim(
     tmp_path,
 ):

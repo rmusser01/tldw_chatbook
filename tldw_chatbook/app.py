@@ -9607,6 +9607,20 @@ class TldwCli(
                 if getattr(self, "scheduler_loop", None) is not None
                 else None
             ),
+            # schedules-handoff PR-2, Task 6: `run_automation_now` (manual
+            # dispatch) resolves the app for read-time health
+            # (`compute_local_health`) and the automation handler through
+            # these getters rather than importing the handler module
+            # itself (ADR-097 boot-census rule) or holding either
+            # reference directly -- both are late-binding lambdas closing
+            # over `self`, same discipline as `on_queue_changed` above:
+            # `self` is still mid-`__init__` here, and
+            # `_get_automation_definition_handler` reads
+            # `self.scheduling_service` (assigned by this very statement)
+            # and `self.notification_dispatch_service`, neither resolved
+            # until the getter is actually called.
+            app_getter=lambda: self,
+            automation_handler_getter=lambda: self._get_automation_definition_handler(),
         )
 
         watchlist_checks_enabled = get_cli_setting(
@@ -9685,21 +9699,7 @@ class TldwCli(
         # if it is the same object each time; building a fresh handler
         # per dispatch would silently defeat that guard.
         async def _dispatch_automation_definition(task: dict[str, Any]) -> None:
-            handler = getattr(self, "_automation_definition_handler", None)
-            if handler is None:
-                from .Scheduling.scheduler.handlers.automation_handler import (
-                    AutomationDefinitionHandler,
-                )
-
-                handler = AutomationDefinitionHandler(
-                    db=self.scheduling_service.db,
-                    app_getter=lambda: self,
-                    dispatch_service=self.notification_dispatch_service,
-                    handler_timeout_seconds=get_cli_setting(
-                        "scheduling", "handler_timeout_seconds", HANDLER_TIMEOUT_SECONDS
-                    ),
-                )
-                self._automation_definition_handler = handler
+            handler = self._get_automation_definition_handler()
             await handler.handle(task)
 
         handlers["automation_definition"] = _dispatch_automation_definition
@@ -10260,6 +10260,38 @@ class TldwCli(
             self.notification_dispatch_service
         )
         self.local_watchlists_service.notification_app = self
+
+    def _get_automation_definition_handler(self) -> Any:
+        """Lazily construct and memoize the automation-definition handler.
+
+        ADR-097 (boot-census ratchet): `AutomationDefinitionHandler`'s
+        import chain (the handler module + `schedule_compute` +
+        `slot_keys`) stays OFF the boot path -- built on first use, then
+        cached on `self` so every later call (scheduled dispatch via
+        `_dispatch_automation_definition` above, and manual dispatch via
+        `SchedulingService.run_automation_now`'s injected
+        `automation_handler_getter`) reuses the SAME instance. The
+        overlap-claim guard (`_claimed`/`_pending` on the handler) only
+        works across calls if it is the same object each time; a fresh
+        handler per call would silently defeat it -- and would let a
+        manual run race a scheduled one for the same definition.
+        """
+        handler = getattr(self, "_automation_definition_handler", None)
+        if handler is None:
+            from .Scheduling.scheduler.handlers.automation_handler import (
+                AutomationDefinitionHandler,
+            )
+
+            handler = AutomationDefinitionHandler(
+                db=self.scheduling_service.db,
+                app_getter=lambda: self,
+                dispatch_service=self.notification_dispatch_service,
+                handler_timeout_seconds=get_cli_setting(
+                    "scheduling", "handler_timeout_seconds", HANDLER_TIMEOUT_SECONDS
+                ),
+            )
+            self._automation_definition_handler = handler
+        return handler
 
     def _backfill_subscription_items_fts(self) -> None:
         """Worker body: index subscription_items rows that predate the FTS
