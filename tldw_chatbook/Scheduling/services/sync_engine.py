@@ -222,13 +222,20 @@ class SyncEngine:
 
         # The reminder phase's own outcome/status semantics are preserved
         # unchanged (`_sync_reminders` is the original method body) when it
-        # already failed or was not applicable. But an "ok" reminder phase
+        # already failed. But an "ok" OR "not_applicable" reminder phase
         # sitting beside a failed automation phase used to report clean --
         # the exact dishonesty task-23105 fixed for reminders (F2): surface
         # the first automation-phase error so the caller doesn't toast
-        # success next to a fresh error badge. Results/definitions already
-        # pulled by an earlier phase this round are not rolled back.
-        if reminder_outcome.status == "ok" and phase_errors:
+        # success (or silent no-op) next to a fresh error badge.
+        # "not_applicable" belongs here too (review round 2): it means the
+        # REMINDER phase's own policy action was refused, which says
+        # nothing about the automation phases' (different policy actions)
+        # own genuinely-failed attempt -- that error must not be masked by
+        # the reminder side's non-error status. An "error" reminder phase
+        # already carries its own message and is left alone. Results/
+        # definitions already pulled by an earlier phase this round are
+        # not rolled back.
+        if reminder_outcome.status in ("ok", "not_applicable") and phase_errors:
             return replace(reminder_outcome, status="error", error=phase_errors[0])
 
         return reminder_outcome

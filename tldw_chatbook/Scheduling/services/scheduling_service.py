@@ -509,12 +509,16 @@ class SchedulingService:
     ) -> bool:
         """Set a local automation result's review state (local entry point).
 
-        Always writes the local row first. When that row is a server
-        mirror (``server_id`` set), also records an
-        ``automation_result_review`` pending mutation carrying the SERVER
-        result id -- so ``SyncEngine._replay_review_mutations`` can push it
-        without a local join (spec §5.1's payload-not-reference rule).
-        The mutation is recorded under the ROW's own ``owner_id`` (falling
+        Writes the local row via a single ``update_result_review`` call.
+        When that row is a server mirror (``server_id`` set), the same
+        call also records an ``automation_result_review`` pending
+        mutation carrying the SERVER result id -- in the SAME DB
+        transaction as the review UPDATE, so a crash between the two
+        writes can never leave a local review that never pushes (or an
+        outbox row for a review that was rolled back) -- so
+        ``SyncEngine._replay_review_mutations`` can push it without a
+        local join (spec §5.1's payload-not-reference rule). The
+        mutation is recorded under the ROW's own ``owner_id`` (falling
         back to ``self.owner_id`` only if the row has none) since the
         workbench can toggle the service's active owner independently of
         which owner a given result row belongs to -- recording under
@@ -549,27 +553,29 @@ class SchedulingService:
         if row is None:
             return False
 
-        updated = await asyncio.to_thread(
-            self.db.update_result_review, result_id, review_state, review_note
-        )
-        if not updated:
-            return False
-
         server_id = row.get("server_id")
+        pending_mutation: dict[str, Any] | None = None
         if server_id:
             mutation_owner = row.get("owner_id") or self.owner_id
-            await asyncio.to_thread(
-                self.db.record_pending_mutation,
-                result_id,
-                _RESULT_REVIEW_PRIMITIVE,
-                mutation_owner,
-                {
+            pending_mutation = {
+                "local_id": result_id,
+                "primitive": _RESULT_REVIEW_PRIMITIVE,
+                "owner_id": mutation_owner,
+                "payload": {
                     "server_result_id": server_id,
                     "review_state": review_state,
                     "review_note": review_note,
                 },
-            )
-        return True
+            }
+
+        updated = await asyncio.to_thread(
+            self.db.update_result_review,
+            result_id,
+            review_state,
+            review_note,
+            pending_mutation=pending_mutation,
+        )
+        return updated
 
     def _use_server(self) -> bool:
         """Return True when server operations should be attempted."""

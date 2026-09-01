@@ -945,6 +945,65 @@ def test_review_transitions_and_unread_count(tmp_path):
     assert not db.update_result_review("missing", "dismissed")
 
 
+def test_update_result_review_writes_pending_mutation_in_same_transaction(tmp_path):
+    """review round 1 finding: the review UPDATE and its outbox mutation
+    insert must land as one write, so a server-mirrored review is never
+    left un-pushed (or pushed for a review that didn't actually commit)."""
+    db = _mk_db(tmp_path)
+    rid = db.create_automation_result(
+        "server:1", "d1", "r1", "finding", "T", "S", "k1", server_id="srv-1"
+    )
+
+    assert db.update_result_review(
+        rid,
+        "dismissed",
+        "noise",
+        pending_mutation={
+            "local_id": rid,
+            "primitive": "automation_result_review",
+            "owner_id": "server:1",
+            "payload": {"server_result_id": "srv-1", "review_state": "dismissed"},
+        },
+    )
+
+    row = db.get_automation_result(rid)
+    assert row["review_state"] == "dismissed"
+    pending = db.get_pending_mutations("server:1", primitive="automation_result_review")
+    assert len(pending) == 1
+    assert pending[0]["payload"]["server_result_id"] == "srv-1"
+    assert pending[0]["payload"]["idempotency_key"]  # generated, same as the standalone method
+
+
+def test_update_result_review_pending_mutation_atomic_rollback_on_insert_failure(tmp_path):
+    """Fault-inject a genuine DB failure in the mutation INSERT (a NULL
+    owner_id violates pending_mutations' NOT NULL constraint) and confirm
+    the review UPDATE in the SAME transaction rolls back with it -- the
+    atomicity the review round 1 finding required."""
+    db = _mk_db(tmp_path)
+    rid = db.create_automation_result(
+        "server:1", "d1", "r1", "finding", "T", "S", "k1", server_id="srv-1"
+    )
+
+    with pytest.raises(Exception):
+        db.update_result_review(
+            rid,
+            "dismissed",
+            "noise",
+            pending_mutation={
+                "local_id": rid,
+                "primitive": "automation_result_review",
+                "owner_id": None,  # NOT NULL violation -> INSERT raises
+                "payload": {"server_result_id": "srv-1", "review_state": "dismissed"},
+            },
+        )
+
+    row = db.get_automation_result(rid)
+    assert row["review_state"] == "unread"  # the UPDATE rolled back too
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_result_review") == []
+    )
+
+
 # ----------------------------------------------------------------------
 # Server-mirror upserts (schedules-handoff PR-3, task 3)
 # ----------------------------------------------------------------------

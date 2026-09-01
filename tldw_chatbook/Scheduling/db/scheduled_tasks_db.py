@@ -1560,8 +1560,22 @@ class ScheduledTasksDB(BaseDB):
         review_state: str,
         review_note: str | None = None,
         reviewed_by: str | None = None,
+        *,
+        pending_mutation: dict[str, Any] | None = None,
     ) -> bool:
-        """Set a result's review state; returns False for an unknown id."""
+        """Set a result's review state; returns False for an unknown id.
+
+        When ``pending_mutation`` is given, its
+        ``automation_result_review`` mutation is inserted into
+        ``pending_mutations`` in the SAME transaction as the review
+        UPDATE, so a crash between the two can never leave a local
+        review recorded without the outbox row that pushes it (or vice
+        versa). The dict mirrors ``record_pending_mutation``'s
+        parameters: ``local_id``, ``primitive``, ``owner_id``,
+        ``payload`` -- an ``idempotency_key`` is generated into the
+        payload if one isn't already present, same as the standalone
+        method.
+        """
         now_iso = self._to_utc_iso(datetime.now(timezone.utc))
         with self.transaction() as conn:
             cursor = conn.execute(
@@ -1573,7 +1587,28 @@ class ScheduledTasksDB(BaseDB):
                 """,
                 (review_state, review_note, reviewed_by, now_iso, now_iso, result_id),
             )
-            return cursor.rowcount > 0
+            if cursor.rowcount == 0:
+                return False
+
+            if pending_mutation is not None:
+                stored_payload = dict(pending_mutation["payload"])
+                if not stored_payload.get("idempotency_key"):
+                    stored_payload["idempotency_key"] = str(uuid.uuid4())
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO pending_mutations
+                    (local_id, primitive, owner_id, payload, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        pending_mutation["local_id"],
+                        pending_mutation["primitive"],
+                        pending_mutation["owner_id"],
+                        self._to_json(stored_payload),
+                        now_iso,
+                    ),
+                )
+            return True
 
     # ------------------------------------------------------------------
     # Server-mirror upserts (schedules-handoff PR-3)

@@ -822,3 +822,45 @@ async def test_review_automation_result_unknown_id_returns_false(db):
     ok = await svc.review_automation_result("no-such-id", "dismissed")
 
     assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_review_automation_result_server_mirrored_makes_a_single_db_call(db):
+    """review round 1 finding: the review write and its outbox mutation
+    must be ONE ``update_result_review(..., pending_mutation=...)`` call --
+    not a separate ``record_pending_mutation`` call after -- so the two
+    can never land in different transactions.
+    """
+    result_id = db.create_automation_result(
+        "server:1", "def-1", "run-1", "finding", "T", "S", "key-1",
+        server_id="srv-res-1",
+    )
+    svc = SchedulingService(db=db, runtime_source="server:1")
+
+    real_update = db.update_result_review
+    calls: list[dict] = []
+
+    def _spy_update(*args, **kwargs):
+        calls.append(kwargs)
+        return real_update(*args, **kwargs)
+
+    db.update_result_review = _spy_update  # type: ignore[method-assign]
+    db.record_pending_mutation = MagicMock(  # type: ignore[method-assign]
+        side_effect=AssertionError(
+            "record_pending_mutation must not be called separately from "
+            "review_automation_result -- it must go through "
+            "update_result_review(pending_mutation=...)"
+        )
+    )
+
+    ok = await svc.review_automation_result(result_id, "dismissed", "noise")
+
+    assert ok is True
+    assert len(calls) == 1
+    mutation = calls[0]["pending_mutation"]
+    assert mutation["local_id"] == result_id
+    assert mutation["owner_id"] == "server:1"
+    assert mutation["payload"]["server_result_id"] == "srv-res-1"
+
+    pending = db.get_pending_mutations("server:1", primitive="automation_result_review")
+    assert len(pending) == 1

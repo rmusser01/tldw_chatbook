@@ -1369,3 +1369,68 @@ async def test_sync_now_reminder_transaction_failure_still_pulls_automation_resu
     assert outcome.status == "error"
     assert "boom" in (outcome.error or "")
     assert len(db.list_automation_results("server:1")) == 1
+
+
+# --- review round 2: "not_applicable" reminder phase must not mask a ------
+# --- genuinely-failed automation phase -------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sync_now_reminder_policy_refusal_does_not_mask_automation_error(
+    tmp_path,
+):
+    """The reminder phase's own policy action can be refused
+    (`not_applicable`) while a DIFFERENT policy action -- an automation
+    phase -- genuinely fails. The old `status == "ok"` guard only caught
+    this when the reminder phase was "ok"; "not_applicable" let the
+    automation failure through unreported."""
+    from tldw_chatbook.Scheduling.services.server_client import (
+        ServerClientPolicyError,
+    )
+
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = AsyncMock()
+    server_client.list_reminders.side_effect = ServerClientPolicyError(
+        "requires server mode"
+    )
+    server_client.list_automation_definitions.side_effect = ServerUnavailableError(
+        "defs down"
+    )
+    server_client.list_automation_results.return_value = _result_page(_result_items(1))
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "error"
+    assert "defs down" in (outcome.error or "")
+    assert len(db.list_automation_results("server:1")) == 1  # later phase still ran
+    state = db.get_sync_state("server:1") or {}
+    assert state.get("sync_errors"), "the definitions-phase failure must be recorded"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_all_policy_refusal_stays_not_applicable(tmp_path):
+    """A pure all-refusal round (every phase's policy action refused) is
+    still `not_applicable`, not `error` -- refusals are never errors."""
+    from tldw_chatbook.Scheduling.services.server_client import (
+        ServerClientPolicyError,
+    )
+
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    server_client = AsyncMock()
+    server_client.list_reminders.side_effect = ServerClientPolicyError(
+        "requires server mode"
+    )
+    server_client.list_automation_definitions.side_effect = ServerClientPolicyError(
+        "requires server mode"
+    )
+    server_client.list_automation_results.side_effect = ServerClientPolicyError(
+        "requires server mode"
+    )
+    engine = SyncEngine(db, server_client, owner_id="local")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "not_applicable"
+    state = db.get_sync_state("local") or {}
+    assert not (state.get("sync_errors") or [])
