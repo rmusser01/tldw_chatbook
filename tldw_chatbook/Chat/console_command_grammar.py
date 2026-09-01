@@ -80,6 +80,12 @@ REDIRECT_COMMAND_NAME = "redirect"
 REDIRECT_COMMAND_ARGUMENT_HINT = "<correction for the running turn>"
 REDIRECT_COMMAND_HANDLER_ID = "redirect"
 
+#: TASK-26004: the global emergency stop. Holds NEW agent runs and scheduled
+#: dispatches; in-flight work is untouched. `/emergency-stop clear` resumes.
+EMERGENCY_STOP_COMMAND_NAME = "emergency-stop"
+EMERGENCY_STOP_COMMAND_ARGUMENT_HINT = "[clear | <reason>]"
+EMERGENCY_STOP_COMMAND_HANDLER_ID = "emergency-stop"
+
 REWIND_COMMAND_NAME = "rewind"
 REWIND_COMMAND_ARGUMENT_HINT = ""
 REWIND_COMMAND_HANDLER_ID = "rewind"
@@ -283,6 +289,13 @@ def default_console_registry() -> ConsoleCommandRegistry:
             name=REDIRECT_COMMAND_NAME,
             argument_hint=REDIRECT_COMMAND_ARGUMENT_HINT,
             handler_id=REDIRECT_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=EMERGENCY_STOP_COMMAND_NAME,
+            argument_hint=EMERGENCY_STOP_COMMAND_ARGUMENT_HINT,
+            handler_id=EMERGENCY_STOP_COMMAND_HANDLER_ID,
         )
     )
     registry.register(

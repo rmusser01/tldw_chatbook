@@ -65,3 +65,37 @@ def test_state_carries_a_clear_hint(tmp_path: Path):
     msg = emergency_stop_state(path).visible_copy()
     assert "stop" in msg.lower()
     assert "clear" in msg.lower()
+
+
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_scheduler_holds_dispatch_when_stopped(tmp_path):
+    from tldw_chatbook.Scheduling.scheduler.loop import SchedulerLoop
+    from datetime import datetime, timezone
+
+    popped = {"count": 0}
+
+    class _Queue:
+        def pop_due(self, now):
+            popped["count"] += 1
+            return []
+
+    loop = SchedulerLoop.__new__(SchedulerLoop)
+    loop.queue = _Queue()
+    loop._emergency_stop_path = tmp_path / "estop.json"
+
+    # not stopped -> pops
+    await loop._dispatch_due(datetime.now(timezone.utc))
+    assert popped["count"] == 1
+
+    # stopped -> does NOT pop (holds without consuming, AC#1/#2)
+    set_emergency_stop(loop._emergency_stop_path, reason="halt")
+    await loop._dispatch_due(datetime.now(timezone.utc))
+    assert popped["count"] == 1, "a stop must not drain the due queue"
+
+    # cleared -> resumes without restart (AC#6)
+    clear_emergency_stop(loop._emergency_stop_path)
+    await loop._dispatch_due(datetime.now(timezone.utc))
+    assert popped["count"] == 2

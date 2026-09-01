@@ -252,6 +252,8 @@ from ...Chat.console_command_grammar import (
     RESEARCH_COMMAND_HANDLER_ID,
     RESEARCH_COMMAND_NAME,
     REWIND_COMMAND_HANDLER_ID,
+    EMERGENCY_STOP_COMMAND_HANDLER_ID,
+    EMERGENCY_STOP_COMMAND_NAME,
     REDIRECT_COMMAND_HANDLER_ID,
     REDIRECT_COMMAND_NAME,
     STEER_COMMAND_HANDLER_ID,
@@ -15035,6 +15037,7 @@ class ChatScreen(BaseAppScreen):
         REWIND_COMMAND_NAME: REWIND_COMMAND_HANDLER_ID,
         STEER_COMMAND_NAME: STEER_COMMAND_HANDLER_ID,
         REDIRECT_COMMAND_NAME: REDIRECT_COMMAND_HANDLER_ID,
+        EMERGENCY_STOP_COMMAND_NAME: EMERGENCY_STOP_COMMAND_HANDLER_ID,
         RESEARCH_COMMAND_NAME: RESEARCH_COMMAND_HANDLER_ID,
     }
 
@@ -15096,6 +15099,7 @@ class ChatScreen(BaseAppScreen):
             REWIND_COMMAND_HANDLER_ID: self._console_command_rewind,
             STEER_COMMAND_HANDLER_ID: self._console_command_steer,
             REDIRECT_COMMAND_HANDLER_ID: self._console_command_redirect,
+            EMERGENCY_STOP_COMMAND_HANDLER_ID: self._console_command_emergency_stop,
             RESEARCH_COMMAND_HANDLER_ID: self._console_command_research,
         }
         handler = dispatch_map.get(handler_id)
@@ -15540,6 +15544,35 @@ class ChatScreen(BaseAppScreen):
         # one habitual extra Enter would redirect the run twice.
         self._clear_console_composer_draft()
         self.app_instance.notify("Redirect sent — correcting the running turn.")
+        return True
+
+    async def _console_command_emergency_stop(self, parse: CommandParse) -> bool:
+        """`/emergency-stop [clear|<reason>]`: the global stop (TASK-26004).
+
+        Holds all NEW agent runs and scheduled dispatches; in-flight work is
+        untouched, and the state survives a restart. `clear`/`off`/`resume`
+        lifts it. A stopped state is reported plainly on the next send/dispatch.
+        """
+        from tldw_chatbook.emergency_stop import (
+            clear_emergency_stop,
+            default_emergency_stop_path,
+            set_emergency_stop,
+        )
+
+        arg = (parse.args or "").strip()
+        path = default_emergency_stop_path()
+        if arg.lower() in {"clear", "off", "resume"}:
+            clear_emergency_stop(path)
+            self._clear_console_composer_draft()
+            self.app_instance.notify("Emergency stop cleared — new work may start.")
+            return True
+        set_emergency_stop(path, reason=arg)
+        self._clear_console_composer_draft()
+        self.app_instance.notify(
+            "Emergency stop ACTIVE — new runs and scheduled dispatches are held. "
+            "Run /emergency-stop clear to resume.",
+            severity="warning",
+        )
         return True
 
     async def handle_console_redirect_generation(

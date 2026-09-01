@@ -14,6 +14,10 @@ from loguru import logger
 
 from tldw_chatbook.Metrics.metrics_logger import log_counter
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
+from tldw_chatbook.emergency_stop import (
+    default_emergency_stop_path,
+    is_emergency_stopped,
+)
 from tldw_chatbook.Scheduling.scheduler_heartbeat import (
     SchedulerHeartbeat,
     default_heartbeat_path,
@@ -83,6 +87,7 @@ class SchedulerLoop:
         missed_fire_grace_seconds: float = MISSED_FIRE_GRACE_SECONDS,
         handler_timeout_seconds: float | None = HANDLER_TIMEOUT_SECONDS,
         heartbeat_path: Path | None = None,
+        emergency_stop_path: Path | None = None,
     ) -> None:
         self.db = db
         self.handlers = handlers
@@ -91,6 +96,7 @@ class SchedulerLoop:
         # path; injectable for tests. last_success/error persist across
         # ticks so a stalled loop's last state is inspectable.
         self._heartbeat_path = heartbeat_path
+        self._emergency_stop_path = emergency_stop_path
         self._last_success_at: datetime | None = None
         self._last_error: str | None = None
         self.clock = clock or (lambda: datetime.now(timezone.utc))
@@ -401,6 +407,13 @@ class SchedulerLoop:
             ),
         )
 
+    def _emergency_stopped(self) -> bool:
+        """Whether the global emergency stop holds new dispatches (26004)."""
+        path = getattr(self, "_emergency_stop_path", None) or (
+            default_emergency_stop_path()
+        )
+        return is_emergency_stopped(path)
+
     async def _reconcile_and_prune_run_ledger(self) -> None:
         """Startup maintenance for the TASK-26026 run ledger. Never raises."""
         if not hasattr(self.db, "fail_interrupted_task_runs"):
@@ -418,7 +431,17 @@ class SchedulerLoop:
             logger.opt(exception=True).debug("run-ledger maintenance failed")
 
     async def _dispatch_due(self, now: datetime) -> None:
-        """Dispatch everything due at ``now`` (the tick's frozen clock)."""
+        """Dispatch everything due at ``now`` (the tick's frozen clock).
+
+        TASK-26004: the global emergency stop is checked BEFORE draining the
+        due queue, so a stop holds new dispatches without consuming them --
+        held tasks stay queued and fire when the stop clears (AC#1/#2/#6).
+        Fail-safe: an unreadable stop state reads as stopped, so a doubt
+        holds work rather than proceeding (AC#4).
+        """
+        if self._emergency_stopped():
+            logger.debug("scheduler: emergency stop active; holding due dispatches")
+            return
         due = self.queue.pop_due(now)
         for task in due:
             task_type = task.get("type", "reminder")

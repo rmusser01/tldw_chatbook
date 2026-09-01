@@ -34,6 +34,7 @@ COMMANDS = [
     "/stream-video",
     "/steer",
     "/redirect",
+    "/emergency-stop",
     "/rewind",
     "/research",
 ]

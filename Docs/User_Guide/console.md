@@ -491,7 +491,7 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 While Console is the active screen, the command palette (**Ctrl+P**) also
 gains "Console: …" entries for these same actions. Slash commands
 (`/prompt`, `/system`, `/skills`, `/prefill`, `/generate-image`, `/steer`,
-`/redirect`, `/rewind`) are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.md) and [Branching & rewind](console/branching-and-rewind.md).
+`/redirect`, `/emergency-stop`, `/rewind`) are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.md) and [Branching & rewind](console/branching-and-rewind.md).
 
 **Steering a running turn.** `/steer <guidance>` delivers text into the
 *currently running* agent turn — it is read before the next model call, after
@@ -513,6 +513,15 @@ model call. A redirect that arrives while a *tool* is executing degrades to
 steering (delivered before the next model call) rather than interrupting the
 tool. Plain **Stop** is unchanged: it ends the run, no re-run. Refusal rules
 match steering (visible notice; same 4,000-character cap).
+
+**Emergency stop.** `/emergency-stop` is the global brake: it holds **all**
+new agent runs and new scheduled dispatches from starting, across the whole
+app — in-flight runs and already-dispatched scheduled tasks are left to
+finish untouched. The stop is durable (it survives a restart) and
+fail-safe: if its state can't be read, the app treats it as stopped rather
+than proceeding. Any attempted send while it's active is refused with a
+plain notice and how to clear it; `/emergency-stop clear` resumes normal
+operation immediately, no restart needed.
 
 ## Related settings & docs
 

@@ -42,6 +42,7 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "stream-video": "Stream a video from a URL into the transcript",
     "steer": "Send guidance into the RUNNING turn (plain messages queue)",
     "redirect": "Cut off the current response and re-run the turn with your correction",
+    "emergency-stop": "Hold ALL new agent runs + scheduled dispatches (clear to resume)",
     "rewind": "Rewind the session to an earlier user prompt",
     "research": "Run deep research in the background; the report is delivered into this conversation",
 }

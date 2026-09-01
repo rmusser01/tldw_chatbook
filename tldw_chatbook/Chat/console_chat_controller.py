@@ -5041,6 +5041,18 @@ class ConsoleChatController:
             A human-readable refusal message if the send must be blocked
             right now, otherwise ``None`` when the send is allowed.
         """
+        # TASK-26004: the global emergency stop refuses EVERY new send
+        # first (AC#1), reporting plainly with the clear hint (AC#5) and
+        # fail-safe to stopped on an unreadable state (AC#4). In-flight runs
+        # are untouched -- this only gates STARTING new work.
+        from tldw_chatbook.emergency_stop import (
+            default_emergency_stop_path,
+            emergency_stop_state,
+        )
+
+        estop = emergency_stop_state(default_emergency_stop_path())
+        if estop.active:
+            return estop.visible_copy()
         interrupted = self.store.interrupted_provider_continuation_message(session_id)
         if interrupted is not None and not self.provider_continuation_owner_is_live(
             interrupted.id

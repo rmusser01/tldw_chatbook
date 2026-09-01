@@ -103,6 +103,7 @@ def test_default_console_registry_registers_prompt_system_skills_prefill_and_gen
         "stream-video",
         "steer",
         "redirect",
+        "emergency-stop",
         "rewind",
         "research",
     )
