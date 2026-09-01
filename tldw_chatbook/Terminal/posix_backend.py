@@ -1012,6 +1012,7 @@ class PosixTerminalBackend:
             self._input_pending.clear()
 
     def _read_master(self, maximum: int) -> bytes | None:
+        fd: int | None = None
         with self._io_lock:
             if self._output_buffer:
                 payload = bytes(self._output_buffer[:maximum])
@@ -1031,10 +1032,26 @@ class PosixTerminalBackend:
                 if exc.errno != errno.EIO:
                     raise OSError("terminal output failed") from None
                 payload = b""
-            if not payload:
-                with self._state_lock:
-                    self._pty_eof = True
-            return payload
+            if payload:
+                return payload
+
+        if not self._shell_reaped.is_set():
+            return None
+        scan = self._scan()
+        if not scan.complete or scan.owned:
+            return None
+        with self._io_lock:
+            if self._output_buffer:
+                payload = bytes(self._output_buffer[:maximum])
+                del self._output_buffer[: len(payload)]
+                return payload
+            with self._state_lock:
+                if self._pty_eof or self._master_fd is None:
+                    return b""
+                if self._master_fd != fd:
+                    return None
+                self._pty_eof = True
+        return b""
 
     def _buffer_cleanup_turn(self) -> None:
         """Preserve at most one bounded PTY read for the healthy output path."""

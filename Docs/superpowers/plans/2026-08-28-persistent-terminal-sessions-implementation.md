@@ -1393,11 +1393,11 @@ If the inventory file did not change, omit it from `git add` rather than creatin
 - Modify: `backlog/tasks/task-22512 - Persistent-interactive-PTY-and-ConPTY-terminal-sessions.md`
 - Modify: `backlog/docs/lessons-testing-evidence.md` or `backlog/docs/lessons-live-verification.md` only if this work produces a genuinely new evidenced lesson
 
-- [ ] **Step 1: Add distribution, four-session memory, and flood qualification**
+- [x] **Step 1: Add distribution, four-session memory, and flood qualification**
 
 Build a wheel without network/isolation and assert it contains the `tldw_chatbook.Terminal` package plus metadata for unconditional `pyte==0.8.2` and no pywinpty dependency. Then measure empty-manager baseline and four sessions at 300x120 plus 5,000 lines/4 MiB normal scrollback. After five-second quiescence, sum Chatbook parent delta and app-owned worker/helper/IPC RSS while excluding identified user shell/program RSS. Assert `<=256 MiB` only on named qualification hosts; developer runs report measurements. Run ten seconds of synthetic ANSI output with a 100 ms sentinel and assert p95 `<100 ms` on each claimed platform host.
 
-- [ ] **Step 2: Add mounted/live lifetime verification**
+- [x] **Step 2: Add mounted/live lifetime verification**
 
 Launch the real Textual app hierarchy with fd-backed standard streams and worktree provenance. Exercise arm, create, real shell input, retained `cd`/environment, Unicode, resize, alternate screen, Ctrl+] local navigation, model-turn independence, conversation/screen navigation, recompose/remount, shell exit with final state retained, close, Disarm, Retry cleanup, and app shutdown. Wait for screen state, DOM mount, and compositor paint; Pilot-only key/process evidence is insufficient.
 
@@ -1417,11 +1417,11 @@ Expected: the native POSIX test passes on every claimed POSIX row and the
 Windows availability contract proves refusal without importing or launching a
 fallback backend.
 
-- [ ] **Step 3: Re-run platform-native cleanup and crash probes**
+- [x] **Step 3: Re-run platform-native cleanup and crash probes**
 
 On macOS/Linux, rerun normal close, parallel Disarm, global Shutdown, exact-shell-exit descendant drain, parser-failure raw cleanup drain, cleanup-unproven Retry, and app-process-failure fixtures. On native Windows, rerun only the fail-closed dependency/availability checks; do not rerun or reinterpret the rejected backend as product evidence. Append exact results and commands to the qualification artifact. Rebase onto latest `origin/dev` before merge, rerun `format_ratchet.py snapshot` against that newly resolved base to replace `format-baseline.json`, then verify `HEAD` against the new stored immutable SHA. Recheck ADR-099's ID/status/index after the rebase.
 
-- [ ] **Step 4: Update user and setup documentation**
+- [x] **Step 4: Update user and setup documentation**
 
 Document:
 
@@ -1440,7 +1440,7 @@ Document:
 
 ADR-094 receives only a cross-reference to accepted ADR-099; do not rewrite its one-shot contracts.
 
-- [ ] **Step 5: Run the focused verification matrix**
+- [x] **Step 5: Run the focused verification matrix**
 
 First prove provenance:
 
@@ -1543,11 +1543,15 @@ git diff --check origin/dev...HEAD
 
 Expected: the normalized base-vs-HEAD formatter ratchet passes for every existing modified Python file; Ruff lint and formatting of every new file, CSS sync, working-tree whitespace, and branch-wide whitespace checks pass. Do not introduce formatter debt on a task-changed line or mass-format unrelated code.
 
-- [ ] **Step 7: Ask whether the user wants a full suite**
+- [x] **Step 7: Ask whether the user wants a full suite**
 
 Do not infer consent from pre-PR or merge language. If explicitly approved, run the repository's full suite and record the command/result. Otherwise state that focused reachable suites and native platform matrices were run under repository policy.
 
-- [ ] **Step 8: Self-review against every acceptance criterion and tripwire**
+The user explicitly declined the full repository suite on 2026-09-01 and
+directed closeout using the focused reachable suites and native platform
+matrices.
+
+- [x] **Step 8: Self-review against every acceptance criterion and tripwire**
 
 Read the complete diff. Confirm:
 

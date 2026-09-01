@@ -7,6 +7,8 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from textual.css.query import NoMatches
+
 from tldw_chatbook.Terminal.contracts import (
     TERMINAL_DISCLOSURE_LINES,
     TerminalLaunchRequest,
@@ -425,26 +427,31 @@ class ConsoleTerminalController:
         fingerprint = _projection_fingerprint(permitted, armed, view_state)
         if fingerprint == self._last_fingerprint:
             return
-        self._last_fingerprint = fingerprint
         workspace = self._workspace_accessor()
         if workspace is not None:
-            workspace.project(
-                permitted=permitted,
-                armed=armed,
-                view_state=view_state,
-            )
-            selected = view_state.selected_session_id if armed else None
-            if selected is not None and selected != self._visible_session_id:
-                columns, rows = workspace.terminal_size()
-                self._run_async(
-                    lambda: self._resize_generation(
-                        generation,
-                        selected,
-                        columns,
-                        rows,
-                    )
+            try:
+                workspace.project(
+                    permitted=permitted,
+                    armed=armed,
+                    view_state=view_state,
                 )
-            self._visible_session_id = selected
+                selected = view_state.selected_session_id if armed else None
+                if selected is not None and selected != self._visible_session_id:
+                    columns, rows = workspace.terminal_size()
+                    self._run_async(
+                        lambda: self._resize_generation(
+                            generation,
+                            selected,
+                            columns,
+                            rows,
+                        )
+                    )
+                self._visible_session_id = selected
+            except NoMatches:
+                # Textual may briefly retain a mounted parent after removing its
+                # children during recompose. Keep this projection retryable.
+                return
+        self._last_fingerprint = fingerprint
 
     async def _resize_generation(
         self,

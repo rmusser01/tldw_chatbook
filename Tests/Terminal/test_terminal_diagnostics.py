@@ -454,9 +454,9 @@ def test_private_terminal_paths_emit_no_generic_diagnostics(tmp_path: Path) -> N
 def test_diagnostic_guards_are_mutation_sensitive_for_every_private_value() -> None:
     for label, sentinel in PRIVATE_SENTINELS.items():
         records = _capture_loguru(
-            lambda sentinel=sentinel: logger.bind(
-                terminal_diagnostic_test=True
-            ).log("TRACE", sentinel)
+            lambda sentinel=sentinel: logger.bind(terminal_diagnostic_test=True).log(
+                "TRACE", sentinel
+            )
         )
         assert len(records) == 1 and sentinel in repr(records[0]), (
             f"Loguru mutation sink was not reached for {label}"

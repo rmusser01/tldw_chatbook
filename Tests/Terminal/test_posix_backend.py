@@ -53,6 +53,7 @@ from tldw_chatbook.Terminal.posix_backend import (  # noqa: E402
 from tldw_chatbook.Terminal.posix_launcher import _validated_config  # noqa: E402
 from tldw_chatbook.Terminal.session_manager import (  # noqa: E402
     TerminalSessionManager,
+    TerminalViewToken,
 )
 
 
@@ -431,6 +432,20 @@ def _wait_for_positive_pid(path: Path, *, timeout: float = 5.0) -> int | None:
     if not _wait_for(ready, timeout=timeout):
         return None
     return observed
+
+
+def _manager_screen_contains(
+    terminal: TerminalSessionManager,
+    view: TerminalViewToken,
+    needle: str,
+) -> bool:
+    state = terminal.view_state(view)
+    if state is None or not state.sessions:
+        return False
+    screen = state.sessions[0].screen
+    return needle in "\n".join(
+        line.text for line in (*screen.scrollback, *screen.lines)
+    )
 
 
 def test_wait_for_positive_pid_ignores_incomplete_file_contents(
@@ -1233,6 +1248,38 @@ def test_nonblocking_read_resize_winch_and_alternate_screen(
     assert b"\x1b[?1049l" in output
 
 
+def test_runtime_eio_waits_for_complete_zero_owned_observation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    master_fd, peer_fd = os.pipe()
+    os.set_blocking(master_fd, False)
+    descendant = PosixProcessIdentity(44001, 4.4, 44001, 44001)
+    owned = True
+
+    def scan() -> OwnershipScan:
+        members = (descendant,) if owned else ()
+        return OwnershipScan(members, members, complete=True)
+
+    def terminal_eio(fd: int, _maximum: int) -> bytes:
+        assert fd == master_fd
+        raise OSError(errno.EIO, "transient PTY EIO")
+
+    backend = PosixTerminalBackend(scan_wrapper=scan)
+    backend._master_fd = master_fd
+    backend._shell_reaped.set()
+    monkeypatch.setattr(os, "read", terminal_eio)
+    try:
+        assert backend.read() is None
+        assert backend._pty_eof is False
+
+        owned = False
+        assert backend.read() == b""
+        assert backend._pty_eof is True
+    finally:
+        _safe_test_close(master_fd)
+        _safe_test_close(peer_fd)
+
+
 def test_finalize_shutdown_closes_the_master_without_waiting(
     backend: PosixTerminalBackend,
 ) -> None:
@@ -1779,7 +1826,6 @@ def test_manager_parser_failure_closes_direct_flood_under_original_attempt(
 ) -> None:
     flood_bytes = MAX_PENDING_OUTPUT_BYTES + (64 * 1024)
     ready_file = tmp_path / "parser-flood.ready"
-    accepted_bytes = 0
     feed_sizes: list[int] = []
     snapshot_calls = 0
     parser_attempts: list[CleanupAttempt] = []
@@ -1890,47 +1936,19 @@ def test_manager_parser_failure_closes_direct_flood_under_original_attempt(
 
     monkeypatch.setattr(os, "read", record_raw_read)
     try:
-        deadline = time.monotonic() + 5.0
-        while accepted_bytes < MAX_PENDING_OUTPUT_BYTES:
-            pending_bytes, next_read_size = terminal.output_actor_accounting_for_tests(
-                session_id
-            )
-            assert pending_bytes == accepted_bytes
-            assert next_read_size == min(
-                MAX_IO_CHUNK_BYTES,
-                MAX_PENDING_OUTPUT_BYTES - accepted_bytes,
-            )
-            remaining = deadline - time.monotonic()
-            assert remaining > 0
-            master_fd = backend._master_fd
-            assert master_fd is not None
-            readable, _, _ = select.select([master_fd], [], [], remaining)
-            assert readable
-            chunk = backend.read(next_read_size)
-            if chunk is None:
-                continue
-            assert chunk != b""
-            assert terminal.offer_output(session_id, chunk).accepted is True
-            accepted_bytes += len(chunk)
-
-        assert terminal.output_actor_accounting_for_tests(session_id) == (
-            MAX_PENDING_OUTPUT_BYTES,
-            0,
-        )
+        assert parser_cleanup_entered.wait(2.0)
         assert ready_file.exists()
-        assert flood_bytes + 1 > accepted_bytes
-        assert feed_sizes == []
-        assert snapshot_calls == 0
-
-        assert terminal.process_output(session_id, visible=False) is None
-        assert parser_cleanup_entered.wait(1.0)
 
         receipt = terminal.cleanup_receipt(session_id)
         assert receipt is not None
         assert parser_attempts == [receipt.attempt]
-        assert terminal.output_actor_accounting_for_tests(session_id) == (
-            MAX_PENDING_OUTPUT_BYTES - MAX_PARSER_SLICE_BYTES,
-            MAX_PARSER_SLICE_BYTES,
+        pending_bytes, next_read_size = terminal.output_actor_accounting_for_tests(
+            session_id
+        )
+        assert 0 <= pending_bytes <= MAX_PENDING_OUTPUT_BYTES
+        assert next_read_size == min(
+            MAX_IO_CHUNK_BYTES,
+            MAX_PENDING_OUTPUT_BYTES - pending_bytes,
         )
         assert feed_sizes == [MAX_PARSER_SLICE_BYTES]
         assert snapshot_calls == 0
@@ -1968,14 +1986,18 @@ def test_manager_hands_cleanup_tail_to_screen_before_output_is_complete(
     holder_pid_file = tmp_path / "cleanup-tail-holder.pid"
     after_shell = tmp_path / "cleanup-tail-after-shell.json"
     release_tail = tmp_path / "cleanup-tail-release"
+    tail_written = tmp_path / "cleanup-tail-written"
     handed_off: list[bytes] = []
     cleanup_started = Event()
+    allow_cleanup = Event()
     backend: PosixTerminalBackend | None = None
     holder_identity: tuple[int, float] | None = None
 
     class ObservedBackend(PosixTerminalBackend):
         def cleanup(self, attempt: CleanupAttempt) -> CleanupProof:
             cleanup_started.set()
+            if not allow_cleanup.wait(2.0):
+                return CleanupProof()
             return super().cleanup(attempt)
 
         def take_preserved_cleanup_output(self, maximum: int) -> bytes:
@@ -2009,7 +2031,10 @@ def test_manager_hands_cleanup_tail_to_screen_before_output_is_complete(
     identity = backend.identity_for_tests
     view = terminal.attach_view()
     try:
-        _read_until(backend, b"$", timeout=3.0)
+        assert _wait_for(
+            lambda: _manager_screen_contains(terminal, view, "$"),
+            timeout=3.0,
+        )
         command = shlex.join(
             [
                 sys.executable,
@@ -2018,16 +2043,36 @@ def test_manager_hands_cleanup_tail_to_screen_before_output_is_complete(
                 str(after_shell),
                 "cleanup-tail-marker",
                 str(release_tail),
+                str(tail_written),
             ]
         )
-        backend.write((command + "\n").encode())
+        assert terminal.send_paste(
+            session_id,
+            command,
+            bracketed=False,
+            view=view,
+        ).accepted
+        assert terminal.send_key(session_id, b"\r", view=view).accepted
         holder_pid = _wait_for_positive_pid(holder_pid_file, timeout=3.0)
         assert holder_pid is not None
-        _read_until(backend, b"$", timeout=3.0)
-        backend.write(b"exit 19\n")
-        _read_until(backend, b"exit 19", timeout=3.0)
-        exit_code = backend.wait_for_shell_exit(timeout_seconds=3.0)
-        assert exit_code == 19
+        assert _wait_for(
+            lambda: _manager_screen_contains(terminal, view, "$"),
+            timeout=3.0,
+        )
+        assert terminal.send_paste(
+            session_id,
+            "exit 19",
+            bracketed=False,
+            view=view,
+        ).accepted
+        assert terminal.send_key(session_id, b"\r", view=view).accepted
+        assert _wait_for(
+            lambda: (
+                terminal.projection(session_id) is not None
+                and terminal.projection(session_id).exit_code == 19
+            ),
+            timeout=3.0,
+        )
         holder_identity = _capture_exact(holder_pid)
         assert holder_identity is not None
         assert _wait_for(after_shell.exists, timeout=3.0)
@@ -2035,12 +2080,22 @@ def test_manager_hands_cleanup_tail_to_screen_before_output_is_complete(
         assert descriptor_state["held_slave_open"] is True
         assert descriptor_state["held_slave_tty"] is True
 
-        receipt = terminal.shell_exited(session_id, exit_code=exit_code)
+        receipt = terminal.cleanup_receipt(session_id)
         assert receipt is not None
         assert cleanup_started.wait(1.0)
+
+        def runtime_stopped() -> bool:
+            with terminal._lock:
+                record = terminal._sessions.get(session_id)
+                thread = None if record is None else record.runtime_thread
+            return thread is not None and not thread.is_alive()
+
+        assert _wait_for(runtime_stopped, timeout=1.0)
         assert handed_off == []
         assert _pid_matches(*holder_identity)
         release_tail.touch()
+        assert _wait_for(tail_written.exists, timeout=2.0)
+        allow_cleanup.set()
         assert terminal.wait_for_cleanup(session_id, timeout_seconds=6.0)
 
         projection = terminal.projection(session_id)
@@ -2048,18 +2103,19 @@ def test_manager_hands_cleanup_tail_to_screen_before_output_is_complete(
         assert projection.lifecycle is TerminalLifecycle.EXITED
         assert projection.stream_closed is True
         assert projection.output_complete is True
-        assert b"cleanup-tail-marker" in b"".join(handed_off)
         state = terminal.view_state(view)
         assert state is not None
         assert len(state.sessions) == 1
         visible = "\n".join(line.text for line in state.sessions[0].screen.lines)
         assert "cleanup-tail-marker" in visible
+        assert b"cleanup-tail-marker" in b"".join(handed_off)
         assert backend._output_buffer == b""
         assert backend.shell_reap_count_for_tests == 1
         assert not _pid_matches(identity.pid, identity.birth_time)
         assert not _pid_matches(*holder_identity)
     finally:
         release_tail.touch(exist_ok=True)
+        allow_cleanup.set()
         extra = () if holder_identity is None else (holder_identity,)
         _cleanup_backend_exact(backend, extra)
 
@@ -2347,6 +2403,44 @@ def test_real_foreground_background_groups_are_owned_and_cleaned(
                         known[captured[0]] = captured[1]
         for pid, birth_time in known.items():
             _terminate_exact(pid, birth_time)
+
+
+def test_manager_runtime_bridge_disarm_cleans_idle_real_shell(
+    tmp_path: Path,
+) -> None:
+    backend: PosixTerminalBackend | None = None
+
+    def backend_factory() -> PosixTerminalBackend:
+        nonlocal backend
+        backend = PosixTerminalBackend(
+            environment_factory=lambda: _environment(tmp_path),
+        )
+        return backend
+
+    terminal = TerminalSessionManager(lambda: True, backend_factory)
+    terminal.arm(acknowledge_disclosure=True)
+    result = terminal.create_session(
+        TerminalLaunchRequest(
+            name="runtime-disarm",
+            shell="default",
+            start_directory=str(tmp_path),
+            columns=80,
+            rows=24,
+        )
+    )
+    assert result.admitted is True
+    assert result.projection is not None
+
+    try:
+        terminal.disarm()
+        assert terminal.wait_for_cleanup(
+            result.projection.session_id,
+            timeout_seconds=6.0,
+        )
+        assert terminal.projection(result.projection.session_id) is None
+    finally:
+        terminal.finalize_shutdown()
+        _cleanup_backend_exact(backend, require_proven=False)
 
 
 def test_shell_exit_with_descendant_holding_slave_is_not_mistaken_for_eof(

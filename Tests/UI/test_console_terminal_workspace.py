@@ -10,6 +10,7 @@ import pytest
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
+from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
@@ -658,6 +659,54 @@ def test_controller_coalesces_selected_repaint_and_ignores_hidden_output() -> No
     assert len(scheduled) == 1
     _run_one(scheduled)
     assert len(sink.projected) == 2
+
+
+def test_controller_retries_projection_after_recompose_gap() -> None:
+    class RecomposeGapSink(_ProjectionSink):
+        def __init__(self) -> None:
+            super().__init__()
+            self.attempts = 0
+
+        def project(
+            self,
+            *,
+            permitted: bool,
+            armed: bool,
+            view_state: TerminalViewState,
+        ) -> None:
+            self.attempts += 1
+            if self.attempts == 1:
+                raise NoMatches("terminal workspace children are remounting")
+            super().project(
+                permitted=permitted,
+                armed=armed,
+                view_state=view_state,
+            )
+
+    runtime = _Runtime(
+        TerminalViewState(
+            selected_session_id="one",
+            sessions=(_session("one", "One"),),
+        )
+    )
+    sink = RecomposeGapSink()
+    scheduled: list[Callable[[], None]] = []
+    marshalled: list[Callable[[], None]] = []
+    controller = _controller(
+        runtime,
+        sink,
+        scheduled=scheduled,
+        marshalled=marshalled,
+    )
+
+    controller.open_workspace()
+    _run_one(scheduled)
+    assert sink.projected == []
+
+    runtime.emit()
+    _run_one(marshalled)
+    _run_one(scheduled)
+    assert len(sink.projected) == 1
 
 
 def test_controller_drops_stale_generation_callbacks_after_detach_and_remount() -> None:

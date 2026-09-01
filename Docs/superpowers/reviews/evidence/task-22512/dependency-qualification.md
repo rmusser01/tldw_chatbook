@@ -1,7 +1,9 @@
 # TASK-22512 dependency qualification
 
-Status: BLOCKED on the pinned native Windows boundary. Native macOS ARM64 and
-Linux ARM64 package, parser, and environment rows pass. Native Windows x64
+Status: POSIX delivery qualified; the pinned native Windows boundary remains
+blocked and fails closed. Native macOS ARM64 and Linux ARM64 package, parser,
+environment, runtime-bridge, mounted-lifetime, cleanup, and resource rows pass.
+Native Windows x64
 CPython 3.11 ran on Windows build 26100: package identity, platform floor,
 ConPTY construction, Job admission and cleanup, bounded I/O, profile discovery,
 app-crash cleanup, and managed RSS passed, but alternate-buffer isolation and
@@ -679,6 +681,55 @@ creates a new session can survive ordinary master close. The test revalidated
 and terminated that exact detached PID by PID plus birth time; this backend
 does not claim containment of deliberately detached host-authority processes.
 
+## Task 15 final implementation qualification
+
+The final source was rebased onto `origin/dev`
+`822aae341b18808c36f67af1b9dcd87d2957924b`. The formatter snapshot was
+regenerated against that immutable base before closeout. Task 15 added the
+app-owned runtime bridge after a source audit found that earlier component
+tests manually moved input/output bytes and therefore did not prove production
+wiring. Bridge regressions also cover bounded 64 KiB transport of one ordered
+256 KiB paste, fail-closed I/O errors, sole-reaper exit observation,
+stop-before-cleanup ordering, finalizer ordering, and dismissal of an already
+proven exited record without a second cleanup attempt. Final review also found
+and corrected two real lifetime races: Textual recomposition can temporarily
+leave a mounted workspace without mounted children, and macOS PTY `EIO` after
+shell exit is not final EOF while an owned descendant can still emit output.
+
+The final native host rows were:
+
+- macOS: Darwin 24.6.0 ARM64, CPython 3.12.11 from
+  `../../.venv/bin/python`;
+- Linux: Ubuntu 24.04.4 LTS ARM64, kernel `6.12.76-linuxkit`, CPython
+  3.12.3, cached image
+  `sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c538ea`,
+  disposable container
+  `4fcb4890b42535750ffeb9d24f4f5c6a6d17cd772fbd9096e83c49140661382f`,
+  read-only `/worktree`, and ordinary uid/gid 1001 with `C.UTF-8` locale.
+
+| Qualification row | Command/observation | Result |
+| --- | --- | --- |
+| Final macOS Terminal suite | `env -u PYTHONPATH ../../.venv/bin/python -B -m pytest Tests/Terminal -q --tb=short --show-capture=no --timeout=90 --basetemp=/private/tmp/task22512-terminal-suite-final` outside the process sandbox | PASS: 625 passed and one native-Windows-only skip in 76.64 seconds. This included the resource, runtime bridge, PTY/cleanup, dependency, parser, privacy-diagnostic, and fail-closed platform slices. |
+| Runtime manager regressions | `../../.venv/bin/python -B -m pytest Tests/Terminal/test_session_manager.py -q --tb=short --basetemp=/private/tmp/task22512-manager-after-close` | PASS: 64 passed and one installed Requests dependency warning in 2.03 seconds. |
+| Installed distribution | `../../.venv/bin/python -B -m pytest Tests/Packaging/test_terminal_distribution.py -q --tb=short --basetemp=/private/tmp/task22512-packaging-final` | PASS: 2 passed and one installed Requests dependency warning in 6.62 seconds. The built wheel contains the Terminal runtime/UI/CSS, pins unconditional `pyte==0.8.2`, excludes `pywinpty`, and proves Windows availability refusal. |
+| macOS mounted real lifetime | `env -u PYTHONPATH ../../.venv/bin/python -B -m pytest Tests/integration/test_console_terminal_lifetime.py::test_posix_mounted_real_terminal_focus_input_and_navigation -q --tb=short --show-capture=no --timeout=35 --basetemp=/private/tmp/task22512-mounted-terminal-9` | PASS: 1 passed and two installed dependency warnings in 12.00 seconds. It exercised real TTY input/output, retained cwd/environment, Unicode, resize/SIGWINCH, alternate screen, local scrollback, model independence, recompose/remount/navigation, exact exit 23, final-state retention/dismissal, Disarm, and app shutdown. |
+| Linux mounted real lifetime | The same named test via `docker exec --user 1001:1001 --workdir /worktree ... /opt/task22512-venv/bin/python`, with `-p no:cacheprovider --basetemp=/tmp/task22512-mounted-linux-final` | PASS: 1 passed in 11.84 seconds. The first container attempt failed during collection on the newly vendored local `tldw_profile_core` package; installing that declared local package into disposable scratch corrected the harness before product execution. |
+| macOS four-session/flood resource gate | `TLDW_TERMINAL_QUALIFICATION_HOST=1 ../../.venv/bin/python -B -m pytest Tests/Terminal/test_terminal_resource_qualification.py -q --junitxml=/private/tmp/task22512-resource.xml --basetemp=/private/tmp/task22512-resource` | PASS: 2 passed and one installed Requests dependency warning in 36.43 seconds. Four 300×120 sessions retaining 5,000 lines each added 59,490,304 bytes RSS; ten-second ANSI flood p95 sentinel lateness was 42.066 ms. |
+| Linux four-session/flood resource gate | The same qualification file as ordinary uid/gid 1001 with `TLDW_TERMINAL_QUALIFICATION_HOST=1`, JUnit `/tmp/task22512-resource-linux.xml`, and no pytest cache | PASS: 2 passed in 40.88 seconds. RSS delta was 51,134,464 bytes; p95 sentinel lateness was 27.770 ms. Both are below the 256 MiB and 100 ms gates. |
+| Pre-compaction memory RED | The named macOS qualification-host memory test before compact immutable screen-run storage | RED: 393,101,312 bytes exceeded the 268,435,456-byte limit. The final representation preserves the public immutable-cell API while retaining compact text/layout bytes. |
+| macOS cleanup/crash subset | Eleven collected cases covering normal close, native runtime Disarm, final handle close, parser-failure raw cleanup, descendant-held PTY shell exit, cleanup-unproven, app crash, explicit Retry, and one global Shutdown attempt | PASS: 11 passed and one installed Requests dependency warning in 5.20 seconds. |
+| Linux cleanup/crash subset | The same eleven cases under ordinary uid/gid 1001 with a read-only worktree and no pytest cache | PASS: 11 passed in 4.11 seconds. |
+| Post-run fixture censuses | `pgrep -af 'descendant_holds_tty\.py|job_control_tree\.py|terminal_child\.py|posix_app_crash_probe\.py|tldw_chatbook\.Terminal\.posix_launcher'` on macOS and inside the Linux container | PASS: exit 1 with no output on both hosts; no matching fixture or launcher remained. |
+| Final Console Terminal UI slice | The four Terminal UI test files plus controller wiring, left rail, and the exact command-provider Terminal addition in a fresh process | PASS: 137 passed in 67.20 seconds. The mounted real-PTY cleanup-tail plus lifetime regressions also passed together outside the sandbox: 2 passed in 12.97 seconds. |
+| Final privacy/settings/raw boundary slice | Settings, runtime ownership, architecture privacy, packaging, raw CLI persistence/revocation, model-shell integration, and provenance tests in a fresh process | 150 passed; one settings confirmation click was order-sensitive. The failing node then passed alone and the complete seven-test Terminal settings file passed in 7.05 seconds in a fresh process. |
+| Latest-dev UI attribution control | Fifteen exact non-Terminal UI nodes reported by the monolithic closeout run were executed on this branch and a disposable clean worktree at base `822aae341b18808c36f67af1b9dcd87d2957924b` | IDENTICAL: 11 failed and 4 passed in both arms. Additional failures from the monolithic run passed in isolation, so none is attributable to this branch. |
+| Static/generated checks | Ruff lint on all planned paths except the repository-wide `app.py` E402 baseline; `app.py` with only E402 excluded; Ruff format, generated CSS guard, and `git diff --check` | PASS: all non-baseline lint rules passed, 41 files were formatted, the CSS guard passed 5 tests, and the working diff had no whitespace errors. The exact `app.py` E402-only baseline remains governed by the formatter ratchet. |
+| Repository-wide suite | User choice recorded on 2026-09-01 after focused and native results were presented | SKIPPED by explicit user request under repository policy. No full-suite result is claimed; the focused reachable suites, paired clean-`dev` attribution control, and native platform matrices above are the closeout evidence. |
+
+Task 15 records no native Windows input/focus support claim. The installed
+distribution check proves only the ADR-099-required content-free refusal and
+absence of a ConPTY dependency or fallback.
+
 ## Limitations and fail-closed boundaries
 
 - One supported native Windows row ran. It is genuine host evidence, not a
@@ -725,7 +776,7 @@ mixed-generation sibling before publication.
 - The formatter baseline was regenerated after rebasing the PR. The exact
   `verify --head HEAD` command accepted its immutable base hashes, normalized
   formatter-diff hashes, debt facts, red-path set, and recorded Ruff version.
-  Its base is `3e5e75e4aa884d4f362aa63c1e151c3855f07a36`; verification does not modify
+  Its base is `822aae341b18808c36f67af1b9dcd87d2957924b`; verification does not modify
   source.
 - This artifact adds no product code, workflow, or adapted third-party terminal
   source beyond the reviewed `regex==2026.4.4` validation dependency pin.

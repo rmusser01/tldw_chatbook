@@ -476,6 +476,22 @@ without a model approval card and is not controlled by the model-tool kill
 switch. See [Raw CLI: direct user commands and model `shell_exec`](console/agent-runs-and-tools.md#raw-cli-direct-user-commands-and-model-shell_exec)
 for the complete boundary.
 
+The same saved unlock also enables a separate **Arm Terminal** control. Its arm
+is independent: arming Terminal does not arm raw `!` commands or model
+`shell_exec`, and arming raw CLI does not arm Terminal. Both arms live only for
+this Chatbook launch. Terminal starts a normal interactive account shell, so
+startup profiles may restore secrets and commands despite the scrubbed initial
+environment; shell history and other side effects can be written anywhere the
+OS user can access. The selected Workspace or home directory is only the
+starting directory, never confinement. Disarming Terminal immediately blocks
+new input and begins bounded cleanup of every retained Terminal session.
+
+Terminal is user-only: it never registers a model tool and its input, output,
+screen, names, or paths are not added to conversation history, run logs,
+exports, or reconnect state. There is no `terminal_armed` config field. Current
+builds support POSIX PTYs on macOS/Linux and fail closed on Windows; a qualified
+Windows boundary requires a new or superseding ADR.
+
 ### Troubleshooting — Diagnostics
 
 Three buttons, no fields. Pressing **t** runs the first two together.

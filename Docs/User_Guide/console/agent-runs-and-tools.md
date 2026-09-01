@@ -1224,6 +1224,50 @@ bounded agent tool history and local run logs; they do not create a
 `local_command` record. Generic diagnostics retain content-free execution
 metadata rather than command or output bodies.
 
+### Persistent Terminal: user-only interactive PTY
+
+Persistent Terminal is a fourth, deliberately separate capability. Open it
+from the pinned **Context** rail's Terminal row or the Console command palette.
+It does not extend direct `!`, model `shell_exec`, or read-only `virtual_cli`.
+It registers no model tool, makes no provider call, and never places Terminal
+input, output, names, paths, or screen state in model context, conversation
+history, AgentRuns, run logs, exports, or reconnect data.
+
+Terminal shares the saved **Allow raw CLI host access** unlock but has its own
+per-launch **Arm Terminal** confirmation. Raw CLI and Terminal arms do not arm
+one another. Terminal starts a normal interactive account shell from a
+scrubbed initial environment; normal profile files may restore credentials,
+agents, proxies, aliases, environment values, or arbitrary commands. The shell
+may write history, files, logs, and caches. A Workspace folder—or home when no
+Workspace is selected—is only the starting directory. The process has the full
+filesystem, process, and network authority of the OS user and is not sandboxed
+or confined there.
+
+The Terminal workspace supports **New**, **Rename**, **Focus**, **Close**,
+cleanup **Retry**, and **Jump live**. Up to four app-global sessions survive
+conversation switches, screen navigation, recomposition, and remounting for
+the current Chatbook process. Each retains its shell process, current directory,
+environment, terminal screen, and bounded normal-screen scrollback until the
+shell exits, the user closes it, Terminal is disarmed, or Chatbook shuts down.
+An ordinary shell exit retains the final screen and exact exit state until the
+user closes that record. Sessions are never persisted or reconnected after a
+restart.
+
+Each session is bounded to a 300×120 active viewport, 5,000 lines/4 MiB of
+normal-screen scrollback, 512 KiB pending input, 512 KiB pending output, and a
+256 KiB all-or-refuse paste. While input is focused, terminal-convention keys
+go to the shell except Chatbook's reserved global keys. Press **Ctrl+]** to
+release input into local keyboard scrollback; line/page/oldest navigation and
+**Jump live** stay local and are not forwarded. Mouse reporting is not
+supported in this version.
+
+Close, Disarm, and shutdown perform bounded best-effort process cleanup and
+show when cleanup cannot be proven; deliberately detached processes may
+survive. macOS/Linux use an admitted controlling PTY. Windows Terminal support
+is currently unavailable and fails closed—Chatbook ships no `pywinpty`, legacy
+winpty, or ordinary-pipe fallback. A future Windows implementation requires a
+new or superseding ADR and passing native qualification.
+
 ### Project instructions before tools run
 
 When project instructions are enabled for a session, Chatbook treats the

@@ -262,9 +262,11 @@ def _assert_no_terminal_model_tool(
 ) -> None:
     rendered = json.dumps(
         {"catalog": catalog, "schemas": schemas},
-        default=lambda value: dataclasses.asdict(value)
-        if dataclasses.is_dataclass(value)
-        else repr(value),
+        default=lambda value: (
+            dataclasses.asdict(value)
+            if dataclasses.is_dataclass(value)
+            else repr(value)
+        ),
         sort_keys=True,
     ).casefold()
     words = {
@@ -288,25 +290,23 @@ def _production_model_catalog() -> tuple[list[object], list[object], tuple[str, 
         assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
     )
     profile_provider = _CatalogProvider("profile", "profile_probe")
-    registry, allowed, _builtin_names, _local_names = (
-        _compose_run_registry_and_allowed(
-            {
-                "available_skills": [
-                    {
-                        "name": "skill_probe",
-                        "description": "skill composition probe",
-                        "argument_hint": "optional probe text",
-                    }
-                ]
-            },
-            local_provider=local_provider,
-            virtual_cli_provider=virtual_provider,
-            raw_shell_provider=raw_provider,
-            mcp_provider=mcp_provider,
-            library_provider=library_provider,
-            library_authority=library_authority,
-            profile_provider=profile_provider,
-        )
+    registry, allowed, _builtin_names, _local_names = _compose_run_registry_and_allowed(
+        {
+            "available_skills": [
+                {
+                    "name": "skill_probe",
+                    "description": "skill composition probe",
+                    "argument_hint": "optional probe text",
+                }
+            ]
+        },
+        local_provider=local_provider,
+        virtual_cli_provider=virtual_provider,
+        raw_shell_provider=raw_provider,
+        mcp_provider=mcp_provider,
+        library_provider=library_provider,
+        library_authority=library_authority,
+        profile_provider=profile_provider,
     )
     catalog = registry.list_catalog()
     schemas = [registry.load_schema(entry.id) for entry in catalog]
@@ -374,17 +374,18 @@ def _real_boundary_payloads(
     run_log_root = tmp_path / "run-log-root"
     run_log = RunLogWriter(root=run_log_root)
     run_log.bind("ordinary-run")
-    assert run_log.append(
-        run_id="ordinary-run",
-        kind="primary",
-        type="model",
-        content="ordinary run-log boundary probe",
-    ) == 1
+    assert (
+        run_log.append(
+            run_id="ordinary-run",
+            kind="primary",
+            type="model",
+            content="ordinary run-log boundary probe",
+        )
+        == 1
+    )
     run_log.close()
     run_log_payloads = [
-        path.read_bytes()
-        for path in sorted(run_log_root.rglob("*"))
-        if path.is_file()
+        path.read_bytes() for path in sorted(run_log_root.rglob("*")) if path.is_file()
     ]
     assert run_log_payloads
 
@@ -458,9 +459,7 @@ def _real_boundary_payloads(
             "session": session,
             "messages": chat_store.messages_for_session(session.id),
         },
-        "crash_recovery_snapshot": chat_store.dispatch_recovery_for_session(
-            session.id
-        ),
+        "crash_recovery_snapshot": chat_store.dispatch_recovery_for_session(session.id),
     }
     assert manager.projection(projection.session_id) is projection
     return payloads
@@ -491,7 +490,9 @@ def _fake_boundary_sinks() -> dict[str, list[object]]:
 
 def _create_live_session(
     tmp_path: Path,
-) -> tuple[TerminalSessionManager, TerminalProjection, list[tuple[TerminalProjection, ...]]]:
+) -> tuple[
+    TerminalSessionManager, TerminalProjection, list[tuple[TerminalProjection, ...]]
+]:
     start_directory = tmp_path / START_DIRECTORY_MARKER
     start_directory.mkdir()
     manager = TerminalSessionManager(
@@ -573,7 +574,9 @@ def test_terminal_package_is_not_registered_as_a_model_tool() -> None:
     assert schemas
     assert "TerminalSessionManager" not in catalog_source
     assert "console_terminal" not in catalog_source
-    _assert_no_terminal_model_tool(catalog, {"schemas": schemas, "allowed": allowed_tools})
+    _assert_no_terminal_model_tool(
+        catalog, {"schemas": schemas, "allowed": allowed_tools}
+    )
     assert not _contains_terminal_material(
         {"catalog": catalog, "schemas": schemas},
         (SESSION_NAME, START_DIRECTORY_MARKER),
@@ -600,9 +603,7 @@ def test_model_tool_guard_rejects_a_realistic_terminal_registration() -> None:
 async def test_app_owned_terminal_session_leaves_live_console_boundaries_free(
     tmp_path: Path,
 ) -> None:
-    app = _build_test_app(
-        config_overrides={"console": {"raw_cli_permitted": True}}
-    )
+    app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": True}})
     _configure_native_ready_console(app)
     app.terminal_session_manager.finalize_shutdown()
     manager, projection, local_render_snapshots = _create_live_session(tmp_path)

@@ -10642,3 +10642,53 @@ and all of them failed identically without the change.
   isolation first.
 * Paying for the baseline arm is the cost of an attributable answer. A cheaper
   run that cannot attribute is not cheaper — it is worthless.
+
+## A manually pumped component path does not prove production wiring
+
+**TASK-22512 Task 15, 2026-09-01.** Persistent-terminal component tests passed
+because the tests themselves moved bytes between the backend and manager: they
+called the backend reader, offered the bytes to the output actor, took queued
+input, and wrote it back to the backend. No production owner performed those
+steps. The first mounted real-shell proof therefore admitted and rendered a
+Terminal workspace whose queued user input could never reach the PTY and whose
+PTY output could never reach the screen. Adding the app-owned bridge made one
+old native test fail for the opposite reason: its manual reader raced the now
+real production reader and double-offered output.
+
+**What to do.** When a component test connects two layers by hand, inventory
+who owns that connection in production and add one mounted or end-to-end test
+that crosses it without test-side pumping. After the real bridge exists,
+component tests must observe it or use a backend without the runtime protocol;
+they must not become a second runtime.
+
+## Do not block a UI loop on work whose completion posts back to that loop
+
+**TASK-22512 Task 15, 2026-09-01.** The mounted Disarm proof synchronously
+called `wait_for_cleanup` from Textual's event-loop thread. Backend cleanup
+finished quickly in an isolated real-PTY test, but the manager's final
+subscriber notification used Textual's thread-safe UI handoff. The worker
+could not return until the event loop handled that notification, while the
+event loop was blocked waiting for the worker: a deterministic test-created
+deadlock that looked like cleanup exceeding its five-second deadline.
+
+**What to do.** In mounted async tests and production UI handlers, keep
+blocking future/process waits off the event-loop thread. Await the async owner
+API when one exists or move only the blocking wait to a worker thread; then
+assert the UI projection after the loop has had a chance to process the final
+notification.
+
+## A PTY `EIO` is not final EOF while an owned descendant can still write
+
+**TASK-22512 Task 15, 2026-09-01.** The production runtime bridge continuously
+read the macOS PTY master and treated `EIO` after exact shell exit as irreversible
+EOF. A same-session descendant still held the slave, reopened it after the shell
+disappeared, and successfully wrote a delayed cleanup marker. The eager reader had
+already latched EOF, so cleanup reported a complete stream without ever handing the
+marker to the screen. The older component test had hidden this because it stopped
+reading before shell exit and left final draining entirely to cleanup.
+
+**What to do.** A running PTY read may treat `EIO` or an empty read as final only
+after the shell reaper has fired and a complete ownership scan observes no owned
+process. Until then it is backpressure, not proof. Keep the stronger two-scan,
+deadline-bounded process and stream proof in the cleanup owner, and test delayed
+descendant output through the production reader rather than a manually paused one.
