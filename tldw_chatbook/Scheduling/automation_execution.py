@@ -282,7 +282,22 @@ def _classify(
         )
 
     # generation_mode is "optional" or "required": generation was attempted.
-    assert answer is not None
+    if answer is None:
+        # Defensive: `execute_recurring_question` only reaches this branch
+        # when generation was actually attempted (its own guard mirrors
+        # these same three preconditions), so this should be unreachable --
+        # but an internal invariant break must degrade honestly rather than
+        # crash the spawned run task (server parity: `classify_rag_response`
+        # never asserts either).
+        return _degraded(
+            failure_code="generation_unavailable",
+            evidence_summary=_evidence_summary(
+                result_count=result_count,
+                answer_present=False,
+                retrieval_status=retrieval_status,
+                generation_status="",
+            ),
+        )
     confidence = {"citation_status": answer.citation_status} if answer.citation_status else {}
 
     if answer.status == ANSWER_STATUS_READY:
@@ -336,7 +351,16 @@ def _classify(
 
 async def execute_recurring_question(app: Any, definition_row: dict) -> ExecutionOutcome:
     """Run one `recurring_question` definition: scope -> retrieval -> (maybe)
-    generation -> classification. Never raises."""
+    generation -> classification.
+
+    Composes `run_library_rag_search` and `generate_library_rag_answer`,
+    both hardened not to raise for their own internal failures -- but this
+    function does not itself add a blanket try/except around that
+    composition. Containment for anything that still escapes (this
+    function's own bug, an unhardened seam change) is the caller's job:
+    `AutomationDefinitionHandler._run`'s spawned-task wrapper is the actual
+    "never raises" boundary for a scheduled run.
+    """
     row = definition_row if isinstance(definition_row, Mapping) else {}
 
     definition_input = row.get("input")
@@ -387,6 +411,9 @@ async def execute_recurring_question(app: Any, definition_row: dict) -> Executio
         and generation_mode != "disabled"
     ):
         target = resolve_execution_target(row)
+        # target["max_tokens"] is resolved for future executors (agent_task)
+        # but not passed here: `generate_library_rag_answer` computes its own
+        # budget via `_effective_max_tokens` (reasoning-aware, model-keyed).
         answer = await generate_library_rag_answer(
             query=question,
             results=results,

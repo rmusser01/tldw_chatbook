@@ -343,3 +343,24 @@ def test_bounded_caps_at_1000_chars_with_ellipsis():
 
 def test_bounded_leaves_short_text_untouched():
     assert automation_execution._bounded("short") == "short"
+
+
+# --- _classify: missing-answer guard (was `assert answer is not None`) -----
+
+
+def test_classify_missing_answer_after_attempted_generation_degrades_honestly():
+    """`_classify`'s "generation was attempted" branch used to `assert
+    answer is not None` -- unreachable through `execute_recurring_question`
+    (it only reaches this branch after actually calling
+    `generate_library_rag_answer`), but a production `assert` is stripped
+    under `-O` and is not a real guard. It must degrade honestly rather than
+    crash or silently fall through."""
+    outcome = automation_execution._classify(
+        retrieval_status="ok",
+        results=(_row(),),
+        generation_mode="optional",
+        answer=None,
+    )
+    assert outcome.outcome == "degraded"
+    assert outcome.failure_reason == {"code": "generation_unavailable"}
+    assert outcome.evidence_summary["answer_present"] is False

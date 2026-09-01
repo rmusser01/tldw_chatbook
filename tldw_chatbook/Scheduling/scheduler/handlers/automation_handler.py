@@ -384,7 +384,16 @@ class AutomationDefinitionHandler:
         becomes asyncio's "Task exception was never retrieved". The
         execution timeout (task-18939 semantics) wraps only the executor
         call, per `handler_timeout_seconds` (`<=0` disables the bound,
-        `SchedulerLoop._effective_timeout_seconds` precedent).
+        `SchedulerLoop._effective_timeout_seconds` precedent). The outer
+        `except Exception` below is the same containment for the
+        bookkeeping that runs AFTER a successful (or already-handled
+        timeout/error) executor call -- `update_automation_run`/
+        `create_automation_result` can themselves raise (DB busy/locked),
+        and without this guard that escaped the same way, stranding the
+        run row at `running` and dropping the notification. Best-effort:
+        it tries once to mark the run `failed` and to notify, but a
+        failure inside THAT attempt is swallowed too -- the DB may be the
+        broken thing.
         """
         try:
             app = self.app_getter() if self.app_getter is not None else None
@@ -480,12 +489,50 @@ class AutomationDefinitionHandler:
                     confidence=outcome.confidence,
                     source_refs=outcome.source_refs,
                 )
+            if outcome.outcome == "degraded":
+                code = (
+                    outcome.failure_reason.get("code")
+                    if isinstance(outcome.failure_reason, dict)
+                    else None
+                )
+                message = f"Run degraded: {code}." if code else "Run degraded."
+            else:
+                message = outcome.summary or outcome.title or "Completed."
             self._notify(
                 task,
                 run_id=run_id,
                 status="completed",
                 outcome_value=outcome.outcome,
-                message=outcome.summary or outcome.title or "Completed.",
+                message=message,
+            )
+        except Exception as exc:  # noqa: BLE001 - must never escape the spawned task
+            logger.exception(
+                f"Automation run {run_id} for definition {definition_id!r} "
+                f"bookkeeping failed after execution: {type(exc).__name__}"
+            )
+            try:
+                await asyncio.to_thread(
+                    self.db.update_automation_run,
+                    run_id,
+                    status="failed",
+                    outcome="degraded",
+                    ended_at=datetime.now(timezone.utc),
+                    failure_reason={
+                        "code": "bookkeeping_error",
+                        "error_type": type(exc).__name__,
+                    },
+                )
+            except Exception:  # noqa: BLE001 - the DB may be the broken thing
+                pass
+            self._notify(
+                task,
+                run_id=run_id,
+                status="failed",
+                outcome_value="degraded",
+                message=(
+                    f"{task.get('name') or 'Automation'} failed: bookkeeping "
+                    f"error ({type(exc).__name__})."
+                ),
             )
         finally:
             self._claimed.discard(definition_id)

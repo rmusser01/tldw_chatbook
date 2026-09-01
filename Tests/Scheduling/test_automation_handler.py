@@ -82,6 +82,27 @@ class _RaiseOnceThenDelegate:
         return getattr(self._db, name)
 
 
+class _RaiseOnceOnUpdateThenDelegate:
+    """Wraps a real `ScheduledTasksDB`; the first `update_automation_run`
+    call raises, every call after (including the handler's own best-effort
+    retry) delegates to the real accessor. Everything else passes straight
+    through via `__getattr__`."""
+
+    def __init__(self, db: ScheduledTasksDB, *, exc: Exception) -> None:
+        self._db = db
+        self._exc = exc
+        self._raised = False
+
+    def update_automation_run(self, *args: Any, **kwargs: Any) -> Any:
+        if not self._raised:
+            self._raised = True
+            raise self._exc
+        return self._db.update_automation_run(*args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._db, name)
+
+
 def _make_definition(db: ScheduledTasksDB, **overrides: Any) -> dict[str, Any]:
     kwargs: dict[str, Any] = dict(
         owner_id="local",
@@ -486,3 +507,90 @@ async def test_a_db_error_inserting_the_running_row_does_not_strand_the_claim(
     assert len(runs) == 1
     assert runs[0]["status"] == "completed"
     assert not any(r["status"] == "skipped" for r in runs)
+
+
+@pytest.mark.asyncio
+async def test_a_db_error_in_post_execution_bookkeeping_does_not_escape_the_spawned_task(
+    tmp_path,
+):
+    """`_run`'s completed-path bookkeeping (`update_automation_run` after a
+    successful executor call) must be contained the same way the executor
+    call itself is: a DB error there must not become an unretrieved
+    exception on the spawned task, must not strand the claim, and must
+    still notify (as a failure, via the best-effort retry)."""
+    db = _make_db(tmp_path)
+    row = _make_definition(db)
+    flaky = _RaiseOnceOnUpdateThenDelegate(
+        db, exc=sqlite3.OperationalError("database is locked")
+    )
+    spy = _DispatchSpy()
+
+    async def fake_executor(app, definition_row):
+        return _FakeOutcome(outcome="finding")
+
+    handler = AutomationDefinitionHandler(
+        db=flaky,
+        dispatch_service=spy,
+        executors={"recurring_question": fake_executor},
+    )
+
+    await handler.handle(row)
+
+    # No exception escapes the spawned task -- `gather` must return cleanly.
+    pending = list(handler._pending)
+    await asyncio.gather(*pending)
+
+    # The claim is released despite the bookkeeping failure.
+    assert handler._claimed == set()
+
+    # The best-effort retry (this fake's SECOND `update_automation_run`
+    # call) goes through: the run lands `failed`/`degraded`, not stranded
+    # at `running`.
+    runs = db.list_automation_runs("local", definition_id=row["id"])
+    assert len(runs) == 1
+    assert runs[0]["status"] == "failed"
+    assert runs[0]["outcome"] == "degraded"
+    assert runs[0]["failure_reason"]["code"] == "bookkeeping_error"
+
+    # The notification still fires, as a failure.
+    assert len(spy.calls) == 1
+    assert spy.calls[0]["payload"]["kind"] == "automation_run_failed"
+    assert spy.calls[0]["severity"] == "warning"
+
+
+@pytest.mark.asyncio
+async def test_degraded_completed_outcome_notifies_with_the_failure_code_not_completed(
+    tmp_path,
+):
+    """A `degraded` outcome on the "completed" status path must not send
+    the generic "Completed." message -- that reads as success on every
+    degraded interval run."""
+    db = _make_db(tmp_path)
+    row = _make_definition(db)
+    spy = _DispatchSpy()
+
+    async def degraded_executor(app, definition_row):
+        return _FakeOutcome(
+            outcome="degraded",
+            title="",
+            summary="",
+            failure_reason={"code": "retrieval_blocked"},
+        )
+
+    handler = AutomationDefinitionHandler(
+        db=db,
+        dispatch_service=spy,
+        executors={"recurring_question": degraded_executor},
+    )
+
+    await handler.handle(row)
+    await _drain(handler)
+
+    runs = db.list_automation_runs("local", definition_id=row["id"])
+    assert runs[0]["status"] == "completed"
+    assert runs[0]["outcome"] == "degraded"
+
+    assert len(spy.calls) == 1
+    message = spy.calls[0]["message"]
+    assert "retrieval_blocked" in message
+    assert message != "Completed."

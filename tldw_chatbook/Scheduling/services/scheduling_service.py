@@ -8,6 +8,7 @@ server identity (``server:<user_id>``).
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
@@ -440,7 +441,7 @@ class SchedulingService:
             )
             return None
 
-        row = self.db.get_automation_definition(definition_id)
+        row = await asyncio.to_thread(self.db.get_automation_definition, definition_id)
         if row is None:
             return None
 
