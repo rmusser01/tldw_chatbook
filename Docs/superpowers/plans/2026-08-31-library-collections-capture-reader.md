@@ -137,19 +137,14 @@ python -m pytest tldw_Server_API/tests/Collections/test_reading_service.py -k sn
 
 Expected: FAIL because the writer can commit between count and page evaluation.
 
-- [ ] **Step 3: Use the existing transaction and connection plumbing**
+- [ ] **Step 3: Use one explicit read-snapshot connection**
 
 In `CollectionsDatabase.list_content_items`, keep current filtering and SQL construction, but execute
-the count, page, and tag hydration inside the existing `transaction()` context and pass its
+the count, page, and tag hydration inside a focused `_read_snapshot()` context and pass its
 connection through every backend call:
 
 ```python
-with self.transaction() as connection:
-    if self.backend_type == BackendType.POSTGRESQL:
-        self.backend.execute(
-            "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
-            connection=connection,
-        )
+with self._read_snapshot() as connection:
     total = self.backend.execute(
         count_query,
         tuple(params),
@@ -167,10 +162,14 @@ with self.transaction() as connection:
 ```
 
 Add the optional `connection` parameter only to the existing focused tag helper and forward it to
-its current backend call. SQLite's explicit transaction already pins the read snapshot; PostgreSQL's
-default `READ COMMITTED` does not, so request `REPEATABLE READ READ ONLY` as the first statement in
-the existing transaction and cover that branch with a backend-proxy regression. Do not create a
-second transaction abstraction or change the endpoint schema.
+its current backend call. For SQLite, begin a deferred transaction so the first read pins the
+snapshot without reserving the writer lock. For PostgreSQL, pool checkout first applies scope SQL
+and therefore opens an implicit transaction: commit that setup, save the connection's autocommit
+state, temporarily enable autocommit, and execute raw
+`BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY` before yielding the connection. On
+exit, roll back the read transaction, restore autocommit, and return the connection; cleanup failure
+must never replace the primary operation failure. Cover the exact psycopg lifecycle with a
+backend-proxy regression. Do not change the endpoint schema.
 
 - [ ] **Step 4: Run focused server paging tests**
 
