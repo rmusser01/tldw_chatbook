@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from pathlib import Path
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Iterator, Union
 
 from .base_db import BaseDB
+
+
+class LibraryCollectionsSchemaError(RuntimeError):
+    """Typed failure for an unavailable or unsupported Collections schema."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
 
 
 class LibraryCollectionsDB(BaseDB):
@@ -30,7 +38,386 @@ class LibraryCollectionsDB(BaseDB):
     makes the held connection safe here -- each thread owns exactly one.
     """
 
-    _CURRENT_SCHEMA_VERSION = 1
+    _CURRENT_SCHEMA_VERSION = 2
+    _WAL_SETUP_TIMEOUT_SECONDS = 5.0
+
+    _CAPTURE_TABLE_NAMES = frozenset(
+        {
+            "collection_capture_highlights",
+            "collection_capture_item_tags",
+            "collection_capture_items",
+            "collection_capture_note_links",
+            "collection_capture_offline_files",
+            "collection_capture_saved_searches",
+            "collection_capture_scavenge_state",
+            "collection_capture_search",
+            "collection_capture_tags",
+        }
+    )
+    _CAPTURE_TRIGGER_NAMES = frozenset(
+        {
+            "collection_capture_item_tags_search_ad",
+            "collection_capture_item_tags_search_ai",
+            "collection_capture_items_search_ad",
+            "collection_capture_items_search_ai",
+            "collection_capture_items_search_au",
+            "collection_capture_tags_search_au",
+        }
+    )
+    _LEGACY_REQUIRED_COLUMNS = {
+        "library_collections": frozenset(
+            {
+                "collection_id",
+                "name",
+                "description",
+                "created_at",
+                "updated_at",
+                "deleted_at",
+            }
+        ),
+        "library_collection_items": frozenset(
+            {
+                "membership_id",
+                "collection_id",
+                "source_type",
+                "source_id",
+                "title",
+                "created_at",
+            }
+        ),
+    }
+
+    _LEGACY_SCHEMA_DDL = (
+        """
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER PRIMARY KEY NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS library_collections (
+            collection_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            description TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            deleted_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS library_collection_items (
+            membership_id TEXT PRIMARY KEY,
+            collection_id TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            title TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(collection_id)
+                REFERENCES library_collections(collection_id)
+                ON DELETE CASCADE,
+            UNIQUE(collection_id, source_type, source_id)
+        )
+        """,
+    )
+
+    _CAPTURE_SCHEMA_DDL = (
+        """
+        CREATE TABLE IF NOT EXISTS collection_capture_items (
+            authority_key TEXT NOT NULL,
+            capture_id TEXT NOT NULL,
+            submitted_url TEXT NOT NULL,
+            canonical_url TEXT NOT NULL,
+            domain TEXT NOT NULL DEFAULT '',
+            title TEXT,
+            summary TEXT,
+            freeform_note TEXT,
+            text_content TEXT,
+            clean_html TEXT,
+            byline TEXT,
+            published_at TEXT,
+            read_at TEXT,
+            content_hash TEXT,
+            word_count INTEGER,
+            status TEXT NOT NULL CHECK(status IN ('saved', 'reading', 'read', 'archived')),
+            favorite INTEGER NOT NULL CHECK(favorite IN (0, 1)),
+            processing_state TEXT NOT NULL
+                CHECK(processing_state IN ('queued', 'processing', 'ready', 'failed', 'interrupted')),
+            last_fetch_error TEXT,
+            media_authority_key TEXT,
+            media_item_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0),
+            purge_state TEXT,
+            PRIMARY KEY(authority_key, capture_id),
+            UNIQUE(authority_key, canonical_url)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS collection_capture_tags (
+            authority_key TEXT NOT NULL,
+            tag_id INTEGER NOT NULL,
+            normalized_name TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            PRIMARY KEY(authority_key, tag_id),
+            UNIQUE(authority_key, normalized_name)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS collection_capture_item_tags (
+            authority_key TEXT NOT NULL,
+            capture_id TEXT NOT NULL,
+            tag_id INTEGER NOT NULL,
+            PRIMARY KEY(authority_key, capture_id, tag_id),
+            FOREIGN KEY(authority_key, capture_id)
+                REFERENCES collection_capture_items(authority_key, capture_id)
+                ON DELETE CASCADE,
+            FOREIGN KEY(authority_key, tag_id)
+                REFERENCES collection_capture_tags(authority_key, tag_id)
+                ON DELETE CASCADE
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS collection_capture_highlights (
+            authority_key TEXT NOT NULL,
+            highlight_id TEXT NOT NULL,
+            capture_id TEXT NOT NULL,
+            quote TEXT NOT NULL,
+            note TEXT,
+            anchor_json TEXT,
+            detached INTEGER NOT NULL DEFAULT 0 CHECK(detached IN (0, 1)),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0),
+            PRIMARY KEY(authority_key, highlight_id),
+            FOREIGN KEY(authority_key, capture_id)
+                REFERENCES collection_capture_items(authority_key, capture_id)
+                ON DELETE CASCADE
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS collection_capture_saved_searches (
+            authority_key TEXT NOT NULL,
+            search_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            query_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0),
+            PRIMARY KEY(authority_key, search_id),
+            UNIQUE(authority_key, name)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS collection_capture_note_links (
+            authority_key TEXT NOT NULL,
+            link_id TEXT NOT NULL,
+            capture_id TEXT NOT NULL,
+            note_authority_key TEXT NOT NULL,
+            note_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY(authority_key, link_id),
+            UNIQUE(authority_key, capture_id, note_authority_key, note_id),
+            FOREIGN KEY(authority_key, capture_id)
+                REFERENCES collection_capture_items(authority_key, capture_id)
+                ON DELETE CASCADE
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS collection_capture_offline_files (
+            authority_key TEXT NOT NULL,
+            file_id TEXT NOT NULL,
+            capture_id TEXT NOT NULL,
+            relative_path TEXT NOT NULL,
+            content_hash TEXT,
+            reserved_size INTEGER NOT NULL CHECK(reserved_size >= 0),
+            actual_size INTEGER CHECK(actual_size IS NULL OR actual_size >= 0),
+            media_type TEXT,
+            state TEXT NOT NULL CHECK(state IN ('staging', 'ready', 'failed', 'purging')),
+            failure_reason TEXT,
+            temporary_name TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0),
+            PRIMARY KEY(authority_key, file_id),
+            FOREIGN KEY(authority_key, capture_id)
+                REFERENCES collection_capture_items(authority_key, capture_id)
+                ON DELETE CASCADE
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS collection_capture_scavenge_state (
+            authority_key TEXT PRIMARY KEY,
+            authority_fingerprint TEXT,
+            cursor_kind TEXT,
+            cursor_value TEXT,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE VIRTUAL TABLE IF NOT EXISTS collection_capture_search USING fts5(
+            authority_key UNINDEXED,
+            capture_id UNINDEXED,
+            title,
+            summary,
+            freeform_note,
+            text_content,
+            tag_text
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_collection_capture_items_updated_page
+        ON collection_capture_items(authority_key, updated_at DESC, capture_id DESC)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_collection_capture_items_created_page
+        ON collection_capture_items(authority_key, created_at DESC, capture_id DESC)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_collection_capture_items_published_page
+        ON collection_capture_items(authority_key, published_at DESC, capture_id DESC)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_collection_capture_items_title_page
+        ON collection_capture_items(authority_key, title COLLATE NOCASE, capture_id)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_collection_capture_items_status_page
+        ON collection_capture_items(authority_key, status, updated_at DESC, capture_id DESC)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_collection_capture_items_favorite_page
+        ON collection_capture_items(authority_key, favorite, updated_at DESC, capture_id DESC)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_collection_capture_items_domain_page
+        ON collection_capture_items(authority_key, domain, updated_at DESC, capture_id DESC)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_collection_capture_item_tags_by_tag
+        ON collection_capture_item_tags(authority_key, tag_id, capture_id)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_collection_capture_highlights_by_item
+        ON collection_capture_highlights(authority_key, capture_id, created_at, highlight_id)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_collection_capture_note_links_by_item
+        ON collection_capture_note_links(authority_key, capture_id, created_at, link_id)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_collection_capture_offline_by_item
+        ON collection_capture_offline_files(authority_key, capture_id, updated_at, file_id)
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_collection_capture_offline_by_state
+        ON collection_capture_offline_files(authority_key, state, updated_at, file_id)
+        """,
+        """
+        CREATE TRIGGER IF NOT EXISTS collection_capture_items_search_ai
+        AFTER INSERT ON collection_capture_items
+        BEGIN
+            INSERT INTO collection_capture_search(
+                rowid, authority_key, capture_id, title, summary,
+                freeform_note, text_content, tag_text
+            ) VALUES (
+                new.rowid, new.authority_key, new.capture_id,
+                COALESCE(new.title, ''), COALESCE(new.summary, ''),
+                COALESCE(new.freeform_note, ''), COALESCE(new.text_content, ''), ''
+            );
+        END
+        """,
+        """
+        CREATE TRIGGER IF NOT EXISTS collection_capture_items_search_au
+        AFTER UPDATE OF authority_key, capture_id, title, summary, freeform_note, text_content
+        ON collection_capture_items
+        BEGIN
+            DELETE FROM collection_capture_search WHERE rowid = old.rowid;
+            INSERT INTO collection_capture_search(
+                rowid, authority_key, capture_id, title, summary,
+                freeform_note, text_content, tag_text
+            ) VALUES (
+                new.rowid, new.authority_key, new.capture_id,
+                COALESCE(new.title, ''), COALESCE(new.summary, ''),
+                COALESCE(new.freeform_note, ''), COALESCE(new.text_content, ''),
+                COALESCE((
+                    SELECT group_concat(tag.display_name, ' ')
+                    FROM collection_capture_item_tags AS item_tag
+                    JOIN collection_capture_tags AS tag
+                      ON tag.authority_key = item_tag.authority_key
+                     AND tag.tag_id = item_tag.tag_id
+                    WHERE item_tag.authority_key = new.authority_key
+                      AND item_tag.capture_id = new.capture_id
+                ), '')
+            );
+        END
+        """,
+        """
+        CREATE TRIGGER IF NOT EXISTS collection_capture_items_search_ad
+        AFTER DELETE ON collection_capture_items
+        BEGIN
+            DELETE FROM collection_capture_search WHERE rowid = old.rowid;
+        END
+        """,
+        """
+        CREATE TRIGGER IF NOT EXISTS collection_capture_item_tags_search_ai
+        AFTER INSERT ON collection_capture_item_tags
+        BEGIN
+            UPDATE collection_capture_search
+            SET tag_text = COALESCE((
+                SELECT group_concat(tag.display_name, ' ')
+                FROM collection_capture_item_tags AS item_tag
+                JOIN collection_capture_tags AS tag
+                  ON tag.authority_key = item_tag.authority_key
+                 AND tag.tag_id = item_tag.tag_id
+                WHERE item_tag.authority_key = new.authority_key
+                  AND item_tag.capture_id = new.capture_id
+            ), '')
+            WHERE authority_key = new.authority_key
+              AND capture_id = new.capture_id;
+        END
+        """,
+        """
+        CREATE TRIGGER IF NOT EXISTS collection_capture_item_tags_search_ad
+        AFTER DELETE ON collection_capture_item_tags
+        BEGIN
+            UPDATE collection_capture_search
+            SET tag_text = COALESCE((
+                SELECT group_concat(tag.display_name, ' ')
+                FROM collection_capture_item_tags AS item_tag
+                JOIN collection_capture_tags AS tag
+                  ON tag.authority_key = item_tag.authority_key
+                 AND tag.tag_id = item_tag.tag_id
+                WHERE item_tag.authority_key = old.authority_key
+                  AND item_tag.capture_id = old.capture_id
+            ), '')
+            WHERE authority_key = old.authority_key
+              AND capture_id = old.capture_id;
+        END
+        """,
+        """
+        CREATE TRIGGER IF NOT EXISTS collection_capture_tags_search_au
+        AFTER UPDATE OF display_name ON collection_capture_tags
+        BEGIN
+            UPDATE collection_capture_search
+            SET tag_text = COALESCE((
+                SELECT group_concat(tag.display_name, ' ')
+                FROM collection_capture_item_tags AS item_tag
+                JOIN collection_capture_tags AS tag
+                  ON tag.authority_key = item_tag.authority_key
+                 AND tag.tag_id = item_tag.tag_id
+                WHERE item_tag.authority_key = collection_capture_search.authority_key
+                  AND item_tag.capture_id = collection_capture_search.capture_id
+            ), '')
+            WHERE authority_key = new.authority_key
+              AND capture_id IN (
+                  SELECT capture_id
+                  FROM collection_capture_item_tags
+                  WHERE authority_key = new.authority_key
+                    AND tag_id = new.tag_id
+              );
+        END
+        """,
+    )
 
     #: Liveness-ping gate (mirrors `Workspace_DB`/`ChaChaNotes_DB`,
     #: task-261/3011): pinging on every call roughly doubles the statement
@@ -48,7 +435,7 @@ class LibraryCollectionsDB(BaseDB):
         conn = super()._get_connection()
         conn.execute("PRAGMA foreign_keys = ON")
         if not self.is_memory_db:
-            conn.execute("PRAGMA journal_mode = WAL")
+            self._enable_wal(conn)
         # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
         # lose the last commit, acceptable for this local collections cache)
         # and avoids an fsync per commit. Unlike journal_mode, which is
@@ -64,10 +451,22 @@ class LibraryCollectionsDB(BaseDB):
         # transaction" -- and silently ROLLS BACK bare DML on close.
         # Audited (task-15466): every write in this file's own module and in
         # `Library/library_collections_service.py` goes through
-        # `transaction()`; the only DML outside it is `_initialize_schema`'s
-        # `executescript`, which self-commits under either mode.
+        # `transaction()`; schema initialization owns its explicit migration
+        # transaction.
         conn.isolation_level = None
         return conn
+
+    def _enable_wal(self, conn: sqlite3.Connection) -> None:
+        """Enable WAL despite a concurrent opener briefly holding the file."""
+        deadline = time.monotonic() + self._WAL_SETUP_TIMEOUT_SECONDS
+        while True:
+            try:
+                conn.execute("PRAGMA journal_mode = WAL")
+                return
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower() or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.01)
 
     def _held_connection(self) -> sqlite3.Connection:
         """Return this thread's held connection, opening or reviving it.
@@ -200,45 +599,80 @@ class LibraryCollectionsDB(BaseDB):
                 pass
 
     def _initialize_schema(self) -> None:
-        """Initialize the local Collections schema."""
+        """Atomically initialize or migrate the local Collections schema."""
         with self.connection() as conn:
-            conn.executescript(
-                """
-                PRAGMA foreign_keys = ON;
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                has_version_table = (
+                    conn.execute(
+                        "SELECT 1 FROM sqlite_schema "
+                        "WHERE type = 'table' AND name = 'schema_version'"
+                    ).fetchone()
+                    is not None
+                )
+                current_version = 0
+                if has_version_table:
+                    row = conn.execute(
+                        "SELECT MAX(version) FROM schema_version"
+                    ).fetchone()
+                    current_version = int(row[0] or 0) if row is not None else 0
+                if current_version > self._CURRENT_SCHEMA_VERSION:
+                    raise LibraryCollectionsSchemaError("schema_too_new")
 
-                CREATE TABLE IF NOT EXISTS schema_version (
-                    version INTEGER PRIMARY KEY NOT NULL
-                );
-                INSERT OR IGNORE INTO schema_version (version) VALUES (1);
+                if current_version == 0:
+                    for statement in self._LEGACY_SCHEMA_DDL:
+                        conn.execute(statement)
+                    conn.execute(
+                        "INSERT OR IGNORE INTO schema_version (version) VALUES (1)"
+                    )
 
-                CREATE TABLE IF NOT EXISTS library_collections (
-                    collection_id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL UNIQUE,
-                    description TEXT NOT NULL DEFAULT '',
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    deleted_at TEXT
-                );
-
-                CREATE TABLE IF NOT EXISTS library_collection_items (
-                    membership_id TEXT PRIMARY KEY,
-                    collection_id TEXT NOT NULL,
-                    source_type TEXT NOT NULL,
-                    source_id TEXT NOT NULL,
-                    title TEXT NOT NULL DEFAULT '',
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY(collection_id)
-                        REFERENCES library_collections(collection_id)
-                        ON DELETE CASCADE,
-                    UNIQUE(collection_id, source_type, source_id)
-                );
-                """
-            )
-            # No commit: executescript self-commits, and the held connection
-            # is in autocommit mode, so there is no transaction to end.
+                for statement in self._CAPTURE_SCHEMA_DDL:
+                    conn.execute(statement)
+                conn.execute(
+                    "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
+                    (self._CURRENT_SCHEMA_VERSION,),
+                )
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
 
     def get_schema_version(self) -> int:
         """Return the initialized schema version."""
         with self.connection() as conn:
             row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
         return int(row[0] or 0) if row is not None else 0
+
+    def require_capture_schema(self) -> None:
+        """Raise when the authority-scoped capture schema is unavailable."""
+        version = self.get_schema_version()
+        if version > self._CURRENT_SCHEMA_VERSION:
+            raise LibraryCollectionsSchemaError("schema_too_new")
+        with self.connection() as conn:
+            objects = {
+                (str(row[0]), str(row[1]))
+                for row in conn.execute(
+                    "SELECT type, name FROM sqlite_schema "
+                    "WHERE type IN ('table', 'view', 'trigger')"
+                )
+            }
+        tables = {name for kind, name in objects if kind in {"table", "view"}}
+        triggers = {name for kind, name in objects if kind == "trigger"}
+        if (
+            version != self._CURRENT_SCHEMA_VERSION
+            or not self._CAPTURE_TABLE_NAMES <= tables
+            or not self._CAPTURE_TRIGGER_NAMES <= triggers
+        ):
+            raise LibraryCollectionsSchemaError("capture_schema_unavailable")
+
+    def has_compatible_legacy_schema(self) -> bool:
+        """Return whether bounded v1 inspection can read the legacy tables."""
+        with self.connection() as conn:
+            for table, required_columns in self._LEGACY_REQUIRED_COLUMNS.items():
+                columns = {
+                    str(row[1])
+                    for row in conn.execute(f"PRAGMA table_info({table})")
+                }
+                if not required_columns <= columns:
+                    return False
+        return True
