@@ -1190,7 +1190,7 @@ async def test_finalize_shutdown_closes_each_retained_backend_once_without_waiti
     backend = FinalizableBackend()
     terminal = TerminalSessionManager(lambda: True, lambda: backend)
     terminal.arm(acknowledge_disclosure=True)
-    create_running_session(terminal, "final-handle-close")
+    session_id = create_running_session(terminal, "final-handle-close")
 
     try:
         assert await terminal.shutdown(deadline_seconds=0.01) is False
@@ -1199,6 +1199,7 @@ async def test_finalize_shutdown_closes_each_retained_backend_once_without_waiti
         assert backend.finalize_calls == 1
     finally:
         finish_cleanup.set()
+    assert terminal.wait_for_cleanup(session_id, timeout_seconds=1)
 
 
 def test_managed_process_inventory_is_test_only_and_content_free() -> None:
