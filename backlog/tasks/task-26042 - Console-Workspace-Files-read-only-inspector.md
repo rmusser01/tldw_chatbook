@@ -73,6 +73,12 @@ were identical; the visible active conversation/workspace and `Approvals: 0`
 also remained unchanged, and no tmux/app process remained. The automated
 four-size test was strengthened to fingerprint both workspace roots
 recursively and passes 4/4. AC #7 and Definition of Done #4 are now evidenced.
+Final review then found and TDD-closed two bounded-lifecycle gaps: the modal
+now coalesces the service's live filter progress into generation-checked
+visited/result copy, and final untrusted file opens use non-blocking no-follow
+flags before `fstat`, so a listed file swapped to a FIFO is rejected without
+hanging read, dismissal, or quit. The combined service/modal/integration run is
+80 passed; focused Ruff and `git diff --check` are clean.
 The task remains In Progress only for the final independent whole-slice review
 and Definition of Done #1/#6; Done status is intentionally unchanged.
 <!-- SECTION:NOTES:END -->
