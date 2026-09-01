@@ -1,5 +1,5 @@
 ---
-id: TASK-25887
+id: TASK-26837
 title: >-
   Provider setup can report a successful connection test yet write no
   api_settings block
@@ -26,3 +26,18 @@ During the 2026-08-30 Console review a first-run setup completed for a local pro
 - [ ] #2 A successful connection test cannot be followed by a summary reporting the same provider as unconfigured
 - [ ] #3 The conditions under which provider commit is skipped are covered by a test
 <!-- AC:END -->
+
+## Renumbering
+
+Filed as TASK-25887 on 2026-08-31 20:05. `dev` merged its own TASK-25887 on
+2026-09-01 05:15, and the backlog guard flagged the duplicate.
+
+Deviation from the 2026-08-21 owner rule (TASK-19601), stated so it is not read
+as an oversight: by that rule the OLDER arrival keeps the id, which would be
+this task. It moves the other way because dev's task is already MERGED and may
+carry references an unmerged PR cannot see, while this one has no blast radius.
+Renumbered to 26837 (next free after sweeping all refs; max was 26836).
+
+This is the fourth such collision for this review's tasks in two days -- the
+backlog CLI mints against the local checkout only, so a branch that sits open
+across other merges will keep losing the race.
