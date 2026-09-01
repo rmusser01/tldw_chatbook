@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-31 15:08'
-updated_date: '2026-08-31 23:12'
+updated_date: '2026-09-01 00:18'
 labels:
   - agents
   - reliability
@@ -124,4 +124,32 @@ Credential handling: keys were read from the owner's gitignored
 repository at mode 0600, and that file was overwritten and deleted immediately
 afterwards. No key value appears in any script, test, task file, commit message
 or log line; verified by a full-key grep across the worktree.
+
+## Correction to the scope limit above (2026-08-31)
+
+The paragraph above says the three available keys are native "so the
+native→fence crossing is unit-tested only", and implies a fence-provider
+*credential* would close it. The first half is right; the second is wrong, and
+so was the provider list I gave.
+
+`NATIVE_TOOLS_PROVIDERS` actually contains **13** providers: anthropic, cohere,
+custom-openai-api, custom-openai-api-2, deepseek, google, groq, mistral,
+moonshot, openai, openrouter, qwencloud, zai. I had named four of them, read off
+the code comments documenting four migrations rather than off the frozenset.
+
+What that changes: **every hosted API provider is native.** The fence set is
+almost entirely local inference servers — aphrodite, koboldcpp, llama_cpp,
+mlx_lm, ollama, oobabooga, tabbyapi, vllm (plus huggingface and mistralai). So
+the crossing cannot be exercised by adding an API key of any kind; a
+`sk-`-format key belongs to a native provider by definition. It needs a **local
+inference server running** (ollama on 11434, llama.cpp on 8080, ...), or a
+huggingface token.
+
+Checked at the time of writing: no local server was listening on 11434, 8080,
+5000 or 8000, so the crossing remains unit-tested only.
+
+The projection test itself was never affected — `test_every_native_provider_
+round_trips` derives each provider's protocol from `provider_supports_native_
+tools` at runtime rather than from a hand-written list, which is exactly why
+ADR-110 required that. The error was in my prose, not the coverage.
 <!-- SECTION:NOTES:END -->
