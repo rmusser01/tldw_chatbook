@@ -1748,6 +1748,9 @@ class ConsoleCompactionService:
         self._now = now or (lambda: datetime.now(timezone.utc))
         self._monotonic = monotonic
         self._locks: dict[str, asyncio.Lock] = {}
+        # Read once at service construction (unlike the sibling
+        # compaction_* keys, which resolve per-use): changing the timeout
+        # in config takes effect on the next app start.
         # Fail-closed coercion: None / non-numeric / non-finite / <= 0 all
         # land on the documented default -- the auxiliary call is never
         # unbounded again (TASK-26016).
@@ -1817,6 +1820,9 @@ class ConsoleCompactionService:
             summary = ""
             completion = None
             for attempt_index, attempt_messages in enumerate(message_attempts):
+                # Same executor-thread ceiling as compact()'s bound above;
+                # additionally a FOCUSED plan may spend up to 2x the bound
+                # (steered + unsteered attempts each get the full timeout).
                 try:
                     completion = await asyncio.wait_for(
                         self._gateway.complete_auxiliary(
@@ -2095,6 +2101,15 @@ class ConsoleCompactionService:
             )
             logger.info("console_compaction_auxiliary_started")
             started_tick = self._monotonic()
+            # ponytail: wait_for bounds the WAIT, not the work -- for
+            # non-llama.cpp providers the call is sync chat_api_call inside
+            # asyncio.to_thread, which cancellation cannot interrupt, so a
+            # genuinely hung provider leaks one default-executor thread per
+            # timed-out attempt until its socket gives up (and a late
+            # completion's usage goes unrecorded). Lock and run-state ARE
+            # released -- the user-facing wedge is fixed. Upgrade path: cap
+            # the provider HTTP timeout at/below this bound for auxiliary
+            # calls in the gateway.
             try:
                 completion = await asyncio.wait_for(
                     self._gateway.complete_auxiliary(

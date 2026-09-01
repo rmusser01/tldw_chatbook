@@ -1518,6 +1518,18 @@ class _Repository:
         self.starts.append(attempt)
 
     def finish_auxiliary_attempt(self, operation_id, **kwargs) -> bool:
+        # Review Critical (2026-09-01): this fake's **kwargs swallowed a
+        # status the REAL repository's CHECK constraint rejected
+        # (TIMED_OUT missing from the v33 DDL) -- the standing
+        # "**kwargs fakes mask real-service contracts" lesson. Mirror the
+        # real terminal-status validation so the fake can't hide the next
+        # one.
+        from tldw_chatbook.Chat.console_context_repository import (
+            TERMINAL_AUXILIARY_ATTEMPT_STATUSES,
+        )
+
+        if kwargs.get("status") not in TERMINAL_AUXILIARY_ATTEMPT_STATUSES:
+            raise ValueError("status must be a terminal auxiliary-attempt status")
         self.finishes.append((operation_id, kwargs))
         return True
 

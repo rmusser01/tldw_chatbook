@@ -16658,6 +16658,11 @@ class ChatScreen(BaseAppScreen):
                 return
             focus = ""
             if preview is not None:
+                # Known edge (review 2026-09-01): another exclusive
+                # console-run-{session} worker firing while this modal is
+                # open cancels THIS awaiting worker and orphans the modal
+                # on screen (Esc still dismisses it). Rare enough to note
+                # rather than serialize the whole group on a modal.
                 modal_result = await self.app_instance.push_screen_wait(
                     ConsoleSummarizePreviewModal(preview)
                 )

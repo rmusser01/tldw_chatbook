@@ -4,9 +4,10 @@
 Shows what the summarize WILL do -- turns summarized, turns retained, the
 estimated context change -- before any model call happens. The numbers come
 from the same ``ManualMemoryPlan`` the commit path executes, so what is
-previewed is what happens (AC#4). Dismisses ``True`` to commit, ``False``
-to discard; the caller re-runs planning on commit, so a conversation that
-changed in between is re-validated rather than trusted.
+previewed is what happens (AC#4). Dismisses the (possibly empty) focus
+topic string on confirm and ``None`` on cancel; the caller re-runs
+planning on commit, so a conversation that changed in between is
+re-validated rather than trusted.
 """
 
 from __future__ import annotations
@@ -19,6 +20,10 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
+
+from tldw_chatbook.Chat.console_context_compaction import (
+    MAX_SUMMARY_FOCUS_CHARS,
+)
 
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
@@ -108,7 +113,7 @@ class ConsoleSummarizePreviewModal(
                 id="console-summarize-preview-focus",
                 # TASK-26018 AC#4: bounded at the widget; the controller
                 # re-sanitizes (collapse/cap/marker-refusal) regardless.
-                max_length=200,
+                max_length=MAX_SUMMARY_FOCUS_CHARS,
             )
             with Horizontal(id="console-summarize-preview-actions"):
                 yield Button("Cancel", id="console-summarize-preview-cancel")
@@ -126,6 +131,13 @@ class ConsoleSummarizePreviewModal(
     async def _perform_safe_cancel(self, *, source: str) -> None:
         del source
         self.dismiss_safe_once(None)
+
+    @on(Input.Submitted, "#console-summarize-preview-focus")
+    def _submit_focus(self, event: Input.Submitted) -> None:
+        """Enter in the focus field confirms -- typing then Enter is the
+        natural gesture; requiring a mouse trip to Summarize is not."""
+        event.stop()
+        self.dismiss(event.value or "")
 
     @on(Button.Pressed, "#console-summarize-preview-confirm")
     def _confirm(self, event: Button.Pressed) -> None:
