@@ -62,7 +62,12 @@ the point-in-time artifact; `--require-live-current` is only an immediate captur
 diagnostic/self-test. Appendix C records the manifest pin, observed `origin/dev`, and
 exact equality/fast-forward ancestry result; missing or divergent/force-pushed state
 fails `E_ORIGIN_DEV_DIVERGED`, while a normal descendant does not restart the full
-refresh. No fetch occurs after the allocator's final claim scan. The
+refresh. Precreate scans still recompute an allocation after unrelated external-ID
+movement. After all cleanup records exist, `--expect-map` preserves their authenticated
+allocation only after proving every exact self identity in the live claim census and
+rejecting any different identity on an active ID; unrelated higher task IDs remain
+audit evidence rather than forcing renumbering. No fetch occurs after the allocator's
+final claim scan. The
 canonical final allocation-audit SHA-256 plus its bound `manifest_pin`,
 `observed_origin_dev`, and `origin_dev_ancestry` values must be recorded in Task 7
 Implementation Notes, and
@@ -152,6 +157,9 @@ Pre-record manifest/materializer/producer/checker/allocator/renderer hashes are
 `a003aee74e01c2729136e244474f1fac08a06ae9ee9331752f56d1bfbffe9e79`,
 `6d7559449c35cd6db3dca31dbbdb510efbb45d1dc0a96c4f01f59c6a8461403b`,
 and `4a08b6a5a9a8b12926ab9417bc330a4e94eb60c3b4afe88226ef232e2653a17a`.
+Current post-failure/Task 7 materializer and allocator hashes are
+`353160bc073aef50dfcf51f55bd18e261c58e91147db9df30a6e3d0d0f5a2977` and
+`2e456e41bdd2b4f357d181a32b91efdfd07060c33a8f23cc1622d3ef8a4bd432`.
 <!-- SECTION:PLAN:END -->
 
 ### Task 1 Repin Record (2026-08-30)

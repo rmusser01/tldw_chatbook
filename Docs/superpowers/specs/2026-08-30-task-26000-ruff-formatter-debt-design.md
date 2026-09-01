@@ -70,6 +70,9 @@ producer, checker, allocator, and renderer SHA-256 values are respectively
 `a003aee74e01c2729136e244474f1fac08a06ae9ee9331752f56d1bfbffe9e79`,
 `6d7559449c35cd6db3dca31dbbdb510efbb45d1dc0a96c4f01f59c6a8461403b`,
 and `4a08b6a5a9a8b12926ab9417bc330a4e94eb60c3b4afe88226ef232e2653a17a`.
+The current post-failure/Task 7 materializer and allocator SHA-256 values are
+`353160bc073aef50dfcf51f55bd18e261c58e91147db9df30a6e3d0d0f5a2977` and
+`2e456e41bdd2b4f357d181a32b91efdfd07060c33a8f23cc1622d3ef8a4bd432`.
 After Task 5, the canonical manifest contains 83 cleanup records allocated as
 `TASK-26933` through `TASK-27015`, with `TASK-27015` as the final record. Its
 post-record SHA-256 is
@@ -163,8 +166,14 @@ that final claim scan. The canonical final allocation-audit SHA-256 and its boun
 `manifest_pin`, `observed_origin_dev`, and `origin_dev_ancestry` values are required
 in Task 7 Implementation Notes. The canonical
 `raw/allocation-closeout-rescan.json` remains outside the repository but is retained
-through review and integration with the other temporary evidence. The evidence never
-combines path lists, contents, or configuration from different revisions.
+through review and integration with the other temporary evidence. Before cleanup
+records exist, a live external-maximum change recomputes the proposed allocation and
+forces regeneration. Once all cleanup records exist, the final scan authenticates
+their exact manifest-bound self identities, proves they appeared in the live claim
+census, rejects any different identity on an active ID, and preserves their allocation
+despite unrelated higher task IDs. A fresh collision-recovery scan still allocates
+above every observed claim. The evidence never combines path lists, contents, or
+configuration from different revisions.
 
 ## Chosen Approach
 

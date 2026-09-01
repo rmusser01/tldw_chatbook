@@ -59,9 +59,9 @@ pytest task-ID guard.
   `historical_no_longer_current=17`, `shared_ancestor_debt=1,603`, and
   `current_line_drift=319`, represented by 2,096 identities and 83 batches with zero
   blockers. The pre-record authority-cut manifest contained zero cleanup records.
-- Current/common raw, lineage, replay-cache, pre-record manifest, PR snapshot,
-  materializer, producer, checker, allocator, and renderer SHA-256 values are
-  respectively
+- The Task 5/pre-record execution used the current/common raw, lineage,
+  replay-cache, pre-record manifest, PR snapshot, materializer, producer, checker,
+  allocator, and renderer SHA-256 values respectively
   `f888cf9351f1c41f66fb98b4ec218c9268beb9b23295037320f725cec567ae10`,
   `c34c5fe9d8e3154c3450f1cf28d4c9a6f1f631feb4735296fc6b891af5de1b15`,
   `b9f9876d438b4b6770e84013c515ae54791b14f0e740de67283fb3de20f655a6`,
@@ -73,6 +73,9 @@ pytest task-ID guard.
   `a003aee74e01c2729136e244474f1fac08a06ae9ee9331752f56d1bfbffe9e79`,
   `6d7559449c35cd6db3dca31dbbdb510efbb45d1dc0a96c4f01f59c6a8461403b`,
   and `4a08b6a5a9a8b12926ab9417bc330a4e94eb60c3b4afe88226ef232e2653a17a`.
+- Current post-failure/Task 7 materializer and allocator SHA-256 values are
+  `353160bc073aef50dfcf51f55bd18e261c58e91147db9df30a6e3d0d0f5a2977` and
+  `2e456e41bdd2b4f357d181a32b91efdfd07060c33a8f23cc1622d3ef8a4bd432`.
 - After Task 5, the canonical manifest contains 83 cleanup records with contiguous
   IDs `TASK-26933` through `TASK-27015`; `TASK-27015` is the final record. Its
   post-record SHA-256 is
@@ -1274,12 +1277,16 @@ current raw census, and complete lineage were rebuilt.
 - The post-Task5 canonical manifest contains 83 cleanup records, allocated as
   `TASK-26933` through `TASK-27015` with final record `TASK-27015`, and has SHA-256
   `ded7288d8580367842110dd1a9e79976dc9c00663361251bb9212ca717cea0b9`.
-- Materializer, producer, checker, allocator, and renderer SHA-256 values are
+- Task 5 execution materializer, producer, checker, allocator, and renderer SHA-256
+  values were
   `69817bd0bac15097f80c6d194b7b27618bc96f494aab806aeb6d009a9c384c5c`,
   `fd33448f2841d0502509201a5bf6fd2f279f3f2c67cff8f3d4391b9ed7d9ce3e`,
   `a003aee74e01c2729136e244474f1fac08a06ae9ee9331752f56d1bfbffe9e79`,
   `6d7559449c35cd6db3dca31dbbdb510efbb45d1dc0a96c4f01f59c6a8461403b`,
   and `4a08b6a5a9a8b12926ab9417bc330a4e94eb60c3b4afe88226ef232e2653a17a`.
+- Current post-failure/Task 7 materializer and allocator SHA-256 values are
+  `353160bc073aef50dfcf51f55bd18e261c58e91147db9df30a6e3d0d0f5a2977` and
+  `2e456e41bdd2b4f357d181a32b91efdfd07060c33a8f23cc1622d3ef8a4bd432`.
 
 ---
 
@@ -1318,14 +1325,14 @@ task26000_verify_child_hashes() {
   printf '%s  %s\n' \
     'fd33448f2841d0502509201a5bf6fd2f279f3f2c67cff8f3d4391b9ed7d9ce3e' "${task26000_manifest_producer}" \
     'a003aee74e01c2729136e244474f1fac08a06ae9ee9331752f56d1bfbffe9e79' "${task26000_manifest_checker}" \
-    '6d7559449c35cd6db3dca31dbbdb510efbb45d1dc0a96c4f01f59c6a8461403b' "${task26000_allocator}" \
+    '2e456e41bdd2b4f357d181a32b91efdfd07060c33a8f23cc1622d3ef8a4bd432' "${task26000_allocator}" \
     '4a08b6a5a9a8b12926ab9417bc330a4e94eb60c3b4afe88226ef232e2653a17a' "${task26000_renderer}" | shasum -a 256 -c - || {
       echo 'E_TOOL_AUTHORITY_PREFLIGHT: child digest mismatch' >&2
       exit 2
     }
 }
 printf '%s  %s\n' \
-  '69817bd0bac15097f80c6d194b7b27618bc96f494aab806aeb6d009a9c384c5c' \
+  '353160bc073aef50dfcf51f55bd18e261c58e91147db9df30a6e3d0d0f5a2977' \
   "${task26000_tool_authority}" | shasum -a 256 -c - || {
     echo 'E_TOOL_AUTHORITY_PREFLIGHT: materializer digest mismatch' >&2
     exit 2
@@ -1342,7 +1349,7 @@ printf '%s  %s\n' \
 task26000_verify_child_hashes
 task26000_verify_tool_authority() {
   printf '%s  %s\n' \
-    '69817bd0bac15097f80c6d194b7b27618bc96f494aab806aeb6d009a9c384c5c' \
+    '353160bc073aef50dfcf51f55bd18e261c58e91147db9df30a6e3d0d0f5a2977' \
     "${task26000_tool_authority}" | shasum -a 256 -c - || {
       echo 'E_TOOL_AUTHORITY_PREFLIGHT: materializer digest mismatch' >&2
       exit 2
@@ -1392,7 +1399,7 @@ task26000_verify_tool_authority
   Expected scanner self-test stdout is exactly:
 
   ```text
-  allocation scanner self-tests: 38 cases passed
+  allocation scanner self-tests: 40 cases passed
   ```
 
   Inspect the scanner's claims for title-fragment renumbered twins before accepting
@@ -1408,8 +1415,9 @@ task26000_verify_tool_authority
   Materialize Appendix D verbatim. If the create journal exists, recover it before
   the precreate scanner: recovery removes a partial uncommitted generation or
   completes a generation whose manifest commit landed. Then repeat Appendix C with
-  the initial audit as `--expect-map`; an external claim on any reserved ID blocks
-  rendering. Then invoke the renderer once:
+  the initial audit as `--expect-map`; an external identity on any reserved ID blocks
+  rendering, while unrelated claims still recompute the precreate allocation and
+  therefore raise `E_ALLOCATION_MOVED`. Then invoke the renderer once:
 
   ```bash
   task26000_verify_tool_authority
@@ -1572,6 +1580,13 @@ task26000_verify_tool_authority
   `E_ORIGIN_DEV_DIVERGED` means the pin/tip is missing or the observed tip is not a
   descendant (including force-push/divergence), and is a hard stop. A normal
   descendant does not trigger another full census/review cycle.
+
+  With complete `cleanup_records`, `--expect-map` authenticates every manifest-bound
+  record, requires each exact self identity to appear in the live claim census, and
+  classifies unexpected identities before retaining the active allocation. A new
+  external maximum outside the active IDs remains audit evidence but does not move
+  the already-created records. Only an unexpected identity on an active ID raises
+  `E_ID_COLLISION` and authorizes the bounded reallocation path below.
 
   An `E_ID_COLLISION` after rendering, or a reviewed change that adds, removes, or
   renames any batch label, must not be repaired with manual renames or a sequence of
@@ -1987,6 +2002,12 @@ task26000_verify_tool_authority
   closeout. The first successful `raw/allocation-closeout-rescan.json` is the last
   fetch and claim scan and the only audit allowed to populate the final evidence
   variables.
+
+  Because the manifest now has complete cleanup records, this `--expect-map` scan
+  retains the authenticated active allocation after proving every exact self identity
+  and rejecting every unexpected identity on its IDs. New unrelated task IDs remain
+  in `external_used_ids`; they do not authorize reallocation or produce
+  `E_ALLOCATION_MOVED`.
 
   ```bash
   task26000_task5_final_allocation_audit="${task26000_tmp_root}/raw/allocation-task5-final-rescan.json"
@@ -7282,9 +7303,9 @@ only after both positive phases and all mutations pass.
 
 ## Appendix B.1: Durable Tool Authority Materializer
 
-Materialize this file verbatim as `task26000_tmp_root/task26000_tool_authority.py`. Before executing it, require SHA-256 `69817bd0bac15097f80c6d194b7b27618bc96f494aab806aeb6d009a9c384c5c`. It authenticates its own tracked source against the executing file, then deterministically extracts the tracked producer, checker, allocator, and renderer sources and requires both every adjacent marker and every extracted byte digest to equal the closed approved child hashes embedded below. The shell independently rechecks the same four reviewed literals after extraction.
+Materialize this file verbatim as `task26000_tmp_root/task26000_tool_authority.py`. Before executing it, require SHA-256 `353160bc073aef50dfcf51f55bd18e261c58e91147db9df30a6e3d0d0f5a2977`. It authenticates its own tracked source against the executing file, then deterministically extracts the tracked producer, checker, allocator, and renderer sources and requires both every adjacent marker and every extracted byte digest to equal the closed approved child hashes embedded below. The shell independently rechecks the same four reviewed literals after extraction.
 
-<!-- TASK-26000-AUTHORITY-MATERIALIZER-BEGIN sha256=69817bd0bac15097f80c6d194b7b27618bc96f494aab806aeb6d009a9c384c5c -->
+<!-- TASK-26000-AUTHORITY-MATERIALIZER-BEGIN sha256=353160bc073aef50dfcf51f55bd18e261c58e91147db9df30a6e3d0d0f5a2977 -->
 ```python
 from __future__ import annotations
 
@@ -7303,7 +7324,7 @@ class AuthorityError(RuntimeError):
 EXPECTED_CHILD_SHA256 = {
     "producer": "fd33448f2841d0502509201a5bf6fd2f279f3f2c67cff8f3d4391b9ed7d9ce3e",
     "checker": "a003aee74e01c2729136e244474f1fac08a06ae9ee9331752f56d1bfbffe9e79",
-    "allocator": "6d7559449c35cd6db3dca31dbbdb510efbb45d1dc0a96c4f01f59c6a8461403b",
+    "allocator": "2e456e41bdd2b4f357d181a32b91efdfd07060c33a8f23cc1622d3ef8a4bd432",
     "renderer": "4a08b6a5a9a8b12926ab9417bc330a4e94eb60c3b4afe88226ef232e2653a17a",
 }
 
@@ -7485,10 +7506,10 @@ optional `--expect-map`, and fixture-only `--self-test`; it reads batch labels p
 manifest, accepts only an exact canonical closed and immutable-OID-bound scanner audit or validated active-state
 handoff as `--expect-map`, writes a canonical closed nine-key audit JSON, and exits 2 on a moved PR head, malformed task
 identity, inaccessible checkout/ref, self-claim mismatch, external ID collision, or
-changed allocation. An immutable commit with no `backlog` tree contributes zero
+changed precreate allocation. An immutable commit with no `backlog` tree contributes zero
 claims; invalid OIDs, non-commit objects, and unexpected tree probes fail `E_ARCHIVE`.
 
-<!-- TASK-26000-ALLOCATOR-SOURCE-BEGIN sha256=6d7559449c35cd6db3dca31dbbdb510efbb45d1dc0a96c4f01f59c6a8461403b -->
+<!-- TASK-26000-ALLOCATOR-SOURCE-BEGIN sha256=2e456e41bdd2b4f357d181a32b91efdfd07060c33a8f23cc1622d3ef8a4bd432 -->
 ```python
 from __future__ import annotations
 
@@ -8400,6 +8421,12 @@ def classify_claims(
             }
             for identity in sorted(identities)
         ]
+    for task_id, allowed in sorted(self_claims.items()):
+        fail(
+            allowed in claims.get(task_id, {}),
+            "E_SELF_CLAIMS",
+            f"TASK-{task_id}: authenticated self identity absent from live claims",
+        )
     return external_ids, claim_audit
 
 
@@ -8412,6 +8439,24 @@ def allocate_ids(
         label: task_id
         for label, task_id in zip(non_final + [final_label], range(start, start + len(labels)))
     }
+
+
+def select_allocation(
+    labels: list[str],
+    final_label: str,
+    external_ids: set[int],
+    expected_map: dict[str, int] | None,
+    self_claims: dict[int, ClaimIdentity],
+) -> dict[str, int]:
+    if not self_claims:
+        return allocate_ids(labels, final_label, external_ids)
+    fail(expected_map is not None, "E_SELF_CLAIMS", "expected allocation is missing")
+    fail(
+        set(self_claims) == set(expected_map.values()),
+        "E_SELF_CLAIMS",
+        "authenticated self IDs differ from expected allocation",
+    )
+    return dict(expected_map)
 
 
 def verify_pr_head(number: int, expected: str, actual: str) -> None:
@@ -8549,7 +8594,9 @@ def scan(
         scan_worktree(raw_root, claims, worktree_audit)
     self_claims = planned_self_claims(manifest, repo, expected_map) if expected_map is not None else {}
     external_ids, claim_audit = classify_claims(claims, self_claims, expected_map)
-    allocation = allocate_ids(labels, final_label, external_ids)
+    allocation = select_allocation(
+        labels, final_label, external_ids, expected_map, self_claims
+    )
     return {
         **authority,
         "refs": ref_audit,
@@ -8669,6 +8716,23 @@ def run_self_tests() -> None:
         accepted_claims, {26100: self_claim.identity}, expected
     )
     fail(external == set() and audit["26100"][0]["accepted_self"], "E_SELF_TEST", "self copy")
+    cases += 1
+
+    preserved = select_allocation(
+        ["alpha"], "alpha", {26834}, expected, {26100: self_claim.identity}
+    )
+    refreshed = select_allocation(["alpha"], "alpha", {26834}, expected, {})
+    fail(
+        preserved == expected and refreshed == {"alpha": 26934},
+        "E_SELF_TEST",
+        "allocation lifecycle",
+    )
+    cases += 1
+
+    expect_error(
+        "E_SELF_CLAIMS",
+        lambda: classify_claims({}, {26100: self_claim.identity}, expected),
+    )
     cases += 1
 
     expect_error(
@@ -9008,8 +9072,8 @@ def run_self_tests() -> None:
         expect_error("E_ORIGIN_DEV_DIVERGED", lambda: verify_origin_dev_ancestry(repo, "f" * 40))
         cases += 1
 
-    fail(cases == 38, "E_SELF_TEST", f"case count {cases}")
-    print("allocation scanner self-tests: 38 cases passed")
+    fail(cases == 40, "E_SELF_TEST", f"case count {cases}")
+    print("allocation scanner self-tests: 40 cases passed")
 
 
 def main() -> int:
@@ -9078,19 +9142,26 @@ usable numeric ID, filename/frontmatter numeric mismatches and ambiguous numeric
 frontmatter fail closed without consulting headings, invalid UTF-8 maps to exact
 `E_TASK_IDENTITY`, commits without a `backlog` tree contribute zero claims while
 invalid archive OIDs fail closed, moved or changed PR heads fail, worktree files
-become claims, allocation leapfrogs deterministically with the final label highest,
+become claims, fresh and precreate allocation leapfrog deterministically with the
+final label highest, complete manifest-bound self claims preserve their authenticated
+allocation despite an unrelated higher external maximum, missing planned live self
+claims fail closed,
 an audit output cannot be overwritten, equal and fast-forward-descendant authority
 tips are distinguished, and missing/divergent authority fails closed. Each mutation must raise its documented
 scanner error; canonical scanner-audit and active-state inputs are accepted while
 noncanonical, open-shaped, or digest-invalid handoffs fail closed. A missed mutation
 makes the self-test exit nonzero. Successful output is exactly
-`allocation scanner self-tests: 38 cases passed`.
+`allocation scanner self-tests: 40 cases passed`.
 
 The first scan's audit is retained under `task26000_tmp_root/raw/allocation.json`.
-Immediately before task-file creation and again immediately before commit, rerun the
-scanner with `--expect-map` pointing to that audit. Any `E_ALLOCATION_MOVED` forces a
-fresh allocation and regeneration of filenames, frontmatter, manifest bindings, and
-final dependencies before staging. Every scan verifies that the post-fetch
+Immediately before task-file creation, rerun the scanner with `--expect-map` pointing
+to that audit. While `cleanup_records` is empty, it recomputes the allocation from the
+live external maximum; `E_ALLOCATION_MOVED` forces a fresh allocation and regeneration
+before any task file is created. After rendering and again immediately before commit,
+the same option authenticates the complete manifest-bound records, requires every
+planned self identity to appear in the live claim census, rejects a different identity
+on any active ID with `E_ID_COLLISION`, and retains the expected allocation even when
+an unrelated external maximum has advanced. Every scan verifies that the post-fetch
 `origin/dev` commit equals `manifest.revisions.current` or is its fast-forward
 descendant, captures the complete audited ref snapshot once, mechanically binds
 the ancestry observation to that snapshot's `origin/dev` OID, and records both
@@ -9100,6 +9171,8 @@ creation, `cleanup_records` is empty and the expected IDs must be wholly unclaim
 After rendering, the scanner excludes only manifest-proven self claims whose exact
 path, frontmatter ID, batch marker, and content SHA-256 match; a ref, PR, or worktree
 copy with different bytes is a distinct identity and therefore `E_ID_COLLISION`.
+Fresh scans without `--expect-map` continue to treat the old generated IDs as external
+and allocate above every observed claim for the bounded reallocation workflow.
 
 
 ---
