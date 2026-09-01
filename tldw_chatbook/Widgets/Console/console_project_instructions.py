@@ -19,6 +19,8 @@ from textual.widget import Widget
 from textual.widgets import Button, Footer, Static
 from textual.css.query import QueryError
 
+from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
+
 from ...Chat.console_chat_controller import (
     ProjectInstructionBindingRecovery,
     ProjectInstructionDispatchNotice,

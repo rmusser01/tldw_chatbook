@@ -17,8 +17,6 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Footer, Static
 
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
-
 from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
@@ -1749,7 +1747,7 @@ def test_notice_observes_captured_stop_event_after_run_map_cleanup():
     modal_holder[0].dismiss.assert_called_once_with("cancel")
 
 
-class _ModalHarness(ConsolidatedCSSApp):
+class _ModalHarness(App):
     def compose(self) -> ComposeResult:
         yield Static("background")
 
