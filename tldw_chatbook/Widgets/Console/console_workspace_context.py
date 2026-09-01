@@ -33,6 +33,7 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
 from tldw_chatbook.Workspaces.display_state import (
     ConsoleWorkspaceContextState,
 )
+from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 
@@ -571,6 +572,14 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     _composed_fixed_signature: tuple[str, ...] | None = None
     #: Live collector for the compose pass currently running, or None.
     _composing_fixed_signature: list[str] | None = None
+
+    class WorkspaceFilesRequested(Message):
+        """Typed request to inspect one stable workspace without activation."""
+
+        def __init__(self, workspace_id: str, *, expected_available: bool = False) -> None:
+            super().__init__()
+            self.workspace_id = str(workspace_id or "").strip()
+            self.expected_available = bool(expected_available)
 
     class Relabeled(Message):
         """Posted after a width-driven relabel recompose.
@@ -1416,6 +1425,33 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         # one-asterisk-per-row pattern the grouped browser adopted in
         # TASK-23200. The ``s`` star-toggle binding on the tree remains.
 
+        # This is deliberately its own row: the primary workspace action row
+        # is geometry constrained and cannot safely absorb another control.
+        # Keep it adjacent to the primary actions so keyboard traversal reaches
+        # Show Files before the workspace search/status controls.
+        with self._record_composed_node(
+            Horizontal(
+                id="console-workspace-files-row",
+                classes="console-workspace-action-row",
+            )
+        ):
+            files_button = Button(
+                "Show Files",
+                id="console-workspace-files-open",
+                classes="console-workspace-action",
+                compact=True,
+            )
+            files_button.workspace_id = self.state.workspace_id
+            files_button.workspace_files_expected_available = bool(
+                self.state.workspace_files_available
+            )
+            files_button.tooltip = (
+                "Show files for this workspace"
+                if self.state.workspace_files_available
+                else "No local folders are attached. Add one in Settings."
+            )
+            yield self._record_composed_node(files_button)
+
         yield self._record_composed_node(
             ConsoleBrowserSearchInput(
                 initial_value=self.state.workspace_query,
@@ -1786,6 +1822,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 compact=True,
             )
             toggle.group_id = group.group_id
+            toggle.styles.width = 3
+            toggle.styles.min_width = 3
+            toggle.styles.max_width = 3
             # TASK-1233 AC#1: same collapsed/capped aggregate-marker split
             # as the label above, decoded into the already-existing toggle
             # tooltip rather than a new tooltip surface.
@@ -1797,6 +1836,24 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 f"{action_verb} {group.label}", header_marker
             )
             yield toggle
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Translate the active workspace's Show Files control into a typed intent."""
+        button_id = str(event.button.id or "")
+        if button_id != "console-workspace-files-open":
+            return
+        event.stop()
+        workspace_id = str(
+            getattr(event.button, "workspace_id", "") or DEFAULT_WORKSPACE_ID
+        ).strip()
+        self.post_message(
+            self.WorkspaceFilesRequested(
+                workspace_id,
+                expected_available=bool(
+                    getattr(event.button, "workspace_files_expected_available", False)
+                ),
+            )
+        )
 
     def _compose_conversation_browser_row(
         self,

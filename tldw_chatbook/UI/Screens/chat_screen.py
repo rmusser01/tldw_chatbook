@@ -4877,6 +4877,11 @@ class ChatScreen(BaseAppScreen):
             workspace_id=workspace_id,
             name=str(getattr(record, "name", "") or ""),
             is_active=bool(getattr(record, "active", False)),
+            files_available=bool(
+                self._workspace._workspace_files_availability_by_id.get(
+                    workspace_id, False
+                )
+            ),
         )
 
     async def _open_console_workspace_action_menu(
@@ -5114,6 +5119,7 @@ class ChatScreen(BaseAppScreen):
             ACTION_NEW_CHAT,
             ACTION_RAG_SCOPE,
             ACTION_RENAME,
+            ACTION_SHOW_FILES,
         )
 
         event.stop()
@@ -5127,6 +5133,16 @@ class ChatScreen(BaseAppScreen):
                 self._create_console_chat_in_workspace(workspace_id),
                 exclusive=True,
                 group="console-workspace-new-chat",
+            )
+            return
+        if event.action_id == ACTION_SHOW_FILES:
+            self.run_worker(
+                self._workspace.request_workspace_files(
+                    workspace_id,
+                    expected_available=bool(target.files_available),
+                ),
+                exclusive=False,
+                group="console-workspace-files-open",
             )
             return
         if event.action_id == ACTION_RENAME:
@@ -10799,6 +10815,9 @@ class ChatScreen(BaseAppScreen):
                         exclusive=True,
                     )
                 )
+            # The Workspace Files modal is intentionally not part of the
+            # recompose path, so push only its small typed attention snapshot.
+            self._workspace.update_workspace_files_attention()
         except (NoMatches, QueryError):
             logger.debug("No Console workspace context tray available for sync")
 
@@ -10839,6 +10858,24 @@ class ChatScreen(BaseAppScreen):
                 group="console-workspace-context-legacy-aliases",
                 exclusive=True,
             )
+        )
+
+    @on(ConsoleWorkspaceContextTray.WorkspaceFilesRequested)
+    def _on_console_workspace_files_requested(
+        self, event: ConsoleWorkspaceContextTray.WorkspaceFilesRequested
+    ) -> None:
+        """Route a typed non-activating Workspace Files request once."""
+        event.stop()
+        self.run_worker(
+            self._workspace.request_workspace_files(
+                event.workspace_id,
+                expected_available=event.expected_available,
+            ),
+            # Admission owns same/different-workspace serialization. An
+            # exclusive worker would cancel A merely because B was clicked,
+            # bypassing that policy and letting B retarget the visit.
+            exclusive=False,
+            group="console-workspace-files-open",
         )
 
     @staticmethod

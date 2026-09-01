@@ -3352,6 +3352,97 @@ VideoPlayerScreen .video-player-frame {
     text-style: bold;
 }
 
+/* TASK-26042: read-only Workspace Files modal.  The modal's rows are pinned;
+   only the tree and safe viewer scroll.  At compact widths it deliberately
+   becomes full-screen, so there is no misleading visible backdrop target. */
+ConsoleWorkspaceFilesModal {
+    align: center middle;
+}
+
+.console-workspace-files-binding.-selected {
+    background: $ds-action-focus;
+    color: $ds-text-primary;
+}
+
+ConsoleWorkspaceFilesModal.-fullscreen #console-workspace-files-modal {
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    max-height: 100%;
+    border: none;
+    padding: 0 1;
+}
+
+ConsoleWorkspaceFilesModal.-compact #console-workspace-files-body {
+    height: 1fr;
+}
+
+ConsoleWorkspaceFilesModal.-compact #console-workspace-files-tree {
+    width: 100%;
+    min-width: 0;
+    margin-right: 0;
+}
+
+ConsoleWorkspaceFilesModal.-compact #console-workspace-files-viewer {
+    display: none;
+}
+
+ConsoleWorkspaceFilesModal.-compact.-viewer-stage #console-workspace-files-tree {
+    display: none;
+}
+
+ConsoleWorkspaceFilesModal.-compact.-viewer-stage #console-workspace-files-viewer {
+    display: block;
+    width: 100%;
+}
+
+ConsoleWorkspaceFilesModal.-compact.-viewer-stage #console-workspace-files-back-to-files {
+    display: block;
+}
+
+ConsoleWorkspaceFilesModal.-compact #console-workspace-files-actions Button {
+    min-width: 0;
+    width: 1fr;
+}
+
+/* Keep the two stage/visit exits legible in the one-row compact strip. */
+ConsoleWorkspaceFilesModal.-compact #console-workspace-files-actions #console-workspace-files-back {
+    width: 17;
+    min-width: 17;
+}
+
+ConsoleWorkspaceFilesModal.-compact #console-workspace-files-actions #console-workspace-files-back-to-files {
+    width: 15;
+    min-width: 15;
+}
+
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-modal {
+    height: 100%;
+    max-height: 100%;
+    padding: 0 1;
+}
+
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-fold {
+    display: block;
+}
+
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-body {
+    min-height: 0;
+}
+
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-binding-row,
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-filter-row,
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions {
+    height: 1;
+    min-height: 1;
+}
+
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-filter-row Button,
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
+    height: 1;
+    min-height: 1;
+}
+
 ConsoleCitationSourcesModal {
     align: center middle;
 }

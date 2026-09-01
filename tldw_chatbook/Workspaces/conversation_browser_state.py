@@ -324,6 +324,9 @@ class ConsoleConversationBrowserGroup:
     collapsed: bool
     rows: tuple[ConsoleConversationBrowserRow, ...]
     count: int
+    #: Stable registry identity for typed workspace actions.  Rendering must
+    #: never recover authority from ``label`` or from a list position.
+    workspace_id: str = ""
     hidden_count: int = 0
     preference_collapsed: bool = False
     empty_copy: str = ""
@@ -730,6 +733,7 @@ def _build_workspace_groups(
                 collapsed=collapsed,
                 rows=visible_rows,
                 count=len(group_rows),
+                workspace_id=workspace_id,
                 hidden_count=hidden_count,
                 preference_collapsed=preference_collapsed,
                 empty_copy="No workspace conversations.",

@@ -87,7 +87,7 @@ async def test_tree_rows_paint_a_trailing_asterisk_affordance() -> None:
 
 
 @pytest.mark.asyncio
-async def test_workspace_menu_opens_with_the_five_approved_entries(
+async def test_workspace_menu_opens_with_the_six_approved_entries(
     monkeypatch,
 ) -> None:
     async with make_console_pilot(size=(160, 44), production_styles=True) as pilot:
@@ -102,6 +102,7 @@ async def test_workspace_menu_opens_with_the_five_approved_entries(
         assert labels == [
             "Activate",
             "New chat",
+            "Show files",
             "Rename…",
             "RAG scope…",
             "More ▸",
@@ -399,6 +400,7 @@ async def test_workspace_actions_route_through_the_existing_seams(
             "_confirm_console_workspace_archive",
             lambda ws_id: calls.append(("archive", ws_id)),
         )
+
         async def _fake_scope_picker():
             calls.append(("rag-scope", None))
 
@@ -406,6 +408,16 @@ async def test_workspace_actions_route_through_the_existing_seams(
             console._workspace,
             "_open_console_workspace_scope_picker",
             _fake_scope_picker,
+        )
+
+        async def _fake_files(workspace_id, *, expected_available=False):
+            assert expected_available is True
+            calls.append(("show-files", workspace_id))
+
+        monkeypatch.setattr(
+            console._workspace,
+            "request_workspace_files",
+            _fake_files,
         )
 
         async def _fake_create():
@@ -431,6 +443,7 @@ async def test_workspace_actions_route_through_the_existing_seams(
             ACTION_NEW_CHAT,
             ACTION_RAG_SCOPE,
             ACTION_RENAME,
+            ACTION_SHOW_FILES,
             WorkspaceMenuTarget,
         )
         from tldw_chatbook.Widgets.Console.console_workspace_action_menu import (
@@ -438,11 +451,15 @@ async def test_workspace_actions_route_through_the_existing_seams(
         )
 
         target = WorkspaceMenuTarget(
-            workspace_id="ws-beta", name="Workspace Beta", is_active=False
+            workspace_id="ws-beta",
+            name="Workspace Beta",
+            is_active=False,
+            files_available=True,
         )
         for action in (
             ACTION_ACTIVATE,
             ACTION_NEW_CHAT,
+            ACTION_SHOW_FILES,
             ACTION_RENAME,
             ACTION_RAG_SCOPE,
             ACTION_ARCHIVE,
@@ -453,10 +470,18 @@ async def test_workspace_actions_route_through_the_existing_seams(
         await pilot.pause(0.8)
 
         routed = {name for name, _ in calls}
-        assert routed == {"activate", "new-chat", "rename", "rag-scope", "archive"}
+        assert routed == {
+            "activate",
+            "new-chat",
+            "show-files",
+            "rename",
+            "rag-scope",
+            "archive",
+        }
         assert ("activate", "ws-beta") in calls
         assert ("rename", "ws-beta") in calls
         assert ("archive", "ws-beta") in calls
+        assert ("show-files", "ws-beta") in calls
 
 
 @pytest.mark.asyncio

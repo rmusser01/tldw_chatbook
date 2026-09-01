@@ -88,6 +88,9 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
         ("_refresh_console_persisted_rows_cache", "console-persisted-browser-cache"),
         ("_refresh_console_skill_candidates", "default"),
         ("_sync_console_legacy_workspace_context_aliases", "console-workspace-context-legacy-aliases"),
+        # TASK-26042: this one off-loop snapshot is required to render truthful
+        # Show Files availability without filesystem status work on the UI loop.
+        ("_refresh_workspace_files_availability_snapshot", "console-workspace-files-availability"),
         ("build_worker", "console-changed-files"),
         ("load", "console-prompt-history"),
         ("reconcile_persona_buddy_view", "persona-buddy-view-reconcile"),

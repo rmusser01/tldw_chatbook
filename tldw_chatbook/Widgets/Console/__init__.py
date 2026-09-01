@@ -84,7 +84,6 @@ from .console_workspace_switcher_modal import (
     ConsoleWorkspaceRenameModal,
     ConsoleWorkspaceSwitcherModal,
 )
-
 __all__ = [
     "build_console_workbench_state",
     "ConsoleActivityActivated",

@@ -125,11 +125,10 @@ class ConsoleWorkspaceActionMenu(Vertical):
 
     can_focus = True
 
-    #: Painted height of the menu's tallest page (the root: five one-row
+    #: Painted height of the menu's tallest page (the root: six one-row
     #: buttons plus the rounded border), used by the screen's anchor
     #: clamping. Keep in lockstep with the root page's item count.
-    ROOT_PAGE_HEIGHT = 7
-
+    ROOT_PAGE_HEIGHT = 8
 
     #: Anchoring clamps against this; the stylesheet below must declare the
     #: same width or viewport clamping drifts from what is painted. Pinned

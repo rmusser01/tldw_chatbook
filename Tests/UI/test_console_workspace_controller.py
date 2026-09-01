@@ -23,6 +23,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 from dataclasses import replace
+import time
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
@@ -50,8 +52,14 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
+import tldw_chatbook.UI.Console_Modules.workspace as workspace_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
+from tldw_chatbook.Widgets.Console.console_workspace_files_modal import (
+    ConsoleWorkspaceFilesModal,
+    WorkspaceFilesAttention,
+    WorkspaceFilesBinding,
+)
 from tldw_chatbook.Workspaces import (
     CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
     CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
@@ -59,10 +67,15 @@ from tldw_chatbook.Workspaces import (
     DEFAULT_WORKSPACE_ID,
     ConsoleConversationBrowserInputRow,
     ConsoleConversationBrowserRow,
+    RuntimeBindingKind,
+    RuntimeBindingStatus,
     WorkspaceRecord,
+    WorkspaceRuntimeBinding,
     console_conversation_browser_group_row_limit,
     console_rail_section_height_budget,
 )
+from tldw_chatbook.Workspaces.file_inspector import BindingScope, ScopeCaptureError
+import tldw_chatbook.Workspaces.file_inspector as file_inspector_module
 from tldw_chatbook.Workspaces.display_state import (
     ConsoleWorkspaceContextState,
     ConsoleWorkspaceConversationRow,
@@ -79,6 +92,8 @@ class _NoMountScreen:
         self.workers: list[tuple[object, dict[str, object]]] = []
         self._pending_console_launch_context = None
         self._console_agent_drilldown_run_id = None
+        self.size = SimpleNamespace(width=120, height=40)
+        self.app = SimpleNamespace(push_screen=lambda _modal: None)
 
     def call_after_refresh(self, callback) -> None:
         self.after_refresh.append(callback)
@@ -87,6 +102,15 @@ class _NoMountScreen:
         self.workers.append((work, kwargs))
         coroutine = work() if callable(work) else work
         coroutine.close()
+
+
+class _AsyncWorkerScreen(_NoMountScreen):
+    """Run controller-owned workers without mounting a Textual app."""
+
+    def run_worker(self, coroutine, **kwargs):
+        task = asyncio.create_task(coroutine)
+        self.workers.append((task, kwargs))
+        return task
 
 
 class _FakeTimer:
@@ -141,6 +165,485 @@ def _workspace_controller(
     )
     dependencies.update(overrides)
     return ConsoleWorkspaceController(screen or _NoMountScreen(), **dependencies)
+
+
+def _minimal_workspace_context_state() -> ConsoleWorkspaceContextState:
+    return ConsoleWorkspaceContextState(
+        heading="Workspaces",
+        workspace_label="Workspace: A",
+        authority_label="Authority: ready",
+        sync_label="Sync: ready",
+        runtime_label="Runtime: ready",
+        conversation_rows=(),
+        conversation_empty_copy="",
+        change_workspace_enabled=True,
+        change_workspace_recovery="",
+        new_conversation_enabled=True,
+        new_conversation_recovery="",
+        recovery_copy="",
+    )
+
+
+def _availability_controller(monkeypatch, registry, screen, records, sync_calls):
+    """Build the real cache owner with all unrelated state derivation inert."""
+    controller = _workspace_controller(
+        screen=screen,
+        app_instance=SimpleNamespace(workspace_registry_service=registry),
+        sync_workspace_context=lambda: sync_calls.append("sync"),
+    )
+    monkeypatch.setattr(
+        workspace_module,
+        "build_console_workspace_state",
+        lambda **_kwargs: _minimal_workspace_context_state(),
+    )
+    monkeypatch.setattr(
+        ConsoleWorkspaceController,
+        "_with_native_console_session_rows",
+        lambda _self, state: state,
+    )
+    monkeypatch.setattr(
+        ConsoleWorkspaceController,
+        "_with_console_conversation_browser_state",
+        lambda _self, state, **_kwargs: state,
+    )
+    monkeypatch.setattr(
+        ConsoleWorkspaceController,
+        "_console_browser_workspace_records",
+        lambda _self: tuple(records[0]),
+    )
+    return controller
+
+
+@pytest.mark.asyncio
+async def test_workspace_files_availability_snapshot_never_blocks_context_build(
+    monkeypatch,
+):
+    """Filesystem status work is owned by one off-loop, fail-closed snapshot."""
+    entered = Event()
+    release = Event()
+
+    class _Registry:
+        def list_folder_bindings(self, workspace_id):
+            entered.set()
+            release.wait(timeout=2)
+            return (
+                SimpleNamespace(
+                    binding_kind=RuntimeBindingKind.LOCAL_FILESYSTEM,
+                    status=RuntimeBindingStatus.READY,
+                ),
+            )
+
+    screen = _AsyncWorkerScreen()
+    records = [[SimpleNamespace(workspace_id="ws-a")]]
+    sync_calls: list[str] = []
+    controller = _availability_controller(
+        monkeypatch, _Registry(), screen, records, sync_calls
+    )
+
+    started = time.monotonic()
+    state = controller._build_console_workspace_context_state()
+    assert time.monotonic() - started < 0.1
+    assert state.workspace_files_available_by_id == {"ws-a": False}
+    with pytest.raises(TypeError):
+        state.workspace_files_available_by_id["ws-a"] = True
+    assert len(screen.workers) == 1
+    for _ in range(100):
+        if entered.is_set():
+            break
+        await asyncio.sleep(0.02)
+    assert entered.is_set(), "availability snapshot did not start"
+
+    # A cadence tick while disk work is blocked is still cache-only and does
+    # not mint a duplicate worker or mutate the Console context.
+    state = controller._build_console_workspace_context_state()
+    assert state.workspace_files_available_by_id == {"ws-a": False}
+    assert len(screen.workers) == 1
+    assert sync_calls == []
+
+    release.set()
+    await screen.workers[0][0]
+    assert controller._workspace_files_availability_by_id == {"ws-a": True}
+    assert sync_calls == ["sync"]
+    assert controller._build_console_workspace_context_state().workspace_files_available_by_id == {
+        "ws-a": True
+    }
+
+
+@pytest.mark.asyncio
+async def test_workspace_files_availability_snapshot_discards_stale_generation(
+    monkeypatch,
+):
+    """Only the current workspace set can publish; absent entries stay false."""
+    first_entered = Event()
+    first_release = Event()
+    second_entered = Event()
+    second_release = Event()
+
+    class _Registry:
+        def list_folder_bindings(self, workspace_id):
+            if workspace_id == "ws-a":
+                first_entered.set()
+                first_release.wait(timeout=2)
+            else:
+                second_entered.set()
+                second_release.wait(timeout=2)
+            return (
+                SimpleNamespace(
+                    binding_kind=RuntimeBindingKind.LOCAL_FILESYSTEM,
+                    status=RuntimeBindingStatus.READY,
+                ),
+            )
+
+    screen = _AsyncWorkerScreen()
+    records = [[SimpleNamespace(workspace_id="ws-a")]]
+    sync_calls: list[str] = []
+    controller = _availability_controller(
+        monkeypatch, _Registry(), screen, records, sync_calls
+    )
+    assert controller._build_console_workspace_context_state().workspace_files_available_by_id == {
+        "ws-a": False
+    }
+    for _ in range(100):
+        if first_entered.is_set():
+            break
+        await asyncio.sleep(0.02)
+    assert first_entered.is_set(), "first availability generation did not start"
+
+    records[0] = [SimpleNamespace(workspace_id="ws-b")]
+    assert controller._build_console_workspace_context_state().workspace_files_available_by_id == {
+        "ws-b": False
+    }
+    first_release.set()
+    for _ in range(100):
+        if second_entered.is_set():
+            break
+        await asyncio.sleep(0.02)
+    assert second_entered.is_set(), "replacement availability generation did not start"
+    second_release.set()
+    await screen.workers[0][0]
+
+    assert controller._workspace_files_availability_by_id == {"ws-b": True}
+    assert controller._build_console_workspace_context_state().workspace_files_available_by_id == {
+        "ws-b": True
+    }
+    assert sync_calls == ["sync"]
+
+
+@pytest.mark.asyncio
+async def test_active_files_availability_uses_the_off_loop_binding_snapshot(
+    monkeypatch,
+):
+    """The real active-state builder cannot reach synchronous filesystem status."""
+    entered = Event()
+    release = Event()
+    active = WorkspaceRecord(workspace_id="ws-active", name="Active")
+    binding = WorkspaceRuntimeBinding(
+        workspace_id="ws-active",
+        binding_id="folder-active",
+        binding_kind=RuntimeBindingKind.LOCAL_FILESYSTEM,
+        label="Folder",
+        locator="/blocked-by-test",
+        status=RuntimeBindingStatus.READY,
+        metadata={"access": "ro"},
+    )
+
+    class _Registry:
+        def get_active_workspace(self):
+            return active
+
+        def list_workspaces(self, **_kwargs):
+            return (active,)
+
+        def list_memberships(self, *_args, **_kwargs):
+            return ()
+
+        def list_folder_bindings(self, _workspace_id):
+            entered.set()
+            release.wait(timeout=2)
+            return (binding,)
+
+        def list_runtime_bindings(self, _workspace_id):
+            return (binding,)
+
+    screen = _AsyncWorkerScreen()
+    sync_calls: list[str] = []
+    controller = _workspace_controller(
+        screen=screen,
+        app_instance=SimpleNamespace(workspace_registry_service=_Registry()),
+        sync_workspace_context=lambda: sync_calls.append("sync"),
+    )
+    monkeypatch.setattr(
+        ConsoleWorkspaceController,
+        "_with_native_console_session_rows",
+        lambda _self, state: state,
+    )
+    monkeypatch.setattr(
+        ConsoleWorkspaceController,
+        "_with_console_conversation_browser_state",
+        lambda _self, state, **_kwargs: state,
+    )
+    monkeypatch.setattr(
+        ConsoleWorkspaceController,
+        "_console_browser_workspace_records",
+        lambda _self: (active,),
+    )
+
+    started = time.monotonic()
+    state = controller._build_console_workspace_context_state()
+    assert time.monotonic() - started < 0.1
+    assert state.workspace_files_available is False
+    assert state.workspace_files_available_by_id == {"ws-active": False}
+    for _ in range(100):
+        if entered.is_set():
+            break
+        await asyncio.sleep(0.02)
+    assert entered.is_set(), "active availability snapshot did not start"
+
+    release.set()
+    await screen.workers[0][0]
+    refreshed = controller._build_console_workspace_context_state()
+    assert refreshed.workspace_files_available is True
+    assert refreshed.workspace_files_available_by_id == {"ws-active": True}
+    assert sync_calls == ["sync"]
+
+
+@pytest.mark.asyncio
+async def test_workspace_files_cancelled_resolution_releases_its_admission_claim():
+    """Textual worker cancellation cannot permanently lock later Files visits."""
+    entered = Event()
+    release = Event()
+    notices: list[str] = []
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=object(),
+            notify=lambda message, **_kwargs: notices.append(message),
+        )
+    )
+
+    def resolve(_workspace_id: str):
+        entered.set()
+        release.wait(timeout=2)
+        return None
+
+    controller._resolve_workspace_files_visit = resolve  # type: ignore[method-assign]
+    pending = asyncio.create_task(controller.request_workspace_files("ws-a"))
+    for _ in range(100):
+        if entered.is_set():
+            break
+        await asyncio.sleep(0.02)
+    assert entered.is_set(), "workspace-files resolution did not start"
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    assert controller._workspace_files_admission_claim is None
+    release.set()
+
+
+@pytest.mark.asyncio
+async def test_workspace_files_cleanup_cannot_be_cancelled_while_lock_is_contended():
+    """A second cancellation cannot strand the admission claim during cleanup."""
+    entered = Event()
+    release = Event()
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=object(),
+            notify=_noop,
+        )
+    )
+
+    def resolve(_workspace_id: str):
+        entered.set()
+        release.wait(timeout=2)
+        return None
+
+    controller._resolve_workspace_files_visit = resolve  # type: ignore[method-assign]
+    pending = asyncio.create_task(controller.request_workspace_files("ws-a"))
+    for _ in range(100):
+        if entered.is_set():
+            break
+        await asyncio.sleep(0.02)
+    assert entered.is_set(), "workspace-files resolution did not start"
+
+    await controller._workspace_files_admission_lock.acquire()
+    try:
+        pending.cancel()
+        await asyncio.sleep(0)
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+    finally:
+        controller._workspace_files_admission_lock.release()
+        release.set()
+
+    assert controller._workspace_files_admission_claim is None
+
+
+@pytest.mark.asyncio
+async def test_workspace_files_claim_blocks_different_request_and_promotes_once():
+    """The real admission gate, rather than worker cancellation, owns races."""
+    entered = Event()
+    release = Event()
+    notices: list[str] = []
+    promotions: list[str] = []
+
+    class _Modal:
+        is_mounted = True
+
+        @staticmethod
+        def query_one(_selector):
+            return SimpleNamespace(focus=lambda: None)
+
+    app = SimpleNamespace(
+        workspace_registry_service=object(),
+        notify=lambda message, **_kwargs: notices.append(message),
+    )
+    controller = _workspace_controller(app_instance=app)
+
+    def resolve(workspace_id: str):
+        entered.set()
+        release.wait(timeout=2)
+        return SimpleNamespace(
+            workspace_id=workspace_id,
+            workspace_name="Workspace A",
+            active_workspace_id="active",
+            active_workspace_name="Active",
+            bindings=(),
+            had_bindings=True,
+        )
+
+    controller._resolve_workspace_files_visit = resolve  # type: ignore[method-assign]
+    controller.open_workspace_files_modal = lambda **_kwargs: (  # type: ignore[method-assign]
+        promotions.append("open") or _Modal()
+    )
+    first = asyncio.create_task(controller.request_workspace_files("ws-a"))
+    for _ in range(100):
+        if entered.is_set():
+            break
+        await asyncio.sleep(0.02)
+    assert entered.is_set(), "workspace-files admission owner did not start"
+    await controller.request_workspace_files("ws-b")
+    assert notices == ["Close Workspace Files before inspecting another workspace."]
+    release.set()
+    await first
+    await controller.request_workspace_files("ws-a")
+    assert promotions == ["open"]
+    await controller.request_workspace_files("ws-b")
+    assert notices[-1] == "Close Workspace Files before inspecting another workspace."
+
+
+@pytest.mark.asyncio
+async def test_workspace_files_push_failure_leaves_no_ledger_or_claim():
+    app = SimpleNamespace(workspace_registry_service=object(), notify=_noop)
+    controller = _workspace_controller(app_instance=app)
+    controller._resolve_workspace_files_visit = lambda workspace_id: SimpleNamespace(  # type: ignore[method-assign]
+        workspace_id=workspace_id, workspace_name="A", active_workspace_id="A",
+        active_workspace_name="A", bindings=(), had_bindings=True,
+    )
+    controller.open_workspace_files_modal = lambda **_kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        RuntimeError("push failed")
+    )
+    with pytest.raises(RuntimeError, match="push failed"):
+        await controller.request_workspace_files("ws-a")
+    assert controller._workspace_files_admission_claim is None
+    assert controller._workspace_files_modal is None
+    assert controller._workspace_files_visit_workspace_id is None
+
+
+@pytest.mark.asyncio
+async def test_workspace_files_no_folder_blocks_but_stale_available_request_opens_recovery():
+    notices: list[str] = []
+    opened: list[dict[str, object]] = []
+    app = SimpleNamespace(workspace_registry_service=object(), notify=lambda text, **_kw: notices.append(text))
+    controller = _workspace_controller(app_instance=app)
+    controller._resolve_workspace_files_visit = lambda workspace_id: SimpleNamespace(  # type: ignore[method-assign]
+        workspace_id=workspace_id, workspace_name="A", active_workspace_id="A",
+        active_workspace_name="A", bindings=(), had_bindings=False,
+    )
+    controller.open_workspace_files_modal = lambda **kwargs: (  # type: ignore[method-assign]
+        opened.append(kwargs) or SimpleNamespace(is_mounted=True)
+    )
+    await controller.request_workspace_files("")
+    assert notices == ["No local folders are attached. Add one in Settings."]
+    assert opened == []
+    await controller.request_workspace_files("ws-a", expected_available=True)
+    assert len(opened) == 1
+    closed = opened[0]["on_visit_closed"]
+    assert callable(closed)
+    closed()
+    closed()
+    assert controller._workspace_files_modal is None
+    assert controller._workspace_files_visit_workspace_id is None
+    await controller.request_workspace_files("ws-a", expected_available=True)
+    assert len(opened) == 2
+
+
+def test_workspace_files_resolution_preserves_ro_and_rw_binding_access_labels(monkeypatch):
+    """The inspector must show the captured folder mode, even when unavailable."""
+    workspace = SimpleNamespace(workspace_id="ws-a", name="A", archived=False)
+    bindings = (
+        SimpleNamespace(
+            binding_id="folder-ro", label="Read only", metadata={"access": "ro"}
+        ),
+        SimpleNamespace(
+            binding_id="folder-rw", label="Read write", metadata={"access": "rw"}
+        ),
+    )
+
+    class _Registry:
+        def get_workspace(self, _workspace_id):
+            return workspace
+
+        def list_folder_bindings(self, _workspace_id):
+            return bindings
+
+        def get_active_workspace(self):
+            return workspace
+
+    class _Inspector:
+        def __init__(self, _registry):
+            pass
+
+        def capture_binding(self, _workspace_id, binding_id):
+            if binding_id == "folder-ro":
+                raise ScopeCaptureError("changed")
+            return BindingScope("ws-a", binding_id, "fingerprint", "/safe", 1, 1)
+
+    monkeypatch.setattr(file_inspector_module, "WorkspaceFileInspector", _Inspector)
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(workspace_registry_service=_Registry())
+    )
+    resolution = controller._resolve_workspace_files_visit("ws-a")
+
+    assert resolution is not None
+    assert [(binding.access_label, binding.available) for binding in resolution.bindings] == [
+        ("Read-only", False),
+        ("Read/write", True),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_workspace_files_minimum_refusal_does_not_resolve_or_claim() -> None:
+    """The exact small-terminal warning must not create a worker or visit."""
+    notices: list[tuple[str, str | None]] = []
+    screen = _NoMountScreen()
+    screen.size = SimpleNamespace(width=79, height=23)
+    controller = _workspace_controller(
+        screen=screen,
+        app_instance=SimpleNamespace(
+            workspace_registry_service=object(),
+            notify=lambda text, **kwargs: notices.append((text, kwargs.get("severity"))),
+        ),
+    )
+    calls: list[str] = []
+    controller._resolve_workspace_files_visit = lambda workspace_id: calls.append(workspace_id)  # type: ignore[method-assign]
+
+    await controller.request_workspace_files("ws-a")
+
+    assert notices == [("Workspace Files needs at least 80 × 24 terminal cells.", "warning")]
+    assert calls == []
+    assert screen.workers == []
+    assert controller._workspace_files_admission_claim is None
+    assert controller._workspace_files_modal is None
 
 
 def _rich_row() -> ConsoleConversationBrowserInputRow:
@@ -2240,6 +2743,82 @@ def test_active_flat_search_overlays_current_star_selection_and_run_marker() -> 
         True,
     )
     assert controller._flat_conversation_search.rows == (stale,)
+def test_workspace_files_owner_seam_only_constructs_and_pushes_the_pinned_modal():
+    """Task 2's truthful launch seam cannot activate or retarget Console state."""
+    pushed: list[ConsoleWorkspaceFilesModal] = []
+    screen = _NoMountScreen()
+    screen.app = SimpleNamespace(push_screen=lambda modal: pushed.append(modal))
+    controller = _workspace_controller(screen=screen)
+    inspector = object()
+    bindings = (
+        WorkspaceFilesBinding("binding-1", "Folder", None, available=False),
+    )
+    attention = WorkspaceFilesAttention("One generic attention flag.")
+    before = (
+        controller._console_conversation_browser_query,
+        controller._console_conversation_browser_rows,
+        controller._console_workspace_conversation_workspace_id,
+    )
+
+    controller.open_workspace_files_modal(
+        inspector=inspector,
+        inspected_workspace_id="inspected-id",
+        inspected_workspace_name="Inspected",
+        active_workspace_id="active-id",
+        active_workspace_name="Active",
+        bindings=bindings,
+        attention=attention,
+    )
+
+    assert len(pushed) == 1
+    modal = pushed[0]
+    assert modal.inspected_workspace_id == "inspected-id"
+    assert modal.inspected_workspace_name == "Inspected"
+    assert modal.active_workspace_id == "active-id"
+    assert modal.active_workspace_name == "Active"
+    assert modal._workspace_bindings == bindings
+    assert modal._attention is attention
+    assert before == (
+        controller._console_conversation_browser_query,
+        controller._console_conversation_browser_rows,
+        controller._console_workspace_conversation_workspace_id,
+    )
+
+
+def test_workspace_files_owner_seam_fails_closed_for_a_foreign_binding_scope():
+    """A modal labeled for A must never receive readable scope authority for B."""
+    pushed: list[ConsoleWorkspaceFilesModal] = []
+    screen = _NoMountScreen()
+    screen.app = SimpleNamespace(push_screen=lambda modal: pushed.append(modal))
+    controller = _workspace_controller(screen=screen)
+    foreign_scope = BindingScope("workspace-b", "binding-b", "fp", "/b", 1, 2)
+    valid_scope = BindingScope("workspace-a", "binding-a", "fp", "/a", 3, 4)
+
+    controller.open_workspace_files_modal(
+        inspector=object(),
+        inspected_workspace_id="workspace-a",
+        inspected_workspace_name="A",
+        active_workspace_id="workspace-a",
+        active_workspace_name="A",
+        bindings=(
+            WorkspaceFilesBinding("binding-a", "Valid", valid_scope),
+            WorkspaceFilesBinding("binding-b", "Foreign", foreign_scope),
+            WorkspaceFilesBinding(
+                "binding-c",
+                "Unavailable foreign",
+                foreign_scope,
+                available=False,
+                availability_copy="Already unavailable",
+            ),
+        ),
+    )
+
+    valid, foreign, unavailable_foreign = pushed[0]._workspace_bindings
+    assert valid.available and valid.scope is valid_scope
+    assert not foreign.available and foreign.scope is None
+    assert "different workspace" in foreign.availability_copy
+    assert not unavailable_foreign.available and unavailable_foreign.scope is None
+    assert "different workspace" in unavailable_foreign.availability_copy
 
 
 def test_workspace_controller_constructor_documents_every_dependency():
