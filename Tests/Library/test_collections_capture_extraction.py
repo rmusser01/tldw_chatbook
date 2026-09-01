@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -71,6 +72,7 @@ def test_claim_and_complete_store_only_inert_reader_text(
     claimed = repository.claim_extraction(
         capture.identity,
         expected_revision=capture.revision,
+        owner_token="worker-a",
     )
     assert claimed.processing_state == "processing"
     assert claimed.revision == capture.revision + 1
@@ -78,6 +80,7 @@ def test_claim_and_complete_store_only_inert_reader_text(
     completed = repository.complete_extraction(
         capture.identity,
         expected_revision=claimed.revision,
+        owner_token="worker-a",
         result={
             "content": (
                 "<article><h1>Reader title</h1><p>Useful body</p>"
@@ -125,10 +128,12 @@ def test_failed_extraction_is_bounded_and_retry_preserves_reading_state(
     claimed = repository.claim_extraction(
         capture.identity,
         expected_revision=capture.revision,
+        owner_token="worker-a",
     )
     failed = repository.fail_extraction(
         capture.identity,
         expected_revision=claimed.revision,
+        owner_token="worker-a",
         reason="fetch_failed",
     )
 
@@ -146,35 +151,75 @@ def test_failed_extraction_is_bounded_and_retry_preserves_reading_state(
     assert retried.status == "reading"
     assert retried.favorite is True
 
-    with pytest.raises(CollectionsCaptureError) as caught:
-        repository.fail_extraction(
-            capture.identity,
-            expected_revision=retried.revision,
-            reason="https://private.invalid/?token=secret",
-        )
-    assert caught.value.reason == "invalid_extraction_failure_reason"
+    for malformed_reason in (
+        ["unhashable"],
+        "https://private.invalid/?token=secret",
+    ):
+        with pytest.raises(CollectionsCaptureError) as caught:
+            repository.fail_extraction(
+                capture.identity,
+                expected_revision=retried.revision,
+                owner_token="worker-a",
+                reason=malformed_reason,  # type: ignore[arg-type]
+            )
+        assert caught.value.reason == "invalid_extraction_failure_reason"
 
 
-def test_startup_interrupts_only_this_authoritys_processing_rows(
+def test_startup_interrupts_only_expired_claims_for_this_authority(
     tmp_path: Path,
 ) -> None:
+    class Clock:
+        value = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
+
+        def __call__(self) -> str:
+            return self.value.isoformat().replace("+00:00", "Z")
+
+    clock = Clock()
     path = tmp_path / "collections.db"
     database_a = LibraryCollectionsDB(path)
     database_b = LibraryCollectionsDB(path)
-    repo_a = CollectionsCaptureRepository(database_a, authority_key="local:profile-a")
-    repo_b = CollectionsCaptureRepository(database_b, authority_key="local:profile-b")
+    repo_a = CollectionsCaptureRepository(
+        database_a,
+        authority_key="local:profile-a",
+        clock=clock,
+        extraction_lease_seconds=300,
+    )
+    second_process_a = CollectionsCaptureRepository(
+        database_b,
+        authority_key="local:profile-a",
+        clock=clock,
+        extraction_lease_seconds=300,
+    )
+    database_c = LibraryCollectionsDB(path)
+    repo_b = CollectionsCaptureRepository(
+        database_c,
+        authority_key="local:profile-b",
+        clock=clock,
+        extraction_lease_seconds=300,
+    )
     queued_a = _save(repo_a, "a").capture
     queued_b = _save(repo_b, "b").capture
     processing_a = repo_a.claim_extraction(
         queued_a.identity,
         expected_revision=queued_a.revision,
+        owner_token="worker-a",
     )
     processing_b = repo_b.claim_extraction(
         queued_b.identity,
         expected_revision=queued_b.revision,
+        owner_token="worker-b",
     )
 
-    interrupted = repo_a.interrupt_stale_extractions()
+    assert second_process_a.interrupt_stale_extractions() == 0
+    clock.value = datetime(2026, 9, 1, 12, 4, tzinfo=timezone.utc)
+    repo_a.renew_extraction_lease(
+        processing_a.identity,
+        owner_token="worker-a",
+    )
+    clock.value = datetime(2026, 9, 1, 12, 6, tzinfo=timezone.utc)
+    assert second_process_a.interrupt_stale_extractions() == 0
+    clock.value = datetime(2026, 9, 1, 12, 10, tzinfo=timezone.utc)
+    interrupted = second_process_a.interrupt_stale_extractions()
 
     assert interrupted == 1
     detail_a = repo_a.get_detail(processing_a.identity)
@@ -187,6 +232,7 @@ def test_startup_interrupts_only_this_authoritys_processing_rows(
     assert detail_b.processing_state == "processing"
     database_a.close()
     database_b.close()
+    database_c.close()
 
 
 def test_extraction_transitions_require_current_revision_and_valid_state(
@@ -197,6 +243,7 @@ def test_extraction_transitions_require_current_revision_and_valid_state(
         repository.complete_extraction(
             capture.identity,
             expected_revision=capture.revision,
+            owner_token="worker-a",
             result={"content": "Body"},
         )
     assert caught.value.reason == "invalid_extraction_state"
@@ -204,11 +251,23 @@ def test_extraction_transitions_require_current_revision_and_valid_state(
     claimed = repository.claim_extraction(
         capture.identity,
         expected_revision=capture.revision,
+        owner_token="worker-a",
     )
     with pytest.raises(CollectionsCaptureError) as caught:
         repository.complete_extraction(
             capture.identity,
+            expected_revision=claimed.revision,
+            owner_token="worker-b",
+            result={"content": "Body"},
+        )
+    assert caught.value.reason == "extraction_claim_lost"
+    assert repository.get_detail(capture.identity) == claimed
+
+    with pytest.raises(CollectionsCaptureError) as caught:
+        repository.complete_extraction(
+            capture.identity,
             expected_revision=capture.revision,
+            owner_token="worker-a",
             result={"content": "Body"},
         )
     assert caught.value.reason == "revision_conflict"
@@ -218,6 +277,7 @@ def test_extraction_transitions_require_current_revision_and_valid_state(
         repository.complete_extraction(
             capture.identity,
             expected_revision=claimed.revision,
+            owner_token="worker-a",
             result={"content": "<script>only active content</script>"},
         )
     assert caught.value.reason == "empty_extraction_content"

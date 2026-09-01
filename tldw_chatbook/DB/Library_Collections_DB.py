@@ -38,7 +38,7 @@ class LibraryCollectionsDB(BaseDB):
     makes the held connection safe here -- each thread owns exactly one.
     """
 
-    _CURRENT_SCHEMA_VERSION = 2
+    _CURRENT_SCHEMA_VERSION = 3
     _WAL_SETUP_TIMEOUT_SECONDS = 5.0
 
     _CAPTURE_TABLE_NAMES = frozenset(
@@ -63,6 +63,18 @@ class LibraryCollectionsDB(BaseDB):
             "collection_capture_items_search_au",
             "collection_capture_tags_search_au",
         }
+    )
+    _CAPTURE_V3_COLUMNS = (
+        (
+            "extraction_owner_token",
+            "ALTER TABLE collection_capture_items "
+            "ADD COLUMN extraction_owner_token TEXT",
+        ),
+        (
+            "extraction_lease_expires_at",
+            "ALTER TABLE collection_capture_items "
+            "ADD COLUMN extraction_lease_expires_at TEXT",
+        ),
     )
     _LEGACY_REQUIRED_COLUMNS = {
         "library_collections": frozenset(
@@ -142,6 +154,8 @@ class LibraryCollectionsDB(BaseDB):
             processing_state TEXT NOT NULL
                 CHECK(processing_state IN ('queued', 'processing', 'ready', 'failed', 'interrupted')),
             last_fetch_error TEXT,
+            extraction_owner_token TEXT,
+            extraction_lease_expires_at TEXT,
             media_authority_key TEXT,
             media_item_id TEXT,
             created_at TEXT NOT NULL,
@@ -628,6 +642,16 @@ class LibraryCollectionsDB(BaseDB):
 
                 for statement in self._CAPTURE_SCHEMA_DDL:
                     conn.execute(statement)
+                if current_version == 2:
+                    columns = {
+                        str(row[1])
+                        for row in conn.execute(
+                            "PRAGMA table_info(collection_capture_items)"
+                        )
+                    }
+                    for column_name, statement in self._CAPTURE_V3_COLUMNS:
+                        if column_name not in columns:
+                            conn.execute(statement)
                 conn.execute(
                     "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
                     (self._CURRENT_SCHEMA_VERSION,),
@@ -656,12 +680,23 @@ class LibraryCollectionsDB(BaseDB):
                     "WHERE type IN ('table', 'view', 'trigger')"
                 )
             }
+            capture_item_columns = {
+                str(row[1])
+                for row in conn.execute(
+                    "PRAGMA table_info(collection_capture_items)"
+                )
+            }
         tables = {name for kind, name in objects if kind in {"table", "view"}}
         triggers = {name for kind, name in objects if kind == "trigger"}
         if (
             version != self._CURRENT_SCHEMA_VERSION
             or not self._CAPTURE_TABLE_NAMES <= tables
             or not self._CAPTURE_TRIGGER_NAMES <= triggers
+            or not {
+                "extraction_owner_token",
+                "extraction_lease_expires_at",
+            }
+            <= capture_item_columns
         ):
             raise LibraryCollectionsSchemaError("capture_schema_unavailable")
 

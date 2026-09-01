@@ -52,8 +52,10 @@ required.
    authority, scope, item, revision/epoch, and generation all match.
 
 4. **Add a dedicated Local capture repository to the existing database file.**
-   `LibraryCollectionsDB` advances additively to schema v2 with capture items, tags, highlights,
-   saved searches, linked-Note references, offline-copy metadata, and FTS5-owned search objects.
+   `LibraryCollectionsDB` advances additively to schema v3: v2 adds capture items, tags,
+   highlights, saved searches, linked-Note references, offline-copy metadata, and FTS5-owned
+   search objects; v3 adds persisted extraction owner/lease fields so separate supported
+   processes recover only expired claims.
    Capture rows include a monotonic revision for optimistic compare-and-swap. Count and page reads
    share one read transaction. Filtering occurs before deterministic 20-row slicing, and every
    sort has a stable id tie-breaker.
@@ -68,18 +70,21 @@ required.
    evidence is unsupported with reason `server_page_snapshot_unavailable`. This adds no new public
    endpoint. Local remains available.
 
-6. **Make the v2 migration atomic and leave v1 physically untouched.** Migration acquires a
-   bounded immediate write lock, rechecks version, creates all v2 objects, and records version 2 in
-   one transaction. It does not rename, delete, import, or update `library_collections` or
-   `library_collection_items`. Failure leaves v1 usable. The existing configurable
-   `library_collections_db_path` remains the one Collections database setting. A version greater
-   than 2 fails capture reads/writes with `schema_too_new` and is never stamped or repaired.
+6. **Make capture migrations atomic and leave v1 physically untouched.** Migration acquires a
+   bounded immediate write lock, rechecks version, creates all v2 objects, and adds the v3
+   extraction-lease fields atomically. It does not rename, delete, import, or update
+   `library_collections` or `library_collection_items`. Failure leaves v1 usable. The existing
+   configurable `library_collections_db_path` remains the one Collections database setting. A
+   version greater than 3 fails capture reads/writes with `schema_too_new` and is never stamped or
+   repaired.
 
 7. **Mirror canonical-URL upsert semantics inside Local authority.** Canonical URL is unique within
    a Local authority. Resave merges tags, preserves existing nonempty fields when input is absent,
    applies explicit supported updates, and replaces extracted content deterministically. It never
    deduplicates across authorities. A capture is committed before Local extraction completes;
-   failed or interrupted extraction preserves it with Retry. Current Server save extracts before
+   each active claim has an opaque persisted owner and renewable expiry, and only expired or
+   migrated-unowned processing rows become interrupted. Failed or interrupted extraction
+   preserves it with Retry. Current Server save extracts before
    persistence and supplies default status/favorite values. An unknown Server outcome is never
    retried automatically; explicit retry warns that it is duplicate-safe but not state-idempotent.
 
@@ -207,7 +212,7 @@ required.
 
 ## Rollback plan
 
-Rollback disables capture browse and capture-service behavior while leaving schema-v2 tables and
+Rollback disables capture browse and capture-service behavior while leaving schema-v3 tables and
 managed files intact. It does not hide the Collections destination whenever any v1 row exists;
 that destination becomes a recovery-only screen exposing **Legacy Collections data…** and the
 labelled inspector/export adapter. Because v1 tables are untouched, recovery remains available

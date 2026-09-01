@@ -75,6 +75,38 @@ def _create_v1_fixture(path: Path) -> None:
         )
 
 
+def _create_v2_fixture(path: Path) -> None:
+    """Create the pre-lease capture schema shipped by the prior increment."""
+    _create_v1_fixture(path)
+    with _open(path) as connection:
+        for statement in LibraryCollectionsDB._CAPTURE_SCHEMA_DDL:
+            if "CREATE TABLE IF NOT EXISTS collection_capture_items" in statement:
+                statement = statement.replace(
+                    "            extraction_owner_token TEXT,\n",
+                    "",
+                ).replace(
+                    "            extraction_lease_expires_at TEXT,\n",
+                    "",
+                )
+            connection.execute(statement)
+        connection.execute("INSERT INTO schema_version (version) VALUES (2)")
+        connection.execute(
+            "INSERT INTO collection_capture_items ("
+            "authority_key, capture_id, submitted_url, canonical_url, domain, "
+            "status, favorite, processing_state, created_at, updated_at"
+            ") VALUES (?, ?, ?, ?, ?, 'saved', 0, 'processing', ?, ?)",
+            (
+                "local:profile-a",
+                "capture-v2",
+                "https://example.org/v2",
+                "https://example.org/v2",
+                "example.org",
+                "2026-01-01T00:00:00Z",
+                "2026-01-01T00:00:00Z",
+            ),
+        )
+
+
 def _schema_objects(path: Path) -> set[tuple[str, str]]:
     with _open(path) as connection:
         return {
@@ -103,12 +135,12 @@ def _legacy_rows(path: Path) -> tuple[list[tuple[object, ...]], list[tuple[objec
     return collections, memberships
 
 
-def test_fresh_database_creates_v1_compatibility_and_capture_v2(tmp_path: Path) -> None:
+def test_fresh_database_creates_v1_compatibility_and_capture_v3(tmp_path: Path) -> None:
     path = tmp_path / "collections.db"
 
     database = LibraryCollectionsDB(path)
 
-    assert database.get_schema_version() == 2
+    assert database.get_schema_version() == 3
     assert database.has_compatible_legacy_schema() is True
     database.require_capture_schema()
     objects = _schema_objects(path)
@@ -126,14 +158,14 @@ def test_real_v1_fixture_migrates_without_changing_legacy_values(tmp_path: Path)
 
     database = LibraryCollectionsDB(path)
 
-    assert database.get_schema_version() == 2
+    assert database.get_schema_version() == 3
     assert _legacy_rows(path) == before
     assert database.has_compatible_legacy_schema() is True
     database.require_capture_schema()
     database.close()
 
 
-def test_capture_ddl_failure_rolls_back_every_v2_object(
+def test_capture_ddl_failure_rolls_back_every_capture_object(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -158,7 +190,7 @@ def test_capture_ddl_failure_rolls_back_every_v2_object(
     )
 
 
-def test_two_concurrent_openers_publish_one_complete_v2_schema(tmp_path: Path) -> None:
+def test_two_concurrent_openers_publish_one_complete_v3_schema(tmp_path: Path) -> None:
     path = tmp_path / "collections.db"
     _create_v1_fixture(path)
     ready = threading.Barrier(3)
@@ -188,14 +220,14 @@ def test_two_concurrent_openers_publish_one_complete_v2_schema(tmp_path: Path) -
             for row in connection.execute(
                 "SELECT version FROM schema_version ORDER BY version"
             )
-        ] == [1, 2]
+        ] == [1, 3]
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     assert CAPTURE_TABLES <= {
         name for kind, name in _schema_objects(path) if kind == "table"
     }
 
 
-def test_v2_reopen_is_idempotent(tmp_path: Path) -> None:
+def test_v3_reopen_is_idempotent(tmp_path: Path) -> None:
     path = tmp_path / "collections.db"
     first = LibraryCollectionsDB(path)
     first.close()
@@ -203,7 +235,7 @@ def test_v2_reopen_is_idempotent(tmp_path: Path) -> None:
 
     second = LibraryCollectionsDB(path)
 
-    assert second.get_schema_version() == 2
+    assert second.get_schema_version() == 3
     assert _schema_objects(path) == before
     second.close()
 
@@ -212,7 +244,7 @@ def test_future_schema_is_refused_without_writing(tmp_path: Path) -> None:
     path = tmp_path / "collections.db"
     _create_v1_fixture(path)
     with _open(path) as connection:
-        connection.execute("INSERT INTO schema_version (version) VALUES (3)")
+        connection.execute("INSERT INTO schema_version (version) VALUES (4)")
     before_objects = _schema_objects(path)
     before_rows = _legacy_rows(path)
 
@@ -228,7 +260,84 @@ def test_future_schema_is_refused_without_writing(tmp_path: Path) -> None:
             for row in connection.execute(
                 "SELECT version FROM schema_version ORDER BY version"
             )
-        ] == [1, 3]
+        ] == [1, 4]
+
+
+def test_v2_processing_row_migrates_with_unowned_expired_lease(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "collections.db"
+    _create_v2_fixture(path)
+
+    database = LibraryCollectionsDB(path)
+
+    assert database.get_schema_version() == 3
+    database.require_capture_schema()
+    with database.connection() as connection:
+        columns = {
+            str(row[1])
+            for row in connection.execute(
+                "PRAGMA table_info(collection_capture_items)"
+            )
+        }
+        row = connection.execute(
+            "SELECT processing_state, extraction_owner_token, "
+            "extraction_lease_expires_at FROM collection_capture_items "
+            "WHERE authority_key = 'local:profile-a' AND capture_id = 'capture-v2'"
+        ).fetchone()
+        versions = [
+            int(item[0])
+            for item in connection.execute(
+                "SELECT version FROM schema_version ORDER BY version"
+            )
+        ]
+    assert {
+        "extraction_owner_token",
+        "extraction_lease_expires_at",
+    } <= columns
+    assert tuple(row) == ("processing", None, None)
+    assert versions == [1, 2, 3]
+    database.close()
+
+
+def test_v2_lease_migration_failure_rolls_back_columns_and_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "collections.db"
+    _create_v2_fixture(path)
+    monkeypatch.setattr(
+        LibraryCollectionsDB,
+        "_CAPTURE_V3_COLUMNS",
+        (
+            LibraryCollectionsDB._CAPTURE_V3_COLUMNS[0],
+            ("extraction_lease_expires_at", "ALTER TABL deliberately_invalid"),
+        ),
+    )
+
+    with pytest.raises(sqlite3.OperationalError):
+        LibraryCollectionsDB(path)
+
+    with _open(path) as connection:
+        columns = {
+            str(row[1])
+            for row in connection.execute(
+                "PRAGMA table_info(collection_capture_items)"
+            )
+        }
+        version = int(
+            connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+        )
+        state = str(
+            connection.execute(
+                "SELECT processing_state FROM collection_capture_items "
+                "WHERE authority_key = 'local:profile-a' AND capture_id = 'capture-v2'"
+            ).fetchone()[0]
+        )
+    assert "extraction_owner_token" not in columns
+    assert "extraction_lease_expires_at" not in columns
+    assert version == 2
+    assert state == "processing"
 
 
 def test_capture_schema_gate_requires_owned_search_triggers(tmp_path: Path) -> None:

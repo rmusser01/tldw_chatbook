@@ -84,11 +84,26 @@ _EXTRACTION_FAILURE_REASONS = frozenset(
         "unknown",
     }
 )
+_DEFAULT_EXTRACTION_LEASE_SECONDS = 300
 
 
 def _now() -> str:
     return (
         datetime.now(timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def _timestamp_after(value: str, seconds: int) -> str:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise CollectionsCaptureError("invalid_clock") from exc
+    if parsed.tzinfo is None:
+        raise CollectionsCaptureError("invalid_clock")
+    return (
+        (parsed.astimezone(timezone.utc) + timedelta(seconds=seconds))
         .isoformat(timespec="microseconds")
         .replace("+00:00", "Z")
     )
@@ -181,14 +196,22 @@ class CollectionsCaptureRepository:
         *,
         authority_key: str,
         clock: Callable[[], str] = _now,
+        extraction_lease_seconds: int = _DEFAULT_EXTRACTION_LEASE_SECONDS,
     ) -> None:
         if not isinstance(db, LibraryCollectionsDB):
             raise CollectionsCaptureError("invalid_collections_database")
         if not isinstance(authority_key, str) or not authority_key.strip():
             raise CollectionsCaptureError("invalid_authority_key")
+        if (
+            isinstance(extraction_lease_seconds, bool)
+            or not isinstance(extraction_lease_seconds, int)
+            or extraction_lease_seconds < 1
+        ):
+            raise CollectionsCaptureError("invalid_extraction_lease")
         self.db = db
         self.authority_key = authority_key.strip()
         self._clock = clock
+        self._extraction_lease_seconds = extraction_lease_seconds
         self.db.require_capture_schema()
 
     def _require_identity(self, identity: CaptureIdentity) -> None:
@@ -388,6 +411,7 @@ class CollectionsCaptureRepository:
                     "freeform_note = ?, text_content = ?, clean_html = ?, byline = ?, "
                     "published_at = ?, read_at = ?, content_hash = ?, word_count = ?, "
                     "status = ?, favorite = ?, processing_state = ?, last_fetch_error = ?, "
+                    "extraction_owner_token = ?, extraction_lease_expires_at = ?, "
                     "updated_at = ?, revision = revision + 1 "
                     "WHERE authority_key = ? AND capture_id = ?",
                     (
@@ -417,6 +441,10 @@ class CollectionsCaptureRepository:
                         else int(existing["favorite"]),
                         "ready" if content_changed else existing["processing_state"],
                         None if content_changed else existing["last_fetch_error"],
+                        None if content_changed else existing["extraction_owner_token"],
+                        None
+                        if content_changed
+                        else existing["extraction_lease_expires_at"],
                         now,
                         self.authority_key,
                         identity.capture_id,
@@ -493,6 +521,8 @@ class CollectionsCaptureRepository:
                 values["word_count"] = self._word_count(text_content)
                 values["processing_state"] = "ready"
                 values["last_fetch_error"] = None
+                values["extraction_owner_token"] = None
+                values["extraction_lease_expires_at"] = None
             values["updated_at"] = now
 
             assignments = [f"{field} = ?" for field in values]
@@ -518,11 +548,14 @@ class CollectionsCaptureRepository:
         identity: CaptureIdentity,
         *,
         expected_revision: int,
+        owner_token: str,
     ) -> CaptureDetail:
         """Claim one queued capture for extraction."""
         self._require_identity(identity)
         expected_revision = self._expected_revision(expected_revision)
+        normalized_owner = self._extraction_owner(owner_token)
         now = self._clock()
+        lease_expires_at = _timestamp_after(now, self._extraction_lease_seconds)
         with self.db.transaction() as connection:
             self._extraction_row(
                 connection,
@@ -532,10 +565,18 @@ class CollectionsCaptureRepository:
             )
             connection.execute(
                 "UPDATE collection_capture_items SET processing_state = 'processing', "
-                "last_fetch_error = NULL, updated_at = ?, revision = revision + 1 "
+                "last_fetch_error = NULL, extraction_owner_token = ?, "
+                "extraction_lease_expires_at = ?, updated_at = ?, revision = revision + 1 "
                 "WHERE authority_key = ? AND capture_id = ? AND revision = ? "
                 "AND processing_state = 'queued'",
-                (now, self.authority_key, identity.capture_id, expected_revision),
+                (
+                    normalized_owner,
+                    lease_expires_at,
+                    now,
+                    self.authority_key,
+                    identity.capture_id,
+                    expected_revision,
+                ),
             )
             return self._written_detail(connection, identity)
 
@@ -544,11 +585,13 @@ class CollectionsCaptureRepository:
         identity: CaptureIdentity,
         *,
         expected_revision: int,
+        owner_token: str,
         result: Mapping[str, Any],
     ) -> CaptureDetail:
         """Store extracted content as inert text and finish the active claim."""
         self._require_identity(identity)
         expected_revision = self._expected_revision(expected_revision)
+        normalized_owner = self._extraction_owner(owner_token)
         if not isinstance(result, Mapping) or not isinstance(result.get("content"), str):
             raise CollectionsCaptureError("invalid_extraction_result")
         text_content = readable_body_text(result["content"]).strip()
@@ -561,6 +604,7 @@ class CollectionsCaptureRepository:
                 identity,
                 expected_revision=expected_revision,
                 states={"processing"},
+                owner_token=normalized_owner,
             )
             title = self._inert_optional_extraction_text(
                 result.get("title"),
@@ -574,6 +618,7 @@ class CollectionsCaptureRepository:
                 "UPDATE collection_capture_items SET text_content = ?, clean_html = NULL, "
                 "title = ?, byline = ?, content_hash = ?, word_count = ?, "
                 "processing_state = 'ready', last_fetch_error = NULL, updated_at = ?, "
+                "extraction_owner_token = NULL, extraction_lease_expires_at = NULL, "
                 "revision = revision + 1 "
                 "WHERE authority_key = ? AND capture_id = ? AND revision = ? "
                 "AND processing_state = 'processing'",
@@ -596,12 +641,14 @@ class CollectionsCaptureRepository:
         identity: CaptureIdentity,
         *,
         expected_revision: int,
+        owner_token: str,
         reason: str,
     ) -> CaptureDetail:
         """Finish an active extraction with a bounded, content-free reason."""
         self._require_identity(identity)
         expected_revision = self._expected_revision(expected_revision)
-        if reason not in _EXTRACTION_FAILURE_REASONS:
+        normalized_owner = self._extraction_owner(owner_token)
+        if not isinstance(reason, str) or reason not in _EXTRACTION_FAILURE_REASONS:
             raise CollectionsCaptureError("invalid_extraction_failure_reason")
         now = self._clock()
         with self.db.transaction() as connection:
@@ -610,10 +657,13 @@ class CollectionsCaptureRepository:
                 identity,
                 expected_revision=expected_revision,
                 states={"processing"},
+                owner_token=normalized_owner,
             )
             connection.execute(
                 "UPDATE collection_capture_items SET processing_state = 'failed', "
-                "last_fetch_error = ?, updated_at = ?, revision = revision + 1 "
+                "last_fetch_error = ?, extraction_owner_token = NULL, "
+                "extraction_lease_expires_at = NULL, updated_at = ?, "
+                "revision = revision + 1 "
                 "WHERE authority_key = ? AND capture_id = ? AND revision = ? "
                 "AND processing_state = 'processing'",
                 (
@@ -645,23 +695,54 @@ class CollectionsCaptureRepository:
             )
             connection.execute(
                 "UPDATE collection_capture_items SET processing_state = 'queued', "
-                "last_fetch_error = NULL, updated_at = ?, revision = revision + 1 "
+                "last_fetch_error = NULL, extraction_owner_token = NULL, "
+                "extraction_lease_expires_at = NULL, updated_at = ?, "
+                "revision = revision + 1 "
                 "WHERE authority_key = ? AND capture_id = ? AND revision = ? "
                 "AND processing_state IN ('failed', 'interrupted')",
                 (now, self.authority_key, identity.capture_id, expected_revision),
             )
             return self._written_detail(connection, identity)
 
+    def renew_extraction_lease(
+        self,
+        identity: CaptureIdentity,
+        *,
+        owner_token: str,
+    ) -> None:
+        """Extend a live claim without changing the capture revision."""
+        self._require_identity(identity)
+        normalized_owner = self._extraction_owner(owner_token)
+        now = self._clock()
+        lease_expires_at = _timestamp_after(now, self._extraction_lease_seconds)
+        with self.db.transaction() as connection:
+            cursor = connection.execute(
+                "UPDATE collection_capture_items SET extraction_lease_expires_at = ? "
+                "WHERE authority_key = ? AND capture_id = ? "
+                "AND processing_state = 'processing' AND purge_state IS NULL "
+                "AND extraction_owner_token = ?",
+                (
+                    lease_expires_at,
+                    self.authority_key,
+                    identity.capture_id,
+                    normalized_owner,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise CollectionsCaptureError("extraction_claim_lost")
+
     def interrupt_stale_extractions(self) -> int:
-        """Mark this authority's abandoned processing rows interrupted at startup."""
+        """Mark this authority's expired or legacy-unowned claims interrupted."""
         now = self._clock()
         with self.db.transaction() as connection:
             cursor = connection.execute(
                 "UPDATE collection_capture_items SET processing_state = 'interrupted', "
-                "last_fetch_error = 'interrupted', updated_at = ?, revision = revision + 1 "
+                "last_fetch_error = 'interrupted', extraction_owner_token = NULL, "
+                "extraction_lease_expires_at = NULL, updated_at = ?, revision = revision + 1 "
                 "WHERE authority_key = ? AND processing_state = 'processing' "
-                "AND purge_state IS NULL",
-                (now, self.authority_key),
+                "AND purge_state IS NULL AND (extraction_lease_expires_at IS NULL "
+                "OR extraction_lease_expires_at <= ?)",
+                (now, self.authority_key, now),
             )
             return int(cursor.rowcount)
 
@@ -1025,6 +1106,7 @@ class CollectionsCaptureRepository:
         *,
         expected_revision: int,
         states: set[str],
+        owner_token: str | None = None,
     ) -> sqlite3.Row:
         row = self._active_item_row(connection, identity)
         if int(row["revision"]) != expected_revision:
@@ -1036,6 +1118,8 @@ class CollectionsCaptureRepository:
             )
         if str(row["processing_state"]) not in states:
             raise CollectionsCaptureError("invalid_extraction_state")
+        if owner_token is not None and row["extraction_owner_token"] != owner_token:
+            raise CollectionsCaptureError("extraction_claim_lost")
         return row
 
     def _written_detail(
@@ -1255,6 +1339,15 @@ class CollectionsCaptureRepository:
         if not isinstance(value, str):
             raise CollectionsCaptureError(reason)
         return readable_body_text(value).strip() or None
+
+    @staticmethod
+    def _extraction_owner(value: Any) -> str:
+        if not isinstance(value, str):
+            raise CollectionsCaptureError("invalid_extraction_owner")
+        normalized = value.strip()
+        if not normalized or len(normalized) > 128:
+            raise CollectionsCaptureError("invalid_extraction_owner")
+        return normalized
 
     @staticmethod
     def _saved_search_name(name: str) -> str:

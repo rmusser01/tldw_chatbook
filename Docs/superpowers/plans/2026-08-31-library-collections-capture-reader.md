@@ -4,7 +4,7 @@
 
 **Goal:** Replace the obsolete generic-container Collections surface with an authority-safe Local/Server capture reader for saving, finding, reading, annotating, archiving, recovering, and permanently deleting Pocket/Instapaper-style captures.
 
-**Architecture:** Land one independent `tldw_server` prerequisite that makes Reading List count and rows share a database snapshot and advertises that fact. In Chatbook, add an additive schema-v2 capture repository beside untouched v1 legacy tables, normalize Local and Server through one capture-specific scope service, and mount destination-owned Items/Work widgets inside the existing `LibraryAdaptiveReaderShell`; reuse the existing authenticated API client, secure URL extraction, inert HTML-to-text path, private-file primitives, and shared layout resolver.
+**Architecture:** Land one independent `tldw_server` prerequisite that makes Reading List count and rows share a database snapshot and advertises that fact. In Chatbook, add an additive schema-v2 capture repository with schema-v3 process-safe extraction leases beside untouched v1 legacy tables, normalize Local and Server through one capture-specific scope service, and mount destination-owned Items/Work widgets inside the existing `LibraryAdaptiveReaderShell`; reuse the existing authenticated API client, secure URL extraction, inert HTML-to-text path, private-file primitives, and shared layout resolver.
 
 **Tech Stack:** Python 3.11+, Textual 8.x, SQLite/FTS5, existing `TLDWAPIClient`/Pydantic schemas, stdlib `dataclasses`/`enum`/`hashlib`/`json`, pytest, Hypothesis, Textual Pilot, TCSS.
 
@@ -56,8 +56,8 @@ name, and rebase the feature commits. Re-run the task/ADR id collision check aft
 
 ### PR B — Chatbook capture domain
 
-- Modify `tldw_chatbook/DB/Library_Collections_DB.py` — atomic schema-v2 migration, future-version
-  refusal, and v1 compatibility checks.
+- Modify `tldw_chatbook/DB/Library_Collections_DB.py` — atomic schema-v2 foundation and schema-v3
+  extraction-lease migration, future-version refusal, and v1 compatibility checks.
 - Create `tldw_chatbook/Library/collections_capture_models.py` — immutable authority, scope, page,
   summary, detail, mutation, save-outcome, and tri-state capability contracts plus envelope
   validation.
@@ -622,6 +622,8 @@ git commit -m 'feat(collections): persist local capture reading state'
 
 **Files:**
 - Modify: `tldw_chatbook/Library/collections_capture_repository.py`
+- Modify: `tldw_chatbook/DB/Library_Collections_DB.py`
+- Modify: `Tests/DB/test_library_collections_capture_migration.py`
 - Create: `Tests/Library/test_collections_capture_extraction.py`
 - Reuse unchanged: `tldw_chatbook/Local_Ingestion/web_article_ingestion.py`
 - Reuse unchanged: `tldw_chatbook/Subscriptions/html_text.py`
@@ -645,7 +647,10 @@ Expected: FAIL because extraction transitions do not exist.
 
 - [ ] **Step 3: Compose the existing secure extractor off-loop**
 
-Add repository claim/complete/fail/interruption methods guarded by identity and revision. In the
+Add repository claim/complete/fail/interruption methods guarded by identity and revision. Persist
+an opaque owner token and renewable expiry for each processing claim; startup interrupts only
+expired or migrated-unowned rows, and the later Local adapter renews a live lease while extraction
+runs. Advance the database to schema v3 with an atomic v2-to-v3 lease-field migration. In the
 Local service task, call existing `extract_article_for_ingest(url, options)` through
 `asyncio.to_thread`; do not add a fetch stack. Normalize its readable text with
 `readable_body_text`/`strip_control_characters`. If an upstream path supplies HTML, reduce it to
@@ -664,7 +669,7 @@ the discovered focused tests that own `web_article_ingestion.py` and record thei
 - [ ] **Step 5: Commit extraction**
 
 ```bash
-git add tldw_chatbook/Library/collections_capture_repository.py Tests/Library/test_collections_capture_extraction.py
+git add tldw_chatbook/DB/Library_Collections_DB.py tldw_chatbook/Library/collections_capture_repository.py Tests/DB/test_library_collections_capture_migration.py Tests/Library/test_collections_capture_extraction.py
 git commit -m 'feat(collections): extract local captures after commit'
 ```
 
@@ -1166,7 +1171,7 @@ generic containers as Collections. The Python compatibility methods `create_coll
 `rename_collection`, `add_item_to_collection`, `delete_collection`, and `restore_collection` must
 remain callable on `LocalLibraryCollectionsService` and return the structured reason
 `legacy_read_only`; they are never absent and never save captures. Recovery must remain reachable whenever v1 rows exist, including with
-schema version greater than 2. Convert obsolete phase-39 tests to capture reader tests or move their
+schema version greater than 3. Convert obsolete phase-39 tests to capture reader tests or move their
 still-valid legacy assertions into the recovery suite; do not preserve tests for the retired UI.
 Assert `CAPABILITY_REGISTRY` has no `library.collections.*` entries and no visible “Library
 Collections & agent tools” label, while the unrelated `library.templates`, `library.media`, and

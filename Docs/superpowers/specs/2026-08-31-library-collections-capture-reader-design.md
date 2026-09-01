@@ -168,10 +168,11 @@ the complete fence cannot update the visible page, Reader, receipts, or actions.
 
 ## Local capture storage
 
-### Additive schema v2
+### Additive schema v3
 
-`LibraryCollectionsDB` advances additively to schema v2. The migration creates capture-owned
-tables for:
+`LibraryCollectionsDB` advances additively to schema v3. Schema v2 creates the capture-owned
+tables; schema v3 adds persisted extraction-owner and lease-expiry fields so another supported
+process can recover only expired work rather than interrupting a live claim. The tables cover:
 
 - reading items and their durable extraction state;
 - normalized item tags;
@@ -188,18 +189,19 @@ last fetch error, optional Media provenance, created/updated timestamps, and a m
 increasing revision. Text and clean HTML are independently optional; neither is fabricated merely
 to satisfy a schema shape.
 
-The migration:
+The migrations:
 
-- acquires a bounded `BEGIN IMMEDIATE` migration lock;
-- rechecks the current schema inside the transaction;
-- creates all v2 objects and records version 2 atomically;
-- never renames, deletes, or writes v1 generic-container rows;
-- rolls back completely on failure; and
-- leaves an older process able to read or mutate only the physically separate legacy tables.
+- acquire a bounded `BEGIN IMMEDIATE` migration lock;
+- recheck the current schema inside the transaction;
+- create all v2 objects and record version 2 atomically, then add the v3 lease fields atomically;
+- never rename, delete, or write v1 generic-container rows;
+- roll back completely on failure; and
+- leave an older process able to read or mutate only the physically separate legacy tables.
 
 The current `schema_version` table's maximum-version convention remains valid. Fresh creation,
-real v1-to-v2 migration, failed migration rollback, concurrent-open behavior, and v2 reopen are
-all tested. If `MAX(schema_version) > 2`, this implementation refuses capture reads and writes with
+real v1-to-current migration, v2-to-v3 lease migration, failed migration rollback,
+concurrent-open behavior, and v3 reopen are all tested. If `MAX(schema_version) > 3`, this
+implementation refuses capture reads and writes with
 `schema_too_new`; only the explicitly compatible v1 legacy inspector/export may remain available
 after verifying its expected tables. It never stamps or attempts to repair an unknown future
 schema.
@@ -239,7 +241,10 @@ boundaries, rejects unsafe URL schemes and SSRF targets, limits redirects and re
 sanitizes stored HTML. It does not create a Media record merely to obtain text.
 
 Processing states distinguish queued/processing, ready, failed, and interrupted. On startup, a
-stale in-flight state becomes **Interrupted · Retry** rather than remaining busy forever. Extraction
+stale in-flight state becomes **Interrupted · Retry** rather than remaining busy forever. Each
+processing claim stores an opaque owner token and expiry; the live owner renews its lease while
+the off-loop extractor runs, and startup interrupts only expired or migrated-unowned claims. A
+different process therefore cannot invalidate a fresh same-authority extraction. Extraction
 failure records a bounded user-safe reason while preserving the saved capture.
 
 Large offline copies are managed private files, not unbounded SQLite blobs. Local bodies live under
@@ -534,7 +539,8 @@ repository's global bindings.
 
 ### Local repository and migration
 
-- fresh v2 creation, real v1-to-v2 migration, rollback, reopen, concurrent-open, and synthetic
+- fresh v3 creation, real v1-to-current and v2-to-v3 migration, rollback, reopen,
+  concurrent-open, and synthetic
   future-version `schema_too_new` tests;
 - v1 tables byte/row unchanged by migration and new capture operations;
 - canonical-URL upsert, tag merge, explicit archived resave, content replacement, and revision CAS;
