@@ -32,6 +32,7 @@ COMMANDS = [
     "/generate-image",
     "/generate-video",
     "/stream-video",
+    "/steer",
     "/rewind",
     "/research",
 ]

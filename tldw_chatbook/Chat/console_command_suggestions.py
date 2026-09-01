@@ -40,6 +40,7 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "generate-image": "Generate an image (optionally via a chosen backend)",
     "generate-video": "Generate a video (optionally via a chosen backend)",
     "stream-video": "Stream a video from a URL into the transcript",
+    "steer": "Send guidance into the RUNNING turn (plain messages queue)",
     "rewind": "Rewind the session to an earlier user prompt",
     "research": "Run deep research in the background; the report is delivered into this conversation",
 }

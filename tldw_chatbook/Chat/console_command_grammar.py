@@ -65,6 +65,13 @@ STREAM_VIDEO_COMMAND_NAME = "stream-video"
 STREAM_VIDEO_COMMAND_ARGUMENT_HINT = "<url>"
 STREAM_VIDEO_COMMAND_HANDLER_ID = "stream-video"
 
+#: TASK-25903: deliver text into the ACTIVE run's next model call instead of
+#: queueing it for the next turn. Plain submission still queues -- that default
+#: is unchanged; /steer is the explicit opt-in per message.
+STEER_COMMAND_NAME = "steer"
+STEER_COMMAND_ARGUMENT_HINT = "<guidance for the running agent>"
+STEER_COMMAND_HANDLER_ID = "steer"
+
 REWIND_COMMAND_NAME = "rewind"
 REWIND_COMMAND_ARGUMENT_HINT = ""
 REWIND_COMMAND_HANDLER_ID = "rewind"
@@ -254,6 +261,13 @@ def default_console_registry() -> ConsoleCommandRegistry:
             name=STREAM_VIDEO_COMMAND_NAME,
             argument_hint=STREAM_VIDEO_COMMAND_ARGUMENT_HINT,
             handler_id=STREAM_VIDEO_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=STEER_COMMAND_NAME,
+            argument_hint=STEER_COMMAND_ARGUMENT_HINT,
+            handler_id=STEER_COMMAND_HANDLER_ID,
         )
     )
     registry.register(

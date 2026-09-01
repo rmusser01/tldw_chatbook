@@ -249,6 +249,8 @@ from ...Chat.console_command_grammar import (
     RESEARCH_COMMAND_HANDLER_ID,
     RESEARCH_COMMAND_NAME,
     REWIND_COMMAND_HANDLER_ID,
+    STEER_COMMAND_HANDLER_ID,
+    STEER_COMMAND_NAME,
     REWIND_COMMAND_NAME,
     SKILLS_COMMAND_HANDLER_ID,
     SKILLS_COMMAND_NAME,
@@ -15017,6 +15019,7 @@ class ChatScreen(BaseAppScreen):
         GENERATE_VIDEO_COMMAND_NAME: GENERATE_VIDEO_COMMAND_HANDLER_ID,
         STREAM_VIDEO_COMMAND_NAME: STREAM_VIDEO_COMMAND_HANDLER_ID,
         REWIND_COMMAND_NAME: REWIND_COMMAND_HANDLER_ID,
+        STEER_COMMAND_NAME: STEER_COMMAND_HANDLER_ID,
         RESEARCH_COMMAND_NAME: RESEARCH_COMMAND_HANDLER_ID,
     }
 
@@ -15076,6 +15079,7 @@ class ChatScreen(BaseAppScreen):
             GENERATE_VIDEO_COMMAND_HANDLER_ID: self._console_command_generate_video,
             STREAM_VIDEO_COMMAND_HANDLER_ID: self._console_command_stream_video,
             REWIND_COMMAND_HANDLER_ID: self._console_command_rewind,
+            STEER_COMMAND_HANDLER_ID: self._console_command_steer,
             RESEARCH_COMMAND_HANDLER_ID: self._console_command_research,
         }
         handler = dispatch_map.get(handler_id)
@@ -15475,6 +15479,23 @@ class ChatScreen(BaseAppScreen):
         ]
         rows.reverse()
         return tuple(rows)
+
+    async def _console_command_steer(self, parse: CommandParse) -> bool:
+        """`/steer <text>`: deliver guidance into the ACTIVE running turn.
+
+        TASK-25903. Plain submission still queues for the next turn; this is
+        the explicit per-message opt-in. A refusal (no active run, finished
+        run, empty or over-cap text) surfaces as a notify rather than being
+        silently dropped -- the AC#5 contract, end to end.
+        """
+        text = (parse.args or "").strip()
+        controller = self._ensure_console_chat_controller()
+        refusal = controller.steer_active_run(text)
+        if refusal is not None:
+            self.app_instance.notify(f"Not steered: {refusal}", severity="warning")
+            return False
+        self.app_instance.notify("Steered into the running turn.")
+        return True
 
     async def _console_command_rewind(self, parse: CommandParse) -> bool:
         """Open the `/rewind` menu over the active session's prior USER prompts.

@@ -490,8 +490,17 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 
 While Console is the active screen, the command palette (**Ctrl+P**) also
 gains "Console: …" entries for these same actions. Slash commands
-(`/prompt`, `/system`, `/skills`, `/prefill`, `/generate-image`, `/rewind`)
-are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.md) and [Branching & rewind](console/branching-and-rewind.md).
+(`/prompt`, `/system`, `/skills`, `/prefill`, `/generate-image`, `/steer`,
+`/rewind`) are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.md) and [Branching & rewind](console/branching-and-rewind.md).
+
+**Steering a running turn.** `/steer <guidance>` delivers text into the
+*currently running* agent turn — it is read before the next model call, after
+the in-flight tool batch finishes, so it never interrupts a tool mid-write.
+A plain message typed while a run is active still queues for the next turn
+(that default is unchanged); `/steer` is the explicit per-message opt-in.
+Steering is refused with a visible notice — never silently dropped — when no
+run is active, the run has already finished, the text is empty, or it exceeds
+the 4,000-character steering cap.
 
 ## Related settings & docs
 

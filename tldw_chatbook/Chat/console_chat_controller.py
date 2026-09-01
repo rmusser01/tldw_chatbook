@@ -3104,6 +3104,11 @@ class ConsoleChatController:
         #: docstring for the resulting, deliberately-scoped-down, limit on
         #: the three worker-thread approval/confirm bridges below.
         self._active_cancel_events: dict[str, threading.Event] = {}
+        #: TASK-25903: per-session steer callables, populated by the bridge's
+        #: on_steer_ready when a primary run's mailbox registers. A stale
+        #: entry is harmless -- the service refuses once the mailbox is
+        #: unregistered -- so this map is hygiene, not the safety boundary.
+        self._active_steer_hooks: dict[str, Callable[[str], str | None]] = {}
         self._active_capture_details: dict[str, CaptureDetail] = {}
         # Cost-ticker PR3: per-session cache-break/TTL ground truth for the
         # cost chip. All three are process-local and best-effort -- a missed
@@ -5155,6 +5160,7 @@ class ConsoleChatController:
                 self._active_stream_tasks.pop(session_id, None)
                 self._active_assistant_message_ids.pop(session_id, None)
                 self._active_cancel_events.pop(session_id, None)
+                self._active_steer_hooks.pop(session_id, None)
                 self._stop_requested = False
         try:
             current = self.store.get_message(message.id)
@@ -13046,6 +13052,25 @@ class ConsoleChatController:
         with self._pending_skill_script_lock:
             return list(self._pending_skill_script_rounds)
 
+    def steer_active_run(self, text: str) -> str | None:
+        """Deliver ``text`` into the ACTIVE session's running agent turn.
+
+        TASK-25903. Plain submission still queues for the next turn -- that
+        default is unchanged (AC#4); this is the explicit per-message opt-in
+        behind the ``/steer`` command. Only ever targets the viewed session,
+        mirroring ``stop_active_run``'s contract.
+
+        Returns:
+            None when the text was delivered into the live run; a
+            human-readable refusal otherwise (no active run, run already
+            finished, empty text, over the steering cap).
+        """
+        session_id = self.store.active_session_id
+        steer = self._active_steer_hooks.get(session_id) if session_id else None
+        if steer is None:
+            return "no active run to steer — plain messages queue for the next turn"
+        return steer(text)
+
     def stop_active_run(self, *, record_user_stop: bool = True) -> bool:
         """Request the ACTIVE (viewed) session's stream to stop at the next
         safe boundary.
@@ -20631,6 +20656,11 @@ class ConsoleChatController:
                 scratch_root=scratch_snapshot.root,
                 scratch_lease=scratch_lease,
                 review_tool_calls=review_hook,
+                on_steer_ready=(
+                    lambda steer, _sid=session_id: self._active_steer_hooks.__setitem__(
+                        _sid, steer
+                    )
+                ),
                 local_provider=local_provider,
                 virtual_cli_provider=virtual_cli_provider,
                 raw_shell_provider=raw_shell_provider,

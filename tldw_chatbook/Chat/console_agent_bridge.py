@@ -4366,6 +4366,8 @@ class ConsoleAgentBridge:
         # id in before handing it to `LoopDeps`.
         review_tool_calls: Callable[[list[ToolCall], str], dict[str, str]]
         | None = None,
+        on_steer_ready: Callable[[Callable[[str], str | None]], None]
+        | None = None,
         change_roots: Sequence[Path] | None = None,
         change_root_aliases: Sequence[str] = (),
         change_review_skipped_roots: Sequence[SkippedReviewRoot] = (),
@@ -5533,6 +5535,10 @@ class ConsoleAgentBridge:
             chat_call=adapter.chat_call,
             clock=self._clock,
             on_step=on_step,
+            # TASK-25903: hands the controller a steer(text) bound to THIS
+            # run once its mailbox registers -- run ids are minted inside
+            # run_turn, so the caller cannot key by one.
+            on_primary_steer_ready=on_steer_ready,
             skill_runner=skill_runner,
             skill_file_bindings=skill_file_bindings,
             review_tool_calls=review_tool_calls,

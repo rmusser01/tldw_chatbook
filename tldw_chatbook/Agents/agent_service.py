@@ -50,6 +50,7 @@ from .agent_models import (
     CONTROL_CAPTURE_INDEX_BASE,
     DIRECT_DISCLOSURE_CONTEXT_FRACTION,
     MAX_STEERING_CHARS,
+    STEERING_SOURCE_USER,
     RUN_CANCELLED,
     RUN_DONE,
     RUN_ERROR,
@@ -1695,6 +1696,9 @@ class AgentService:
         post_tool_dispatch: (
             Callable[[ToolCall, ToolResult, float, str], None] | None
         ) = None,
+        on_primary_steer_ready: (
+            Callable[[Callable[[str], str | None]], None] | None
+        ) = None,
         review_state_scope: Callable[[str], "contextlib.AbstractContextManager"]
         | None = None,
         install_skill_tool: Callable[[str], ToolResult] | None = None,
@@ -1776,6 +1780,13 @@ class AgentService:
         #: but its own observation. None (the default) leaves every closure
         #: unwrapped, so an unconfigured install pays nothing.
         self.post_tool_dispatch = post_tool_dispatch
+        #: TASK-25903: fired when a PRIMARY run's steering mailbox is
+        #: registered, handing the caller a `steer(text) -> refusal | None`
+        #: bound to that run -- the Console never needs to learn run ids,
+        #: which are minted inside run_turn.
+        self.on_primary_steer_ready = on_primary_steer_ready
+        self._primary_steering_lock = threading.Lock()
+        self._primary_mailboxes: dict[str, list[tuple[str, str]]] = {}
         self.before_tool_dispatch = before_tool_dispatch
         # C1 (probe-verified security regression, pre-merge review of the
         # Phase 5 chat bridge): an optional, generically-shaped seam a
@@ -2594,6 +2605,69 @@ class AgentService:
             effective_log_active,
             trusted_role=trusted_role,
         )
+
+    def steer_primary(self, run_id: str, text: str) -> str | None:
+        """Deliver user text into a LIVE primary run's next model call.
+
+        TASK-25903. Validation mirrors the fleet `send_to_agent` path exactly
+        (AC#6): stripped, non-empty, capped at MAX_STEERING_CHARS. Delivery
+        rides the existing drain seam, which consumes the mailbox at the one
+        protocol-coherent point -- before a model call, after the budget and
+        cancel checks -- so steered text can never split a native
+        tool_calls/role:"tool" pair.
+
+        Returns:
+            None when accepted; a human-readable refusal otherwise. A run
+            that has finished (its mailbox is unregistered) refuses honestly
+            rather than dropping the text (AC#5).
+        """
+        stripped = str(text or "").strip()
+        if not stripped:
+            return "steering text is empty; there is nothing to deliver"
+        if len(stripped) > MAX_STEERING_CHARS:
+            return (
+                f"steering text is too long ({len(stripped)} chars; the cap "
+                f"is {MAX_STEERING_CHARS}). Shorten it and send it again."
+            )
+        with self._primary_steering_lock:
+            mailbox = self._primary_mailboxes.get(run_id)
+            if mailbox is None:
+                return "that run is not running (finished, cancelled, or unknown)"
+            mailbox.append((STEERING_SOURCE_USER, stripped))
+        return None
+
+    def _register_primary_mailbox(self, run_id: str):
+        """Create the run's mailbox; return its drain for LoopDeps.
+
+        Also fires `on_primary_steer_ready` with a bound steer callable, so
+        the Console can steer without knowing the run id.
+        """
+        with self._primary_steering_lock:
+            self._primary_mailboxes[run_id] = []
+
+        def drain() -> list[tuple[str, str]]:
+            with self._primary_steering_lock:
+                mailbox = self._primary_mailboxes.get(run_id)
+                if not mailbox:
+                    return []
+                drained, mailbox[:] = list(mailbox), []
+                return drained
+
+        if self.on_primary_steer_ready is not None:
+            try:
+                self.on_primary_steer_ready(
+                    lambda text: self.steer_primary(run_id, text)
+                )
+            except Exception:  # noqa: BLE001 -- a broken observer costs nothing
+                logger.opt(exception=True).debug(
+                    "on_primary_steer_ready raised; steering entry lost"
+                )
+        return drain
+
+    def _unregister_primary_mailbox(self, run_id: str) -> None:
+        """After this, `steer_primary(run_id, ...)` refuses honestly."""
+        with self._primary_steering_lock:
+            self._primary_mailboxes.pop(run_id, None)
 
     def _fire_post_tool_dispatch(
         self, call: ToolCall, result: ToolResult, duration: float, run_id: str
@@ -6121,6 +6195,14 @@ class AgentService:
                 )
             return entries
 
+        # TASK-25903: the primary's user-steering mailbox. Registered here so
+        # `on_primary_steer_ready` fires before the first model call; the
+        # matching unregister sits in the finally around run_agent_loop.
+        primary_steering_drain = (
+            self._register_primary_mailbox(run_id)
+            if agent_kind == AGENT_KIND_PRIMARY
+            else None
+        )
         deps = LoopDeps(
             call_model=call_model,
             call_model_with_continuation=call_model,
@@ -6219,10 +6301,22 @@ class AgentService:
             )
             if fleet_active
             else None,
-            # PR3b Task 1: non-None ONLY for a threaded fleet child (see
-            # the parameter's own comment above); the pure loop drains it
-            # at its protocol-coherent pre-model-call point.
-            drain_mailbox=drain_mailbox,
+            # PR3b Task 1: a threaded fleet child's coordinator mailbox --
+            # and, since TASK-25903, the PRIMARY run's user-steering mailbox
+            # (registered below). Both ride the same protocol-coherent
+            # pre-model-call drain; inline (turn-scoped) children still get
+            # None. The old "None for a primary by design" stance is
+            # deliberately superseded: the design reason was that no producer
+            # existed, and steer_primary is now that producer.
+            drain_mailbox=(
+                drain_mailbox
+                if drain_mailbox is not None
+                else (
+                    primary_steering_drain
+                    if agent_kind == AGENT_KIND_PRIMARY
+                    else None
+                )
+            ),
             drain_mailbox_with_causes=(
                 drain_causal_steering
                 if seeded_steering_with_causes or drain_mailbox_with_causes is not None
@@ -6296,13 +6390,19 @@ class AgentService:
                 if resume_provider_continuation:
                     continuation_kwargs["resume_provider_continuation"] = True
                 with use_run_actor(run_actor):
-                    outcome = run_agent_loop(
-                        config,
-                        run_messages,
-                        active,
-                        deps,
-                        **continuation_kwargs,
-                    )
+                    try:
+                        outcome = run_agent_loop(
+                            config,
+                            run_messages,
+                            active,
+                            deps,
+                            **continuation_kwargs,
+                        )
+                    finally:
+                        # TASK-25903: after this, steer_primary refuses with
+                        # "not running" -- the honest-refusal contract for a
+                        # finished or crashed run (AC#5).
+                        self._unregister_primary_mailbox(run_id)
             except _ProjectInstructionPayloadError as error:
                 outcome = RunOutcome(
                     status=RUN_ERROR,
