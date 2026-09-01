@@ -306,8 +306,12 @@ async def test_filter_follows_a_class_added_to_an_ancestor_at_runtime() -> None:
 #:
 #: Pinned 2026-08-31 at measured 274 + 10 slack (ADR-097's convention:
 #: enough headroom that one ordinary PR does not red the build, little
-#: enough that regrowth forces the re-keying conversation).
-MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES = 284
+#: enough that regrowth forces the re-keying conversation). TIGHTENED
+#: 2026-09-01 after the TASK-25812 split merged (`b62407e258`) and its
+#: vocabulary pinning reorganised ten of these rules away: measured 264,
+#: re-pinned at 264 + 10 so the freed headroom is banked, per the same
+#: convention.
+MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES = 274
 
 #: Anti-vacuity floor: the census walking a hollow stylesheet (bundle
 #: missing, parse failure swallowed) must fail loudly, not pass at zero.
