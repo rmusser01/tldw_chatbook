@@ -3384,6 +3384,13 @@ items_width = 40
 # caller-supplied native Anthropic tool dicts already carrying cache_control
 # still pass through verbatim.
 anthropic_enabled = true
+# TASK-26014: cache TTL tier -- "5m" (default) or "1h". 1h keeps the prefix
+# cached across a coffee break so a returning conversation is not re-billed
+# the 1.25x write premium, but a 1h write bills ~2x vs 5m's 1.25x, so it
+# wins only when gaps routinely exceed 5 minutes. Unsupported models and any
+# unrecognized value fall back to 5m silently; the kill switch above
+# disables this along with everything else.
+cache_ttl = "5m"
 
 [agents]
 # Sub-agent fleet knobs. Every key here is COMMENTED OUT on purpose: the

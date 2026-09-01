@@ -10,6 +10,7 @@ import requests
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 from tldw_chatbook.LLM_Calls.LLM_API_Calls import (
     _anthropic_caching_enabled,
+    chat_with_anthropic,
     _contains_cache_control,
     _without_cache_control,
 )
@@ -170,3 +171,106 @@ def test_without_cache_control_strips_recursively():
     assert stripped["max_tokens"] == 5
     assert _contains_cache_control(data) is True
     assert _contains_cache_control(stripped) is False
+
+
+# --- TASK-26014: 1-hour cache TTL tier --------------------------------------
+
+
+def test_cache_marker_defaults_to_5m_bare_ephemeral():
+    from tldw_chatbook.LLM_Calls.LLM_API_Calls import _cache_control_marker
+
+    with patch(
+        "tldw_chatbook.LLM_Calls.LLM_API_Calls.get_cli_setting", return_value="5m"
+    ):
+        assert _cache_control_marker("claude-opus-5") == {"type": "ephemeral"}
+
+
+def test_cache_marker_emits_1h_when_configured_and_supported():
+    from tldw_chatbook.LLM_Calls.LLM_API_Calls import _cache_control_marker
+
+    with patch(
+        "tldw_chatbook.LLM_Calls.LLM_API_Calls.get_cli_setting", return_value="1h"
+    ):
+        assert _cache_control_marker("claude-opus-5") == {
+            "type": "ephemeral",
+            "ttl": "1h",
+        }
+
+
+def test_cache_marker_falls_back_to_5m_on_unsupported_or_junk():
+    from tldw_chatbook.LLM_Calls.LLM_API_Calls import _cache_control_marker
+
+    for value in ("banana", "", None, "2h"):
+        with patch(
+            "tldw_chatbook.LLM_Calls.LLM_API_Calls.get_cli_setting",
+            return_value=value,
+        ):
+            assert _cache_control_marker("claude-opus-5") == {"type": "ephemeral"}
+
+
+@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_default_session")
+def test_1h_ttl_flows_into_the_payload_and_adds_the_beta_header(mock_session):
+    posted = {}
+
+    def _post(url, headers=None, json=None, **kwargs):
+        posted["headers"] = headers
+        posted["json"] = json
+        return _ok_response()
+
+    session = Mock()
+    session.post.side_effect = _post
+    session.__enter__ = Mock(return_value=session)
+    session.__exit__ = Mock(return_value=False)
+    mock_session.return_value = session
+
+    def _setting(section, key, default=None):
+        if key == "cache_ttl":
+            return "1h"
+        return default
+
+    with patch(
+        "tldw_chatbook.LLM_Calls.LLM_API_Calls.get_cli_setting", side_effect=_setting
+    ):
+        chat_with_anthropic(
+            input_data=[{"role": "user", "content": "hi"}],
+            api_key="k",
+            model="claude-opus-5",
+            system_prompt="stable prefix",
+            prompt_caching=True,
+            streaming=False,
+        )
+
+    system_block = posted["json"]["system"][0]
+    assert system_block["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+    beta = posted["headers"].get("anthropic-beta", "")
+    assert "extended-cache-ttl" in beta, "1h markers require the beta opt-in header"
+
+
+@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_default_session")
+def test_5m_default_adds_no_beta_header(mock_session):
+    posted = {}
+
+    def _post(url, headers=None, json=None, **kwargs):
+        posted["headers"] = headers
+        return _ok_response()
+
+    session = Mock()
+    session.post.side_effect = _post
+    session.__enter__ = Mock(return_value=session)
+    session.__exit__ = Mock(return_value=False)
+    mock_session.return_value = session
+
+    with patch(
+        "tldw_chatbook.LLM_Calls.LLM_API_Calls.get_cli_setting",
+        side_effect=lambda s, k, d=None: d,
+    ):
+        chat_with_anthropic(
+            input_data=[{"role": "user", "content": "hi"}],
+            api_key="k",
+            model="claude-opus-5",
+            system_prompt="stable prefix",
+            prompt_caching=True,
+            streaming=False,
+        )
+
+    assert "anthropic-beta" not in posted["headers"]

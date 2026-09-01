@@ -1082,6 +1082,43 @@ def _anthropic_caching_enabled() -> bool:
         return True
 
 
+#: TASK-26014: the Anthropic beta opt-in required to emit a 1-hour cache
+#: TTL. Sent only when a 1h marker is actually present in the payload.
+_EXTENDED_CACHE_TTL_BETA = "extended-cache-ttl-2025-04-11"
+
+
+def _anthropic_supports_1h_ttl(model: str) -> bool:
+    """Whether ``model`` accepts the 1-hour cache tier.
+
+    Same family gate as ``_anthropic_supports_caching`` today -- every
+    modern Claude that caches at all also honors the extended TTL. A model
+    outside that set falls back to the 5-minute marker (AC#3).
+    """
+    return _anthropic_supports_caching(model)
+
+
+def _cache_control_marker(model: str) -> dict[str, str]:
+    """The ``cache_control`` value for one breakpoint (TASK-26014).
+
+    Reads ``[caching] cache_ttl`` -- ``"5m"`` (the default and every
+    unrecognized/unsupported value) yields the bare ``{"type":
+    "ephemeral"}`` marker, byte-identical to before; ``"1h"`` yields the
+    extended tier only when the model supports it. Any config read failure
+    falls back to 5m so a broken config never changes request shapes.
+    """
+    marker = {"type": "ephemeral"}
+    try:
+        ttl = str(get_cli_setting("caching", "cache_ttl", "5m") or "5m").strip().lower()
+    except Exception as exc:  # noqa: BLE001 -- fail safe to the 5m default
+        logger.warning(
+            f"caching cache_ttl read failed; defaulting to 5m: {exc!r}"
+        )
+        return marker
+    if ttl == "1h" and _anthropic_supports_1h_ttl(model):
+        return {"type": "ephemeral", "ttl": "1h"}
+    return marker
+
+
 def _without_cache_control(obj: Any) -> Any:
     """Deep-copy ``obj`` with every ``cache_control`` key removed.
 
@@ -1117,6 +1154,17 @@ def _contains_cache_control(obj: Any) -> bool:
         )
     if isinstance(obj, list):
         return any(_contains_cache_control(item) for item in obj)
+    return False
+
+
+def _contains_extended_ttl(obj: Any) -> bool:
+    """True when any nested ``cache_control`` carries ``ttl == "1h"``."""
+    if isinstance(obj, dict):
+        if obj.get("type") == "ephemeral" and obj.get("ttl") == "1h":
+            return True
+        return any(_contains_extended_ttl(value) for value in obj.values())
+    if isinstance(obj, list):
+        return any(_contains_extended_ttl(item) for item in obj)
     return False
 
 
@@ -1463,7 +1511,7 @@ def chat_with_anthropic(
                 {
                     "type": "text",
                     "text": system_prompt,
-                    "cache_control": {"type": "ephemeral"},
+                    "cache_control": _cache_control_marker(current_model),
                 }
             ]
         else:
@@ -1508,7 +1556,7 @@ def chat_with_anthropic(
             # so the caller's input `tools` are never mutated.
             tools_payload[-1] = {
                 **tools_payload[-1],
-                "cache_control": {"type": "ephemeral"},
+                "cache_control": _cache_control_marker(current_model),
             }
         data["tools"] = tools_payload
     if thinking_config is not None:
@@ -1541,8 +1589,13 @@ def chat_with_anthropic(
         last_content = anthropic_messages[-1]["content"]
         last_content[-1] = {
             **last_content[-1],
-            "cache_control": {"type": "ephemeral"},
+            "cache_control": _cache_control_marker(current_model),
         }
+
+    # TASK-26014: the 1h tier is a beta opt-in -- add the header iff a 1h
+    # marker actually made it into the payload (never on the 5m default).
+    if _contains_extended_ttl(data):
+        headers["anthropic-beta"] = _EXTENDED_CACHE_TTL_BETA
 
     api_url = (
         api_base_url
