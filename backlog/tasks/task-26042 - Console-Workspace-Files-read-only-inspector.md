@@ -80,13 +80,15 @@ tree had replaced the former grouped workspace headers. The non-active entry
 was moved into the tree's existing workspace action menu, preserving the same
 stable-id, cached-availability, and non-activating admission contracts; stale
 binding and four-size integration evidence were rerun against that current UI.
-The current-dev reconciliation verification passed 80 service/modal/integration
-tests, 21 workspace-tree action/routing/geometry tests, and 9 modal/status-row
-safety tests; focused Ruff and `git diff --check` also passed. The CSS integrity
-file passed 14/15 checks. Its remaining inspector-handle minimum-height failure
-reproduces unchanged on a pristine `origin/dev` worktree and is outside this
-feature's CSS and behavior scope. The full suite was not run under the
-repository's targeted-verification policy.
+The final current-dev verification passed 80 service/modal/integration tests,
+21 workspace-tree action/routing/geometry tests, and both exact Workspace Files
+modal-contract checks; focused Ruff and `git diff --check` also passed. A wider
+modal-contract sweep retained the same three launch-inventory/model-popover
+failures reproduced on pristine `origin/dev`. The CSS integrity file passed
+14/15 checks; its remaining inspector-handle minimum-height failure likewise
+reproduces unchanged on pristine `origin/dev` and is outside this feature's CSS
+and behavior scope. The full suite was not run under the repository's
+targeted-verification policy.
 <!-- SECTION:NOTES:END -->
 
 ## Definition of Done
