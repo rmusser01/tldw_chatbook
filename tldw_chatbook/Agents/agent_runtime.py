@@ -62,6 +62,7 @@ from .agent_models import (
     STEP_MODEL_ERROR,
     STEP_MODEL_REQUEST_STARTED,
     STEP_MODEL_RESPONSE_COMPLETED,
+    STEERING_SOURCE_REDIRECT,
     STEP_APPROVAL_APPROVED,
     STEP_APPROVAL_DENIED,
     STEP_APPROVAL_REQUESTED,
@@ -553,6 +554,11 @@ class LoopDeps:
     # builder. None (the default) means no chain is configured and no fallback
     # code runs at all.
     fallback: "FallbackRuntime | None" = None
+    # TASK-26000: probe -- does the mailbox hold a redirect entry? Read-only
+    # (never consumes); the loop only drains when this answers True, so plain
+    # steering keeps its pre-model-call delivery point. None = no redirect
+    # surface wired (every legacy caller), byte-identical behaviour.
+    has_pending_redirect: Callable[[], bool] | None = None
 
 
 
@@ -1367,8 +1373,14 @@ def run_agent_loop(
                         ]
                     )
                     for steer_source, steer_text, source_event_id in entries:
-                        steer_message = format_steering_message(
-                            steer_source, steer_text
+                        # TASK-26000 AC#4: a redirect that missed its model
+                        # call (tool was executing) degrades to this drain,
+                        # but stays a PLAIN user reply -- it is a correction,
+                        # not injected guidance.
+                        steer_message = (
+                            steer_text
+                            if steer_source == STEERING_SOURCE_REDIRECT
+                            else format_steering_message(steer_source, steer_text)
                         )
                         messages.append({"role": "user", "content": steer_message})
                         add(
@@ -1614,6 +1626,78 @@ def run_agent_loop(
             # inference servers) are exactly the flaky-empties population this
             # guard was written for (review I1, 2026-08-31).
             consecutive_empty_turns = 0
+        # TASK-26000: an active-turn redirect. The service aborted the
+        # in-flight model request (the transport returns early with the
+        # partial), so this turn is the CUT-OFF response: keep its visible
+        # text as assistant context, drop its tool calls (the user just
+        # cancelled them), append the correction as a plain user message, and
+        # re-ask -- via `continue`, never loop re-entry, so the sticky
+        # fallback switch living in the loop locals survives a redirect
+        # (ADR-110). Ordering pins: Stop wins (a cancelled run never
+        # redirects), and a mid-continuation turn refuses -- the entry stays
+        # in the mailbox and degrades to the next pre-call drain (AC#4),
+        # because rewriting a turn whose batch is durably persisted would
+        # corrupt the checkpoint contract.
+        if (
+            deps.has_pending_redirect is not None
+            and not restoring_batch
+            and continuation_checkpoint is None
+            and turn.provider_continuation is None
+            # Probe order matters: has_pending_redirect FIRST, so the
+            # common no-redirect turn never spends an extra should_cancel
+            # poll (test_fleet_stop_semantics counts those polls exactly).
+            # Stop still beats redirect -- the cancel check runs whenever a
+            # redirect is actually pending.
+            and deps.has_pending_redirect()
+            and not deps.should_cancel()
+        ):
+            try:
+                entries = (
+                    deps.drain_mailbox_with_causes()
+                    if deps.drain_mailbox_with_causes is not None
+                    else [
+                        (source, text, None)
+                        for source, text in (
+                            deps.drain_mailbox() if deps.drain_mailbox else []
+                        )
+                    ]
+                )
+            except Exception:  # noqa: BLE001 -- containment, like the pre-call drain
+                logger.opt(exception=True).warning(
+                    "redirect drain raised; classifying the turn normally"
+                )
+                entries = []
+            if entries:
+                visible, _cut_fence = split_visible_text_and_tool_call(turn.text)
+                if visible.strip():
+                    # AC#3: the partial the user watched stream stays in
+                    # context; the fence (a call the user just cancelled)
+                    # does not, and is never executed.
+                    messages.append(
+                        {"role": "assistant", "content": visible.strip()}
+                    )
+                for steer_source, steer_text, source_event_id in entries:
+                    content = (
+                        steer_text
+                        if steer_source == STEERING_SOURCE_REDIRECT
+                        else format_steering_message(steer_source, steer_text)
+                    )
+                    messages.append({"role": "user", "content": content})
+                    add(
+                        STEP_STEERING,
+                        summary=content[:200],
+                        parent_event_id=source_event_id,
+                        source_event_id=source_event_id,
+                    )
+                    _emit_record(
+                        deps,
+                        "steering",
+                        content=content,
+                        tool="",
+                        status=steer_source,
+                        call_id="",
+                    )
+                continue
         candidate = turn.provider_continuation
         if not restoring_batch and calls and candidate is not None:
             context = deps.continuation_context

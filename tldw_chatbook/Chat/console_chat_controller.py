@@ -3109,6 +3109,9 @@ class ConsoleChatController:
         #: entry is harmless -- the service refuses once the mailbox is
         #: unregistered -- so this map is hygiene, not the safety boundary.
         self._active_steer_hooks: dict[str, Callable[[str], str | None]] = {}
+        #: TASK-26000: same lifecycle as _active_steer_hooks, but the hook
+        #: cuts the in-flight model response and re-runs the turn.
+        self._active_redirect_hooks: dict[str, Callable[[str], str | None]] = {}
         self._active_capture_details: dict[str, CaptureDetail] = {}
         # Cost-ticker PR3: per-session cache-break/TTL ground truth for the
         # cost chip. All three are process-local and best-effort -- a missed
@@ -5161,6 +5164,7 @@ class ConsoleChatController:
                 self._active_assistant_message_ids.pop(session_id, None)
                 self._active_cancel_events.pop(session_id, None)
                 self._active_steer_hooks.pop(session_id, None)
+                self._active_redirect_hooks.pop(session_id, None)
                 self._stop_requested = False
         try:
             current = self.store.get_message(message.id)
@@ -13071,6 +13075,26 @@ class ConsoleChatController:
             return "no active run to steer — plain messages queue for the next turn"
         return steer(text)
 
+    def redirect_active_run(self, text: str) -> str | None:
+        """Cut off the ACTIVE session's current model response and re-run the
+        turn with ``text`` as a plain user correction.
+
+        TASK-26000. Unlike ``steer_active_run`` (which lets the current
+        response finish), this aborts the in-flight model request; completed
+        tool results and the partial the user watched stream are retained.
+        Plain Stop is untouched and remains terminal.
+
+        Returns:
+            None when delivered; a human-readable refusal otherwise.
+        """
+        session_id = self.store.active_session_id
+        redirect = (
+            self._active_redirect_hooks.get(session_id) if session_id else None
+        )
+        if redirect is None:
+            return "no active run to redirect — plain messages queue for the next turn"
+        return redirect(text)
+
     def stop_active_run(self, *, record_user_stop: bool = True) -> bool:
         """Request the ACTIVE (viewed) session's stream to stop at the next
         safe boundary.
@@ -13259,6 +13283,7 @@ class ConsoleChatController:
                 self._active_assistant_message_ids.pop(session_id, None)
                 self._active_cancel_events.pop(session_id, None)
                 self._active_steer_hooks.pop(session_id, None)
+                self._active_redirect_hooks.pop(session_id, None)
         for task in submit_tasks:
             self._unregister_submit_task(task)
         if current not in tasks:
@@ -13499,6 +13524,7 @@ class ConsoleChatController:
                 self._active_assistant_message_ids.pop(session_id, None)
                 self._active_cancel_events.pop(session_id, None)
                 self._active_steer_hooks.pop(session_id, None)
+                self._active_redirect_hooks.pop(session_id, None)
 
     def _active_streaming_assistant_message_id(self) -> str | None:
         """Return the visible streaming assistant message for the active session."""
@@ -18846,6 +18872,7 @@ class ConsoleChatController:
                 # intended "no active run to steer" -- and 26000's redirect
                 # hook will ride this same lifecycle.
                 self._active_steer_hooks.pop(owner_id, None)
+                self._active_redirect_hooks.pop(owner_id, None)
                 self._active_capture_details.pop(owner_id, None)
 
     @staticmethod
@@ -20667,6 +20694,11 @@ class ConsoleChatController:
                 on_steer_ready=(
                     lambda steer, _sid=session_id: self._active_steer_hooks.__setitem__(
                         _sid, steer
+                    )
+                ),
+                on_redirect_ready=(
+                    lambda redirect, _sid=session_id: (
+                        self._active_redirect_hooks.__setitem__(_sid, redirect)
                     )
                 ),
                 local_provider=local_provider,

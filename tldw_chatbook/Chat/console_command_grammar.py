@@ -72,6 +72,14 @@ STEER_COMMAND_NAME = "steer"
 STEER_COMMAND_ARGUMENT_HINT = "<guidance for the running agent>"
 STEER_COMMAND_HANDLER_ID = "steer"
 
+#: TASK-26000: cut off the current model response and re-run the turn with
+#: the correction; completed tool results and the streamed partial survive.
+#: /steer lets the current response finish; /redirect is for when it is
+#: already wrong. Stop stays terminal and untouched.
+REDIRECT_COMMAND_NAME = "redirect"
+REDIRECT_COMMAND_ARGUMENT_HINT = "<correction for the running turn>"
+REDIRECT_COMMAND_HANDLER_ID = "redirect"
+
 REWIND_COMMAND_NAME = "rewind"
 REWIND_COMMAND_ARGUMENT_HINT = ""
 REWIND_COMMAND_HANDLER_ID = "rewind"
@@ -268,6 +276,13 @@ def default_console_registry() -> ConsoleCommandRegistry:
             name=STEER_COMMAND_NAME,
             argument_hint=STEER_COMMAND_ARGUMENT_HINT,
             handler_id=STEER_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=REDIRECT_COMMAND_NAME,
+            argument_hint=REDIRECT_COMMAND_ARGUMENT_HINT,
+            handler_id=REDIRECT_COMMAND_HANDLER_ID,
         )
     )
     registry.register(

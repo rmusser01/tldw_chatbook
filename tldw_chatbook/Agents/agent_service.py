@@ -50,6 +50,7 @@ from .agent_models import (
     CONTROL_CAPTURE_INDEX_BASE,
     DIRECT_DISCLOSURE_CONTEXT_FRACTION,
     MAX_STEERING_CHARS,
+    STEERING_SOURCE_REDIRECT,
     STEERING_SOURCE_USER,
     RUN_CANCELLED,
     RUN_DONE,
@@ -1699,6 +1700,17 @@ class AgentService:
         on_primary_steer_ready: (
             Callable[[Callable[[str], str | None]], None] | None
         ) = None,
+        # TASK-26000: fired at primary-mailbox registration with
+        # (redirect_fn, abort_probe). redirect_fn posts a plain-user
+        # correction AND raises the run's abort flag; abort_probe is what the
+        # bridge ORs into its STREAM-cancel predicate only -- never into
+        # LoopDeps.should_cancel, or a redirect would kill the run.
+        on_primary_redirect_ready: (
+            Callable[
+                [Callable[[str], str | None], Callable[[], bool]], None
+            ]
+            | None
+        ) = None,
         review_state_scope: Callable[[str], "contextlib.AbstractContextManager"]
         | None = None,
         install_skill_tool: Callable[[str], ToolResult] | None = None,
@@ -1785,8 +1797,14 @@ class AgentService:
         #: bound to that run -- the Console never needs to learn run ids,
         #: which are minted inside run_turn.
         self.on_primary_steer_ready = on_primary_steer_ready
+        self.on_primary_redirect_ready = on_primary_redirect_ready
         self._primary_steering_lock = threading.Lock()
         self._primary_mailboxes: dict[str, list[tuple[str, str]]] = {}
+        # TASK-26000: per-run abort flag, raised by redirect_primary and
+        # cleared by the drain that consumes the redirect entry -- one lock,
+        # one source of truth for both the stream predicate and the loop's
+        # has_pending_redirect probe.
+        self._primary_redirect_flags: dict[str, threading.Event] = {}
         self.before_tool_dispatch = before_tool_dispatch
         # C1 (probe-verified security regression, pre-merge review of the
         # Phase 5 chat bridge): an optional, generically-shaped seam a
@@ -2636,6 +2654,43 @@ class AgentService:
             mailbox.append((STEERING_SOURCE_USER, stripped))
         return None
 
+    def redirect_primary(self, run_id: str, text: str) -> str | None:
+        """Cut off a LIVE primary run's current model response and re-ask.
+
+        TASK-26000. Same mailbox and validation as `steer_primary`, plus the
+        abort flag: the bridge's stream predicate sees it and returns the
+        partial early; the loop's redirect branch then keeps completed tool
+        results and the visible partial, appends this text as a PLAIN user
+        message, and re-runs the turn. Posting the entry and raising the flag
+        happen under one lock so the loop can never observe one without the
+        other.
+
+        Returns:
+            None when accepted; a human-readable refusal otherwise.
+        """
+        stripped = str(text or "").strip()
+        if not stripped:
+            return "redirect text is empty; there is nothing to deliver"
+        if len(stripped) > MAX_STEERING_CHARS:
+            return (
+                f"redirect text is too long ({len(stripped)} chars; the cap "
+                f"is {MAX_STEERING_CHARS}). Shorten it and send it again."
+            )
+        with self._primary_steering_lock:
+            mailbox = self._primary_mailboxes.get(run_id)
+            if mailbox is None:
+                return "that run is not running (finished, cancelled, or unknown)"
+            mailbox.append((STEERING_SOURCE_REDIRECT, stripped))
+            flag = self._primary_redirect_flags.get(run_id)
+            if flag is not None:
+                flag.set()
+        return None
+
+    def _primary_redirect_pending(self, run_id: str) -> bool:
+        """True between redirect_primary and the drain that consumes it."""
+        flag = self._primary_redirect_flags.get(run_id)
+        return flag is not None and flag.is_set()
+
     def _primary_drain_for(self, run_id: str):
         """The drain closure alone -- safe to hand to LoopDeps before the
         mailbox exists (it just returns [] until registration)."""
@@ -2646,6 +2701,15 @@ class AgentService:
                 if not mailbox:
                     return []
                 drained, mailbox[:] = list(mailbox), []
+                # TASK-26000: a consumed redirect lowers the abort flag --
+                # the NEXT model call must not be cut by a correction that
+                # was already delivered. Same lock as the post, so no gap.
+                if any(
+                    source == STEERING_SOURCE_REDIRECT for source, _ in drained
+                ):
+                    flag = self._primary_redirect_flags.get(run_id)
+                    if flag is not None:
+                        flag.clear()
                 return drained
 
         return drain
@@ -2663,7 +2727,18 @@ class AgentService:
         """
         with self._primary_steering_lock:
             self._primary_mailboxes[run_id] = []
+            self._primary_redirect_flags[run_id] = threading.Event()
         drain = self._primary_drain_for(run_id)
+        if self.on_primary_redirect_ready is not None:
+            try:
+                self.on_primary_redirect_ready(
+                    lambda text: self.redirect_primary(run_id, text),
+                    lambda: self._primary_redirect_pending(run_id),
+                )
+            except Exception:  # noqa: BLE001 -- a broken observer costs nothing
+                logger.opt(exception=True).debug(
+                    "on_primary_redirect_ready raised; redirect hook lost"
+                )
         if self.on_primary_steer_ready is not None:
             try:
                 self.on_primary_steer_ready(
@@ -2679,6 +2754,7 @@ class AgentService:
         """After this, `steer_primary(run_id, ...)` refuses honestly."""
         with self._primary_steering_lock:
             self._primary_mailboxes.pop(run_id, None)
+            self._primary_redirect_flags.pop(run_id, None)
 
     def _fire_post_tool_dispatch(
         self, call: ToolCall, result: ToolResult, duration: float, run_id: str
@@ -6248,6 +6324,13 @@ class AgentService:
             call_model=call_model,
             call_model_with_continuation=call_model,
             fallback=fallback_runtime,
+            # TASK-26000: primary runs only -- children have no redirect
+            # producer (the Console redirects the run it is watching).
+            has_pending_redirect=(
+                (lambda: self._primary_redirect_pending(run_id))
+                if agent_kind == AGENT_KIND_PRIMARY
+                else None
+            ),
             invoke_tool=invoke_tool,
             spawn=spawn,
             invoke_tool_at_step=lambda call, step_index, call_id: invoke_tool(

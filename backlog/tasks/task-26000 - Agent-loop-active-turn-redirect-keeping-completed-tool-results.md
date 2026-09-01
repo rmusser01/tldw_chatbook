@@ -1,9 +1,11 @@
 ---
 id: TASK-26000
 title: 'Agent loop: active-turn redirect keeping completed tool results'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-08-31 15:43'
+updated_date: '2026-09-01 15:29'
 labels:
   - agents
   - console
@@ -26,3 +28,9 @@ Correcting a running agent costs the user every completed tool result. Verified 
 - [ ] #5 Plain Stop with no correction behaves exactly as today and remains terminal
 - [ ] #6 Tests cover: redirect mid-stream retains prior tool results, redirect during tool execution degrades to steering, plain stop unchanged
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. RED loop tests (6, incl. fallback-stickiness enforcer)\n2. Loop: has_pending_redirect probe on LoopDeps + post-transport redirect branch (keep tool results, strip fences from partial, plain user correction, continue in-loop)\n3. Service: redirect_primary + per-run abort flag, drain clears flag atomically, on_primary_redirect_ready hook\n4. Bridge: stream_cut predicate (primary streams only, never LoopDeps.should_cancel) + on_redirect_ready plumb\n5. Console: /redirect command + Redirect button next to Stop (user's chosen entry points), controller redirect_active_run with steer-hook lifecycle\n6. Guide + pins
+<!-- SECTION:PLAN:END -->

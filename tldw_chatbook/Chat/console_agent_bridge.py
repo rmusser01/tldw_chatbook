@@ -2658,6 +2658,9 @@ class _StreamingModelAdapter:
         self._resolution = resolution
         self._assistant_message_id = assistant_message_id
         self._should_cancel = should_cancel
+        # TASK-26000: armed by run_reply's redirect-ready hook; cuts the
+        # PRIMARY's in-flight stream only (see stream_cut in chat_call).
+        self._primary_stream_abort: Callable[[], bool] = lambda: False
         self._loop = loop
         self._native_tools = native_tools
         self._provider_stream_signals = provider_stream_signals
@@ -2796,6 +2799,17 @@ class _StreamingModelAdapter:
             messages_payload, native_tools=self._native_tools
         )
         is_subagent = self._is_subagent(transport_messages)
+        # TASK-26000: a redirect aborts only the PRIMARY's in-flight
+        # model stream. Children keep the plain cancel predicate --
+        # cutting a fleet child's stream on a primary redirect would
+        # truncate its turn with no redirect entry in ITS mailbox to
+        # explain it. Never wired into LoopDeps.should_cancel: aborting
+        # is not cancelling.
+        stream_cut = (
+            self._should_cancel
+            if is_subagent
+            else (lambda: self._should_cancel() or self._primary_stream_abort())
+        )
         request_count = int(getattr(self._thread_loop, "request_count", 0))
         self._thread_loop.request_count = request_count + 1
         route = (
@@ -2960,7 +2974,7 @@ class _StreamingModelAdapter:
                                 update.envelope,
                                 generation_token=self._generation_token,
                             )
-                    if self._should_cancel():
+                    if stream_cut():
                         break
                     continue
                 if isinstance(chunk, ProviderToolCalls):
@@ -2974,7 +2988,7 @@ class _StreamingModelAdapter:
                         terminal_metadata = chunk.metadata
                     if not is_subagent:
                         self._thinking_capture.observe(chunk)
-                    if self._should_cancel():
+                    if stream_cut():
                         break
                     continue
                 visible = gate.feed(chunk)
@@ -2982,7 +2996,7 @@ class _StreamingModelAdapter:
                     self._thinking_capture.observe_answer(visible)
                     self._store.append_stream_chunk(self._assistant_message_id, visible)
                     any_streamed = True
-                if self._should_cancel():
+                if stream_cut():
                     break
             tail = gate.flush_tail()
             if tail and not is_subagent:
@@ -4382,6 +4396,11 @@ class ConsoleAgentBridge:
         | None = None,
         on_steer_ready: Callable[[Callable[[str], str | None]], None]
         | None = None,
+        # TASK-26000: fired once the run's mailbox registers, with a bound
+        # `redirect(text) -> refusal | None` -- the Redirect button's and
+        # /redirect's hook, exactly like on_steer_ready is /steer's.
+        on_redirect_ready: Callable[[Callable[[str], str | None]], None]
+        | None = None,
         change_roots: Sequence[Path] | None = None,
         change_root_aliases: Sequence[str] = (),
         change_review_skipped_roots: Sequence[SkippedReviewRoot] = (),
@@ -5543,6 +5562,16 @@ class ConsoleAgentBridge:
                     status,
                 )
 
+        def _redirect_ready(redirect_fn, abort_probe):
+            # TASK-26000: arm the primary stream's abort probe,
+            # then hand the Console its redirect hook. The probe
+            # reaches ONLY the adapter's stream_cut predicate --
+            # LoopDeps.should_cancel never sees it, so a
+            # redirect can never kill the run.
+            adapter._primary_stream_abort = abort_probe
+            if on_redirect_ready is not None:
+                on_redirect_ready(redirect_fn)
+        
         service = AgentService(
             self._db,
             registry,
@@ -5553,6 +5582,7 @@ class ConsoleAgentBridge:
             # run once its mailbox registers -- run ids are minted inside
             # run_turn, so the caller cannot key by one.
             on_primary_steer_ready=on_steer_ready,
+            on_primary_redirect_ready=_redirect_ready,
             skill_runner=skill_runner,
             skill_file_bindings=skill_file_bindings,
             review_tool_calls=review_tool_calls,

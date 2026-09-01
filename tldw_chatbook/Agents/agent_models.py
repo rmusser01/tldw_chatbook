@@ -95,6 +95,10 @@ ToolOutcome: TypeAlias = Literal["success", "failed", "blocked", "timeout", "can
 # below -- prepended by the mechanism, never trusted from input.
 STEERING_SOURCE_SUPERVISOR = "supervisor"
 STEERING_SOURCE_USER = "user"
+# TASK-26000: an active-turn redirect. Unlike the two steering sources it is
+# rendered PLAIN (a real user reply, no "[Steering from ...]" wrapper) -- the
+# loop branches on it before format_steering_message is ever called.
+STEERING_SOURCE_REDIRECT = "redirect"
 #: Cap on one steering entry's text, enforced by the producers at their own
 #: boundaries (send_to_agent -- Task 2; the panel input -- Task 3). The
 #: ``max_subagent_result_chars`` shape: a plain int ceiling, 4000.

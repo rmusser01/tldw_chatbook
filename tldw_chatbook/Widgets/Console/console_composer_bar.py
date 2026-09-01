@@ -2193,6 +2193,14 @@ class ConsoleComposerBar(Horizontal):
         stop_button.set_class(not run_active, "console-stop-idle")
         stop_button.set_class(not run_active, "console-action-disabled")
         stop_button.styles.display = "block" if run_active else "none"
+        # TASK-26000: Redirect shares Stop's visibility exactly -- present
+        # while (and only while) this tab's run is active.
+        try:
+            redirect_button = self.query_one("#console-redirect-generation", Button)
+        except NoMatches:
+            redirect_button = None
+        if redirect_button is not None:
+            redirect_button.styles.display = "block" if run_active else "none"
 
         # Attach and Save Chatbook no longer live in this row -- their
         # enabled/disabled presentation (including the temporary-chat block
@@ -6049,6 +6057,23 @@ class ConsoleComposerBar(Horizontal):
                 )
                 mic_button.styles.margin = (0, 0, 0, MIC_SEND_GAP)
                 yield mic_button
+                redirect_button = self._bounded_button(
+                    "Redirect",
+                    width=10,
+                    id="console-redirect-generation",
+                    classes="destination-action-button console-redirect-button",
+                    # TASK-26000: conditional like Stop -- costs nothing at
+                    # rest, time-critical when a run is going wrong. Takes
+                    # the composer draft as the correction.
+                    tooltip=(
+                        "Cut off the current response and re-run this turn "
+                        "with your typed correction. Completed tool results "
+                        "are kept."
+                    ),
+                )
+                redirect_button.styles.line_pad = 0
+                redirect_button.styles.display = "none"
+                yield redirect_button
                 stop_button = self._bounded_button(
                     "Stop",
                     width=6,

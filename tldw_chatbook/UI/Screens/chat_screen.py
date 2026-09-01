@@ -249,6 +249,8 @@ from ...Chat.console_command_grammar import (
     RESEARCH_COMMAND_HANDLER_ID,
     RESEARCH_COMMAND_NAME,
     REWIND_COMMAND_HANDLER_ID,
+    REDIRECT_COMMAND_HANDLER_ID,
+    REDIRECT_COMMAND_NAME,
     STEER_COMMAND_HANDLER_ID,
     STEER_COMMAND_NAME,
     REWIND_COMMAND_NAME,
@@ -15020,6 +15022,7 @@ class ChatScreen(BaseAppScreen):
         STREAM_VIDEO_COMMAND_NAME: STREAM_VIDEO_COMMAND_HANDLER_ID,
         REWIND_COMMAND_NAME: REWIND_COMMAND_HANDLER_ID,
         STEER_COMMAND_NAME: STEER_COMMAND_HANDLER_ID,
+        REDIRECT_COMMAND_NAME: REDIRECT_COMMAND_HANDLER_ID,
         RESEARCH_COMMAND_NAME: RESEARCH_COMMAND_HANDLER_ID,
     }
 
@@ -15080,6 +15083,7 @@ class ChatScreen(BaseAppScreen):
             STREAM_VIDEO_COMMAND_HANDLER_ID: self._console_command_stream_video,
             REWIND_COMMAND_HANDLER_ID: self._console_command_rewind,
             STEER_COMMAND_HANDLER_ID: self._console_command_steer,
+            REDIRECT_COMMAND_HANDLER_ID: self._console_command_redirect,
             RESEARCH_COMMAND_HANDLER_ID: self._console_command_research,
         }
         handler = dispatch_map.get(handler_id)
@@ -15501,6 +15505,56 @@ class ChatScreen(BaseAppScreen):
         self._clear_console_composer_draft()
         self.app_instance.notify("Steered into the running turn.")
         return True
+
+    async def _console_command_redirect(self, parse: CommandParse) -> bool:
+        """`/redirect <text>`: cut off the current response, keep completed
+        tool results and the streamed partial, re-run the turn with the
+        correction as a plain user message.
+
+        TASK-26000. /steer lets the current response finish; this is for
+        when it is already wrong. Stop is untouched and remains terminal.
+        Refusals surface as a notify, never a silent drop.
+        """
+        text = (parse.args or "").strip()
+        controller = self._ensure_console_chat_controller()
+        refusal = controller.redirect_active_run(text)
+        if refusal is not None:
+            self.app_instance.notify(
+                f"Not redirected: {refusal}", severity="warning"
+            )
+            return False
+        # Same double-delivery guard as /steer (review I-3): dispatch
+        # restores the stash, so the command would sit in the composer and
+        # one habitual extra Enter would redirect the run twice.
+        self._clear_console_composer_draft()
+        self.app_instance.notify("Redirected — re-running the turn.")
+        return True
+
+    async def handle_console_redirect_generation(
+        self, event: Button.Pressed
+    ) -> None:
+        """The Redirect button next to Stop: sends the composer draft as the
+        correction. An empty draft is a prompt to type one, not a no-op."""
+        event.stop()
+        if self._console_setup_modal_blocking():
+            return
+        composer = self._console_composer_or_none()
+        text = composer.draft_text().strip() if composer is not None else ""
+        if not text:
+            self.app_instance.notify(
+                "Type your correction in the composer, then press Redirect.",
+                severity="warning",
+            )
+            return
+        controller = self._ensure_console_chat_controller()
+        refusal = controller.redirect_active_run(text)
+        if refusal is not None:
+            self.app_instance.notify(
+                f"Not redirected: {refusal}", severity="warning"
+            )
+            return
+        self._clear_console_composer_draft()
+        self.app_instance.notify("Redirected — re-running the turn.")
 
     async def _console_command_rewind(self, parse: CommandParse) -> bool:
         """Open the `/rewind` menu over the active session's prior USER prompts.
@@ -19077,6 +19131,9 @@ class ChatScreen(BaseAppScreen):
             "console-collapsed-stop-generation",
         }:
             await self.handle_console_stop_generation(event)
+            return
+        if button_id == "console-redirect-generation":
+            await self.handle_console_redirect_generation(event)
             return
         if button_id == "console-settings-open":
             await self.on_console_settings_open(event)
