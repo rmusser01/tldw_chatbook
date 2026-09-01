@@ -7168,6 +7168,9 @@ class ChatScreen(BaseAppScreen):
                 self._ensure_console_prompt_history() if prompts is not None else None
             ),
             "set_pending_approval": self._set_console_pending_approval,
+            # ADR-090: UI-thread bridge to patch a mounted approval card's
+            # advisory summary line in place (never re-runs set_batch).
+            "update_pending_approval_summary": self._update_console_approval_summary,
             # Task 9 (parked background approvals): UI-thread bridge target
             # for a NON-active session's approval round -- badge + one
             # toast, never the mounted-card path above.
@@ -19194,6 +19197,15 @@ class ChatScreen(BaseAppScreen):
         self.set_task_resume_state(
             replace(self._task_resume_state, pending_approval=approval)
         )
+
+    def _update_console_approval_summary(self, round_id: str, text: str) -> None:
+        """ADR-090: patch the mounted approval card's summary line in place."""
+        try:
+            task_cards = self.query_one("#console-task-surface", ChatTaskCards)
+            card = task_cards.query_one(ChatApprovalCard)
+        except QueryError:
+            return
+        card.set_summary(round_id, text)
 
     def _park_console_approval(self, session_id: str) -> None:
         """PA-T9 (parked background approvals): badge a NON-viewed session's

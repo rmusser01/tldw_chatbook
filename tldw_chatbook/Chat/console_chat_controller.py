@@ -36,6 +36,7 @@ import weakref
 from loguru import logger
 from rich.markup import escape as escape_markup
 
+from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import TOOL_DESCRIPTION_CAPTURE_CAP
 from tldw_chatbook.Character_Chat.emote_directives import (
     CharacterEmoteAssetReference,
     CharacterEmoteRunSnapshot,
@@ -320,6 +321,12 @@ from tldw_chatbook.Chat.console_skill_resolver import (
     resolve_skill_command,
 )
 from tldw_chatbook.Chat.prompt_history import PromptHistory
+from tldw_chatbook.Chat.permission_summary_service import (
+    build_messages_tail,
+    pending_calls_info_from_payload,
+    resolve_permission_summary,
+    summarize_pending_round,
+)
 
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.agent_lesson_promotion import ManagedSkillProposalGate
@@ -372,6 +379,7 @@ from tldw_chatbook.config import (
     get_cli_setting,
     apply_console_capture_settings,
     runtime_capture_policy,
+    get_runtime_config_snapshot,
 )
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 from tldw_chatbook.Library.library_rag_service import (
@@ -1395,11 +1403,65 @@ def _collect_mcp_pending(
     pending: list["MCPPendingCall"] = []
     for call in calls:
         gate = provider.pending_gate_for(
-            call.name, call.args, str(getattr(call, "call_id", "") or "")
+            call.name,
+            call.args,
+            str(getattr(call, "call_id", "") or ""),
+            rationale=str(getattr(call, "rationale", "") or ""),
         )
         if gate is not None:
             pending.append(gate)
     return pending
+
+
+def _build_approval_payload(
+    round_id: str,
+    session_id: str,
+    run_id: str,
+    pending: "list[MCPPendingCall]",
+    timeout_seconds: float,
+    deadline: float | None,
+) -> dict[str, Any]:
+    """Marshal one approval round's card payload.
+
+    ADR-090: rows carry ``rationale`` (the model's advisory context) and
+    ``description`` (the tool definition's own text, for the external
+    summarizer); the payload carries a ``summary`` slot that starts ``None``
+    and is filled by the advisory summarizer -- payload-carried so any
+    remount re-renders it rather than depending on a live patch surviving.
+    """
+    return {
+        "round_id": round_id,
+        "session_id": session_id,
+        "run_id": run_id,
+        "calls": [
+            {
+                "llm_name": call.llm_name,
+                "server_key": call.server_key,
+                "tool_name": call.tool_name,
+                "server_label": call.server_label,
+                "arguments": dict(call.arguments or {}),
+                "reason": call.reason,
+                "options": list(call.options),
+                "effects": list(call.effects),
+                "execution_policy": (
+                    call.execution_policy.value
+                    if isinstance(call.execution_policy, ToolExecutionPolicy)
+                    else ToolExecutionPolicy.BOUNDED_ABANDONABLE.value
+                ),
+                "path_precheck_failed": call.path_precheck_failed,
+                "call_id": call.call_id,
+                "full_command": call.full_command,
+                "warning": call.warning,
+                "scope_notice": call.scope_notice,
+                "rationale": str(getattr(call, "rationale", "") or ""),
+                "description": str(getattr(call, "description", "") or ""),
+            }
+            for call in pending
+        ],
+        "timeout_seconds": timeout_seconds,
+        "deadline_monotonic": deadline,
+        "summary": None,
+    }
 
 
 def build_mcp_review_hook(
@@ -1814,6 +1876,10 @@ def build_tool_review_hook(
                     # refuse another in the same batch. Empty on the fence
                     # path, where the runtime falls back to the name.
                     call_id=str(getattr(call, "call_id", "") or ""),
+                    rationale=str(getattr(call, "rationale", "") or ""),
+                    description=str(getattr(tool, "description", "") or "")[
+                        :TOOL_DESCRIPTION_CAPTURE_CAP
+                    ],
                     reason="risk_floored" if state.risk_floored else "ask",
                     options=("approve_once", "approve_session", "deny"),
                     # TASK-1231/F3 AC2: pre-flight the roots check for the
@@ -2014,6 +2080,10 @@ def build_local_review_hook(
                 call.name,
                 call.args,
                 str(getattr(call, "call_id", "") or ""),
+                # Qodo review #10: the local owner must receive the call's
+                # advisory rationale like the MCP and builtin owners do, or
+                # every local approval row renders without model context.
+                rationale=str(getattr(call, "rationale", "") or ""),
                 run_id=run_id,
             )
             if gate is not None:
@@ -3139,6 +3209,11 @@ class ConsoleChatController:
         #: _set_console_pending_approval``). Always invoked through
         #: ``self.app.call_from_thread`` from ``request_mcp_approvals``.
         self.set_pending_approval: Callable[[dict[str, Any] | None], None] | None = None
+        #: ADR-090: UI-thread bridge that patches a mounted approval card's
+        #: advisory summary line ``(round_id, text)``. Registered by the
+        #: Console screen alongside ``set_pending_approval``; None in
+        #: headless contexts and delivery silently no-ops.
+        self.update_pending_approval_summary: Callable[[str, str], None] | None = None
         #: Task 9 (parked background approvals): UI-thread callback invoked
         #: (via ``self.app.call_from_thread``) when ``request_mcp_approvals``
         #: raises a round for a NON-active session -- sets the fleet
@@ -9670,9 +9745,15 @@ class ConsoleChatController:
         # "card state derives from the run's pending review state" rule
         # every other activation path follows.
         if self.set_pending_approval is not None:
-            self.set_pending_approval(
-                self._head_round_payload(self._parked_approval_payloads, session.id)
+            payload = self._head_round_payload(
+                self._parked_approval_payloads, session.id
             )
+            self.set_pending_approval(payload)
+            # ADR-090: this re-derive bypasses `_marshal_pending_approval`,
+            # so the summary trigger is armed here too (always None for a
+            # fresh session today; fire-once guards any future payload).
+            if isinstance(payload, dict):
+                self._maybe_fire_permission_summary(payload)
         # TASK-910: same re-derive for the skill-install/script cards -- a
         # brand-new session can never itself have a parked confirm, so this
         # always resolves to clearing whatever the session being left behind
@@ -10042,9 +10123,16 @@ class ConsoleChatController:
         # parking -- the round now stays alive until its own resolution
         # (decision, cancel, or timeout).
         if self.set_pending_approval is not None:
-            self.set_pending_approval(
-                self._head_round_payload(self._parked_approval_payloads, session_id)
+            payload = self._head_round_payload(
+                self._parked_approval_payloads, session_id
             )
+            self.set_pending_approval(payload)
+            # ADR-090: this mount of a stored payload bypasses
+            # `_marshal_pending_approval`, so a round that armed while
+            # parked fires its advisory summary HERE (fire-once makes the
+            # switch-away-and-back re-mount safe).
+            if isinstance(payload, dict):
+                self._maybe_fire_permission_summary(payload)
         # TASK-910: skill-install/script confirms now get the SAME park/
         # re-derive treatment as MCP batch approvals above -- a context
         # change (switch away) no longer force-denies either bridge's
@@ -10214,11 +10302,15 @@ class ConsoleChatController:
         if new_active_id is not None and new_active_id != previous_active_id:
             self.mark_session_visited(new_active_id)
             if self.set_pending_approval is not None:
-                self.set_pending_approval(
-                    self._head_round_payload(
-                        self._parked_approval_payloads, new_active_id
-                    )
+                payload = self._head_round_payload(
+                    self._parked_approval_payloads, new_active_id
                 )
+                self.set_pending_approval(payload)
+                # ADR-090: neighbor auto-activation is a mount of a stored
+                # payload outside `_marshal_pending_approval` -- arm the
+                # summary trigger here too (fire-once; None clears no-op).
+                if isinstance(payload, dict):
+                    self._maybe_fire_permission_summary(payload)
             # TASK-910: same re-derive for the skill-install/script cards --
             # closing the ACTIVE session auto-activates a neighbor, which is
             # now the VIEWED session exactly as if `switch_session` had
@@ -10758,6 +10850,11 @@ class ConsoleChatController:
             # approval` snapshots the box before writing to it) can never
             # turn a revoked round back into an approval.
             "revoked": False,
+            # ADR-090: advisory summary for this round (payload-carried so
+            # remounts re-render it) and the fire-once guard for the
+            # external summarizer (no-call outcomes also consume it).
+            "summary": None,
+            "summary_fired": False,
         }
         # F2b fix (Qodo wave): guard the round registration -- the UI
         # thread's `resolve_pending_approval` (TASK-913: fails closed by
@@ -10773,40 +10870,18 @@ class ConsoleChatController:
         # card renders no countdown copy for 0; see
         # `format_approval_deadline`).
         deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
-        payload = {
-            "round_id": round_id,
-            "session_id": owning_session_id,
-            "run_id": owning_run_id,
-            "calls": [
-                {
-                    "llm_name": call.llm_name,
-                    "server_key": call.server_key,
-                    "tool_name": call.tool_name,
-                    "server_label": call.server_label,
-                    "arguments": dict(call.arguments or {}),
-                    "reason": call.reason,
-                    "options": list(call.options),
-                    "effects": list(call.effects),
-                    "execution_policy": (
-                        call.execution_policy.value
-                        if isinstance(call.execution_policy, ToolExecutionPolicy)
-                        else ToolExecutionPolicy.BOUNDED_ABANDONABLE.value
-                    ),
-                    "path_precheck_failed": call.path_precheck_failed,
-                    "call_id": call.call_id,
-                    "full_command": call.full_command,
-                    "warning": call.warning,
-                    "scope_notice": call.scope_notice,
-                }
-                for call in pending
-            ],
-            "timeout_seconds": timeout_seconds,
-            # Qodo PR #1836 finding 1: the absolute deadline, so a mount
-            # that happens AFTER arm (promotion, switch-back, attach) can
-            # show the remaining window instead of the arm-time total --
-            # see `_head_round_payload`'s snapshot.
-            "deadline_monotonic": deadline,
-        }
+        # Qodo PR #1836 finding 1: the absolute deadline, so a mount
+        # that happens AFTER arm (promotion, switch-back, attach) can
+        # show the remaining window instead of the arm-time total --
+        # see `_head_round_payload`'s snapshot.
+        payload = _build_approval_payload(
+            round_id,
+            owning_session_id,
+            owning_run_id,
+            pending,
+            timeout_seconds,
+            deadline,
+        )
         # Task 9: park rather than mount when this round's session is a
         # DIFFERENT, background session -- `session_id is None` (a legacy
         # caller with no session context) always mounts, matching every
@@ -10870,12 +10945,23 @@ class ConsoleChatController:
                 if self.app is not None and self.park_pending_approval is not None:
                     self.app.call_from_thread(self.park_pending_approval, session_id)
             elif is_head:
-                self._marshal_pending_approval(payload)
+                # ADR-090: deliver the payload WITHOUT the summary fire hook
+                # here -- the human-input wait mark below must be entered
+                # with dev's original marshal→mark spacing, or the hook's
+                # config read widens the window in which an armed round is
+                # not yet marked as waiting (regression caught by
+                # test_request_mcp_approvals_marks_human_input_wait_while_round_armed).
+                self._marshal_pending_approval(payload, fire_summary=False)
             # ADR-067: mark this run as waiting on a human decision for the
             # duration of the wait, so a per-call wrapper hosting this round
             # (the invoke-path fallback approval) pauses its deadline -- an
             # indefinite wait must not trip `max_tool_call_seconds`.
             with use_human_input_wait(owning_run_id):
+                # ADR-090: fire the advisory summarizer now, INSIDE the
+                # wait mark -- the payload is already mounted and the mark
+                # is already process state, so the hook's config read
+                # cannot delay either.
+                self._maybe_fire_permission_summary(payload)
                 while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
                     if self._is_session_cancelled(
                         session_id,
@@ -11071,10 +11157,143 @@ class ConsoleChatController:
                     "Failed to record cancelled MCP approval decision"
                 )
 
-    def _marshal_pending_approval(self, payload: dict[str, Any] | None) -> None:
-        """Push ``payload`` (or clear it) onto the UI thread, if wired."""
+    def _marshal_pending_approval(
+        self, payload: dict[str, Any] | None, *, fire_summary: bool = True
+    ) -> None:
+        """Push ``payload`` (or clear it) onto the UI thread, if wired.
+
+        Args:
+            payload: The approval payload dict, or ``None`` to clear.
+            fire_summary: Whether to run the ADR-090 advisory-summary
+                trigger check after delivery. The arm-time head-mount site
+                passes ``False`` and fires the check itself inside the
+                ``use_human_input_wait`` mark, so the hook's config read
+                cannot sit between payload delivery and the wait mark.
+        """
         if self.app is not None and self.set_pending_approval is not None:
             self.app.call_from_thread(self.set_pending_approval, payload)
+        if fire_summary and isinstance(payload, dict):
+            self._maybe_fire_permission_summary(payload)
+
+    def _maybe_fire_permission_summary(self, payload: dict[str, Any]) -> None:
+        """Fire the external summarizer once per round, if configured.
+
+        ADR-090 trigger: ``fallback`` only when some pending row lacks a
+        rationale, ``always`` for every round with rows. One call per
+        ``round_id`` -- no-call outcomes also consume the once-flag, so
+        exactly one trigger check runs per round no matter how many times
+        it mounts. Called from EVERY path that marshals a stored approval
+        payload to the UI: ``_marshal_pending_approval`` (arm-time head
+        mount), the session-activation mounts (``new_session``/
+        ``switch_session``/``close_session`` neighbor activation,
+        ``remount_pending_approval_for_active_session`` headless attach)
+        and ``_remount_head`` (sibling promotion on resolve/revoke) -- so
+        a round that armed while parked fires when its card actually
+        mounts. Never raises.
+        """
+        round_id = str(payload.get("round_id") or "")
+        rows = payload.get("calls") or []
+        if not round_id or not rows:
+            return
+        # Lock order: config lock FIRST, then `_approval_state_lock` (see
+        # `run_if_runtime_config_generation_current` in config.py) -- so the
+        # config read happens before the approval lock is taken.
+        try:
+            resolution = resolve_permission_summary(
+                get_runtime_config_snapshot().values
+            )
+        except Exception:  # noqa: BLE001 -- advisory only
+            resolution = None
+        # A wasted resolve when the once-flag is already consumed is harmless.
+        with self._approval_state_lock:
+            state = self._pending_approval_rounds.get(round_id)
+            if state is None or state.get("summary_fired"):
+                return
+            if resolution is None or not resolution.active:
+                state["summary_fired"] = True
+                return
+            needs = resolution.mode == "always" or any(
+                not str(row.get("rationale") or "") for row in rows
+            )
+            state["summary_fired"] = True
+            if not needs:
+                return
+        try:
+            threading.Thread(
+                target=self._permission_summary_worker,
+                args=(round_id, payload, resolution),
+                daemon=True,
+                name=f"permission-summary-{round_id}",
+            ).start()
+        except Exception:  # noqa: BLE001 -- advisory only
+            # A failed spawn must not destroy the approval round; the summary
+            # lane is advisory-only, so swallow it (content-free log below).
+            logger.debug("permission summary thread spawn failed")
+
+    def _permission_summary_worker(
+        self, round_id: str, payload: dict[str, Any], resolution: object
+    ) -> None:
+        """Worker THREAD: run the advisory call, deliver on the UI thread.
+
+        The approval wait loop is never blocked and the round's deadline is
+        unaffected; a slow call that outlives the round is dropped on
+        delivery. Content-free failures only (ADR-090).
+        """
+        try:
+            tail = build_messages_tail(
+                self._summary_tail_messages(payload), resolution.tail_max_chars
+            )
+            info = pending_calls_info_from_payload(payload.get("calls") or [])
+            text = summarize_pending_round(resolution, tail, info)
+        except Exception:  # noqa: BLE001 -- advisory only
+            text = None
+        if not text or self.app is None:
+            return
+        self.app.call_from_thread(
+            self._deliver_permission_summary, round_id, payload, text
+        )
+
+    def _summary_tail_messages(self, payload: dict[str, Any]) -> list:
+        """User/assistant text projection of the round's stored conversation.
+
+        Uses the same message flattening as world-info scanning
+        (``_normalize_world_info_history``) and the same stored-message
+        source its call sites feed it (``_provider_messages_for_session``,
+        which reads ``self.store.messages_for_session`` and emits the
+        provider-dict shape the flattener consumes); keeps the defensive
+        no-raise posture.
+        """
+        try:
+            session_id = str(payload.get("session_id") or "")
+            messages: list = list(
+                self._provider_messages_for_session(session_id)
+                if session_id
+                else []
+            )
+        except Exception:  # noqa: BLE001 -- advisory only
+            return []
+        return _normalize_world_info_history(messages)
+
+    def _deliver_permission_summary(
+        self, round_id: str, payload: dict[str, Any], text: str
+    ) -> None:
+        """UI THREAD: store the summary, then patch the mounted card.
+
+        Drops resolved/revoked rounds and unknown ids; writes the payload's
+        ``summary`` slot (the source of truth for remounts) before the live
+        patch. Never re-runs ``set_batch``.
+        """
+        with self._approval_state_lock:
+            state = self._pending_approval_rounds.get(round_id)
+            if state is None or state["event"].is_set():
+                return
+            state["summary"] = text
+        payload["summary"] = text
+        if self.update_pending_approval_summary is not None:
+            try:
+                self.update_pending_approval_summary(round_id, text)
+            except Exception:  # noqa: BLE001 -- advisory only
+                pass
 
     # -- PR0: per-round retained payloads ------------------------------
     #
@@ -11201,13 +11420,21 @@ class ConsoleChatController:
             return
 
         def _apply() -> None:
-            if session_id is None:
-                active = self.store.active_session_id or ""
-                setter(self._head_round_payload(store, active))
+            target = session_id
+            if target is None:
+                target = self.store.active_session_id or ""
+            elif target != (self.store.active_session_id or ""):
                 return
-            if session_id != (self.store.active_session_id or ""):
-                return
-            setter(self._head_round_payload(store, session_id))
+            payload = self._head_round_payload(store, target)
+            setter(payload)
+            # ADR-090: this is the promotion mount (a head resolving or a
+            # run revoking hands the card to the queued sibling) and it
+            # bypasses `_marshal_pending_approval`, so the summary trigger
+            # is armed here too. No-op for non-MCP stores sharing this
+            # helper (skill bridges): their rounds are unknown to
+            # `_pending_approval_rounds`, and fire-once guards repeats.
+            if isinstance(payload, dict):
+                self._maybe_fire_permission_summary(payload)
 
         self.app.call_from_thread(_apply)
 
@@ -11246,6 +11473,11 @@ class ConsoleChatController:
         if payload is None:
             return False
         self.set_pending_approval(payload)
+        # ADR-090: a headless attach is often the FIRST mount a parked
+        # round ever gets -- arm the summary trigger here (bypasses
+        # `_marshal_pending_approval`; fire-once makes re-attaches safe).
+        if isinstance(payload, dict):
+            self._maybe_fire_permission_summary(payload)
         return True
 
     def _approval_view_is_detached(self) -> bool:

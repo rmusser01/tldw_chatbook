@@ -1425,3 +1425,32 @@ def test_compose_local_provider_without_bridge_registers_no_todo_spec(
     local_provider, _hook = _compose_local_provider(controller, session_id=session.id)
 
     assert _registered_task_tools(local_provider) == set()
+
+
+def test_hook_passes_rationale_onto_local_pending_rows(tmp_path):
+    """Qodo review #10: the local owner receives each call's rationale.
+
+    Without this, every local approval row renders without the model's
+    advisory context even though MCP and builtin rows carry it.
+    """
+    p = provider(ASK, tmp_path)
+    seen: list[list[MCPPendingCall]] = []
+
+    def decide(pending: list[MCPPendingCall]) -> dict[str, str]:
+        seen.append(pending)
+        return {"fs_list": "deny"}
+
+    hook = build_local_review_hook(p, decide)
+    hook(
+        [
+            ToolCall(
+                name="fs_list",
+                args={"path": "."},
+                rationale="Listing the workspace to find the config",
+            ),
+            ToolCall(name="fs_list", args={"path": "sub"}),
+        ],
+        RUN,
+    )
+    assert seen[0][0].rationale == "Listing the workspace to find the config"
+    assert seen[0][1].rationale == ""
