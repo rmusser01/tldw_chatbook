@@ -236,11 +236,18 @@ class SchedulesWorkbench(BaseAppScreen):
                 with TabPane("Queue", id="scheduling-queue-tab"):
                     with Horizontal(id="scheduling-workbench"):
                         with Vertical(id="scheduling-list-pane"):
-                            yield Static(
-                                "Schedule Queue",
-                                id="scheduling-list-title",
-                                classes="scheduling-column-title",
-                            )
+                            with Horizontal(id="scheduling-list-header"):
+                                yield Static(
+                                    "Schedule Queue",
+                                    id="scheduling-list-title",
+                                    classes="scheduling-column-title",
+                                )
+                                yield Button(
+                                    "+ New",
+                                    id="scheduling-new-task",
+                                    variant="primary",
+                                    tooltip="Schedule a new task (c).",
+                                )
                             yield Input(
                                 placeholder="Filter: title, type, or status…",
                                 id="scheduling-queue-filter",
@@ -675,6 +682,11 @@ class SchedulesWorkbench(BaseAppScreen):
             exclusive=True,
             group="schedules-delete-task",
         )  # type: ignore[arg-type]
+
+    @on(Button.Pressed, "#scheduling-new-task")
+    def _on_new_task_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.action_create_reminder()
 
     @on(Button.Pressed, "#schedules-follow-in-console")
     def follow_latest_schedule_run_in_console(self, event: Button.Pressed) -> None:

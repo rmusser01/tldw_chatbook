@@ -13587,6 +13587,19 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     margin-bottom: 1;
 }
 
+#scheduling-list-header {
+    height: auto;
+}
+
+#scheduling-list-header #scheduling-list-title {
+    width: 1fr;
+}
+
+#scheduling-new-task {
+    width: auto;
+    min-width: 9;
+}
+
 /* Empty state */
 #scheduling-task-detail-empty-state {
     color: $text-muted;
