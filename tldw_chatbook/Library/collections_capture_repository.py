@@ -8,7 +8,7 @@ import re
 import sqlite3
 import uuid
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Mapping, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
@@ -18,6 +18,8 @@ from .collections_capture_models import (
     CAPTURE_PAGE_SIZE,
     CAPTURE_STATUSES,
     CaptureActionResult,
+    CaptureConflict,
+    CaptureConflictError,
     CaptureDetail,
     CaptureHighlight,
     CaptureHighlightDraft,
@@ -144,6 +146,17 @@ def _fts_query(search: str) -> str | None:
     return " AND ".join(f'"{token}"*' for token in tokens)
 
 
+def _inclusive_date_to(value: str) -> tuple[str, str]:
+    """Return a comparison and bound that include a date-only final day."""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        return "item.created_at <= ?", value
+    try:
+        following_day = date.fromisoformat(value) + timedelta(days=1)
+    except ValueError as exc:
+        raise CollectionsCaptureError("invalid_date_to") from exc
+    return "item.created_at < ?", following_day.isoformat()
+
+
 class CollectionsCaptureRepository:
     """Persist one Local capture authority in a shared Collections database."""
 
@@ -211,8 +224,9 @@ class CollectionsCaptureRepository:
             where.append("item.created_at >= ?")
             params.append(request.date_from)
         if request.date_to is not None:
-            where.append("item.created_at <= ?")
-            params.append(request.date_to)
+            date_to_clause, date_to_bound = _inclusive_date_to(request.date_to)
+            where.append(date_to_clause)
+            params.append(date_to_bound)
         for tag in request.tags:
             where.append(
                 "EXISTS ("
@@ -351,6 +365,8 @@ class CollectionsCaptureRepository:
                 read_at = existing["read_at"]
                 if request.status == "read" and read_at is None:
                     read_at = now
+                elif request.status in {"saved", "reading"}:
+                    read_at = None
                 connection.execute(
                     "UPDATE collection_capture_items SET "
                     "submitted_url = ?, domain = ?, title = ?, summary = ?, "
@@ -423,7 +439,12 @@ class CollectionsCaptureRepository:
         with self.db.transaction() as connection:
             row = self._active_item_row(connection, identity)
             if int(row["revision"]) != expected_revision:
-                raise CollectionsCaptureError("revision_conflict")
+                current = self._get_detail(connection, identity)
+                if current is None:
+                    raise CollectionsCaptureError("capture_not_found")
+                raise CaptureConflictError(
+                    CaptureConflict(identity, expected_revision, current)
+                )
 
             values: dict[str, Any] = {}
             for field in _STRIPPED_UPDATE_FIELDS & changes.keys():
@@ -690,6 +711,7 @@ class CollectionsCaptureRepository:
         normalized_id = self._opaque_id(highlight_id, "invalid_highlight_id")
         expected_revision = self._expected_revision(expected_revision)
         with self.db.transaction() as connection:
+            self._active_item_row(connection, identity)
             row = connection.execute(
                 "SELECT revision FROM collection_capture_highlights "
                 "WHERE authority_key = ? AND capture_id = ? AND highlight_id = ?",
@@ -801,7 +823,12 @@ class CollectionsCaptureRepository:
         with self.db.transaction() as connection:
             row = self._active_item_row(connection, identity)
             if int(row["revision"]) != expected_revision:
-                raise CollectionsCaptureError("revision_conflict")
+                current = self._get_detail(connection, identity)
+                if current is None:
+                    raise CollectionsCaptureError("capture_not_found")
+                raise CaptureConflictError(
+                    CaptureConflict(identity, expected_revision, current)
+                )
             connection.execute(
                 "UPDATE collection_capture_items SET purge_state = 'pending', "
                 "updated_at = ?, revision = revision + 1 "

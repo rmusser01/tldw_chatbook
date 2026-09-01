@@ -581,6 +581,16 @@ class CaptureConflict:
         return self.current.revision
 
 
+class CaptureConflictError(CollectionsCaptureError):
+    """Revision conflict carrying the current capture aggregate."""
+
+    def __init__(self, conflict: CaptureConflict) -> None:
+        if not isinstance(conflict, CaptureConflict):
+            raise CollectionsCaptureError("invalid_capture_conflict")
+        self.conflict = conflict
+        super().__init__("revision_conflict")
+
+
 @dataclass(frozen=True)
 class SavedCaptureSearch:
     authority_key: str
@@ -860,6 +870,7 @@ __all__ = [
     "CaptureCapabilities",
     "CaptureCapability",
     "CaptureConflict",
+    "CaptureConflictError",
     "CaptureContentResult",
     "CaptureDetail",
     "CaptureHighlight",

@@ -162,6 +162,9 @@ def test_update_uses_revision_cas_and_replaces_mutable_reading_state(
             changes={"status": "read"},
         )
     assert caught.value.reason == "revision_conflict"
+    assert caught.value.conflict.identity == saved.identity
+    assert caught.value.conflict.expected_revision == saved.revision + 1
+    assert caught.value.conflict.current == saved
 
     updated = repository.update_capture(
         saved.identity,
@@ -218,7 +221,8 @@ def test_fts_and_exact_filters_are_authority_bounded(
     )
     with repository.db.transaction() as connection:
         connection.execute(
-            "UPDATE collection_capture_items SET created_at = published_at "
+            "UPDATE collection_capture_items "
+            "SET created_at = published_at || 'T12:00:00Z' "
             "WHERE authority_key = ?",
             (repository.authority_key,),
         )
@@ -242,11 +246,24 @@ def test_fts_and_exact_filters_are_authority_bounded(
         CapturePageRequest(repository.authority_key, date_from="2026-01-01")
     ).total == 1
     assert repository.list_page(
-        CapturePageRequest(repository.authority_key, date_to="2025-12-31")
+        CapturePageRequest(repository.authority_key, date_to="2025-06-01")
     ).total == 1
     assert repository.list_page(
         CapturePageRequest(repository.authority_key, search='Rust: "guide"')
     ).total == 1
+
+
+def test_canonical_resave_clears_read_timestamp_for_explicit_unread_status(
+    repository: CollectionsCaptureRepository,
+) -> None:
+    read = _save(repository, "read-state", status="read").capture
+    assert read is not None and read.read_at is not None
+
+    saved = _save(repository, "read-state", status="saved").capture
+    assert saved is not None
+    assert saved.identity == read.identity
+    assert saved.status == "saved"
+    assert saved.read_at is None
 
 
 @pytest.mark.parametrize("sort", CAPTURE_SORTS)
@@ -414,12 +431,24 @@ def test_highlights_note_links_and_hard_delete_tombstone(
     assert repository.list_note_links(capture.identity) == (link,)
     assert repository.unlink_note(capture.identity, link.link_id).success
 
+    retained_highlight = repository.save_highlight(
+        capture.identity,
+        CaptureHighlightDraft("Retained until purge finishes"),
+    )
+
     result = repository.hard_delete(
         capture.identity,
         expected_revision=capture.revision,
     )
     assert result.success is True
     assert repository.get_detail(capture.identity) is None
+    with pytest.raises(CollectionsCaptureError) as caught:
+        repository.delete_highlight(
+            capture.identity,
+            retained_highlight.highlight_id,
+            expected_revision=retained_highlight.revision,
+        )
+    assert caught.value.reason == "capture_not_found"
     with repository.db.connection() as connection:
         row = connection.execute(
             "SELECT purge_state FROM collection_capture_items "
