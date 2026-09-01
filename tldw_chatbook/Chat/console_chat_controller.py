@@ -11188,14 +11188,14 @@ class ConsoleChatController:
         rows = payload.get("calls") or []
         if not round_id or not rows:
             return
-        from tldw_chatbook.Chat.permission_summary_service import (
-            resolve_permission_summary,
-        )
-
         # Lock order: config lock FIRST, then `_approval_state_lock` (see
         # `run_if_runtime_config_generation_current` in config.py) -- so the
         # config read happens before the approval lock is taken.
         try:
+            from tldw_chatbook.Chat.permission_summary_service import (
+                resolve_permission_summary,
+            )
+
             resolution = resolve_permission_summary(
                 get_runtime_config_snapshot().values
             )

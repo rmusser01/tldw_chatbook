@@ -1,5 +1,7 @@
 """ADR-090: fire-once trigger matrix + guarded delivery, no real threads."""
 
+import builtins
+
 import threading
 from types import SimpleNamespace
 
@@ -61,6 +63,25 @@ def test_mode_off_never_fires(monkeypatch):
     }
     ctrl._maybe_fire_permission_summary(_payload())
     assert _ThreadStub.started == []
+    assert ctrl._pending_approval_rounds["r1"]["summary_fired"] is True
+
+
+def test_summary_service_import_failure_is_advisory(monkeypatch):
+    ctrl = _bare_controller()
+    ctrl._pending_approval_rounds["r1"] = {
+        "event": threading.Event(), "summary_fired": False,
+    }
+    real_import = builtins.__import__
+
+    def fail_summary_service_import(name, *args, **kwargs):
+        if name == "tldw_chatbook.Chat.permission_summary_service":
+            raise ImportError("summary service unavailable")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fail_summary_service_import)
+
+    ctrl._maybe_fire_permission_summary(_payload())
+
     assert ctrl._pending_approval_rounds["r1"]["summary_fired"] is True
 
 
