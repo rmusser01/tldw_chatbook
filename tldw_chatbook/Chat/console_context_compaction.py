@@ -379,6 +379,37 @@ class CompactionTransactionResult:
     reason: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ManualSummaryPreview:
+    """TASK-26017: what a manual summarize WILL do, before it does it.
+
+    A pure projection of the already-computed ``ManualMemoryPlan`` -- no
+    model call, no repository write. Shown in the confirm dialog so the
+    user can commit or discard with the numbers in front of them.
+    """
+
+    from_here: bool
+    turns_summarized: int
+    turns_retained: int
+    before_tokens: int
+    after_tokens: int
+    output_cap: int
+
+
+def manual_summary_preview(
+    plan: ManualMemoryPlan, *, from_here: bool
+) -> ManualSummaryPreview:
+    """Project the preview numbers out of one exact manual plan."""
+    return ManualSummaryPreview(
+        from_here=from_here,
+        turns_summarized=len(plan.selected_units),
+        turns_retained=len(plan.retained_units),
+        before_tokens=plan.before_tokens,
+        after_tokens=plan.after_tokens,
+        output_cap=plan.requested_output_cap,
+    )
+
+
 def prefix_digest(messages: Sequence[DurableMessageSnapshot]) -> str:
     """Digest identity, versions, selected variants, content, and attachments."""
     return _digest_json([message.digest_payload() for message in messages])
@@ -1706,13 +1737,16 @@ class ConsoleCompactionService:
             logger.info("console_compaction_auxiliary_started")
             started_tick = self._monotonic()
             try:
-                completion = await self._gateway.complete_auxiliary(
-                    AuxiliaryCompletionRequest(
-                        resolution=resolution,
-                        messages=plan.auxiliary_messages,
-                        response_format=None,
-                        max_output_tokens=plan.requested_output_cap,
-                    )
+                completion = await asyncio.wait_for(
+                    self._gateway.complete_auxiliary(
+                        AuxiliaryCompletionRequest(
+                            resolution=resolution,
+                            messages=plan.auxiliary_messages,
+                            response_format=None,
+                            max_output_tokens=plan.requested_output_cap,
+                        )
+                    ),
+                    timeout=self._auxiliary_timeout,
                 )
             except asyncio.CancelledError:
                 self._finish(
@@ -1721,6 +1755,21 @@ class ConsoleCompactionService:
                     started_tick,
                 )
                 raise
+            except TimeoutError:
+                # TASK-26016: same bound as automatic compaction -- a hung
+                # manual summarize wedged the run-state at VALIDATING.
+                self._finish(
+                    operation_id,
+                    AuxiliaryAttemptStatus.TIMED_OUT,
+                    started_tick,
+                )
+                logger.warning(
+                    "console_manual_compaction_auxiliary_timed_out timeout_s={}",
+                    self._auxiliary_timeout,
+                )
+                return CompactionTransactionResult(
+                    CompactionTerminal.FAILED, reason="auxiliary_timed_out"
+                )
             except Exception as exc:
                 self._finish(
                     operation_id,

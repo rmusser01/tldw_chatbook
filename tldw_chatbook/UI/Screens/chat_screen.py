@@ -150,7 +150,10 @@ from ..Console_Modules.session import (
     _is_empty_select_value,
 )
 from ...Chat.citation_trace_repository import ActiveCitationTraceState
-from ...Chat.console_chat_controller import ConsoleChatController
+from ...Chat.console_chat_controller import (
+    ConsoleChatController,
+    ConsoleSubmitResult,
+)
 from ...Chat.console_context_compaction import (
     EffectiveMemoryKind,
     complete_durable_units,
@@ -600,6 +603,9 @@ from ...Widgets.Console.console_rewind_modal import (
     KIND_SUMMARIZE_FROM,
     KIND_SUMMARIZE_UP_TO,
     RewindPromptRow,
+)
+from tldw_chatbook.Widgets.Console.console_summarize_preview_modal import (
+    ConsoleSummarizePreviewModal,
 )
 from ...Widgets.Console.console_workbench_state import build_console_workbench_state
 from ...Workspaces.display_state import (
@@ -16632,6 +16638,30 @@ class ChatScreen(BaseAppScreen):
                     severity="warning",
                 )
                 return
+            # TASK-26017: show what the summarize WILL do before any model
+            # call. The preview runs the same planning as the commit path;
+            # a planning failure surfaces its copy here, and a preview
+            # error falls open to the pre-preview behavior (the commit
+            # path re-validates everything anyway).
+            preview = None
+            try:
+                preview = await controller.preview_summarize(
+                    message_id, from_here=from_here
+                )
+            except Exception:
+                preview = None
+            if isinstance(preview, ConsoleSubmitResult):
+                if preview.visible_copy:
+                    self.app_instance.notify(
+                        preview.visible_copy, severity="warning"
+                    )
+                return
+            if preview is not None:
+                confirmed = await self.app_instance.push_screen_wait(
+                    ConsoleSummarizePreviewModal(preview)
+                )
+                if not confirmed:
+                    return
             should_sync = True
             self.app_instance.notify(
                 "Summarizing selected range...", severity="information"

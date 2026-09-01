@@ -12,6 +12,7 @@ from loguru import logger
 
 from tldw_chatbook.Chat.console_context_compaction import (
     DEFAULT_COMPACTION_AUXILIARY_TIMEOUT_SECONDS,
+    manual_summary_preview,
     COMPACTION_INPUT_CLOSE,
     COMPACTION_INPUT_OPEN,
     CompactionAdmission,
@@ -4227,3 +4228,49 @@ def test_auxiliary_timeout_coercion_never_goes_unbounded() -> None:
         repository, gateway, auxiliary_timeout_seconds=45
     )
     assert service._auxiliary_timeout == 45.0
+
+
+def test_manual_summary_preview_reads_the_plan_without_any_call() -> None:
+    """TASK-26017: the preview is a pure projection of the already-computed
+    ManualMemoryPlan -- counts, retained turns, token change -- with no
+    gateway and no repository anywhere near it (AC#2/#5)."""
+    plan, _prompt, _commit = _manual_transaction_inputs()
+
+    preview = manual_summary_preview(plan, from_here=True)
+
+    assert preview.from_here is True
+    assert preview.turns_summarized == len(plan.selected_units)
+    assert preview.turns_retained == len(plan.retained_units)
+    assert preview.before_tokens == plan.before_tokens
+    assert preview.after_tokens == plan.after_tokens
+    assert preview.output_cap == plan.requested_output_cap
+    assert preview.turns_summarized > 0
+
+
+@pytest.mark.asyncio
+async def test_hung_manual_auxiliary_call_times_out_the_same_way() -> None:
+    """TASK-26016 covers BOTH auxiliary calls: the manual summarize path
+    hangs the run-state at VALIDATING just as hard as automatic compaction
+    hangs the send."""
+    repository = _Repository()
+    gateway = _Gateway(text="never delivered")
+    gateway.release = asyncio.Event()  # never set: the provider hangs
+    service = ConsoleCompactionService(
+        repository, gateway, auxiliary_timeout_seconds=0.05
+    )
+    plan, prompt, admission = _manual_transaction_inputs()
+
+    result = await service.summarize_manual(
+        plan=plan,
+        admission=admission,
+        resolution=_resolution(),
+        prompt=prompt,
+        current_admission=lambda: admission,
+        prepare_projection=_prepare,
+    )
+
+    assert result.terminal is CompactionTerminal.FAILED
+    assert result.reason == "auxiliary_timed_out"
+    assert repository.memories == []
+    assert repository.commits == []
+    assert repository.finishes[0][1]["status"] is AuxiliaryAttemptStatus.TIMED_OUT

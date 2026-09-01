@@ -2746,6 +2746,26 @@
     }
 
 
+/* ===== WIDGET: ConsoleSummarizePreviewModal (Widgets/Console/console_summarize_preview_modal.py) ===== */
+
+
+
+    ConsoleSummarizePreviewModal #console-summarize-preview-modal {
+        width: 64;
+        max-width: 95%;
+        height: auto;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    ConsoleSummarizePreviewModal #console-summarize-preview-actions {
+        height: auto;
+        margin-top: 1;
+        align-horizontal: right;
+    }
+
+
 /* ===== WIDGET: LibraryNoteFolderNameDialog (Widgets/Library/library_note_folder_dialog.py) ===== */
 
 

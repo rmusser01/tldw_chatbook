@@ -50,6 +50,10 @@ from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
 from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
+from tldw_chatbook.Chat.console_context_compaction import ManualSummaryPreview
+from tldw_chatbook.Widgets.Console.console_summarize_preview_modal import (
+    ConsoleSummarizePreviewModal,
+)
 from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     AutoSpeakConsentModal,
 )
@@ -382,6 +386,25 @@ TASK2_MODAL_CONTRACTS = (
         "#console-auto-speak-consent-modal",
         False,
         "Console auto-speak toggle",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task2ModalContract(
+        ConsoleSummarizePreviewModal,
+        lambda: ConsoleSummarizePreviewModal(
+            ManualSummaryPreview(
+                from_here=False,
+                turns_summarized=3,
+                turns_retained=2,
+                before_tokens=1200,
+                after_tokens=400,
+                output_cap=256,
+            )
+        ),
+        "#console-summarize-preview-modal",
+        False,
+        "Console rewind summarize action",
         None,
         "none",
         _RESTORE_OPENER,
@@ -1462,9 +1485,10 @@ class _SyntheticDeclaredOwner:
 
 
 def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
-    assert len(TASK2_MODAL_CONTRACTS) == 14
+    assert len(TASK2_MODAL_CONTRACTS) == 15
     assert {contract.modal_type.__name__ for contract in TASK2_MODAL_CONTRACTS} == {
         "AutoSpeakConsentModal",
+        "ConsoleSummarizePreviewModal",
         "ConsoleCharacterPickerModal",
         "ConsoleReactionPickerModal",
         "ConsoleCitationSourcesModal",

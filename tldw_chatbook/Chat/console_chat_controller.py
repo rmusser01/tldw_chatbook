@@ -144,6 +144,7 @@ from tldw_chatbook.Chat.console_context_compaction import (
     complete_durable_units,
     decide_compaction,
     plan_compaction,
+    manual_summary_preview,
     plan_manual_prefix,
     plan_manual_range,
     prefix_digest,
@@ -2527,6 +2528,21 @@ class _DispatchRetryContext:
 
 class _DispatchRecoveryRefusal(RuntimeError):
     """Bounded user-visible refusal raised before recovery provider entry."""
+
+
+@dataclass(frozen=True)
+class _ManualSummaryPlanning:
+    """TASK-26017: everything the manual-summary commit path needs after
+    planning -- shared by preview (which stops here) and commit."""
+
+    session_id: str
+    snapshots: tuple
+    resolution: object
+    prompt: object
+    configuration: object
+    service: object
+    prepare_projection: object
+    plan_result: object
 
 
 @dataclass(frozen=True)
@@ -13989,10 +14005,16 @@ class ConsoleChatController:
         """Create a generated memory for the complete inclusive range to the leaf."""
         return await self._summarize_manual(message_id, from_here=True)
 
-    async def _summarize_manual(
+    async def _manual_summary_planning(
         self, message_id: str, *, from_here: bool
-    ) -> ConsoleSubmitResult:
-        """Plan and execute either manual memory direction through one service."""
+    ):
+        """Shared planning for preview and commit (TASK-26017 AC#4).
+
+        Everything up to (and including) plan construction -- guards,
+        snapshots, provider resolution, prompt, projections -- with NO
+        admission, no attempt-ledger write, and no model call. Returns a
+        blocked ``ConsoleSubmitResult`` or a ``_ManualSummaryPlanning``.
+        """
         active_rejection = self._active_run_rejection()
         if active_rejection is not None:
             return active_rejection
@@ -14137,6 +14159,53 @@ class ConsoleChatController:
             return self._summarize_block(
                 session_id, self._manual_plan_failure_copy(plan_result.reason)
             )
+        return _ManualSummaryPlanning(
+            session_id=session_id,
+            snapshots=snapshots,
+            resolution=resolution,
+            prompt=prompt,
+            configuration=configuration,
+            service=service,
+            prepare_projection=prepare_projection,
+            plan_result=plan_result,
+        )
+
+    async def preview_summarize(self, message_id: str, *, from_here: bool):
+        """TASK-26017: what a manual summarize WILL do -- planning only.
+
+        Runs the SAME planning as the commit path (AC#4) and stops before
+        any admission, attempt-ledger write, or model call (AC#2/#5).
+
+        Returns:
+            A ``ManualSummaryPreview`` on success, or the blocked
+            ``ConsoleSubmitResult`` the commit path would have produced.
+        """
+        planning = await self._manual_summary_planning(
+            message_id, from_here=from_here
+        )
+        if isinstance(planning, ConsoleSubmitResult):
+            return planning
+        return manual_summary_preview(
+            planning.plan_result.plan, from_here=from_here
+        )
+
+    async def _summarize_manual(
+        self, message_id: str, *, from_here: bool
+    ) -> ConsoleSubmitResult:
+        """Plan and execute either manual memory direction through one service."""
+        planning = await self._manual_summary_planning(
+            message_id, from_here=from_here
+        )
+        if isinstance(planning, ConsoleSubmitResult):
+            return planning
+        session_id = planning.session_id
+        snapshots = planning.snapshots
+        resolution = planning.resolution
+        prompt = planning.prompt
+        configuration = planning.configuration
+        service = planning.service
+        prepare_projection = planning.prepare_projection
+        plan_result = planning.plan_result
         admission = self._manual_memory_admission(
             session_id=session_id,
             snapshots=snapshots,
@@ -14222,6 +14291,8 @@ class ConsoleChatController:
             )
         elif transaction.reason == "summary_did_not_make_progress":
             visible_copy = "The summary would not reduce this conversation's context."
+        elif transaction.reason == "auxiliary_timed_out":
+            visible_copy = "The summarizer timed out. No memory was saved."
         elif transaction.reason == "invalid_summary_output":
             visible_copy = "The model returned an invalid summary."
         else:

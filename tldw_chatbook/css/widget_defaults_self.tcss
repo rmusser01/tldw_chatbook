@@ -2162,6 +2162,17 @@
 
 
 
+/* ===== WIDGET: ConsoleSummarizePreviewModal (Widgets/Console/console_summarize_preview_modal.py) ===== */
+
+    ConsoleSummarizePreviewModal {
+        align: center middle;
+    }
+
+
+
+
+
+
 /* ===== WIDGET: ConsoleMessageHeader (Widgets/Console/console_transcript.py) ===== */
 
     ConsoleMessageHeader {

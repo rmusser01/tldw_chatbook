@@ -132,9 +132,15 @@ the capture in the Layout tour) lists your earlier prompts newest-first as
   you can re-send it as-is or edit it first. Nothing is deleted: the rewound
   turns remain reachable as a branch.
 - **Summarize up to here** — compresses the turns *before* that prompt into
-  a summary for the model. Your visible transcript is untouched; the banner
+  a summary for the model. Before anything runs, a preview dialog shows what
+  will happen — how many turns get summarized, how many are kept as-is, and
+  the estimated context change (`~before → ~after tokens`) — and no model
+  call is made until you confirm; Cancel discards the preview with nothing
+  recorded. Your visible transcript is untouched; the banner
   "⤵ Earlier turns summarized for context — full history above" marks the
-  boundary in the transcript.
+  boundary in the transcript. If the summarizer hangs, the call is cut off
+  after a bound (default 120 s, `[console] compaction_auxiliary_timeout_seconds`)
+  and no memory is saved.
 - **Never mind** — closes the menu (Esc works too).
 
 With no earlier prompts to go back to, `/rewind` just says
