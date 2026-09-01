@@ -3250,6 +3250,8 @@ sidechat_prompt_template = "Give me more details about: {selection}"  # {selecti
 # locally per turn. Local-only; never synced. Set false to disable.
 exchange_capture = true
 # Independent rollout/rollback gates for the normalized semantic trace ledger.
+# Environment overrides use TLDW_CONSOLE_TRACE_NORMALIZED_WRITES,
+# TLDW_CONSOLE_TRACE_NORMALIZED_READS, and TLDW_CONSOLE_TRACE_LEGACY_WRITES.
 trace_normalized_writes = true
 trace_normalized_reads = true
 trace_legacy_writes = false
@@ -6686,6 +6688,42 @@ class RuntimeCapturePolicy:
 
 _RUNTIME_CAPTURE_POLICY_LOCK = _threading.RLock()
 _RUNTIME_CAPTURE_POLICY: RuntimeCapturePolicy | None = None
+_TRACE_ROLLOUT_ENV_NAMES = (
+    "TLDW_CONSOLE_TRACE_NORMALIZED_WRITES",
+    "TLDW_CONSOLE_TRACE_NORMALIZED_READS",
+    "TLDW_CONSOLE_TRACE_LEGACY_WRITES",
+)
+_RUNTIME_CAPTURE_POLICY_ENV: tuple[str | None, ...] | None = None
+
+
+def _trace_rollout_environment() -> tuple[str | None, ...]:
+    """Return the three rollout overrides as one cache identity.
+
+    Returns:
+        Environment values aligned with ``_TRACE_ROLLOUT_ENV_NAMES``.
+    """
+
+    return tuple(os.environ.get(name) for name in _TRACE_ROLLOUT_ENV_NAMES)
+
+
+def _resolve_trace_rollout_gate(
+    environment_value: str | None,
+    config_value: object,
+    default: bool,
+) -> bool:
+    """Resolve one rollout gate with environment-first precedence.
+
+    Args:
+        environment_value: Raw environment override, if present.
+        config_value: Raw TOML-derived value.
+        default: Fallback when neither value can be coerced.
+
+    Returns:
+        The resolved Boolean gate value.
+    """
+
+    raw = config_value if environment_value in (None, "") else environment_value
+    return coerce_bool_setting(raw, default)
 
 
 def _publish_runtime_capture_policy(
@@ -6705,19 +6743,27 @@ def _publish_runtime_capture_policy(
         raise TypeError("detail must be CaptureDetail")
     if viewer_profile not in {"safe", "full"}:
         raise ValueError("viewer_profile")
+    rollout_environment = _trace_rollout_environment()
     policy = RuntimeCapturePolicy(
         bool(enabled),
         detail,
         generation,
         bool(pii_redaction_enabled),
         viewer_profile,
-        bool(normalized_writes_enabled),
-        bool(normalized_reads_enabled),
-        bool(legacy_writes_enabled),
+        _resolve_trace_rollout_gate(
+            rollout_environment[0], normalized_writes_enabled, True
+        ),
+        _resolve_trace_rollout_gate(
+            rollout_environment[1], normalized_reads_enabled, True
+        ),
+        _resolve_trace_rollout_gate(
+            rollout_environment[2], legacy_writes_enabled, False
+        ),
     )
-    global _RUNTIME_CAPTURE_POLICY
+    global _RUNTIME_CAPTURE_POLICY, _RUNTIME_CAPTURE_POLICY_ENV
     with _RUNTIME_CAPTURE_POLICY_LOCK:
         _RUNTIME_CAPTURE_POLICY = policy
+        _RUNTIME_CAPTURE_POLICY_ENV = rollout_environment
     return policy
 
 
@@ -6729,15 +6775,24 @@ def runtime_capture_policy() -> RuntimeCapturePolicy:
     """
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
 
-    global _RUNTIME_CAPTURE_POLICY
+    rollout_environment = _trace_rollout_environment()
+    global _RUNTIME_CAPTURE_POLICY, _RUNTIME_CAPTURE_POLICY_ENV
     with _RUNTIME_CAPTURE_POLICY_LOCK:
         current = _RUNTIME_CAPTURE_POLICY
-        if current is not None and current.generation == _CONFIG_GENERATION:
+        if (
+            current is not None
+            and current.generation == _CONFIG_GENERATION
+            and _RUNTIME_CAPTURE_POLICY_ENV == rollout_environment
+        ):
             return current
     snapshot = _published_runtime_config_snapshot()
     with _RUNTIME_CAPTURE_POLICY_LOCK:
         current = _RUNTIME_CAPTURE_POLICY
-        if current is not None and current.generation == snapshot.generation:
+        if (
+            current is not None
+            and current.generation == snapshot.generation
+            and _RUNTIME_CAPTURE_POLICY_ENV == rollout_environment
+        ):
             return current
         console = snapshot.values.get("console", {})
         if not isinstance(console, Mapping):
@@ -6755,11 +6810,24 @@ def runtime_capture_policy() -> RuntimeCapturePolicy:
             snapshot.generation,
             pii_redaction_enabled,
             viewer_profile,
-            coerce_bool_setting(console.get("trace_normalized_writes", True), True),
-            coerce_bool_setting(console.get("trace_normalized_reads", True), True),
-            coerce_bool_setting(console.get("trace_legacy_writes", False), False),
+            _resolve_trace_rollout_gate(
+                rollout_environment[0],
+                console.get("trace_normalized_writes", True),
+                True,
+            ),
+            _resolve_trace_rollout_gate(
+                rollout_environment[1],
+                console.get("trace_normalized_reads", True),
+                True,
+            ),
+            _resolve_trace_rollout_gate(
+                rollout_environment[2],
+                console.get("trace_legacy_writes", False),
+                False,
+            ),
         )
         _RUNTIME_CAPTURE_POLICY = current
+        _RUNTIME_CAPTURE_POLICY_ENV = rollout_environment
         return current
 
 

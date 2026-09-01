@@ -2068,6 +2068,23 @@ class ConsoleTraceService:
 
         The comparison resolves prior references inside the caller transaction;
         no transcript-sized value is copied into the admission or call row.
+
+        Args:
+            cursor: Cursor for the caller-owned transaction.
+            owner_id: Trace owner whose durable references may be resolved.
+            segment_id: Segment containing the current surface.
+            route_identity: Frozen route identity for the provider call.
+            preparation_identity: Identity of the prepared provider request.
+            provenance: Descriptors aligned with the complete provider surface.
+            values: Provider values aligned with message and continuation
+                descriptors.
+
+        Returns:
+            The admitted surface delta and its verification boundary.
+
+        Raises:
+            ValueError: If provenance is misaligned or the surface change is
+                outside the supported append or bounded-replacement shapes.
         """
 
         descriptors = tuple(provenance.messages_payload) + tuple(
@@ -2080,9 +2097,18 @@ class ConsoleTraceService:
         ) * len(provenance.continuations)
         tail = self._effective_surface_tail(cursor, segment_id)
         projection = self._surface_projection(cursor, segment_id, tail)
-        active = projection.entries
+        physical_active = projection.entries
+        # Surface nodes stay physically append-only, so later messages can
+        # follow older continuation nodes. Compare in provider domain order
+        # while retaining physical ordinals for replacement validation.
+        active = tuple(
+            (physical_ordinal, sequence, key)
+            for domain in ("messages_payload", "provider_continuations")
+            for physical_ordinal, (sequence, key) in enumerate(physical_active)
+            if _surface_reference_domain(key) == domain
+        )
         durable_keys = tuple(
-            key for _, key in active if key[1] in {"artifact", "revision"}
+            key for _, _, key in active if key[1] in {"artifact", "revision"}
         )
         durable_values = self._resolve_reference_values(
             cursor,
@@ -2091,7 +2117,7 @@ class ConsoleTraceService:
         )
 
         def matches(active_index: int, incoming_index: int) -> bool:
-            key = active[active_index][1]
+            key = active[active_index][2]
             return (
                 _surface_reference_domain(key) == domains[incoming_index]
                 and self._durable_reference_matches(
@@ -2120,42 +2146,52 @@ class ConsoleTraceService:
                 suffix += 1
             incoming_changed = len(descriptors) - prefix - suffix
             active_changed = len(active) - prefix - suffix
-            if incoming_changed != 1 or not 1 <= active_changed <= MAX_SURFACE_REPLACEMENT_SPAN:
+            if incoming_changed == 1 and active_changed == 0:
+                # A later turn adds a message before an unchanged provider
+                # continuation. Append only that message: descriptor domains
+                # reconstruct provider order without rewriting the suffix.
+                admitted_to = prefix + 1
+            elif incoming_changed != 1 or not 1 <= active_changed <= MAX_SURFACE_REPLACEMENT_SPAN:
                 raise ValueError("unsupported_surface_change")
-            changed_entries = active[prefix : len(active) - suffix]
-            changed_sequences = {sequence for sequence, _key in changed_entries}
-            start_sequence = min(changed_sequences)
-            end_sequence = max(changed_sequences)
-            if any(
-                start_sequence <= sequence <= end_sequence
-                and sequence not in changed_sequences
-                for sequence, _key in active
-            ):
-                raise ValueError("unsupported_surface_change")
-            anchors = self.repository.read_lineage_surface_nodes(
-                cursor,
-                segment_id=segment_id,
-                start_sequence=start_sequence,
-                end_sequence=end_sequence,
-            )
-            nodes_by_sequence = {node.sequence: node for node in anchors}
-            start = nodes_by_sequence.get(start_sequence)
-            end = nodes_by_sequence.get(end_sequence)
-            if start is None or end is None or tail is None:
-                raise ValueError("surface_replacement_target_unavailable")
-            replacement_range = VerifiedSurfaceReplacementRange(
-                predecessor_head_id=tail.node_id,
-                start_node_id=start.node_id,
-                end_node_id=end.node_id,
-                start_sequence=start_sequence,
-                end_sequence=end_sequence,
-                current_ordinal=prefix,
-                component_name=domains[prefix],
-                component_ordinal=sum(
-                    domain == domains[prefix] for domain in domains[:prefix]
-                ),
-            )
-            admitted_to = prefix + 1
+            else:
+                changed_entries = active[prefix : len(active) - suffix]
+                changed_sequences = {
+                    sequence for _ordinal, sequence, _key in changed_entries
+                }
+                start_sequence = min(changed_sequences)
+                end_sequence = max(changed_sequences)
+                if any(
+                    start_sequence <= sequence <= end_sequence
+                    and sequence not in changed_sequences
+                    for sequence, _key in physical_active
+                ):
+                    raise ValueError("unsupported_surface_change")
+                anchors = self.repository.read_lineage_surface_nodes(
+                    cursor,
+                    segment_id=segment_id,
+                    start_sequence=start_sequence,
+                    end_sequence=end_sequence,
+                )
+                nodes_by_sequence = {node.sequence: node for node in anchors}
+                start = nodes_by_sequence.get(start_sequence)
+                end = nodes_by_sequence.get(end_sequence)
+                if start is None or end is None or tail is None:
+                    raise ValueError("surface_replacement_target_unavailable")
+                replacement_range = VerifiedSurfaceReplacementRange(
+                    predecessor_head_id=tail.node_id,
+                    start_node_id=start.node_id,
+                    end_node_id=end.node_id,
+                    start_sequence=start_sequence,
+                    end_sequence=end_sequence,
+                    current_ordinal=min(
+                        ordinal for ordinal, _sequence, _key in changed_entries
+                    ),
+                    component_name=domains[prefix],
+                    component_ordinal=sum(
+                        domain == domains[prefix] for domain in domains[:prefix]
+                    ),
+                )
+                admitted_to = prefix + 1
 
         predecessor = None if tail is None else tail.node_id
         checkpoint = self.current_surface_checkpoint(

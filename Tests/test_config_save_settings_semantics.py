@@ -349,6 +349,36 @@ def test_runtime_capture_policy_projects_independent_trace_rollout_gates(
     assert policy.legacy_writes_enabled is True
 
 
+def test_runtime_capture_policy_prefers_trace_rollout_environment_overrides(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 614)
+    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(
+        config_module,
+        "_published_runtime_config_snapshot",
+        lambda: config_module.RuntimeConfigSnapshot(
+            614,
+            {
+                "console": {
+                    "trace_normalized_writes": False,
+                    "trace_normalized_reads": True,
+                    "trace_legacy_writes": False,
+                }
+            },
+        ),
+    )
+    monkeypatch.setenv("TLDW_CONSOLE_TRACE_NORMALIZED_WRITES", "true")
+    monkeypatch.setenv("TLDW_CONSOLE_TRACE_NORMALIZED_READS", "false")
+    monkeypatch.setenv("TLDW_CONSOLE_TRACE_LEGACY_WRITES", "true")
+
+    policy = config_module.runtime_capture_policy()
+
+    assert policy.normalized_writes_enabled is True
+    assert policy.normalized_reads_enabled is False
+    assert policy.legacy_writes_enabled is True
+
+
 def test_runtime_capture_policy_coerces_string_true_capture_and_rollout_gates(
     monkeypatch,
 ) -> None:

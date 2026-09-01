@@ -7941,7 +7941,11 @@ class TldwCli(
 
     @property
     def terminal_session_manager(self) -> "TerminalSessionManager":
-        """Return the single app-owned Terminal manager, creating it on use."""
+        """Return the single app-owned Terminal manager, creating it on use.
+
+        Returns:
+            The app-owned terminal session manager.
+        """
 
         manager = self._terminal_session_manager
         if manager is not None:
@@ -7962,7 +7966,11 @@ class TldwCli(
 
     @terminal_session_manager.setter
     def terminal_session_manager(self, manager: Any) -> None:
-        """Replace the app-owned manager for lifecycle tests and adapters."""
+        """Replace the app-owned manager for lifecycle tests and adapters.
+
+        Args:
+            manager: Replacement terminal session manager.
+        """
 
         self._terminal_session_manager = manager
 

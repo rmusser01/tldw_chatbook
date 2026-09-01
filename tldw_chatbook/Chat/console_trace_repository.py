@@ -824,7 +824,15 @@ class ConsoleTraceRepository:
         cursor: sqlite3.Cursor,
         conversation_id: str,
     ) -> TraceOwnerRecord | None:
-        """Return the conversation's currently attached trace owner, if any."""
+        """Return the conversation's currently attached trace owner, if any.
+
+        Args:
+            cursor: Cursor for the caller-owned transaction.
+            conversation_id: Conversation whose attached owner is requested.
+
+        Returns:
+            The attached owner record, or None when the conversation has none.
+        """
 
         _nonempty(conversation_id, "conversation_id")
         row = cursor.execute(
@@ -1475,7 +1483,18 @@ class ConsoleTraceRepository:
         return lineage
 
     def read_next_call_sequence(self, cursor: sqlite3.Cursor, run_id: str) -> int:
-        """Return the first unused durable sequence for one provider-call chain."""
+        """Return the first unused durable sequence for one provider-call chain.
+
+        Args:
+            cursor: Cursor for the caller-owned transaction.
+            run_id: Durable provider-call chain identity.
+
+        Returns:
+            Zero for a new chain, otherwise one past its greatest sequence.
+
+        Raises:
+            RuntimeError: If a stored call sequence is invalid.
+        """
 
         _nonempty(run_id, "run_id")
         row = cursor.execute(

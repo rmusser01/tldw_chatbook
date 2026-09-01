@@ -35,6 +35,22 @@ from tldw_chatbook.Chat.provider_continuation import (
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
+@pytest.fixture
+def make_database():
+    """Create runtime-test databases and close every instance at teardown."""
+
+    databases: list[CharactersRAGDB] = []
+
+    def create(path, client_id: str) -> CharactersRAGDB:
+        database = CharactersRAGDB(path, client_id)
+        databases.append(database)
+        return database
+
+    yield create
+    for database in reversed(databases):
+        database.close()
+
+
 def _saved_message(
     database: CharactersRAGDB,
     conversation_id: str,
@@ -87,30 +103,37 @@ def _semantic_request(
     )
 
 
-def test_console_runtime_wires_production_boundary_for_durable_database(tmp_path) -> None:
-    database = CharactersRAGDB(tmp_path / "trace-runtime-wiring.sqlite", "trace-wiring")
+@pytest.mark.asyncio
+async def test_console_runtime_wires_production_boundary_for_durable_database(
+    tmp_path,
+    make_database,
+) -> None:
+    database = make_database(tmp_path / "trace-runtime-wiring.sqlite", "trace-wiring")
     runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=database))
 
     gateway = runtime.ensure_provider_gateway(config_provider=lambda: {})
-
-    assert gateway.supports_durable_capture is True
-    lazy_factory = gateway._trace_call_boundary_factory
-    assert callable(lazy_factory)
-    assert runtime.chat_store is not None
-    repository = runtime.chat_store.persistence.console_trace_repository
-    assert lazy_factory._repository is repository
-    assert isinstance(
-        lazy_factory._get_delegate(),
-        ConsoleTraceBoundaryFactory,
-    )
-    assert lazy_factory._get_delegate().repository is repository
+    try:
+        assert gateway.supports_durable_capture is True
+        lazy_factory = gateway._trace_call_boundary_factory
+        assert callable(lazy_factory)
+        assert runtime.chat_store is not None
+        repository = runtime.chat_store.persistence.console_trace_repository
+        assert lazy_factory._repository is repository
+        assert isinstance(
+            lazy_factory._get_delegate(),
+            ConsoleTraceBoundaryFactory,
+        )
+        assert lazy_factory._get_delegate().repository is repository
+    finally:
+        await runtime.dispose()
 
 
 @pytest.mark.asyncio
 async def test_production_factory_persists_append_only_calls_through_real_gateway(
     tmp_path,
+    make_database,
 ) -> None:
-    database = CharactersRAGDB(tmp_path / "trace-runtime.sqlite", "trace-runtime")
+    database = make_database(tmp_path / "trace-runtime.sqlite", "trace-runtime")
     conversation_id = database.add_conversation({"title": "runtime trace"})
     assert conversation_id is not None
     _first_id, first = _saved_message(database, conversation_id, "first")
@@ -177,8 +200,9 @@ async def test_production_factory_persists_append_only_calls_through_real_gatewa
 @pytest.mark.asyncio
 async def test_production_factory_persists_one_item_bounded_replacement(
     tmp_path,
+    make_database,
 ) -> None:
-    database = CharactersRAGDB(tmp_path / "trace-replacement.sqlite", "trace-replace")
+    database = make_database(tmp_path / "trace-replacement.sqlite", "trace-replace")
     conversation_id = database.add_conversation({"title": "replacement trace"})
     assert conversation_id is not None
     saved = [
@@ -256,8 +280,9 @@ async def test_production_factory_persists_one_item_bounded_replacement(
 
 def test_production_factory_uses_latest_message_revision_for_turn_identity(
     tmp_path,
+    make_database,
 ) -> None:
-    database = CharactersRAGDB(tmp_path / "trace-turn-owner.sqlite", "trace-turn")
+    database = make_database(tmp_path / "trace-turn-owner.sqlite", "trace-turn")
     conversation_id = database.add_conversation({"title": "turn owner"})
     assert conversation_id is not None
     prior_id, _prior_revision = _saved_message(
@@ -334,8 +359,9 @@ def test_production_factory_uses_latest_message_revision_for_turn_identity(
 
 def test_production_factory_batches_revision_owner_lookup_for_long_traces(
     tmp_path,
+    make_database,
 ) -> None:
-    database = CharactersRAGDB(tmp_path / "trace-long-owner.sqlite", "trace-long")
+    database = make_database(tmp_path / "trace-long-owner.sqlite", "trace-long")
     conversation_id = database.add_conversation({"title": "long trace"})
     assert conversation_id is not None
     saved = [
@@ -373,8 +399,11 @@ def test_production_factory_batches_revision_owner_lookup_for_long_traces(
     assert boundary.identity.turn_id == saved[-1][0]
 
 
-def test_recreated_factory_continues_durable_chain_sequence(tmp_path) -> None:
-    database = CharactersRAGDB(tmp_path / "trace-chain-sequence.sqlite", "trace-chain")
+def test_recreated_factory_continues_durable_chain_sequence(
+    tmp_path,
+    make_database,
+) -> None:
+    database = make_database(tmp_path / "trace-chain-sequence.sqlite", "trace-chain")
     conversation_id = database.add_conversation({"title": "chain sequence"})
     assert conversation_id is not None
     _message_id, revision = _saved_message(database, conversation_id, "turn")
@@ -418,8 +447,9 @@ def test_recreated_factory_continues_durable_chain_sequence(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_production_factory_accepts_active_ancestor_revisions_on_nested_fork(
     tmp_path,
+    make_database,
 ) -> None:
-    database = CharactersRAGDB(tmp_path / "trace-fork-runtime.sqlite", "trace-fork")
+    database = make_database(tmp_path / "trace-fork-runtime.sqlite", "trace-fork")
     source_id = database.add_conversation({"title": "source"})
     child_id = database.add_conversation({"title": "child"})
     assert source_id is not None and child_id is not None
