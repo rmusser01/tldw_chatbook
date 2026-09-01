@@ -729,3 +729,72 @@ def test_app_wiring_briefing_projection_is_live_not_a_frozen_none():
         app.scheduling_service.briefing_projection
         is app.scheduler_loop.queue.briefing_projection
     )
+
+
+# ---------------------------------------------------------------------------
+# review_automation_result (schedules-handoff PR-3, task 5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_review_automation_result_local_only_updates_without_mutation(db):
+    result_id = db.create_automation_result(
+        "local", "def-1", "run-1", "finding", "T", "S", "key-1"
+    )
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    ok = await svc.review_automation_result(result_id, "dismissed", "not relevant")
+
+    assert ok is True
+    row = db.get_automation_result(result_id)
+    assert row["review_state"] == "dismissed"
+    assert row["review_note"] == "not relevant"
+    assert db.get_pending_mutations("local", primitive="automation_result_review") == []
+
+
+@pytest.mark.asyncio
+async def test_review_automation_result_server_mirrored_records_pending_mutation(db):
+    result_id = db.create_automation_result(
+        "server:1", "def-1", "run-1", "finding", "T", "S", "key-1",
+        server_id="srv-res-1",
+    )
+    svc = SchedulingService(db=db, runtime_source="server:1")
+
+    ok = await svc.review_automation_result(result_id, "dismissed", "noise")
+
+    assert ok is True
+    row = db.get_automation_result(result_id)
+    assert row["review_state"] == "dismissed"
+
+    pending = db.get_pending_mutations("server:1", primitive="automation_result_review")
+    assert len(pending) == 1
+    assert pending[0]["local_id"] == result_id
+    assert pending[0]["payload"] == {
+        "server_result_id": "srv-res-1",
+        "review_state": "dismissed",
+        "review_note": "noise",
+        "idempotency_key": pending[0]["payload"]["idempotency_key"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_review_automation_result_rejects_unknown_review_state(db):
+    result_id = db.create_automation_result(
+        "local", "def-1", "run-1", "finding", "T", "S", "key-1"
+    )
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    ok = await svc.review_automation_result(result_id, "bogus")
+
+    assert ok is False
+    row = db.get_automation_result(result_id)
+    assert row["review_state"] == "unread"  # untouched
+
+
+@pytest.mark.asyncio
+async def test_review_automation_result_unknown_id_returns_false(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    ok = await svc.review_automation_result("no-such-id", "dismissed")
+
+    assert ok is False

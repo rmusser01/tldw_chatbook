@@ -1544,6 +1544,16 @@ class ScheduledTasksDB(BaseDB):
             row = cursor.fetchone()
             return int(row[0]) if row else 0
 
+    def get_automation_result(self, result_id: str) -> Optional[dict[str, Any]]:
+        """Fetch an automation result by local id."""
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                "SELECT * FROM automation_results WHERE id = ?", (result_id,)
+            )
+            return self._row_to_dict(
+                cursor.fetchone(), json_fields=self._AUTOMATION_RESULT_JSON_FIELDS
+            )
+
     def update_result_review(
         self,
         result_id: str,
