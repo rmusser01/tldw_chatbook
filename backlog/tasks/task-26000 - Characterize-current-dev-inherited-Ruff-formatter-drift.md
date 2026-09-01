@@ -71,7 +71,7 @@ The final cleanup record retains the clean Git-tracked repository-wide Ruff gate
 any post-cut unassigned failure blocks and requires a separate correction record
 rather than changing the pinned counts or batches.
 
-Current authority-cut manifest record (2026-08-31): pins are task base/current
+Pre-record authority-cut manifest record (2026-08-31): pins are task base/current
 `e555df102c950c29beed5e7119f433d35eee1f3c`, common
 `f0e8961222fe1a7a3ac7566f7f78142e717358f3`, historical base
 `31ed49bb368f54211d6482599e00a5c1340f80b2`, pre-closeout
@@ -81,8 +81,14 @@ Current authority-cut manifest record (2026-08-31): pins are task base/current
 current `=1,966`, `historical_still_current=44`,
 `historical_no_longer_current=17`, `shared_ancestor_debt=1,603`,
 `current_line_drift=319`, identities `=2,096`, batches `=83`, blockers `=0`, and
-cleanup records `=0`. Recreated current/common snapshots contain `5,056/1,966` and
+cleanup records `=0` at this pre-record capture. Recreated current/common snapshots
+contain `5,056/1,966` and
 `4,643/1,746` entries/failures.
+
+Post-Task5 manifest record (2026-08-31): the canonical manifest contains 83 cleanup
+records with contiguous IDs `TASK-26933` through `TASK-27015`; `TASK-27015` is the
+final record. Its SHA-256 is
+`ded7288d8580367842110dd1a9e79976dc9c00663361251bb9212ca717cea0b9`.
 
 All 319 drift rows carry authenticated first-parent integration ledgers plus an
 independently derived complete rename-alias inventory. The revision-local Ruff
@@ -139,7 +145,7 @@ Lineage and replay-cache SHA-256 values are
 and `0026dce1124fb3e9fc027dca785101c76a77b63882deac9e1951d5ce2d46a1df`.
 The complete producer/checker sources are durable plan appendices and every Task 5/
 Task 7 authority sequence hash-verifies their deterministic materialization first.
-Manifest/materializer/producer/checker/allocator/renderer hashes are
+Pre-record manifest/materializer/producer/checker/allocator/renderer hashes are
 `0f1a8ca2652e7537628c82885f5d5d0cb4421189c31255bb0f05648991083022`,
 `69817bd0bac15097f80c6d194b7b27618bc96f494aab806aeb6d009a9c384c5c`,
 `fd33448f2841d0502509201a5bf6fd2f279f3f2c67cff8f3d4391b9ed7d9ce3e`,

@@ -58,9 +58,10 @@ pytest task-ID guard.
   entries/failures. The exhaustive classes are `historical_still_current=44`,
   `historical_no_longer_current=17`, `shared_ancestor_debt=1,603`, and
   `current_line_drift=319`, represented by 2,096 identities and 83 batches with zero
-  blockers and zero cleanup records.
-- Current/common raw, lineage, replay-cache, manifest, PR snapshot, materializer,
-  producer, checker, allocator, and renderer SHA-256 values are respectively
+  blockers. The pre-record authority-cut manifest contained zero cleanup records.
+- Current/common raw, lineage, replay-cache, pre-record manifest, PR snapshot,
+  materializer, producer, checker, allocator, and renderer SHA-256 values are
+  respectively
   `f888cf9351f1c41f66fb98b4ec218c9268beb9b23295037320f725cec567ae10`,
   `c34c5fe9d8e3154c3450f1cf28d4c9a6f1f631feb4735296fc6b891af5de1b15`,
   `b9f9876d438b4b6770e84013c515ae54791b14f0e740de67283fb3de20f655a6`,
@@ -72,6 +73,10 @@ pytest task-ID guard.
   `a003aee74e01c2729136e244474f1fac08a06ae9ee9331752f56d1bfbffe9e79`,
   `6d7559449c35cd6db3dca31dbbdb510efbb45d1dc0a96c4f01f59c6a8461403b`,
   and `4a08b6a5a9a8b12926ab9417bc330a4e94eb60c3b4afe88226ef232e2653a17a`.
+- After Task 5, the canonical manifest contains 83 cleanup records with contiguous
+  IDs `TASK-26933` through `TASK-27015`; `TASK-27015` is the final record. Its
+  post-record SHA-256 is
+  `ded7288d8580367842110dd1a9e79976dc9c00663361251bb9212ca717cea0b9`.
 - The 83 exact sorted labels are `ruff-active-pr-1655`,
   `ruff-active-pr-1655-2059`, `ruff-active-pr-1903-2196`,
   `ruff-active-pr-2196`, `ruff-active-pr-2230`, `ruff-active-pr-2264`,
@@ -1237,7 +1242,7 @@ current raw census, and complete lineage were rebuilt.
   and `6486a50497e6dbef847b10447f190877f90d5215ddc259fd77c08c4100545ac3`.
   Cleanup records remain intentionally absent, so no renderer refresh ran.
 
-#### Current Owner-Approved Authority-Cut Record (2026-08-31)
+#### Pre-Record Owner-Approved Authority-Cut Record (2026-08-31)
 
 - Immutable `task_base`/`current` authority cut is
   `e555df102c950c29beed5e7119f433d35eee1f3c`; common remains
@@ -1251,19 +1256,24 @@ current raw census, and complete lineage were rebuilt.
   `F_common=1,746`. Current classes are `historical_still_current=44`,
   `historical_no_longer_current=17`, `shared_ancestor_debt=1,603`, and
   `current_line_drift=319`, represented by 2,096 identities, the 83 exact Global
-  Constraints labels, zero blockers, and zero cleanup records.
+  Constraints labels, zero blockers, and—at this pre-record capture—zero cleanup
+  records.
 - The 319 temporal ledgers contain 1,272 candidates: 736 failing, 533 clean, and
   three transient syntax-invalid states. The 13-PR snapshot at
   `2026-08-31T17:40:01Z` has exact current-failure overlaps `#2265=6`, `#2264=4`,
   `#2230=1`, `#2196=12`, `#2059=1`, `#1903=1`, and `#1655=2`; six PRs have
   zero overlap.
-- Current/common raw, lineage, replay-cache, manifest, and PR snapshot SHA-256 values
-  are `f888cf9351f1c41f66fb98b4ec218c9268beb9b23295037320f725cec567ae10`,
+- Current/common raw, lineage, replay-cache, pre-record manifest, and PR snapshot
+  SHA-256 values are
+  `f888cf9351f1c41f66fb98b4ec218c9268beb9b23295037320f725cec567ae10`,
   `c34c5fe9d8e3154c3450f1cf28d4c9a6f1f631feb4735296fc6b891af5de1b15`,
   `b9f9876d438b4b6770e84013c515ae54791b14f0e740de67283fb3de20f655a6`,
   `0026dce1124fb3e9fc027dca785101c76a77b63882deac9e1951d5ce2d46a1df`,
   `0f1a8ca2652e7537628c82885f5d5d0cb4421189c31255bb0f05648991083022`,
   and `46282d8e81b1bd512263443e97955b1650944684f6c1d0ccd1341f52218bd8d5`.
+- The post-Task5 canonical manifest contains 83 cleanup records, allocated as
+  `TASK-26933` through `TASK-27015` with final record `TASK-27015`, and has SHA-256
+  `ded7288d8580367842110dd1a9e79976dc9c00663361251bb9212ca717cea0b9`.
 - Materializer, producer, checker, allocator, and renderer SHA-256 values are
   `69817bd0bac15097f80c6d194b7b27618bc96f494aab806aeb6d009a9c384c5c`,
   `fd33448f2841d0502509201a5bf6fd2f279f3f2c67cff8f3d4391b9ed7d9ce3e`,
