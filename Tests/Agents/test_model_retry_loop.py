@@ -67,7 +67,9 @@ def test_a_transient_failure_is_retried_and_the_run_completes():
 
     assert outcome.status == RUN_DONE
     assert outcome.final_text == "Tokyo."
-    assert len(slept) == 1, "should have backed off exactly once"
+    # Total time, not call count: the backoff sleep is sliced into <=0.5s
+    # chunks so a Stop during backoff is honoured promptly.
+    assert sum(slept) > 0, "should have backed off before the retry"
     assert not remaining
 
 

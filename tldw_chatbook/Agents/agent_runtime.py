@@ -29,6 +29,8 @@ from tldw_chatbook.model_capabilities import (
     moonshot_model_returns_reasoning_content,
 )
 
+from .fallback_chain import FallbackRuntime, is_credit_terminal
+from .history_projection import ProjectionError, project_history_for_protocol
 from .model_retry import (
     RetryPolicy,
     is_transient_model_error,
@@ -547,6 +549,10 @@ class LoopDeps:
     # legacy positional LoopDeps callers keep their exact slots.
     # TASK-25901: injected so retry backoff is testable without real sleeping.
     sleep: Callable[[float], None] = time.sleep
+    # ADR-110 / TASK-25902: resolved fallback chain + per-provider closure
+    # builder. None (the default) means no chain is configured and no fallback
+    # code runs at all.
+    fallback: "FallbackRuntime | None" = None
 
 
 
@@ -898,12 +904,17 @@ def _effective_review_verdict(
     return verdicts.get(call.name, "proceed")
 
 
-#: Backoff shape for transient model failures. The attempt COUNT is per-run
-#: config (`RunBudget.max_model_retries`); this is only the delay curve.
-#: TASK-26002: consecutive empty turns before the run stops. Two, because
-#: one empty is a blip worth retrying and a second from the same provider
-#: and model means the fault is deterministic.
+#: TASK-26002: consecutive empty turns before the run stops. Two, because one
+#: empty is a blip worth retrying and a second from the same provider and model
+#: means the fault is deterministic. Empty-turn retries carry no backoff
+#: deliberately: the streak is capped here and bounded by max_model_turns, and
+#: an empty response returns fast enough that waiting would only delay the
+#: honest failure (review minor, 2026-08-31).
 EMPTY_TURN_LIMIT = 2
+
+#: Backoff shape for transient model failures (TASK-25901). The attempt COUNT
+#: is per-run config (`RunBudget.max_model_retries`); this is only the delay
+#: curve.
 
 _MODEL_RETRY_POLICY = RetryPolicy(max_attempts=0, base_delay=1.0, max_delay=30.0)
 
@@ -964,6 +975,17 @@ def run_agent_loop(
     coherent_len = len(messages)
     active = list(active_schemas)
     started = deps.clock()
+    # ADR-110: the ACTIVE model-call slots. A provider switch replaces these
+    # locals -- never LoopDeps (TASK-25913: rebuilding deps would reset the
+    # wall-budget origin the tool clamp reads from) -- which is also what makes
+    # the switch STICKY: after a switch every subsequent turn goes to the new
+    # provider, rather than re-failing the primary per call.
+    active_call_model = deps.call_model
+    active_call_model_with_continuation = deps.call_model_with_continuation
+    fallback_candidates = (
+        list(deps.fallback.candidates) if deps.fallback is not None else []
+    )
+    active_provider = config.provider or "unknown"
     #: TASK-25901: transient-failure retries used so far in THIS run. Counted
     #: per run rather than per turn: a provider failing every turn is a failing
     #: provider, and should stop the run rather than pay the budget down twice.
@@ -1311,13 +1333,13 @@ def run_agent_loop(
             )
             try:
                 turn = (
-                    deps.call_model_with_continuation(
+                    active_call_model_with_continuation(
                         messages,
                         tuple(active),
                         continuation_checkpoint,
                     )
-                    if deps.call_model_with_continuation is not None
-                    else deps.call_model(messages, tuple(active))
+                    if active_call_model_with_continuation is not None
+                    else active_call_model(messages, tuple(active))
                 )
             except Exception as exc:
                 # TASK-25901: a transient provider failure used to discard the
@@ -1350,7 +1372,91 @@ def run_agent_loop(
                             sensitivity="diagnostic",
                             parent_step_index=model_request_step.index,
                         )
-                        deps.sleep(delay)
+                        # Sliced so a Stop during backoff is honoured within
+                        # half a second instead of holding a cancelled run for
+                        # up to the full delay (review minor, 2026-08-31).
+                        slept = 0.0
+                        while slept < delay and not deps.should_cancel():
+                            step_sleep = min(0.5, delay - slept)
+                            deps.sleep(step_sleep)
+                            slept += step_sleep
+                        continue
+                # ADR-110: fallback is consulted only AFTER retry declines --
+                # retries exhausted on a transient error, or a credit/quota-
+                # terminal class retry cannot help with. Refused outright while
+                # a provider continuation is in flight: mid-continuation
+                # history is provider-specific state that cannot be projected
+                # faithfully (decision 5; review I4).
+                if (
+                    deps.fallback is not None
+                    and fallback_candidates
+                    and continuation_checkpoint is None
+                    and (
+                        is_credit_terminal(exc)
+                        or is_transient_model_error(exc)
+                    )
+                ):
+                    switched = False
+                    while fallback_candidates:
+                        candidate = fallback_candidates.pop(0)
+                        if not candidate.ready:
+                            trace(
+                                STEP_MODEL_ERROR,
+                                summary=(
+                                    f"Provider fallback skipped: "
+                                    f"{candidate.provider} "
+                                    f"({candidate.skip_reason})"
+                                ),
+                                status="failed",
+                                field_states={"payload": "omitted"},
+                                sensitivity="diagnostic",
+                                parent_step_index=model_request_step.index,
+                            )
+                            continue
+                        try:
+                            projected = project_history_for_protocol(
+                                messages, native=candidate.native
+                            )
+                        except ProjectionError as projection_error:
+                            trace(
+                                STEP_MODEL_ERROR,
+                                summary=(
+                                    f"Provider fallback refused: "
+                                    f"{candidate.provider} (history not "
+                                    f"projectable: {projection_error})"
+                                ),
+                                status="failed",
+                                field_states={"payload": "omitted"},
+                                sensitivity="diagnostic",
+                                parent_step_index=model_request_step.index,
+                            )
+                            continue
+                        new_call = deps.fallback.build(candidate.provider)
+                        if new_call is None:
+                            continue
+                        # Length-preserving by construction, so coherent_len
+                        # and every step index stay valid; in-place so the
+                        # projection becomes the run's canonical history
+                        # (decision 4 -- the run now IS the new protocol).
+                        messages[:] = projected
+                        active_call_model = new_call
+                        active_call_model_with_continuation = new_call
+                        trace(
+                            STEP_MODEL_ERROR,
+                            summary=(
+                                f"Provider fallback: {active_provider} -> "
+                                f"{candidate.provider} "
+                                f"(after {type(exc).__name__})"
+                            ),
+                            status="failed",
+                            field_states={"payload": "omitted"},
+                            sensitivity="diagnostic",
+                            parent_step_index=model_request_step.index,
+                        )
+                        active_provider = candidate.provider
+                        switched = True
+                        break
+                    if switched:
                         continue
                 trace(
                     STEP_MODEL_ERROR,

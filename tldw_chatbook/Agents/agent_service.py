@@ -110,9 +110,7 @@ from .agent_runtime import (
     run_agent_loop,
     safe_utc_timestamp,
 )
-from .fallback_chain import is_credit_terminal, resolve_fallback_chain
-from .history_projection import ProjectionError, project_history_for_protocol
-from .model_retry import is_transient_model_error
+from .fallback_chain import FallbackRuntime, resolve_fallback_chain
 from .fleet_coordinator import (
     DEFAULT_RETAINED_TRANSCRIPT_MAX_CHARS,
     DEFAULT_RETAINED_TRANSCRIPTS,
@@ -2227,81 +2225,6 @@ class AgentService:
         )
         return request, snapshot
 
-    def _wrap_with_fallback(
-        self,
-        primary,
-        *,
-        primary_endpoint: str,
-        build_for_provider,
-        config: AgentConfig,
-        run_id: str,
-    ):
-        """Compose the primary model call with its configured fallback chain.
-
-        ADR-110. Returns ``primary`` unchanged when no chain is configured, so
-        an unconfigured install runs byte-identical code (AC#10) -- no
-        projection, no readiness probe, no extra frame.
-        """
-        chain = resolve_fallback_chain(
-            getattr(config, "fallback_providers", None),
-            primary_endpoint,
-            lambda provider: self._provider_is_ready(provider),
-        )
-        if not chain:
-            return primary
-
-        def call_model(messages, active_schemas, current_continuation=None):
-            try:
-                return primary(messages, active_schemas, current_continuation)
-            except Exception as exc:
-                if not (
-                    is_credit_terminal(exc) or is_transient_model_error(exc)
-                ):
-                    # Auth, bad request, our own bugs: another provider cannot
-                    # absorb these, and hiding them helps nobody.
-                    raise
-                last = exc
-                for candidate in chain:
-                    if not candidate.ready:
-                        self._report_provider_switch(
-                            run_id,
-                            primary_endpoint,
-                            candidate.provider,
-                            f"skipped: {candidate.skip_reason}",
-                        )
-                        continue
-                    try:
-                        projected = project_history_for_protocol(
-                            messages, native=candidate.native
-                        )
-                    except ProjectionError as projection_error:
-                        # ADR-110 decision 5: a history we cannot project
-                        # faithfully means no fallback, not a degraded one.
-                        self._report_provider_switch(
-                            run_id,
-                            primary_endpoint,
-                            candidate.provider,
-                            f"refused: history not projectable "
-                            f"({projection_error})",
-                        )
-                        continue
-                    self._report_provider_switch(
-                        run_id,
-                        primary_endpoint,
-                        candidate.provider,
-                        f"after {type(exc).__name__}",
-                    )
-                    try:
-                        return build_for_provider(candidate.provider)(
-                            projected, active_schemas, current_continuation
-                        )
-                    except Exception as candidate_error:  # noqa: BLE001
-                        last = candidate_error
-                        continue
-                raise last
-
-        return call_model
-
     def _provider_is_ready(self, provider: str) -> bool:
         """Readiness for a fallback candidate, reusing the Chat check."""
         from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
@@ -2312,33 +2235,6 @@ class AgentService:
                 provider, load_cli_config_and_ensure_existence()
             ).ready
         )
-
-    def _report_provider_switch(
-        self, run_id: str, from_provider: str, to_provider: str, reason: str
-    ) -> None:
-        """Make a switch visible; never let reporting break the run."""
-        try:
-            logger.warning(
-                "Model provider fallback: {} -> {} ({}).",
-                from_provider,
-                to_provider,
-                reason,
-            )
-            if self.on_step is not None:
-                self.on_step(
-                    AgentStep(
-                        kind="model",
-                        summary=(
-                            f"Provider fallback: {from_provider} -> "
-                            f"{to_provider} ({reason})"
-                        ),
-                        status="failed",
-                    ),
-                    run_id,
-                    "",
-                )
-        except Exception:  # noqa: BLE001 -- reporting must not end a run
-            pass
 
     def _make_call_model(
         self,
@@ -4653,6 +4549,10 @@ class AgentService:
                     )
             child_config = AgentConfig(
                 model=child_model,
+                # Children report provider-level faults against the same
+                # provider the parent is using (review minor, 2026-08-31 --
+                # previously they reported "unknown provider").
+                provider=config.provider,
                 system_prompt=child_system_prompt,
                 allowed_tools=child_allowed_tools,
                 budget=child_budget,
@@ -5067,6 +4967,10 @@ class AgentService:
                     )
             child_config = AgentConfig(
                 model=child_model,
+                # Children report provider-level faults against the same
+                # provider the parent is using (review minor, 2026-08-31 --
+                # previously they reported "unknown provider").
+                provider=config.provider,
                 system_prompt=child_system_prompt,
                 allowed_tools=child_allowed_tools,
                 budget=child_budget,
@@ -5959,38 +5863,66 @@ class AgentService:
             first_request_fits=schema_plan.request_fits,
         )
 
-        # ADR-110: wrap the primary in the configured fallback chain. A NEW
-        # per-provider closure is built on switch (provider shaping and the
-        # protocol-text cache are resolved at closure-build time, so they
-        # cannot be reused across providers) -- but LoopDeps itself is never
-        # rebuilt, so TASK-25913's wall-budget origin is untouched.
-        def _build_for_provider(candidate_endpoint: str):
-            return self._make_call_model(
-                config,
-                candidate_endpoint,
-                runtime_schemas,
-                log_active,
-                continuation_groups,
-                continuation_owner_key,
-                continuation_owner_message_id,
-                trusted_role=trusted_guidance_role,
-                project_instruction_context=project_context,
-                chain_id=chain_id,
-                payload_state=payload_state,
-                staged_delivery=staged_delivery,
-                on_context_assembled=lambda categories: context_callback_ref[
-                    "callback"
-                ](categories),
-                first_request_fits=schema_plan.request_fits,
-            )
+        # ADR-110 (loop-owned after the 2026-08-31 review): the LOOP executes
+        # the switch -- composition after retry, stickiness, projection of its
+        # own messages, and the trace step. The service supplies only the
+        # impure halves here: the readiness-resolved chain and a builder that
+        # returns a per-candidate closure. A NEW closure per provider is
+        # required (shaping and the protocol-text cache resolve at build
+        # time), but LoopDeps itself is never rebuilt -- TASK-25913's
+        # wall-budget origin is untouched by a switch.
+        def _build_for_candidate(candidate_endpoint: str):
+            try:
+                # The candidate runs ITS OWN configured model, not the
+                # primary's -- an anthropic model id sent verbatim to cohere
+                # is a guaranteed invalid-model failure (review C3b). Empty
+                # means "let the handler use its provider default", the same
+                # resolution the rest of the app applies.
+                from tldw_chatbook.config import get_cli_setting
 
-        call_model = self._wrap_with_fallback(
-            call_model,
-            primary_endpoint=api_endpoint,
-            build_for_provider=_build_for_provider,
-            config=config,
-            run_id=run_id,
+                candidate_model = str(
+                    get_cli_setting(
+                        f"api_settings.{candidate_endpoint}", "model", ""
+                    )
+                    or ""
+                )
+                candidate_config = dataclasses.replace(
+                    config,
+                    model=candidate_model,
+                    provider=candidate_endpoint,
+                )
+                return self._make_call_model(
+                    candidate_config,
+                    candidate_endpoint,
+                    runtime_schemas,
+                    log_active,
+                    continuation_groups,
+                    continuation_owner_key,
+                    continuation_owner_message_id,
+                    trusted_role=trusted_guidance_role,
+                    project_instruction_context=project_context,
+                    chain_id=chain_id,
+                    payload_state=payload_state,
+                    staged_delivery=staged_delivery,
+                    on_context_assembled=lambda categories: context_callback_ref[
+                        "callback"
+                    ](categories),
+                    first_request_fits=schema_plan.request_fits,
+                )
+            except Exception:  # noqa: BLE001 -- a broken candidate is skipped
+                return None
+
+        fallback_runtime = None
+        resolved_chain = resolve_fallback_chain(
+            getattr(config, "fallback_providers", None),
+            api_endpoint,
+            self._provider_is_ready,
         )
+        if resolved_chain:
+            fallback_runtime = FallbackRuntime(
+                candidates=tuple(resolved_chain),
+                build=_build_for_candidate,
+            )
 
         def observe_step(step: AgentStep) -> None:
             try:
@@ -6124,6 +6056,7 @@ class AgentService:
         deps = LoopDeps(
             call_model=call_model,
             call_model_with_continuation=call_model,
+            fallback=fallback_runtime,
             invoke_tool=invoke_tool,
             spawn=spawn,
             invoke_tool_at_step=lambda call, step_index, call_id: invoke_tool(

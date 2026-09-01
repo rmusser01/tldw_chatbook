@@ -255,10 +255,20 @@ def test_every_native_provider_round_trips():
     coverage grows with it.
     """
     from tldw_chatbook.Agents.native_tools import (
+        NATIVE_TOOLS_PROVIDERS,
         provider_supports_native_tools,
     )
+    from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS
 
-    candidates = ["openai", "anthropic", "google", "cohere", "groq", "ollama"]
+    # Review I5: the first version iterated a hand-written six-name list and
+    # only derived each name's protocol from the function -- adding a provider
+    # to the native set grew nothing, while the AC claimed it would. This one
+    # is genuinely driven from the sources of truth: every native provider,
+    # plus every fence provider the dispatcher knows.
+    fence_providers = sorted(
+        p for p in API_CALL_HANDLERS if not provider_supports_native_tools(p)
+    )
+    candidates = sorted(NATIVE_TOOLS_PROVIDERS) + fence_providers
     checked_native = checked_fence = 0
 
     for provider in candidates:

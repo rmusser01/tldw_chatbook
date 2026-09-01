@@ -489,6 +489,28 @@ DEFAULT_CONSOLE_RUN_BUDGET = RunBudget(
 CONSOLE_RUN_BUDGET = DEFAULT_CONSOLE_RUN_BUDGET
 
 
+def console_fallback_providers() -> tuple[str, ...]:
+    """The user's ordered provider fallback chain; empty means off.
+
+    TASK-25902 review C3a: the first implementation declared
+    `fallback_providers` on AgentConfig and never wrote it from anywhere, so
+    the fallback feature was unreachable in the shipped app -- an AC marked
+    "configurable" that no user could configure. Accepts a TOML array or a
+    comma-separated string under `[console] agent_fallback_providers`.
+    """
+    try:
+        from tldw_chatbook.config import get_cli_setting
+
+        raw = get_cli_setting("console", "agent_fallback_providers", "")
+    except Exception:  # noqa: BLE001 -- config must never break a run
+        return ()
+    if isinstance(raw, (list, tuple)):
+        items = [str(item) for item in raw]
+    else:
+        items = str(raw or "").split(",")
+    return tuple(p.strip() for p in items if p and p.strip())
+
+
 def console_run_budget() -> RunBudget:
     """Resolve this run's budget from `[console]`, falling back to defaults.
 
@@ -3783,6 +3805,7 @@ def build_console_first_request_plan(
         # key the request is actually sent under, and it already carries the
         # execution_key -> provider -> "agent" fallback.
         provider=api_endpoint,
+        fallback_providers=console_fallback_providers(),
         allowed_tools=allowed_tools,
         budget=run_budget or console_run_budget(),
         native_tools=native_tools,

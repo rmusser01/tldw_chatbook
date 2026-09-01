@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-31 15:08'
-updated_date: '2026-09-01 00:18'
+updated_date: '2026-09-01 01:01'
 labels:
   - agents
   - reliability
@@ -152,4 +152,29 @@ The projection test itself was never affected — `test_every_native_provider_
 round_trips` derives each provider's protocol from `provider_supports_native_
 tools` at runtime rather than from a hand-written list, which is exactly why
 ADR-110 required that. The error was in my prose, not the coverage.
+
+## Rework after the second review round (2026-08-31) — loop-owned fallback
+
+The review proved the wrapper implementation wrong four ways, several empirically: it inverted the retry composition (the wrapper absorbed transient errors before the loop's retry saw them — a provider switched on a single blip with the retry budget untouched); the switch was per-call rather than sticky, so the run re-failed the primary every turn and manufactured exactly the mixed-protocol history ADR-110 exists to prevent; the feature was unreachable (nothing ever wrote `fallback_providers`, the primary's model id went verbatim to the candidate, and every production 402/403 collapsed into a hardcoded-400 `ChatBadRequestError` so `is_credit_terminal` was dead code); and the switch report was dead code three ways over, silently swallowed by a blanket except. Five ACs were checked that production behaviour did not meet. They were unchecked, the task reopened, and the mechanism rebuilt.
+
+**The loop now owns the switch.** `run_agent_loop` holds sticky `active_call_model` locals (never LoopDeps — TASK-25913's origin is untouched), consults the chain only after retry declines (retries exhausted on a transient, or a credit-terminal class), projects `messages` in place — projection is length-preserving, so `coherent_len` and every step index stay valid, and the projected history becomes the run's canonical protocol per ADR-110 decision 4 — and reports the switch through the same trace seam retries already use, which tests can actually observe. Fallback is refused while a provider continuation is in flight (review I4). The service supplies only the impure halves via `FallbackRuntime`: the readiness-resolved chain and a per-candidate closure builder that resolves the CANDIDATE's configured model (`api_settings.<provider>.model`, empty = handler default) rather than sending the primary's model id verbatim.
+
+**Reachability (C3).** `[console] agent_fallback_providers` (TOML array or comma-separated) now feeds `AgentConfig.fallback_providers` via `console_fallback_providers()`. The dispatcher carries the real 4xx status on `ChatBadRequestError` (type unchanged for existing catchers) so 402/403 are credit-terminal with real traffic, and it now reads the numeric `Retry-After` header onto `ChatRateLimitError.retry_after` — closing review I3, so TASK-25901 AC#2's header clause is genuinely met rather than classifier-only. Six dispatcher tests pin those mappings, including a date-shaped Retry-After being dropped rather than fatal.
+
+**Tests are loop-driven now (review I6).** The wrapper-only tests all passed while every one of those bugs shipped, so they were replaced with tests that drive the real `run_agent_loop`: composition order (primary asked 1+retries times with backoff before any candidate — verified non-vacuous by mutation: suppressing the retry branch fails it), stickiness (primary attempted exactly once across a multi-turn post-switch run), credit-terminal switching without burning retries, auth never absorbed, unready candidates skipped with the skip traced, the switch visible in the trace, projection applied for a fence candidate, and no-runtime behaving byte-identically. The AC#11 round-trip test now genuinely derives from `NATIVE_TOOLS_PROVIDERS` plus every fence provider in `API_CALL_HANDLERS` (review I5 — the earlier version iterated a hand-written six-name list while claiming otherwise).
+
+**Live re-verification (AC#12).** The mechanism changed, so the earlier wrapper-based live check no longer described shipped code. Re-run through the REAL `run_agent_loop` with the real `chat_api_call` against Cohere, primary scripted to fail 503, native `tool_calls`/`role:"tool"` pair in history:
+
+```
+chain: [('cohere', True, True)]
+switch trace: ['Provider fallback: anthropic -> cohere (after ChatProviderError)']
+status: done
+final_text: 'FALLBACK-OK'
+```
+
+Scope limit unchanged: cohere is native, so the native→fence crossing remains unit-tested only (needs a local inference server; none was listening).
+
+Also fixed from the review minors: the interleaved doc comments above `EMPTY_TURN_LIMIT`, retry backoff sliced into ≤0.5s chunks so Stop is honoured during a sleep, sub-agent configs now carry `provider` (children previously reported "unknown provider"), and the no-backoff-on-empty choice is documented as deliberate.
+
+**Files (rework):** `tldw_chatbook/Agents/agent_runtime.py`, `tldw_chatbook/Agents/agent_service.py`, `tldw_chatbook/Agents/fallback_chain.py`, `tldw_chatbook/Chat/Chat_Deps.py`, `tldw_chatbook/Chat/Chat_Functions.py`, `tldw_chatbook/Chat/console_agent_bridge.py`, `Tests/Agents/test_fallback_chain.py` (rewritten), `Tests/Agents/test_history_projection.py`, `Tests/Agents/test_model_retry_loop.py`, `Tests/Chat/test_dispatcher_status_mapping.py` (new).
 <!-- SECTION:NOTES:END -->

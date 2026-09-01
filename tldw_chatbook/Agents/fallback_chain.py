@@ -40,6 +40,23 @@ class FallbackCandidate:
     skip_reason: str = ""
 
 
+@dataclass(frozen=True)
+class FallbackRuntime:
+    """What the loop needs to execute a switch (ADR-110, loop-owned).
+
+    The LOOP owns the switch -- composition with retry, stickiness, projection
+    of its own ``messages``, and the trace step -- because only the loop can
+    make the switch sticky and adopt the projected history as canonical. The
+    service supplies the impure halves: the resolved chain and a builder that
+    returns a per-provider model-call closure (or None when one cannot be
+    built). Built only when a chain is configured, so an unconfigured run
+    carries ``deps.fallback = None`` and executes byte-identical code.
+    """
+
+    candidates: tuple[FallbackCandidate, ...]
+    build: Callable[[str], Callable | None]
+
+
 def is_credit_terminal(exc: BaseException) -> bool:
     """Whether ``exc`` means this provider is out of money or quota.
 
