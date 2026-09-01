@@ -11,7 +11,7 @@ import json
 import sqlite3
 import uuid
 from contextlib import closing, contextmanager
-from datetime import date, datetime, timezone, tzinfo
+from datetime import date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import Any, Iterator, Optional, Union, cast
 from zoneinfo import ZoneInfo
@@ -26,7 +26,7 @@ from tldw_chatbook.DB.sql_validation import validate_identifier
 class ScheduledTasksDB(BaseDB):
     """Database operations for scheduled tasks and reminders."""
 
-    _CURRENT_SCHEMA_VERSION = 3
+    _CURRENT_SCHEMA_VERSION = 4
 
     _REMINDER_TASK_COLUMNS = {
         "id",
@@ -45,6 +45,7 @@ class ScheduledTasksDB(BaseDB):
         "missed_at",
         "missed_count",
         "timeout_seconds",
+        "transfer_state",
         "link_type",
         "link_id",
         "link_url",
@@ -75,6 +76,16 @@ class ScheduledTasksDB(BaseDB):
         "created_at",
         "updated_at",
         "archived_at",
+        "disabled_lock_kind",
+        "disabled_reason",
+        "resolution_state",
+        "resolved_at",
+        "resolved_by",
+        "resolved_result_id",
+        "finding_policy",
+        "retention_policy",
+        "next_run_at",
+        "transfer_state",
     }
 
     _AUTOMATION_AUDIT_EVENT_COLUMNS = {
@@ -100,11 +111,35 @@ class ScheduledTasksDB(BaseDB):
         "visibility_policy",
         "notification_policy",
         "approval_policy",
+        "finding_policy",
+        "retention_policy",
     }
 
     _AUDIT_JSON_FIELDS = {
         "before",
         "after",
+    }
+
+    _RUNS_RETAINED_PER_DEFINITION = 200
+
+    _AUTOMATION_RUN_COLUMNS = {
+        "server_id", "status", "outcome", "schedule_slot",
+        "scope_snapshot", "finding_policy_snapshot", "rag_request_snapshot",
+        "run_summary", "evidence_summary", "failure_reason",
+        "updated_at", "started_at", "ended_at",
+    }
+    _AUTOMATION_RUN_JSON_FIELDS = {
+        "scope_snapshot", "finding_policy_snapshot", "rag_request_snapshot",
+        "run_summary", "evidence_summary", "failure_reason",
+    }
+
+    _AUTOMATION_RESULT_COLUMNS = {
+        "server_id", "answer", "answer_mode", "confidence", "source_refs",
+        "visibility_destination", "review_state", "reviewed_at",
+        "reviewed_by", "review_note", "updated_at",
+    }
+    _AUTOMATION_RESULT_JSON_FIELDS = {
+        "answer", "confidence", "source_refs", "visibility_destination",
     }
 
     _DATETIME_FIELDS = {
@@ -179,9 +214,22 @@ class ScheduledTasksDB(BaseDB):
         their condition structurally (the presence of their column), which
         is memory-correct: an empty memory database runs v0_to_v1, finds
         no ``missed_count``, adds it, finds no ``timeout_seconds``, adds
-        it, and every step lands on a consistent v3 schema even though
-        each step sees its own connection.
+        it, finds no ``automation_runs``/``automation_results`` tables,
+        adds those and the v4 columns, and every step lands on a
+        consistent v4 schema even though each step sees its own
+        connection.
         """
+        if self._schema_is_current():
+            # Warm-boot fast path (ADR-097 boot ratchet): a fully-migrated
+            # file DB skips importing the four migration modules entirely,
+            # keeping them out of the `_ui_ready` module census on every
+            # boot after the first. Only a PROOF of completeness skips --
+            # any probe failure (missing table on a fresh or `:memory:`
+            # per-connection DB, an older recorded version) falls through
+            # to the full chain below, whose idempotence remains the
+            # correctness backstop.
+            return
+
         from tldw_chatbook.Scheduling.db.migrations.v0_to_v1 import (
             migrate as migrate_v0_to_v1,
         )
@@ -191,10 +239,36 @@ class ScheduledTasksDB(BaseDB):
         from tldw_chatbook.Scheduling.db.migrations.v2_to_v3 import (
             migrate as migrate_v2_to_v3,
         )
+        from tldw_chatbook.Scheduling.db.migrations.v3_to_v4 import (
+            migrate as migrate_v3_to_v4,
+        )
 
         migrate_v0_to_v1(self)
         migrate_v1_to_v2(self)
         migrate_v2_to_v3(self)
+        migrate_v3_to_v4(self)
+
+    def _schema_is_current(self) -> bool:
+        """Return True when the recorded version proves the chain already ran.
+
+        A single pre-check before the migration chain, not a version
+        consultation between steps -- the `:memory:` discipline in
+        `_initialize_schema`'s docstring is untouched: a memory DB's fresh
+        connection has no ``schema_version`` table, the probe returns
+        False, and the chain runs exactly as before.
+        """
+        try:
+            with closing(self._get_connection()) as conn:
+                row = conn.execute(
+                    "SELECT MAX(version) FROM schema_version"
+                ).fetchone()
+        except sqlite3.Error:
+            return False
+        return bool(
+            row
+            and row[0] is not None
+            and int(row[0]) >= self._CURRENT_SCHEMA_VERSION
+        )
 
     def get_schema_version(self) -> int:
         """Return the currently recorded schema version."""
@@ -1131,6 +1205,300 @@ class ScheduledTasksDB(BaseDB):
             f"Created automation audit event {event_id} for definition {definition_id}"
         )
         return event_id
+
+    # ------------------------------------------------------------------
+    # Automation runs
+    # ------------------------------------------------------------------
+
+    def create_automation_run(
+        self,
+        owner_id: str,
+        definition_id: str,
+        definition_version: int,
+        trigger_reason: str,
+        **kwargs: Any,
+    ) -> str | None:
+        """Insert a run; return its id, or None when the slot deduped it.
+
+        Also prunes the definition's runs to the newest
+        ``_RUNS_RETAINED_PER_DEFINITION`` (spec §4.1): an
+        every-15-minutes definition would otherwise write ~35k rows/year.
+        """
+        self._validate_kwargs(kwargs, self._AUTOMATION_RUN_COLUMNS, "automation run")
+        run_id = str(uuid.uuid4())
+        now_iso = self._to_utc_iso(datetime.now(timezone.utc))
+        fields: dict[str, Any] = {
+            "id": run_id,
+            "owner_id": owner_id,
+            "definition_id": definition_id,
+            "definition_version": definition_version,
+            "trigger_reason": trigger_reason,
+            "status": "queued",
+            "outcome": "none",
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        }
+        for key, value in kwargs.items():
+            if value is None:
+                continue
+            if key in self._AUTOMATION_RUN_JSON_FIELDS:
+                fields[key] = json.dumps(value)
+            elif isinstance(value, datetime):
+                fields[key] = self._to_utc_iso(value)
+            else:
+                fields[key] = value
+        self._validate_sql_identifiers(list(fields.keys()))
+        columns = ", ".join(fields)
+        placeholders = ", ".join("?" for _ in fields)
+        with self.transaction() as conn:
+            try:
+                conn.execute(
+                    f"INSERT INTO automation_runs ({columns}) VALUES ({placeholders})",
+                    list(fields.values()),
+                )
+            except sqlite3.IntegrityError as exc:
+                if "UNIQUE constraint failed" not in str(exc):
+                    raise
+                # The (definition, version, slot) UNIQUE fired: this slot
+                # already ran. Dedupe is a result, not an error.
+                return None
+            conn.execute(
+                """
+                DELETE FROM automation_runs
+                WHERE definition_id = ? AND id NOT IN (
+                    SELECT id FROM automation_runs
+                    WHERE definition_id = ?
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT ?
+                )
+                """,
+                (definition_id, definition_id, self._RUNS_RETAINED_PER_DEFINITION),
+            )
+        return run_id
+
+    def update_automation_run(self, run_id: str, **kwargs: Any) -> bool:
+        """Update automation-run fields. Returns True if a row changed."""
+        if not kwargs:
+            return False
+
+        self._validate_kwargs(kwargs, self._AUTOMATION_RUN_COLUMNS, "automation run")
+
+        updates: list[str] = []
+        params: list[Any] = []
+
+        for key, value in kwargs.items():
+            if key in self._AUTOMATION_RUN_JSON_FIELDS:
+                updates.append(f"{key} = ?")
+                params.append(self._to_json(value))
+            elif isinstance(value, datetime):
+                updates.append(f"{key} = ?")
+                params.append(self._to_utc_iso(value))
+            else:
+                updates.append(f"{key} = ?")
+                params.append(value)
+
+        self._validate_sql_identifiers([key.split(" ", 1)[0] for key in updates])
+        if "updated_at" not in kwargs:
+            # Auto-stamp only when the caller didn't supply one, mirroring
+            # create_automation_run (caller's value wins) so sync code can
+            # set server timestamps without them being clobbered.
+            updates.append("updated_at = ?")
+            params.append(self._to_utc_iso(datetime.now(timezone.utc)))
+        params.append(run_id)
+
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                f"UPDATE automation_runs SET {', '.join(updates)} WHERE id = ?",
+                params,
+            )
+            return cursor.rowcount > 0
+
+    def list_automation_runs(
+        self,
+        owner_id: str,
+        definition_id: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List automation runs for an owner, newest first.
+
+        Optionally filtered to a single definition; paginated via
+        ``limit``/``offset``.
+        """
+        conditions = ["owner_id = ?"]
+        params: list[Any] = [owner_id]
+
+        if definition_id is not None:
+            conditions.append("definition_id = ?")
+            params.append(definition_id)
+
+        where_clause = f"WHERE {' AND '.join(conditions)}"
+        params.extend([limit, offset])
+
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                f"SELECT * FROM automation_runs {where_clause} "
+                "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                params,
+            )
+            return self._rows_to_dicts(
+                cursor.fetchall(), json_fields=self._AUTOMATION_RUN_JSON_FIELDS
+            )
+
+    def reconcile_stale_automation_runs(self, older_than_seconds: float) -> int:
+        """Mark queued/running runs older than the cutoff as interrupted.
+
+        Called at scheduler start (spec §4.1): an app killed mid-run must
+        not leave a phantom in-flight run.
+        """
+        cutoff = self._to_utc_iso(
+            datetime.now(timezone.utc) - timedelta(seconds=older_than_seconds)
+        )
+        now_iso = self._to_utc_iso(datetime.now(timezone.utc))
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE automation_runs
+                SET status = 'failed',
+                    failure_reason = ?,
+                    ended_at = ?,
+                    updated_at = ?
+                WHERE status IN ('queued', 'running') AND created_at < ?
+                """,
+                (json.dumps({"code": "interrupted"}), now_iso, now_iso, cutoff),
+            )
+            return cursor.rowcount
+
+    # ------------------------------------------------------------------
+    # Automation results
+    # ------------------------------------------------------------------
+
+    def create_automation_result(
+        self,
+        owner_id: str,
+        definition_id: str,
+        run_id: str,
+        kind: str,
+        title: str,
+        summary: str,
+        dedupe_key: str,
+        **kwargs: Any,
+    ) -> str | None:
+        """Insert a result; return its id, or None when the dedupe key fired.
+
+        Mirrors ``create_automation_run``'s create shape: no pruning here
+        (results are user-facing findings, not run bookkeeping).
+        """
+        self._validate_kwargs(kwargs, self._AUTOMATION_RESULT_COLUMNS, "automation result")
+        result_id = str(uuid.uuid4())
+        now_iso = self._to_utc_iso(datetime.now(timezone.utc))
+        fields: dict[str, Any] = {
+            "id": result_id,
+            "owner_id": owner_id,
+            "definition_id": definition_id,
+            "run_id": run_id,
+            "kind": kind,
+            "title": title,
+            "summary": summary,
+            "dedupe_key": dedupe_key,
+            "review_state": "unread",
+            "answer_mode": "none",
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        }
+        for key, value in kwargs.items():
+            if value is None:
+                continue
+            if key in self._AUTOMATION_RESULT_JSON_FIELDS:
+                fields[key] = json.dumps(value)
+            elif isinstance(value, datetime):
+                fields[key] = self._to_utc_iso(value)
+            else:
+                fields[key] = value
+        self._validate_sql_identifiers(list(fields.keys()))
+        columns = ", ".join(fields)
+        placeholders = ", ".join("?" for _ in fields)
+        with self.transaction() as conn:
+            try:
+                conn.execute(
+                    f"INSERT INTO automation_results ({columns}) VALUES ({placeholders})",
+                    list(fields.values()),
+                )
+            except sqlite3.IntegrityError as exc:
+                if "UNIQUE constraint failed" not in str(exc):
+                    raise
+                # The (owner_id, dedupe_key) UNIQUE fired: already reported.
+                return None
+        return result_id
+
+    def list_automation_results(
+        self,
+        owner_id: str,
+        review_state: str | None = None,
+        definition_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List automation results for an owner, newest first.
+
+        Optionally filtered by ``review_state`` and/or ``definition_id``;
+        paginated via ``limit``/``offset``.
+        """
+        conditions = ["owner_id = ?"]
+        params: list[Any] = [owner_id]
+
+        if review_state is not None:
+            conditions.append("review_state = ?")
+            params.append(review_state)
+
+        if definition_id is not None:
+            conditions.append("definition_id = ?")
+            params.append(definition_id)
+
+        where_clause = f"WHERE {' AND '.join(conditions)}"
+        params.extend([limit, offset])
+
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                f"SELECT * FROM automation_results {where_clause} "
+                "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                params,
+            )
+            return self._rows_to_dicts(
+                cursor.fetchall(), json_fields=self._AUTOMATION_RESULT_JSON_FIELDS
+            )
+
+    def count_unread_results(self, owner_id: str) -> int:
+        """Count unread results for an owner (spec §4's inbox badge)."""
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM automation_results "
+                "WHERE owner_id = ? AND review_state = 'unread'",
+                (owner_id,),
+            )
+            row = cursor.fetchone()
+            return int(row[0]) if row else 0
+
+    def update_result_review(
+        self,
+        result_id: str,
+        review_state: str,
+        review_note: str | None = None,
+        reviewed_by: str | None = None,
+    ) -> bool:
+        """Set a result's review state; returns False for an unknown id."""
+        now_iso = self._to_utc_iso(datetime.now(timezone.utc))
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE automation_results
+                SET review_state = ?, review_note = ?, reviewed_by = ?,
+                    reviewed_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (review_state, review_note, reviewed_by, now_iso, now_iso, result_id),
+            )
+            return cursor.rowcount > 0
 
     # ------------------------------------------------------------------
     # Sync helpers
