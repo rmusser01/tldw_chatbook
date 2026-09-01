@@ -27,6 +27,7 @@ from textual import on
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import ComposeResult
 from textual.widgets import Button, Select, Static, TextArea
+from textual.widgets._select import SelectOverlay
 
 import tldw_chatbook
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
@@ -756,6 +757,168 @@ async def test_identical_approval_round_sync_preserves_mounted_controls():
         )
         await pilot.pause()
         assert card._batch_generation == generation + 3
+
+
+@pytest.mark.asyncio
+async def test_changed_ordinary_one_row_reuses_only_noncommitting_widgets():
+    """A new ordinary one-row round updates in place without reusing commit buttons.
+
+    Replacing the row and Select forces Textual to register, style, lay out, and
+    paint the whole subtree again.  The decision controls deliberately remain
+    round-scoped: reusing them would let queued old-round interaction reach the
+    new round.
+    """
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        first = [
+            dict(
+                _single_call()[0],
+                effects=["network"],
+                rationale="Checking the old target",
+            )
+        ]
+        card.set_batch(first, timeout_seconds=45.0, round_id="round-reuse-old")
+        await pilot.pause()
+
+        row = app.query_one(".approval-row")
+        header = row.query_one(".approval-row-header", Static)
+        args = row.query_one(".approval-row-args", Static)
+        select = app.query_one(".approval-row-decision", Select)
+        old_fast_approve = app.query_one(".approval-row-fast-approve", Button)
+        card.set_batch([], timeout_seconds=0, round_id=None)
+        assert card.display is False
+
+        changed = [
+            {
+                "llm_name": "mcp__srv_b__write",
+                "server_key": "local:srv_b",
+                "tool_name": "write",
+                "server_label": "Srv B",
+                "arguments": {"path": "/tmp/new.txt"},
+                "reason": "ask",
+                "options": ["approve_session", "deny"],
+                "effects": ["private_read"],
+                "rationale": "Writing the new target",
+            }
+        ]
+        card.set_batch(changed, timeout_seconds=45.0, round_id="round-reuse-new")
+        await pilot.pause()
+
+        assert app.query_one(".approval-row") is row
+        assert row.query_one(".approval-row-header", Static) is header
+        assert row.query_one(".approval-row-args", Static) is args
+        new_select = app.query_one(".approval-row-decision", Select)
+        assert new_select is not select
+        assert app.query_one(".approval-row-fast-approve", Button) is not (
+            old_fast_approve
+        )
+        assert [value for _label, value in new_select._options] == [
+            "approve_session",
+            "deny",
+        ]
+        assert new_select.value == "approve_session"
+        assert "Srv B · write" in _text(row.query_one(".approval-row-header", Static))
+        assert "/tmp/new.txt" in _text(row.query_one(".approval-row-args", Static))
+        assert "may read private local data" in _text(
+            row.query_one(".approval-row-effects", Static)
+        )
+        context = next(
+            widget
+            for widget in row.query(Static)
+            if (widget.id or "").startswith("approval-context-")
+        )
+        assert "Writing the new target" in _text(context)
+
+        app.query_one(".approval-row-fast-approve", Button).press()
+        await pilot.pause()
+        assert app.decided == [{"mcp__srv_b__write": "approve_once"}]
+        assert app.decided_round_ids == ["round-reuse-new"]
+
+
+@pytest.mark.asyncio
+async def test_queued_old_select_event_cannot_change_the_new_round():
+    """An old overlay message must remain bound to its old decision control."""
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_single_call(), timeout_seconds=45.0, round_id="round-old")
+        await pilot.pause()
+
+        old_select = app.query_one(".approval-row-decision", Select)
+        old_select.expanded = True
+        old_select.query_one(SelectOverlay).post_message(
+            SelectOverlay.UpdateSelection(1)
+        )
+        card.set_batch([], timeout_seconds=0, round_id=None)
+        card.set_batch(
+            [
+                {
+                    "llm_name": "mcp__srv_b__write",
+                    "server_key": "local:srv_b",
+                    "tool_name": "write",
+                    "server_label": "Srv B",
+                    "arguments": {"path": "/tmp/new.txt"},
+                    "reason": "ask",
+                    "options": ["approve_once", "always_allow", "deny"],
+                }
+            ],
+            timeout_seconds=45.0,
+            round_id="round-new",
+        )
+
+        await pilot.pause()
+        new_select = app.query_one(".approval-row-decision", Select)
+        assert new_select is not old_select
+        assert new_select.value == "approve_once"
+        assert new_select.expanded is False
+
+
+@pytest.mark.asyncio
+async def test_back_to_back_changed_rounds_leave_only_latest_controls():
+    """Deferred pruning cannot leave an intermediate decision row visible."""
+    app = _CardHarnessApp()
+    async with app.run_test() as pilot:
+        card = app.query_one(ChatApprovalCard)
+        card.set_batch(_single_call(), timeout_seconds=45.0, round_id="round-first")
+        await pilot.pause()
+
+        def changed_call(suffix: str) -> list[dict]:
+            return [
+                {
+                    "llm_name": f"mcp__srv__{suffix}",
+                    "server_key": "local:srv",
+                    "tool_name": suffix,
+                    "server_label": "Srv",
+                    "arguments": {"path": f"/tmp/{suffix}.txt"},
+                    "reason": "ask",
+                }
+            ]
+
+        card.set_batch(
+            changed_call("second"),
+            timeout_seconds=45.0,
+            round_id="round-second",
+        )
+        card.set_batch(
+            changed_call("third"),
+            timeout_seconds=45.0,
+            round_id="round-third",
+        )
+        await pilot.pause()
+
+        row = app.query_one(".approval-row")
+        assert len(row.query(".approval-row-controls")) == 1
+        assert len(row.query(".approval-row-decision")) == 1
+        assert len(row.query(".approval-row-fast-approve")) == 1
+        assert len(row.query(".approval-row-fast-deny")) == 1
+        assert "third" in _text(row.query_one(".approval-row-header", Static))
+
+        row.query_one(".approval-row-decision", Select).value = "deny"
+        app.query_one("#approval-submit", Button).press()
+        await pilot.pause()
+        assert app.decided == [{"mcp__srv__third": "deny"}]
+        assert app.decided_round_ids == ["round-third"]
 
 
 # ---------------------------------------------------------------------------

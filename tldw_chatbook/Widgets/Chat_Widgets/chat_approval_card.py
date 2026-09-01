@@ -683,8 +683,11 @@ class ChatApprovalCard(Container):
 
         Synchronous throughout -- see the module docstring for why this
         cannot ``await``. Repeated resume-state syncs for one unchanged,
-        identified round preserve its mounted controls. Changed rounds,
-        calls, or phases prune old rows via a fire-and-forget
+        identified round preserve its mounted controls. After the first
+        ordinary one-row round is mounted, later ordinary rows with the same
+        detail shape reuse its non-committing widgets; the Select and fast
+        buttons remain generation-scoped. Other changed rounds, calls, or phases
+        prune old rows via a fire-and-forget
         ``remove_children()`` (Textual 8.2.7 defers the actual detachment
         to the next event-loop tick -- see ``Widget.remove_children``'s
         ``AwaitRemove``/``App._prune``), while every new row gets an id
@@ -784,6 +787,17 @@ class ChatApprovalCard(Container):
         grouped = _collapse_pending_calls(calls)
         self._batch_generation += 1
         generation = self._batch_generation
+        if (
+            len(grouped) == 1
+            and not _is_raw_shell_row(grouped[0])
+            and self._update_mounted_single_row(
+                grouped[0],
+                rows_container=rows_container,
+                generation=generation,
+                finishing=finishing,
+            )
+        ):
+            return
         # Fleet-UX expert review F5 (task-1234): a single-decision card
         # still forced a two-step Select-then-Submit commit. Both fast
         # decisions ("approve_once"/"deny") are legal for EVERY row this
@@ -956,6 +970,110 @@ class ChatApprovalCard(Container):
         rows_container.remove_children()
         if rows:
             rows_container.mount(*rows)
+
+    def _update_mounted_single_row(
+        self,
+        entry: Mapping[str, Any],
+        *,
+        rows_container: Vertical,
+        generation: int,
+        finishing: bool,
+    ) -> bool:
+        """Update the existing same-shape ordinary row, if one is mounted."""
+        rows = [
+            child
+            for child in rows_container.children
+            if isinstance(child, Vertical) and child.has_class("approval-row")
+        ]
+        if len(rows) != 1:
+            return False
+        row = rows[0]
+        if not row.is_mounted or row.query(".approval-row-full-command"):
+            return False
+
+        try:
+            header = row.query_one(".approval-row-header", Static)
+            args = row.query_one(".approval-row-args", Static)
+            row.query_one(".approval-row-decision", Select)
+        except NoMatches:
+            return False
+        controls = [
+            child
+            for child in row.children
+            if isinstance(child, Horizontal)
+            and child.has_class("approval-row-controls")
+        ]
+        if not controls:
+            return False
+        effect_widgets = list(row.query(".approval-row-effects"))
+        context_widgets = [
+            widget
+            for widget in row.query(Static)
+            if (widget.id or "").startswith("approval-context-")
+        ]
+
+        effect_copy = format_approval_effects(entry)
+        context = format_context_line(entry.get("rationale"))
+        if bool(effect_copy) != (len(effect_widgets) == 1) or bool(context) != (
+            len(context_widgets) == 1
+        ):
+            return False
+
+        row_options = _options_for_row(entry)
+        row_values = [value for _label, value in row_options]
+        select = Select(
+            row_options,
+            value=_default_decision_for_row(entry, row_values),
+            allow_blank=False,
+            id=f"approval-row-decision-{generation}-0",
+            classes="approval-row-decision",
+        )
+        select.disabled = finishing
+        header.update(_format_row_header(entry))
+        header.tooltip = _row_header_tooltip(entry) or None
+        args.update(_summarize_row_arguments(entry))
+        if effect_widgets:
+            effect_widgets[0].update(effect_copy)
+        if context_widgets:
+            context_widgets[0].update(
+                f"[dim italic]{CONTEXT_LABEL} {escape(context)}[/dim italic]"
+            )
+        row.remove_class("needs-decision")
+
+        fast_approve = Button(
+            "Approve once",
+            id=f"approval-fast-approve-{generation}-0",
+            variant="success",
+            compact=True,
+            classes="approval-row-fast-approve",
+            tooltip="Approve once and resume immediately (skips Select + Submit).",
+        )
+        fast_deny = Button(
+            "Deny",
+            id=f"approval-fast-deny-{generation}-0",
+            variant="error",
+            compact=True,
+            classes="approval-row-fast-deny",
+            tooltip="Deny and resume immediately (skips Select + Submit).",
+        )
+        fast_approve.disabled = finishing
+        fast_deny.disabled = finishing
+        replacement_controls = Horizontal(
+            select,
+            fast_approve,
+            fast_deny,
+            classes="approval-row-controls",
+        )
+        for old_controls in controls:
+            old_controls.remove()
+        self._batch_fast_buttons = [fast_approve, fast_deny]
+        row.mount(replacement_controls)
+
+        self._batch_names = [str(entry.get("call_id", "") or entry.get("llm_name", ""))]
+        self._batch_selects = [select]
+        self._batch_legal_values = [row_values]
+        self._batch_rows = [row]
+        return True
 
     def _render_summary_line(self) -> None:
         """Render the batch-level advisory summary line (ADR-090).

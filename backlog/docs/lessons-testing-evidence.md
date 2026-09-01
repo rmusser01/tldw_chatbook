@@ -10730,3 +10730,24 @@ after the shell reaper has fired and a complete ownership scan observes no owned
 process. Until then it is backpressure, not proof. Keep the stronger two-scan,
 deadline-bounded process and stream proof in the cleanup owner, and test delayed
 descendant output through the production reader rather than a manually paused one.
+
+---
+
+## Hidden precomposition can move a Textual first-open race instead of removing it
+
+**TASK-26836, 2026-09-01.** The first approval-card optimization precomposed a
+hidden ordinary row so the first permission prompt could reveal an existing
+subtree. Its mounted identity regression passed, but the production first-open
+paint test intermittently rendered the title and tool details with the action
+bar clipped. The hidden row still lived below flexible, initially hidden
+containers, so precomposition changed when the widgets were registered without
+giving Textual stable first-open geometry. Reverting that approach and retaining
+the existing first-mount path restored the prior behavior; reusing the real row
+only after its first successful mount delivered the steady-state speedup without
+adding a new hidden-tree layout dependency.
+
+**What to do.** Treat mount identity and first visible geometry as separate
+contracts. When optimizing a Textual subtree that begins hidden, keep a
+production-hierarchy first-open paint test and do not infer layout readiness from
+precomposition alone. Prefer reusing a subtree after one successful visible
+mount unless its hidden ancestors already have deterministic geometry.
