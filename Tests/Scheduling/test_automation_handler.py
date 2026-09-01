@@ -13,6 +13,7 @@ Library RAG seams this handler module deliberately avoids at import time).
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -58,6 +59,27 @@ class _DispatchSpy:
 
 def _make_db(tmp_path) -> ScheduledTasksDB:
     return ScheduledTasksDB(str(tmp_path / "s.db"), client_id="t")
+
+
+class _RaiseOnceThenDelegate:
+    """Wraps a real `ScheduledTasksDB`; the first `create_automation_run`
+    call raises, every call after (including a later `handle`'s own retry)
+    delegates to the real accessor. Everything else passes straight
+    through via `__getattr__`."""
+
+    def __init__(self, db: ScheduledTasksDB, *, exc: Exception) -> None:
+        self._db = db
+        self._exc = exc
+        self._raised = False
+
+    def create_automation_run(self, *args: Any, **kwargs: Any) -> Any:
+        if not self._raised:
+            self._raised = True
+            raise self._exc
+        return self._db.create_automation_run(*args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._db, name)
 
 
 def _make_definition(db: ScheduledTasksDB, **overrides: Any) -> dict[str, Any]:
@@ -314,3 +336,37 @@ async def test_notification_policy_on_failure_false_suppresses_the_notification(
     runs = db.list_automation_runs("local", definition_id=row["id"])
     assert runs[0]["status"] == "failed"  # the row is still written
     assert spy.calls == []  # but the notification is suppressed
+
+
+@pytest.mark.asyncio
+async def test_a_db_error_inserting_the_running_row_does_not_strand_the_claim(
+    tmp_path,
+):
+    db = _make_db(tmp_path)
+    row = _make_definition(db)
+    flaky = _RaiseOnceThenDelegate(
+        db, exc=sqlite3.OperationalError("database is locked")
+    )
+
+    async def fake_executor(app, definition_row):
+        return _FakeOutcome(outcome="finding")
+
+    handler = AutomationDefinitionHandler(
+        db=flaky, executors={"recurring_question": fake_executor}
+    )
+
+    with pytest.raises(sqlite3.OperationalError):
+        await handler.handle(row)
+
+    # The claim must not be stranded by the unexpected DB failure.
+    assert handler._claimed == set()
+
+    # A second `handle` for the same definition must proceed past the
+    # claim check (it is not treated as an overlap) -- no `skipped` row.
+    await handler.handle(row)
+    await _drain(handler)
+
+    runs = db.list_automation_runs("local", definition_id=row["id"])
+    assert len(runs) == 1
+    assert runs[0]["status"] == "completed"
+    assert not any(r["status"] == "skipped" for r in runs)

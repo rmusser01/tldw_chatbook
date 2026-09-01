@@ -238,42 +238,57 @@ class AutomationDefinitionHandler:
             return
 
         self._claimed.add(definition_id)
-        now = datetime.now(timezone.utc)
-        config = task.get("config")
-        run_id = await asyncio.to_thread(
-            self.db.create_automation_run,
-            owner_id,
-            definition_id,
-            version,
-            "scheduled",
-            status="running",
-            schedule_slot=slot,
-            started_at=now,
-            scope_snapshot=config.get("scope") if isinstance(config, dict) else None,
-            finding_policy_snapshot=task.get("finding_policy"),
-        )
-        if run_id is None:
-            # The (definition, version, slot) UNIQUE fired: this slot
-            # already ran. Dedupe is a result, not an error -- nothing
-            # else to do, and nothing was spawned to release the claim.
-            self._claimed.discard(definition_id)
-            return
+        # From here to the successful spawn below, `_run`'s own `finally`
+        # does not exist yet to release the claim -- and this span has two
+        # real awaits (`create_automation_run`, `update_automation_
+        # definition`), either of which can raise (DB busy/locked) or be
+        # cancelled (the loop's per-handler `wait_for`). Without this
+        # try/finally an exception here stranded the claim forever (the
+        # definition became un-runnable until process restart) and, past
+        # the insert, orphaned the `running` row. `claim_released_by_spawn`
+        # is the only path that must NOT discard here: once `_run` is
+        # actually spawned, IT owns the release (its own `finally`).
+        claim_released_by_spawn = False
+        try:
+            now = datetime.now(timezone.utc)
+            config = task.get("config")
+            run_id = await asyncio.to_thread(
+                self.db.create_automation_run,
+                owner_id,
+                definition_id,
+                version,
+                "scheduled",
+                status="running",
+                schedule_slot=slot,
+                started_at=now,
+                scope_snapshot=config.get("scope") if isinstance(config, dict) else None,
+                finding_policy_snapshot=task.get("finding_policy"),
+            )
+            if run_id is None:
+                # The (definition, version, slot) UNIQUE fired: this slot
+                # already ran. Dedupe is a result, not an error -- nothing
+                # else to do; the finally below releases the claim.
+                return
 
-        schedule = task.get("schedule")
-        await asyncio.to_thread(
-            self.db.update_automation_definition,
-            definition_id,
-            next_run_at=compute_next_run_at(
-                schedule if isinstance(schedule, dict) else {}, now=now
-            ),
-        )
+            schedule = task.get("schedule")
+            await asyncio.to_thread(
+                self.db.update_automation_definition,
+                definition_id,
+                next_run_at=compute_next_run_at(
+                    schedule if isinstance(schedule, dict) else {}, now=now
+                ),
+            )
 
-        spawned = asyncio.create_task(
-            self._run(executor, task, run_id=run_id, definition_id=definition_id, owner_id=owner_id),
-            name=f"automation_run_{run_id}",
-        )
-        self._pending.add(spawned)
-        spawned.add_done_callback(self._pending.discard)
+            spawned = asyncio.create_task(
+                self._run(executor, task, run_id=run_id, definition_id=definition_id, owner_id=owner_id),
+                name=f"automation_run_{run_id}",
+            )
+            self._pending.add(spawned)
+            spawned.add_done_callback(self._pending.discard)
+            claim_released_by_spawn = True
+        finally:
+            if not claim_released_by_spawn:
+                self._claimed.discard(definition_id)
 
     async def _run(
         self,
