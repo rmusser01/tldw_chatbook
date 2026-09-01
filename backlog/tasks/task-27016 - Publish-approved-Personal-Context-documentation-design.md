@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-01 15:07'
-updated_date: '2026-09-01 15:41'
+updated_date: '2026-09-01 16:27'
 labels: []
 dependencies: []
 references:
@@ -42,19 +42,22 @@ Reason: this PR publishes reviewed documentation only; ADR-102 already governs t
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Published the reviewed Personal Context documentation design by applying commits 76dfa83343, 58afb082ac, 9ea1b2f134, and dd2d64bdf5 to current origin/dev 50848508f1. Normalized the spec metadata into semantic lists so the required whitespace gate preserves rendering.
+Published the reviewed Personal Context documentation design by applying commits 76dfa83343, 58afb082ac, 9ea1b2f134, and dd2d64bdf5. Normalized the spec metadata into semantic lists so the required whitespace gate preserves rendering.
 
 ADR required: no. ADR-102 governs the implemented Personal Context authority, sync, and encryption architecture; this task adds no architectural decision.
 
-Verification evidence before closeout:
-- backlog task 27016 --plain resolved the exact TASK-27016 file and rendered all three acceptance criteria.
-- git diff --check origin/dev...HEAD exited 0 at 6aeb559283.
-- Exact-scope comparison exited 0: only Docs/superpowers/specs/2026-08-31-personal-context-documentation-design.md and backlog/tasks/task-27016 - Publish-approved-Personal-Context-documentation-design.md differ from origin/dev.
-- The fresh-ID sweep found no TASK-27016 claimant across local/remote refs or repository worktrees before allocation.
-- Both files are tracked, and the task references the published spec path.
-- No application tests were run because this is documentation-only; the approved spec explicitly requires no full application sweep.
+The required branch update exposed an older TASK-26836 on dev. Under the repository younger-task-renumbers rule, this publication record moved from TASK-26836 to the globally unused TASK-27016; the Renumbering provenance section records the timestamps, reason, and updated inbound references.
 
-Post-rebase verification: rebased conflict-free onto current origin/dev b17946c57a. The initial PR review reported no issues. The branch-update check then exposed a duplicate TASK-26836 added to dev by the older Console tray task, so this younger publication task was renumbered under the repository collision rule. Diff, exact-scope, task rendering, targeted uniqueness tests, and all-ref/all-worktree verification must rerun on the renumbered final branch before merge.
+Verification evidence at 5fcc8243cc on origin/dev b17946c57a:
+- backlog task 27016 --plain resolved the exact TASK-27016 file, status Done, and all three checked acceptance criteria.
+- git diff --check origin/dev...HEAD exited 0.
+- Exact-scope comparison exited 0 with only Docs/superpowers/specs/2026-08-31-personal-context-documentation-design.md and backlog/tasks/task-27016 - Publish-approved-Personal-Context-documentation-design.md.
+- The all-ref sweep found TASK-27016 only on refs/heads/codex/personal-context-docs-spec at the renamed task path; the all-worktree sweep found it only in this isolated publication worktree. No distinct TASK-27016 claimant exists.
+- Using the repository Python 3.12 environment, python -m pytest Tests/CI/test_backlog_task_id_uniqueness.py -q passed 3 tests; the system Python 3.9 invocation was discarded because this repository requires Python 3.11+.
+- Both files are tracked, the task references the published spec path, and the spec has no task-ID reference requiring an update.
+- No application test sweep was run because this is documentation-only.
+
+The initial PR review reported no issues and its checks passed before dev added the collision; all required checks must rerun on the final pushed SHA.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
