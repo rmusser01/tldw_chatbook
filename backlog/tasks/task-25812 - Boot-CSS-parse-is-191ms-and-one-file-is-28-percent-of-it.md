@@ -144,6 +144,14 @@ clearing the standing ratchet breach.
 Do not attempt the one-line version (move the whole file to ChatScreen); it
 is measurably wrong.
 
+## Owner decision (2026-08-31): split by screen
+
+Owner: "12 split-by-screen" — implement the split recommended in the
+investigation. Console / Library / Settings portions move to those screens'
+own CSS, MIXED + unattributed stay in the boot bundle. Implementation
+proceeds on its own branch; TASK-24451 (the split itself) is satisfied by
+the same change.
+
 *(This file existed as two copies — the review filing on PR #2258 and the
 implementation record on PR #2281 — merged by union here when #2281 landed
 on dev first, exactly as both copies' provenance notes anticipated.)*

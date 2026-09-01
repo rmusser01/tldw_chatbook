@@ -1,7 +1,7 @@
 ---
 id: task-25810
 title: Re-key ancestor-scoped CSS rules off bare-type subjects
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-30'
 labels:
@@ -172,7 +172,10 @@ settled Console → Library navigation (three interleaved pairs):
 than restyle, so the filter's share of it is smaller. Remaining CSS re-keying
 headroom should be measured against these numbers, not the synthetic ones.
 
-## Sizing of the remaining re-key (2026-08-31) — recommend CLOSING here
+## Sizing of the remaining re-key (2026-08-31) — CLOSED by owner decision 2026-08-31
+
+Owner accepted the recommendation below ("25810 close"). The re-key
+scope is closed; the delivered value is the filter plus the ratchet.
 
 Measured what the outstanding Button re-keying would buy NOW, with the
 shipped filter installed, interleaved arms (4 pairs, median of 7 updates
