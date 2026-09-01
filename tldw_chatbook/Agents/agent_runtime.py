@@ -1372,16 +1372,20 @@ def run_agent_loop(
             model_turns += 1
             total_tokens += turn.tokens
             calls = list(turn.tool_calls)
-        if calls:
-            # A tool call is content: it resets the empty streak even when the
-            # turn carried no text, which is the ordinary shape of a model
-            # deciding to call a tool (TASK-26002 AC#5).
-            consecutive_empty_turns = 0
         fenced = None
         if not calls:
             _visible, fenced = split_visible_text_and_tool_call(turn.text)
             if fenced is not None:
                 calls = [fenced]
+        if calls:
+            # A tool call is content: it resets the empty streak even when the
+            # turn carried no text, which is the ordinary shape of a model
+            # deciding to call a tool (TASK-26002 AC#5). Sits AFTER the fence
+            # split on purpose -- a call parsed out of fence text is as much
+            # content as a native one, and fence providers (mostly local
+            # inference servers) are exactly the flaky-empties population this
+            # guard was written for (review I1, 2026-08-31).
+            consecutive_empty_turns = 0
         candidate = turn.provider_continuation
         if not restoring_batch and calls and candidate is not None:
             context = deps.continuation_context
@@ -1426,6 +1430,41 @@ def run_agent_loop(
                     source_step_index=model_request_step.index,
                 )
                 return _outcome(RUN_CANCELLED, final_text=turn.text)
+            # TASK-26002 + review I2 (2026-08-31): an empty turn is a provider
+            # fault and must be classified BEFORE anything about it is
+            # persisted. Previously the state="complete" continuation branch
+            # below ran first, durably recording a FinalContinuation with
+            # empty content -- and the retry then re-asked with a *completed*
+            # checkpoint in flight, a shape the validators were never written
+            # for. Skipping persistence here also keeps blank model steps out
+            # of the transcript and the run log.
+            if not str(turn.text or "").strip():
+                consecutive_empty_turns += 1
+                if consecutive_empty_turns >= EMPTY_TURN_LIMIT:
+                    add(
+                        STEP_ERROR,
+                        summary=(
+                            f"{consecutive_empty_turns} consecutive empty "
+                            f"responses from provider "
+                            f"'{config.provider or 'unknown'}' model "
+                            f"'{config.model}' — stopping rather than "
+                            f"retrying a deterministic fault"
+                        ),
+                    )
+                    return _outcome(RUN_STUCK)
+                trace(
+                    STEP_MODEL_ERROR,
+                    summary=(
+                        f"Empty response from '{config.provider or 'unknown'}' "
+                        f"model '{config.model}'; retrying "
+                        f"({consecutive_empty_turns} of {EMPTY_TURN_LIMIT})"
+                    ),
+                    status="failed",
+                    field_states={"payload": "omitted"},
+                    sensitivity="diagnostic",
+                    parent_step_index=model_request_step.index,
+                )
+                continue
             if candidate is not None:
                 context = deps.continuation_context
                 try:
@@ -1490,36 +1529,8 @@ def run_agent_loop(
                 call_id="",
             )
         if not calls:
-            # TASK-26002: a turn with no calls AND no text is not an answer.
-            # Returning RUN_DONE here made a provider fault indistinguishable
-            # from the agent deciding it was finished.
-            if not str(turn.text or "").strip():
-                consecutive_empty_turns += 1
-                if consecutive_empty_turns >= EMPTY_TURN_LIMIT:
-                    add(
-                        STEP_ERROR,
-                        summary=(
-                            f"{consecutive_empty_turns} consecutive empty "
-                            f"responses from provider "
-                            f"'{config.provider or 'unknown'}' model "
-                            f"'{config.model}' — stopping rather than "
-                            f"retrying a deterministic fault"
-                        ),
-                    )
-                    return _outcome(RUN_STUCK)
-                trace(
-                    STEP_MODEL_ERROR,
-                    summary=(
-                        f"Empty response from '{config.provider or 'unknown'}' "
-                        f"model '{config.model}'; retrying "
-                        f"({consecutive_empty_turns} of {EMPTY_TURN_LIMIT})"
-                    ),
-                    status="failed",
-                    field_states={"payload": "omitted"},
-                    sensitivity="diagnostic",
-                    parent_step_index=model_request_step.index,
-                )
-                continue
+            # Emptiness was already classified before the continuation block
+            # above (review I2), so a turn reaching here has real text.
             consecutive_empty_turns = 0
             return _outcome(RUN_DONE, final_text=turn.text)
         if not restoring_batch:

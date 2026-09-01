@@ -139,3 +139,109 @@ def test_a_normal_answer_is_unaffected():
 
     assert outcome.status == RUN_DONE
     assert outcome.final_text == "Tokyo."
+
+
+# --- review round (2026-08-31): two holes found by driving the real loop ----
+
+
+def test_a_fenced_tool_call_resets_the_empty_counter():
+    """Review I1, proven empirically before the fix.
+
+    The reset sat BEFORE the fence split, so only native `turn.tool_calls`
+    reset the streak -- a call parsed out of fence text never did. Per the
+    ADR-110 correction, fence providers are almost entirely local inference
+    servers, which are exactly the flaky-empties population this task was
+    written for: the guard misfired on its own target audience.
+    """
+    import json
+
+    fence = "```tool_call\n" + json.dumps(
+        {"name": "calculator", "arguments": {"expression": "6*7"}}
+    ) + "\n```"
+
+    outcome, remaining = _run(
+        [
+            ModelTurn(text=""),
+            ModelTurn(text=fence),
+            ModelTurn(text=""),
+            ModelTurn(text="Tokyo."),
+        ]
+    )
+
+    assert outcome.status == RUN_DONE, (
+        f"fence call did not reset the streak: {outcome.status}"
+    )
+    assert outcome.final_text == "Tokyo."
+    assert not remaining
+
+
+def test_an_empty_turn_never_persists_a_final_continuation():
+    """Review I2. The continuation-persistence block ran BEFORE the empty
+    check, so an empty turn carrying a state="complete" checkpoint durably
+    persisted a FinalContinuation with empty content -- and the retry then
+    re-asked with a *completed* checkpoint as the in-flight continuation,
+    which the validators were never written for. Empty is a fault; classify
+    it before persisting anything about it.
+    """
+    from tldw_chatbook.Agents.agent_models import ContinuationEventContext
+    from tldw_chatbook.Chat.provider_continuation import (
+        ContinuationRound,
+        ProviderContinuationCheckpoint,
+    )
+
+    final = ProviderContinuationCheckpoint(
+        schema_version=1,
+        checkpoint_revision=1,
+        provider="moonshot",
+        protocol="chat_completions",
+        model="kimi-k2-thinking",
+        api_base_url="https://api.moonshot.ai/v1",
+        state="complete",
+        rounds=(
+            ContinuationRound(
+                assistant_content="",
+                reasoning_blocks=("private",),
+                calls=(),
+            ),
+        ),
+    )
+
+    persisted = []
+    remaining = [
+        ModelTurn(text="", provider_continuation=final),
+        ModelTurn(text="Recovered."),
+    ]
+
+    def call_model(messages, active_schemas, current_continuation=None):
+        return remaining.pop(0)
+
+    deps = LoopDeps(
+        call_model=call_model,
+        invoke_tool=lambda c: ToolResult(ok=True, content="x"),
+        spawn=lambda task: ToolResult(ok=True, content="x"),
+        find_tools=lambda q: [],
+        load_schemas=lambda _i, _m, _c: None,
+        should_cancel=lambda: False,
+        clock=lambda: 0.0,
+        continuation_context=ContinuationEventContext(
+            owner_message_id="assistant-owner",
+            run_id="run-1",
+            agent_kind="primary",
+            durability="persistent",
+        ),
+        persist_provider_continuation=persisted.append,
+        sleep=lambda s: None,
+    )
+    cfg = AgentConfig(
+        model="kimi-k2-thinking",
+        system_prompt="s",
+        provider="moonshot",
+        budget=RunBudget(),
+    )
+    outcome = run_agent_loop(cfg, [{"role": "user", "content": "hi"}], [], deps)
+
+    assert persisted == [], (
+        f"an empty turn persisted a continuation: {persisted}"
+    )
+    assert outcome.status == RUN_DONE
+    assert outcome.final_text == "Recovered."
