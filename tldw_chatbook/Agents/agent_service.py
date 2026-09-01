@@ -3200,6 +3200,33 @@ class AgentService:
         except BaseException:  # noqa: BLE001 - observer cannot escape boundary
             logger.warning("could not report definitive tool result")
 
+    def _maybe_emit_run_webhook(self, run_id: str, status: str) -> None:
+        """TASK-26031: fire a signed lifecycle webhook on a fresh terminal
+        transition. Best-effort and fire-and-forget: never delays or breaks
+        terminal persistence (AC#4), disabled unless the user configured an
+        endpoint (AC#7)."""
+        event = {RUN_DONE: "completed", RUN_ERROR: "failed", RUN_STUCK: "failed"}.get(
+            status
+        )
+        if event is None:
+            return
+        try:
+            from tldw_chatbook.config import load_settings
+            from tldw_chatbook.Agents.run_webhooks import (
+                schedule_run_webhook,
+                webhook_config_from_settings,
+            )
+
+            config = webhook_config_from_settings(load_settings())
+            schedule_run_webhook(
+                config,
+                event,
+                run_id,
+                timestamp=safe_utc_timestamp(self.wall_clock),
+            )
+        except Exception as exc:  # noqa: BLE001 - observer cannot break persistence
+            logger.warning("could not emit run lifecycle webhook: {!r}", exc)
+
     def _notify_run_terminal(self, run_id: str) -> None:
         """Sweep approved-but-never-dispatched definitive card rows."""
         callback = self._on_run_terminal
@@ -3710,7 +3737,10 @@ class AgentService:
                 _safe_exception_type(exc),
             )
             try:
-                return self.db.set_status(run_id, status, result)
+                persisted = self.db.set_status(run_id, status, result)
+                if persisted:
+                    self._maybe_emit_run_webhook(run_id, status)
+                return persisted
             except Exception as status_exc:  # noqa: BLE001 — bounded containment
                 logger.warning(
                     "could not persist terminal status without observation "
@@ -3721,9 +3751,12 @@ class AgentService:
                 return False
         for attempt in range(2):
             try:
-                return self.db.set_terminal_with_step(
+                persisted = self.db.set_terminal_with_step(
                     run_id, status, result, record
                 )
+                if persisted:
+                    self._maybe_emit_run_webhook(run_id, status)
+                return persisted
             except Exception as exc:  # noqa: BLE001 — bounded containment
                 logger.warning(
                     "could not persist atomic terminal state "

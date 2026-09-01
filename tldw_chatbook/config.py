@@ -3545,6 +3545,19 @@ USER_DB_BASE_DIR = "~/.local/share/tldw_cli/"
 check_integrity_on_startup = false  # Enable/disable automatic integrity checks on startup
 integrity_check_timeout = 30  # Maximum seconds to wait for integrity check
 
+[webhooks]
+# TASK-26031: outbound signed webhooks for agent run lifecycle events. OFF by
+# default -- with no url configured, no request is ever made. Payloads carry
+# identifiers + an outcome category only (never message content, tool args, or
+# credentials) and are signed X-Tldw-Signature: sha256=HMAC-SHA256(secret,body).
+# The destination is subject to the SSRF egress policy ([web_security]).
+enabled = false
+url = ""            # e.g. "https://your-dashboard.example/hooks/tldw"
+secret = ""         # shared secret the receiver uses to verify the signature
+# Which lifecycle events to POST. Omit to subscribe to all supported events.
+events = ["completed", "failed"]
+timeout_seconds = 5.0   # bounded; a slow/dead endpoint never delays the run
+
 [scheduling]
 # Background sync and scheduler defaults for the scheduling module.
 sync_interval_seconds = 300
