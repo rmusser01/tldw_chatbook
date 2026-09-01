@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from tldw_chatbook.Notifications.notification_dispatch_service import (
     NotificationDispatchService,
@@ -12,8 +12,18 @@ from tldw_chatbook.Notifications.notification_dispatch_service import (
 class ReminderHandler:
     """Dispatch a reminder notification for a scheduled task."""
 
-    def __init__(self, dispatch_service: NotificationDispatchService) -> None:
+    def __init__(
+        self,
+        dispatch_service: NotificationDispatchService,
+        app_getter: Callable[[], Any] | None = None,
+    ) -> None:
         self.dispatch_service = dispatch_service
+        #: Zero-arg getter for the running app, resolved fresh per dispatch
+        #: (BriefingJobHandler's chachanotes_db_getter discipline): the
+        #: handler is constructed before app wiring completes, and
+        #: dispatch() only attempts transient toast delivery when given a
+        #: live app handle.
+        self.app_getter = app_getter
 
     async def handle(self, task: dict[str, Any]) -> None:
         """Dispatch a reminder notification.
@@ -21,7 +31,9 @@ class ReminderHandler:
         Args:
             task: A scheduled task row from ``reminder_tasks``.
         """
+        app = self.app_getter() if self.app_getter is not None else None
         self.dispatch_service.dispatch(
+            app=app,
             category="reminder",
             title=task.get("title", "Reminder"),
             message=task.get("body") or "",
