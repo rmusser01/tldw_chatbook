@@ -1098,6 +1098,38 @@ class ScheduledTasksDB(BaseDB):
                 cursor.fetchall(), json_fields=self._AUTOMATION_JSON_FIELDS
             )
 
+    def list_armable_automation_definitions(
+        self, owner_id: str = "local"
+    ) -> list[dict[str, Any]]:
+        """List local definitions ready to feed the scheduler queue (§7.2).
+
+        A row arms only when all four hold: ``family='recurring_question'``
+        (v1 -- the only executor registered), ``lifecycle='configured'``,
+        a real ``next_run_at``, and no transfer in flight
+        (``transfer_state IS NULL`` -- a definition mid-handoff to the
+        server is not this side's to run, spec §6). ``owner_id`` defaults
+        to ``"local"``: this is the accessor half of the defense-in-depth
+        pairing with `PriorityQueue`'s own `is_server_scoped_owner` guard
+        (slice 1) -- neither alone is trusted to keep a server-scoped
+        definition from arming locally.
+        """
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                """
+                SELECT * FROM automation_definitions
+                WHERE family = 'recurring_question'
+                  AND lifecycle = 'configured'
+                  AND next_run_at IS NOT NULL
+                  AND transfer_state IS NULL
+                  AND owner_id = ?
+                ORDER BY next_run_at
+                """,
+                (owner_id,),
+            )
+            return self._rows_to_dicts(
+                cursor.fetchall(), json_fields=self._AUTOMATION_JSON_FIELDS
+            )
+
     def update_automation_definition(self, definition_id: str, **kwargs: Any) -> bool:
         """Update automation-definition fields. Returns True if a row changed.
 

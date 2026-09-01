@@ -454,6 +454,114 @@ def test_list_automation_definitions_filters(db: ScheduledTasksDB) -> None:
     assert paused_agent[0]["id"] == a1
 
 
+# ---------------------------------------------------------------------------
+# list_armable_automation_definitions (schedules-handoff PR-2, Task 5)
+# ---------------------------------------------------------------------------
+
+
+def test_list_armable_automation_definitions_arms_a_qualifying_row(
+    db: ScheduledTasksDB,
+) -> None:
+    def_id = db.create_automation_definition(
+        owner_id="local",
+        family="recurring_question",
+        name="Daily standup question",
+        next_run_at=_utc(2026, 1, 1),
+    )
+
+    armable = db.list_armable_automation_definitions()
+
+    assert [row["id"] for row in armable] == [def_id]
+    assert armable[0]["family"] == "recurring_question"
+
+
+def test_list_armable_automation_definitions_excludes_wrong_family(
+    db: ScheduledTasksDB,
+) -> None:
+    db.create_automation_definition(
+        owner_id="local",
+        family="agent_task",
+        name="Not v1's family",
+        next_run_at=_utc(2026, 1, 1),
+    )
+
+    assert db.list_armable_automation_definitions() == []
+
+
+def test_list_armable_automation_definitions_excludes_wrong_lifecycle(
+    db: ScheduledTasksDB,
+) -> None:
+    db.create_automation_definition(
+        owner_id="local",
+        family="recurring_question",
+        name="Paused",
+        lifecycle="paused",
+        next_run_at=_utc(2026, 1, 1),
+    )
+
+    assert db.list_armable_automation_definitions() == []
+
+
+def test_list_armable_automation_definitions_excludes_missing_next_run_at(
+    db: ScheduledTasksDB,
+) -> None:
+    db.create_automation_definition(
+        owner_id="local",
+        family="recurring_question",
+        name="Never scheduled",
+    )
+
+    assert db.list_armable_automation_definitions() == []
+
+
+def test_list_armable_automation_definitions_excludes_transfer_pending(
+    db: ScheduledTasksDB,
+) -> None:
+    def_id = db.create_automation_definition(
+        owner_id="local",
+        family="recurring_question",
+        name="Mid-handoff",
+        next_run_at=_utc(2026, 1, 1),
+    )
+    db.update_automation_definition(def_id, transfer_state="to_server_sent")
+
+    assert db.list_armable_automation_definitions() == []
+
+
+def test_list_armable_automation_definitions_excludes_other_owner(
+    db: ScheduledTasksDB,
+) -> None:
+    db.create_automation_definition(
+        owner_id="server:user-1",
+        family="recurring_question",
+        name="Server-owned",
+        next_run_at=_utc(2026, 1, 1),
+    )
+
+    assert db.list_armable_automation_definitions(owner_id="local") == []
+
+
+def test_list_armable_automation_definitions_sorted_by_next_run_at(
+    db: ScheduledTasksDB,
+) -> None:
+    later = db.create_automation_definition(
+        owner_id="local",
+        family="recurring_question",
+        name="Later",
+        next_run_at=_utc(2026, 1, 2),
+    )
+    earlier = db.create_automation_definition(
+        owner_id="local",
+        family="recurring_question",
+        name="Earlier",
+        next_run_at=_utc(2026, 1, 1),
+    )
+
+    armable = db.list_armable_automation_definitions()
+
+    assert [row["id"] for row in armable] == [earlier, later]
+
+
 def test_update_automation_definition(db: ScheduledTasksDB) -> None:
     schedule = {"kind": "cron", "expression": "0 9 * * *"}
     def_id = db.create_automation_definition(

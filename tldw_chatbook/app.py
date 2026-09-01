@@ -9668,6 +9668,42 @@ class TldwCli(
         if briefing_handler is not None:
             handlers["briefing_job"] = briefing_handler
 
+        # schedules-handoff PR-2, Task 5: local automation definitions
+        # (`family="recurring_question"` in v1) are real queue rows, not
+        # gated behind a config flag the way watchlist/briefing checks are
+        # -- `PriorityQueue.load` only ever arms a row that is already
+        # `lifecycle="configured"` with a real `next_run_at`, so there is
+        # nothing here for an absent handler to leave silently unhandled.
+        #
+        # ADR-097 (boot-census ratchet): `AutomationDefinitionHandler`'s
+        # import chain (the handler module + `schedule_compute` +
+        # `slot_keys`) stays OFF the boot path -- constructed lazily on
+        # the first dispatched `automation_definition` row, not here at
+        # wiring time, then cached on `self` so every later dispatch
+        # reuses the SAME instance. The overlap-claim guard
+        # (`_claimed`/`_pending` on the handler) only works across calls
+        # if it is the same object each time; building a fresh handler
+        # per dispatch would silently defeat that guard.
+        async def _dispatch_automation_definition(task: dict[str, Any]) -> None:
+            handler = getattr(self, "_automation_definition_handler", None)
+            if handler is None:
+                from .Scheduling.scheduler.handlers.automation_handler import (
+                    AutomationDefinitionHandler,
+                )
+
+                handler = AutomationDefinitionHandler(
+                    db=self.scheduling_service.db,
+                    app_getter=lambda: self,
+                    dispatch_service=self.notification_dispatch_service,
+                    handler_timeout_seconds=get_cli_setting(
+                        "scheduling", "handler_timeout_seconds", HANDLER_TIMEOUT_SECONDS
+                    ),
+                )
+                self._automation_definition_handler = handler
+            await handler.handle(task)
+
+        handlers["automation_definition"] = _dispatch_automation_definition
+
         self.scheduler_loop = SchedulerLoop(
             self.scheduling_service.db,
             handlers=handlers,
@@ -13617,6 +13653,24 @@ class TldwCli(
             documentation="Total time for on_mount() method",
         )
         self.loguru_logger.info(f"on_mount completed in {mount_duration:.3f} seconds")
+
+        # Stale-run reconciliation (spec §4.1): an app killed mid-run must
+        # not leave a phantom `running`/`queued` automation_runs row in the
+        # UI forever. Cutoff is generous on purpose -- longer than any run
+        # this process itself would let live (handler timeout) plus two
+        # poll intervals of scheduling slack -- so a run still genuinely
+        # in flight is never reconciled out from under itself. Guarded:
+        # a diagnostics-adjacent startup step must never block the
+        # scheduler from starting.
+        try:
+            self.scheduling_service.db.reconcile_stale_automation_runs(
+                older_than_seconds=HANDLER_TIMEOUT_SECONDS
+                + 2 * SCHEDULER_POLL_INTERVAL_SECONDS
+            )
+        except Exception:
+            self.loguru_logger.exception(
+                "Failed to reconcile stale automation runs at startup"
+            )
 
         # Start the background scheduler loop for reminders and scheduled tasks.
         # A COROUTINE worker, never thread=True: scheduled watchlist checks
