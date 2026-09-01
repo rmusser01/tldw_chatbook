@@ -356,6 +356,31 @@ async def test_schedule_is_advanced_before_the_executor_completes(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_scheduled_advance_does_not_bump_definition_version(tmp_path):
+    """PR-2 parked item: the handler's `next_run_at` advance is not an edit
+    -- `version` (used for optimistic-lock conflict detection) must stay
+    stable across a dispatch."""
+    db = _make_db(tmp_path)
+    row = _make_definition(db)
+    assert row["version"] == 1
+
+    async def fast_executor(app, definition_row):
+        return _FakeOutcome(outcome="finding")
+
+    handler = AutomationDefinitionHandler(
+        db=db, executors={"recurring_question": fast_executor}
+    )
+
+    await handler.handle(row)
+    await _drain(handler)
+
+    updated = db.get_automation_definition(row["id"])
+    assert updated is not None
+    assert updated["next_run_at"] != row["next_run_at"]
+    assert updated["version"] == 1
+
+
+@pytest.mark.asyncio
 async def test_on_queue_changed_fires_once_after_a_successful_scheduled_advance(
     tmp_path,
 ):

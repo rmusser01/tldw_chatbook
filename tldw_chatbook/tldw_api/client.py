@@ -984,6 +984,8 @@ from .scheduled_tasks_automation_schemas import (
     ScheduledTaskAutomationDefinitionList,
     ScheduledTaskAutomationRunNowResponse,
     ScheduledTaskAuditList,
+    ScheduledTaskResult,
+    ScheduledTaskResultList,
 )
 from .outputs_schemas import (
     OutputArtifact,
@@ -8126,6 +8128,61 @@ class TLDWAPIClient:
             },
         )
         return ScheduledTaskAuditList.model_validate(response)
+
+    async def list_scheduled_task_results(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        definition_id: str | None = None,
+        review_state: str | None = None,
+    ) -> ScheduledTaskResultList:
+        """List the authenticated user's scheduled-task results (spec §4.2).
+
+        Args:
+            limit: Page size to request. The server clamps to 1..200.
+            offset: Pagination offset to request.
+            definition_id: Optional filter to one definition's results.
+            review_state: Optional filter (``unread``/``read``/``dismissed``).
+
+        Returns:
+            The result list response (items plus total/has_more pagination).
+        """
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        if definition_id is not None:
+            params["definition_id"] = definition_id
+        if review_state is not None:
+            params["review_state"] = review_state
+        response = await self._request(
+            "GET",
+            "/api/v1/scheduled-tasks/results",
+            params=params,
+        )
+        return ScheduledTaskResultList.model_validate(response)
+
+    async def review_scheduled_task_result(
+        self,
+        result_id: str,
+        review_state: str,
+        *,
+        review_note: str | None = None,
+    ) -> ScheduledTaskResult:
+        """Set one result's review state (``ScheduledTaskResultReviewRequest``).
+
+        Args:
+            result_id: The server result to update.
+            review_state: New review state (``read``/``dismissed``/etc).
+            review_note: Optional free-text note attached to the review.
+
+        Returns:
+            The updated result row.
+        """
+        response = await self._request(
+            "POST",
+            f"/api/v1/scheduled-tasks/results/{result_id}/review",
+            json_data={"review_state": review_state, "review_note": review_note},
+        )
+        return ScheduledTaskResult.model_validate(response)
 
     async def list_output_templates(
         self,

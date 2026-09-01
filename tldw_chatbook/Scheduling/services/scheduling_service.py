@@ -18,7 +18,12 @@ from loguru import logger
 
 from tldw_chatbook.Scheduling.automation_health import compute_local_health
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
-from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind, ScheduledTask
+from tldw_chatbook.Scheduling.models import (
+    ReminderTask,
+    ReviewState,
+    ScheduleKind,
+    ScheduledTask,
+)
 from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
 from tldw_chatbook.Scheduling.services.server_client import (
     SchedulingServerClient,
@@ -28,6 +33,12 @@ from tldw_chatbook.Scheduling.services.sync_engine import SyncEngine
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
 
 _REMINDER_PRIMITIVE = "reminder_task"
+
+#: Matches ScheduledTasksDB._RESULT_REVIEW_PRIMITIVE / SyncEngine's module
+#: constant of the same value -- duplicated locally rather than imported,
+#: mirroring how _REMINDER_PRIMITIVE is independently defined in each of
+#: those modules too.
+_RESULT_REVIEW_PRIMITIVE = "automation_result_review"
 
 # Fields that are local-only and should not be sent to the server.
 _LOCAL_ONLY_FIELDS = {
@@ -489,6 +500,82 @@ class SchedulingService:
         handler = self.automation_handler_getter()
         run_id = await handler.run_now(row)
         return {"run_id": run_id, "deduped": run_id is None}
+
+    async def review_automation_result(
+        self,
+        result_id: str,
+        review_state: str,
+        review_note: str | None = None,
+    ) -> bool:
+        """Set a local automation result's review state (local entry point).
+
+        Writes the local row via a single ``update_result_review`` call.
+        When that row is a server mirror (``server_id`` set), the same
+        call also records an ``automation_result_review`` pending
+        mutation carrying the SERVER result id -- in the SAME DB
+        transaction as the review UPDATE, so a crash between the two
+        writes can never leave a local review that never pushes (or an
+        outbox row for a review that was rolled back) -- so
+        ``SyncEngine._replay_review_mutations`` can push it without a
+        local join (spec §5.1's payload-not-reference rule). The
+        mutation is recorded under the ROW's own ``owner_id`` (falling
+        back to ``self.owner_id`` only if the row has none) since the
+        workbench can toggle the service's active owner independently of
+        which owner a given result row belongs to -- recording under
+        ``self.owner_id`` would strand the mutation where
+        ``get_pending_mutations`` for the row's real owner never sees it.
+        Never notifies the queue: results don't arm anything the scheduler
+        dispatches.
+
+        Args:
+            result_id: The result's local id.
+            review_state: New review state; must be a valid
+                ``ReviewState`` value or the call is refused.
+            review_note: Optional free-text note attached to the review.
+
+        Returns:
+            ``True`` on a successful local write; ``False`` for an
+            invalid ``review_state`` or an unknown ``result_id`` (no DB
+            write in either case).
+        """
+        valid_states = {state.value for state in ReviewState}
+        if review_state not in valid_states:
+            logger.warning(
+                "review_automation_result refused for {result_id}: invalid "
+                "review_state {review_state!r} (must be one of {valid_states})",
+                result_id=result_id,
+                review_state=review_state,
+                valid_states=sorted(valid_states),
+            )
+            return False
+
+        row = await asyncio.to_thread(self.db.get_automation_result, result_id)
+        if row is None:
+            return False
+
+        server_id = row.get("server_id")
+        pending_mutation: dict[str, Any] | None = None
+        if server_id:
+            mutation_owner = row.get("owner_id") or self.owner_id
+            pending_mutation = {
+                "local_id": result_id,
+                "primitive": _RESULT_REVIEW_PRIMITIVE,
+                "owner_id": mutation_owner,
+                "payload": {
+                    "server_result_id": server_id,
+                    "review_state": review_state,
+                    "review_note": review_note,
+                },
+            }
+
+        updated = await asyncio.to_thread(
+            self.db.update_result_review,
+            result_id,
+            review_state,
+            review_note,
+            pending_mutation=pending_mutation,
+        )
+        return updated
 
     def _use_server(self) -> bool:
         """Return True when server operations should be attempted."""

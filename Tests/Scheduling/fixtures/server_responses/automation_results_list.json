@@ -1,0 +1,63 @@
+{
+  "items": [
+    {
+      "id": "res_01J5RHPQWXYZ1234567890AB",
+      "owner_id": "server:42",
+      "definition_id": "def_01J5RHPQWXYZ1234567890AB",
+      "run_id": "run_01J5RHPQWXYZ1234567890AB",
+      "kind": "finding",
+      "title": "Daily stand-up summary",
+      "summary": "Two blockers reported: CI flakiness and a pending API review.",
+      "answer": "The team is blocked on CI flakiness and an API review.",
+      "answer_mode": "synthesized",
+      "confidence": {
+        "score": 0.82,
+        "basis": "evidence_coverage"
+      },
+      "source_refs": [
+        {"source_type": "message", "source_id": "msg_1"}
+      ],
+      "dedupe_key": "recurring_question:def_01J5RHPQWXYZ1234567890AB:2026-08-30",
+      "visibility_destination": {
+        "scope": "private"
+      },
+      "review_state": "unread",
+      "reviewed_at": null,
+      "reviewed_by": null,
+      "review_note": null,
+      "created_at": "2026-08-30T09:00:05+00:00",
+      "updated_at": "2026-08-30T09:00:05+00:00"
+    },
+    {
+      "id": "res_01J5RHPQWXYZ1234567890CD",
+      "owner_id": "server:42",
+      "definition_id": "def_01J5RHPQWXYZ1234567890CD",
+      "run_id": "run_01J5RHPQWXYZ1234567890CD",
+      "kind": "failure",
+      "title": "Weekly library digest",
+      "summary": "10 new items ingested into the library this week.",
+      "answer": null,
+      "answer_mode": "evidence_only",
+      "confidence": {},
+      "source_refs": [
+        {"source_type": "media", "source_id": "media_101"},
+        {"source_type": "media", "source_id": "media_102"}
+      ],
+      "dedupe_key": "agent_task:def_01J5RHPQWXYZ1234567890CD:2026-08-24",
+      "visibility_destination": {
+        "scope": "private"
+      },
+      "review_state": "read",
+      "reviewed_at": "2026-08-25T08:15:00+00:00",
+      "reviewed_by": "user:42",
+      "review_note": null,
+      "created_at": "2026-08-24T07:00:02+00:00",
+      "updated_at": "2026-08-25T08:15:00+00:00"
+    }
+  ],
+  "total": 2,
+  "limit": 50,
+  "offset": 0,
+  "has_more": false,
+  "next_offset": null
+}

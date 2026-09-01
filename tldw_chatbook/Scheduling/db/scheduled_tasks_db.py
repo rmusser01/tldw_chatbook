@@ -1157,11 +1157,16 @@ class ScheduledTasksDB(BaseDB):
                 )
             return self._rows_to_dicts(rows, json_fields=self._AUTOMATION_JSON_FIELDS)
 
-    def update_automation_definition(self, definition_id: str, **kwargs: Any) -> bool:
+    def update_automation_definition(
+        self, definition_id: str, *, bump_version: bool = True, **kwargs: Any
+    ) -> bool:
         """Update automation-definition fields. Returns True if a row changed.
 
         The ``version`` column is automatically incremented for optimistic
-        locking; any ``version`` value supplied in kwargs is ignored.
+        locking; any ``version`` value supplied in kwargs is ignored. Pass
+        ``bump_version=False`` for a non-edit update (e.g. the scheduler's
+        `next_run_at` advance) so version churn doesn't pollute conflict
+        detection -- PR-2 final-review parking note.
         """
         if not kwargs:
             return False
@@ -1191,7 +1196,8 @@ class ScheduledTasksDB(BaseDB):
             return False
 
         self._validate_sql_identifiers([key.split(" ", 1)[0] for key in updates])
-        updates.append("version = version + 1")
+        if bump_version:
+            updates.append("version = version + 1")
         updates.append("updated_at = ?")
         params.append(self._to_utc_iso(datetime.now(timezone.utc)))
         params.append(definition_id)
@@ -1538,14 +1544,46 @@ class ScheduledTasksDB(BaseDB):
             row = cursor.fetchone()
             return int(row[0]) if row else 0
 
+    def get_automation_result(self, result_id: str) -> Optional[dict[str, Any]]:
+        """Fetch an automation result by local id.
+
+        Args:
+            result_id: Local ``automation_results.id`` to look up.
+
+        Returns:
+            The result row as a dict (JSON fields already decoded), or
+            ``None`` if no row matches ``result_id``.
+        """
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                "SELECT * FROM automation_results WHERE id = ?", (result_id,)
+            )
+            return self._row_to_dict(
+                cursor.fetchone(), json_fields=self._AUTOMATION_RESULT_JSON_FIELDS
+            )
+
     def update_result_review(
         self,
         result_id: str,
         review_state: str,
         review_note: str | None = None,
         reviewed_by: str | None = None,
+        *,
+        pending_mutation: dict[str, Any] | None = None,
     ) -> bool:
-        """Set a result's review state; returns False for an unknown id."""
+        """Set a result's review state; returns False for an unknown id.
+
+        When ``pending_mutation`` is given, its
+        ``automation_result_review`` mutation is inserted into
+        ``pending_mutations`` in the SAME transaction as the review
+        UPDATE, so a crash between the two can never leave a local
+        review recorded without the outbox row that pushes it (or vice
+        versa). The dict mirrors ``record_pending_mutation``'s
+        parameters: ``local_id``, ``primitive``, ``owner_id``,
+        ``payload`` -- an ``idempotency_key`` is generated into the
+        payload if one isn't already present, same as the standalone
+        method.
+        """
         now_iso = self._to_utc_iso(datetime.now(timezone.utc))
         with self.transaction() as conn:
             cursor = conn.execute(
@@ -1557,7 +1595,307 @@ class ScheduledTasksDB(BaseDB):
                 """,
                 (review_state, review_note, reviewed_by, now_iso, now_iso, result_id),
             )
-            return cursor.rowcount > 0
+            if cursor.rowcount == 0:
+                return False
+
+            if pending_mutation is not None:
+                stored_payload = dict(pending_mutation["payload"])
+                if not stored_payload.get("idempotency_key"):
+                    stored_payload["idempotency_key"] = str(uuid.uuid4())
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO pending_mutations
+                    (local_id, primitive, owner_id, payload, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        pending_mutation["local_id"],
+                        pending_mutation["primitive"],
+                        pending_mutation["owner_id"],
+                        self._to_json(stored_payload),
+                        now_iso,
+                    ),
+                )
+            return True
+
+    # ------------------------------------------------------------------
+    # Server-mirror upserts (schedules-handoff PR-3)
+    # ------------------------------------------------------------------
+
+    #: Primitive name pending `automation_result_review` mutations are
+    #: stored under (matches the SyncEngine module constant of the same
+    #: value -- see sync_engine.py's `_RESULT_REVIEW_PRIMITIVE`).
+    _RESULT_REVIEW_PRIMITIVE = "automation_result_review"
+
+    #: Result columns that may be copied verbatim from a server item on
+    #: insert, beyond id/server_id/owner_id (handled separately).
+    _AUTOMATION_RESULT_INSERT_FIELDS = _AUTOMATION_RESULT_COLUMNS | {
+        "definition_id", "run_id", "kind", "title", "summary", "dedupe_key",
+        "created_at",
+    }
+
+    #: Result fields a server-mirror update is allowed to touch on an
+    #: existing row -- review state only (spec §5: "results sync down,
+    #: review pushes up").
+    _AUTOMATION_RESULT_REVIEW_FIELDS = {
+        "review_state", "reviewed_at", "reviewed_by", "review_note", "updated_at",
+    }
+
+    def upsert_automation_definitions_from_server(
+        self, owner_id: str, items: list[dict[str, Any]]
+    ) -> dict[str, int]:
+        """Server-wins mirror of automation definitions pulled from the server.
+
+        Matches local rows by ``(owner_id, server_id)``. Absent -> insert a
+        new mirror row (server ``id`` becomes local ``server_id``; local
+        ``id`` is a fresh UUID). Present -> every server-carried field is
+        written EXCEPT ``transfer_state``: a server payload must never
+        clear a local transfer marker (spec-2026-08-31-schedules-handoff-
+        parity.md §6 parked finding). Archived lifecycle mirrors like any
+        other field -- rows are never deleted here.
+
+        Returns:
+            ``{"inserted": n, "updated": n}``.
+        """
+        inserted = 0
+        updated = 0
+        with self.transaction() as conn:
+            for item in items:
+                server_id = item.get("id")
+                if not server_id:
+                    continue
+
+                fields: dict[str, Any] = {
+                    key: item[key]
+                    for key in self._AUTOMATION_DEFINITION_COLUMNS
+                    if key in item and key not in {"id", "server_id", "owner_id"}
+                }
+                # §6 parked finding: transfer_state is a local-only marker
+                # a server mirror must never overwrite, even if a payload
+                # somehow carried one.
+                fields.pop("transfer_state", None)
+
+                existing = conn.execute(
+                    "SELECT id FROM automation_definitions "
+                    "WHERE owner_id = ? AND server_id = ?",
+                    (owner_id, server_id),
+                ).fetchone()
+
+                if existing is None:
+                    local_id = str(uuid.uuid4())
+                    now_iso = self._to_utc_iso(datetime.now(timezone.utc))
+                    insert_fields = dict(fields)
+                    insert_fields["id"] = local_id
+                    insert_fields["server_id"] = server_id
+                    insert_fields["owner_id"] = owner_id
+                    insert_fields.setdefault("family", "recurring_question")
+                    insert_fields.setdefault("name", "Untitled automation")
+                    insert_fields.setdefault("lifecycle", "configured")
+                    insert_fields.setdefault("health", "execution_unavailable")
+                    insert_fields.setdefault("version", 1)
+                    insert_fields.setdefault("created_at", now_iso)
+                    insert_fields.setdefault("updated_at", now_iso)
+                    serialized = self._serialize_definition_fields(insert_fields)
+                    self._validate_sql_identifiers(list(serialized.keys()))
+                    columns = ", ".join(serialized.keys())
+                    placeholders = ", ".join(["?"] * len(serialized))
+                    conn.execute(
+                        f"INSERT INTO automation_definitions ({columns}) "
+                        f"VALUES ({placeholders})",
+                        list(serialized.values()),
+                    )
+                    inserted += 1
+                else:
+                    if not fields:
+                        continue
+                    serialized = self._serialize_definition_fields(fields)
+                    self._validate_sql_identifiers(list(serialized.keys()))
+                    updates = ", ".join(f"{key} = ?" for key in serialized)
+                    conn.execute(
+                        f"UPDATE automation_definitions SET {updates} WHERE id = ?",
+                        [*serialized.values(), existing["id"]],
+                    )
+                    updated += 1
+        return {"inserted": inserted, "updated": updated}
+
+    def _serialize_definition_fields(self, fields: dict[str, Any]) -> dict[str, Any]:
+        """Apply the same JSON/datetime conversion `update_automation_definition` uses."""
+        serialized: dict[str, Any] = {}
+        for key, value in fields.items():
+            if key in self._AUTOMATION_JSON_FIELDS:
+                serialized[key] = self._to_json(value)
+            elif key in self._DATETIME_FIELDS:
+                serialized[key] = self._to_utc_iso(value)
+            else:
+                serialized[key] = value
+        return serialized
+
+    def upsert_automation_results_from_server(
+        self,
+        owner_id: str,
+        items: list[dict[str, Any]],
+        *,
+        skip_review_server_ids: frozenset[str] = frozenset(),
+    ) -> dict[str, int]:
+        """Server-wins mirror of scheduled-task results pulled from the server.
+
+        Matches local rows by ``(owner_id, server_id)``.
+
+        Absent -> insert the full row (local ``id`` is a fresh UUID;
+        ``definition_id`` and ``run_id`` are stored exactly as the server
+        sent them -- plain TEXT, no local row to resolve to, same
+        treatment the spec gives ``run_id``, spec §4.2). A ``dedupe_key``
+        UNIQUE conflict against a locally-created row (not yet known to
+        the server) is not an error: the insert is skipped and counted --
+        the local row keeps ownership until its own push resolves the
+        collision.
+
+        Present -> update ONLY the review fields (``review_state``,
+        ``reviewed_at``, ``reviewed_by``, ``review_note``, ``updated_at``).
+        Two guard layers decide whether that update actually happens
+        (Qodo TOCTOU/same-cycle-echo review):
+
+        1. Pending-mutation guard (unpushed reviews): a per-row
+           ``pending_mutations`` SELECT is run INSIDE this same write
+           transaction, immediately before the row's own UPDATE -- not
+           snapshotted once before the loop starts, which left a window
+           for a concurrently-recorded review (the review service writes
+           via ``to_thread`` while this upsert runs on the event loop) to
+           land between the snapshot and this row's write and then get
+           clobbered by a stale server payload despite its own mutation
+           existing. An unpushed local review outranks the mirror until
+           SyncEngine's pushback phase (which runs before this pull) has
+           replayed it.
+        2. Pushed-this-cycle guard (just-pushed reviews): ``server_id in
+           skip_review_server_ids`` skips rows SyncEngine's pushback phase
+           already replayed THIS sync cycle. Their pending mutation is
+           already gone by the time this pull runs, so guard 1 can't see
+           them -- without this second layer, a same-cycle results page
+           that still echoes the pre-review server state (server write/
+           read-path lag) would revert the review that was just pushed,
+           and once the row ages out of the bounded newest-pages pull
+           window, no later sync would ever correct it.
+
+        The residual exposure after both layers is only a server that
+        lies about its own committed writes (reports success on push,
+        then immediately echoes different data back on pull) -- not
+        something a client-side guard can detect.
+
+        Returns:
+            ``{"inserted": n, "updated": n, "skipped_dedupe": n}``.
+        """
+        inserted = 0
+        updated = 0
+        skipped_dedupe = 0
+        with self.transaction() as conn:
+            for item in items:
+                server_id = item.get("id")
+                if not server_id:
+                    continue
+
+                existing = conn.execute(
+                    "SELECT id FROM automation_results "
+                    "WHERE owner_id = ? AND server_id = ?",
+                    (owner_id, server_id),
+                ).fetchone()
+
+                if existing is None:
+                    local_id = str(uuid.uuid4())
+                    now_iso = self._to_utc_iso(datetime.now(timezone.utc))
+                    fields: dict[str, Any] = {
+                        key: item[key]
+                        for key in self._AUTOMATION_RESULT_INSERT_FIELDS
+                        if key in item
+                    }
+                    fields["id"] = local_id
+                    fields["server_id"] = server_id
+                    fields["owner_id"] = owner_id
+                    fields.setdefault("definition_id", "")
+                    fields.setdefault("run_id", "")
+                    fields.setdefault("kind", "finding")
+                    fields.setdefault("title", "Untitled result")
+                    fields.setdefault("summary", "")
+                    fields.setdefault("dedupe_key", f"server:{server_id}")
+                    fields.setdefault("review_state", "unread")
+                    fields.setdefault("answer_mode", "none")
+                    fields.setdefault("created_at", now_iso)
+                    fields.setdefault("updated_at", now_iso)
+                    serialized = self._serialize_result_fields(fields)
+                    self._validate_sql_identifiers(list(serialized.keys()))
+                    columns = ", ".join(serialized.keys())
+                    placeholders = ", ".join(["?"] * len(serialized))
+                    try:
+                        conn.execute(
+                            f"INSERT INTO automation_results ({columns}) "
+                            f"VALUES ({placeholders})",
+                            list(serialized.values()),
+                        )
+                    except sqlite3.IntegrityError as exc:
+                        if "UNIQUE constraint failed" not in str(exc):
+                            raise
+                        # (owner_id, dedupe_key) collided with a
+                        # locally-created row -- skip, don't overwrite it.
+                        skipped_dedupe += 1
+                        continue
+                    inserted += 1
+                else:
+                    if server_id in skip_review_server_ids:
+                        # Guard 2 (pushed-this-cycle): just replayed by
+                        # this same sync's pushback phase -- see the
+                        # design comment on this method.
+                        continue
+                    has_pending_review = conn.execute(
+                        """
+                        SELECT 1 FROM pending_mutations
+                        WHERE local_id = ? AND primitive = ? AND owner_id = ?
+                        LIMIT 1
+                        """,
+                        (existing["id"], self._RESULT_REVIEW_PRIMITIVE, owner_id),
+                    ).fetchone()
+                    if has_pending_review is not None:
+                        # Guard 1 (pending-mutation): checked here, inside
+                        # this row's own write transaction, not via a
+                        # snapshot taken before the loop started -- see
+                        # the design comment on this method.
+                        continue
+                    review_fields = {
+                        key: item[key]
+                        for key in self._AUTOMATION_RESULT_REVIEW_FIELDS
+                        if key in item
+                    }
+                    if not review_fields:
+                        continue
+                    serialized = self._serialize_result_fields(review_fields)
+                    self._validate_sql_identifiers(list(serialized.keys()))
+                    updates = ", ".join(f"{key} = ?" for key in serialized)
+                    conn.execute(
+                        f"UPDATE automation_results SET {updates} WHERE id = ?",
+                        [*serialized.values(), existing["id"]],
+                    )
+                    updated += 1
+        return {
+            "inserted": inserted,
+            "updated": updated,
+            "skipped_dedupe": skipped_dedupe,
+        }
+
+    def _serialize_result_fields(self, fields: dict[str, Any]) -> dict[str, Any]:
+        """Apply the same JSON conversion `create_automation_result` uses.
+
+        Datetime-shaped fields (``reviewed_at``, ``created_at``, ...) are
+        passed through raw, mirroring `create_automation_result`'s own
+        loop (which only special-cases actual ``datetime`` instances) --
+        server items already carry UTC ISO-8601 strings.
+        """
+        serialized: dict[str, Any] = {}
+        for key, value in fields.items():
+            if key in self._AUTOMATION_RESULT_JSON_FIELDS:
+                serialized[key] = json.dumps(value)
+            elif isinstance(value, datetime):
+                serialized[key] = self._to_utc_iso(value)
+            else:
+                serialized[key] = value
+        return serialized
 
     # ------------------------------------------------------------------
     # Sync helpers

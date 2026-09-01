@@ -1,10 +1,12 @@
 """Tests for ScheduledTasksDB CRUD operations."""
 
 import json
+import sqlite3
 import tempfile
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -631,6 +633,38 @@ def test_update_automation_definition_empty_kwargs_returns_false(
     assert db.update_automation_definition(def_id) is False
 
 
+def test_update_automation_definition_bump_version_false_skips_increment(
+    db: ScheduledTasksDB,
+) -> None:
+    """PR-2 parked item: a schedule advance (`next_run_at` only) is not an
+    edit -- `bump_version=False` must leave `version` unchanged, while the
+    default (`bump_version=True`) keeps bumping it for real edits."""
+    def_id = db.create_automation_definition(
+        owner_id="local",
+        family="recurring_question",
+        name="Original",
+        schedule={"kind": "cron", "expression": "0 9 * * *"},
+    )
+
+    advanced = db.update_automation_definition(
+        def_id,
+        bump_version=False,
+        next_run_at=_utc(2026, 1, 2),
+    )
+    assert advanced is True
+
+    row = db.get_automation_definition(def_id)
+    assert row is not None
+    assert row["version"] == 1
+
+    edited = db.update_automation_definition(def_id, name="Updated")
+    assert edited is True
+
+    row = db.get_automation_definition(def_id)
+    assert row is not None
+    assert row["version"] == 2
+
+
 def test_delete_automation_definition(db: ScheduledTasksDB) -> None:
     def_id = db.create_automation_definition(
         owner_id="local", family="recurring_question", name="To delete"
@@ -911,3 +945,363 @@ def test_review_transitions_and_unread_count(tmp_path):
     assert db.count_unread_results("local") == 1
     assert db.list_automation_results("local", review_state="read")[0]["id"] == rid
     assert not db.update_result_review("missing", "dismissed")
+
+
+def test_update_result_review_writes_pending_mutation_in_same_transaction(tmp_path):
+    """review round 1 finding: the review UPDATE and its outbox mutation
+    insert must land as one write, so a server-mirrored review is never
+    left un-pushed (or pushed for a review that didn't actually commit)."""
+    db = _mk_db(tmp_path)
+    rid = db.create_automation_result(
+        "server:1", "d1", "r1", "finding", "T", "S", "k1", server_id="srv-1"
+    )
+
+    assert db.update_result_review(
+        rid,
+        "dismissed",
+        "noise",
+        pending_mutation={
+            "local_id": rid,
+            "primitive": "automation_result_review",
+            "owner_id": "server:1",
+            "payload": {"server_result_id": "srv-1", "review_state": "dismissed"},
+        },
+    )
+
+    row = db.get_automation_result(rid)
+    assert row["review_state"] == "dismissed"
+    pending = db.get_pending_mutations("server:1", primitive="automation_result_review")
+    assert len(pending) == 1
+    assert pending[0]["payload"]["server_result_id"] == "srv-1"
+    assert pending[0]["payload"]["idempotency_key"]  # generated, same as the standalone method
+
+
+def test_update_result_review_pending_mutation_atomic_rollback_on_insert_failure(tmp_path):
+    """Fault-inject a genuine DB failure in the mutation INSERT (a NULL
+    owner_id violates pending_mutations' NOT NULL constraint) and confirm
+    the review UPDATE in the SAME transaction rolls back with it -- the
+    atomicity the review round 1 finding required."""
+    db = _mk_db(tmp_path)
+    rid = db.create_automation_result(
+        "server:1", "d1", "r1", "finding", "T", "S", "k1", server_id="srv-1"
+    )
+
+    with pytest.raises(Exception):
+        db.update_result_review(
+            rid,
+            "dismissed",
+            "noise",
+            pending_mutation={
+                "local_id": rid,
+                "primitive": "automation_result_review",
+                "owner_id": None,  # NOT NULL violation -> INSERT raises
+                "payload": {"server_result_id": "srv-1", "review_state": "dismissed"},
+            },
+        )
+
+    row = db.get_automation_result(rid)
+    assert row["review_state"] == "unread"  # the UPDATE rolled back too
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_result_review") == []
+    )
+
+
+# ----------------------------------------------------------------------
+# Server-mirror upserts (schedules-handoff PR-3, task 3)
+# ----------------------------------------------------------------------
+
+
+def _definition_item(**overrides):
+    item = {
+        "id": "srv-def-1",
+        "owner_id": "server:42",
+        "family": "recurring_question",
+        "name": "Daily stand-up",
+        "lifecycle": "configured",
+        "health": "execution_unavailable",
+        "schedule": {"kind": "cron", "expression": "0 9 * * 1-5"},
+        "created_at": "2026-07-18T09:00:00+00:00",
+        "updated_at": "2026-07-18T09:00:00+00:00",
+    }
+    item.update(overrides)
+    return item
+
+
+def test_upsert_definitions_inserts_new_row(tmp_path):
+    db = _mk_db(tmp_path)
+    counts = db.upsert_automation_definitions_from_server(
+        "server:42", [_definition_item()]
+    )
+    assert counts == {"inserted": 1, "updated": 0}
+    rows = db.list_automation_definitions(owner_id="server:42")
+    assert len(rows) == 1
+    assert rows[0]["server_id"] == "srv-def-1"
+    assert rows[0]["name"] == "Daily stand-up"
+    assert rows[0]["schedule"] == {"kind": "cron", "expression": "0 9 * * 1-5"}
+
+
+def test_upsert_definitions_server_wins_on_update(tmp_path):
+    db = _mk_db(tmp_path)
+    db.upsert_automation_definitions_from_server("server:42", [_definition_item()])
+    counts = db.upsert_automation_definitions_from_server(
+        "server:42",
+        [_definition_item(name="Renamed", lifecycle="paused")],
+    )
+    assert counts == {"inserted": 0, "updated": 1}
+    rows = db.list_automation_definitions(owner_id="server:42")
+    assert len(rows) == 1
+    assert rows[0]["name"] == "Renamed"
+    assert rows[0]["lifecycle"] == "paused"
+
+
+def test_upsert_definitions_never_clears_local_transfer_state(tmp_path):
+    """spec §6 parked finding: a server payload must never clear a local
+    transfer marker."""
+    db = _mk_db(tmp_path)
+    db.upsert_automation_definitions_from_server("server:42", [_definition_item()])
+    local_id = db.list_automation_definitions(owner_id="server:42")[0]["id"]
+    db.update_automation_definition(local_id, transfer_state="pending_pull")
+
+    # Server payload carries no transfer_state at all (the real server never
+    # sends one, it's local-only) -- the update must not touch the column.
+    db.upsert_automation_definitions_from_server(
+        "server:42", [_definition_item(name="Renamed")]
+    )
+    row = db.get_automation_definition(local_id)
+    assert row["transfer_state"] == "pending_pull"
+    assert row["name"] == "Renamed"
+
+    # Even if a server payload somehow carried transfer_state, it must still
+    # be ignored -- the exclusion is unconditional.
+    db.upsert_automation_definitions_from_server(
+        "server:42", [_definition_item(transfer_state="server_side_value")]
+    )
+    row = db.get_automation_definition(local_id)
+    assert row["transfer_state"] == "pending_pull"
+
+
+def test_upsert_definitions_archived_lifecycle_mirrors_not_deletes(tmp_path):
+    db = _mk_db(tmp_path)
+    db.upsert_automation_definitions_from_server("server:42", [_definition_item()])
+    local_id = db.list_automation_definitions(owner_id="server:42")[0]["id"]
+    db.upsert_automation_definitions_from_server(
+        "server:42",
+        [_definition_item(lifecycle="archived", archived_at="2026-08-01T00:00:00+00:00")],
+    )
+    row = db.get_automation_definition(local_id)
+    assert row["lifecycle"] == "archived"
+    assert row["archived_at"] is not None
+
+
+def test_upsert_definitions_skips_item_missing_id(tmp_path):
+    db = _mk_db(tmp_path)
+    item = _definition_item()
+    del item["id"]
+    counts = db.upsert_automation_definitions_from_server("server:42", [item])
+    assert counts == {"inserted": 0, "updated": 0}
+    assert db.list_automation_definitions(owner_id="server:42") == []
+
+
+def _result_item(**overrides):
+    item = {
+        "id": "srv-res-1",
+        "owner_id": "server:42",
+        "definition_id": "srv-def-1",
+        "run_id": "srv-run-1",
+        "kind": "finding",
+        "title": "Daily stand-up summary",
+        "summary": "Two blockers reported.",
+        "answer": "text",
+        "answer_mode": "synthesized",
+        "confidence": {"score": 0.8},
+        "source_refs": [{"source_type": "message", "source_id": "m1"}],
+        "dedupe_key": "recurring_question:srv-def-1:2026-08-30",
+        "review_state": "unread",
+        "reviewed_at": None,
+        "reviewed_by": None,
+        "review_note": None,
+        "created_at": "2026-08-30T09:00:05+00:00",
+        "updated_at": "2026-08-30T09:00:05+00:00",
+    }
+    item.update(overrides)
+    return item
+
+
+def test_upsert_results_inserts_new_row(tmp_path):
+    db = _mk_db(tmp_path)
+    counts = db.upsert_automation_results_from_server("server:42", [_result_item()])
+    assert counts == {"inserted": 1, "updated": 0, "skipped_dedupe": 0}
+    rows = db.list_automation_results("server:42")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["server_id"] == "srv-res-1"
+    assert row["definition_id"] == "srv-def-1"  # plain TEXT, no local resolve
+    assert row["run_id"] == "srv-run-1"
+    assert row["answer"] == "text"
+    assert row["source_refs"] == [{"source_type": "message", "source_id": "m1"}]
+
+
+def test_upsert_results_update_touches_only_review_fields(tmp_path):
+    db = _mk_db(tmp_path)
+    db.upsert_automation_results_from_server("server:42", [_result_item()])
+    counts = db.upsert_automation_results_from_server(
+        "server:42",
+        [
+            _result_item(
+                title="Different title server-side",
+                summary="Different summary",
+                review_state="read",
+                reviewed_at="2026-08-31T00:00:00+00:00",
+                reviewed_by="user:42",
+                review_note="looks fine",
+                updated_at="2026-08-31T00:00:00+00:00",
+            )
+        ],
+    )
+    assert counts == {"inserted": 0, "updated": 1, "skipped_dedupe": 0}
+    row = db.list_automation_results("server:42")[0]
+    # Review fields updated...
+    assert row["review_state"] == "read"
+    assert row["reviewed_by"] == "user:42"
+    assert row["review_note"] == "looks fine"
+    # ...but non-review fields are left alone even though the server item
+    # carried different values for them.
+    assert row["title"] == "Daily stand-up summary"
+    assert row["summary"] == "Two blockers reported."
+
+
+def test_upsert_results_pending_review_mutation_blocks_update(tmp_path):
+    db = _mk_db(tmp_path)
+    db.upsert_automation_results_from_server("server:42", [_result_item()])
+    local_id = db.list_automation_results("server:42")[0]["id"]
+    db.record_pending_mutation(
+        local_id,
+        "automation_result_review",
+        "server:42",
+        {"server_result_id": "srv-res-1", "review_state": "dismissed"},
+    )
+
+    counts = db.upsert_automation_results_from_server(
+        "server:42",
+        [_result_item(review_state="read", reviewed_by="user:42")],
+    )
+    assert counts == {"inserted": 0, "updated": 0, "skipped_dedupe": 0}
+    row = db.list_automation_results("server:42")[0]
+    # The local unpushed review outranks the mirror until it replays.
+    assert row["review_state"] == "unread"
+
+
+def test_upsert_results_pending_mutation_recorded_mid_loop_still_blocks_update(tmp_path):
+    """Qodo TOCTOU finding: the pending-mutation guard used to snapshot
+    ``get_pending_mutations()`` ONCE before the write transaction even
+    opened. A review recorded concurrently (the review service writes via
+    ``to_thread`` while this upsert runs on the event loop) after that
+    snapshot but before the loop reached the row would be invisible to
+    the stale snapshot -- clobbering a review whose own pending mutation
+    genuinely existed by the time this row's write happened.
+
+    This test proves the fix (a per-row SELECT inside the same write
+    transaction, immediately before that row's own UPDATE) by inserting
+    row 2's pending mutation, via a separate real connection, DURING this
+    very upsert call -- timed to land right as row 1 is being processed,
+    i.e. strictly after any pre-loop snapshot would have been taken. The
+    old snapshot-based guard would have missed it; the new per-row check
+    catches it.
+    """
+    db = _mk_db(tmp_path)
+    db.upsert_automation_results_from_server(
+        "server:42",
+        [
+            _result_item(id="srv-res-1", dedupe_key="key-1"),
+            _result_item(id="srv-res-2", dedupe_key="key-2"),
+        ],
+    )
+    rows_by_server_id = {
+        row["server_id"]: row["id"] for row in db.list_automation_results("server:42")
+    }
+    local_id_2 = rows_by_server_id["srv-res-2"]
+
+    # sqlite3.Connection is an immutable C type -- its bound methods can't
+    # be monkeypatched directly. `set_trace_callback` is the supported hook
+    # for observing every SQL statement a connection runs, so it's used
+    # here to detect the exact moment ("SELECT id FROM automation_results",
+    # row 1's existence check) at which the OLD code's pre-loop snapshot
+    # would already have been taken and gone stale.
+    real_get_connection = ScheduledTasksDB._get_connection
+    injected = {"done": False}
+
+    def _get_connection_with_injector(self):
+        conn = real_get_connection(self)
+
+        def _on_statement(sql):
+            if injected["done"] or "SELECT id FROM automation_results" not in sql:
+                return
+            injected["done"] = True
+            # Simulate the review service's concurrent to_thread write
+            # landing mid-loop: a totally separate connection records row
+            # 2's pending review mutation right now, before this upsert
+            # call has reached row 2.
+            side_conn = sqlite3.connect(str(tmp_path / "s.db"))
+            try:
+                side_conn.execute(
+                    "INSERT INTO pending_mutations "
+                    "(local_id, primitive, owner_id, payload, created_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (local_id_2, "automation_result_review", "server:42", "{}",
+                     "2026-09-01T00:00:00+00:00"),
+                )
+                side_conn.commit()
+            finally:
+                side_conn.close()
+
+        conn.set_trace_callback(_on_statement)
+        return conn
+
+    with mock.patch.object(
+        ScheduledTasksDB, "_get_connection", _get_connection_with_injector
+    ):
+        counts = db.upsert_automation_results_from_server(
+            "server:42",
+            [
+                _result_item(id="srv-res-1", review_state="read", reviewed_by="user:42"),
+                _result_item(id="srv-res-2", review_state="read", reviewed_by="user:42"),
+            ],
+        )
+
+    assert injected["done"], "the spy never saw the expected SELECT -- test setup is stale"
+    assert counts == {"inserted": 0, "updated": 1, "skipped_dedupe": 0}
+    rows_by_server_id = {
+        row["server_id"]: row for row in db.list_automation_results("server:42")
+    }
+    # Row 1 had no pending mutation at any point -- it updates normally.
+    assert rows_by_server_id["srv-res-1"]["review_state"] == "read"
+    # Row 2's mutation was recorded mid-loop, after any pre-loop snapshot
+    # would have run -- the per-row in-transaction check still catches it.
+    assert rows_by_server_id["srv-res-2"]["review_state"] == "unread"
+
+
+def test_upsert_results_dedupe_conflict_with_local_row_is_skipped(tmp_path):
+    db = _mk_db(tmp_path)
+    local_id = db.create_automation_result(
+        "server:42", "local-def", "local-run", "finding", "Local title",
+        "Local summary", "recurring_question:srv-def-1:2026-08-30",
+    )
+    assert local_id is not None
+
+    counts = db.upsert_automation_results_from_server(
+        "server:42", [_result_item()]  # same dedupe_key as the local row
+    )
+    assert counts == {"inserted": 0, "updated": 0, "skipped_dedupe": 1}
+    rows = db.list_automation_results("server:42")
+    assert len(rows) == 1
+    assert rows[0]["id"] == local_id
+    assert rows[0]["server_id"] is None  # untouched, still the local-only row
+
+
+def test_upsert_results_skips_item_missing_id(tmp_path):
+    db = _mk_db(tmp_path)
+    item = _result_item()
+    del item["id"]
+    counts = db.upsert_automation_results_from_server("server:42", [item])
+    assert counts == {"inserted": 0, "updated": 0, "skipped_dedupe": 0}
+    assert db.list_automation_results("server:42") == []

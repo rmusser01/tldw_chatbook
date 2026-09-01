@@ -1152,8 +1152,10 @@ AUDITED_CAPABILITY_SEEDS = (
             # server's definitions and triggering a manual run are distinct
             # from workflow jobs -- the notifications.reminders resource
             # covers reminder CRUD, this one covers the agent-automation
-            # control plane.
-            _resource("scheduler.automations", actions=(LIST, LAUNCH)),
+            # control plane. CONFIGURE (schedules-handoff PR-3) gates
+            # reviewing a result's review_state/note -- a metadata mutation,
+            # not a launch or a list, same class as reminder CRUD.
+            _resource("scheduler.automations", actions=(LIST, LAUNCH, CONFIGURE)),
         ),
     ),
     _capability(

@@ -365,6 +365,7 @@ class AutomationDefinitionHandler:
                     await asyncio.to_thread(
                         self.db.update_automation_definition,
                         definition_id,
+                        bump_version=False,
                         next_run_at=compute_next_run_at(
                             schedule if isinstance(schedule, dict) else {}, now=now
                         ),
