@@ -44,6 +44,18 @@ Local owner and no scheduling server connected, the bar collapses to a
 single line ("Local schedules — no scheduling server connected; sync is
 off"), and the **Clear** button only appears once a sync error exists.
 
+## Scheduler liveness
+
+Below the sync bar, a one-line **scheduler liveness** indicator distinguishes
+three states that used to look identical: *not started* (the loop has never
+ticked on this machine), *live* (with the age of the last tick, e.g. "live ·
+last tick 12s ago"), and **STALLED** — the loop has not ticked in several
+poll intervals, so reminders have silently stopped; a stall shows the last
+error the loop hit, if any. Staleness is judged against your configured poll
+interval, so a deliberately long interval is not mistaken for a stall. The
+signal is durable (a small heartbeat file), so a stalled or dead loop is
+distinguishable from an idle one even across a restart.
+
 ## Creating a scheduled task
 
 Press **c** to open the create form. The form scrolls when the terminal

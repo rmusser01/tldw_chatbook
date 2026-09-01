@@ -232,6 +232,9 @@ class SchedulesWorkbench(BaseAppScreen):
                 active_server_id=active_server_id,
                 server_available=server_available,
             )
+            # TASK-26025: scheduler liveness -- a stale heartbeat reads
+            # distinctly from an empty queue and a never-started loop.
+            yield Static("", id="scheduling-liveness")
             with TabbedContent(id="scheduling-tabs"):
                 with TabPane("Queue", id="scheduling-queue-tab"):
                     with Horizontal(id="scheduling-workbench"):
@@ -319,9 +322,44 @@ class SchedulesWorkbench(BaseAppScreen):
         )
         self._request_tasks_refresh()
         self._request_automations_refresh()
+        self._refresh_scheduler_liveness()
+
+    def _refresh_scheduler_liveness(self) -> None:
+        """Update the scheduler-liveness line from the durable heartbeat
+        (TASK-26025). Never raises -- a diagnostics read must not break the
+        screen."""
+        try:
+            from datetime import datetime, timezone
+
+            from ....config import get_cli_setting
+            from ....Scheduling.constants import SCHEDULER_POLL_INTERVAL_SECONDS
+            from ....Scheduling.scheduler_heartbeat import (
+                default_heartbeat_path,
+                read_heartbeat,
+                scheduler_liveness_line,
+            )
+
+            poll = get_cli_setting(
+                "scheduling",
+                "scheduler_poll_interval_seconds",
+                SCHEDULER_POLL_INTERVAL_SECONDS,
+            )
+            line = scheduler_liveness_line(
+                read_heartbeat(default_heartbeat_path()),
+                now=datetime.now(timezone.utc),
+                poll_interval=float(poll or SCHEDULER_POLL_INTERVAL_SECONDS),
+            )
+            self._update_static_content(
+                self.query_one("#scheduling-liveness", Static), line
+            )
+        except Exception:  # noqa: BLE001 -- liveness display never breaks the screen
+            pass
 
     def _refresh_next_run_rendering(self) -> None:
         """Re-render the queue so relative next-run text stays honest.
+
+        Also refreshes the scheduler-liveness line (TASK-26025) so a loop
+        that dies while the screen is open turns visibly stale.
 
         Skips unless this screen is the top of the stack. (Textual's
         ``is_current`` also counts screens behind the top one --
@@ -332,7 +370,12 @@ class SchedulesWorkbench(BaseAppScreen):
         nothing to refresh, and the no-service path must keep its own
         detail-pane copy.
         """
-        if self.app.screen is not self or not self._visible_tasks:
+        if self.app.screen is not self:
+            return
+        # TASK-26025: refresh liveness even on an empty queue -- a stall
+        # with nothing queued is exactly the case AC#2 must distinguish.
+        self._refresh_scheduler_liveness()
+        if not self._visible_tasks:
             return
         self._render_table()
 

@@ -7,12 +7,18 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Coroutine, Optional
 
 from loguru import logger
 
 from tldw_chatbook.Metrics.metrics_logger import log_counter
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
+from tldw_chatbook.Scheduling.scheduler_heartbeat import (
+    SchedulerHeartbeat,
+    default_heartbeat_path,
+    write_heartbeat,
+)
 from tldw_chatbook.Scheduling.constants import (
     HANDLER_TIMEOUT_SECONDS,
     MISSED_FIRE_GRACE_SECONDS,
@@ -67,10 +73,17 @@ class SchedulerLoop:
         expected_unhandled_types: frozenset[str] = frozenset(),
         missed_fire_grace_seconds: float = MISSED_FIRE_GRACE_SECONDS,
         handler_timeout_seconds: float | None = HANDLER_TIMEOUT_SECONDS,
+        heartbeat_path: Path | None = None,
     ) -> None:
         self.db = db
         self.handlers = handlers
         self.poll_interval = poll_interval
+        # TASK-26025: durable liveness. None uses the default user-data
+        # path; injectable for tests. last_success/error persist across
+        # ticks so a stalled loop's last state is inspectable.
+        self._heartbeat_path = heartbeat_path
+        self._last_success_at: datetime | None = None
+        self._last_error: str | None = None
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.queue_reload_interval_ticks = queue_reload_interval_ticks
         #: Task types that are queued but deliberately have no handler. Declaring
@@ -334,12 +347,40 @@ class SchedulerLoop:
         handler cannot leave the previous tick's figure standing.
         """
         now = self.clock()
+        tick_error: str | None = None
         try:
             await self._dispatch_due(now)
+        except Exception as exc:  # noqa: BLE001 -- captured for the heartbeat
+            # TASK-26025 AC#3: the last error is RETAINED and surfaced, not
+            # only logged. Re-raised after recording so existing behavior
+            # (the run loop's own handling) is unchanged.
+            tick_error = f"{type(exc).__name__}: {exc}"[:500]
+            raise
         finally:
             self._last_tick_dispatch_seconds = max(
                 (self.clock() - now).total_seconds(), 0.0
             )
+            self._record_heartbeat(now, error=tick_error)
+
+    def _record_heartbeat(
+        self, tick_at: datetime, *, error: str | None
+    ) -> None:
+        """Persist one liveness snapshot (TASK-26025). Never raises."""
+        if error is None:
+            self._last_success_at = tick_at
+        else:
+            self._last_error = error
+        path = self._heartbeat_path or default_heartbeat_path()
+        write_heartbeat(
+            path,
+            SchedulerHeartbeat(
+                last_tick_at=tick_at,
+                last_success_at=self._last_success_at,
+                last_error=self._last_error,
+                poll_interval=self.poll_interval,
+                tick_count=self._tick_count,
+            ),
+        )
 
     async def _dispatch_due(self, now: datetime) -> None:
         """Dispatch everything due at ``now`` (the tick's frozen clock)."""
