@@ -153,6 +153,7 @@ class TerminalSessionManager:
         self._armed = False
         self._disclosure_acknowledged = False
         self._shutting_down = False
+        self._shutdown_finalized = False
         self._sessions: dict[str, _SessionRecord] = {}
         self._selected_session_id: str | None = None
         self._view_generation = 0
@@ -480,6 +481,26 @@ class TerminalSessionManager:
                 return False
         with self._lock:
             return not self._sessions
+
+    def finalize_shutdown(self) -> None:
+        """Close remaining app-owned backend handles without another wait."""
+        with self._lock:
+            if self._shutdown_finalized:
+                return
+            self._shutdown_finalized = True
+            backends = tuple(
+                {
+                    id(record.backend): record.backend
+                    for record in self._sessions.values()
+                    if record.backend is not None
+                }.values()
+            )
+        for backend in backends:
+            try:
+                backend.finalize_shutdown()
+            except Exception:
+                continue
+        self._cleanup_executor.shutdown(wait=False, cancel_futures=True)
 
     def accepts_input(self, session_id: str) -> bool:
         """Return whether a running record currently accepts input."""

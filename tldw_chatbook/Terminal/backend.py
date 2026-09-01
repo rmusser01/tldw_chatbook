@@ -49,6 +49,10 @@ class TerminalBackend(Protocol):
         """Request out-of-band idempotent cleanup."""
         ...
 
+    def finalize_shutdown(self) -> None:
+        """Fence future startup and close parent-owned handles without waiting."""
+        ...
+
     def cleanup(self, attempt: CleanupAttempt) -> CleanupProof:
         """Run cleanup under one absolute attempt deadline.
 
