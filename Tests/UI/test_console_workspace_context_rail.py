@@ -1174,9 +1174,11 @@ async def test_console_workspace_context_search_controls_keep_stable_ids() -> No
 
 
 def test_console_workspace_context_grouped_browser_styles_are_declared() -> None:
+    # TASK-25812: the console-owned browser rules were split out of the
+    # boot bundle into the console screen sheet.
     for css_path in (
         Path("tldw_chatbook/css/components/_agentic_terminal.tcss"),
-        Path("tldw_chatbook/css/tldw_cli_modular.tcss"),
+        Path("tldw_chatbook/css/screen_agentic_console.tcss"),
     ):
         css = css_path.read_text(encoding="utf-8")
 

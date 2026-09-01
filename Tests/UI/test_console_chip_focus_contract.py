@@ -11,7 +11,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 AGENTIC = ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
-BUNDLE = ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
+# TASK-25812: the console-owned chip rules were split out of the boot
+# bundle into the console screen sheet; the source+generated integrity
+# pair is now (source module, console sheet).
+BUNDLE = ROOT / "tldw_chatbook/css/screen_agentic_console.tcss"
 
 
 def _chip_focus_body(css_text: str) -> str:

@@ -20,7 +20,7 @@ import re
 import pytest
 
 from Tests.UI.app_factory import _build_test_app
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
+from Tests.UI.consolidated_css import APP_STYLESHEETS, app_css_text
 from Tests.UI.test_console_internals_decomposition import (
     _configure_native_ready_console,
 )
@@ -36,11 +36,13 @@ class FocusHarness(ConsoleHarness):
     Focus treatment is a CSS question, so a bare ``ConsoleHarness`` --
     which sets no ``CSS_PATH`` -- would apply none of the rules under
     test and pass vacuously no matter what the bundle says. Pointing at
-    ``BUNDLED_STYLESHEET`` makes these assertions read the same file the
+    ``APP_STYLESHEETS`` makes these assertions read the same files the
     app ships.
     """
 
-    CSS_PATH = str(BUNDLED_STYLESHEET)
+    # TASK-25812: the bundle alone no longer carries the console rules --
+    # the app loads the split screen sheets too, so the harness must.
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
 #: The two container Tab stops. Controls in the rail get their treatment
@@ -62,7 +64,7 @@ def test_container_tab_stops_have_a_focus_rule(selector):
     missing both containers entirely, because some unrelated style does move
     on focus. Asserting the rule exists says exactly what is meant.
     """
-    stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    stylesheet = app_css_text()
     assert f"{selector}:focus" in stylesheet, (
         f"{selector} is a Tab stop in the Inspect rail with no :focus rule, "
         "so focusing it changes nothing a keyboard user can see"
@@ -73,7 +75,7 @@ def test_container_focus_rules_do_not_use_focus_within():
     """These two contain every other stop in the rail, so a
     ``:focus-within`` tint would be on almost permanently and would carry no
     information at all."""
-    stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    stylesheet = app_css_text()
     for selector in CONTAINER_TAB_STOPS:
         assert f"{selector}:focus-within" not in stylesheet, (
             f"{selector} tints on descendant focus, which means it is tinted "
@@ -116,7 +118,7 @@ async def test_the_rail_tab_cycle_is_reachable_and_bounded():
             for name in seen
             if name in {"console-inspector-rail-body", "console-right-rail"}
         }
-        stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+        stylesheet = app_css_text()
         for name in visited_containers:
             assert f"#{name}:focus" in stylesheet, (
                 f"Tab lands on #{name}, which has no focus rule"
@@ -142,7 +144,7 @@ RAIL_CLASSES_REQUIRING_A_RULE = (
 @pytest.mark.parametrize("class_name", RAIL_CLASSES_REQUIRING_A_RULE)
 def test_rail_class_attached_in_python_has_a_stylesheet_rule(class_name):
     """A class the rail attaches must paint something."""
-    stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    stylesheet = app_css_text()
     assert f".{class_name}" in stylesheet, (
         f"{class_name} is attached in Python but has no rule in the bundled "
         "stylesheet, so whatever it encodes renders as plain body text"
@@ -157,7 +159,7 @@ def test_the_collapsed_handle_does_not_demand_more_rows_than_the_rail():
     and it kept `min-height: 20` -- so the rail's shipping default state
     still over-claimed rows on exactly the terminals the fix was written for.
     """
-    stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    stylesheet = app_css_text()
     start = stylesheet.index(".console-inspector-rail-handle {")
     block = stylesheet[start : stylesheet.index("}", start)]
     match = re.search(r"min-height:\s*(\d+)", block)
@@ -183,7 +185,7 @@ def test_the_container_focus_cue_is_an_edge_not_a_tint():
     same accent (so the same 3.77:1), and is already the house dense-form
     convention.
     """
-    stylesheet = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    stylesheet = app_css_text()
     start = stylesheet.index("#console-inspector-rail-body:focus")
     block = stylesheet[start : stylesheet.index("}", start)]
     assert "outline-left" in block, (

@@ -93,7 +93,11 @@ def test_library_source_actions_use_console_text_control_style() -> None:
     agentic_terminal = _text(
         Path("tldw_chatbook/css/components/_agentic_terminal.tcss")
     )
-    bundled_stylesheet = _text(Path("tldw_chatbook/css/tldw_cli_modular.tcss"))
+    # TASK-25812: the library-owned rules (and the variables preamble that
+    # carries the $ds-library-* defs) live in the split library sheet.
+    bundled_stylesheet = _text(
+        Path("tldw_chatbook/css/tldw_cli_modular.tcss")
+    ) + _text(Path("tldw_chatbook/css/screen_agentic_library.tcss"))
 
     assert "$ds-library-source-action-width: auto;" in variables
     assert "$ds-library-source-action-min-width: 0;" in variables

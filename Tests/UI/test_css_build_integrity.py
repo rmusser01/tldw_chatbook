@@ -16,6 +16,23 @@ _AGENTIC_SOURCE = _CSS_ROOT / "components/_agentic_terminal.tcss"
 _SETTINGS_SOURCE = _CSS_ROOT / "components/_settings_splash_theme.tcss"
 _SHARED_SOURCE = _CSS_ROOT / "components/_shared_components.tcss"
 _BUNDLED_STYLESHEET = _CSS_ROOT / "tldw_cli_modular.tcss"
+
+# TASK-25812: the build now emits the bundle PLUS three per-screen sheets
+# split from the agentic-terminal module. "Reaches the generated output"
+# means the union -- a rule in a split sheet is exactly as live as one in
+# the bundle (the app loads it via the owning screen's CSS_PATH).
+_GENERATED_SHEETS = (
+    _BUNDLED_STYLESHEET,
+    _CSS_ROOT / "screen_agentic_console.tcss",
+    _CSS_ROOT / "screen_agentic_library.tcss",
+    _CSS_ROOT / "screen_agentic_settings.tcss",
+)
+
+
+def _generated_css_text() -> str:
+    return "\n".join(
+        sheet.read_text(encoding="utf-8") for sheet in _GENERATED_SHEETS
+    )
 _LIBRARY_SCREEN_SOURCE = _REPO_ROOT / "tldw_chatbook/UI/Screens/library_screen.py"
 
 _LIBRARY_NOTES_COMPACT_GEOMETRY = {
@@ -340,20 +357,52 @@ def _bundled_module(bundle: str, module_path: str) -> str:
     return bundle.split(marker, 1)[1].split("/* ===== MODULE:", 1)[0].strip()
 
 
+def _generated_agentic_css() -> str:
+    """The agentic module as the app actually loads it, post-split.
+
+    TASK-25812 split the module across the bundle (multi-screen remainder)
+    and three per-screen sheets. Contracts about "the generated form of this
+    module" now run against the union of those outputs.
+    """
+    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    parts = [_bundled_module(bundle, "components/_agentic_terminal.tcss")]
+    for filename in css_builder.AGENTIC_SPLIT_SHEETS.values():
+        parts.append((_CSS_ROOT / filename).read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
+
 def test_library_notes_compact_source_module_is_exactly_bundled() -> None:
-    source = _AGENTIC_SOURCE.read_text(encoding="utf-8").strip()
+    """Every byte of the source module reaches exactly one generated output.
+
+    Pre-split this was `bundle section == source`. The split makes that
+    false BY DESIGN, so the contract is now the splitter's own lossless
+    partition, re-checked here against the COMMITTED outputs: the bundle's
+    module section must equal the remainder, and each split sheet must end
+    with its owner's moved blocks. A hand-edit to any generated file still
+    fails loudly, which is this test's entire purpose.
+    """
+    source = _AGENTIC_SOURCE.read_text(encoding="utf-8")
+    remainder, moved = css_builder.split_agentic_terminal(source)
     bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
 
-    assert _bundled_module(bundle, "components/_agentic_terminal.tcss") == source
+    assert (
+        _bundled_module(bundle, "components/_agentic_terminal.tcss")
+        == remainder.strip()
+    )
+    for owner, filename in css_builder.AGENTIC_SPLIT_SHEETS.items():
+        sheet = (_CSS_ROOT / filename).read_text(encoding="utf-8")
+        assert sheet.rstrip().endswith(moved[owner].rstrip()), (
+            f"{filename} does not end with the {owner} blocks split from "
+            "the source module -- regenerate with build_css.py"
+        )
 
 
 def test_console_bounded_sections_have_no_legacy_fractional_css_owner() -> None:
     """Only the bounded viewport may own direct-section scrolling geometry."""
 
-    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
     stylesheets = (
         _AGENTIC_SOURCE.read_text(encoding="utf-8"),
-        _bundled_module(bundle, "components/_agentic_terminal.tcss"),
+        _generated_agentic_css(),
     )
 
     for css in stylesheets:
@@ -377,7 +426,7 @@ def test_library_notes_compact_geometry_matches_fallback_source_and_bundle() -> 
     stylesheets = (
         _library_screen_default_css(),
         _AGENTIC_SOURCE.read_text(encoding="utf-8"),
-        _BUNDLED_STYLESHEET.read_text(encoding="utf-8"),
+        _generated_css_text(),
     )
 
     for selector, expected in _LIBRARY_NOTES_COMPACT_GEOMETRY.items():
@@ -393,7 +442,7 @@ def test_library_notes_compact_geometry_matches_fallback_source_and_bundle() -> 
 def test_file_notes_error_ink_and_disabled_opacity_are_app_tier() -> None:
     stylesheets = (
         _AGENTIC_SOURCE.read_text(encoding="utf-8"),
-        _BUNDLED_STYLESHEET.read_text(encoding="utf-8"),
+        _generated_css_text(),
     )
 
     for css in stylesheets:
@@ -458,7 +507,7 @@ def test_css_manifest_declares_only_existing_settings_source() -> None:
 def test_settings_splash_theme_rules_have_source_and_bundle_integrity() -> None:
     assert _SETTINGS_SOURCE.is_file()
     settings_source = _SETTINGS_SOURCE.read_text(encoding="utf-8")
-    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundle = _generated_css_text()
     # The live, feature-scoped theme-editor + splash-viewer selectors remain.
     required_selectors = (
         "#settings-theme-tree",
@@ -516,7 +565,7 @@ def test_splash_theme_module_has_no_bare_or_generic_component_selectors() -> Non
 def test_relocated_shared_component_rules_are_present() -> None:
     """The moved generic rules live in _shared_components and reach the bundle."""
     shared = _SHARED_SOURCE.read_text(encoding="utf-8")
-    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundle = _generated_css_text()
     for selector in (
         ".setting-label",
         ".section-header",
@@ -532,7 +581,7 @@ def test_relocated_shared_component_rules_are_present() -> None:
 
 def test_console_inspector_handle_full_height_rule_reaches_generated_bundle() -> None:
     source = _AGENTIC_SOURCE.read_text(encoding="utf-8")
-    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundle = _generated_css_text()
 
     for css in (source, bundle):
         inspector_handle = _rule_body(css, ".console-inspector-rail-handle")
@@ -545,7 +594,7 @@ def test_console_inspector_handle_full_height_rule_reaches_generated_bundle() ->
 def test_library_modular_css_compact_shell_and_emergency_return_reach_bundle() -> None:
     """Production CSS owns the narrow box model and its visible return seam."""
     source = _AGENTIC_SOURCE.read_text(encoding="utf-8")
-    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundle = _generated_css_text()
 
     for css in (source, bundle):
         compact = _declarations(css, "#library-shell-grid.library-notes-compact")
@@ -563,7 +612,7 @@ def test_library_modular_css_compact_shell_and_emergency_return_reach_bundle() -
 def test_console_edge_ownership_rules_reach_generated_bundle() -> None:
     """Source and bundle retain the edge-native Console shell contract."""
     source = _AGENTIC_SOURCE.read_text(encoding="utf-8")
-    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundle = _generated_css_text()
 
     for css in (source, bundle):
         grid = _declarations(css, "#console-workspace-grid")
@@ -591,7 +640,7 @@ def test_console_edge_ownership_rules_reach_generated_bundle() -> None:
 
 def test_settings_category_rules_have_source_and_bundle_integrity() -> None:
     source = _AGENTIC_SOURCE.read_text(encoding="utf-8")
-    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundle = _generated_css_text()
 
     for css in (source, bundle):
         category_pane = _rule_body(css, "#settings-category-pane")
