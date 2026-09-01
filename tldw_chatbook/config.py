@@ -5,12 +5,13 @@ from __future__ import annotations
 
 # Imports
 import copy
+import shutil
 from contextlib import ExitStack, contextmanager
 import importlib.util
 import json
 import sys
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 if sys.version_info < (3, 11):
     import tomli as tomllib
@@ -5126,6 +5127,29 @@ def first_profile_created_this_session() -> bool:
     return _FIRST_PROFILE_CREATED_THIS_SESSION
 
 
+def _preserve_corrupt_config_aside(config_path: Path) -> Optional[Path]:
+    """Copy an unparseable config file aside so the user's edits survive.
+
+    TASK-26036 AC#2. Best-effort: a failure to copy must never break the
+    fallback path (the whole point is resilience), so any error is logged
+    and swallowed. Returns the aside path when a copy was made.
+    """
+    try:
+        source = Path(config_path)
+        if not source.exists():
+            return None
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        aside = source.with_name(f"{source.name}.corrupt-{stamp}")
+        shutil.copy2(source, aside)
+        logger.warning(
+            f"Preserved unparseable config {source} at {aside}"
+        )
+        return aside
+    except Exception as exc:  # noqa: BLE001 -- resilience path never raises
+        logger.warning(f"Could not preserve corrupt config aside: {exc!r}")
+        return None
+
+
 class ConfigLoadFailure(NamedTuple):
     """The most recent config parse failure -- TASK-13157.
 
@@ -5183,6 +5207,14 @@ def _load_cli_config_bootstrap_unlocked(
     ):
         return _ConfigBootstrapResult(_CONFIG_CACHE, True)
 
+    # TASK-26036: retain the last successfully loaded config for THIS path
+    # before clearing the cache, so a parse failure on a force-reload can
+    # serve it instead of reverting security-relevant settings to defaults.
+    retained_good = (
+        copy.deepcopy(_CONFIG_CACHE)
+        if _CONFIG_CACHE is not None and _CONFIG_CACHE_SOURCE == config_path
+        else None
+    )
     _CONFIG_CACHE = None
     _CONFIG_CACHE_SOURCE = None
 
@@ -5252,7 +5284,23 @@ def _load_cli_config_bootstrap_unlocked(
         # `.succeeded`). Recording it lets `app.py` surface a loud,
         # user-visible notification instead of a silent `default_user`
         # fallback (see `ConfigLoadFailure`/`get_config_load_failure`).
-        _LAST_CONFIG_LOAD_FAILURE = ConfigLoadFailure(path=config_path, message=str(e))
+        # TASK-26036: preserve the unparseable file aside (never lose the
+        # user's edits) and serve the LAST KNOWN GOOD config instead of
+        # built-in defaults, so a mid-edit break can't silently revert
+        # encryption/database/provider settings.
+        aside = _preserve_corrupt_config_aside(config_path)
+        in_effect = "built-in defaults"
+        if retained_good is not None:
+            loaded_config = copy.deepcopy(retained_good)
+            in_effect = "the last successfully loaded configuration"
+        _LAST_CONFIG_LOAD_FAILURE = ConfigLoadFailure(
+            path=config_path,
+            message=(
+                f"{e} (now serving {in_effect}"
+                + (f"; the unreadable file was kept at {aside.name}" if aside else "")
+                + ")"
+            ),
+        )
     except Exception as e:
         logger.opt(exception=True).error(
             f"An unexpected error occurred while loading CLI config {config_path}: {e}. Using internal defaults + any previous successful load."
