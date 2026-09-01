@@ -1,10 +1,11 @@
 ---
 id: TASK-18919
 title: Build the Local and Server Collections capture reader
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-08-15 02:52'
-updated_date: '2026-09-01 06:30'
+updated_date: '2026-09-01 06:33'
 labels:
   - library
   - collections
@@ -56,3 +57,21 @@ Replace Chatbook's stale generic-container interpretation of Collections with th
 - [ ] #9 Loading, empty, extraction, interrupted, stale, conflict, Retry, detail/back, focus, collapse/restore, exact pure-resolver geometry, and measured-shell 160x50, 120x35, 100x30, and 80x24 walkthroughs match the shared adaptive Library reader conventions without horizontal overflow.
 - [ ] #10 Shared Local/Server contract tests, the server count/page concurrent-writer fix plus docs-info attestation, service and mounted Textual regressions, migration, managed-file and security tests, production-shaped cross-reader suites, and isolated Local plus enabled-Server live walkthroughs with more than 40 captures verify the complete design.
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Land the independent `tldw_server` prerequisite that evaluates Reading List count, rows, and tag hydration under one database snapshot and advertises exact `hasReadingSnapshotPagesV1=true` through docs-info.
+2. Add Chatbook's atomic schema-v2 capture tables, future-version refusal, capture-owned contracts, exact Local paging, canonical-URL upsert, revisions, extraction state, saved searches, highlights, and linked-Note references beside untouched v1 tables.
+3. Add transactionally quota-reserved, authority-rooted private offline files with two-phase publication, restart reconciliation, purge tombstones, and bounded resumable scavenging by composing existing private-path primitives.
+4. Cut generic Collections over to `legacy_read_only` while keeping bounded v1 inspection and complete coherent-snapshot atomic JSON export reachable whenever compatible legacy rows exist.
+5. Normalize the Local repository and authenticated Reading API through one capture-specific authority/scope service with exact Server paging attestation, tri-state capabilities, authority-qualified identity, no Local/Server merge, and no workspace partitioning of Server captures.
+6. Build the generation-fenced Collections controller and mount contextual Library scopes, paged Items/Quick Capture, and permanent Read/Highlights/Notes/Info Work content in the existing adaptive reader shell.
+7. Wire destination preferences and lifecycle, retire old generic-container inventories without redirecting them, run focused security/service/Textual tests, production-shaped cross-reader suites, and isolated 160x50/120x35/100x30/80x24 Local plus enabled-Server walkthroughs.
+
+Detailed executable plan: `Docs/superpowers/plans/2026-08-31-library-collections-capture-reader.md`
+
+ADR required: yes
+
+ADR path: `backlog/decisions/107-collections-capture-authority-and-legacy-boundary.md`
+
+Reason: TASK-18919 changes durable Collections storage, source authority, migration, service, and legacy-data boundaries.
