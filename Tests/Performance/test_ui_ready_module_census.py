@@ -142,6 +142,11 @@ ABSENT_AT_READY_MODULES = (
     "tldw_chatbook.Sync_Interop.notes_organization",
     "tldw_chatbook.Sync_Interop.notes_organization_sync_service",
     "tldw_chatbook.Sync_Interop.notes_outbox_producer",
+    # Terminal sessions are first-use work.  App-lifetime ownership must not
+    # eagerly load their implementation before the Console is interactive.
+    "tldw_chatbook.Terminal",
+    "tldw_chatbook.Terminal.contracts",
+    "tldw_chatbook.Terminal.session_manager",
     # ADR-090: the external-summary LLM graph is approval-time work.
     "tldw_chatbook.Chat.permission_summary_service",
     "tldw_chatbook.Agents.profile_tool_provider",

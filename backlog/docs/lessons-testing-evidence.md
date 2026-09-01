@@ -10538,6 +10538,26 @@ twice; a single compaction cannot expose this ordering divergence.
 
 ---
 
+## A short post-ready timer is not a first-paint boundary
+
+**Incident.** TASK-23113.9, 2026-08-31. After rebasing the trace rollout, the
+UI-ready census repeatedly found Notes organization and Sync modules that were
+supposed to load after the first interactive frame. The callback was scheduled
+only after `_ui_ready` became true, but its 0.1-second timer started before the
+rest of the synchronous post-ready setup completed. On a slow start, the delay
+expired before the census task regained the event loop, so the callback and its
+imports won the race. Merely moving the timer later reduced the remaining work
+but did not establish a deterministic boundary.
+
+**What to do.** Treat a short elapsed-time delay as load shedding, not as proof
+that work happens after first paint. If a startup import must be absent at the
+readiness boundary, use a comfortably separated idle-maintenance window (or an
+explicit paint/phase signal) and enforce the absence in the real UI-ready
+census. Keep first-use owners lazy as well: app-lifetime ownership does not
+require eager construction.
+
+---
+
 ## A profiled cost is not a felt cost — re-time hot paths without the profiler
 
 **Incident.** TASK-25888, 2026-08-31, the Console button-latency hunt. cProfile
