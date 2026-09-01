@@ -791,10 +791,16 @@ def chat_with_openai(
         payload["tool_choice"] = "none"
     if user is not None:
         payload["user"] = user  # 'user' is OpenAI's user identifier field
-    # TASK-26015: a stable prefix-derived cache key. OpenAI ignores an
-    # unknown field, so a provider that does not accept it is unaffected
-    # (AC#4); off by default reproduces today's payload exactly (AC#6).
-    if _openai_cache_key_enabled():
+    # TASK-26015: a stable prefix-derived cache key -- CANONICAL OpenAI
+    # only (review finding 1). A strict OpenAI-COMPATIBLE server behind a
+    # custom base_url can 400 on an unknown body field, and unlike the
+    # Anthropic cache_control path this one has no degrade-retry, so a
+    # custom endpoint never receives it. Off by default reproduces today's
+    # payload exactly (AC#6).
+    _canonical_openai_endpoint = not (
+        api_base_url or openai_config.get("api_base_url")
+    )
+    if _canonical_openai_endpoint and _openai_cache_key_enabled():
         payload["prompt_cache_key"] = _openai_prompt_cache_key(
             system_message, tools
         )
@@ -1707,9 +1713,17 @@ def chat_with_anthropic(
                     "anthropic_cache_control_degrade",
                     labels={"model": current_model},
                 )
+                # Review minor 2: the retry drops cache_control from the
+                # body, so the extended-ttl beta header is no longer needed
+                # -- strip it too rather than resend an unused flag.
+                retry_headers = {
+                    key: value
+                    for key, value in headers.items()
+                    if key != "anthropic-beta"
+                }
                 response = session.post(
                     api_url,
-                    headers=headers,
+                    headers=retry_headers,
                     json=_without_cache_control(data),
                     stream=current_streaming,
                     timeout=180,

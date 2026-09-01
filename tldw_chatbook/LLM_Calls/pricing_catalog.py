@@ -428,11 +428,18 @@ def _models_dev_pricing(provider: str, model: str) -> "ModelPricing | None":
         entry = models_dev_entry(provider, model)
     except Exception:  # noqa: BLE001 -- the gap-fill never breaks a lookup
         return None
-    if entry is None or entry.input_price_per_mtok is None:
+    # Review minor 3: require BOTH rates -- a missing output price would
+    # otherwise bill $0 for output (a misleading half price). No partial
+    # price is more honest than a wrong one (AC#6).
+    if (
+        entry is None
+        or entry.input_price_per_mtok is None
+        or entry.output_price_per_mtok is None
+    ):
         return None
     return ModelPricing(
         input_per_mtok=entry.input_price_per_mtok,
-        output_per_mtok=entry.output_price_per_mtok or 0.0,
+        output_per_mtok=entry.output_price_per_mtok,
         cache_read_per_mtok=None,
         cache_write_per_mtok=None,
         as_of="models.dev",

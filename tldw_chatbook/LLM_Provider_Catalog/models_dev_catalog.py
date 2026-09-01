@@ -226,7 +226,12 @@ def _memory_cache() -> ModelsDevCache:
 
 
 def reset_memory_cache() -> None:
-    """Test/refresh hook: drop the in-memory cache so the next lookup reloads."""
+    """Drop the in-memory cache so the next lookup reloads from disk.
+
+    Review minor 6: the future fetch-wiring MUST call this after a
+    successful ``fetch_models_dev`` write, or a background refresh never
+    reaches lookups until the process restarts (the in-memory copy is
+    loaded once and otherwise never invalidated)."""
     global _MEMORY_CACHE
     _MEMORY_CACHE = None
 

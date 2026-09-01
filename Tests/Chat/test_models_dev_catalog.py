@@ -154,11 +154,13 @@ def test_hand_maintained_pricing_always_wins(tmp_path, monkeypatch):
     from tldw_chatbook.LLM_Calls.pricing_catalog import PricingCatalog
 
     catalog = PricingCatalog()
-    # a hand-seeded model resolves to its seeded rate, never models.dev,
-    # with a real _SEED_AS_OF stamp (not "models.dev")
-    seeded = catalog.get_pricing("openai", "gpt-4o")
-    if seeded is not None:
-        assert seeded.as_of != "models.dev", "local override must win (AC#2)"
+    # claude-haiku-4-5 is in BOTH the models.dev fixture (input 0.8) AND
+    # the hand-maintained Anthropic patterns -- the hand-maintained rate
+    # must win with its own as_of, never the models.dev 0.8/"models.dev".
+    seeded = catalog.get_pricing("anthropic", "claude-haiku-4-5")
+    assert seeded is not None, "the colliding model must resolve"
+    assert seeded.as_of != "models.dev", "local override must win (AC#2)"
+    assert seeded.input_per_mtok != 0.8, "must not use the models.dev rate"
 
 
 def test_capability_gap_fill_context_window(tmp_path, monkeypatch):
@@ -179,3 +181,33 @@ def test_capability_gap_fill_off_by_default(tmp_path, monkeypatch):
 
     caps = ModelCapabilities()
     assert caps.get_context_window("fictprov", "fict-model-xyz9") is None
+
+
+def test_gap_fill_price_requires_both_input_and_output(tmp_path, monkeypatch):
+    """Review minor 3: a models.dev entry missing output price must not
+    produce a half-price ($0 output); it stays honestly unpriced."""
+    import tldw_chatbook.LLM_Provider_Catalog.models_dev_catalog as mdc
+
+    sample = {
+        "partialprov": {
+            "models": {
+                "input-only-model": {
+                    "limit": {"context": 100000},
+                    "cost": {"input": 2.0},
+                }
+            }
+        }
+    }
+    path = tmp_path / "models_dev.json"
+    fetch_models_dev(
+        disk_path=path,
+        http_get=lambda url, headers: (200, {"ETag": '"v"'}, json.dumps(sample).encode()),
+    )
+    monkeypatch.setattr(mdc, "default_cache_path", lambda: path)
+    monkeypatch.setattr(mdc, "_enabled", lambda: True)
+    mdc.reset_memory_cache()
+
+    from tldw_chatbook.LLM_Calls.pricing_catalog import PricingCatalog
+
+    # input-only => no gap-fill price (honest, not a $0-output half price)
+    assert PricingCatalog().get_pricing("partialprov", "input-only-model") is None

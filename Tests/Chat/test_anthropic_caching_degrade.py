@@ -360,3 +360,38 @@ def test_openai_cache_key_absent_by_default(mock_session):
         )
 
     assert "prompt_cache_key" not in posted["json"], "AC#6: off by default"
+
+
+@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_default_session")
+def test_openai_cache_key_skipped_for_custom_base_url(mock_session):
+    """Review finding 1: a strict OpenAI-compatible server (custom base_url)
+    can 400 on an unknown body field and there is no degrade path, so the
+    cache key must only ride the canonical OpenAI endpoint."""
+    posted = {}
+
+    def _post(url, headers=None, json=None, **kwargs):
+        posted["json"] = json
+        return _ok_response()
+
+    session = Mock()
+    session.post.side_effect = _post
+    session.__enter__ = Mock(return_value=session)
+    session.__exit__ = Mock(return_value=False)
+    mock_session.return_value = session
+
+    with patch(
+        "tldw_chatbook.LLM_Calls.LLM_API_Calls.get_cli_setting",
+        side_effect=lambda s, k, d=None: True if k == "openai_cache_key" else d,
+    ):
+        chat_with_openai(
+            input_data=[{"role": "user", "content": "hi"}],
+            api_key="k",
+            model="gpt-5",
+            system_message="stable prefix",
+            streaming=False,
+            api_base_url="https://strict-proxy.example/v1",
+        )
+
+    assert "prompt_cache_key" not in posted["json"], (
+        "custom endpoints must not receive prompt_cache_key"
+    )
