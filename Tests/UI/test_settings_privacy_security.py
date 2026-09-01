@@ -255,3 +255,20 @@ def test_settings_screen_skill_trust_posture_handles_status_errors_safely():
         "keyring_convenience_enabled": False,
         "reduced_rollback_protection": False,
     }
+
+
+def test_passive_terminal_status_does_not_construct_lazy_manager():
+    class App:
+        def __init__(self) -> None:
+            self.app_config = {}
+            self._terminal_session_manager = None
+
+        @property
+        def terminal_session_manager(self):
+            raise AssertionError("passive Settings status constructed Terminal")
+
+    screen = SettingsScreen(App())
+
+    assert screen._terminal_runtime() is None
+    assert screen._terminal_is_armed() is False
+    assert screen._terminal_live_session_count() == 0

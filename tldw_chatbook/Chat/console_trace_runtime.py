@@ -57,7 +57,6 @@ class ConsoleTraceBoundaryFactory:
         self.repository = repository or ConsoleTraceRepository()
         self.service = service or ConsoleTraceService(self.repository)
         self._lock = threading.RLock()
-        self._chain_sequences: dict[str, int] = {}
 
     def __call__(
         self,
@@ -107,6 +106,11 @@ class ConsoleTraceBoundaryFactory:
         )
         if not message_revision_ids:
             raise ValueError("trace_owner_unavailable")
+        active_revision_ids = tuple(
+            _saved_revision_ids(provenance.messages_payload[-1])
+        )
+        if len(active_revision_ids) != 1:
+            raise ValueError("trace_turn_unavailable")
         revision_ids = message_revision_ids + tuple(
             revision_id
             for descriptor in provenance.continuations
@@ -115,7 +119,9 @@ class ConsoleTraceBoundaryFactory:
         policy = frozen_policy_from_provenance(semantic_provenance)
         preparation_identity = new_opaque_id()
         run_id = route_record.chain_id or new_opaque_id()
+        idempotency_key = new_opaque_id()
         call_sequence = 0
+        reserved = None
         with self._lock:
             with self.database.transaction(immediate=True) as cursor:  # type: ignore[attr-defined]
                 unique_revision_ids = tuple(dict.fromkeys(revision_ids))
@@ -143,7 +149,7 @@ class ConsoleTraceBoundaryFactory:
                 }
                 if any(revision_id not in by_revision for revision_id in revision_ids):
                     raise ValueError("trace_revision_unavailable")
-                current_revision_id = message_revision_ids[-1]
+                current_revision_id = active_revision_ids[0]
                 conversation_id, turn_id = by_revision[current_revision_id]
                 owner = self.repository.get_attached_owner_by_conversation(
                     cursor,
@@ -170,11 +176,21 @@ class ConsoleTraceBoundaryFactory:
                     values=tuple(request.messages_payload) + continuation_values,
                 )
                 if route_record.chain_id is not None:
-                    call_sequence = max(
-                        self._chain_sequences.get(run_id, 0),
-                        self.repository.read_next_call_sequence(cursor, run_id),
+                    call_sequence = self.repository.read_next_call_sequence(
+                        cursor,
+                        run_id,
                     )
-                    self._chain_sequences[run_id] = call_sequence + 1
+                reserved = self.repository.reserve_call(
+                    cursor,
+                    owner_id=owner.owner_id,
+                    segment_id=owner.root_segment_id,
+                    turn_id=turn_id,
+                    run_id=run_id,
+                    call_sequence=call_sequence,
+                    idempotency_key=idempotency_key,
+                    policy_id=policy.policy_id,
+                )
+            assert reserved is not None
             return ConsoleTraceCallBoundary(
                 service=self.service,
                 database=self.database,
@@ -184,12 +200,13 @@ class ConsoleTraceBoundaryFactory:
                     turn_id=turn_id,
                     run_id=run_id,
                     call_sequence=call_sequence,
-                    idempotency_key=new_opaque_id(),
+                    idempotency_key=idempotency_key,
                     policy_id=policy.policy_id,
                 ),
                 admission=admission,
                 occurred_at_factory=_utc_now,
                 surface_boundary=surface_boundary,
+                _reserved=reserved,
             )
 
 

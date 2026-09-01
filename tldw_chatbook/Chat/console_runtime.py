@@ -721,6 +721,15 @@ class ConsoleRuntime:
         """Whether raw CLI completion callbacks may still mutate UI state."""
         return not self._disposed
 
+    def trace_compatibility_snapshot(self) -> Mapping[str, int]:
+        """Return the runtime's content-free semantic-trace rollout totals.
+
+        Returns:
+            A fixed-key snapshot containing only compatibility event counts.
+        """
+
+        return self.trace_compatibility_metrics.snapshot()
+
     @property
     def persona_buddy_sink(self) -> PersonaBuddyConsoleAdapter:
         """The app-owned, screen-free sink for trusted Console state."""
@@ -817,6 +826,7 @@ class ConsoleRuntime:
                 getattr(db, "transaction", None)
             )
             legacy_normalizer: Any | None = None
+            native_reader: Any | None = None
 
             def get_legacy_normalizer() -> Any:
                 """Build the legacy adapter only after first paint or first use."""
@@ -830,8 +840,28 @@ class ConsoleRuntime:
                     legacy_normalizer = LegacyTraceNormalizer(db)
                 return legacy_normalizer
 
-            def read_normalized_legacy_calls(message_id: str) -> Any:
-                return get_legacy_normalizer().read_calls(message_id)
+            def get_native_reader() -> Any:
+                """Build the native ledger reader only on first trace inspection."""
+
+                nonlocal native_reader
+                if native_reader is None:
+                    from tldw_chatbook.Chat.console_trace_native_reader import (
+                        ConsoleTraceNativeReader,
+                    )
+
+                    native_reader = ConsoleTraceNativeReader(
+                        db,
+                        repository=persistence.console_trace_repository,
+                    )
+                return native_reader
+
+            def read_normalized_calls(message_id: str) -> Any:
+                """Read native calls first, followed by migrated legacy snapshots."""
+
+                return (
+                    *get_native_reader().read_calls(message_id),
+                    *get_legacy_normalizer().read_calls(message_id),
+                )
         else:
             legacy_normalization_enabled = False
         self._chat_store = ConsoleChatStore(
@@ -841,7 +871,7 @@ class ConsoleRuntime:
                 ConsoleTraceProjection(
                     legacy_reader=db.get_message_exchanges,
                     normalized_reader=(
-                        read_normalized_legacy_calls
+                        read_normalized_calls
                         if legacy_normalization_enabled
                         else None
                     ),
@@ -1456,6 +1486,22 @@ class ConsoleRuntime:
                 logger.opt(exception=True).warning(
                     "Console runtime: provider gateway close failed at dispose."
                 )
+        try:
+            totals = self.trace_compatibility_snapshot()
+            logger.info(
+                "Console trace compatibility totals: normalized_write={} "
+                "normalized_read={} legacy_read={} fallback_read={} incomplete={}",
+                totals.get("normalized_write", 0),
+                totals.get("normalized_read", 0),
+                totals.get("legacy_read", 0),
+                totals.get("fallback_read", 0),
+                totals.get("incomplete", 0),
+            )
+        except Exception as exc:  # noqa: BLE001 - shutdown metrics are best effort
+            logger.warning(
+                "Console trace compatibility totals unavailable: error_type={}",
+                type(exc).__name__,
+            )
 
 
 def _attach(app: Any, runtime: ConsoleRuntime | None) -> None:

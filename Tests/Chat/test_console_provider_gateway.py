@@ -191,7 +191,8 @@ def _capture_on_prepared_request(
     )
 
 
-def test_compatibility_metric_failure_does_not_orphan_reserved_boundary() -> None:
+@pytest.mark.asyncio
+async def test_compatibility_metric_failure_does_not_orphan_reserved_boundary() -> None:
     class Boundary:
         def __init__(self) -> None:
             self.reserved = False
@@ -216,16 +217,19 @@ def test_compatibility_metric_failure_does_not_orphan_reserved_boundary() -> Non
         execution_key="openai",
         streaming=False,
     )
-    prepared = _capture_on_prepared_request(gateway, resolution)
+    try:
+        prepared = _capture_on_prepared_request(gateway, resolution)
 
-    result = gateway._reserve_trace_call(
-        prepared,
-        resolution,
-        ConsoleRequestRoute.FRESH,
-    )
+        result = gateway._reserve_trace_call(
+            prepared,
+            resolution,
+            ConsoleRequestRoute.FRESH,
+        )
 
-    assert result is boundary
-    assert boundary.reserved is True
+        assert result is boundary
+        assert boundary.reserved is True
+    finally:
+        await gateway.aclose()
 
 
 def _prepared_request_with_continuation(

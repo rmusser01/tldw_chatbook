@@ -25,7 +25,12 @@ class TraceCompatibilityRecorder(Protocol):
     """Content-free metric sink used by normalized/legacy read selection."""
 
     def record(self, path: str, count: int = 1) -> None:
-        """Increment one compatibility path."""
+        """Increment one compatibility path.
+
+        Args:
+            path: Fixed compatibility-path identifier.
+            count: Number of observations to add.
+        """
 
 
 @dataclass(frozen=True, slots=True)
@@ -362,7 +367,11 @@ class ConsoleTraceProjection:
 
     @property
     def normalized_writes_enabled(self) -> bool:
-        """Whether new calls are admitted to the normalized ledger."""
+        """Whether new calls are admitted to the normalized ledger.
+
+        Returns:
+            True when normalized writes are enabled.
+        """
 
         return self._gate_enabled(self._normalized_writes_enabled)
 

@@ -127,13 +127,16 @@ def _trace_owned_size(database: CharactersRAGDB) -> _TraceSize:
 
 def test_trace_owned_size_rejects_unsafe_dynamic_column_name(tmp_path: Path) -> None:
     database = CharactersRAGDB(tmp_path / "unsafe-column.sqlite", "unsafe-column")
-    with database.transaction(immediate=True) as cursor:
-        cursor.execute(
-            'ALTER TABLE console_trace_graph_epoch ADD COLUMN "bad""name" TEXT'
-        )
+    try:
+        with database.transaction(immediate=True) as cursor:
+            cursor.execute(
+                'ALTER TABLE console_trace_graph_epoch ADD COLUMN "bad""name" TEXT'
+            )
 
-    with pytest.raises(AssertionError, match="unsafe trace column name"):
-        _trace_owned_size(database)
+        with pytest.raises(AssertionError, match="unsafe trace column name"):
+            _trace_owned_size(database)
+    finally:
+        database.close()
 
 
 def _delta(after: _TraceSize, before: _TraceSize) -> _TraceSize:
@@ -427,7 +430,7 @@ def test_verified_scenario_evidence_bounds_subprocess_runtime(monkeypatch) -> No
 
     verified_scenario_evidence.__wrapped__()
 
-    assert observed["timeout"] == 300
+    assert observed["timeout"] == SCENARIO_EVIDENCE_TIMEOUT_SECONDS
 
 
 @pytest.mark.asyncio

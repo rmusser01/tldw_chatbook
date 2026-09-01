@@ -990,7 +990,7 @@ def test_runtime_injects_legacy_projection_with_rollout_write_default_on() -> No
     assert store.projected_trace_calls("persisted-1") == ()
 
 
-def test_runtime_builds_legacy_normalizer_only_on_first_normalized_read(
+def test_runtime_builds_normalized_readers_only_on_first_normalized_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class _DB:
@@ -1001,11 +1001,11 @@ def test_runtime_builds_legacy_normalizer_only_on_first_normalized_read(
             assert message_id == "persisted-1"
             return ()
 
-    constructed: list[object] = []
+    constructed: list[tuple[str, object]] = []
 
     class _Normalizer:
         def __init__(self, database: object) -> None:
-            constructed.append(database)
+            constructed.append(("legacy", database))
 
         def read_calls(self, message_id: str) -> tuple[()]:
             assert message_id == "persisted-1"
@@ -1014,6 +1014,18 @@ def test_runtime_builds_legacy_normalizer_only_on_first_normalized_read(
     module = ModuleType("tldw_chatbook.Chat.console_trace_legacy")
     module.LegacyTraceNormalizer = _Normalizer  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, module.__name__, module)
+
+    class _NativeReader:
+        def __init__(self, database: object, **_kwargs: object) -> None:
+            constructed.append(("native", database))
+
+        def read_calls(self, message_id: str) -> tuple[()]:
+            assert message_id == "persisted-1"
+            return ()
+
+    native_module = ModuleType("tldw_chatbook.Chat.console_trace_native_reader")
+    native_module.ConsoleTraceNativeReader = _NativeReader  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, native_module.__name__, native_module)
     monkeypatch.setattr(
         "tldw_chatbook.Chat.console_runtime.recover_console_trace_calls",
         lambda _database: (),
@@ -1033,7 +1045,7 @@ def test_runtime_builds_legacy_normalizer_only_on_first_normalized_read(
 
     assert constructed == []
     assert store.projected_trace_calls("persisted-1") == ()
-    assert constructed == [database]
+    assert constructed == [("native", database), ("legacy", database)]
 
 
 @pytest.mark.asyncio

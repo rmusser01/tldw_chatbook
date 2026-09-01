@@ -493,6 +493,38 @@ async def test_dispose_orders_change_review_before_db_and_gateway_close():
 
 
 @pytest.mark.asyncio
+async def test_dispose_publishes_content_free_trace_compatibility_totals():
+    snapshots: list[dict[str, int]] = []
+
+    class _Metrics:
+        def snapshot(self):
+            snapshot = {
+                "normalized_write": 4,
+                "normalized_read": 3,
+                "legacy_read": 2,
+                "fallback_read": 1,
+                "incomplete": 0,
+            }
+            snapshots.append(snapshot)
+            return snapshot
+
+    runtime = ConsoleRuntime(app=None)
+    runtime.trace_compatibility_metrics = _Metrics()
+
+    await runtime.dispose()
+
+    assert snapshots == [
+        {
+            "normalized_write": 4,
+            "normalized_read": 3,
+            "legacy_read": 2,
+            "fallback_read": 1,
+            "incomplete": 0,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_dispose_closes_its_thread_local_db_after_coordinator_timeout():
     calls = []
 

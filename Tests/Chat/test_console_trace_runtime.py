@@ -192,7 +192,6 @@ async def test_production_factory_persists_append_only_calls_through_real_gatewa
         assert cursor.execute("SELECT COUNT(*) FROM console_trace_surface_nodes").fetchone()[0] == 2
         assert cursor.execute("SELECT COUNT(*) FROM console_trace_owners").fetchone()[0] == 1
         assert cursor.execute("SELECT COUNT(*) FROM message_exchanges").fetchone()[0] == 0
-    assert factory._chain_sequences == {}
     assert len(calls) == 2
     await gateway.aclose()
 
@@ -357,6 +356,51 @@ def test_production_factory_uses_latest_message_revision_for_turn_identity(
     assert boundary.identity.turn_id == current_id
 
 
+def test_production_factory_rejects_unsaved_active_message_instead_of_stale_turn(
+    tmp_path,
+    make_database,
+) -> None:
+    database = make_database(tmp_path / "trace-unsaved-active.sqlite", "trace-unsaved")
+    conversation_id = database.add_conversation({"title": "unsaved active turn"})
+    assert conversation_id is not None
+    _prior_id, prior_revision = _saved_message(database, conversation_id, "prior")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    semantic = build_console_request(
+        [
+            {"role": "user", "content": "prior"},
+            {"role": "user", "content": "active but unsaved"},
+        ],
+        message_provenance=(
+            prior_revision,
+            ProviderArtifactTraceProvenance(
+                TraceProvenanceSource.ACTIVE_REQUEST,
+                policy,
+            ),
+        ),
+        memory_provenance=(),
+        mandatory_provenance=(),
+        tool_provenance=(),
+        metadata_provenance=(request_route_provenance(ConsoleRequestRoute.FRESH),),
+        capture_policy=policy,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+    prepared = prepare_provider_request(
+        semantic,
+        wire_style="distinct_roles",
+        provider="openai",
+        model="gpt-test",
+        capacity=resolve_request_capacity(context_window_tokens=None),
+        apply_safety_window=False,
+    )
+
+    with pytest.raises(ValueError, match="trace_turn_unavailable"):
+        ConsoleTraceBoundaryFactory(database)(
+            prepared,
+            None,
+            ConsoleRequestRoute.FRESH,
+        )
+
+
 def test_production_factory_batches_revision_owner_lookup_for_long_traces(
     tmp_path,
     make_database,
@@ -442,6 +486,48 @@ def test_recreated_factory_continues_durable_chain_sequence(
     assert first.identity.call_sequence == 0
     assert second.identity.call_sequence == 1
     second.reserve()
+
+
+def test_recreated_factories_atomically_reserve_distinct_chain_sequences(
+    tmp_path,
+    make_database,
+) -> None:
+    database = make_database(tmp_path / "trace-chain-race.sqlite", "trace-chain-race")
+    conversation_id = database.add_conversation({"title": "chain race"})
+    assert conversation_id is not None
+    _message_id, revision = _saved_message(database, conversation_id, "turn")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    chain_id = new_opaque_id()
+    semantic = _semantic_request(
+        [{"role": "user", "content": "turn"}],
+        [revision],
+        policy,
+        route=ConsoleRequestRoute.AGENT_FIRST,
+        actor_id=new_opaque_id(),
+        chain_id=chain_id,
+    )
+    prepared = prepare_provider_request(
+        semantic,
+        wire_style="distinct_roles",
+        provider="openai",
+        model="gpt-test",
+        capacity=resolve_request_capacity(context_window_tokens=None),
+        apply_safety_window=False,
+    )
+
+    first = ConsoleTraceBoundaryFactory(database)(
+        prepared,
+        None,
+        ConsoleRequestRoute.AGENT_FIRST,
+    )
+    second = ConsoleTraceBoundaryFactory(database)(
+        prepared,
+        None,
+        ConsoleRequestRoute.AGENT_FIRST,
+    )
+
+    assert (first.identity.call_sequence, second.identity.call_sequence) == (0, 1)
+    assert first.reserve().call_id != second.reserve().call_id
 
 
 @pytest.mark.asyncio

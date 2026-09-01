@@ -187,7 +187,7 @@ class ConsoleTraceCallBoundary:
     admission: SurfaceDeltaAdmission
     occurred_at_factory: Callable[[], str] = field(repr=False)
     surface_boundary: object | None = field(default=None, repr=False)
-    _reserved: TraceCallRecord | None = field(default=None, init=False, repr=False)
+    _reserved: TraceCallRecord | None = field(default=None, repr=False)
     _started: TraceCallRecord | None = field(default=None, init=False, repr=False)
     _unknown: TraceCallRecord | None = field(default=None, init=False, repr=False)
     _response_started_at: str | None = field(default=None, init=False, repr=False)
@@ -201,6 +201,10 @@ class ConsoleTraceCallBoundary:
     _reservation_status: TraceCallReservationStatus = field(
         default="unknown", init=False, repr=False
     )
+
+    def __post_init__(self) -> None:
+        if self._reserved is not None:
+            self._reservation_status = "established"
 
     @property
     def reservation_status(self) -> TraceCallReservationStatus:
