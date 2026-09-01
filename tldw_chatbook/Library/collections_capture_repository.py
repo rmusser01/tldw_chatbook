@@ -85,6 +85,15 @@ _EXTRACTION_FAILURE_REASONS = frozenset(
     }
 )
 _DEFAULT_EXTRACTION_LEASE_SECONDS = 300
+_DEFAULT_OFFLINE_COPY_BYTES = 50 * 1024 * 1024
+_DEFAULT_OFFLINE_AUTHORITY_BYTES = 1024 * 1024 * 1024
+_OFFLINE_FAILURE_REASONS = frozenset(
+    {
+        "offline_integrity_failed",
+        "offline_missing",
+        "offline_write_failed",
+    }
+)
 
 
 def _now() -> str:
@@ -1058,6 +1067,254 @@ class CollectionsCaptureRepository:
             revision=int(capture["revision"]),
         )
 
+    def reserve_offline_copy(
+        self,
+        identity: CaptureIdentity,
+        *,
+        reserved_size: int,
+        media_type: str,
+        content_hash: str,
+        max_copy_bytes: int = _DEFAULT_OFFLINE_COPY_BYTES,
+        max_authority_bytes: int = _DEFAULT_OFFLINE_AUTHORITY_BYTES,
+    ) -> CaptureOfflineCopy:
+        """Reserve authority quota before an offline file is published."""
+        self._require_identity(identity)
+        reserved_size = self._offline_size(reserved_size, "invalid_reserved_size")
+        max_copy_bytes = self._positive_limit(
+            max_copy_bytes, "invalid_offline_copy_limit"
+        )
+        max_authority_bytes = self._positive_limit(
+            max_authority_bytes, "invalid_offline_authority_limit"
+        )
+        normalized_media_type = self._media_type(media_type)
+        normalized_hash = self._content_digest(content_hash)
+        if reserved_size > max_copy_bytes:
+            raise CollectionsCaptureError("offline_copy_too_large")
+        if max_copy_bytes > max_authority_bytes:
+            raise CollectionsCaptureError("invalid_offline_quota")
+
+        now = self._clock()
+        with self.db.transaction() as connection:
+            self._active_item_row(connection, identity)
+            existing = connection.execute(
+                "SELECT 1 FROM collection_capture_offline_files "
+                "WHERE authority_key = ? AND capture_id = ? "
+                "AND state IN ('staging', 'ready', 'purging') LIMIT 1",
+                (self.authority_key, identity.capture_id),
+            ).fetchone()
+            if existing is not None:
+                raise CollectionsCaptureError("offline_copy_exists")
+            used = int(
+                connection.execute(
+                    "SELECT COALESCE(SUM(CASE WHEN state = 'ready' "
+                    "THEN COALESCE(actual_size, reserved_size) "
+                    "ELSE reserved_size END), 0) "
+                    "FROM collection_capture_offline_files "
+                    "WHERE authority_key = ? AND state IN ('staging', 'ready')",
+                    (self.authority_key,),
+                ).fetchone()[0]
+            )
+            if used + reserved_size > max_authority_bytes:
+                raise CollectionsCaptureError("offline_authority_quota_exceeded")
+            file_id = _new_id("offline")
+            connection.execute(
+                "INSERT INTO collection_capture_offline_files ("
+                "authority_key, file_id, capture_id, relative_path, content_hash, "
+                "reserved_size, actual_size, media_type, state, failure_reason, "
+                "temporary_name, created_at, updated_at, revision"
+                ") VALUES (?, ?, ?, ?, ?, ?, NULL, ?, 'staging', NULL, "
+                "NULL, ?, ?, 1)",
+                (
+                    self.authority_key,
+                    file_id,
+                    identity.capture_id,
+                    f"{file_id}/{file_id}.bin",
+                    normalized_hash,
+                    reserved_size,
+                    normalized_media_type,
+                    now,
+                    now,
+                ),
+            )
+        return CaptureOfflineCopy(
+            identity,
+            file_id,
+            "staging",
+            content_hash=normalized_hash,
+            media_type=normalized_media_type,
+        )
+
+    def complete_offline_copy(
+        self,
+        identity: CaptureIdentity,
+        *,
+        file_id: str,
+        expected_revision: int,
+        content_hash: str,
+        actual_size: int,
+        media_type: str,
+    ) -> CaptureOfflineCopy:
+        """Promote one staged file after its private atomic publication."""
+        self._require_identity(identity)
+        normalized_file_id = self._opaque_id(file_id, "invalid_file_id")
+        expected_revision = self._expected_revision(expected_revision)
+        actual_size = self._offline_size(actual_size, "invalid_offline_copy_size")
+        normalized_hash = self._content_digest(content_hash)
+        normalized_media_type = self._media_type(media_type)
+        now = self._clock()
+        with self.db.transaction() as connection:
+            self._active_item_row(connection, identity)
+            row = self._offline_row(
+                connection,
+                identity,
+                normalized_file_id,
+                expected_revision=expected_revision,
+                states={"staging"},
+            )
+            if (
+                actual_size != int(row["reserved_size"])
+                or row["content_hash"] != normalized_hash
+            ):
+                raise CollectionsCaptureError("offline_integrity_failed")
+            connection.execute(
+                "UPDATE collection_capture_offline_files SET content_hash = ?, "
+                "actual_size = ?, media_type = ?, state = 'ready', "
+                "failure_reason = NULL, temporary_name = NULL, updated_at = ?, "
+                "revision = revision + 1 WHERE authority_key = ? AND file_id = ? "
+                "AND revision = ? AND state = 'staging'",
+                (
+                    normalized_hash,
+                    actual_size,
+                    normalized_media_type,
+                    now,
+                    self.authority_key,
+                    normalized_file_id,
+                    expected_revision,
+                ),
+            )
+        return CaptureOfflineCopy(
+            identity,
+            normalized_file_id,
+            "ready",
+            content_hash=normalized_hash,
+            size=actual_size,
+            media_type=normalized_media_type,
+            revision=expected_revision + 1,
+        )
+
+    def fail_offline_copy(
+        self,
+        identity: CaptureIdentity,
+        *,
+        file_id: str,
+        expected_revision: int,
+        reason: str,
+    ) -> CaptureOfflineCopy:
+        """Record a content-free terminal failure for one managed file."""
+        self._require_identity(identity)
+        normalized_file_id = self._opaque_id(file_id, "invalid_file_id")
+        expected_revision = self._expected_revision(expected_revision)
+        if not isinstance(reason, str) or reason not in _OFFLINE_FAILURE_REASONS:
+            raise CollectionsCaptureError("invalid_offline_failure_reason")
+        now = self._clock()
+        with self.db.transaction() as connection:
+            row = self._offline_row(
+                connection,
+                identity,
+                normalized_file_id,
+                expected_revision=expected_revision,
+                states={"staging", "ready"},
+            )
+            connection.execute(
+                "UPDATE collection_capture_offline_files SET state = 'failed', "
+                "content_hash = NULL, actual_size = NULL, failure_reason = ?, "
+                "temporary_name = NULL, updated_at = ?, revision = revision + 1 "
+                "WHERE authority_key = ? AND file_id = ? AND revision = ? "
+                "AND state IN ('staging', 'ready')",
+                (
+                    reason,
+                    now,
+                    self.authority_key,
+                    normalized_file_id,
+                    expected_revision,
+                ),
+            )
+        return CaptureOfflineCopy(
+            identity,
+            normalized_file_id,
+            "failed",
+            media_type=row["media_type"],
+            failure_reason=reason,
+            revision=expected_revision + 1,
+        )
+
+    def begin_offline_copy_purge(
+        self,
+        identity: CaptureIdentity,
+        *,
+        file_id: str,
+        expected_revision: int,
+    ) -> CaptureActionResult:
+        """Tombstone an active capture's managed file before unlinking it."""
+        self._require_identity(identity)
+        normalized_file_id = self._opaque_id(file_id, "invalid_file_id")
+        expected_revision = self._expected_revision(expected_revision)
+        now = self._clock()
+        with self.db.transaction() as connection:
+            self._active_item_row(connection, identity)
+            self._offline_row(
+                connection,
+                identity,
+                normalized_file_id,
+                expected_revision=expected_revision,
+                states={"ready", "failed"},
+            )
+            connection.execute(
+                "UPDATE collection_capture_offline_files SET state = 'purging', "
+                "updated_at = ?, revision = revision + 1 "
+                "WHERE authority_key = ? AND file_id = ? AND revision = ?",
+                (
+                    now,
+                    self.authority_key,
+                    normalized_file_id,
+                    expected_revision,
+                ),
+            )
+        return CaptureActionResult(
+            identity,
+            True,
+            revision=expected_revision + 1,
+        )
+
+    def finish_offline_copy_purge(
+        self,
+        identity: CaptureIdentity,
+        *,
+        file_id: str,
+        expected_revision: int,
+    ) -> CaptureActionResult:
+        """Delete metadata after a purging file is absent from disk."""
+        self._require_identity(identity)
+        normalized_file_id = self._opaque_id(file_id, "invalid_file_id")
+        expected_revision = self._expected_revision(expected_revision)
+        with self.db.transaction() as connection:
+            self._offline_row(
+                connection,
+                identity,
+                normalized_file_id,
+                expected_revision=expected_revision,
+                states={"purging"},
+            )
+            cursor = connection.execute(
+                "DELETE FROM collection_capture_offline_files "
+                "WHERE authority_key = ? AND file_id = ? AND revision = ? "
+                "AND state = 'purging'",
+                (self.authority_key, normalized_file_id, expected_revision),
+            )
+            if cursor.rowcount != 1:
+                raise CollectionsCaptureError("offline_copy_conflict")
+        return CaptureActionResult(identity, True)
+
     def hard_delete(
         self,
         identity: CaptureIdentity,
@@ -1077,6 +1334,14 @@ class CollectionsCaptureRepository:
                 raise CaptureConflictError(
                     CaptureConflict(identity, expected_revision, current)
                 )
+            publishing = connection.execute(
+                "SELECT 1 FROM collection_capture_offline_files "
+                "WHERE authority_key = ? AND capture_id = ? "
+                "AND state = 'staging' LIMIT 1",
+                (self.authority_key, identity.capture_id),
+            ).fetchone()
+            if publishing is not None:
+                raise CollectionsCaptureError("offline_copy_busy", retryable=True)
             connection.execute(
                 "UPDATE collection_capture_items SET purge_state = 'pending', "
                 "updated_at = ?, revision = revision + 1 "
@@ -1098,6 +1363,59 @@ class CollectionsCaptureRepository:
         if row is None:
             raise CollectionsCaptureError("capture_not_found")
         return row
+
+    def _offline_row(
+        self,
+        connection: sqlite3.Connection,
+        identity: CaptureIdentity,
+        file_id: str,
+        *,
+        expected_revision: int,
+        states: set[str],
+    ) -> sqlite3.Row:
+        row = connection.execute(
+            "SELECT * FROM collection_capture_offline_files "
+            "WHERE authority_key = ? AND file_id = ? AND capture_id = ?",
+            (self.authority_key, file_id, identity.capture_id),
+        ).fetchone()
+        if row is None:
+            raise CollectionsCaptureError("offline_copy_not_found")
+        if int(row["revision"]) != expected_revision:
+            raise CollectionsCaptureError("offline_copy_conflict")
+        if str(row["state"]) not in states:
+            raise CollectionsCaptureError("invalid_offline_copy_state")
+        return row
+
+    @staticmethod
+    def _offline_size(value: Any, reason: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise CollectionsCaptureError(reason)
+        return value
+
+    @staticmethod
+    def _positive_limit(value: Any, reason: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise CollectionsCaptureError(reason)
+        return value
+
+    @staticmethod
+    def _media_type(value: Any) -> str:
+        if not isinstance(value, str):
+            raise CollectionsCaptureError("invalid_media_type")
+        normalized = value.strip()
+        if not normalized or len(normalized) > 255 or any(
+            character in normalized for character in "\r\n\x00"
+        ):
+            raise CollectionsCaptureError("invalid_media_type")
+        return normalized
+
+    @staticmethod
+    def _content_digest(value: Any) -> str:
+        if not isinstance(value, str) or not re.fullmatch(
+            r"sha256:[0-9a-f]{64}", value
+        ):
+            raise CollectionsCaptureError("invalid_content_hash")
+        return value
 
     def _extraction_row(
         self,
