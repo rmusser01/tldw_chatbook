@@ -211,6 +211,16 @@ markedly worse on dev than on the branch. Earlier full-file runs of this file
 races. No owner assigned here; recorded so the next sweep does not re-derive
 it.
 
+## Fifth finding (2026-09-01, TASK-26836 sweep): a deterministic dev red
+
+`test_console_native_chat_flow.py::test_console_send_after_workspace_switch_persists_to_selected_workspace`
+fails `assert active_session.settings.provider == "llama_cpp"` (gets
+`"openai"`). Measured alone with `-p no:randomly`: **0 passed / 5 failed of 5
+on pristine origin/dev** and identically on the TASK-26836 branch --
+deterministic and pre-existing, not a flake and not from the tray work. Looks
+like session-settings provider derivation drift after a workspace switch;
+left for its owner, recorded here so the next sweep does not re-derive it.
+
 ## Sixth finding (2026-09-01, TASK-26839 sweep): three composer reds on dev
 
 `test_console_command_composer.py` fails identically on pristine `origin/dev`

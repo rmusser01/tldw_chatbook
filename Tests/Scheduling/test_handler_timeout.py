@@ -68,7 +68,10 @@ def _run(coro):
 
 
 def test_schema_v3_adds_timeout_seconds(db):
-    assert db.get_schema_version() == 3
+    # The full chain now reaches v4 (v4 = automation runs/results,
+    # schedules-handoff §4); this test pins that timeout_seconds (v3)
+    # survives that later migration.
+    assert db.get_schema_version() == 4
     with db._get_connection() as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(reminder_tasks)")}
     assert "timeout_seconds" in columns

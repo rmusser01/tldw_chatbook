@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+from tldw_chatbook.Scheduling.models import AutomationRun
 from tldw_chatbook.config import get_scheduled_tasks_db_path
 
 
@@ -35,8 +36,9 @@ def test_get_scheduled_tasks_db_path_returns_path():
 
 def test_get_schema_version(db: ScheduledTasksDB) -> None:
     # v2 added missed_count (task-18937); v3 adds timeout_seconds
-    # (task-18939).
-    assert db.get_schema_version() == 3
+    # (task-18939); v4 adds automation runs/results (schedules-handoff
+    # §4).
+    assert db.get_schema_version() == 4
 
 
 def test_create_and_get_reminder_task(db: ScheduledTasksDB) -> None:
@@ -651,3 +653,128 @@ def test_record_sync_error_appends_and_caps(tmp_path):
     assert len(state["sync_errors"]) == 10
     assert state["sync_errors"][-1]["message"] == "error 11"
     assert state["sync_errors"][0]["message"] == "error 2"
+
+
+# ----------------------------------------------------------------------
+# Automation runs
+# ----------------------------------------------------------------------
+
+
+def _mk_db(tmp_path):
+    return ScheduledTasksDB(str(tmp_path / "s.db"), client_id="t")
+
+
+def test_create_run_and_slot_dedupe(tmp_path):
+    db = _mk_db(tmp_path)
+    first = db.create_automation_run(
+        "local", "d1", 1, "scheduled",
+        status="running", schedule_slot="2026-09-01T09:00:00+00:00",
+    )
+    assert first is not None
+    duplicate = db.create_automation_run(
+        "local", "d1", 1, "scheduled",
+        status="running", schedule_slot="2026-09-01T09:00:00+00:00",
+    )
+    assert duplicate is None  # deduped, not raised
+    two_manuals = [
+        db.create_automation_run("local", "d1", 1, "manual", status="running")
+        for _ in range(2)
+    ]
+    assert all(two_manuals)  # NULL slots never collide
+
+
+def test_update_and_list_runs(tmp_path):
+    db = _mk_db(tmp_path)
+    run_id = db.create_automation_run("local", "d1", 1, "manual", status="running")
+    assert db.update_automation_run(
+        run_id, status="completed", outcome="finding",
+        run_summary={"note": "ok"},
+    )
+    rows = db.list_automation_runs("local", definition_id="d1")
+    assert rows[0]["status"] == "completed"
+    assert rows[0]["run_summary"] == {"note": "ok"}  # JSON round-trips
+
+
+def test_create_run_with_no_snapshot_kwargs_round_trips_and_hydrates(tmp_path):
+    db = _mk_db(tmp_path)
+    run_id = db.create_automation_run("local", "d1", 1, "manual")
+    row = db.list_automation_runs("local", definition_id="d1")[0]
+    assert row["id"] == run_id
+    assert row["scope_snapshot"] is None  # NULL column, not json.loads'd
+    assert row["run_summary"] is None
+    AutomationRun(**row)  # must not raise (models.py None -> {} coercion)
+
+
+def test_update_automation_run_honors_caller_supplied_updated_at(tmp_path):
+    db = _mk_db(tmp_path)
+    run_id = db.create_automation_run("local", "d1", 1, "manual", status="running")
+    assert db.update_automation_run(
+        run_id, status="completed", updated_at=_utc(2020, 1, 1),
+    )
+    row = db.list_automation_runs("local", definition_id="d1")[0]
+    assert row["updated_at"] == "2020-01-01T00:00:00+00:00"
+
+
+def test_prune_keeps_newest_200_per_definition(tmp_path):
+    db = _mk_db(tmp_path)
+    for i in range(205):
+        db.create_automation_run(
+            "local", "d1", 1, "scheduled",
+            status="completed", schedule_slot=f"slot-{i:04d}",
+        )
+    rows = db.list_automation_runs("local", definition_id="d1", limit=500)
+    assert len(rows) == 200
+    slots = {r["schedule_slot"] for r in rows}
+    assert "slot-0204" in slots and "slot-0000" not in slots
+
+
+def test_reconcile_marks_stale_running_as_interrupted(tmp_path):
+    db = _mk_db(tmp_path)
+    run_id = db.create_automation_run("local", "d1", 1, "manual", status="running")
+    # Backdate created_at past the cutoff.
+    with closing(db._get_connection()) as conn:
+        conn.execute(
+            "UPDATE automation_runs SET created_at = ? WHERE id = ?",
+            ("2020-01-01T00:00:00+00:00", run_id),
+        )
+        conn.commit()
+    reconciled = db.reconcile_stale_automation_runs(older_than_seconds=3600)
+    assert reconciled == 1
+    row = db.list_automation_runs("local", definition_id="d1")[0]
+    assert row["status"] == "failed"
+    assert row["failure_reason"] == {"code": "interrupted"}
+
+
+# ----------------------------------------------------------------------
+# Automation results
+# ----------------------------------------------------------------------
+
+
+def test_create_result_and_dedupe(tmp_path):
+    db = _mk_db(tmp_path)
+    rid = db.create_automation_result(
+        "local", "d1", "r1", "finding", "Title", "Summary", "key-1",
+        answer_mode="synthesized", answer={"text": "42"},
+        source_refs=[{"source": "notes", "id": "n1"}],
+    )
+    assert rid is not None
+    assert db.create_automation_result(
+        "local", "d1", "r2", "finding", "Again", "S", "key-1"
+    ) is None  # same (owner, dedupe_key)
+    row = db.list_automation_results("local")[0]
+    assert row["review_state"] == "unread"
+    assert row["answer"] == {"text": "42"}
+    assert row["source_refs"] == [{"source": "notes", "id": "n1"}]
+
+
+def test_review_transitions_and_unread_count(tmp_path):
+    db = _mk_db(tmp_path)
+    rid = db.create_automation_result(
+        "local", "d1", "r1", "finding", "T", "S", "k1"
+    )
+    db.create_automation_result("local", "d1", "r2", "failure", "F", "S", "k2")
+    assert db.count_unread_results("local") == 2
+    assert db.update_result_review(rid, "read", reviewed_by="local")
+    assert db.count_unread_results("local") == 1
+    assert db.list_automation_results("local", review_state="read")[0]["id"] == rid
+    assert not db.update_result_review("missing", "dismissed")
