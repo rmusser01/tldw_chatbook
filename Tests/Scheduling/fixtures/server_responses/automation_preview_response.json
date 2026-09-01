@@ -1,0 +1,124 @@
+{
+  "_comment": "Hand-assembled ScheduledTaskPreviewResponse-shaped fixtures for tldw_chatbook.Scheduling.automation_preview.preview_automation_definition (task-1, schedules-handoff PR-4). Field values were derived from reading tldw_server2 origin/dev tldw_Server_API/app/services/scheduled_task_automation_service.py's preview assembly (_normalize_preview/_create_preview/_preview_response) -- see automation_endpoints.md's ScheduledTaskPreviewCreateRequest/ScheduledTaskPreviewResponse tables for the field list. `schedule_preview.next_occurrences` is a LOCAL addition (not present in the server's response; the server just puts the bare normalized schedule dict there) -- see automation_preview.py's module docstring. Both `now` values are fixed so `next_occurrences` is deterministic; feed `request` through preview_automation_definition(request, now=<that fixture's now>) and compare validation_errors/status/schedule_preview.",
+  "valid_recurring_question_create": {
+    "now": "2026-01-01T00:00:00+00:00",
+    "request": {
+      "mode": "create",
+      "family": "recurring_question",
+      "name": "Daily stand-up summary",
+      "description": "Ask the team for yesterday's progress and today's blockers.",
+      "config": {
+        "scope": {"mode": "all_searchable_library"},
+        "finding_policy": {"preset": "balanced_findings"},
+        "retention_policy": {"mode": "default"},
+        "generation_mode": "optional"
+      },
+      "input": {"question": "What did you work on yesterday and what is blocking you today?"},
+      "schedule": {"kind": "daily", "time_of_day": "09:00", "timezone": "UTC"},
+      "visibility_policy": null,
+      "notification_policy": {"on_success": "silent", "on_failure": "toast"},
+      "approval_policy": {"mode": "auto"}
+    },
+    "response": {
+      "mode": "create",
+      "family": "recurring_question",
+      "definition_id": null,
+      "definition_version": null,
+      "status": "valid",
+      "normalized_config": {
+        "name": "Daily stand-up summary",
+        "description": "Ask the team for yesterday's progress and today's blockers.",
+        "config": {
+          "scope": {
+            "mode": "all_searchable_library",
+            "resolved_sources": ["media_db", "notes", "chats"]
+          },
+          "finding_policy": {"preset": "balanced_findings"},
+          "retention_policy": {"mode": "default"},
+          "generation_mode": "optional"
+        },
+        "input": {"question": "What did you work on yesterday and what is blocking you today?"},
+        "schedule": {"kind": "daily", "time_of_day": "09:00", "timezone": "UTC"},
+        "visibility_policy": "findings_only",
+        "notification_policy": {"on_success": "silent", "on_failure": "toast"},
+        "approval_policy": {"mode": "auto"},
+        "family": "recurring_question"
+      },
+      "validation_errors": [],
+      "warnings": [],
+      "visibility_policy": {"mode": "findings_only"},
+      "schedule_preview": {
+        "kind": "daily",
+        "time_of_day": "09:00",
+        "timezone": "UTC",
+        "next_occurrences": [
+          "2026-01-01T09:00:00+00:00",
+          "2026-01-02T09:00:00+00:00",
+          "2026-01-03T09:00:00+00:00"
+        ]
+      },
+      "redaction_policy": {"mode": "none", "fields": []}
+    }
+  },
+  "invalid_recurring_question_bad_schedule_kind": {
+    "now": "2026-01-01T00:00:00+00:00",
+    "request": {
+      "mode": "create",
+      "family": "recurring_question",
+      "name": "Daily stand-up summary",
+      "description": null,
+      "config": {
+        "scope": {"mode": "all_searchable_library"},
+        "finding_policy": {"preset": "balanced_findings"},
+        "retention_policy": {"mode": "default"},
+        "generation_mode": "optional"
+      },
+      "input": {"question": "What did you work on yesterday?"},
+      "schedule": {"kind": "monthly", "day_of_month": 1},
+      "visibility_policy": null,
+      "notification_policy": {},
+      "approval_policy": {}
+    },
+    "response": {
+      "mode": "create",
+      "family": "recurring_question",
+      "definition_id": null,
+      "definition_version": null,
+      "status": "invalid",
+      "normalized_config": {
+        "name": "Daily stand-up summary",
+        "description": null,
+        "config": {
+          "scope": {
+            "mode": "all_searchable_library",
+            "resolved_sources": ["media_db", "notes", "chats"]
+          },
+          "finding_policy": {"preset": "balanced_findings"},
+          "retention_policy": {"mode": "default"},
+          "generation_mode": "optional"
+        },
+        "input": {"question": "What did you work on yesterday?"},
+        "schedule": {"kind": "monthly", "day_of_month": 1},
+        "visibility_policy": "findings_only",
+        "notification_policy": {},
+        "approval_policy": {},
+        "family": "recurring_question"
+      },
+      "validation_errors": [
+        {
+          "field": "schedule.kind",
+          "code": "unsupported",
+          "message": "Unsupported schedule kind: monthly"
+        }
+      ],
+      "warnings": [],
+      "visibility_policy": {"mode": "findings_only"},
+      "schedule_preview": {
+        "kind": "monthly",
+        "day_of_month": 1,
+        "next_occurrences": []
+      },
+      "redaction_policy": {"mode": "none", "fields": []}
+    }
+  }
+}
