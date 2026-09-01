@@ -144,6 +144,16 @@ def compute_next_run_at(schedule: dict[str, Any], *, now: datetime) -> datetime 
     never replayed. Returns ``None`` for a spent ``one_time`` schedule or
     any invalid/junk schedule -- this never raises, since a bad row must
     not take down the queue.
+
+    Args:
+        schedule: A schedule dict with a ``kind`` key (one of
+            ``_KIND_COMPUTERS``: ``one_time``, ``interval``, ``daily``,
+            ``weekly``, ``cron``) plus that kind's own fields.
+        now: The current time, used as the basis to advance from.
+
+    Returns:
+        The next UTC run time, or ``None`` if the schedule is spent,
+        malformed, or of an unrecognized ``kind``.
     """
     if not isinstance(schedule, dict):
         return None

@@ -562,6 +562,31 @@ def test_list_armable_automation_definitions_sorted_by_next_run_at(
     assert [row["id"] for row in armable] == [earlier, later]
 
 
+def test_list_armable_automation_definitions_caps_at_500(
+    db: ScheduledTasksDB,
+) -> None:
+    cap = ScheduledTasksDB._ARMABLE_DEFINITIONS_CAP
+    base = _utc(2026, 1, 1)
+    ids = []
+    for i in range(cap + 1):
+        ids.append(
+            db.create_automation_definition(
+                owner_id="local",
+                family="recurring_question",
+                name=f"Def {i}",
+                next_run_at=base + timedelta(seconds=i),
+            )
+        )
+
+    armable = db.list_armable_automation_definitions()
+
+    assert len(armable) == cap
+    # Oldest (earliest next_run_at) cap rows are kept, in ascending order;
+    # the newest-scheduled row (last inserted) is the one dropped.
+    assert [row["id"] for row in armable] == ids[:cap]
+    assert ids[-1] not in {row["id"] for row in armable}
+
+
 def test_update_automation_definition(db: ScheduledTasksDB) -> None:
     schedule = {"kind": "cron", "expression": "0 9 * * *"}
     def_id = db.create_automation_definition(

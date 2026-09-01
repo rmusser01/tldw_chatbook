@@ -122,6 +122,15 @@ def resolve_execution_target(definition_row: dict) -> dict:
     is no config-default fallback for `max_tokens`). `max_tokens` defaults
     to `_DEFAULT_MAX_TOKENS` when nothing resolves one, and is always capped
     at `_MAX_TOKENS_CAP`.
+
+    Args:
+        definition_row: An automation-definition row (as a dict). Its
+            ``input`` field, when a mapping, is consulted first.
+
+    Returns:
+        A dict with ``provider``, ``model``, and ``max_tokens`` keys.
+        ``provider``/``model`` may be ``None`` if no layer resolved a
+        value; ``max_tokens`` is always a positive int.
     """
     definition_input = definition_row.get("input") if isinstance(definition_row, Mapping) else None
     if not isinstance(definition_input, Mapping):
@@ -360,6 +369,15 @@ async def execute_recurring_question(app: Any, definition_row: dict) -> Executio
     function's own bug, an unhardened seam change) is the caller's job:
     `AutomationDefinitionHandler._run`'s spawned-task wrapper is the actual
     "never raises" boundary for a scheduled run.
+
+    Args:
+        app: The running `TldwCli` app instance, passed through to
+            `run_library_rag_search`.
+        definition_row: The `recurring_question` automation-definition row
+            (as a dict) to execute.
+
+    Returns:
+        The classified `ExecutionOutcome` for this run.
     """
     row = definition_row if isinstance(definition_row, Mapping) else {}
 

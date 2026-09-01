@@ -42,6 +42,19 @@ def compute_local_health(app: Any, definition_row: dict) -> tuple[str, str]:
        `provider` at any of its layers (definition `input`, `[scheduling]`
        config, or the Library RAG answer-provider default).
     3. Otherwise `"ready"`, with an empty reason.
+
+    Args:
+        app: The running `TldwCli` app instance, checked for
+            `library_rag_search_service` and passed through to
+            `resolve_execution_target`.
+        definition_row: The automation-definition row (as a dict) to
+            evaluate.
+
+    Returns:
+        A `(health, reason)` tuple: `health` is one of `Health`'s string
+        values (`capability_unavailable`, `permission_required`, `ready`);
+        `reason` is a human-readable explanation, or `""` when `health` is
+        `ready`.
     """
     global resolve_execution_target
 

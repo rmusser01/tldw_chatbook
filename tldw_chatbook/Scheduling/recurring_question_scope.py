@@ -3,6 +3,11 @@
 Ported from tldw_server `recurring_question_scope.py` @ 5921014aa9 — byte-parity
 except imports; regenerate the parity tests when the server module changes
 (spec §7.1 drift rule).
+
+Function docstrings (Args/Returns sections) are a local addition on top of
+the ported bodies and are excluded from the parity comparison -- the parity
+claim above covers behavior/code, not docstrings. A future re-sync should
+diff from each `def` body, not from the docstring text.
 """
 
 from __future__ import annotations
@@ -38,7 +43,20 @@ def normalize_recurring_question_scope(
     *,
     available_sources: list[str] | tuple[str, ...] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
-    """Normalize a Recurring Question scope without binding to source-specific UI."""
+    """Normalize a Recurring Question scope without binding to source-specific UI.
+
+    Args:
+        scope: The raw scope dict from a definition's `config.scope` field
+            (or any value -- non-dict input normalizes as an empty scope).
+        available_sources: The readable searchable source names to resolve
+            against. Defaults to `DEFAULT_SEARCHABLE_SOURCES` when omitted.
+
+    Returns:
+        A `(normalized_scope, errors, warnings)` tuple. `normalized_scope`
+        always carries a `mode`; `errors` and `warnings` are lists of
+        field-coded dicts describing any unsupported fields, an unsupported
+        mode, an empty resolved scope, or unavailable requested sources.
+    """
     readable_sources = list(dict.fromkeys(available_sources or DEFAULT_SEARCHABLE_SOURCES))
     raw_scope = scope if isinstance(scope, dict) else {}
     errors: list[dict[str, Any]] = []
@@ -120,6 +138,14 @@ def engine_source_types(normalized_scope: dict[str, Any]) -> tuple[str, ...]:
 
     Reads `resolved_sources` (all-library mode) or `sources` (sources mode).
     Unknown source names are skipped rather than raised.
+
+    Args:
+        normalized_scope: A scope dict as returned by
+            `normalize_recurring_question_scope`.
+
+    Returns:
+        A tuple of retrieval-engine source-type strings (e.g. `"media"`,
+        `"note"`, `"conversation"`), in the order the source names appeared.
     """
     names = normalized_scope.get("resolved_sources") or normalized_scope.get("sources") or []
     return tuple(_ENGINE_SOURCE_TYPE_MAP[name] for name in names if name in _ENGINE_SOURCE_TYPE_MAP)
