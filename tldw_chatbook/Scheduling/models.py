@@ -101,6 +101,10 @@ class ReminderTask(BaseModel):
     #: Per-task handler execution timeout in seconds (task-18939). None
     #: means use the global ``[scheduling] handler_timeout_seconds``.
     timeout_seconds: float | None = None
+    #: Transfer state machine marker (schedules-handoff spec §6). NULL =
+    #: not in transfer. Values arrive in a later PR; the column lands with
+    #: schema v4 so readers must tolerate it from day one.
+    transfer_state: str | None = None
     link_type: str | None = None
     link_id: str | None = None
     link_url: str | None = None

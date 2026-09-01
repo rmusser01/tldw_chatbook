@@ -45,6 +45,7 @@ class ScheduledTasksDB(BaseDB):
         "missed_at",
         "missed_count",
         "timeout_seconds",
+        "transfer_state",
         "link_type",
         "link_id",
         "link_url",
