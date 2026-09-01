@@ -461,3 +461,102 @@ class SchedulingServerClient:
             review_state,
             review_note=review_note,
         )
+
+    async def preview_automation_definition(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Create a server-side authoring preview, retried on failure.
+
+        Retryable: the server derives the preview's idempotency from a hash
+        of the normalized payload (spec §5.1) -- replaying an identical
+        preview request after a transient failure returns the same preview
+        rather than creating a second one, so this keeps the default retry
+        behavior like ``review_automation_result``.
+
+        Args:
+            request: The preview request payload (``ScheduledTaskPreview
+                CreateRequest`` fields -- see
+                ``tldw_chatbook.tldw_api.scheduled_tasks_automation_schemas``).
+
+        Returns:
+            The preview response (``status``/``validation_errors``/
+            ``normalized_config``/etc).
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientValidationError: If the request is rejected by
+                policy or the server (e.g. an invalid family/mode).
+            ServerClientServerError: If the server returns a server error
+                after retries are exhausted.
+            ServerClientTimeoutError: If the request times out after
+                retries.
+        """
+        return await self._call_with_retry(
+            "preview_scheduled_automation_definition", request
+        )
+
+    async def create_automation_definition(
+        self,
+        preview_id: str,
+        *,
+        initial_lifecycle: str = "configured",
+    ) -> dict[str, Any]:
+        """Create a server-side automation definition, retried on failure.
+
+        Retryable: creating a definition from a preview inherits the same
+        payload-hash idempotency the preview itself is built from (spec
+        §5.1) -- replaying the same ``preview_id`` after a transient
+        failure resolves to the same definition rather than a duplicate,
+        so this is safe to retry like ``preview_automation_definition``.
+
+        Args:
+            preview_id: The valid create-mode preview to consume.
+            initial_lifecycle: Starting lifecycle -- ``"configured"``
+                (default) or ``"paused"``.
+
+        Returns:
+            The created definition row.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientValidationError: If the preview is invalid,
+                expired, or already consumed, or policy denies the action.
+            ServerClientServerError: If the server returns a server error
+                after retries are exhausted.
+            ServerClientTimeoutError: If the request times out after
+                retries.
+        """
+        return await self._call_with_retry(
+            "create_scheduled_automation_definition",
+            preview_id,
+            initial_lifecycle=initial_lifecycle,
+        )
+
+    async def update_automation_definition(
+        self,
+        definition_id: str,
+        preview_id: str,
+    ) -> dict[str, Any]:
+        """Apply a consumed update-mode preview to an existing definition.
+
+        Args:
+            definition_id: The definition to update.
+            preview_id: The valid update-mode preview to consume.
+
+        Returns:
+            The updated definition row.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientNotFoundError: If the definition does not exist
+                server-side.
+            ServerClientValidationError: If the preview is invalid,
+                expired, or already consumed, or policy denies the action.
+            ServerClientServerError: If the server returns a server error
+                after retries are exhausted.
+            ServerClientTimeoutError: If the request times out after
+                retries.
+        """
+        return await self._call_with_retry(
+            "update_scheduled_automation_definition",
+            definition_id,
+            preview_id,
+        )

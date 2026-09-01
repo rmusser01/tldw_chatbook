@@ -12,6 +12,10 @@ from tldw_chatbook.tldw_api.scheduled_tasks_automation_schemas import (
     ScheduledTaskAutomationDefinitionList,
     ScheduledTaskAutomationRunNowResponse,
     ScheduledTaskAuditList,
+    ScheduledTaskDefinitionCreateRequest,
+    ScheduledTaskDefinitionUpdateRequest,
+    ScheduledTaskPreview,
+    ScheduledTaskPreviewCreateRequest,
     ScheduledTaskResult,
     ScheduledTaskResultList,
 )
@@ -265,3 +269,175 @@ async def test_review_result_sends_null_note_when_not_given(monkeypatch):
         "review_state": "read",
         "review_note": None,
     }
+
+
+_PREVIEW_FIXTURE = (
+    Path(__file__).resolve().parents[1]
+    / "Scheduling"
+    / "fixtures"
+    / "server_responses"
+    / "automation_preview_response.json"
+)
+
+
+def _load_preview_fixture_case(case_name: str) -> dict:
+    return json.loads(_PREVIEW_FIXTURE.read_text())[case_name]
+
+
+@pytest.mark.asyncio
+async def test_preview_definition_posts_to_previews_route(monkeypatch):
+    case = _load_preview_fixture_case("valid_recurring_question_create")
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(return_value=case["response"])
+    monkeypatch.setattr(client, "_request", mocked)
+
+    request = ScheduledTaskPreviewCreateRequest(**case["request"])
+    result = await client.preview_scheduled_task_definition(request)
+
+    assert mocked.await_args.args[:2] == (
+        "POST",
+        "/api/v1/scheduled-tasks/previews",
+    )
+    assert mocked.await_args.kwargs["json_data"]["family"] == "recurring_question"
+    assert mocked.await_args.kwargs["json_data"]["name"] == "Daily stand-up summary"
+    # visibility_policy was null in the fixture request -- exclude_none drops it.
+    assert "visibility_policy" not in mocked.await_args.kwargs["json_data"]
+
+    assert isinstance(result, ScheduledTaskPreview)
+    assert result.status == "valid"
+    assert result.mode == "create"
+    assert result.family == "recurring_question"
+    assert result.schedule_preview == case["response"]["schedule_preview"]
+    assert result.normalized_config == case["response"]["normalized_config"]
+    # Round-trip-only fields are absent from the (pure-local-preview) fixture
+    # and default to None on the client model.
+    assert result.id is None
+    assert result.payload_hash is None
+
+
+@pytest.mark.asyncio
+async def test_preview_definition_excludes_unset_optional_fields_from_request_body(
+    monkeypatch,
+):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "mode": "create",
+            "family": "recurring_question",
+            "status": "invalid",
+            "validation_errors": [],
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    request = ScheduledTaskPreviewCreateRequest(family="recurring_question")
+    await client.preview_scheduled_task_definition(request)
+
+    body = mocked.await_args.kwargs["json_data"]
+    assert body["mode"] == "create"
+    assert body["family"] == "recurring_question"
+    assert body["config"] == {}
+    assert body["schedule"] == {}
+    for optional_field in ("definition_id", "definition_version", "name", "description"):
+        assert optional_field not in body
+
+
+def test_preview_schema_validates_fixture_response_for_the_invalid_case():
+    case = _load_preview_fixture_case("invalid_recurring_question_bad_schedule_kind")
+    preview = ScheduledTaskPreview.model_validate(case["response"])
+    assert preview.status == "invalid"
+    assert preview.validation_errors == [
+        {
+            "field": "schedule.kind",
+            "code": "unsupported",
+            "message": "Unsupported schedule kind: monthly",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_create_definition_posts_to_definitions_route(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "id": "def-1",
+            "family": "recurring_question",
+            "name": "Daily stand-up summary",
+            "lifecycle": "paused",
+            "health": "ready",
+            "preview_id": "prev-1",
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    result = await client.create_scheduled_task_definition(
+        "prev-1", initial_lifecycle="paused"
+    )
+
+    assert mocked.await_args.args[:2] == (
+        "POST",
+        "/api/v1/scheduled-tasks/definitions",
+    )
+    assert mocked.await_args.kwargs["json_data"] == {
+        "preview_id": "prev-1",
+        "initial_lifecycle": "paused",
+    }
+    assert isinstance(result, ScheduledTaskAutomationDefinition)
+    assert result.id == "def-1"
+    assert result.lifecycle == "paused"
+    assert result.preview_id == "prev-1"
+
+
+@pytest.mark.asyncio
+async def test_create_definition_defaults_lifecycle_to_configured(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "id": "def-2",
+            "family": "recurring_question",
+            "name": "N",
+            "lifecycle": "configured",
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    await client.create_scheduled_task_definition("prev-2")
+
+    assert mocked.await_args.kwargs["json_data"] == {
+        "preview_id": "prev-2",
+        "initial_lifecycle": "configured",
+    }
+
+
+@pytest.mark.asyncio
+async def test_update_definition_patches_definitions_route_with_id(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "id": "def-1",
+            "family": "recurring_question",
+            "name": "Renamed",
+            "lifecycle": "configured",
+            "version": 2,
+            "preview_id": "prev-3",
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    result = await client.update_scheduled_task_definition("def-1", "prev-3")
+
+    assert mocked.await_args.args[:2] == (
+        "PATCH",
+        "/api/v1/scheduled-tasks/definitions/def-1",
+    )
+    assert mocked.await_args.kwargs["json_data"] == {"preview_id": "prev-3"}
+    assert isinstance(result, ScheduledTaskAutomationDefinition)
+    assert result.version == 2
+    assert result.name == "Renamed"
+
+
+def test_definition_create_and_update_request_schemas_round_trip():
+    create = ScheduledTaskDefinitionCreateRequest(preview_id="prev-1")
+    assert create.initial_lifecycle == "configured"
+    update = ScheduledTaskDefinitionUpdateRequest(preview_id="prev-2")
+    assert update.preview_id == "prev-2"
