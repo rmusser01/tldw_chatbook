@@ -1473,22 +1473,35 @@ def test_kill_switch_string_true_enables_capture(monkeypatch):
     assert signals.exchange_capture_enabled is True
 
 
-def test_legacy_writer_requires_both_capture_and_legacy_rollout_gate(monkeypatch):
+@pytest.mark.parametrize(
+    ("capture_enabled", "legacy_writes_enabled", "expected"),
+    (
+        (True, True, True),
+        (False, True, False),
+        (True, False, False),
+    ),
+)
+def test_legacy_writer_requires_both_capture_and_legacy_rollout_gate(
+    monkeypatch,
+    capture_enabled: bool,
+    legacy_writes_enabled: bool,
+    expected: bool,
+):
     controller = _new_controller()
     monkeypatch.setattr(
         controller_module,
         "runtime_capture_policy",
         lambda: SimpleNamespace(
-            enabled=True,
+            enabled=capture_enabled,
             detail=CaptureDetail.SAFE,
             generation=1,
-            legacy_writes_enabled=True,
+            legacy_writes_enabled=legacy_writes_enabled,
         ),
     )
 
     signals = controller._new_run_stream_signals()
 
-    assert signals.exchange_capture_enabled is True
+    assert signals.exchange_capture_enabled is expected
 
 
 def test_shipped_config_default_resolves_exchange_capture_true():

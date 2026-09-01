@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -63,6 +64,10 @@ def _semantic_request(
     messages: list[dict[str, str]],
     descriptors: list[SavedRevisionTraceProvenance],
     policy: FrozenTracePolicy,
+    *,
+    route: ConsoleRequestRoute = ConsoleRequestRoute.FRESH,
+    actor_id: str | None = None,
+    chain_id: str | None = None,
 ):
     return build_console_request(
         messages,
@@ -70,7 +75,13 @@ def _semantic_request(
         memory_provenance=(),
         mandatory_provenance=(),
         tool_provenance=(),
-        metadata_provenance=(request_route_provenance(ConsoleRequestRoute.FRESH),),
+        metadata_provenance=(
+            request_route_provenance(
+                route,
+                actor_id=actor_id,
+                chain_id=chain_id,
+            ),
+        ),
         capture_policy=policy,
         capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
     )
@@ -85,10 +96,14 @@ def test_console_runtime_wires_production_boundary_for_durable_database(tmp_path
     assert gateway.supports_durable_capture is True
     lazy_factory = gateway._trace_call_boundary_factory
     assert callable(lazy_factory)
+    assert runtime.chat_store is not None
+    repository = runtime.chat_store.persistence.console_trace_repository
+    assert lazy_factory._repository is repository
     assert isinstance(
         lazy_factory._get_delegate(),
         ConsoleTraceBoundaryFactory,
     )
+    assert lazy_factory._get_delegate().repository is repository
 
 
 @pytest.mark.asyncio
@@ -315,6 +330,89 @@ def test_production_factory_uses_latest_message_revision_for_turn_identity(
     )
 
     assert boundary.identity.turn_id == current_id
+
+
+def test_production_factory_batches_revision_owner_lookup_for_long_traces(
+    tmp_path,
+) -> None:
+    database = CharactersRAGDB(tmp_path / "trace-long-owner.sqlite", "trace-long")
+    conversation_id = database.add_conversation({"title": "long trace"})
+    assert conversation_id is not None
+    saved = [
+        _saved_message(database, conversation_id, f"message-{index}")
+        for index in range(257)
+    ]
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    semantic = _semantic_request(
+        [
+            {"role": "user", "content": f"message-{index}"}
+            for index in range(len(saved))
+        ],
+        [descriptor for _message_id, descriptor in saved],
+        policy,
+    )
+    prepared = prepare_provider_request(
+        semantic,
+        wire_style="distinct_roles",
+        provider="openai",
+        model="gpt-test",
+        capacity=resolve_request_capacity(context_window_tokens=None),
+        apply_safety_window=False,
+    )
+    connection = database.get_connection()
+    prior_limit = connection.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 256)
+    try:
+        boundary = ConsoleTraceBoundaryFactory(database)(
+            prepared,
+            None,
+            ConsoleRequestRoute.FRESH,
+        )
+    finally:
+        connection.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, prior_limit)
+
+    assert boundary.identity.turn_id == saved[-1][0]
+
+
+def test_recreated_factory_continues_durable_chain_sequence(tmp_path) -> None:
+    database = CharactersRAGDB(tmp_path / "trace-chain-sequence.sqlite", "trace-chain")
+    conversation_id = database.add_conversation({"title": "chain sequence"})
+    assert conversation_id is not None
+    _message_id, revision = _saved_message(database, conversation_id, "turn")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    actor_id = new_opaque_id()
+    chain_id = new_opaque_id()
+    semantic = _semantic_request(
+        [{"role": "user", "content": "turn"}],
+        [revision],
+        policy,
+        route=ConsoleRequestRoute.AGENT_FIRST,
+        actor_id=actor_id,
+        chain_id=chain_id,
+    )
+    prepared = prepare_provider_request(
+        semantic,
+        wire_style="distinct_roles",
+        provider="openai",
+        model="gpt-test",
+        capacity=resolve_request_capacity(context_window_tokens=None),
+        apply_safety_window=False,
+    )
+
+    first = ConsoleTraceBoundaryFactory(database)(
+        prepared,
+        None,
+        ConsoleRequestRoute.AGENT_FIRST,
+    )
+    first.reserve()
+    second = ConsoleTraceBoundaryFactory(database)(
+        prepared,
+        None,
+        ConsoleRequestRoute.AGENT_FIRST,
+    )
+
+    assert first.identity.call_sequence == 0
+    assert second.identity.call_sequence == 1
+    second.reserve()
 
 
 @pytest.mark.asyncio

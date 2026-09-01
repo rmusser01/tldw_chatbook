@@ -307,6 +307,9 @@ of truth: traces reference immutable message revisions instead of copying the
 whole transcript on every send. Provider-only instructions, RAG, tools, and
 responses are filtered and stored once as reusable artifacts. Capture is on by
 default; Capture Off stops future trace writes without erasing prior history.
+Durable captures stay local to the device's conversation database and are never
+synced. Temporary in-process captures are not written to disk until **Save &
+Send** makes the conversation durable.
 
 A temporary chat must use **Save & Send** before a durable Capture On call, or
 explicitly send once with Capture Off. In-process temporary trace state remains

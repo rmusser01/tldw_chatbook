@@ -2192,7 +2192,11 @@ class ConsoleTraceService:
             )
             delta_provenance = replace(
                 provenance,
-                messages=message_delta,
+                messages=(
+                    message_delta
+                    if provenance.messages == provenance.messages_payload
+                    else provenance.messages
+                ),
                 messages_payload=message_delta,
                 continuations=continuation_delta,
                 tool_loop=tuple(

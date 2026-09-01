@@ -389,7 +389,8 @@ class ConsoleTraceProjection:
                 self._record_metric("incomplete")
 
         normalized_by_key: dict[tuple[str, int], list[NormalizedTraceCall]] = {}
-        if self.normalized_reads_enabled:
+        normalized_reads_enabled = self.normalized_reads_enabled
+        if normalized_reads_enabled:
             assert self._normalized_reader is not None
             for call in self._normalized_reader(message_id):
                 error = _normalized_validation_error(call)
@@ -425,7 +426,7 @@ class ConsoleTraceProjection:
             if len(legacy_claims) == 1:
                 selected.append(legacy_claims[0])
                 self._record_metric("legacy_read")
-                if self.normalized_reads_enabled:
+                if normalized_reads_enabled:
                     self._record_metric("fallback_read")
             elif len(legacy_claims) > 1:
                 _warn_ambiguous(source="legacy")

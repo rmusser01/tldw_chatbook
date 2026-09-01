@@ -973,7 +973,8 @@ class ConsoleRuntime:
                 if database is not None and callable(
                     getattr(database, "transaction", None)
                 ):
-                    persistence = getattr(self._chat_store, "persistence", None)
+                    chat_store = self.ensure_chat_store()
+                    persistence = getattr(chat_store, "persistence", None)
                     repository = getattr(
                         persistence,
                         "console_trace_repository",

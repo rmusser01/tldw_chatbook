@@ -23,6 +23,8 @@ from tldw_chatbook.Chat.console_trace_service import (
     TraceCallIdentity,
 )
 
+REVISION_OWNER_LOOKUP_BATCH_SIZE = 256
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -63,6 +65,20 @@ class ConsoleTraceBoundaryFactory:
         _resolution: object,
         route: object,
     ) -> ConsoleTraceCallBoundary:
+        """Create one durable boundary for a prepared provider request.
+
+        Args:
+            request: Prepared request carrying normalized trace provenance.
+            _resolution: Reserved provider resolution argument.
+            route: Dispatch route, when the caller has resolved one.
+
+        Returns:
+            ConsoleTraceCallBoundary: Boundary owned by the request's current turn.
+
+        Raises:
+            TypeError: If ``request`` is not a prepared provider request.
+            ValueError: If required trace provenance or ownership is unavailable.
+        """
         if not isinstance(request, PreparedProviderRequest):
             raise TypeError("request")
         provenance = request.provenance
@@ -98,16 +114,30 @@ class ConsoleTraceBoundaryFactory:
         )
         policy = frozen_policy_from_provenance(semantic_provenance)
         preparation_identity = new_opaque_id()
+        run_id = route_record.chain_id or new_opaque_id()
+        call_sequence = 0
         with self._lock:
             with self.database.transaction(immediate=True) as cursor:  # type: ignore[attr-defined]
-                rows = cursor.execute(
-                    """SELECT revision_id, source_conversation_id, source_message_id
-                         FROM console_trace_semantic_revisions
-                        WHERE revision_id IN ({})""".format(
-                        ",".join("?" for _ in revision_ids)
-                    ),
-                    revision_ids,
-                ).fetchall()
+                unique_revision_ids = tuple(dict.fromkeys(revision_ids))
+                rows = []
+                for offset in range(
+                    0,
+                    len(unique_revision_ids),
+                    REVISION_OWNER_LOOKUP_BATCH_SIZE,
+                ):
+                    batch = unique_revision_ids[
+                        offset : offset + REVISION_OWNER_LOOKUP_BATCH_SIZE
+                    ]
+                    rows.extend(
+                        cursor.execute(
+                            """SELECT revision_id, source_conversation_id, source_message_id
+                                 FROM console_trace_semantic_revisions
+                                WHERE revision_id IN ({})""".format(
+                                ",".join("?" for _ in batch)
+                            ),
+                            batch,
+                        ).fetchall()
+                    )
                 by_revision = {
                     str(row[0]): (str(row[1]), str(row[2])) for row in rows
                 }
@@ -139,13 +169,12 @@ class ConsoleTraceBoundaryFactory:
                     provenance=provenance,
                     values=tuple(request.messages_payload) + continuation_values,
                 )
-            if route_record.chain_id is None:
-                run_id = new_opaque_id()
-                call_sequence = 0
-            else:
-                run_id = route_record.chain_id
-                call_sequence = self._chain_sequences.get(run_id, 0)
-                self._chain_sequences[run_id] = call_sequence + 1
+                if route_record.chain_id is not None:
+                    call_sequence = max(
+                        self._chain_sequences.get(run_id, 0),
+                        self.repository.read_next_call_sequence(cursor, run_id),
+                    )
+                    self._chain_sequences[run_id] = call_sequence + 1
             return ConsoleTraceCallBoundary(
                 service=self.service,
                 database=self.database,

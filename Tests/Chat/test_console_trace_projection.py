@@ -236,6 +236,33 @@ def test_missing_normalized_call_falls_back_to_legacy_exchange() -> None:
     )
 
 
+def test_read_calls_snapshots_normalized_gate_for_fallback_metrics() -> None:
+    legacy = _capture(
+        run_tag="run-1",
+        seq=0,
+        created_at="2026-08-28T10:00:00Z",
+        model="legacy",
+    )
+    reads = 0
+
+    def changing_gate() -> bool:
+        nonlocal reads
+        reads += 1
+        return reads == 1
+
+    metrics = TraceCompatibilityMetrics()
+    projection = ConsoleTraceProjection(
+        normalized_reader=lambda _message_id: (),
+        legacy_reader=lambda _message_id: (_legacy_row(legacy),),
+        normalized_reads_enabled=changing_gate,
+        compatibility_metrics=metrics,
+    )
+
+    assert projection.read_calls("message-1") == (LegacyExchangeCall(legacy, False),)
+    assert reads == 1
+    assert dict(metrics.snapshot())["fallback_read"] == 1
+
+
 def test_mixed_calls_have_stable_semantic_order_without_duplicates() -> None:
     first = _capture(
         run_tag="run-a", seq=0, created_at="2026-08-28T10:00:00Z", model="first"

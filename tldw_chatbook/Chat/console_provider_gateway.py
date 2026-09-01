@@ -2211,13 +2211,11 @@ class ConsoleProviderGateway:
         """Whether this gateway can actually reserve a durable trace call.
 
         TASK-25814: `trace_call_boundary_factory` is documented as optional
-        ("Optional hard-off normalized-writer seam"), and in production it is
-        never supplied -- both callers of `ensure_provider_gateway` omit it.
-        Capture-On dispatch nonetheless requires it, so a turn prepared as
-        Capture-On against a gateway without one can only ever be refused.
-        Callers that CHOOSE the capture mode consult this first, so the
-        refusal in `_reserve_trace_call` stays what it is meant to be -- a
-        guard against a real failure, not the default outcome of every send.
+        ("Optional hard-off normalized-writer seam"). Production supplies the
+        app-owned lazy boundary factory when durable storage is available, and
+        the independent normalized-write rollout gate must also be enabled.
+        Capture-On dispatch without either condition is refused before the
+        adapter; callers that choose capture mode consult this property first.
         """
 
         return self._trace_call_boundary_factory is not None and bool(
@@ -2285,17 +2283,23 @@ class ConsoleProviderGateway:
             if not callable(reserve):
                 raise TraceCallPersistenceError()
             reserve()
-            metrics = self._trace_compatibility_metrics
-            record = getattr(metrics, "record", None)
-            if callable(record):
-                record("normalized_write")
-            return boundary
         except TraceCallPersistenceError as exc:
             if exc.boundary is None and boundary is not None:
                 raise TraceCallPersistenceError(boundary=boundary) from None
             raise
         except Exception:
             raise TraceCallPersistenceError(reservation_status="unknown") from None
+        metrics = self._trace_compatibility_metrics
+        record = getattr(metrics, "record", None)
+        if callable(record):
+            try:
+                record("normalized_write")
+            except Exception as exc:  # noqa: BLE001 - compatibility metrics are best-effort
+                logger.debug(
+                    "trace compatibility metric skipped after {}",
+                    type(exc).__name__,
+                )
+        return boundary
 
     async def aclose(self) -> None:
         """Close the HTTP client(s) owned by this instance.

@@ -26,6 +26,7 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -68,12 +69,14 @@ asyncio.run(gateway.aclose())
 """
     result = subprocess.run(
         [sys.executable, "-c", probe],
+        cwd=Path(__file__).resolve().parents[2],
         capture_output=True,
         check=False,
         text=True,
+        timeout=30,
     )
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 class ConsoleChatStore(_ConsoleChatStore):

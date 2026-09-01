@@ -2912,6 +2912,62 @@ def test_saved_continuation_value_mismatch_rejects_before_any_trace_write(
     )
 
 
+def test_current_surface_delta_preserves_distinct_logical_message_projection(
+    db: CharactersRAGDB,
+    repository: ConsoleTraceRepository,
+) -> None:
+    owner_id, segment_id = _owned_segment(db, repository)
+    policy = _policy()
+    logical_message = ProviderArtifactTraceProvenance(
+        TraceProvenanceSource.MANDATORY_CONTEXT,
+        policy,
+    )
+    first_wire = ProviderArtifactTraceProvenance(
+        TraceProvenanceSource.ACTIVE_REQUEST,
+        policy,
+    )
+    second_wire = ProviderArtifactTraceProvenance(
+        TraceProvenanceSource.ACTIVE_REQUEST,
+        policy,
+    )
+    initial_provenance = ProviderRequestProvenance(
+        messages=(logical_message,),
+        messages_payload=(first_wire,),
+        metadata=(request_route_provenance(ConsoleRequestRoute.FRESH),),
+    )
+    service = ConsoleTraceService(repository)
+    with db.transaction() as cursor:
+        _persist(
+            service,
+            cursor,
+            owner_id=owner_id,
+            segment_id=segment_id,
+            provenance=initial_provenance,
+            bundle=_available_bundle(
+                initial_provenance,
+                messages=[{"role": "user", "content": "first"}],
+            ),
+        )
+        extended_provenance = replace(
+            initial_provenance,
+            messages_payload=(first_wire, second_wire),
+        )
+        _admission, boundary = service.prepare_current_surface_delta(
+            cursor,
+            owner_id=owner_id,
+            segment_id=segment_id,
+            route_identity=ConsoleRequestRoute.FRESH.value,
+            preparation_identity=new_opaque_id(),
+            provenance=extended_provenance,
+            values=(
+                {"role": "user", "content": "first"},
+                {"role": "user", "content": "second"},
+            ),
+        )
+
+    assert boundary.provenance.messages == (logical_message,)
+
+
 def test_interleaved_domains_reopen_and_replace_continuation_by_local_ordinal(
     db: CharactersRAGDB,
     repository: ConsoleTraceRepository,

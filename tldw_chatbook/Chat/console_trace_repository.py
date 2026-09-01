@@ -1421,7 +1421,7 @@ class ConsoleTraceRepository:
         ):
             raise ValueError("sequence_range")
         nodes: list[SurfaceNodeRecord] = []
-        for lineage_segment_id, through_sequence in self._segment_lineage(
+        for lineage_segment_id, through_sequence in self._surface_segment_lineage(
             cursor, segment_id
         ):
             upper_bound = (
@@ -1442,6 +1442,52 @@ class ConsoleTraceRepository:
             ).fetchall()
             nodes.extend(SurfaceNodeRecord(*row) for row in rows)
         return tuple(sorted(nodes, key=lambda node: node.sequence))
+
+    def _surface_segment_lineage(
+        self,
+        cursor: sqlite3.Cursor,
+        root_segment_id: str,
+    ) -> list[tuple[str, int | None]]:
+        """Return root-to-leaf segments bounded by inherited surface heads."""
+
+        lineage: list[tuple[str, int | None]] = []
+        segment = self.get_segment(cursor, root_segment_id)
+        upper_bound: int | None = None
+        while segment is not None:
+            lineage.append((segment.segment_id, upper_bound))
+            if segment.parent_segment_id is None:
+                break
+            inherited_head_id = segment.inherited_surface_head_id
+            if inherited_head_id is None:
+                inherited_bound = -1
+            else:
+                inherited_head = self.get_surface_node(cursor, inherited_head_id)
+                if inherited_head is None:
+                    raise RuntimeError("inherited_surface_head_unavailable")
+                inherited_bound = inherited_head.sequence
+            upper_bound = (
+                inherited_bound
+                if upper_bound is None
+                else min(upper_bound, inherited_bound)
+            )
+            segment = self.get_segment(cursor, segment.parent_segment_id)
+        lineage.reverse()
+        return lineage
+
+    def read_next_call_sequence(self, cursor: sqlite3.Cursor, run_id: str) -> int:
+        """Return the first unused durable sequence for one provider-call chain."""
+
+        _nonempty(run_id, "run_id")
+        row = cursor.execute(
+            "SELECT MAX(call_sequence) FROM console_trace_calls WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        current = None if row is None else row[0]
+        if current is None:
+            return 0
+        if type(current) is not int or current < 0:
+            raise RuntimeError("call_sequence_unavailable")
+        return current + 1
 
     def get_surface_tail(
         self,

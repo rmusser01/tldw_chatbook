@@ -7,6 +7,7 @@ import json
 import statistics
 import subprocess
 import sys
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import TypedDict
 
@@ -38,6 +39,7 @@ from tldw_chatbook.DB.sql_validation import (
 FIXTURE_PATH = Path(__file__).with_name("fixtures") / "console_trace_growth_v1.json"
 FIXTURE_CHECKSUM_PATH = FIXTURE_PATH.with_suffix(".sha256")
 ARTIFACT_NAME = "console_trace_growth.json"
+SCENARIO_EVIDENCE_TIMEOUT_SECONDS = 300
 EXPECTED_SCENARIOS = frozenset(
     {
         "edits",
@@ -230,97 +232,117 @@ async def _run_fixture(
         root / f"trace-growth-{replacement_heavy}-{run_index}.sqlite",
         f"trace-growth-{run_index}",
     )
-    conversation_id = database.add_conversation({"title": "trace growth fixture"})
-    assert conversation_id is not None
-    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
-    adapter_calls: list[dict[str, object]] = []
+    async with AsyncExitStack() as resources:
+        resources.callback(database.close)
+        conversation_id = database.add_conversation({"title": "trace growth fixture"})
+        assert conversation_id is not None
+        policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+        adapter_calls: list[dict[str, object]] = []
 
-    def adapter(**kwargs):
-        adapter_calls.append(kwargs)
-        return {"choices": [{"message": {"content": "ok"}}]}
+        def adapter(**kwargs):
+            adapter_calls.append(kwargs)
+            return {"choices": [{"message": {"content": "ok"}}]}
 
-    boundary_errors: list[Exception] = []
-    boundary_factory = ConsoleTraceBoundaryFactory(database)
+        boundary_errors: list[Exception] = []
+        boundary_factory = ConsoleTraceBoundaryFactory(database)
 
-    def diagnostic_boundary_factory(*args):
-        try:
-            return boundary_factory(*args)
-        except Exception as exc:
-            boundary_errors.append(exc)
-            raise
-
-    gateway = ConsoleProviderGateway(
-        chat_api_call_fn=adapter,
-        trace_call_boundary_factory=diagnostic_boundary_factory,
-    )
-    resolution = ConsoleProviderResolution(
-        provider="openai",
-        base_url="https://api.example.invalid/v1",
-        model="gpt-growth",
-        ready=True,
-        execution_key="openai",
-        api_key="fixture-secret-must-not-be-persisted",
-        streaming=False,
-    )
-    active: list[tuple[dict[str, str], TraceProvenance]] = []
-    start = _trace_owned_size(database)
-    halfway: _TraceSize | None = None
-    for turn in range(1, turns + 1):
-        if replacement_heavy and turn % interval == 0 and active:
-            replaced_count = max(1, int(len(active) * replacement_fraction))
-            summary = _semi_incompressible_text(f"{seed}:summary", turn, message_bytes)
-            active = [
-                (
-                    {"role": "user", "content": summary},
-                    ProviderArtifactTraceProvenance(
-                        TraceProvenanceSource.ACTIVE_REQUEST,
-                        policy,
-                    ),
-                ),
-                *active[replaced_count:],
-            ]
+        def diagnostic_boundary_factory(*args):
             try:
-                await _dispatch(gateway, resolution, active, policy, boundary_errors)
+                return boundary_factory(*args)
+            except Exception as exc:
+                boundary_errors.append(exc)
+                raise
+
+        gateway = ConsoleProviderGateway(
+            chat_api_call_fn=adapter,
+            trace_call_boundary_factory=diagnostic_boundary_factory,
+        )
+        resources.push_async_callback(gateway.aclose)
+        resolution = ConsoleProviderResolution(
+            provider="openai",
+            base_url="https://api.example.invalid/v1",
+            model="gpt-growth",
+            ready=True,
+            execution_key="openai",
+            api_key="fixture-secret-must-not-be-persisted",
+            streaming=False,
+        )
+        active: list[tuple[dict[str, str], TraceProvenance]] = []
+        start = _trace_owned_size(database)
+        halfway: _TraceSize | None = None
+        for turn in range(1, turns + 1):
+            if replacement_heavy and turn % interval == 0 and active:
+                replaced_count = max(1, int(len(active) * replacement_fraction))
+                summary = _semi_incompressible_text(
+                    f"{seed}:summary", turn, message_bytes
+                )
+                active = [
+                    (
+                        {"role": "user", "content": summary},
+                        ProviderArtifactTraceProvenance(
+                            TraceProvenanceSource.ACTIVE_REQUEST,
+                            policy,
+                        ),
+                    ),
+                    *active[replaced_count:],
+                ]
+                try:
+                    await _dispatch(
+                        gateway,
+                        resolution,
+                        active,
+                        policy,
+                        boundary_errors,
+                    )
+                except Exception as exc:
+                    raise AssertionError(
+                        "replacement dispatch failed at turn "
+                        f"{turn} with {len(active)} active items"
+                    ) from exc
+            content = _semi_incompressible_text(seed, turn, message_bytes)
+            active.append(_saved_message(database, conversation_id, content))
+            try:
+                await _dispatch(
+                    gateway,
+                    resolution,
+                    active,
+                    policy,
+                    boundary_errors,
+                )
             except Exception as exc:
                 raise AssertionError(
-                    f"replacement dispatch failed at turn {turn} with {len(active)} active items"
+                    f"append dispatch failed at turn {turn} "
+                    f"with {len(active)} active items"
                 ) from exc
-        content = _semi_incompressible_text(seed, turn, message_bytes)
-        active.append(_saved_message(database, conversation_id, content))
-        try:
-            await _dispatch(gateway, resolution, active, policy, boundary_errors)
-        except Exception as exc:
-            raise AssertionError(
-                f"append dispatch failed at turn {turn} with {len(active)} active items"
-            ) from exc
-        if turn == checkpoint_turn:
-            halfway = _trace_owned_size(database)
-    finish = _trace_owned_size(database)
-    assert halfway is not None
-    with database.transaction() as cursor:
-        legacy_exchange_count = int(
-            cursor.execute("SELECT COUNT(*) FROM message_exchanges").fetchone()[0]
-        )
-        persisted = " ".join(
-            str(value)
-            for table in (
-                "console_trace_calls",
-                "console_trace_artifacts",
-                "console_trace_request_headers",
+            if turn == checkpoint_turn:
+                halfway = _trace_owned_size(database)
+        finish = _trace_owned_size(database)
+        assert halfway is not None
+        with database.transaction() as cursor:
+            legacy_exchange_count = int(
+                cursor.execute("SELECT COUNT(*) FROM message_exchanges").fetchone()[
+                    0
+                ]
             )
-            for row in cursor.execute(f'SELECT * FROM "{table}"').fetchall()
-            for value in row
-        )
-    assert "fixture-secret-must-not-be-persisted" not in persisted
-    await gateway.aclose()
-    return {
-        "run_index": run_index,
-        "first_half": _delta(halfway, start),
-        "second_half": _delta(finish, halfway),
-        "total": _delta(finish, start),
-        "adapter_call_count": len(adapter_calls),
-        "legacy_exchange_count": legacy_exchange_count,
-    }
+            persisted = " ".join(
+                str(value)
+                for table in (
+                    "console_trace_calls",
+                    "console_trace_artifacts",
+                    "console_trace_request_headers",
+                )
+                for row in cursor.execute(f'SELECT * FROM "{table}"').fetchall()
+                for value in row
+            )
+        assert "fixture-secret-must-not-be-persisted" not in persisted
+        return {
+            "run_index": run_index,
+            "first_half": _delta(halfway, start),
+            "second_half": _delta(finish, halfway),
+            "total": _delta(finish, start),
+            "adapter_call_count": len(adapter_calls),
+            "legacy_exchange_count": legacy_exchange_count,
+        }
 
 
 def _median(results: list[_RunResult], section: str, metric: str) -> float:
@@ -328,6 +350,50 @@ def _median(results: list[_RunResult], section: str, metric: str) -> float:
         result[section][metric]  # type: ignore[literal-required]
         for result in results
     )
+
+
+@pytest.mark.asyncio
+async def test_run_fixture_closes_owned_resources_when_measurement_fails(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    closed = {"database": False, "gateway": False}
+
+    class Database:
+        def __init__(self, *_args: object) -> None:
+            pass
+
+        def add_conversation(self, _values: object) -> str:
+            return "conversation-id"
+
+        def close(self) -> None:
+            closed["database"] = True
+
+    class Gateway:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        async def aclose(self) -> None:
+            closed["gateway"] = True
+
+    module = sys.modules[__name__]
+    monkeypatch.setattr(module, "CharactersRAGDB", Database)
+    monkeypatch.setattr(module, "ConsoleProviderGateway", Gateway)
+
+    def fail_measurement(_database: object) -> _TraceSize:
+        raise RuntimeError("measurement failed")
+
+    monkeypatch.setattr(module, "_trace_owned_size", fail_measurement)
+
+    with pytest.raises(RuntimeError, match="measurement failed"):
+        await _run_fixture(
+            tmp_path,
+            _fixture(),
+            run_index=0,
+            replacement_heavy=False,
+        )
+
+    assert closed == {"database": True, "gateway": True}
 
 
 @pytest.fixture(scope="module")
@@ -344,9 +410,24 @@ def verified_scenario_evidence() -> tuple[str, ...]:
         capture_output=True,
         text=True,
         check=False,
+        timeout=SCENARIO_EVIDENCE_TIMEOUT_SECONDS,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     return node_ids
+
+
+def test_verified_scenario_evidence_bounds_subprocess_runtime(monkeypatch) -> None:
+    observed: dict[str, object] = {}
+
+    def run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        observed.update(kwargs)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+
+    verified_scenario_evidence.__wrapped__()
+
+    assert observed["timeout"] == 300
 
 
 @pytest.mark.asyncio
