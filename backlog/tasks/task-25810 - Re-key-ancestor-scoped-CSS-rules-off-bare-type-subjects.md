@@ -171,3 +171,40 @@ settled Console → Library navigation (three interleaved pairs):
 **Quote 26%, not 37%, as the user-facing benefit.** A navigation does more
 than restyle, so the filter's share of it is smaller. Remaining CSS re-keying
 headroom should be measured against these numbers, not the synthetic ones.
+
+## Sizing of the remaining re-key (2026-08-31) — recommend CLOSING here
+
+Measured what the outstanding Button re-keying would buy NOW, with the
+shipped filter installed, interleaved arms (4 pairs, median of 7 updates
+per arm, non-overlapping ranges):
+
+| arm | `stylesheet.update`, 500 nodes |
+|---|---:|
+| filter ON, index untouched | 77.9 ms (77.7–79.3) |
+| filter ON + Button rules modelled as re-keyed | 57.6 ms (57.2–61.6) |
+| **remaining value of Button re-keying** | **~20.3 ms synthetic** |
+
+Scaling by the measured real-navigation ratio, that is roughly **8–10 ms
+per screen switch**.
+
+Then sized the churn by grouping the 184 ancestor-scoped Button rules by
+their leading scope:
+
+- **102 distinct ancestor scopes**; the largest holds 5 rules, the top 20
+  cumulate to only 35%. **There is no concentrated slice** — each scope is
+  one compose-site edit (buttons gain a class) plus its selector edits, so
+  capturing even half the win touches ~50 sites across the whole app.
+- 74 of the 184 rules are TYPE-led (`Widget Button`-shaped): the filter
+  cannot reject those today, and re-keying them costs the same markup churn.
+
+**Recommendation: close the re-keying scope as not worth the churn** (owner
+call). ~8–10 ms per switch, diffused over ~100 tiny groups app-wide, is a
+mega-diff with real visual-regression surface for a small win — the shape
+of change the stability-over-quick-wins ruling rejects. What this task has
+delivered stands on its own: the filter (~62% of the original bound,
+zero markup churn) and the never-rise ratchet at 284 that stops regrowth.
+If the ratchet ever forces a re-key, do it per-offender at that moment.
+
+(Method note: the first, non-interleaved run of this measurement said
+27.9 ms; interleaving corrected it to 20.3. Same lesson as every other
+number this review.)
