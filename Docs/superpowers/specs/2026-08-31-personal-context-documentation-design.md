@@ -6,8 +6,8 @@
 
 ## Decision record check
 
-- ADR required: no
-- ADR path: N/A
+- ADR required: no new ADR required; existing ADR applies
+- ADR path: `backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md`
 - Reason: This work documents the Personal Context architecture and behavior already governed by the existing Personal Context ADRs and merged implementation. It does not change storage, synchronization, security, authority, or user-interface contracts.
 
 ## Purpose

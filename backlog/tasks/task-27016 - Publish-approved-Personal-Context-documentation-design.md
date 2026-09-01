@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-01 15:07'
-updated_date: '2026-09-01 16:27'
+updated_date: '2026-09-01 17:27'
 labels: []
 dependencies: []
 references:
@@ -34,9 +34,14 @@ Publish the reviewed Personal Context documentation design on Chatbook dev so bo
 3. Run diff, scope, duplicate-ID, and stable-reference checks.
 4. Record exact evidence, close the task, open the spec-only PR, and merge only after required checks/review.
 
-ADR required: no
-ADR path: N/A
+ADR required: no new ADR required; existing ADR applies
+ADR path: `backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md`
 Reason: this PR publishes reviewed documentation only; ADR-102 already governs the implemented architecture.
+
+Follow-up correction plan:
+5. Replace the stale pre-merge wording with the completed final checks for 145ac07d527aab6a75e6ffdb406d42b06a7c12f4.
+6. Cite backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md wherever the ADR disposition appears in the spec and task.
+7. Verify exact two-file scope, Markdown and diff hygiene, ADR-path existence, and TASK-27016 uniqueness before closing the task and merging the follow-up PR.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -44,7 +49,9 @@ Reason: this PR publishes reviewed documentation only; ADR-102 already governs t
 <!-- SECTION:NOTES:BEGIN -->
 Published the reviewed Personal Context documentation design by applying commits 76dfa83343, 58afb082ac, 9ea1b2f134, and dd2d64bdf5. Normalized the spec metadata into semantic lists so the required whitespace gate preserves rendering.
 
-ADR required: no. ADR-102 governs the implemented Personal Context authority, sync, and encryption architecture; this task adds no architectural decision.
+ADR required: no new ADR required; existing ADR applies.
+ADR path: `backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md`.
+Reason: the accepted Personal Context ADR governs the implemented authority, sync, and encryption architecture; this task adds no architectural decision.
 
 The required branch update exposed an older TASK-26836 on dev. Under the repository younger-task-renumbers rule, this publication record moved from TASK-26836 to the globally unused TASK-27016; the Renumbering provenance section records the timestamps, reason, and updated inbound references.
 
@@ -57,7 +64,17 @@ Verification evidence at 5fcc8243cc on origin/dev b17946c57a:
 - Both files are tracked, the task references the published spec path, and the spec has no task-ID reference requiring an update.
 - No application test sweep was run because this is documentation-only.
 
-The initial PR review reported no issues and its checks passed before dev added the collision; all required checks must rerun on the final pushed SHA.
+Final publication verification at `145ac07d527aab6a75e6ffdb406d42b06a7c12f4`: the GitHub `No duplicate backlog task IDs` check passed in 16s, `PR Fast Lane` passed in 8m34s, and `Derived artifacts reproduce from their sources` passed in 5m47s. PR #2292 then merged to `dev` as `0b17f7f73cad28cdb5089aa5fff437b072e640c8`; GitHub Contents API returned the published spec blob `95ebb836330792afe8bf9b15c8eca074cb5294a9` and TASK-27016 blob `41fc737f284441491510bb4160c7687f80d1c30b` from `dev`.
+
+Follow-up correction completed after post-merge quality review: the stale pre-merge sentence now records the completed final result, and every ADR disposition names the exact canonical Personal Context ADR path.
+
+Follow-up verification before closeout on origin/dev `0b17f7f73cad28cdb5089aa5fff437b072e640c8`:
+- backlog task 27016 --plain resolved the exact task file in In Progress with all three acceptance criteria still checked and the appended correction plan visible.
+- git diff --check exited 0, and the exact-scope assertion found only the specification and TASK-27016 record.
+- backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md exists and declares Status: Accepted; the obsolete disposition and pre-merge sentence are absent from the corrected files.
+- The repository Python 3.12 environment passed all 3 targeted backlog task-ID uniqueness tests.
+- The all-ref and all-worktree sweeps found only the same TASK-27016 filename and identity.
+- No application test sweep was run because this follow-up is documentation-only.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
