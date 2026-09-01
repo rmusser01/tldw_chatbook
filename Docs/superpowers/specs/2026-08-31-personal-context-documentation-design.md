@@ -1,0 +1,288 @@
+# Personal Context Profile Documentation Design
+
+**Date:** 2026-08-31  
+**Status:** Approved for implementation planning  
+**Repositories:** `tldw_chatbook`, `tldw_server`
+
+## Decision record check
+
+ADR required: no  
+ADR path: N/A  
+Reason: This work documents the Personal Context architecture and behavior already governed by the existing Personal Context ADRs and merged implementation. It does not change storage, synchronization, security, authority, or user-interface contracts.
+
+## Purpose
+
+Publish accurate user and developer documentation for the unified Personal Context Profile feature in both repositories. The documentation must help people use, operate, extend, and troubleshoot the feature without creating two competing descriptions of the shared contract.
+
+Chatbook remains the primary user-facing profile editor and interview experience. Server documentation explains the home-peer role, authenticated API, operations, storage, security, and synchronization boundary. Each repository owns its product-specific details while both repeat a short, deliberately identical statement of the shared identity and synchronization contract.
+
+## Goals
+
+- Make the existing Chatbook profile experience easy to discover and use.
+- Explain global and workspace context, optional interviews, reviewable agent learning, profile editing, export, and deletion.
+- Explain how one logical profile and its canonical records are shared between Chatbook and tldw_server.
+- State exactly which data synchronizes and which settings or secrets remain peer-local.
+- Give developers a reliable map of the shared core package, peer-specific services and repositories, authority checks, encryption, synchronization, and tests.
+- Give users and operators actionable recovery guidance for common locked, offline, conflict, compatibility, and purge states.
+- Keep the documentation maintainable by assigning one owner to each body of detail and linking rather than duplicating it.
+
+## Non-goals
+
+- Redesigning or changing the Personal Context feature.
+- Adding a standalone server WebUI profile editor.
+- Reproducing the complete API reference in a user guide.
+- Reproducing implementation plans or ADRs as end-user documentation.
+- Publishing encryption keys, recovery secrets, raw interview drafts, or other private profile material in examples.
+- Adding diagrams or other visual aids where prose and compact tables are clearer.
+
+## Documentation ownership
+
+### Shared contract
+
+Both repositories will include a short matching contract statement:
+
+- `tldw_profile_core` defines the shared, versioned record and synchronization shapes used by both peers.
+- Chatbook and tldw_server store the same canonical logical profile, scope, record, proposal, conflict, and purge identities when those objects are eligible to synchronize.
+- Each peer retains its own ciphertext, key custody, local database rows, runtime permissions, and operational metadata.
+- Synchronization is capability-negotiated and applies only to objects explicitly marked syncable.
+
+The shared statement is intentionally short. Detailed client behavior belongs in Chatbook; API and server behavior belongs in tldw_server.
+
+### Chatbook-owned detail
+
+Chatbook documentation owns:
+
+- Setup-wizard and post-install interview workflows.
+- Settings navigation and profile editing.
+- Global versus workspace context from the user's perspective.
+- Agent read, propose, review, direct-write, and promotion behavior.
+- Context injection and the Console **Next Send** preview.
+- Local encryption and unlock behavior.
+- Chatbook outbox, reconciliation, and client-side recovery.
+- Client architecture, services, repositories, UI boundaries, and client tests.
+
+### Server-owned detail
+
+tldw_server documentation owns:
+
+- Home-peer configuration and authenticated access.
+- Per-user storage and ownership boundaries.
+- Master-key custody and locked-profile behavior.
+- REST and Sync-v2 surfaces.
+- Server repository and service boundaries.
+- Conflict, idempotency, capability, export, and purge semantics.
+- Operator troubleshooting and server tests.
+
+## Chatbook documentation changes
+
+### User guide
+
+Enhance the existing canonical guide:
+
+`Docs/User_Guide/settings/personal-context-profile.md`
+
+The current guide already contains the comprehensive feature reference. The change must preserve it as the canonical detailed user guide and add only the missing task-oriented material:
+
+1. An **In five minutes** quick start covering profile creation, the optional interview, review, and first use.
+2. Short common workflows for:
+   - adding or editing a global preference;
+   - adding workspace goals and long-term context;
+   - reviewing something an agent learned;
+   - rerunning an interview;
+   - linking a home server;
+   - exporting, removing a local copy, and deleting everywhere.
+3. A compact **What synchronizes?** table.
+4. A troubleshooting table covering the failure states defined below.
+5. Clear links to the server operator and API documentation.
+
+The guide must not duplicate internal module descriptions or the complete server endpoint reference.
+
+### Developer guide
+
+Add:
+
+`Docs/Development/personal-context-profile.md`
+
+The guide will cover:
+
+- Shared-core contract and compatibility boundary.
+- Local encrypted repository and key custody.
+- Service boundary and prohibition on direct profile-table access.
+- Interview draft, answer, proposal, and review lifecycle.
+- Agent tool exposure and effective-authority calculation.
+- Context selection and injection.
+- Outbox, Sync-v2 adapters, first-link reconciliation, conflicts, and purge generations.
+- Extension checklist and targeted test map.
+
+It will link to the existing Personal Context ADR/design and the generic Sync-v2 client reference instead of restating those documents.
+
+### Discovery links
+
+Add or confirm links from:
+
+- `Docs/User_Guide/index.md`
+- `Docs/User_Guide/settings.md`
+- `Docs/Development/Developer_Guide.md`
+
+Only concise index descriptions should be added.
+
+## Server documentation changes
+
+### User and operator guide
+
+Add:
+
+`Docs/User_Guides/Server/Personal_Context_Profile.md`
+
+The guide will explain:
+
+- What the server contributes to a shared profile.
+- Required authentication and master-key setup.
+- Linking Chatbook as the primary user interface.
+- Inspecting or operating the profile through the authenticated API when needed.
+- Export, local-client removal, and delete-everywhere behavior.
+- Sync status, conflicts, and operational recovery.
+- The current product boundary: the server does not provide a complete standalone profile-editing WebUI.
+
+Endpoint details will link to the existing API reference:
+
+`Docs/API-related/Personal_Context_API.md`
+
+### Developer guide
+
+Add:
+
+`Docs/Code_Documentation/Personal_Context_Developer_Guide.md`
+
+The guide will cover:
+
+- Authentication and per-user ownership.
+- Shared-core version and compatibility boundary.
+- Key custody, encryption, and locked states.
+- API, service, repository, and Sync-v2 adapter responsibilities.
+- Optimistic concurrency, idempotency, semantic collisions, reconciliation, and purge generations.
+- Logging and privacy constraints.
+- Extension checklist and server conformance/test map.
+
+It will link to the existing server design, ADR, and API reference rather than duplicating them.
+
+### Discovery and publication
+
+Update:
+
+- `Docs/User_Guides/index.md`
+- `Docs/Code_Documentation/index.md`
+- `Docs/Code_Documentation/README.md` when required by its existing organization
+- `Docs/API-related/API_README.md` with a related-guide link
+- `Docs/mkdocs.yml`
+
+Canonical source remains under `Docs/`. `Docs/Published/` must be regenerated with `Helper_Scripts/refresh_docs_published.sh`; generated files must not be edited by hand.
+
+## What synchronizes
+
+The user and developer documentation must distinguish these categories explicitly.
+
+| Synchronizes when eligible | Remains peer-local |
+| --- | --- |
+| Canonical profile manifest identity | Encryption and recovery keys |
+| Syncable global and workspace scopes | Raw interview answers and unfinished drafts |
+| Syncable canonical records and tombstones | Runtime agent authority grants and tool availability |
+| Syncable proposals and their review state | Device-only records or records marked non-syncable |
+| Conflict objects needed for reconciliation | Local undo history, caches, and operational metadata |
+| Purge generation and acknowledgement state | Local ciphertext and database row identities |
+
+Wording must not imply that a shared logical record means peers share ciphertext, keys, or physical database rows.
+
+## User lifecycle
+
+The documentation will describe the lifecycle in prose and small tables:
+
+1. A user creates or edits context directly, or completes an optional interview.
+2. Interview results and agent-learned facts enter reviewable draft or proposal states unless effective authority permits direct write.
+3. Accepted changes are stored as encrypted canonical records in the local peer repository.
+4. Eligible changes enter the outbox and synchronize with the configured home peer.
+5. The peers reconcile versions, tombstones, semantic collisions, and purge generations.
+6. Chatbook selects permitted global and current-workspace records for agent context and exposes the exact assembled body in **Next Send**.
+
+## Failure and recovery guidance
+
+Both user-facing guides must use consistent names and direct the reader to the owning peer for recovery.
+
+| State | Meaning | Required guidance |
+| --- | --- | --- |
+| Profile locked | The peer cannot decrypt profile content because key material is unavailable or locked. | Restore or unlock the configured key; do not recreate or overwrite encrypted data as a first response. |
+| Offline or queued | Local changes are safe but have not reached the home peer. | Continue locally where supported, then retry sync and inspect the outbox/status. |
+| Capability not negotiated | Peer versions do not share the required profile capability. | Upgrade the incompatible peer and retry; do not bypass negotiation. |
+| Version conflict | Both peers changed the same canonical object from different bases. | Review the conflict and choose or merge content through supported resolution surfaces. |
+| Semantic collision | Distinct record identities describe the same scope/kind/key. | Review both records and resolve intentionally; do not silently discard either. |
+| First-link conflict | A standalone local profile and server profile both contain context. | Reconcile the presented records before treating the profiles as one synchronized set. |
+| Purge pending | Delete-everywhere has started but not every known peer has acknowledged the purge generation. | Keep the purge pending, reconnect peers, and verify acknowledgements; do not resurrect older snapshots. |
+
+## Developer extension checklist
+
+Both developer guides will contain a peer-specific version of this checklist:
+
+1. Decide whether the change affects the shared contract or only one peer.
+2. For shared changes, update `tldw_profile_core` schemas and compatibility behavior first.
+3. Preserve canonical identities and explicit syncability.
+4. Route reads and writes through the owning service; never access profile tables directly from UI, tools, or endpoints.
+5. Enforce authority, scope, expiry, visibility, and secret-rejection checks at the service boundary.
+6. Keep plaintext out of logs, diagnostics, outbox metadata, and unencrypted fixtures.
+7. Add parity/conformance coverage in both repositories for shared behavior.
+8. Add peer-specific migration, repository, service, API/UI, and recovery tests as applicable.
+9. Update the governing ADR when storage, ownership, encryption, synchronization, or authority changes.
+10. Update both documentation sets when the shared contract changes.
+
+## Links and merge order
+
+- Use relative links within a repository.
+- Use stable GitHub `blob/dev` links for the counterpart repository.
+- User guides link to stable user/operator material, not implementation plans.
+- Developer guides may link to accepted ADRs, designs, API references, and maintained implementation references.
+
+The server documentation PR lands first because it can link to Chatbook's existing merged user guide. The Chatbook documentation branch is then rebased on current `dev` and finalized with links to the merged server guides. This avoids permanently landing cross-repository links whose target does not yet exist.
+
+## Work breakdown and pull requests
+
+Create one atomic Backlog task and one documentation PR per repository:
+
+1. **tldw_server documentation PR against `dev`**
+   - User/operator guide, developer guide, indexes, navigation, related API link, and generated published documentation.
+2. **tldw_chatbook documentation PR against `dev`**
+   - Focused improvements to the existing user guide, new developer guide, indexes, and final cross-repository links.
+
+Implementation must occur in isolated worktrees so unrelated changes in existing checkouts are preserved.
+
+## Verification
+
+### tldw_server
+
+- Run the repository's documentation-link validation if available.
+- Run `Helper_Scripts/refresh_docs_published.sh`.
+- Stage or inspect the generated output, then run the refresh script again and confirm it produces no diff.
+- Run `mkdocs build --strict -f Docs/mkdocs.yml` in the supported documentation environment.
+- Confirm the generated diff contains only expected pages, navigation, and indexes.
+- Check Markdown formatting and repository diff hygiene.
+
+### tldw_chatbook
+
+- Run the repository's targeted documentation-link or Markdown validation if available.
+- Verify every internal relative link and every cross-repository target.
+- Confirm user instructions match the merged Settings and Console surfaces.
+- Confirm developer paths, symbols, and test references exist on `dev`.
+- Check Markdown formatting and repository diff hygiene.
+
+No full application test sweep is required for documentation-only changes unless repository checks expose an integration concern.
+
+## Acceptance of the documentation set
+
+The documentation work is complete when:
+
+- Both repositories contain discoverable user and developer guidance appropriate to their roles.
+- The guides agree about canonical identity, encryption, syncability, authority, and deletion.
+- The guides clearly distinguish synchronized content from peer-local keys and settings.
+- No guide promises a UI or operation that the merged products do not provide.
+- Common failure states have actionable, consistent recovery instructions.
+- Cross-repository links resolve on `dev` after the ordered merges.
+- Server published documentation is reproducible and strict site validation passes.
+- Both PRs are based on current `dev`, contain only documentation/task artifacts, and have no unrelated changes.
