@@ -212,7 +212,8 @@ def test_capabilities_require_every_known_action_and_are_immutable() -> None:
     assert capabilities.for_action("capture").state is CapabilityState.SUPPORTED
     with pytest.raises(TypeError):
         capabilities.values["capture"] = CaptureCapability(  # type: ignore[index]
-            CapabilityState.UNSUPPORTED
+            CapabilityState.UNSUPPORTED,
+            "Not provided by this authority",
         )
 
     missing = {
@@ -228,6 +229,10 @@ def test_capabilities_require_every_known_action_and_are_immutable() -> None:
     complete["made_up"] = CaptureCapability(CapabilityState.SUPPORTED)
     with pytest.raises(CollectionsCaptureError):
         CaptureCapabilities(complete)
+
+    with pytest.raises(CollectionsCaptureError) as unsupported_error:
+        CaptureCapability(CapabilityState.UNSUPPORTED)
+    assert unsupported_error.value.reason == "missing_capability_reason"
 
 
 def test_saved_search_page_validates_scope_and_paging() -> None:
@@ -310,6 +315,9 @@ def test_remaining_contracts_keep_external_references_authority_qualified() -> N
     )
     assert request.tags == ("Research",)
     assert CaptureSaveOutcome(detail, created=True).capture == detail
+    unknown = CaptureSaveOutcome(None, None, outcome_unknown=True)
+    assert unknown.capture is None
+    assert unknown.created is None
     assert CaptureConflict(identity, expected_revision=1, current=detail).actual_revision == 2
     assert CaptureActionResult(identity, success=True, revision=3).success is True
     assert CaptureContentResult(identity, "summary", text="Short summary").text
@@ -319,3 +327,79 @@ def test_typed_error_exposes_bounded_reason_and_retryability() -> None:
     error = CollectionsCaptureError("server_offline", retryable=True)
     assert error.reason == "server_offline"
     assert error.retryable is True
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        lambda detail: CaptureSaveOutcome(detail, True, outcome_unknown=True),
+        lambda detail: CaptureSaveOutcome(None, False, outcome_unknown=True),
+        lambda detail: CaptureSaveOutcome(None, None, extraction_pending=True, outcome_unknown=True),
+        lambda detail: CaptureSaveOutcome(None, True),
+    ],
+)
+def test_save_outcome_rejects_contradictory_authority(outcome) -> None:
+    detail = CaptureDetail(
+        identity=CaptureIdentity("local:alpha", "capture-1"),
+        canonical_url="https://example.org/capture-1",
+    )
+    with pytest.raises(CollectionsCaptureError) as caught:
+        outcome(detail)
+    assert caught.value.reason == "invalid_save_outcome"
+
+
+@pytest.mark.parametrize(
+    ("factory", "reason"),
+    [
+        (
+            lambda: CaptureDetail(
+                identity=CaptureIdentity("local:alpha", "capture-1"),
+                canonical_url="https://example.org/capture-1",
+                submitted_url=7,  # type: ignore[arg-type]
+            ),
+            "invalid_submitted_url",
+        ),
+        (
+            lambda: CaptureSaveRequest(
+                authority_key="local:alpha",
+                submitted_url="https://example.org/capture-1",
+                title={"nested": "title"},  # type: ignore[arg-type]
+            ),
+            "invalid_title",
+        ),
+        (
+            lambda: CaptureHighlight(
+                CaptureIdentity("local:alpha", "capture-1"),
+                "highlight-1",
+                "quote",
+                ["nested"],  # type: ignore[arg-type]
+                None,
+                False,
+                "2026-09-01",
+                "2026-09-01",
+                1,
+            ),
+            "invalid_highlight_note",
+        ),
+        (
+            lambda: CaptureActionResult(
+                CaptureIdentity("local:alpha", "capture-1"),
+                True,
+                reason={"private": "detail"},  # type: ignore[arg-type]
+            ),
+            "invalid_action_reason",
+        ),
+        (
+            lambda: CaptureContentResult(
+                CaptureIdentity("local:alpha", "capture-1"),
+                "summary",
+                text=["not", "text"],  # type: ignore[arg-type]
+            ),
+            "invalid_content_text",
+        ),
+    ],
+)
+def test_public_contracts_fail_closed_on_malformed_fields(factory, reason: str) -> None:
+    with pytest.raises(CollectionsCaptureError) as caught:
+        factory()
+    assert caught.value.reason == reason

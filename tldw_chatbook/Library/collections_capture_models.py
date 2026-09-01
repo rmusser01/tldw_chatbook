@@ -75,6 +75,15 @@ def _optional_text(value: Any, reason: str) -> str | None:
     return normalized or None
 
 
+def _optional_content(value: Any, reason: str) -> str | None:
+    """Validate optional content without changing meaningful whitespace."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise CollectionsCaptureError(reason)
+    return value
+
+
 def _positive_int(value: Any, reason: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise CollectionsCaptureError(reason)
@@ -342,8 +351,31 @@ class CaptureDetail(CaptureSummary):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        submitted_url = self.submitted_url.strip() if isinstance(self.submitted_url, str) else ""
+        if not isinstance(self.submitted_url, str):
+            raise CollectionsCaptureError("invalid_submitted_url")
+        submitted_url = self.submitted_url.strip()
         object.__setattr__(self, "submitted_url", submitted_url or self.canonical_url)
+        object.__setattr__(
+            self,
+            "freeform_note",
+            _optional_content(self.freeform_note, "invalid_freeform_note"),
+        )
+        object.__setattr__(
+            self,
+            "text_content",
+            _optional_content(self.text_content, "invalid_text_content"),
+        )
+        object.__setattr__(
+            self,
+            "clean_html",
+            _optional_content(self.clean_html, "invalid_clean_html"),
+        )
+        object.__setattr__(self, "byline", _optional_text(self.byline, "invalid_byline"))
+        object.__setattr__(
+            self,
+            "content_hash",
+            _optional_text(self.content_hash, "invalid_content_hash"),
+        )
         if self.word_count is not None and (
             isinstance(self.word_count, bool)
             or not isinstance(self.word_count, int)
@@ -429,6 +461,7 @@ class CaptureSaveRequest:
             "canonical_url",
             _optional_text(self.canonical_url, "invalid_canonical_url"),
         )
+        object.__setattr__(self, "title", _optional_text(self.title, "invalid_title"))
         object.__setattr__(self, "tags", _normalize_display_tags(self.tags))
         if self.status is not None:
             status = _nonempty(self.status, "invalid_status").casefold()
@@ -437,21 +470,54 @@ class CaptureSaveRequest:
             object.__setattr__(self, "status", status)
         if self.favorite is not None and not isinstance(self.favorite, bool):
             raise CollectionsCaptureError("invalid_favorite")
+        object.__setattr__(
+            self, "summary", _optional_text(self.summary, "invalid_summary")
+        )
+        object.__setattr__(
+            self,
+            "freeform_note",
+            _optional_content(self.freeform_note, "invalid_freeform_note"),
+        )
+        object.__setattr__(
+            self,
+            "text_content",
+            _optional_content(self.text_content, "invalid_text_content"),
+        )
+        object.__setattr__(
+            self,
+            "clean_html",
+            _optional_content(self.clean_html, "invalid_clean_html"),
+        )
+        object.__setattr__(self, "byline", _optional_text(self.byline, "invalid_byline"))
+        object.__setattr__(
+            self,
+            "published_at",
+            _optional_text(self.published_at, "invalid_published_at"),
+        )
 
 
 @dataclass(frozen=True)
 class CaptureSaveOutcome:
-    capture: CaptureDetail
-    created: bool
+    capture: CaptureDetail | None
+    created: bool | None
     extraction_pending: bool = False
     outcome_unknown: bool = False
 
     def __post_init__(self) -> None:
-        if not isinstance(self.capture, CaptureDetail):
-            raise CollectionsCaptureError("invalid_capture_detail")
-        if not all(
-            isinstance(value, bool)
-            for value in (self.created, self.extraction_pending, self.outcome_unknown)
+        if not isinstance(self.extraction_pending, bool) or not isinstance(
+            self.outcome_unknown, bool
+        ):
+            raise CollectionsCaptureError("invalid_save_outcome")
+        if self.outcome_unknown:
+            if (
+                self.capture is not None
+                or self.created is not None
+                or self.extraction_pending
+            ):
+                raise CollectionsCaptureError("invalid_save_outcome")
+            return
+        if not isinstance(self.capture, CaptureDetail) or not isinstance(
+            self.created, bool
         ):
             raise CollectionsCaptureError("invalid_save_outcome")
 
@@ -536,6 +602,14 @@ class CaptureHighlightDraft:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "quote", _nonempty(self.quote, "invalid_highlight_quote"))
+        object.__setattr__(
+            self, "note", _optional_content(self.note, "invalid_highlight_note")
+        )
+        object.__setattr__(
+            self,
+            "anchor_json",
+            _optional_content(self.anchor_json, "invalid_highlight_anchor"),
+        )
 
 
 @dataclass(frozen=True)
@@ -559,6 +633,14 @@ class CaptureHighlight:
             _nonempty(self.highlight_id, "invalid_highlight_id"),
         )
         object.__setattr__(self, "quote", _nonempty(self.quote, "invalid_highlight_quote"))
+        object.__setattr__(
+            self, "note", _optional_content(self.note, "invalid_highlight_note")
+        )
+        object.__setattr__(
+            self,
+            "anchor_json",
+            _optional_content(self.anchor_json, "invalid_highlight_anchor"),
+        )
         if not isinstance(self.detached, bool):
             raise CollectionsCaptureError("invalid_highlight_state")
         object.__setattr__(self, "revision", _positive_int(self.revision, "invalid_revision"))
@@ -644,6 +726,9 @@ class CaptureActionResult:
             object.__setattr__(
                 self, "revision", _positive_int(self.revision, "invalid_revision")
             )
+        object.__setattr__(
+            self, "reason", _optional_text(self.reason, "invalid_action_reason")
+        )
 
 
 @dataclass(frozen=True)
@@ -658,6 +743,16 @@ class CaptureContentResult:
             raise CollectionsCaptureError("invalid_capture_identity")
         if self.kind not in {"summary", "audio"}:
             raise CollectionsCaptureError("invalid_content_result_kind")
+        object.__setattr__(
+            self, "text", _optional_content(self.text, "invalid_content_text")
+        )
+        object.__setattr__(
+            self,
+            "artifact_reference",
+            _optional_text(
+                self.artifact_reference, "invalid_content_artifact_reference"
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -671,9 +766,10 @@ class CaptureCapability:
         except (TypeError, ValueError) as exc:
             raise CollectionsCaptureError("invalid_capability_state") from exc
         object.__setattr__(self, "state", state)
-        object.__setattr__(
-            self, "reason", _optional_text(self.reason, "invalid_capability_reason")
-        )
+        reason = _optional_text(self.reason, "invalid_capability_reason")
+        if state is CapabilityState.UNSUPPORTED and reason is None:
+            raise CollectionsCaptureError("missing_capability_reason")
+        object.__setattr__(self, "reason", reason)
 
 
 @dataclass(frozen=True)

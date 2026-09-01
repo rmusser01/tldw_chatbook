@@ -299,17 +299,48 @@ def test_capture_search_triggers_follow_item_and_tag_changes(tmp_path: Path) -> 
             "(authority_key, capture_id, tag_id) VALUES (?, ?, ?)",
             ("local:one", "capture-1", 1),
         )
+        connection.execute(
+            """
+            INSERT INTO collection_capture_items (
+                authority_key, capture_id, submitted_url, canonical_url, domain,
+                title, status, favorite, processing_state, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "local:two",
+                "capture-1",
+                "https://two.example.org/submitted",
+                "https://two.example.org/canonical",
+                "two.example.org",
+                "Second authority reader",
+                "saved",
+                0,
+                "ready",
+                "2026-01-01",
+                "2026-01-01",
+            ),
+        )
+        connection.execute(
+            "INSERT INTO collection_capture_tags "
+            "(authority_key, tag_id, normalized_name, display_name) VALUES (?, ?, ?, ?)",
+            ("local:two", 1, "research", "Research"),
+        )
+        connection.execute(
+            "INSERT INTO collection_capture_item_tags "
+            "(authority_key, capture_id, tag_id) VALUES (?, ?, ?)",
+            ("local:two", "capture-1", 1),
+        )
 
     with database.connection() as connection:
         assert connection.execute(
             "SELECT capture_id FROM collection_capture_search "
-            "WHERE collection_capture_search MATCH ?",
-            ('"reader"',),
+            "WHERE collection_capture_search MATCH ? AND authority_key = ?",
+            ('"reader"', "local:one"),
         ).fetchone()[0] == "capture-1"
         assert connection.execute(
             "SELECT capture_id FROM collection_capture_search "
-            "WHERE collection_capture_search MATCH ?",
-            ('"research"',),
+            "WHERE collection_capture_search MATCH ? AND authority_key = ?",
+            ('"research"', "local:one"),
         ).fetchone()[0] == "capture-1"
 
     with database.transaction() as connection:
@@ -321,14 +352,19 @@ def test_capture_search_triggers_follow_item_and_tag_changes(tmp_path: Path) -> 
     with database.connection() as connection:
         assert connection.execute(
             "SELECT capture_id FROM collection_capture_search "
-            "WHERE collection_capture_search MATCH ?",
-            ('"analysis"',),
+            "WHERE collection_capture_search MATCH ? AND authority_key = ?",
+            ('"analysis"', "local:one"),
         ).fetchone()[0] == "capture-1"
         assert connection.execute(
             "SELECT capture_id FROM collection_capture_search "
-            "WHERE collection_capture_search MATCH ?",
-            ('"research"',),
+            "WHERE collection_capture_search MATCH ? AND authority_key = ?",
+            ('"research"', "local:one"),
         ).fetchone() is None
+        assert connection.execute(
+            "SELECT capture_id FROM collection_capture_search "
+            "WHERE collection_capture_search MATCH ? AND authority_key = ?",
+            ('"research"', "local:two"),
+        ).fetchone()[0] == "capture-1"
 
     with database.transaction() as connection:
         connection.execute(
@@ -339,9 +375,14 @@ def test_capture_search_triggers_follow_item_and_tag_changes(tmp_path: Path) -> 
     with database.connection() as connection:
         assert connection.execute(
             "SELECT capture_id FROM collection_capture_search "
-            "WHERE collection_capture_search MATCH ?",
-            ('"analysis"',),
+            "WHERE collection_capture_search MATCH ? AND authority_key = ?",
+            ('"analysis"', "local:one"),
         ).fetchone() is None
+        assert connection.execute(
+            "SELECT capture_id FROM collection_capture_search "
+            "WHERE collection_capture_search MATCH ? AND authority_key = ?",
+            ('"research"', "local:two"),
+        ).fetchone()[0] == "capture-1"
 
     with database.transaction() as connection:
         connection.execute(
@@ -352,8 +393,8 @@ def test_capture_search_triggers_follow_item_and_tag_changes(tmp_path: Path) -> 
     with database.connection() as connection:
         assert connection.execute(
             "SELECT capture_id FROM collection_capture_search "
-            "WHERE collection_capture_search MATCH ?",
-            ('"changed"',),
+            "WHERE collection_capture_search MATCH ? AND authority_key = ?",
+            ('"changed"', "local:one"),
         ).fetchone()[0] == "capture-1"
 
     with database.transaction() as connection:
@@ -364,9 +405,14 @@ def test_capture_search_triggers_follow_item_and_tag_changes(tmp_path: Path) -> 
     with database.connection() as connection:
         assert connection.execute(
             "SELECT capture_id FROM collection_capture_search "
-            "WHERE collection_capture_search MATCH ?",
-            ('"changed"',),
+            "WHERE collection_capture_search MATCH ? AND authority_key = ?",
+            ('"changed"', "local:one"),
         ).fetchone() is None
+        assert connection.execute(
+            "SELECT capture_id FROM collection_capture_search "
+            "WHERE collection_capture_search MATCH ? AND authority_key = ?",
+            ('"reader"', "local:two"),
+        ).fetchone()[0] == "capture-1"
     database.close()
 
 
