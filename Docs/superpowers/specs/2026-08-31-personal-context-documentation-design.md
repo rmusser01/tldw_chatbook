@@ -43,7 +43,7 @@ Both repositories will include a short matching contract statement:
 
 - `tldw_profile_core` defines the versioned canonical profile object models, exact canonical bytes, interview/tool contracts, serialization, and validation used by both peers. Sync-v2 transport envelopes are a separate contract.
 - After a successful reviewed link, Chatbook and tldw_server converge on the same canonical manifest, scope, record, proposal, and version identities and bytes for eligible shared objects.
-- Sync V2 transports the `personal_context.manifest`, `personal_context.scope`, `personal_context.record`, `personal_context.proposal`, and content-free `personal_context.purge` domains after capability negotiation.
+- Sync V2 defines the `personal_context.manifest`, `personal_context.scope`, `personal_context.record`, `personal_context.proposal`, and content-free `personal_context.purge` domains. The current linked flow publishes eligible Chatbook-originated manifest, scope, record, and proposal changes; purge production and distribution are not wired end to end.
 - Each peer retains its own at-rest ciphertext and keys, local database rows, runtime permissions, conflict-review metadata, acknowledgement tracking, and other operational state.
 
 The shared statement is intentionally short. Detailed client behavior belongs in Chatbook; API and server behavior belongs in tldw_server.
@@ -80,7 +80,7 @@ The documentation must distinguish the accepted architecture from the behavior a
 - Reviewed first-link reconciliation is available. A standalone Chatbook profile and an existing server profile remain separate until the user approves reconciliation and link completion succeeds.
 - Eligible Chatbook-originated changes can use the Personal Context Sync-v2 domains after linking.
 - Chatbook currently exposes **Remove local profile**. It does not expose a **Delete everywhere** action.
-- The server exposes authenticated `POST /purge`. It advances the purge barrier and leaves the server in `purge_pending`; completion through device acknowledgement is not implemented. User documentation must present this as a current limitation, not a routine recoverable workflow.
+- The server exposes authenticated `POST /purge`. It advances a server-local canonical purge fence and leaves the server in `purge_pending`; it does not publish a `personal_context.purge` Sync envelope, and completion through device acknowledgement is not implemented. User documentation must present this as a current limitation, not a routine recoverable workflow.
 - First-link collisions have a reviewed reconciliation surface. Normal post-link conflicts may be retained as generic Sync conflict metadata, but there is no dedicated Personal Context conflict-resolution screen.
 - The server REST API operates the canonical server copy, but ordinary server-origin record and proposal mutations are not currently published into the Personal Context Sync log for already-linked Chatbook clients. Chatbook is therefore the supported editing surface for changes expected to flow through the current shared sync path.
 
@@ -197,14 +197,16 @@ Canonical source remains under `Docs/`. `Docs/Published/` must be regenerated wi
 
 The user and developer documentation must distinguish these categories explicitly.
 
-| Synchronizes when eligible | Remains peer-local |
+| Shared through the current linked flow when eligible | Remains peer-local or is not currently published |
 | --- | --- |
 | Canonical manifest after successful reviewed linking | Peer-local at-rest encryption and recovery keys |
 | Required global and linked-workspace scope objects | Raw interview answers and unfinished drafts |
 | Records and tombstones whose controls permit synchronization | Runtime agent authority grants and tool availability |
 | Eligible proposals and their canonical review state | Device-only records or records marked non-syncable |
-| Content-free purge barrier | Conflict-review objects and acknowledgement tracking |
 | Exact canonical object identities, versions, and bytes for eligible shared objects | Local undo history, caches, ciphertext, database row identities, and other operational metadata |
+| — | Conflict-review objects and acknowledgement tracking |
+
+`personal_context.purge` exists at the protocol and adapter boundary, but the shipped Chatbook has no producer and server `POST /purge` does not publish that envelope. The server endpoint currently performs a server-local canonical purge and fence only; barrier distribution and acknowledgement completion are not a reachable end-to-end workflow.
 
 Wording must not imply that a shared logical record means peers share at-rest ciphertext, recovery keys, or physical database rows. Developer documentation must separately explain that the home server owns the Sync integrity key and distributes it wrapped for an authenticated registered Chatbook device during bootstrap; that transport key exchange is not synchronization of profile content or at-rest key custody.
 
@@ -217,7 +219,7 @@ The documentation will describe the lifecycle in prose and small tables:
 3. Direct-write authority permits only the narrow update of an existing eligible record for an explicit correction whose exact evidence appears in the current persisted user message.
 4. Accepted changes are stored as encrypted canonical records in the local peer repository.
 5. Eligible Chatbook-originated changes enter its outbox and synchronize with the configured home peer. Ordinary server REST mutations do not currently publish back to linked Chatbook clients.
-6. The peers transport eligible versions, tombstones, proposals, and the purge barrier. First-link collisions are reviewed before linking; later conflicts remain generic Sync metadata until a dedicated resolution surface exists.
+6. The peers transport eligible versions, tombstones, and proposals. First-link collisions are reviewed before linking; later conflicts remain generic Sync metadata until a dedicated resolution surface exists.
 7. Chatbook selects permitted global and current-workspace records for agent context and exposes the exact assembled body in **Next Send**.
 
 ## Failure and recovery guidance
@@ -230,8 +232,8 @@ Both user-facing guides must use consistent names and direct the reader to the o
 | Offline or queued | Local changes are safe but have not reached the home peer. | Continue locally where supported, then retry sync and inspect the outbox/status. |
 | Capability not negotiated | Peer versions do not share the required profile capability. | Upgrade the incompatible peer and retry; do not bypass negotiation. |
 | Version conflict | Both peers changed the same canonical object from different bases. | Preserve the conflict and inspect the generic Sync status/metadata. A dedicated Personal Context post-link resolver is not currently shipped; do not claim that Settings can resolve it. |
-| Semantic collision | Distinct record identities describe the same scope/kind/key. | Review both records and resolve intentionally; do not silently discard either. |
-| First-link conflict | A standalone local profile and server profile both contain context. | Reconcile the presented records before treating the profiles as one synchronized set. |
+| First-link semantic collision | Distinct local and server record identities describe the same scope/kind/key during reviewed linking. | Compare and resolve the presented records in the first-link reconciliation review before treating the profiles as one synchronized set. |
+| Post-link semantic collision | Distinct record identities describe the same scope/kind/key after linking. | Preserve both sides and inspect generic Sync status/metadata. No dedicated Personal Context resolver is currently shipped; do not claim that Settings can resolve it. |
 | Purge pending | The server purge barrier has advanced and ordinary mutations are blocked. | The current server cannot complete the acknowledgement workflow. State this limitation before an operator invokes `POST /purge`; do not promise that reconnecting devices will clear it. |
 
 ## Developer extension checklist
@@ -281,6 +283,8 @@ Implementation must occur in isolated worktrees so unrelated changes in existing
 - Confirm the generated diff contains only expected pages, navigation, and indexes.
 - Confirm published pages have no relative links to source-only `Docs/Design/` or `backlog/` paths.
 - Confirm the API reference no longer says Sync is wholly outside the server when the current Sync-v2 domains are present, while retaining the server-origin publication and purge-acknowledgement limitations.
+- Confirm the `tldw-profile-core==0.1.0` boundary against the vendored server package, parity tests, current digest authority, and governing ADR.
+- Confirm the guides distinguish protocol support for `personal_context.purge` from the absent producer/distribution/acknowledgement workflow.
 - Check Markdown formatting and repository diff hygiene.
 
 ### tldw_chatbook
