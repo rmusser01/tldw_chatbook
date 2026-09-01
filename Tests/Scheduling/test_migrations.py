@@ -1,5 +1,6 @@
 import sqlite3
 from contextlib import closing
+from datetime import datetime, timezone
 from pathlib import Path
 
 from tldw_chatbook.Scheduling.db.migrations import v0_to_v1
@@ -43,13 +44,14 @@ def _table_names(conn: sqlite3.Connection) -> set[str]:
 
 
 def test_migration_v0_to_v1(tmp_path):
-    # A fresh ScheduledTasksDB runs the full chain: v0 -> v1 -> v2 -> v3
-    # (v2 = missed_count, task-18937; v3 = timeout_seconds, task-18939).
-    # The individual hops are covered in test_missed_fire.py and
-    # test_handler_timeout.py; what this pins is that a fresh database
-    # reaches the current version end-to-end.
+    # A fresh ScheduledTasksDB runs the full chain: v0 -> v1 -> v2 -> v3 -> v4
+    # (v2 = missed_count, task-18937; v3 = timeout_seconds, task-18939; v4 =
+    # automation runs/results, schedules-handoff §4). The individual hops
+    # are covered in test_missed_fire.py, test_handler_timeout.py, and this
+    # file's v4 tests; what this pins is that a fresh database reaches the
+    # current version end-to-end.
     db = ScheduledTasksDB(tmp_path / "test.db")
-    assert db.get_schema_version() == 3
+    assert db.get_schema_version() == 4
 
 
 def test_migration_v0_to_v1_directly(tmp_path):
@@ -67,7 +69,7 @@ def test_migration_v0_to_v1_directly(tmp_path):
 
 def test_migration_v0_to_v1_to_v0_rollback(tmp_path):
     db = ScheduledTasksDB(tmp_path / "test.db")
-    assert db.get_schema_version() == 3
+    assert db.get_schema_version() == 4
 
     v0_to_v1.rollback(db)
 
@@ -76,3 +78,43 @@ def test_migration_v0_to_v1_to_v0_rollback(tmp_path):
         tables = _table_names(conn)
     scheduling_tables = _EXPECTED_TABLES - {"schema_version"}
     assert scheduling_tables.isdisjoint(tables)
+
+
+def test_v4_creates_runs_and_results_tables(tmp_path):
+    db = ScheduledTasksDB(str(tmp_path / "s.db"), client_id="t")
+    with closing(db._get_connection()) as conn:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+    assert {"automation_runs", "automation_results"} <= tables
+    assert db.get_schema_version() == 4
+
+
+def test_v4_adds_definition_and_reminder_columns(tmp_path):
+    db = ScheduledTasksDB(str(tmp_path / "s.db"), client_id="t")
+    with closing(db._get_connection()) as conn:
+        def_cols = {r[1] for r in conn.execute("PRAGMA table_info(automation_definitions)")}
+        rem_cols = {r[1] for r in conn.execute("PRAGMA table_info(reminder_tasks)")}
+    assert {
+        "disabled_lock_kind", "disabled_reason", "resolution_state",
+        "resolved_at", "resolved_by", "resolved_result_id",
+        "finding_policy", "retention_policy", "next_run_at", "transfer_state",
+    } <= def_cols
+    assert "transfer_state" in rem_cols
+
+
+def test_v4_preserves_existing_rows_and_is_idempotent(tmp_path):
+    path = str(tmp_path / "s.db")
+    db = ScheduledTasksDB(path, client_id="t")
+    task_id = db.create_reminder_task(
+        owner_id="local", title="keep me", schedule_kind="one_time",
+        run_at=datetime(2027, 1, 1, tzinfo=timezone.utc),
+    )
+    from tldw_chatbook.Scheduling.db.migrations.v3_to_v4 import migrate
+    migrate(db)  # second application must be a no-op
+    row = db.get_reminder_task(task_id)
+    assert row is not None and row["title"] == "keep me"
+    assert db.get_schema_version() == 4

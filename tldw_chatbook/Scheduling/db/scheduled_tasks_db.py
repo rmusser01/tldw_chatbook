@@ -26,7 +26,7 @@ from tldw_chatbook.DB.sql_validation import validate_identifier
 class ScheduledTasksDB(BaseDB):
     """Database operations for scheduled tasks and reminders."""
 
-    _CURRENT_SCHEMA_VERSION = 3
+    _CURRENT_SCHEMA_VERSION = 4
 
     _REMINDER_TASK_COLUMNS = {
         "id",
@@ -75,6 +75,16 @@ class ScheduledTasksDB(BaseDB):
         "created_at",
         "updated_at",
         "archived_at",
+        "disabled_lock_kind",
+        "disabled_reason",
+        "resolution_state",
+        "resolved_at",
+        "resolved_by",
+        "resolved_result_id",
+        "finding_policy",
+        "retention_policy",
+        "next_run_at",
+        "transfer_state",
     }
 
     _AUTOMATION_AUDIT_EVENT_COLUMNS = {
@@ -100,6 +110,8 @@ class ScheduledTasksDB(BaseDB):
         "visibility_policy",
         "notification_policy",
         "approval_policy",
+        "finding_policy",
+        "retention_policy",
     }
 
     _AUDIT_JSON_FIELDS = {
@@ -179,8 +191,10 @@ class ScheduledTasksDB(BaseDB):
         their condition structurally (the presence of their column), which
         is memory-correct: an empty memory database runs v0_to_v1, finds
         no ``missed_count``, adds it, finds no ``timeout_seconds``, adds
-        it, and every step lands on a consistent v3 schema even though
-        each step sees its own connection.
+        it, finds no ``automation_runs``/``automation_results`` tables,
+        adds those and the v4 columns, and every step lands on a
+        consistent v4 schema even though each step sees its own
+        connection.
         """
         from tldw_chatbook.Scheduling.db.migrations.v0_to_v1 import (
             migrate as migrate_v0_to_v1,
@@ -191,10 +205,14 @@ class ScheduledTasksDB(BaseDB):
         from tldw_chatbook.Scheduling.db.migrations.v2_to_v3 import (
             migrate as migrate_v2_to_v3,
         )
+        from tldw_chatbook.Scheduling.db.migrations.v3_to_v4 import (
+            migrate as migrate_v3_to_v4,
+        )
 
         migrate_v0_to_v1(self)
         migrate_v1_to_v2(self)
         migrate_v2_to_v3(self)
+        migrate_v3_to_v4(self)
 
     def get_schema_version(self) -> int:
         """Return the currently recorded schema version."""
