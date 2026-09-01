@@ -211,6 +211,16 @@ markedly worse on dev than on the branch. Earlier full-file runs of this file
 races. No owner assigned here; recorded so the next sweep does not re-derive
 it.
 
+## Sixth finding (2026-09-01, TASK-26837 sweep): three composer reds on dev
+
+`test_console_command_composer.py` fails identically on pristine `origin/dev`
+and on the TASK-26837 branch (whole file, `-p no:randomly`):
+`test_raw_cli_collapsed_state_retains_danger_label_and_one_row_geometry`,
+`test_console_unknown_command_second_unmodified_enter_sends_as_text`,
+`test_console_collapsed_paste_starting_with_slash_sends_normally` --
+3 failed / 100 passed both trees. Pre-existing, owner unknown, recorded so
+the next sweep does not re-derive them.
+
 ## Notes
 
 Filed in the same spirit as TASK-15512. `origin/dev` had by this point absorbed
