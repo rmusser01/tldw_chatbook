@@ -176,3 +176,20 @@ async def test_briefing_handler_without_recorder_always_notifies(tmp_path):
     await handler._notify_error(7, signature="ConnectionError: down")
     await handler._notify_error(7, signature="ConnectionError: down")
     assert dispatch.calls == 2, "no recorder = today's behavior (always notify)"
+
+
+def test_format_incidents_shows_open_only_newest_first():
+    from tldw_chatbook.UI.Screens.scheduling.task_detail import format_incidents
+
+    assert "No open incidents" in format_incidents(None)
+    assert "No open incidents" in format_incidents(
+        [{"status": "closed", "occurrence_count": 3, "signature": "x"}]
+    )
+    rendered = format_incidents(
+        [
+            {"status": "alerting", "occurrence_count": 5, "signature": "ConnErr"},
+            {"status": "closed", "occurrence_count": 1, "signature": "old"},
+        ]
+    )
+    assert "alerting" in rendered and "×5" in rendered and "ConnErr" in rendered
+    assert "old" not in rendered, "closed incidents are not shown"

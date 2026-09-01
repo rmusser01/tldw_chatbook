@@ -28,6 +28,7 @@ from ....runtime_policy.bootstrap import set_authoritative_runtime_source
 from ....Scheduling.events import (
     DeleteTaskRequested,
     DisableTaskRequested,
+    AcknowledgeIncidentRequested,
     EditTaskRequested,
     EnableTaskRequested,
     RunReminderNowRequested,
@@ -549,6 +550,25 @@ class SchedulesWorkbench(BaseAppScreen):
         """Update the detail pane when the user highlights a task row."""
         self._update_detail_for_index(event.cursor_row)
 
+    def _incidents_for(self, task_id) -> list:
+        """TASK-26027: the selected task's failure incidents (fail-safe).
+
+        Reminders key their incidents by the raw task id; briefings (whose
+        failures the briefing handler records) key by "briefing:<id>", so
+        both spellings are queried.
+        """
+        db = getattr(self._scheduling_service, "db", None)
+        reader = getattr(db, "list_task_incidents", None)
+        if not callable(reader):
+            return []
+        rows: list = []
+        for key in (str(task_id), f"briefing:{task_id}"):
+            try:
+                rows.extend(reader(key, limit=10))
+            except Exception:  # noqa: BLE001 -- never breaks the pane
+                pass
+        return rows
+
     def _run_history_for(self, task_id) -> list:
         """TASK-26026: the selected task's durable run history, newest first.
 
@@ -578,7 +598,9 @@ class SchedulesWorkbench(BaseAppScreen):
         task = self._visible_tasks[index]
         self._selected_task_id = task.id
         self.query_one("#scheduling-task-detail", TaskDetail).set_task(
-            task, run_history=self._run_history_for(task.id)
+            task,
+            run_history=self._run_history_for(task.id),
+            incidents=self._incidents_for(task.id),
         )
         self.query_one("#scheduling-task-inspector", TaskInspector).set_task(task)
 
@@ -835,6 +857,29 @@ class SchedulesWorkbench(BaseAppScreen):
             exclusive=True,
             group="schedules-save-reminder",
         )  # type: ignore[arg-type]
+
+    @on(AcknowledgeIncidentRequested)
+    def _on_acknowledge_incident(self, event) -> None:
+        """TASK-26027: acknowledge one incident, then refresh the detail."""
+        event.stop()
+        db = getattr(self._scheduling_service, "db", None)
+        ack = getattr(db, "acknowledge_incident", None)
+        if not callable(ack):
+            return
+        try:
+            from datetime import datetime, timezone
+
+            ack(int(event.incident_id), datetime.now(timezone.utc))
+        except Exception:  # noqa: BLE001 -- ack failure never breaks the screen
+            logger.debug("acknowledge_incident failed")
+            return
+        # re-render the detail so the acked incident drops out of the
+        # alerting set and the button hides.
+        if self._selected_task_id is not None:
+            for index, task in enumerate(self._visible_tasks):
+                if task.id == self._selected_task_id:
+                    self._update_detail_for_index(index)
+                    break
 
     @on(EditTaskRequested)
     def _on_edit_task_requested(self, event: EditTaskRequested) -> None:

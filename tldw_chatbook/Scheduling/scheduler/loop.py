@@ -386,7 +386,10 @@ class SchedulerLoop:
             self._last_success_at = tick_at
         else:
             self._last_error = error
-        path = self._heartbeat_path or default_heartbeat_path()
+        try:
+            path = self._heartbeat_path or default_heartbeat_path()
+        except Exception:  # noqa: BLE001 -- resolution must not mask a tick error
+            return
         write_heartbeat(
             path,
             SchedulerHeartbeat(
@@ -490,14 +493,13 @@ class SchedulerLoop:
                 run_id, "preflight_failed", now, error=preflight_reason
             )
             self._record_preflight_incident(task, task_type, task_id, preflight_reason)
-            if task_type == "reminder" and task_id:
-                await asyncio.to_thread(
-                    self.db.mark_reminder_dispatched,
-                    task_id,
-                    now,
-                    False,
-                    grace_seconds=self.missed_fire_grace_seconds,
-                )
+            # AC#3 (review minor #2): a failed preflight must NOT consume the
+            # occurrence -- calling mark_reminder_dispatched would disable a
+            # one_time reminder forever (enabled=False, next_run_at=None),
+            # hiding the very problem the preflight surfaced. The task stays
+            # due so it retries once the precondition is fixed; the grouped
+            # incident (recorded above) prevents notification spam. It never
+            # ran, so there is no dispatch to record on the task row.
             return False
         timeout = self._effective_timeout_seconds(task)
         timed_out = False

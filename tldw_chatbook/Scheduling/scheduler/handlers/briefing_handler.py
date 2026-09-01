@@ -455,6 +455,13 @@ class BriefingJobHandler:
                 return
             # TASK-26027 AC#4: a completed brief resolves any open incident
             # for this watchlist, so a later recurrence alerts afresh.
+            # Conscious ruling (lane-5 review minors #3/#4): only a genuine
+            # COMPLETE closes -- a STATUS_EMPTY run "ran fine, no news" is not
+            # treated as resolving a prior crash (a recurrence of the SAME
+            # signature is the one the user was already alerted on), and an
+            # in-band STATUS_FAILED keeps its own per-run "needs attention"
+            # notice rather than routing through incident grouping (only
+            # UNCAUGHT exceptions, via _notify_error, group).
             if status == STATUS_COMPLETE:
                 self._close_incident(watchlist_id)
             name = await asyncio.to_thread(self._watchlist_name, watchlist_id)

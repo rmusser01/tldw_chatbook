@@ -78,7 +78,7 @@ single durable **incident** — only the first failure of a signature alerts;
 the rest are recorded silently. A different error opens its own incident. A
 successful run resolves the incident, so a later recurrence alerts afresh.
 Incidents survive restarts, and acknowledging one suppresses its
-notifications only — it never disables the task or removes it from the queue.
+notifications only — it never disables the task or removes it from the queue. The Task Detail pane lists a task's open incidents and offers an **Acknowledge incident** button when one is alerting.
 
 ## Run history
 

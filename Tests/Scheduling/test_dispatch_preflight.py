@@ -119,3 +119,33 @@ async def test_no_preflight_dispatches_exactly_as_today(tmp_path):
     )
     assert ok is True
     assert ran["handler"] is True
+
+
+@pytest.mark.asyncio
+async def test_preflight_failure_does_not_consume_the_occurrence(tmp_path):
+    """Review minor #2 / AC#3: a failed preflight must not disable a
+    one_time reminder (which would hide the problem) -- the task stays
+    due so it retries once the precondition is fixed, with the incident
+    grouping preventing notification spam."""
+    loop = _loop(tmp_path)
+    marked = {"called": False}
+
+    def _mark(*a, **k):
+        marked["called"] = True
+
+    loop.db.mark_reminder_dispatched = _mark  # type: ignore[assignment]
+
+    async def handler(task):
+        pass
+
+    handler.preflight = lambda task: (False, "provider key removed")
+    await loop.dispatch_reminder(
+        {"id": "t1", "owner_id": "local", "type": "reminder"},
+        handler,
+        "reminder",
+        _t(0),
+        scheduled=False,
+    )
+    assert marked["called"] is False, (
+        "a preflight failure must not consume/advance the occurrence"
+    )
