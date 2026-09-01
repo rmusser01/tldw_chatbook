@@ -32,6 +32,7 @@ from tldw_chatbook.Workspaces.file_inspector import (
     FileRevision,
     FileReadKind,
     FileReadResult,
+    FilterProgress,
     FilterResult,
     FilterStatus,
 )
@@ -50,7 +51,7 @@ class _Inspector:
             (DirectoryEntry(("unsafe[bold]\\n",), "unsafe[bold]\\n", False),),
         )
 
-    def filter_paths(self, scope: BindingScope, query: str, *, is_cancelled=None):
+    def filter_paths(self, scope: BindingScope, query: str, *, is_cancelled=None, on_progress=None):
         self.calls.append(("filter", (scope, query)))
         return FilterResult(FilterStatus.EMPTY, status_copy="No matching paths.")
 
@@ -618,6 +619,58 @@ async def test_filter_enter_cancel_and_clear_restore_the_directory_view() -> Non
         await pilot.pause()
         assert modal.state.filter_query == ""
         assert sum(name == "list" for name, _call in inspector.calls) == list_calls_before_clear
+
+
+@pytest.mark.asyncio
+async def test_filter_progress_is_rendered_and_stale_worker_updates_cannot_overwrite_new_binding() -> None:
+    """Catch the omitted progress bridge or a stale worker repainting a new binding."""
+    entered = Event()
+    release = Event()
+
+    class _ProgressInspector(_Inspector):
+        def filter_paths(self, scope, query, *, is_cancelled=None, on_progress=None):
+            self.calls.append(("filter", (scope, query)))
+            if on_progress is None:
+                return FilterResult(FilterStatus.EMPTY, status_copy="No matching paths.")
+            on_progress(FilterProgress(3, 1))
+            entered.set()
+            release.wait(timeout=1)
+            on_progress(FilterProgress(99, 99))
+            return FilterResult(FilterStatus.EMPTY, status_copy="No matching paths.")
+
+    modal = ConsoleWorkspaceFilesModal(
+        inspector=_ProgressInspector([]),
+        inspected_workspace_id="ws-a",
+        inspected_workspace_name="A",
+        active_workspace_id="ws-a",
+        active_workspace_name="A",
+        bindings=(
+            WorkspaceFilesBinding("binding-a", "Old", _scope()),
+            WorkspaceFilesBinding("binding-b", "New", _scope()),
+        ),
+    )
+    app = _Host()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal._request_filter("old")
+        for _ in range(50):
+            if entered.is_set() and "3 visited" in modal.state.status_copy:
+                break
+            await pilot.pause(0.02)
+        assert entered.is_set()
+        assert "3 visited" in modal.state.status_copy
+        assert "1 result" in modal.state.status_copy
+
+        await pilot.click("#console-workspace-files-binding-1")
+        release.set()
+        for _ in range(50):
+            if modal.owned_lane_count == 0:
+                break
+            await pilot.pause(0.02)
+        assert modal.state.selected_binding_id == "binding-b"
+        assert "99 visited" not in modal.state.status_copy
+        assert "99 result" not in modal.state.status_copy
 
 
 @pytest.mark.asyncio

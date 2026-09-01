@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
+from threading import Lock
 from typing import Any, Protocol
 
 from rich.text import Text
@@ -21,6 +22,7 @@ from textual.css.query import NoMatches
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Resize
 from textual.geometry import Size
+from textual.message import Message
 from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widgets import Button, Input, Static
@@ -34,6 +36,7 @@ from tldw_chatbook.Workspaces.file_inspector import (
     FileReadKind,
     FileReadResult,
     FileRef,
+    FilterProgress,
     FilterResult,
 )
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
@@ -56,6 +59,7 @@ class WorkspaceFilesService(Protocol):
         query: str,
         *,
         is_cancelled: Callable[[], bool] | None = None,
+        on_progress: Callable[[FilterProgress], None] | None = None,
     ) -> FilterResult: ...
 
     def read_file(
@@ -125,6 +129,10 @@ class _LaneRequest:
     operation: Callable[[], Any]
     publish: Callable[[Any], Awaitable[None]]
     can_publish: Callable[[], bool] | None = None
+
+
+class _FilterProgressReady(Message):
+    """A single queued notification that the latest worker progress is ready."""
 
 
 class _OperationLane:
@@ -254,6 +262,10 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
         self._workspace_files_closing = False
         self._status_sync_deferred = False
         self._filter_timer: Timer | None = None
+        self._filter_progress_lock = Lock()
+        self._filter_progress_token = 0
+        self._filter_progress_pending: tuple[int, int, FilterProgress] | None = None
+        self._filter_progress_scheduled = False
         self._pre_filter_tree_state: WorkspaceFilesViewState | None = None
         self._tree_entries: dict[str, Any] = {}
         self._tree_more: dict[str, tuple[tuple[str, ...], DirectoryContinuation]] = {}
@@ -397,7 +409,55 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
 
     def _next_generation(self) -> int:
         self._generation += 1
+        self._clear_filter_progress()
         return self._generation
+
+    def _clear_filter_progress(self) -> None:
+        """Fence queued worker progress so terminal/newer state always wins."""
+        with self._filter_progress_lock:
+            self._filter_progress_token += 1
+            self._filter_progress_pending = None
+
+    @staticmethod
+    def _filter_progress_copy(progress: FilterProgress) -> str:
+        result_label = "result" if progress.matched_entries == 1 else "results"
+        return (
+            "Searching paths… "
+            f"{progress.visited_entries} visited · "
+            f"{progress.matched_entries} {result_label}."
+        )
+
+    def _queue_filter_progress_from_worker(
+        self, generation: int, token: int, progress: FilterProgress
+    ) -> None:
+        """Coalesce worker snapshots into one UI notification at a time."""
+        with self._filter_progress_lock:
+            if token != self._filter_progress_token:
+                return
+            self._filter_progress_pending = (generation, token, progress)
+            if self._filter_progress_scheduled:
+                return
+            self._filter_progress_scheduled = True
+        if not self.post_message(_FilterProgressReady()):
+            with self._filter_progress_lock:
+                self._filter_progress_scheduled = False
+
+    @on(_FilterProgressReady)
+    def _publish_queued_filter_progress(self) -> None:
+        """Paint only the latest still-current worker progress snapshot."""
+        with self._filter_progress_lock:
+            pending = self._filter_progress_pending
+            self._filter_progress_pending = None
+            self._filter_progress_scheduled = False
+        if pending is None:
+            return
+        generation, token, progress = pending
+        if token != self._filter_progress_token or not self._can_publish(generation):
+            return
+        self._state = replace(
+            self._state, status_copy=self._filter_progress_copy(progress)
+        )
+        self._sync_status()
 
     def _page_for(self, directory_parts: tuple[str, ...]) -> DirectoryPage | None:
         if directory_parts == ():
@@ -566,6 +626,8 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
                 self._state, filter_query="", filter_result=None
             )
         generation = self._next_generation()
+        with self._filter_progress_lock:
+            progress_token = self._filter_progress_token
         self._state = replace(self._state, filter_query=query, filter_result=None, status_copy="Searching paths…")
         self._sync_status()
         self._filter_lane.submit(
@@ -576,12 +638,16 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
                     query,
                     is_cancelled=lambda: self._workspace_files_closing
                     or generation != self._generation,
+                    on_progress=lambda progress: self._queue_filter_progress_from_worker(
+                        generation, progress_token, progress
+                    ),
                 ),
                 self._publish_filter,
             )
         )
 
     async def _publish_filter(self, result: FilterResult) -> None:
+        self._clear_filter_progress()
         self._state = replace(self._state, filter_result=result, status_copy=result.status_copy or f"Filter {result.status.value}.")
         await self._render_tree()
         self._sync_status()
