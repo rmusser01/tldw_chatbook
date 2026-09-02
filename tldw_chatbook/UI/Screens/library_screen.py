@@ -3999,8 +3999,11 @@ class LibraryScreen(BaseAppScreen):
         # ever replaced wholesale (a fetch settles) or cleared to None,
         # never mutated in place, so its identity is a sound document
         # marker; the None sentinel guarantees the first lookup misses.
+        # task-28026: keyed by (detail, query, MODE) -- the Read and Analysis
+        # tabs search different corpora of the same detail, so the mode is
+        # part of the key or a tab switch would serve the other tab's matches.
         self._library_media_content_match_memo: (
-            tuple[Any, str, tuple[int, ...]] | None
+            tuple[Any, str, tuple[int, ...], str] | None
         ) = None
         # LIB-13: "rendered" (Markdown, via the same render path Notes
         # Preview uses) or "raw" (plain/highlighted text). Reseeded per
@@ -42815,7 +42818,11 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, ".library-media-reader-mode")
     def handle_library_media_reader_mode(self, event: Button.Pressed) -> None:
-        """Select one permanent Reader mode without reloading the item."""
+        """Select one permanent Reader mode without reloading the item.
+
+        Args:
+            event: The Reader mode button press; its id names the target mode.
+        """
         event.stop()
         button_id = str(event.button.id or "")
         prefix = "library-media-reader-select-"
@@ -42825,6 +42832,7 @@ class LibraryScreen(BaseAppScreen):
         self._capture_library_media_loaded_progress()
         if mode == "read":
             self._library_media_progress_restored_id = None
+        self._reset_library_media_search_on_mode_change(mode)
         self._library_media_reader_session = set_mode(
             self._library_media_reader_session,
             mode,  # type: ignore[arg-type]
@@ -42837,6 +42845,24 @@ class LibraryScreen(BaseAppScreen):
                     self._restore_library_media_loaded_progress, loaded_id
                 )
 
+    def _reset_library_media_search_on_mode_change(self, new_mode: str) -> None:
+        """Drop the in-item search when the Reader actually changes tab.
+
+        task-28026: each Reader tab searches its own corpus (the analysis
+        text vs the transcript), so a real mode transition clears the active
+        query, its match index, and the one-slot match memo rather than
+        carrying one tab's highlights -- and a possibly out-of-range match
+        index -- onto the other tab's text. A no-op re-press of the current
+        mode leaves the search intact.
+
+        Args:
+            new_mode: The Reader mode being switched to.
+        """
+        if new_mode != self._library_media_reader_session.mode:
+            self._library_media_content_query = ""
+            self._library_media_content_match_index = 0
+            self._library_media_content_match_memo = None
+
     def _capture_library_media_loaded_progress(self) -> None:
         """Snapshot and queue persistence of the local content body's offset.
 
@@ -42848,8 +42874,13 @@ class LibraryScreen(BaseAppScreen):
         """
         session = self._library_media_reader_session
         loaded_id = session.loaded_id
+        # task-28026: only the Read tab's content body carries transcript
+        # reading progress. The Analysis tab reuses the same
+        # #library-media-viewer-content id, so a capture taken in any other
+        # mode would persist an unrelated scroll offset as transcript progress.
         if (
             session.external_detail
+            or session.mode != "read"
             or loaded_id is None
             or not loaded_id.startswith("local:media:")
         ):
@@ -42982,8 +43013,16 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-media-reader-find")
     def handle_library_media_reader_find(self, event: Button.Pressed) -> None:
-        """Take Find to the loaded item's content body."""
+        """Take Find to the loaded item's content body.
+
+        Args:
+            event: The Find button press.
+        """
         event.stop()
+        # task-28026: Find is a real Analysis->Read transition too, so it
+        # clears any active analysis search before focusing the transcript
+        # find bar -- the same reset the Reader mode buttons apply.
+        self._reset_library_media_search_on_mode_change("read")
         self._library_media_reader_session = set_mode(
             self._library_media_reader_session, "read"
         )
@@ -43175,17 +43214,24 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_content_match_memo = None
             return ()
         query = self._library_media_content_query
+        # task-28026: the Analysis tab searches the analysis text; every other
+        # mode searches the transcript. Mode is part of the memo key.
+        mode = self._library_media_reader_session.mode
         memo = self._library_media_content_match_memo
-        if memo is not None and memo[0] is detail and memo[1] == query:
+        if (
+            memo is not None
+            and memo[0] is detail
+            and memo[1] == query
+            and memo[3] == mode
+        ):
             return memo[2]
-        matches = find_content_matches(
-            # task-22208 memoizes the viewer state per detail arrival; going
-            # through it keeps this memo's miss path from re-copying the whole
-            # document that 22208 already built for this same arrival.
-            self._library_media_viewer_state_cached(detail).content,
-            query,
-        )
-        self._library_media_content_match_memo = (detail, query, matches)
+        # task-22208 memoizes the viewer state per detail arrival; going
+        # through it keeps this memo's miss path from re-copying the whole
+        # document that 22208 already built for this same arrival.
+        viewer_state = self._library_media_viewer_state_cached(detail)
+        corpus = viewer_state.analysis if mode == "analysis" else viewer_state.content
+        matches = find_content_matches(corpus, query)
+        self._library_media_content_match_memo = (detail, query, matches, mode)
         return matches
 
     def _advance_library_media_content_match(self, step: int) -> None:

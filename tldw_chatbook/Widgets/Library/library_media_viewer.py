@@ -571,12 +571,12 @@ class LibraryMediaViewer(Vertical):
         if self.editing_analysis:
             yield from self._compose_analysis_edit_form()
             return
-        yield Static(
-            self.viewer.analysis or "No analysis yet.",
-            id="library-media-viewer-analysis-text",
-            markup=False,
-        )
         if self.generating_analysis:
+            yield Static(
+                self.viewer.analysis or "No analysis yet.",
+                id="library-media-viewer-analysis-text",
+                markup=False,
+            )
             yield Static(
                 "Generating analysis…",
                 id="library-media-analysis-generating",
@@ -584,6 +584,35 @@ class LibraryMediaViewer(Vertical):
                 markup=False,
             )
             return
+        if self.viewer.analysis:
+            # task-28026: render the analysis in the SAME searchable/
+            # highlightable widgets the Read tab uses, so the in-item find
+            # bar works over the analysis text. The screen's search corpus
+            # (_library_media_content_matches) is mode-aware, so the query,
+            # match count, Prev/Next, and Enter-advance all follow the
+            # active tab. Analysis is plain text -> raw mode, not Markdown.
+            matches = find_content_matches(self.viewer.analysis, self.content_query)
+            yield LibraryMediaContentSearchControls(
+                is_markdown=False,
+                query=self.content_query,
+                matches=matches,
+                match_index=self.content_match_index,
+                id="library-media-content-search-controls",
+            )
+            yield LibraryMediaContentBody(
+                content=self.viewer.analysis,
+                is_markdown=False,
+                mode="raw",
+                query=self.content_query,
+                match_index=self.content_match_index,
+                id="library-media-viewer-content",
+            )
+        else:
+            yield Static(
+                "No analysis yet.",
+                id="library-media-viewer-analysis-text",
+                markup=False,
+            )
         with Horizontal(classes="ds-toolbar"):
             yield Button(
                 "Edit analysis" if self.viewer.analysis else "Add analysis",

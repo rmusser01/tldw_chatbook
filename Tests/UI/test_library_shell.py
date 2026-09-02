@@ -10328,10 +10328,12 @@ async def test_library_shell_media_viewer_shows_analysis_from_latest_version():
         screen.query_one("#library-media-row-1").press()
         await _wait_for_selector(screen, pilot, "#library-media-reader-select-analysis")
         screen.query_one("#library-media-reader-select-analysis", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-media-viewer-analysis-text")
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
 
+        # task-28026: a non-empty analysis renders in the searchable content
+        # body (its raw text is on ``.content``), not the plain Static.
         analysis_text = str(
-            screen.query_one("#library-media-viewer-analysis-text").renderable
+            screen.query_one("#library-media-viewer-content").content
         )
         assert analysis_text == "Roadmap analysis"
 
@@ -10421,8 +10423,10 @@ async def test_library_shell_media_analysis_save_persists_and_exits_edit_mode():
 
         assert screen._library_media_editing_analysis is False
         assert not screen.query("#library-media-analysis-edit-text")
+        # task-28026: a non-empty analysis renders in the searchable content
+        # body (its raw text is on ``.content``), not the plain Static.
         analysis_text = str(
-            screen.query_one("#library-media-viewer-analysis-text").renderable
+            screen.query_one("#library-media-viewer-content").content
         )
         assert analysis_text == "Revised analysis"
 
@@ -10462,8 +10466,10 @@ async def test_library_shell_media_analysis_cancel_discards():
 
         assert screen._library_media_editing_analysis is False
         assert not screen.query("#library-media-analysis-edit-text")
+        # task-28026: a non-empty analysis renders in the searchable content
+        # body (its raw text is on ``.content``), not the plain Static.
         analysis_text = str(
-            screen.query_one("#library-media-viewer-analysis-text").renderable
+            screen.query_one("#library-media-viewer-content").content
         )
         assert analysis_text == "Existing analysis"
 
@@ -33725,3 +33731,103 @@ async def test_commit_line_stays_visible_and_synced_while_a_gate_blocks(
         await pilot.pause()
         assert summary.display is True
         assert "1 will import" in str(summary.renderable)
+
+
+def _media_item_with_multiline_analysis():
+    """A media item whose analysis has two lines containing "budget"."""
+    items = _two_media_items()
+    items[0]["versions"] = [
+        {
+            "version_number": 1,
+            "analysis_content": "\n".join(
+                [
+                    "Summary intro line.",
+                    "The budget outlook is covered here.",
+                    "A neutral middle line.",
+                    "Second budget mention appears here too.",
+                ]
+            ),
+        }
+    ]
+    return items
+
+
+@pytest.mark.asyncio
+async def test_library_media_analysis_tab_is_searchable():
+    """task-28026: the Analysis tab has a search box that finds analysis matches."""
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), media=_media_item_with_multiline_analysis()
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(
+            screen, pilot, "#library-media-reader-select-analysis"
+        )
+        screen.query_one("#library-media-reader-select-analysis", Button).press()
+        # Wait for the analysis tab to settle (its Edit action is the stable
+        # signal the existing analysis tests use) before searching.
+        await _wait_for_selector(screen, pilot, "#library-media-analysis-edit")
+        search = screen.query_one("#library-media-content-search", Input)
+
+        search.value = "budget"
+        search.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(
+                screen.query("#library-media-content-search-status")
+            )
+            and str(
+                screen.query("#library-media-content-search-status")
+                .first()
+                .renderable
+            )
+            == "Match 1 of 2 matches",
+            message="Analysis-tab search did not report its two matches.",
+        )
+        # Two analysis lines contain "budget" -> the search corpus is the
+        # analysis text, not the (empty here) transcript.
+
+
+@pytest.mark.asyncio
+async def test_library_media_switching_tabs_clears_the_search():
+    """task-28026: switching Reader tabs re-scopes -- the search does not carry over."""
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), media=_media_item_with_multiline_analysis()
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        # Read tab: search the transcript.
+        search = await _wait_for_selector(
+            screen, pilot, "#library-media-content-search"
+        )
+        search.value = "roadmap"
+        search.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert screen._library_media_content_query == "roadmap"
+
+        # Switching to the Analysis tab drops the transcript search rather than
+        # carrying its query/highlights onto the analysis text.
+        screen.query_one("#library-media-reader-select-analysis", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-analysis-edit")
+        assert screen._library_media_content_query == ""
+        assert screen._library_media_content_match_index == 0
