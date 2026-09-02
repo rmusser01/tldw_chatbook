@@ -39,6 +39,13 @@ from urllib3.util.retry import Retry
 
 #
 # Import Local libraries
+from tldw_chatbook.LLM_Calls.anthropic_subscription import (
+    MISSING_CREDENTIAL_MESSAGE,
+    STALE_CREDENTIAL_MESSAGE,
+    anthropic_auth_source,
+    read_claude_code_credential,
+    subscription_headers_for_token,
+)
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAPIError,
     ChatAuthenticationError,
@@ -1355,12 +1362,28 @@ def chat_with_anthropic(
     loaded_config_data = load_settings()
     anthropic_config = loaded_config_data.get("anthropic_api", {})
     final_api_key = api_key or anthropic_config.get("api_key")
-    if not final_api_key:
+    # TASK-26022: explicit opt-in subscription auth. Read-only borrow of the
+    # Claude Code credential; a missing/expired credential FAILS with a clear
+    # message rather than silently falling back to (and billing) an API key.
+    subscription_token: Optional[str] = None
+    if anthropic_auth_source(anthropic_config) == "claude_subscription":
+        _sub_cred = read_claude_code_credential()
+        if _sub_cred is None:
+            raise ChatConfigurationError(
+                provider="anthropic", message=MISSING_CREDENTIAL_MESSAGE
+            )
+        if _sub_cred.expired:
+            raise ChatConfigurationError(
+                provider="anthropic", message=STALE_CREDENTIAL_MESSAGE
+            )
+        subscription_token = _sub_cred.access_token
+        logger.debug("Anthropic: using Claude subscription credential (read-only).")
+    elif not final_api_key:
         raise ChatConfigurationError(
             provider="anthropic", message="Anthropic API Key is required."
         )
-
-    logger.debug("Anthropic: API key provided.")
+    else:
+        logger.debug("Anthropic: API key provided.")
 
     current_model = model or anthropic_config.get("model", "claude-sonnet-5")
     default_temperature = float(anthropic_config.get("temperature", 0.7))
@@ -1539,10 +1562,14 @@ def chat_with_anthropic(
         )
 
     headers = {
-        "x-api-key": final_api_key,
         "anthropic-version": anthropic_config.get("api_version", "2023-06-01"),
         "Content-Type": "application/json",
     }
+    if subscription_token is not None:
+        # TASK-26022: the subscription path replaces x-api-key entirely.
+        headers.update(subscription_headers_for_token(subscription_token))
+    else:
+        headers["x-api-key"] = final_api_key
     caching_active = (
         _anthropic_supports_caching(current_model) and _anthropic_caching_enabled()
     )
@@ -1646,7 +1673,13 @@ def chat_with_anthropic(
     # TASK-26014: the 1h tier is a beta opt-in -- add the header iff a 1h
     # marker actually made it into the payload (never on the 5m default).
     if _contains_extended_ttl(data):
-        headers["anthropic-beta"] = _EXTENDED_CACHE_TTL_BETA
+        # merge with any beta already present (the subscription oauth flag)
+        existing_beta = headers.get("anthropic-beta")
+        headers["anthropic-beta"] = (
+            f"{existing_beta},{_EXTENDED_CACHE_TTL_BETA}"
+            if existing_beta
+            else _EXTENDED_CACHE_TTL_BETA
+        )
 
     api_url = (
         api_base_url
