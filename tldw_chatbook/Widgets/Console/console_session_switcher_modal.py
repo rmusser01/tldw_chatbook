@@ -48,9 +48,23 @@ _GROUP_LABELS = {
     "saved": "SAVED CHATS",
 }
 SEARCH_DEBOUNCE_SECONDS = 0.2
+ACTIVE_PROJECTION_POLL_SECONDS = 0.2
+RESULT_DISAPPEARED_COPY = (
+    "The selected result is no longer available — selection moved."
+)
 
 HistoryLoader = Callable[..., Awaitable[ConsoleSwitcherHistoryPage]]
 AuthoritySnapshot = Callable[[], tuple[str, str, int]]
+ActiveProjectionLoader = Callable[
+    [],
+    tuple[
+        tuple[ConsoleSwitcherActiveResult, ...],
+        str,
+        str,
+        int,
+        str,
+    ],
+]
 
 
 @dataclass(frozen=True)
@@ -85,6 +99,9 @@ class ConsoleSessionSwitcherModal(
         height: 1; color: gray; text-style: bold;
     }
     #console-switcher-status { height: 1; color: yellow; }
+    #console-switcher-receipt-state {
+        display: none; height: 1; color: yellow;
+    }
     #console-switcher-feedback { display: none; }
     #console-switcher-page-controls { height: 3; min-height: 3; }
     #console-switcher-page-status {
@@ -122,6 +139,8 @@ class ConsoleSessionSwitcherModal(
         authority_token: str = "",
         active_projection_generation: int = 0,
         authority_snapshot: AuthoritySnapshot | None = None,
+        activity_receipt_state: str = "ready",
+        active_projection_loader: ActiveProjectionLoader | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize with an immediate Active snapshot and lazy History seam."""
@@ -143,6 +162,8 @@ class ConsoleSessionSwitcherModal(
         self._authority_token = str(authority_token or "")
         self._active_projection_generation = int(active_projection_generation)
         self._authority_snapshot = authority_snapshot
+        self._active_projection_loader = active_projection_loader
+        self._activity_receipt_state = str(activity_receipt_state or "ready")
         self._mode = SwitcherMode.ACTIVE
         self._entries: tuple[ConsoleSwitcherActiveResult, ...] = ()
         self._payload_by_widget_id: dict[str, ConsoleSwitcherActiveResult] = {}
@@ -154,14 +175,16 @@ class ConsoleSessionSwitcherModal(
         self._instance_token = uuid4().hex
         self._query_pending = False
         self._explicit_navigation = False
+        self._selection_feedback = ""
         self._widened_to_history = False
         self._closed = False
         self._query_debounce_timer: Timer | None = None
+        self._active_projection_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         """Build the bounded switchboard structure."""
         with Vertical(id="console-switcher-modal"):
-            yield Static("Agent switchboard", classes="console-modal-header")
+            yield Static("Switch Session", classes="console-modal-header")
             with Horizontal(id="console-switcher-mode-controls"):
                 yield Button(
                     "Active (0) — selected",
@@ -184,6 +207,7 @@ class ConsoleSessionSwitcherModal(
                 id="console-switcher-query",
             )
             yield VerticalScroll(id="console-switcher-results")
+            yield Static("", id="console-switcher-receipt-state", markup=False)
             yield Static("", id="console-switcher-status", markup=False)
             yield Static("", id="console-switcher-feedback", markup=False)
             with Horizontal(id="console-switcher-page-controls"):
@@ -201,8 +225,14 @@ class ConsoleSessionSwitcherModal(
     async def on_mount(self) -> None:  # type: ignore[override]
         """Paint Active immediately and leave History cold."""
         super().on_mount()
+        self._update_receipt_status()
         self.query_one("#console-switcher-query", Input).focus()
         await self._refresh_results("")
+        if self._active_projection_loader is not None:
+            self._active_projection_timer = self.set_interval(
+                ACTIVE_PROJECTION_POLL_SECONDS,
+                self._poll_active_projection,
+            )
 
     def on_unmount(self) -> None:
         """Invalidate late work without remounting into a closed screen."""
@@ -211,7 +241,44 @@ class ConsoleSessionSwitcherModal(
         if self._query_debounce_timer is not None:
             self._query_debounce_timer.stop()
             self._query_debounce_timer = None
+        if self._active_projection_timer is not None:
+            self._active_projection_timer.stop()
+            self._active_projection_timer = None
         super().on_unmount()
+
+    def _poll_active_projection(self) -> None:
+        """Reconcile one memory-only live snapshot while the modal is open."""
+        loader = self._active_projection_loader
+        if self._closed or loader is None:
+            return
+        try:
+            results, profile, token, generation, receipt_state = loader()
+        except Exception:  # noqa: BLE001 - a polling seam must not break input
+            return
+        profile = str(profile or "")
+        token = str(token or "")
+        generation = int(generation)
+        receipt_state = str(receipt_state or "ready")
+        if profile != self._profile_authority or token != self._authority_token:
+            self._query_pending = False
+            self.dismiss(None)
+            return
+        if generation < self._active_projection_generation:
+            return
+        normalized_results = tuple(results)
+        if (
+            generation == self._active_projection_generation
+            and normalized_results == self._active_results
+            and receipt_state == self._activity_receipt_state
+        ):
+            return
+        self.reconcile_active_results(
+            normalized_results,
+            profile_authority=profile,
+            authority_token=token,
+            projection_generation=generation,
+            activity_receipt_state=receipt_state,
+        )
 
     def reconcile_active_results(
         self,
@@ -220,6 +287,7 @@ class ConsoleSessionSwitcherModal(
         profile_authority: str,
         authority_token: str,
         projection_generation: int,
+        activity_receipt_state: str | None = None,
     ) -> None:
         """Accept a newer in-memory Active projection from this runtime only."""
         if (
@@ -231,10 +299,31 @@ class ConsoleSessionSwitcherModal(
             return
         self._active_projection_generation = projection_generation
         self._active_results = tuple(results)
+        if activity_receipt_state is not None:
+            self._activity_receipt_state = str(activity_receipt_state or "ready")
+            self._update_receipt_status()
         try:
             query = self.query_one("#console-switcher-query", Input).value
         except NoMatches:
             return
+        if self._mode is SwitcherMode.ACTIVE:
+            focused_key = self._focused_result_key()
+            if focused_key:
+                filtered = filter_console_active_results(self._active_results, query)
+                focused_index = next(
+                    (
+                        index
+                        for index, entry in enumerate(filtered)
+                        if entry.stable_result_key == focused_key
+                    ),
+                    None,
+                )
+                self._page_offset = (
+                    (focused_index // CONSOLE_SWITCHER_PAGE_LIMIT)
+                    * CONSOLE_SWITCHER_PAGE_LIMIT
+                    if focused_index is not None
+                    else 0
+                )
         self.run_worker(
             self._refresh_results(query),
             exclusive=True,
@@ -259,22 +348,32 @@ class ConsoleSessionSwitcherModal(
         self._widened_to_history = False
 
         page: ConsoleSwitcherHistoryPage | None = None
+        widened_to_history = False
         if self._mode is SwitcherMode.ACTIVE:
-            entries = (
+            filtered = (
                 build_console_switcher_entries(
                     self._rows,
                     query=query,
-                    limit=CONSOLE_SWITCHER_PAGE_LIMIT,
+                    limit=max(CONSOLE_SWITCHER_PAGE_LIMIT, len(self._rows)),
                 )
                 if self._legacy_rows
-                else filter_console_active_results(self._active_results, query)[
-                    :CONSOLE_SWITCHER_PAGE_LIMIT
-                ]
+                else filter_console_active_results(self._active_results, query)
             )
-            if query.strip() and not entries and self._history_loader is not None:
+            entries = filtered[
+                self._page_offset : self._page_offset + CONSOLE_SWITCHER_PAGE_LIMIT
+            ]
+            if query.strip() and not filtered and self._history_loader is not None:
                 self._set_status("Searching History…")
                 page = await self._load_history(query=query, offset=self._page_offset)
                 entries = tuple(page.entries)
+                widened_to_history = True
+            elif len(filtered) > CONSOLE_SWITCHER_PAGE_LIMIT or self._page_offset:
+                page = ConsoleSwitcherHistoryPage(
+                    tuple(entries),
+                    self._page_offset,
+                    CONSOLE_SWITCHER_PAGE_LIMIT,
+                    len(filtered),
+                )
         else:
             self._set_status(
                 "Searching History…" if query.strip() else "Loading History…"
@@ -285,9 +384,7 @@ class ConsoleSessionSwitcherModal(
         if not self._request_is_current(generation, captured, query):
             return False
         self._query_pending = False
-        self._widened_to_history = (
-            self._mode is SwitcherMode.ACTIVE and page is not None
-        )
+        self._widened_to_history = widened_to_history
         self._page_total = page.total if page is not None else len(entries)
         self._rendered_query = query
         await self._commit_entries(entries, page=page)
@@ -343,6 +440,10 @@ class ConsoleSessionSwitcherModal(
         if self._authority_snapshot is not None:
             profile, token, projection = self._authority_snapshot()
             if (profile, token, projection) != current[3:]:
+                self._query_pending = False
+                self._set_status("Activity changed — refreshing…")
+                if self._active_projection_loader is not None:
+                    self.call_after_refresh(self._poll_active_projection)
                 return False
         return True
 
@@ -355,7 +456,18 @@ class ConsoleSessionSwitcherModal(
         previous_key = self._candidate_key()
         focused_key = self._focused_result_key()
         retained_key = focused_key or previous_key
+        previous_index = (
+            self._focused_result_index()
+            if focused_key
+            else self._candidate_index
+        )
+        had_previous_entries = bool(self._entries)
         self._entries = entries[:CONSOLE_SWITCHER_PAGE_LIMIT]
+        retained_disappeared = bool(
+            had_previous_entries
+            and focused_key
+            and self._index_for_key(retained_key) is None
+        )
         results = self.query_one("#console-switcher-results", VerticalScroll)
         await results.remove_children()
         self._payload_by_widget_id.clear()
@@ -370,7 +482,10 @@ class ConsoleSessionSwitcherModal(
             )
             self._candidate_index = 0
         else:
-            self._candidate_index = self._choose_candidate(retained_key)
+            if retained_disappeared:
+                self._candidate_index = min(previous_index, len(self._entries) - 1)
+            else:
+                self._candidate_index = self._choose_candidate(retained_key)
             widgets: list[Static | Button] = []
             previous_section = ""
             for index, entry in enumerate(self._entries):
@@ -419,7 +534,16 @@ class ConsoleSessionSwitcherModal(
         else:
             self._update_selection_status()
 
-        if focused_key:
+        if retained_disappeared:
+            self._selection_feedback = RESULT_DISAPPEARED_COPY
+            if self._entries:
+                buttons = self._result_buttons()
+                self._focus_candidate(buttons)
+            else:
+                self.query_one("#console-switcher-query", Input).focus()
+            self._set_status(self._selection_feedback)
+            self.notify(RESULT_DISAPPEARED_COPY, severity="warning")
+        elif focused_key:
             focused = self._button_for_key(focused_key)
             if focused is not None:
                 focused.focus()
@@ -519,6 +643,7 @@ class ConsoleSessionSwitcherModal(
     @on(Input.Changed, "#console-switcher-query")
     def _query_changed(self, event: Input.Changed) -> None:
         event.stop()
+        self._selection_feedback = ""
         self._cancel_query_debounce()
         self._query_pending = True
         query = event.value
@@ -619,6 +744,7 @@ class ConsoleSessionSwitcherModal(
             return
         index = self._focused_result_index()
         self._explicit_navigation = True
+        self._selection_feedback = ""
         if index is None:
             self._candidate_index = 0
         elif index + 1 < len(buttons):
@@ -637,6 +763,7 @@ class ConsoleSessionSwitcherModal(
                 pass
             return
         self._explicit_navigation = True
+        self._selection_feedback = ""
         self._candidate_index = index - 1
         self._focus_candidate(buttons)
 
@@ -728,6 +855,7 @@ class ConsoleSessionSwitcherModal(
         self._mode = mode
         self._page_offset = 0
         self._explicit_navigation = False
+        self._selection_feedback = ""
         query = self.query_one("#console-switcher-query", Input).value
         self._update_mode_controls()
         self.run_worker(
@@ -804,7 +932,25 @@ class ConsoleSessionSwitcherModal(
         last = page.offset + len(page.entries)
         status.update(f"{first}–{last} of {page.total}")
 
+    def _update_receipt_status(self) -> None:
+        """Expose only content-free local activity storage readiness."""
+        try:
+            status = self.query_one("#console-switcher-receipt-state", Static)
+        except NoMatches:
+            return
+        degraded = self._activity_receipt_state == "degraded"
+        status.display = degraded
+        status.update(
+            "Local activity updates unavailable — retrying; switching and "
+            "History still work."
+            if degraded
+            else ""
+        )
+
     def _update_selection_status(self) -> None:
+        if self._selection_feedback:
+            self._set_status(self._selection_feedback)
+            return
         if not self._entries:
             mode = (
                 "Active" if self._mode is SwitcherMode.ACTIVE else "History"

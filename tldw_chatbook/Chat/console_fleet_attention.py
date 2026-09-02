@@ -311,7 +311,18 @@ class ConsoleFleetAttentionConsumer:
         if not statuses:
             return
         if self._receipt_service is not None:
-            self._receipt_service.publish_fleet_drain(event)
+            publication = self._receipt_service.publish_fleet_drain(event)
+            if not getattr(publication, "complete", False):
+                try:
+                    written = self._receipt_service.ensure_fleet_mark(conversation_id)
+                except Exception as exc:  # noqa: BLE001 - retain the fallback path
+                    logger.warning(
+                        "fleet receipt fallback failed (exception_type={})",
+                        type(exc).__name__,
+                    )
+                    written = False
+                if not written:
+                    self._write_mark(conversation_id)
         else:
             self._write_mark(conversation_id)
         session_id = str(getattr(survivors[-1], "session_id", "") or "")

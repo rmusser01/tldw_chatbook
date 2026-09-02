@@ -14,24 +14,29 @@ from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 class RecordingMarks:
     FLEET_UNSEEN = "fleet_unseen"
+    FLEET_RECEIPT_FALLBACK = "fleet_receipt_fallback"
 
     def __init__(self) -> None:
-        self.marked: set[str] = set()
+        self._marked_by_type: dict[str, set[str]] = {
+            self.FLEET_UNSEEN: set(),
+            self.FLEET_RECEIPT_FALLBACK: set(),
+        }
         self.calls: list[tuple[str, str]] = []
 
+    @property
+    def marked(self) -> set[str]:
+        return self._marked_by_type[self.FLEET_UNSEEN]
+
     def set_mark(self, conversation_id: str, mark: str) -> None:
-        assert mark == self.FLEET_UNSEEN
         self.calls.append(("set", conversation_id))
-        self.marked.add(conversation_id)
+        self._marked_by_type[mark].add(conversation_id)
 
     def clear_mark(self, conversation_id: str, mark: str) -> None:
-        assert mark == self.FLEET_UNSEEN
         self.calls.append(("clear", conversation_id))
-        self.marked.discard(conversation_id)
+        self._marked_by_type[mark].discard(conversation_id)
 
     def list_marked_conversation_ids(self, mark: str) -> tuple[str, ...]:
-        assert mark == self.FLEET_UNSEEN
-        return tuple(sorted(self.marked))
+        return tuple(sorted(self._marked_by_type[mark]))
 
 
 def _child(
@@ -69,7 +74,8 @@ def test_fleet_drain_maps_statuses_and_is_idempotent(tmp_path):
     second = service.publish_fleet_drain(event)
 
     assert second == first
-    assert len(first) == 3
+    assert first.complete is True
+    assert len(first.activity_ids) == 3
     assert {receipt.status for receipt in service.unseen_snapshot()} == {
         "done",
         "failed",
@@ -123,7 +129,8 @@ def test_unknown_fleet_status_fails_closed_and_degrades(tmp_path):
         )
     )
 
-    assert published == ()
+    assert published.activity_ids == ()
+    assert published.complete is False
     assert service.unseen_snapshot() == ()
     assert service.hydration_state() == "degraded"
 
@@ -186,7 +193,7 @@ def test_ready_clear_request_respects_receipts_and_viewless_set(tmp_path):
 
     assert service.clear_fleet_mark_if_seen("conversation-1") is False
     assert marks.marked == {"conversation-1"}
-    assert service.acknowledge(receipts) == 1
+    assert service.acknowledge(receipts.activity_ids) == 1
     assert marks.marked == set()
 
     assert service.ensure_fleet_mark("conversation-1") is True
@@ -214,11 +221,13 @@ def test_acknowledge_reconciles_badge_without_clearing_newer_receipt(tmp_path):
         )
     )
 
-    assert service.acknowledge(first) == 1
+    assert service.acknowledge(first.activity_ids) == 1
     assert marks.marked == {"conversation-1"}
-    assert [row.activity_id for row in service.unseen_snapshot()] == list(second)
+    assert [row.activity_id for row in service.unseen_snapshot()] == list(
+        second.activity_ids
+    )
 
-    assert service.acknowledge(second) == 1
+    assert service.acknowledge(second.activity_ids) == 1
     assert marks.marked == set()
 
 
@@ -243,11 +252,13 @@ def test_publication_and_acknowledgement_share_one_lock(tmp_path, monkeypatch):
         return real_acknowledge(activity_ids)
 
     monkeypatch.setattr(database, "acknowledge_console_activity", blocked_acknowledge)
-    acknowledge_thread = threading.Thread(target=service.acknowledge, args=(original,))
+    acknowledge_thread = threading.Thread(
+        target=service.acknowledge, args=(original.activity_ids,)
+    )
     acknowledge_thread.start()
     assert acknowledge_entered.wait(5)
 
-    published: list[tuple[str, ...]] = []
+    published = []
     publish_thread = threading.Thread(
         target=lambda: published.append(
             service.publish_fleet_drain(
@@ -265,7 +276,250 @@ def test_publication_and_acknowledgement_share_one_lock(tmp_path, monkeypatch):
     publish_thread.join(5)
 
     assert published and marks.marked == {"conversation-1"}
-    assert [row.activity_id for row in service.unseen_snapshot()] == list(published[0])
+    assert [row.activity_id for row in service.unseen_snapshot()] == list(
+        published[0].activity_ids
+    )
+
+
+def test_all_failed_fleet_publication_keeps_coarse_mark_and_degraded_state(
+    tmp_path, monkeypatch
+):
+    database = AgentRunsDB(tmp_path / "runs.db")
+    marks = RecordingMarks()
+    service = ConsoleActivityReceiptService(database, marks)
+    monkeypatch.setattr(
+        database,
+        "publish_console_activity",
+        lambda **_kwargs: (_ for _ in ()).throw(sqlite3.OperationalError("private")),
+    )
+
+    result = service.publish_fleet_drain(
+        FleetDrained(
+            conversation_id="conversation-1",
+            children=(_child("done", run_id="run-one"),),
+            drain_id="drain-one",
+        )
+    )
+
+    assert result.activity_ids == ()
+    assert result.complete is False
+    assert service.hydration_state() == "degraded"
+    assert marks.marked == {"conversation-1"}
+
+
+def test_partial_fleet_publication_keeps_coarse_mark_and_reports_incomplete(
+    tmp_path, monkeypatch
+):
+    database = AgentRunsDB(tmp_path / "runs.db")
+    marks = RecordingMarks()
+    service = ConsoleActivityReceiptService(database, marks)
+    real_publish = database.publish_console_activity
+    calls = {"count": 0}
+
+    def publish_once(**kwargs):
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise sqlite3.OperationalError("private")
+        return real_publish(**kwargs)
+
+    monkeypatch.setattr(database, "publish_console_activity", publish_once)
+
+    result = service.publish_fleet_drain(
+        FleetDrained(
+            conversation_id="conversation-1",
+            children=(
+                _child("done", run_id="run-one"),
+                _child("error", run_id="run-two"),
+            ),
+            drain_id="drain-one",
+        )
+    )
+
+    assert len(result.activity_ids) == 1
+    assert result.complete is False
+    assert service.hydration_state() == "degraded"
+    assert marks.marked == {"conversation-1"}
+
+
+def test_fleet_reload_failure_keeps_coarse_mark_and_reports_incomplete(
+    tmp_path, monkeypatch
+):
+    database = AgentRunsDB(tmp_path / "runs.db")
+    marks = RecordingMarks()
+    service = ConsoleActivityReceiptService(database, marks)
+    monkeypatch.setattr(
+        database,
+        "list_unseen_console_activity",
+        lambda: (_ for _ in ()).throw(sqlite3.OperationalError("private")),
+    )
+
+    result = service.publish_fleet_drain(
+        FleetDrained(
+            conversation_id="conversation-1",
+            children=(_child("done", run_id="run-one"),),
+            drain_id="drain-one",
+        )
+    )
+
+    assert len(result.activity_ids) == 1
+    assert result.complete is False
+    assert service.hydration_state() == "degraded"
+    assert marks.marked == {"conversation-1"}
+
+
+def test_failed_fleet_publication_debt_survives_recovery_until_explicit_visit(
+    tmp_path, monkeypatch
+):
+    database = AgentRunsDB(tmp_path / "runs.db")
+    marks = RecordingMarks()
+    service = ConsoleActivityReceiptService(database, marks)
+    real_publish = database.publish_console_activity
+    monkeypatch.setattr(
+        database,
+        "publish_console_activity",
+        lambda **_kwargs: (_ for _ in ()).throw(sqlite3.OperationalError("private")),
+    )
+
+    result = service.publish_fleet_drain(
+        FleetDrained(
+            conversation_id="conversation-1",
+            children=(_child("done", run_id="run-one"),),
+            drain_id="drain-one",
+        )
+    )
+    assert result.complete is False
+    assert marks.marked == {"conversation-1"}
+    assert marks.list_marked_conversation_ids(
+        marks.FLEET_RECEIPT_FALLBACK
+    ) == ("conversation-1",)
+
+    monkeypatch.setattr(database, "publish_console_activity", real_publish)
+    recovered = ConsoleActivityReceiptService(database, marks)
+    assert recovered.hydrate_from_storage() == 0
+    recovered.publish_ordinary(
+        logical_outcome_id="ordinary-one",
+        status="done",
+        session_id="session-ordinary",
+        conversation_id="conversation-ordinary",
+    )
+
+    assert recovered.hydration_state() == "ready"
+    assert "conversation-1" in marks.marked
+    assert recovered.clear_fleet_mark_if_seen("conversation-1") is True
+    assert "conversation-1" not in marks.marked
+    assert marks.list_marked_conversation_ids(
+        marks.FLEET_RECEIPT_FALLBACK
+    ) == ()
+
+
+def test_acknowledge_retry_confirms_ids_absent_after_post_write_reload_failure(
+    tmp_path, monkeypatch
+):
+    database = AgentRunsDB(tmp_path / "runs.db")
+    service = ConsoleActivityReceiptService(database, RecordingMarks())
+    publication = service.publish_fleet_drain(
+        FleetDrained(
+            conversation_id="conversation-1",
+            children=(_child("done", run_id="run-one"),),
+            drain_id="drain-one",
+        )
+    )
+    real_list = database.list_unseen_console_activity
+    calls = {"count": 0}
+
+    def fail_first_reload():
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise sqlite3.OperationalError("private")
+        return real_list()
+
+    monkeypatch.setattr(database, "list_unseen_console_activity", fail_first_reload)
+
+    assert service.acknowledge(publication.activity_ids) == 1
+    assert service.hydration_state() == "degraded"
+    assert service.acknowledge(publication.activity_ids) == 1
+    assert service.hydration_state() == "ready"
+    assert service.unseen_snapshot() == ()
+
+
+def test_complete_fleet_replay_replaces_fallback_debt_with_exact_receipt(
+    tmp_path, monkeypatch
+):
+    database = AgentRunsDB(tmp_path / "runs.db")
+    marks = RecordingMarks()
+    service = ConsoleActivityReceiptService(database, marks)
+    event = FleetDrained(
+        conversation_id="conversation-1",
+        children=(_child("done", run_id="run-one"),),
+        drain_id="drain-one",
+    )
+    real_publish = database.publish_console_activity
+    monkeypatch.setattr(
+        database,
+        "publish_console_activity",
+        lambda **_kwargs: (_ for _ in ()).throw(sqlite3.OperationalError("private")),
+    )
+    assert service.publish_fleet_drain(event).complete is False
+    monkeypatch.setattr(database, "publish_console_activity", real_publish)
+
+    replay = service.publish_fleet_drain(event)
+
+    assert replay.complete is True
+    assert marks.list_marked_conversation_ids(
+        marks.FLEET_RECEIPT_FALLBACK
+    ) == ()
+    assert marks.marked == {"conversation-1"}
+    assert [receipt.activity_id for receipt in service.unseen_snapshot()] == list(
+        replay.activity_ids
+    )
+
+
+def test_transient_fallback_mark_failure_is_repaired_before_ready_and_restart(
+    tmp_path, monkeypatch
+):
+    database = AgentRunsDB(tmp_path / "runs.db")
+    marks = RecordingMarks()
+    service = ConsoleActivityReceiptService(database, marks)
+    real_set_mark = marks.set_mark
+    fallback_attempts = {"count": 0}
+
+    def fail_first_fallback(conversation_id: str, mark: str) -> None:
+        if mark == marks.FLEET_RECEIPT_FALLBACK:
+            fallback_attempts["count"] += 1
+            if fallback_attempts["count"] == 1:
+                raise sqlite3.OperationalError("private")
+        real_set_mark(conversation_id, mark)
+
+    monkeypatch.setattr(marks, "set_mark", fail_first_fallback)
+    monkeypatch.setattr(
+        database,
+        "publish_console_activity",
+        lambda **_kwargs: (_ for _ in ()).throw(sqlite3.OperationalError("private")),
+    )
+
+    assert service.publish_fleet_drain(
+        FleetDrained(
+            conversation_id="conversation-1",
+            children=(_child("done", run_id="run-one"),),
+            drain_id="drain-one",
+        )
+    ).complete is False
+    assert service.hydration_state() == "degraded"
+    assert marks.marked == {"conversation-1"}
+    assert marks.list_marked_conversation_ids(
+        marks.FLEET_RECEIPT_FALLBACK
+    ) == ()
+
+    assert service.hydrate_from_storage() == 0
+    assert service.hydration_state() == "ready"
+    assert marks.list_marked_conversation_ids(
+        marks.FLEET_RECEIPT_FALLBACK
+    ) == ("conversation-1",)
+
+    restarted = ConsoleActivityReceiptService(database, marks)
+    assert restarted.hydrate_from_storage() == 0
+    assert restarted.hydration_state() == "ready"
+    assert marks.marked == {"conversation-1"}
 
 
 def test_storage_failure_is_content_free_degradation_with_retry(tmp_path, monkeypatch):

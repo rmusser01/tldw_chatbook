@@ -859,6 +859,45 @@ def _normalized_active_query(query: str) -> list[str]:
     return [token for token in normalized.split() if token]
 
 
+def _active_result_predicates(
+    result: ConsoleSwitcherActiveResult,
+) -> dict[str, bool]:
+    """Return the shared semantic vocabulary for plain and ``is:`` terms."""
+    group = result.group
+    state = str(
+        getattr(result, "activity_state", "")
+        or getattr(result, "primary_status", "")
+    )
+    is_unavailable = isinstance(result, UnavailableSessionNotice)
+    return {
+        "waiting": group is ActivityGroup.WAITING_FOR_YOU,
+        "working": group is ActivityGroup.WORKING,
+        "new": group is ActivityGroup.NEW_RESULTS,
+        # Current is destination identity, independent of the winning
+        # activity group (a current tab may simultaneously be running).
+        "current": bool(getattr(result, "is_active", False)),
+        "open": bool(getattr(result, "native_session_id", None))
+        and not is_unavailable,
+        # Persistence and openness overlap: a resumed saved conversation is
+        # both saved and open, so neither alias hides the other identity.
+        "saved": bool(getattr(result, "conversation_id", None)),
+        "unavailable": is_unavailable,
+        # User vocabulary treats both terms as routes to the Working group;
+        # exact lifecycle states remain visible in labels and free text.
+        "running": group is ActivityGroup.WORKING,
+        "queued": group is ActivityGroup.WORKING,
+        "failed": state in {"failed", "error"},
+        "finished": state in {"done", "completed", "succeeded"},
+        "cancelled": state == "cancelled",
+        "approval": state == "approval",
+        "paused": state in {"paused", "blocked"},
+        "stuck": state == "stuck",
+        "stopped": state == "stopped",
+        "validating": state == "validating",
+        "retrying": state == "retrying",
+    }
+
+
 def filter_console_active_results(
     results: Iterable[ConsoleSwitcherActiveResult], query: str
 ) -> tuple[ConsoleSwitcherActiveResult, ...]:
@@ -871,7 +910,7 @@ def filter_console_active_results(
         group = result.group
         state = str(getattr(result, "activity_state", "") or getattr(result, "primary_status", ""))
         workspace = str(getattr(result, "workspace_label", "") or "").casefold()
-        is_unavailable = isinstance(result, UnavailableSessionNotice)
+        predicates = _active_result_predicates(result)
         haystack = " ".join(
             str(value or "")
             for value in (
@@ -894,34 +933,11 @@ def filter_console_active_results(
                 continue
             if token.startswith("is:"):
                 value = token.partition(":")[2]
-                predicates = {
-                    "waiting": group is ActivityGroup.WAITING_FOR_YOU,
-                    "working": group is ActivityGroup.WORKING,
-                    "new": group is ActivityGroup.NEW_RESULTS,
-                    "current": group is ActivityGroup.CURRENT,
-                    "open": bool(getattr(result, "native_session_id", None)),
-                    "saved": bool(getattr(result, "conversation_id", None)),
-                    "unavailable": is_unavailable,
-                    "running": state in {"running", "streaming"},
-                    "queued": state == "queued",
-                    "failed": state in {"failed", "error"},
-                    "finished": state in {"done", "completed", "succeeded"},
-                    "cancelled": state == "cancelled",
-                    "approval": state == "approval",
-                    "paused": state in {"paused", "blocked"},
-                    "stuck": state == "stuck",
-                    "stopped": state == "stopped",
-                }
                 if value not in predicates or not predicates[value]:
                     return False
                 continue
-            plain_alias = {
-                "waiting": group is ActivityGroup.WAITING_FOR_YOU,
-                "working": group is ActivityGroup.WORKING,
-                "new": group is ActivityGroup.NEW_RESULTS,
-            }
-            if token in plain_alias:
-                if not plain_alias[token]:
+            if token in predicates:
+                if not predicates[token]:
                     return False
             elif token not in haystack:
                 return False

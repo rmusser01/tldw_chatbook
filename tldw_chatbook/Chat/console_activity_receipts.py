@@ -48,6 +48,14 @@ class ConsoleActivityReceipt:
         )
 
 
+@dataclass(frozen=True)
+class FleetReceiptPublication:
+    """Result of publishing every eligible child from one FLEET drain."""
+
+    activity_ids: tuple[str, ...]
+    complete: bool
+
+
 class ConsoleActivityReceiptService:
     """Serialize receipt persistence, cache publication, and FLEET marks."""
 
@@ -63,6 +71,11 @@ class ConsoleActivityReceiptService:
         self._marks = marks
         self._lock = threading.RLock()
         self._snapshot: tuple[ConsoleActivityReceipt, ...] = ()
+        # A receipt write can fail after a FLEET survivor has settled.  Keep
+        # that conversation-level evidence independently from hydration so a
+        # later successful empty reload cannot erase the only remaining cue.
+        self._fleet_fallback_debt: set[str] = set()
+        self._fleet_marks_seeded = False
         self._projection_generation = 0
         self._state: Literal["cold", "loading", "ready", "degraded"] = (
             "cold" if runs_db.receipt_capability_available else "degraded"
@@ -116,13 +129,34 @@ class ConsoleActivityReceiptService:
         mark = getattr(self._marks, "FLEET_UNSEEN", None)
         if mark is None:
             return True
-        required = {
+        fallback_mark = getattr(
+            self._marks, "FLEET_RECEIPT_FALLBACK", None
+        )
+        try:
+            if fallback_mark is not None:
+                durable_fallback = set(
+                    self._marks.list_marked_conversation_ids(fallback_mark)
+                )
+                if not self._fleet_marks_seeded:
+                    self._fleet_fallback_debt.update(
+                        durable_fallback
+                    )
+                for conversation_id in sorted(
+                    self._fleet_fallback_debt - durable_fallback
+                ):
+                    self._marks.set_mark(conversation_id, fallback_mark)
+            self._fleet_marks_seeded = True
+        except Exception as exc:  # noqa: BLE001 - preserve coarse marks
+            self._set_degraded("fleet_fallback_reconcile", exc)
+            return False
+        receipt_required = {
             receipt.conversation_id
             for receipt in self._snapshot
             if receipt.origin == "fleet_survivor" and receipt.conversation_id
         }
         try:
             marked = set(self._marks.list_marked_conversation_ids(mark))
+            required = receipt_required | self._fleet_fallback_debt
             for conversation_id in sorted(required - marked):
                 self._marks.set_mark(conversation_id, mark)
             for conversation_id in sorted(marked - required):
@@ -130,6 +164,32 @@ class ConsoleActivityReceiptService:
         except Exception as exc:  # noqa: BLE001 - a stale badge is safer than a crash
             self._set_degraded("fleet_mark", exc)
             return False
+        return True
+
+    def _set_fleet_fallback_locked(self, conversation_id: str) -> bool:
+        self._fleet_fallback_debt.add(conversation_id)
+        if self._marks is None:
+            return True
+        mark = getattr(self._marks, "FLEET_RECEIPT_FALLBACK", None)
+        if mark is None:
+            return True
+        try:
+            self._marks.set_mark(conversation_id, mark)
+        except Exception as exc:  # noqa: BLE001 - coarse badge remains best effort
+            self._set_degraded("fleet_fallback_set", exc)
+            return False
+        return True
+
+    def _clear_fleet_fallback_locked(self, conversation_id: str) -> bool:
+        if self._marks is not None:
+            mark = getattr(self._marks, "FLEET_RECEIPT_FALLBACK", None)
+            if mark is not None:
+                try:
+                    self._marks.clear_mark(conversation_id, mark)
+                except Exception as exc:  # noqa: BLE001 - retain evidence
+                    self._set_degraded("fleet_fallback_clear", exc)
+                    return False
+        self._fleet_fallback_debt.discard(conversation_id)
         return True
 
     def ensure_fleet_mark(self, conversation_id: str) -> bool:
@@ -171,6 +231,11 @@ class ConsoleActivityReceiptService:
             if mark is None:
                 return False
             if self._state != "ready":
+                return False
+            # Visiting the conversation is the explicit compatibility
+            # acknowledgement for survivor evidence that could not be
+            # represented by a durable receipt.
+            if not self._clear_fleet_fallback_locked(conversation_id):
                 return False
             if any(
                 receipt.origin == "fleet_survivor"
@@ -234,23 +299,26 @@ class ConsoleActivityReceiptService:
             self._reconcile_fleet_marks_locked()
             return activity_id
 
-    def publish_fleet_drain(self, event: Any) -> tuple[str, ...]:
-        """Publish post-turn survivors from one stable FLEET drain event."""
+    def publish_fleet_drain(self, event: Any) -> FleetReceiptPublication:
+        """Publish post-turn survivors and report all-or-partial durability."""
         with self._lock:
             conversation_id = str(getattr(event, "conversation_id", "") or "")
             drain_id = str(getattr(event, "drain_id", "") or "")
             if not conversation_id or not drain_id:
                 self._set_degraded("fleet_identity")
-                return ()
+                return FleetReceiptPublication(activity_ids=(), complete=False)
             published: list[str] = []
-            invalid_status = False
+            complete = True
+            eligible_children = 0
+            incomplete_operation = "fleet_status"
             for ordinal, child in enumerate(getattr(event, "children", ()) or ()):
                 if getattr(child, "settled_after_turn", False) is not True:
                     continue
+                eligible_children += 1
                 raw_status = str(getattr(child, "status", "") or "")
                 status = self._FLEET_STATUS.get(raw_status)
                 if status is None:
-                    invalid_status = True
+                    complete = False
                     continue
                 run_id = getattr(child, "run_id", None)
                 logical_outcome_id = (
@@ -273,20 +341,45 @@ class ConsoleActivityReceiptService:
                     )
                 except Exception as exc:  # noqa: BLE001 - child settlement is authoritative
                     self._set_degraded("publish_fleet", exc)
+                    incomplete_operation = "publish_fleet"
+                    complete = False
                     continue
                 published.append(activity_id)
-            if self._reload_locked():
+            reloaded = self._reload_locked()
+            if complete and reloaded:
                 self._state = "ready"
-                self._reconcile_fleet_marks_locked()
-            if invalid_status:
-                self._set_degraded("fleet_status")
-            return tuple(published)
+                if eligible_children:
+                    # A complete replay has now represented every survivor as
+                    # a durable receipt, which supersedes the coarse debt.
+                    complete = self._clear_fleet_fallback_locked(conversation_id)
+                if complete:
+                    complete = self._reconcile_fleet_marks_locked()
+            if not complete or not reloaded:
+                # A partial receipt set must never reconcile away the one
+                # compatibility signal that still tells the user news exists.
+                self._set_fleet_fallback_locked(conversation_id)
+                self.ensure_fleet_mark(conversation_id)
+                self._set_degraded(
+                    incomplete_operation if not complete else "fleet_reload"
+                )
+            return FleetReceiptPublication(
+                activity_ids=tuple(published), complete=complete and reloaded
+            )
 
     def acknowledge(self, activity_ids: Sequence[str]) -> int:
-        """Acknowledge exact frozen receipt IDs and reconcile coarse marks."""
+        """Acknowledge exact frozen IDs and return durably confirmed count."""
         with self._lock:
+            requested = tuple(
+                dict.fromkeys(
+                    str(activity_id).strip()
+                    for activity_id in activity_ids
+                    if str(activity_id).strip()
+                )
+            )
+            if not requested:
+                return 0
             try:
-                updated = self._db.acknowledge_console_activity(activity_ids)
+                updated = self._db.acknowledge_console_activity(requested)
             except Exception as exc:  # noqa: BLE001 - keep unseen state on uncertainty
                 self._set_degraded("acknowledge", exc)
                 return 0
@@ -294,7 +387,8 @@ class ConsoleActivityReceiptService:
                 return updated
             self._state = "ready"
             self._reconcile_fleet_marks_locked()
-            return updated
+            remaining = {receipt.activity_id for receipt in self._snapshot}
+            return sum(activity_id not in remaining for activity_id in requested)
 
     def reconcile_fleet_marks(self) -> None:
         """Reconcile coarse FLEET marks without acknowledging receipts."""

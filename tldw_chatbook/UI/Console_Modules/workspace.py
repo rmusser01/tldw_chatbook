@@ -2554,6 +2554,78 @@ class ConsoleWorkspaceController:
             rows.append(self._apply_console_browser_star_state(row, starred_ids))
         return rows
 
+    def _native_console_switcher_rows(
+        self,
+        cached_rows: Iterable[ConsoleConversationBrowserInputRow] = (),
+    ) -> list[ConsoleConversationBrowserInputRow]:
+        """Project open sessions for Active using only app-lifetime memory.
+
+        Cached workspace rows may contribute display labels and star state,
+        but this path never calls a registry, mark store, or conversation
+        service. Controller activity is merged separately as memory signals.
+        """
+        store = self._console_chat_store
+        if store is None:
+            return []
+        cached = tuple(cached_rows)
+        labels = {
+            str(row.workspace_id): str(row.workspace_label or row.workspace_id)
+            for row in cached
+            if row.workspace_id and row.workspace_label
+        }
+        cached_by_conversation = {
+            str(row.conversation_id): row
+            for row in cached
+            if row.conversation_id
+        }
+        active_session_id = store.active_session_id
+        controller = self._console_chat_controller
+        rows: list[ConsoleConversationBrowserInputRow] = []
+        for session in store.sessions():
+            session_workspace_id = str(session.workspace_id or "").strip()
+            scope_type = (
+                "global"
+                if session_workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
+                else "workspace"
+            )
+            workspace_id = None if scope_type == "global" else session_workspace_id
+            persisted_id = str(session.persisted_conversation_id or "").strip()
+            cached_row = cached_by_conversation.get(persisted_id)
+            workspace_label = (
+                "Chats"
+                if not workspace_id or workspace_id == DEFAULT_WORKSPACE_ID
+                else labels.get(workspace_id, workspace_id)
+            )
+            queued_count = 0
+            if controller is not None:
+                try:
+                    queued_count = controller.activity_for(session.id).queued_count
+                except Exception:  # noqa: BLE001 - keep the open shell usable
+                    queued_count = 0
+            rows.append(
+                ConsoleConversationBrowserInputRow(
+                    row_key=persisted_id or f"native:{session.id}",
+                    conversation_id=persisted_id or None,
+                    native_session_id=session.id,
+                    title=str(session.title or "Untitled conversation"),
+                    scope_type=scope_type,
+                    workspace_id=workspace_id,
+                    workspace_label=workspace_label,
+                    status=(
+                        "active session"
+                        if session.id == active_session_id
+                        else "open session"
+                    ),
+                    selected=session.id == active_session_id,
+                    source_kind="native",
+                    updated_sort=str(session.updated_at or ""),
+                    queued_count=queued_count,
+                    starred=bool(getattr(cached_row, "starred", False)),
+                    star_enabled=bool(persisted_id),
+                )
+            )
+        return rows
+
     def _membership_console_browser_rows(
         self,
         current_conversation_id: str | None = None,
@@ -2640,19 +2712,15 @@ class ConsoleWorkspaceController:
 
     def console_session_switcher_active_entries(self) -> tuple[Any, ...]:
         """Return the immediate memory-only canonical Active projection."""
-        current_conversation_id = self._current_console_conversation_id()
-        native_rows = self._native_console_browser_rows(current_conversation_id)
-        membership_rows = self._membership_console_browser_rows(
-            current_conversation_id
-        )
-        cached_named_rows = self._merge_console_browser_rows(
+        cached_named_rows = self._merge_console_switcher_memory_rows(
             self._workspace_tree_search.rows,
             self._workspace_tree_search.settled_rows,
             *(attempt.rows for attempt in self._workspace_page_attempts.values()),
             *self._workspace_membership_rows.values(),
         )
-        rows = self._merge_console_browser_rows(
-            native_rows, membership_rows, cached_named_rows
+        native_rows = self._native_console_switcher_rows(cached_named_rows)
+        rows = self._merge_console_switcher_memory_rows(
+            native_rows, cached_named_rows
         )
         profile, token = self._console_switcher_authority()
         runtime = getattr(self.app_instance, "console_runtime", None)
@@ -3161,6 +3229,22 @@ class ConsoleWorkspaceController:
         for group in row_groups:
             for raw_row in group:
                 row = self._apply_console_browser_star_state(raw_row, starred_ids)
+                identity = self._console_browser_display_identity(row)
+                if not identity[-1] or identity in seen:
+                    continue
+                seen.add(identity)
+                merged.append(row)
+        return tuple(merged)
+
+    def _merge_console_switcher_memory_rows(
+        self,
+        *row_groups: Iterable[ConsoleConversationBrowserInputRow],
+    ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
+        """Dedupe already-cached switcher rows without refreshing star state."""
+        merged: list[ConsoleConversationBrowserInputRow] = []
+        seen: set[tuple[str, ...]] = set()
+        for group in row_groups:
+            for row in group:
                 identity = self._console_browser_display_identity(row)
                 if not identity[-1] or identity in seen:
                     continue

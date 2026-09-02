@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -147,19 +149,23 @@ async def test_session_surface_always_mounts_hidden_notice_between_work_and_tran
 class _RecordingReceiptService:
     def __init__(self) -> None:
         self.calls: list[tuple[str, ...]] = []
+        self.threads: list[str] = []
         self.degraded = False
         self.projection_generation = 1
 
     def acknowledge(self, activity_ids) -> int:  # type: ignore[no-untyped-def]
         captured = tuple(activity_ids)
         self.calls.append(captured)
+        self.threads.append(threading.current_thread().name)
         return len(captured)
 
 
 class _DegradingReceiptService(_RecordingReceiptService):
     def acknowledge(self, activity_ids) -> int:  # type: ignore[no-untyped-def]
-        self.calls.append(tuple(activity_ids))
-        return 0
+        captured = tuple(activity_ids)
+        self.calls.append(captured)
+        self.threads.append(threading.current_thread().name)
+        return 0 if self.degraded else len(captured)
 
 
 def _native_choice(
@@ -227,6 +233,7 @@ async def test_success_receipt_acknowledges_only_after_destination_notice_paints
         notice = console.query_one(ConsoleActivityOutcomeNotice)
         assert notice.display
         assert service.calls == [("done-1",)]
+        assert service.threads[0] != threading.current_thread().name
 
 
 @pytest.mark.asyncio
@@ -426,6 +433,58 @@ async def test_switch_away_before_deferred_paint_invalidates_acknowledgement(
 
         assert store.active_session_id == return_id
         assert service.calls == []
+
+
+@pytest.mark.asyncio
+async def test_failed_ack_completion_revalidates_notice_after_switch_away():
+    class _BlockingFailureService(_DegradingReceiptService):
+        def __init__(self) -> None:
+            super().__init__()
+            self.entered = threading.Event()
+            self.release = threading.Event()
+
+        def acknowledge(self, activity_ids) -> int:  # type: ignore[no-untyped-def]
+            self.calls.append(tuple(activity_ids))
+            self.threads.append(threading.current_thread().name)
+            self.entered.set()
+            assert self.release.wait(5)
+            return 0
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await pilot.click("#console-new-chat-tab")
+        await pilot.pause()
+        store = console._console_chat_store
+        target_id = store.sessions()[0].id
+        return_id = store.active_session_id
+        service = _BlockingFailureService()
+        service.degraded = True
+        console._console_runtime()._activity_receipts = service
+        profile, token = console._workspace._console_switcher_authority()
+
+        await console._session._apply_console_switcher_choice(
+            _native_choice(
+                session_id=target_id,
+                profile=profile,
+                token=token,
+                receipts=(CapturedReceipt("done-blocked", "done"),),
+            )
+        )
+        await pilot.pause()
+        assert await asyncio.to_thread(service.entered.wait, 2)
+
+        await console._session._activate_native_console_session(return_id)
+        service.release.set()
+        await pilot.pause(0.1)
+
+        notice = console.query_one(ConsoleActivityOutcomeNotice)
+        assert store.active_session_id == return_id
+        assert not notice.display
+        assert service.threads[0] != threading.current_thread().name
 
 
 @pytest.mark.asyncio

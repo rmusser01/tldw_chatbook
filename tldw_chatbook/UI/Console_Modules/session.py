@@ -2696,7 +2696,7 @@ class ConsoleSessionController:
         if choice.kind == "mark_seen" and isinstance(
             entry, UnavailableSessionNotice
         ):
-            self._mark_unavailable_switcher_notice_seen(entry)
+            await self._mark_unavailable_switcher_notice_seen(entry)
             return
         if not isinstance(entry, ConsoleSwitcherEntry) or entry.target is None:
             self._notify_stale_switcher_target()
@@ -2888,21 +2888,42 @@ class ConsoleSessionController:
         if not activity_ids:
             return
         service = getattr(self._console_runtime_accessor(), "activity_receipts", None)
-        try:
-            updated = service.acknowledge(activity_ids) if service is not None else 0
-        except Exception:  # noqa: BLE001 - leave unseen and expose explicit retry
-            logger.opt(exception=True).warning(
-                "Failed to acknowledge painted Console activity"
-            )
-            updated = 0
-        if (
-            service is None
-            or bool(getattr(service, "degraded", False))
-            or updated < len(activity_ids)
-        ):
-            notice.require_mark_seen(generation)
 
-    def _mark_console_activity_seen(
+        async def acknowledge_after_paint() -> None:
+            try:
+                updated = (
+                    await asyncio.to_thread(service.acknowledge, activity_ids)
+                    if service is not None
+                    else 0
+                )
+            except Exception:  # noqa: BLE001 - leave unseen and expose exact retry
+                logger.opt(exception=True).warning(
+                    "Failed to acknowledge painted Console activity"
+                )
+                updated = 0
+            current_notice = self._console_activity_notice()
+            if (
+                current_notice is not notice
+                or not self._console_activity_presentation_is_current(
+                    notice, presentation, generation
+                )
+            ):
+                return
+            if (
+                service is None
+                or bool(getattr(service, "degraded", False))
+                or updated < len(activity_ids)
+            ):
+                notice.require_mark_seen(generation)
+
+        self.run_worker(
+            acknowledge_after_paint(),
+            exclusive=False,
+            group=f"console-activity-ack:{generation}",
+            exit_on_error=False,
+        )
+
+    async def _mark_console_activity_seen(
         self,
         presentation: ConsoleActivityOutcomePresentation,
         generation: int,
@@ -2924,15 +2945,26 @@ class ConsoleSessionController:
         if not activity_ids:
             return False
         try:
-            service.acknowledge(activity_ids)
+            updated = await asyncio.to_thread(service.acknowledge, activity_ids)
         except Exception:  # noqa: BLE001 - explicit retry stays visible
             logger.opt(exception=True).warning(
                 "Failed to mark Console activity seen"
             )
             return False
-        return not bool(getattr(service, "degraded", False))
+        current_notice = self._console_activity_notice()
+        if (
+            current_notice is not notice
+            or not self._console_activity_presentation_is_current(
+                notice, presentation, generation
+            )
+        ):
+            return False
+        return bool(
+            updated >= len(activity_ids)
+            and not bool(getattr(service, "degraded", False))
+        )
 
-    def _mark_unavailable_switcher_notice_seen(
+    async def _mark_unavailable_switcher_notice_seen(
         self, notice: UnavailableSessionNotice
     ) -> None:
         """Acknowledge one vanished session's frozen receipts without navigation."""
@@ -2948,10 +2980,9 @@ class ConsoleSessionController:
         if service is None:
             self._notify_stale_switcher_target()
             return
+        activity_ids = tuple(receipt.activity_id for receipt in notice.receipts)
         try:
-            service.acknowledge(
-                tuple(receipt.activity_id for receipt in notice.receipts)
-            )
+            updated = await asyncio.to_thread(service.acknowledge, activity_ids)
         except Exception:  # noqa: BLE001 - receipt remains safely unseen
             logger.opt(exception=True).warning(
                 "Failed to mark unavailable Console activity seen"
@@ -2961,7 +2992,16 @@ class ConsoleSessionController:
                 severity="warning",
             )
             return
-        if bool(getattr(service, "degraded", False)):
+        try:
+            current_profile, _token = self._switcher_authority_accessor()
+        except Exception:  # noqa: BLE001 - no stale post-write UI
+            return
+        if current_profile != notice.profile_authority:
+            return
+        if (
+            updated < len(activity_ids)
+            or bool(getattr(service, "degraded", False))
+        ):
             self.app_instance.notify(
                 "Activity could not be marked seen. Reopen Ctrl+K and retry.",
                 severity="warning",

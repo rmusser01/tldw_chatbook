@@ -35,8 +35,11 @@ One app-lifetime activity-receipt service coordinates receipt publication,
 acknowledgement, and the existing `FLEET_UNSEEN` compatibility mark under one
 process-wide re-entrant lock. Receipts are authoritative for switcher
 membership. The mark remains a derived coarse badge for incumbent Console/wake
-surfaces and is cleared only when no unseen FLEET survivor receipt remains.
-Starred marks remain unrelated.
+surfaces and is cleared only when no unseen FLEET survivor receipt remains. If
+receipt publication fails after settlement, a separate local-only
+`FLEET_RECEIPT_FALLBACK` companion mark makes that coarse evidence durable
+until the user visits the conversation or a complete event replay creates the
+receipt. Starred marks remain unrelated.
 
 Direct-run, queue-chain, and live `FleetDrained` publication is non-throwing
 presentation bookkeeping: failure preserves execution settlement and exposes a

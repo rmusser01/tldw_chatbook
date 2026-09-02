@@ -1,0 +1,142 @@
+{
+  "platform": "macOS-26.5.2-arm64-arm-64bit",
+  "python": "3.12.11",
+  "method": "perf_counter_ns; nearest-rank p95; warm in-process Textual CSS; no claim of improvement",
+  "sizes": {
+    "small": {
+      "input_subjects": 5,
+      "modal_open": {
+        "samples": 7,
+        "median_ms": 89.662,
+        "p95_ms": 144.113
+      },
+      "active_filter_pure": {
+        "samples": 200,
+        "median_ms": 0.006,
+        "p95_ms": 0.006
+      },
+      "modal_operations": {
+        "active_filter": {
+          "samples": 20,
+          "median_ms": 239.851,
+          "p95_ms": 241.816
+        },
+        "zero_match_widening": {
+          "samples": 20,
+          "median_ms": 240.578,
+          "p95_ms": 242.925
+        },
+        "f3_toggle": {
+          "samples": 20,
+          "median_ms": 79.252,
+          "p95_ms": 102.132
+        },
+        "mounted_selectable_widgets": 5,
+        "modal_rows": 35
+      },
+      "history_page": {
+        "samples": 30,
+        "median_ms": 0.11,
+        "p95_ms": 0.207,
+        "database_rows_materialized": 5,
+        "reported_total": 5
+      },
+      "receipt_cache_refresh": {
+        "samples": 30,
+        "median_ms": 0.006,
+        "p95_ms": 0.01,
+        "database_rows_materialized": 5
+      }
+    },
+    "representative": {
+      "input_subjects": 50,
+      "modal_open": {
+        "samples": 7,
+        "median_ms": 114.384,
+        "p95_ms": 175.587
+      },
+      "active_filter_pure": {
+        "samples": 200,
+        "median_ms": 0.082,
+        "p95_ms": 0.093
+      },
+      "modal_operations": {
+        "active_filter": {
+          "samples": 20,
+          "median_ms": 245.434,
+          "p95_ms": 264.095
+        },
+        "zero_match_widening": {
+          "samples": 20,
+          "median_ms": 265.146,
+          "p95_ms": 268.55
+        },
+        "f3_toggle": {
+          "samples": 20,
+          "median_ms": 126.922,
+          "p95_ms": 200.008
+        },
+        "mounted_selectable_widgets": 50,
+        "modal_rows": 35
+      },
+      "history_page": {
+        "samples": 30,
+        "median_ms": 0.383,
+        "p95_ms": 0.481,
+        "database_rows_materialized": 50,
+        "reported_total": 50
+      },
+      "receipt_cache_refresh": {
+        "samples": 30,
+        "median_ms": 0.045,
+        "p95_ms": 0.047,
+        "database_rows_materialized": 50
+      }
+    },
+    "stress": {
+      "input_subjects": 500,
+      "modal_open": {
+        "samples": 7,
+        "median_ms": 115.157,
+        "p95_ms": 189.013
+      },
+      "active_filter_pure": {
+        "samples": 200,
+        "median_ms": 0.543,
+        "p95_ms": 0.687
+      },
+      "modal_operations": {
+        "active_filter": {
+          "samples": 20,
+          "median_ms": 263.81,
+          "p95_ms": 344.999
+        },
+        "zero_match_widening": {
+          "samples": 20,
+          "median_ms": 264.686,
+          "p95_ms": 270.156
+        },
+        "f3_toggle": {
+          "samples": 20,
+          "median_ms": 106.528,
+          "p95_ms": 129.713
+        },
+        "mounted_selectable_widgets": 50,
+        "modal_rows": 35
+      },
+      "history_page": {
+        "samples": 30,
+        "median_ms": 0.385,
+        "p95_ms": 0.481,
+        "database_rows_materialized": 50,
+        "reported_total": 500
+      },
+      "receipt_cache_refresh": {
+        "samples": 30,
+        "median_ms": 0.412,
+        "p95_ms": 0.425,
+        "database_rows_materialized": 500
+      }
+    }
+  }
+}
