@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-01 15:07'
-updated_date: '2026-09-02 06:56'
+updated_date: '2026-09-02 07:11'
 labels: []
 dependencies: []
 references:
@@ -104,6 +104,16 @@ Focused correction evidence:
 - `python -m pytest Tests/CI/test_backlog_task_id_uniqueness.py -q --disable-warnings` passed all 3 targeted tests under the repository Python 3.12 environment; pytest reported one sandbox cleanup warning after the successful run.
 - The exact reusable four-bullet block describes the eligible snapshot as resulting from the user-approved content-free reconciliation plan.
 - TASK-27016 remains In Progress for re-review. No PR was opened.
+
+Independent specification review and the subsequent quality review approved the source-traced canonical correction after the Critical findings above were resolved. The approved specification wording was then prepared for PR without closing this review task.
+
+Post-rebase evidence on `origin/dev` `a1391b0baf81bb671097d1c225780d58b094ee7f`:
+- All three correction commits rebased without conflict, and a direct file comparison with pre-rebase correction commit `cb3a36dcf4ee2b8f72e31f99d2dc5e1ba9fe2bd9` confirmed that the approved specification wording was unchanged.
+- The fail-closed semantic, exact shared-block, local-link, and task-state check passed with four exact bullets, 19 required claims, seven stale claims absent, three links resolved, and five checked acceptance criteria; four negative controls still caught the former false claims.
+- `git diff --check origin/dev...HEAD` passed, and the rebased exact-scope check found only the specification and this task record.
+- `python -m pytest Tests/CI/test_backlog_task_id_uniqueness.py -q --disable-warnings` passed all 3 targeted tests under the repository Python 3.12 environment; pytest reported one sandbox cleanup warning after the successful run.
+- The all-ref and all-worktree collision sweeps each found only `backlog/tasks/task-27016 - Publish-approved-Personal-Context-documentation-design.md` as the TASK-27016 claimant path.
+- TASK-27016 remains In Progress for PR review and closeout. No PR was opened or merged by this preparation step.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
