@@ -829,12 +829,19 @@ git commit -m "feat: inspect tool packs without side effects"
 - Create: `tldw_chatbook/Tool_Packs/activation.py`
 - Create: `Tests/Tool_Packs/test_activation.py`
 - Modify: `Tests/MCP/test_permission_resolution.py`
+- Modify: `tldw_chatbook/Tool_Packs/receipt_store.py`
+- Modify: `Tests/Tool_Packs/test_receipt_store.py`
 
 **Interfaces:**
 - Consumes: reviews (Task 8), lifecycle coordinator/store operations (Task 2), receipts (Task 5), and inventory (Task 6).
 - Produces: `InstalledToolProfile`, `ToolPackActivationResult`, `compile_imported_profile()`, and `ToolPackActivationService.install()`.
 
-- [ ] **Step 1: Write safe-compilation tests**
+- [ ] **Step 1: Correct empty reviewed-mapping receipt admission, then write safe-compilation tests**
+
+An exact automatic match may require no manual server mapping. Add a failing receipt
+round-trip/activation regression for `reviewed_mappings=[]`, then admit that canonical
+empty list while retaining the existing maximum, sort, uniqueness, strict-field, and
+privacy checks. Run the focused receipt-store tests before continuing.
 
 ```python
 compiled = compile_imported_profile(review, destination_inventory)
