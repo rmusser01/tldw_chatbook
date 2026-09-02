@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-01
 
-**Status:** In review
+**Status:** Independently approved; pending user review
 
 **Repositories:** `tldw_chatbook`, `tldw_server`
 
@@ -108,7 +108,9 @@ clients. Add asynchronous, user-scoped export-job routes that evaluate one expli
 coherently, write every matching item exactly once to a private managed artifact, expose bounded job
 history/detail, and support authorized download and confirmed cleanup. Interruption is restart-safe
 and never publishes a partial artifact as complete. A caller-generated export request key prevents
-duplicate artifacts after a lost create response. Docs-info advertises exact
+duplicate artifacts after a lost create response; reusing a key with a different normalized scope or
+content payload returns a bounded conflict. Each artifact carries the versioned Server-native
+portable-schema identifier and manifest consumed by S5b. Docs-info advertises exact
 `hasReadingExportJobsV1=true` only when complete-scope export, job lifecycle, artifact retention,
 and cleanup guarantees are active.
 
