@@ -1,17 +1,19 @@
-"""Export extraction series: state object exists and is screen-wired.
+"""Export extraction series: state object + controller are screen-wired.
 
-Wave-2 Task 2 (recipe: backlog/docs/library-decomposition-recipe.md;
-conversations series precedent: Tests/Architecture/
-test_library_conversations_wiring.py, its state-PR-era shape). Every field
-LibraryExportState declares must have a matching generated property shim on
-LibraryScreen under the `_library_export_<field>` name -- the single prefix
-every export field uses (unlike conversations, no field needed a plural
-`_library_exports_` variant; the ownership analysis found none, see the
-export series' task-2 report).
+Wave-2 Task 2 (state PR) and Task 3 (controller PR, export series 2/3;
+recipe: backlog/docs/library-decomposition-recipe.md; conversations series
+precedent: Tests/Architecture/test_library_conversations_wiring.py). Task 2's
+single assertion (every LibraryExportState field has a matching generated
+property shim on LibraryScreen, under the single `_library_export_` prefix
+every export field uses) is unchanged below; Task 3 adds the full-cluster
+controller-ownership and same-name-delegator-forwarding checks, mirroring
+`_BROWSE_CLUSTER_METHOD_NAMES`'s shape in the conversations wiring test.
 """
 from __future__ import annotations
 
 import dataclasses
+import inspect
+import re
 
 import pytest
 
@@ -31,3 +33,197 @@ def test_state_object_fields_match_the_shim_surface() -> None:
         assert isinstance(shim, property), (
             f"no screen shim property found for state field {name!r}"
         )
+
+
+#: Every method Task 3 moved into `LibraryExportController`, under its
+#: original `LibraryScreen` name. Derived from a full `ast` census of every
+#: `LibraryScreen` method whose name contains "export" (51 methods, matching
+#: Task 2's own census) followed by reading each candidate's body -- NOT a
+#: prefix/substring shortcut (the recipe's own documented trap). Only 22 of
+#: the 51 are genuinely Export-owned AND move; the other 29 are excluded
+#: (see `library_export_controller.py`'s module docstring for the full,
+#: per-name reasoning):
+#:
+#: - 18 belong to a DIFFERENT subsystem (Notes/Prompts/Media/Conversations/
+#:   Collections/Search-RAG) despite the name match -- verified by reading
+#:   what state each body actually touches, not by name.
+#: - 2 more (`_run_library_export_counts_worker`, `_run_library_export_worker`)
+#:   are genuinely Export-owned but stay on `LibraryScreen`, UNMOVED: both
+#:   carry `@work(thread=True, ...)`, whose decorator asserts
+#:   `isinstance(self, DOMNode)` at call time -- a plain controller instance
+#:   would fail that assertion (the module docstring's "framework-decorator
+#:   self-type assertion" exclusion note).
+#: - 9 more, found only by running this task's own verification battery
+#:   (not static analysis, and not `Tests/UI` alone -- four of the nine
+#:   surfaced only once the sweep was widened to `Tests/Library/`), are
+#:   genuinely Export-owned but ALSO stay on `LibraryScreen`, UNMOVED:
+#:   `_apply_library_export_cancelled`, `handle_library_export_cancel`,
+#:   `_apply_library_export_progress`, `_apply_library_export_counts`,
+#:   `_build_library_export_state`, `_update_library_export_canvas_after_run`,
+#:   `_start_library_export_counts_worker`, `_start_library_export_worker`,
+#:   `_apply_library_export_success` -- each reached by an unbound
+#:   `LibraryScreen.<name>(fake, ...)` call (a `SimpleNamespace` lacking
+#:   `_export_controller`, or -- for `_apply_library_export_success` alone --
+#:   a `unittest.mock.Mock()`, whose auto-attribution silently swallows a
+#:   delegator instead of raising) in one of six test files. All 9 were
+#:   confirmed, via `git stash -u`, to PASS on a pristine baseline before
+#:   being excluded (genuine regressions this move introduced, not
+#:   pre-existing reds).
+_EXPORT_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
+    "_default_library_export_form",
+    "_reset_library_export_transient_state",
+    "_open_library_export_canvas",
+    "_library_export_is_server_mode",
+    "_resolve_library_export_chachanotes_db",
+    "_compute_library_export_counts",
+    "handle_library_export_submit",
+    "_build_library_export_payload",
+    "_run_library_export_via_service",
+    "_marshal_library_export_success",
+    "_marshal_library_export_failure",
+    "_marshal_library_export_cancelled",
+    "_build_library_export_success_message",
+    "_apply_library_export_failure",
+    "_refresh_library_export_status_line",
+    "action_library_export_back",
+    "handle_library_export_name_changed",
+    "handle_library_export_description_changed",
+    "handle_library_export_quality",
+    "handle_library_export_quality_choice",
+    "handle_library_export_choose_destination",
+    "_apply_library_export_destination",
+)
+
+#: The 5 names above that are `@staticmethod`s on `LibraryScreen`. Their
+#: delegators forward straight to the module-level `LibraryExportController`
+#: CLASS (per task-8-report.md's "static-method delegator pattern"
+#: correction, cited in the conversations wiring test), not through
+#: `self._export_controller`.
+_EXPORT_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
+    {
+        "_default_library_export_form",
+        "_compute_library_export_counts",
+        "_build_library_export_payload",
+        "_run_library_export_via_service",
+        "_build_library_export_success_message",
+    }
+)
+
+
+@pytest.mark.unit
+def test_export_controller_owns_its_cluster() -> None:
+    """Every one of the 22 moved names is a callable on the controller.
+
+    Covers the whole cluster, not a hand-picked sample -- mirrors
+    `test_browse_controller_owns_its_cluster` in the conversations wiring
+    test.
+    """
+    from tldw_chatbook.UI.Library_Modules.library_export_controller import (
+        LibraryExportController,
+    )
+
+    missing = [
+        name
+        for name in _EXPORT_CLUSTER_METHOD_NAMES
+        if not callable(getattr(LibraryExportController, name, None))
+    ]
+    assert not missing, f"LibraryExportController is missing: {missing!r}"
+
+
+@pytest.mark.unit
+def test_screen_delegates_export_handlers() -> None:
+    """Every one of the 22 moved names is a one-line screen delegator that
+    forwards to the SAME-NAMED controller method (or, for the 5
+    static/classmethods, to the module-level controller CLASS).
+
+    Mirrors `test_screen_delegates_browse_handlers` in the conversations
+    wiring test: a same-name forwarding check, not a loose "the controller
+    is referenced somewhere" substring check.
+    """
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+    from tldw_chatbook.UI.Library_Modules.library_export_controller import (
+        LibraryExportController,
+    )
+
+    not_delegators = []
+    for name in _EXPORT_CLUSTER_METHOD_NAMES:
+        method = getattr(LibraryScreen, name, None)
+        if method is None:
+            not_delegators.append(f"{name!r} (missing entirely)")
+            continue
+        src = inspect.getsource(method)
+        escaped = re.escape(name)
+        if not re.search(rf"_export_controller\.{escaped}\(", src) and not re.search(
+            rf"LibraryExportController\.{escaped}\(", src
+        ):
+            not_delegators.append(name)
+    assert not not_delegators, f"not delegators yet: {not_delegators!r}"
+
+
+@pytest.mark.unit
+def test_export_cluster_staticmethods_forward_to_the_controller_class() -> None:
+    """The 5 staticmethod names in the cluster forward to the CLASS, not an instance."""
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    not_class_forwarding = []
+    for name in _EXPORT_CLUSTER_STATICMETHOD_NAMES:
+        src = inspect.getsource(getattr(LibraryScreen, name))
+        if not re.search(rf"LibraryExportController\.{re.escape(name)}\(", src):
+            not_class_forwarding.append(name)
+    assert not not_class_forwarding, (
+        f"expected class-forwarding delegators: {not_class_forwarding!r}"
+    )
+
+
+@pytest.mark.unit
+def test_export_controller_exposes_every_state_field() -> None:
+    """The controller's generated shim loop covers every state field.
+
+    Mirrors `test_browse_controller_exposes_every_state_field` in the
+    conversations wiring test. Export uses a single `_library_export_`
+    prefix for every field (task 2's report: no field needed a plural
+    variant), so unlike Conversations there is no prefix branch to check.
+    """
+    from tldw_chatbook.UI.Library_Modules.library_export_controller import (
+        LibraryExportController,
+    )
+
+    field_names = {f.name for f in dataclasses.fields(LibraryExportState)}
+    assert field_names, "state object is empty"
+    missing = [
+        name
+        for name in field_names
+        if not isinstance(
+            getattr(LibraryExportController, "_library_export_" + name, None),
+            property,
+        )
+    ]
+    assert not missing, (
+        f"no export controller shim property found for state field(s): {missing!r}"
+    )
+
+
+@pytest.mark.unit
+def test_export_controller_safe_text_is_bound_via_screen_import() -> None:
+    """Importing `library_screen` installs `_safe_text` on the export controller.
+
+    Mirrors `test_browse_controller_safe_text_is_bound_via_screen_import` in
+    the conversations wiring test: `handle_library_export_submit` calls
+    `self._safe_text(...)` on a regular instance method, so the SAME
+    class-level rebinding shape (`LibraryExportController._safe_text =
+    staticmethod(LibraryScreen._safe_text)`) is required here too.
+    """
+    import tldw_chatbook.UI.Screens.library_screen  # noqa: F401  (import side effect installs the binding)
+    from tldw_chatbook.UI.Library_Modules.library_export_controller import (
+        LibraryExportController,
+    )
+
+    bound = LibraryExportController.__dict__.get("_safe_text")
+    assert isinstance(bound, staticmethod), (
+        "LibraryExportController._safe_text must be the staticmethod "
+        "installed by library_screen.py's trailing class-level rebinding -- "
+        f"got {type(bound)!r}"
+    )
+    assert callable(LibraryExportController._safe_text), (
+        "LibraryExportController._safe_text must be callable"
+    )

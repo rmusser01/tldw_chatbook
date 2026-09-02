@@ -148,7 +148,21 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # import line only), not pinned by
     # `test_screen_still_re_exports_every_moved_name`, and not imported by
     # anything outside this module. Method count unchanged (imports only).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43930, 1282),
+    # Wave-2 task 3 (export series 2/3, controller PR): 43930 -> 43432 --
+    # 22 method bodies moved verbatim to `LibraryExportController`
+    # (`UI/Library_Modules/library_export_controller.py`), replaced by
+    # 22 one-line screen delegators. Method count unchanged (1282): a pure
+    # move, 22 `FunctionDef`s out, 22 back in as delegators. Of the 51
+    # "export"-named candidates the task's own census started from, 29 stay
+    # screen-resident, unmoved and byte-for-byte untouched (18 belong to
+    # other subsystems; 2 carry `@work` and would fail Textual's
+    # `isinstance(self, DOMNode)` check on a plain controller; 9 more are
+    # reached by unbound-fake-self test calls this task's own verification
+    # battery found -- see `library_export_controller.py`'s module
+    # docstring for the full per-name accounting and its own exclusion
+    # reasoning, which is where that reasoning lives, NOT as inline
+    # comments on the 29 untouched screen methods themselves).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43432, 1282),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

@@ -340,6 +340,31 @@ rediscover the same red from scratch.
   selector) to mount within its 30s budget, consistent with machine-load-
   sensitive DOM-mount flakiness rather than a logic bug, but confirmed
   100% reproducible (same set, both runs) rather than randomly flipping.
+- Wave-2 Task 3 (export controller PR) found 1 more, confirmed identical
+  via `git stash -u` (same root cause as the `test_cancel_apply_current_
+  run_sets_cancelled_status` row above -- both trip on the SAME stale-fake
+  `_sync_library_emergency_guard_presentation` gap, in different completion
+  handlers): `Tests/Library/test_library_export_roundtrip.py::
+  test_library_export_success_records_a_durable_receipt_with_the_real_path`
+  -- its unbound-`SimpleNamespace` fake for `_apply_library_export_success`
+  never gained a `_sync_library_emergency_guard_presentation` entry, and
+  the method's own `run_id`-staleness guard does not return early before
+  reaching that call for this test's inputs (`run_id=1` matches the fake's
+  `_library_export_run_id=1`), so it raises `AttributeError` regardless of
+  whether the method is a delegator or its original body -- this task's
+  own move neither causes nor fixes it. Also newly found by this task,
+  affecting `Tests/Library/` specifically (a directory this recipe's own
+  `-k "export and library"` per-task check had not previously needed to
+  cover, since Task 2 found its 14 entirely within `Tests/UI/`): the
+  "unbound fake-self" bypass shape reaches at a much larger scale here
+  than the conversations exemplar's own 5-method precedent -- 9 Export
+  methods, across 6 test files, 4 of them in `Tests/Library/` rather than
+  `Tests/UI/`. See `library_export_controller.py`'s module docstring for
+  the full per-name accounting; future subsystems' controller-PR sweeps
+  should widen their `-k` search beyond `Tests/UI` before trusting a clean
+  result, and should expect this shape to scale with how much a
+  subsystem's tests favor unbound-`SimpleNamespace`/`Mock` unit-style
+  calls over full-harness ones.
 
 ## 8. Subsystem order (spec, "Order of work")
 

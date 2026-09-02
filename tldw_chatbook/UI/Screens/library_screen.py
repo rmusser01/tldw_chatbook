@@ -582,6 +582,7 @@ from ..Library_Modules.library_conversations_controller import (
     LibraryConversationsController,
 )
 from ..Library_Modules.library_conversations_state import LibraryConversationsState
+from ..Library_Modules.library_export_controller import LibraryExportController
 from ..Library_Modules.library_export_state import LibraryExportState
 from ..Library_Modules.library_note_import_controller import (
     LibraryNoteImportController,
@@ -2265,6 +2266,58 @@ class LibraryScreen(BaseAppScreen):
             ),
             selected_conversation_handoff_payload=(
                 lambda: self._selected_conversation_handoff_payload()
+            ),
+        )
+        self._export_controller = LibraryExportController(
+            self,
+            export_state_accessor=lambda: self._export_state,
+            apply_open_item_surface=(
+                lambda *a, **k: self._apply_library_open_item_surface(*a, **k)
+            ),
+            flush_note_save=lambda: self._flush_library_note_save(),
+            set_library_destination_with_conversation_fence=(
+                lambda value: self._set_library_destination_with_conversation_fence(
+                    value
+                )
+            ),
+            sync_library_emergency_guard_presentation=(
+                lambda: self._sync_library_emergency_guard_presentation()
+            ),
+            close_open_library_choice_strip=(
+                lambda: self._close_open_library_choice_strip()
+            ),
+            focus_library_hub_entry=lambda: self._focus_library_hub_entry(),
+            select_library_rail_row=(
+                lambda *a, **k: self._select_library_rail_row(*a, **k)
+            ),
+            focus_library_choice_strip_active=(
+                lambda *a, **k: self._focus_library_choice_strip_active(*a, **k)
+            ),
+            focus_library_control=(
+                lambda *a, **k: self._focus_library_control(*a, **k)
+            ),
+            library_selected_row_id_accessor=lambda: self._library_selected_row_id,
+            library_prompts_mutation_in_flight_accessor=(
+                lambda: self._library_prompts_mutation_in_flight
+            ),
+            build_library_export_state=lambda: self._build_library_export_state(),
+            start_library_export_counts_worker=(
+                lambda: self._start_library_export_counts_worker()
+            ),
+            start_library_export_worker=(
+                lambda **k: self._start_library_export_worker(**k)
+            ),
+            apply_library_export_success=(
+                lambda *a, **k: self._apply_library_export_success(*a, **k)
+            ),
+            apply_library_export_cancelled=(
+                lambda run_id: self._apply_library_export_cancelled(run_id)
+            ),
+            update_library_export_canvas_after_run=(
+                lambda: self._update_library_export_canvas_after_run()
+            ),
+            handle_library_export_cancel=(
+                lambda event: self.handle_library_export_cancel(event)
             ),
         )
         (
@@ -19655,153 +19708,23 @@ class LibraryScreen(BaseAppScreen):
 
     @staticmethod
     def _default_library_export_form() -> dict[str, Any]:
-        """Build a fresh export form echo: today's stamped name, nothing else set."""
-        return {
-            "name": default_export_name(),
-            "description": "",
-            "quality": DEFAULT_MEDIA_QUALITY,
-            "destination": "",
-            "destination_exists": False,
-        }
+        return LibraryExportController._default_library_export_form()
 
-    def _reset_library_export_transient_state(
-        self, scope: ExportScope | None = None
-    ) -> None:
-        """Clear the export canvas's scope/counts/form to defaults on entry.
-
-        Called from both entry points into the export canvas -- the rail
-        row's own ``_select_library_rail_row`` switch (always the default
-        Everything ``scope``) and the browse-canvas "Export…" section
-        actions (``_open_library_export_canvas``, their own pre-scoped
-        ``ExportScope``) -- so neither a stale form from a previous Export
-        visit nor a stale scope/counts pairing from a different section
-        ever reappears. The name field re-stamps today's local date every
-        time (mirrors the ingest form's own from-scratch reset), never
-        carrying a previous visit's edited name forward.
-
-        Also invalidates any export run still executing on its own OS
-        thread (bumps ``_library_export_run_id``) -- navigating away mid-
-        run resets ``running`` to ``False`` for THIS fresh visit, but the
-        abandoned worker keeps running regardless (it cannot be preempted
-        mid-``asyncio.run``); bumping the token here ensures that worker's
-        eventual completion is recognized as stale and cannot stomp
-        whatever the user is looking at by the time it lands. See
-        ``_library_export_run_id``'s docstring in ``__init__``.
-
-        Args:
-            scope: The scope to open the canvas with; defaults to
-                ``ExportScope(kind="everything")`` when omitted.
-        """
-        self._library_export_scope = scope or ExportScope(kind="everything")
-        self._library_export_counts = None
-        self._library_export_form = self._default_library_export_form()
-        # task-14902: a fresh visit never inherits a half-open quality strip.
-        self._library_export_quality_choices_visible = False
-        self._library_export_running = False
-        self._library_export_error = ""
-        self._library_export_status = ""
-        if self._library_export_cancel_event is not None:
-            self._library_export_cancel_event.set()
-        self._library_export_run_id += 1
+    def _reset_library_export_transient_state(self, scope: ExportScope | None=None) -> None:
+        return self._export_controller._reset_library_export_transient_state(scope)
 
     async def _open_library_export_canvas(self, scope: ExportScope) -> None:
-        """Open the export canvas pre-scoped to a browse section's own filter.
-
-        Wired to each browse canvas's "Export…" action (media/
-        conversations/notes/Prompts) -- mirrors ``_select_library_rail_row``'s
-        dirty-note-flush discipline for switching canvases, but only
-        touches the export-specific state (the rail row's own switch
-        already resets everything else on the way past); the caller's
-        ``scope`` survives untouched (unlike a plain rail-row switch,
-        which always resets to Everything).
-
-        Args:
-            scope: The section-specific scope to open the form with (e.g.
-                ``ExportScope(kind="media", media_type=...)``).
-        """
-        if self._library_prompts_mutation_in_flight:
-            return
-        if self._library_export_is_server_mode():
-            # The section "Export..." actions bypass the rail row's own
-            # server-disabled gate, so re-check here (Qodo review): export
-            # reads the LOCAL DBs, so running it while the Library is in
-            # server runtime mode would package the wrong dataset.
-            self.app_instance.notify(
-                LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP, severity="warning"
-            )
-            return
-        note_flush = await self._flush_library_note_save()
-        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
-            return
-        # task-4023 AC#7: remember which canvas opened Export so Escape
-        # (action_library_export_back) can return there -- "Export… from
-        # within Media navigates away with no return path". Recorded
-        # AFTER the flush admits the switch, BEFORE the row id moves.
-        self._library_export_origin_row_id = self._library_selected_row_id
-        self._set_library_destination_with_conversation_fence(LIBRARY_ROW_INGEST_EXPORT)
-        self._reset_library_export_transient_state(scope)
-        # task-21116: rail selection + canvas-child swap only, never a
-        # whole-screen rebuild for a per-click section "Export…" action.
-        await self._apply_library_open_item_surface(
-            lambda: LibraryExportCanvas(
-                self._build_library_export_state(),
-                id="library-export-canvas",
-            )
-        )
-        self._start_library_export_counts_worker()
+        return await self._export_controller._open_library_export_canvas(scope)
 
     def _library_export_is_server_mode(self) -> bool:
-        """True when the Library is in server runtime mode.
-
-        Export packages LOCAL content only (it reads the local media /
-        ChaChaNotes / Prompt DBs), so both the rail Export row and the section
-        "Export..." actions must refuse to run in server mode.
-        """
-        runtime_policy = getattr(self.app_instance, "runtime_policy", None)
-        runtime_state = runtime_policy.state if runtime_policy is not None else None
-        active_source = str(
-            getattr(runtime_state, "active_source", "local") or "local"
-        ).lower()
-        return active_source == "server"
+        return self._export_controller._library_export_is_server_mode()
 
     def _resolve_library_export_chachanotes_db(self) -> Any:
-        """Return the ChaChaNotes DB handle for export counts.
-
-        Mirrors ``_resolve_library_notes_sync_db``'s exact access path
-        (prefer ``app_instance.chachanotes_db``, fall back to
-        ``notes_service.db``) -- the same canonical DB-access path this
-        screen already uses elsewhere, per the F4 brief's requirement that
-        the counts worker reach the DB the same way the rest of the
-        screen does.
-        """
-        notes_service = getattr(self.app_instance, "notes_service", None)
-        return getattr(self.app_instance, "chachanotes_db", None) or getattr(
-            notes_service, "db", None
-        )
+        return self._export_controller._resolve_library_export_chachanotes_db()
 
     @staticmethod
-    def _compute_library_export_counts(
-        scope: ExportScope,
-        media_db: Any,
-        chachanotes_db: Any,
-        prompts_db: Any,
-    ) -> dict[str, int]:
-        """Run the full-query, uncapped counts for ``scope`` (never a rendered snapshot).
-
-        A quiet-degrade failure (a missing DB seam, an unexpected DB
-        error) reports all-zero counts rather than raising -- the export
-        canvas simply shows "Nothing to export in this scope." rather
-        than crashing the recompose; the failure is still logged.
-        """
-        try:
-            return count_export_scope(scope, media_db, chachanotes_db, prompts_db)
-        except Exception as exc:
-            logger.warning(
-                "Library export counts failed scope_kind={} category={}",
-                scope.kind,
-                type(exc).__name__,
-            )
-            return {"media": 0, "conversations": 0, "notes": 0, "prompts": 0}
+    def _compute_library_export_counts(scope: ExportScope, media_db: Any, chachanotes_db: Any, prompts_db: Any) -> dict[str, int]:
+        return LibraryExportController._compute_library_export_counts(scope, media_db, chachanotes_db, prompts_db)
 
     def _start_library_export_counts_worker(self) -> None:
         """Kick off the export scope's full-query counts (Task 1's resolver).
@@ -20032,71 +19955,7 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-export-submit")
     def handle_library_export_submit(self, event: Button.Pressed) -> None:
-        """Validate and kick off the chatbook export worker.
-
-        Re-validates on the UI thread (destination chosen, scope non-empty,
-        not already running) rather than trusting the button's ``disabled``
-        state alone. A second press while an export is already running is a
-        guarded no-op here (``self._library_export_running``) -- on top of
-        the button itself being disabled while running and the worker's own
-        ``group="library_export"``/``exclusive=True`` single-flight, this is
-        belt-and-suspenders against a stale/racing ``Pressed`` event.
-
-        The transition INTO ``running`` is the one place this feature uses
-        a full recompose rather than a targeted update (see
-        ``_update_library_export_canvas_after_run``'s docstring for the
-        reverse transition's targeted-update discipline): the user's last
-        action was clicking this button, not typing, so nothing is
-        mid-keystroke -- unlike the counts-landing case Task 2 fixed, or
-        the run-completion case below, where the (long-running) wait window
-        gives the user time to resume typing in the still-editable name/
-        description fields. Worker dispatch runs after that refresh so an
-        immediate completion always targets the newly mounted running canvas,
-        never the outgoing form that the recompose is replacing.
-        """
-        event.stop()
-        if self._library_export_running:
-            return
-        form = self._library_export_form
-        destination = str(form.get("destination", "")).strip()
-        counts = self._library_export_counts
-        total = sum(counts.values()) if counts else 0
-        if not destination or total <= 0:
-            return
-        if self._library_export_is_server_mode():
-            # Defense in depth: the rail row and section actions already
-            # gate on server mode, but re-check at submit in case the
-            # runtime source flipped while the form was open (Qodo review).
-            self.app_instance.notify(
-                LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP, severity="warning"
-            )
-            return
-        # Sanitize name/description at the UI boundary before they flow into
-        # the export payload, chatbook manifest, and Artifacts registry
-        # (Qodo review) -- bound length + strip unsafe content via the shared
-        # input_validation helpers, mirroring the media-field path.
-        name = self._safe_text(form.get("name", ""), "Chatbook", max_length=200)
-        description = self._safe_text(form.get("description", ""), "", max_length=2000)
-        media_quality = str(form.get("quality", DEFAULT_MEDIA_QUALITY))
-        self._library_export_running = True
-        self._library_export_error = ""
-        self._library_export_status = f"Exporting… ({total} items)"
-        self._library_export_run_id += 1
-        run_id = self._library_export_run_id
-        self._library_export_cancel_event = threading.Event()
-        cancel_event = self._library_export_cancel_event
-        self.refresh(recompose=True)
-        self.call_after_refresh(self._sync_library_emergency_guard_presentation)
-        self.call_after_refresh(
-            self._start_library_export_worker,
-            run_id=run_id,
-            scope=self._library_export_scope,
-            name=name,
-            description=description,
-            media_quality=media_quality,
-            destination=destination,
-            cancel_event=cancel_event,
-        )
+        return self._export_controller.handle_library_export_submit(event)
 
     @on(Button.Pressed, "#library-export-cancel")
     def handle_library_export_cancel(self, event: "Button.Pressed") -> None:
@@ -20188,121 +20047,12 @@ class LibraryScreen(BaseAppScreen):
         )
 
     @staticmethod
-    def _build_library_export_payload(
-        *,
-        name: str,
-        description: str,
-        selections: Mapping[ContentType, list[str]],
-        destination: str,
-        media_quality: str,
-    ) -> dict[str, Any]:
-        """Build the ``local_chatbook_service.export_chatbook`` request payload.
-
-        ``include_media`` is spec-critical (F4 plan Global Constraints):
-        it MUST be ``True`` whenever ``ContentType.MEDIA`` is present in
-        ``selections`` -- ``ChatbookCreator`` silently skips all media
-        content otherwise, even when media ids ARE present in
-        ``content_selections``. Since ``resolve_export_selections`` omits
-        a ``ContentType`` key entirely when that source resolves zero ids
-        (see its docstring), keying off simple membership is automatically
-        correct for every scope, including an "everything" scope whose
-        library happens to have no media at all.
-        """
-        return {
-            "name": name,
-            "description": description,
-            "content_selections": dict(selections),
-            "output_path": destination,
-            "media_quality": media_quality,
-            "include_media": ContentType.MEDIA in selections,
-        }
+    def _build_library_export_payload(*, name: str, description: str, selections: Mapping[ContentType, list[str]], destination: str, media_quality: str) -> dict[str, Any]:
+        return LibraryExportController._build_library_export_payload(name=name, description=description, selections=selections, destination=destination, media_quality=media_quality)
 
     @staticmethod
-    def _run_library_export_via_service(
-        service: Any,
-        payload: dict[str, Any],
-        *,
-        name: str,
-        description: str,
-        progress_callback=None,
-        cancel_check=None,
-    ) -> dict[str, Any]:
-        """Execute one export through ``service``, synchronously: zip first, registry only on success.
-
-        Runs both of ``service``'s async-signature/sync-body methods
-        through ``asyncio.run`` -- they never touch the app's own event
-        loop, so this is only ever safe to call from a genuine OS thread
-        (never the UI thread, which already owns a running loop). Exposed
-        as its own (non-``@work``) static method so tests can call it
-        directly with a fake ``service`` and assert call ordering /
-        the include_media invariant without booting a real thread.
-
-        ``create_chatbook`` (the registry record) is attempted ONLY when
-        ``export_chatbook`` reports ``success`` -- the F4 plan's Global
-        Constraints' "zip first, registry record only on success". A
-        registry-recording failure AFTER a successful zip does not flip
-        the overall outcome to failure (the artifact genuinely exists on
-        disk; only the bookkeeping failed) -- ``registry_recorded``
-        reports that separately for callers/tests that care.
-
-        Returns a plain dict: ``success``, ``message``, ``path``,
-        ``dependency_info``, ``registry_recorded``.
-        """
-        try:
-            export_result = asyncio.run(  # policy-exception: worker-thread loop
-                service.export_chatbook(
-                    payload,
-                    progress_callback=progress_callback,
-                    cancel_check=cancel_check,
-                )
-            )
-        except Exception as exc:
-            logger.opt(exception=True).warning("Library export service call failed.")
-            return {
-                "success": False,
-                "message": f"Export failed: {exc}",
-                "path": "",
-                "dependency_info": {},
-                "registry_recorded": False,
-                "cancelled": False,
-            }
-
-        if not export_result.get("success"):
-            return {
-                "success": False,
-                "message": str(export_result.get("message") or "Export failed."),
-                "path": export_result.get("path") or payload.get("output_path", ""),
-                "dependency_info": export_result.get("dependency_info") or {},
-                "registry_recorded": False,
-                "cancelled": bool(export_result.get("cancelled", False)),
-            }
-
-        output_path = export_result.get("path") or payload.get("output_path", "")
-        dependency_info = export_result.get("dependency_info") or {}
-        registry_recorded = False
-        try:
-            asyncio.run(  # policy-exception: worker-thread loop
-                service.create_chatbook(
-                    name=name,
-                    description=description,
-                    file_path=output_path,
-                    tags=["library-export"],
-                )
-            )
-            registry_recorded = True
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Library export succeeded but registry recording failed for {output_path!r}."
-            )
-
-        return {
-            "success": True,
-            "message": export_result.get("message") or "",
-            "path": output_path,
-            "dependency_info": dependency_info,
-            "registry_recorded": registry_recorded,
-            "cancelled": False,
-        }
+    def _run_library_export_via_service(service: Any, payload: dict[str, Any], *, name: str, description: str, progress_callback=None, cancel_check=None) -> dict[str, Any]:
+        return LibraryExportController._run_library_export_via_service(service, payload, name=name, description=description, progress_callback=progress_callback, cancel_check=cancel_check)
 
     @work(thread=True, exclusive=True, group="library_export")
     def _run_library_export_worker(
@@ -20393,51 +20143,14 @@ class LibraryScreen(BaseAppScreen):
         else:
             self._marshal_library_export_failure(run_id, outcome["message"])
 
-    def _marshal_library_export_success(
-        self,
-        run_id: int,
-        path: str,
-        dependency_info: Any,
-        registry_recorded: bool,
-        message: str = "",
-    ) -> None:
-        """Marshal a successful run onto the UI thread (called from the worker)."""
-        try:
-            self.app.call_from_thread(
-                self._apply_library_export_success,
-                run_id,
-                path,
-                dependency_info,
-                registry_recorded,
-                message,
-            )
-        except Exception:
-            # A shutdown/detach mid-marshal can raise RuntimeError OR
-            # Textual's NoApp (which subclasses Exception, not RuntimeError)
-            # -- either way the worker thread must not crash on teardown.
-            pass
+    def _marshal_library_export_success(self, run_id: int, path: str, dependency_info: Any, registry_recorded: bool, message: str='') -> None:
+        return self._export_controller._marshal_library_export_success(run_id, path, dependency_info, registry_recorded, message)
 
     def _marshal_library_export_failure(self, run_id: int, message: str) -> None:
-        """Marshal a failed run onto the UI thread (called from the worker)."""
-        try:
-            self.app.call_from_thread(
-                self._apply_library_export_failure, run_id, message
-            )
-        except Exception:
-            # A shutdown/detach mid-marshal can raise RuntimeError OR
-            # Textual's NoApp (which subclasses Exception, not RuntimeError)
-            # -- either way the worker thread must not crash on teardown.
-            pass
+        return self._export_controller._marshal_library_export_failure(run_id, message)
 
     def _marshal_library_export_cancelled(self, run_id: int) -> None:
-        """Marshal a cancelled run onto the UI thread (called from the worker)."""
-        try:
-            self.app.call_from_thread(self._apply_library_export_cancelled, run_id)
-        except Exception:
-            # A shutdown/detach mid-marshal can raise RuntimeError OR
-            # Textual's NoApp (which subclasses Exception, not RuntimeError)
-            # -- either way the worker thread must not crash on teardown.
-            pass
+        return self._export_controller._marshal_library_export_cancelled(run_id)
 
     def _apply_library_export_cancelled(self, run_id: int) -> None:
         """UI-thread completion for a cancelled run: clear running, show cancelled, return to form."""
@@ -20450,64 +20163,8 @@ class LibraryScreen(BaseAppScreen):
         self._update_library_export_canvas_after_run()
 
     @staticmethod
-    def _build_library_export_success_message(
-        path: Any, dependency_info: Any, creator_message: Any = ""
-    ) -> str:
-        """Build the success notification text.
-
-        Three pieces, in order:
-
-        1. The destination path (always present), ``escape_markup``'d:
-           Textual notifications render Rich console markup, so a
-           user-chosen path containing ``[...]`` (legal in filenames on
-           any platform) would otherwise mis-render or raise in the
-           markup parser.
-        2. The creator's own ``outcome["message"]`` detail (task-158):
-           ``ChatbookCreator.create_chatbook`` returns a message carrying
-           its own counts (e.g. missing-dependency warnings) that was
-           previously discarded entirely by the caller. Its redundant
-           ``"Chatbook created successfully at <path>"`` prefix -- the
-           path is already the primary notify line above -- is stripped
-           so only the actual detail remains; an unrecognized message
-           shape (e.g. a different service implementation) is kept
-           verbatim rather than guessed at.
-        3. The ``dependency_info.get("auto_included")`` count suffix (the
-           character ids ``ChatbookCreator`` pulled in automatically as
-           conversation dependencies) -- BUT only when the creator detail
-           above does not already state it. ``create_chatbook`` already
-           puts an ``"Auto-included N character dependencies"`` clause
-           into its own message (that clause and ``auto_included`` derive
-           from the same ``self.auto_included_characters`` state), so
-           emitting the suffix on top of a detail that carries that clause
-           would restate the identical fact twice. The suffix therefore
-           only fires when the auto-included count would otherwise go
-           unstated (e.g. an empty creator message, or a creator message
-           whose only detail is a missing-dependency warning).
-        """
-        message = f"Exported bundle to {escape_markup(str(path))}"
-
-        detail = str(creator_message or "").strip()
-        known_prefix = f"Chatbook created successfully at {path}"
-        if detail.startswith(known_prefix):
-            detail = detail[len(known_prefix) :].strip(" .")
-        if detail:
-            message += f": {escape_markup(detail)}"
-
-        auto_included = (
-            dependency_info.get("auto_included")
-            if isinstance(dependency_info, dict)
-            else None
-        )
-        # De-dup: skip the suffix when the surfaced detail already states
-        # the auto-included count (see point 3 above).
-        if auto_included and "auto-included" not in detail.lower():
-            try:
-                count = len(auto_included)
-            except TypeError:
-                count = auto_included
-            message += f" ({count} characters auto-included)"
-
-        return message
+    def _build_library_export_success_message(path: Any, dependency_info: Any, creator_message: Any='') -> str:
+        return LibraryExportController._build_library_export_success_message(path, dependency_info, creator_message)
 
     def _apply_library_export_success(
         self,
@@ -20579,27 +20236,7 @@ class LibraryScreen(BaseAppScreen):
         self._update_library_export_canvas_after_run()
 
     def _apply_library_export_failure(self, run_id: int, message: str) -> None:
-        """UI-thread completion: render the escaped error, clear running, re-enable Export.
-
-        See ``_apply_library_export_success``'s docstring for the
-        ``run_id`` staleness guard -- a superseded run's failure is
-        dropped silently here (no error line to render it into, since the
-        canvas may now belong to a different scope/visit entirely) rather
-        than notified, since surfacing a failure banner for a run the user
-        has already navigated away from and possibly re-run successfully
-        would be actively misleading.
-        """
-        if run_id != self._library_export_run_id:
-            logger.info(
-                f"Library export run {run_id} failed after being superseded "
-                f"(current run {self._library_export_run_id}): {message}"
-            )
-            return
-        self._library_export_running = False
-        self._library_export_status = ""
-        self._library_export_error = escape_markup(str(message))
-        self._sync_library_emergency_guard_presentation()
-        self._update_library_export_canvas_after_run()
+        return self._export_controller._apply_library_export_failure(run_id, message)
 
     def _apply_library_export_progress(
         self, run_id: int, phase: str, current: int, total: int
@@ -20611,18 +20248,7 @@ class LibraryScreen(BaseAppScreen):
         self._refresh_library_export_status_line()
 
     def _refresh_library_export_status_line(self) -> None:
-        """Update only the #library-export-status-line widget (no recompose)."""
-        if (
-            not self.is_mounted
-            or self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT
-        ):
-            return
-        try:
-            widget = self.query_one("#library-export-status-line", Static)
-            widget.update(self._library_export_status)
-            widget.display = bool(self._library_export_status)
-        except (NoMatches, QueryError):
-            pass
+        return self._export_controller._refresh_library_export_status_line()
 
     def _update_library_export_canvas_after_run(self) -> None:
         """Targeted DOM update once an export run finishes (success or failure).
@@ -28227,33 +27853,7 @@ class LibraryScreen(BaseAppScreen):
             self.call_after_refresh(self._focus_library_hub_entry)
 
     async def action_library_export_back(self) -> None:
-        """Escape: leave the Export canvas (task-4023 AC#7).
-
-        Returns to the canvas whose "Export…" action opened it (Media/
-        Conversations/Notes/Prompts -- the "navigates away with no return path"
-        finding), or to the hub landing when Export was entered from the
-        rail. A running export keeps running; the canvas's own state
-        (including the durable last-export receipt) survives exactly as a
-        rail switch would leave it.
-
-        task-14902: an open quality strip consumes the Escape first --
-        cancelling a half-made pick must not eject the user from the form.
-        """
-        if self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT:
-            return
-        if self._close_open_library_choice_strip():
-            return
-        if self._library_export_running:
-            self.handle_library_export_cancel(None)
-            return
-        origin = self._library_export_origin_row_id
-        self._library_export_origin_row_id = ""
-        if origin:
-            await self._select_library_rail_row(origin)
-            return
-        await self._select_library_rail_row("")
-        if self.is_mounted:
-            self.call_after_refresh(self._focus_library_hub_entry)
+        return await self._export_controller.action_library_export_back()
 
     async def action_library_handoff_back(self) -> None:
         """Escape: leave a Study staging canvas for the hub (task-4023 AC#7).
@@ -37031,134 +36631,26 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Input.Changed, "#library-export-name")
     def handle_library_export_name_changed(self, event: Input.Changed) -> None:
-        """Track the export name text as the user types it (state only)."""
-        event.stop()
-        self._library_export_form["name"] = event.value
+        return self._export_controller.handle_library_export_name_changed(event)
 
     @on(Input.Changed, "#library-export-description")
     def handle_library_export_description_changed(self, event: Input.Changed) -> None:
-        """Track the export description text as the user types it (state only)."""
-        event.stop()
-        self._library_export_form["description"] = event.value
+        return self._export_controller.handle_library_export_description_changed(event)
 
     @on(Button.Pressed, "#library-export-quality")
     def handle_library_export_quality(self, event: Button.Pressed) -> None:
-        """Open or close the quality chooser's direct-pick strip.
-
-        task-14902: the per-press thumbnail/compressed/original cycle
-        retired -- the chooser opens a strip of all three values below the
-        (still-visible) button, so a second press here also closes it.
-
-        Args:
-            event: Button press event emitted by the quality control.
-        """
-        event.stop()
-        self._library_export_quality_choices_visible = (
-            not self._library_export_quality_choices_visible
-        )
-        self.refresh(recompose=True)
-        if self._library_export_quality_choices_visible:
-            self.call_after_refresh(
-                self._focus_library_choice_strip_active,
-                ".library-export-quality-choice",
-                str(self._library_export_form.get("quality", DEFAULT_MEDIA_QUALITY)),
-            )
-        else:
-            self.call_after_refresh(
-                self._focus_library_control, "#library-export-quality"
-            )
+        return self._export_controller.handle_library_export_quality(event)
 
     @on(Button.Pressed, ".library-export-quality-choice")
     def handle_library_export_quality_choice(self, event: Button.Pressed) -> None:
-        """Apply the exact quality value carried by one strip choice.
-
-        Args:
-            event: Button press event emitted by a quality-strip option.
-        """
-        event.stop()
-        requested = str(getattr(event.button, "choice_value", "") or "")
-        self._library_export_quality_choices_visible = False
-        if requested in MEDIA_QUALITY_OPTIONS:
-            self._library_export_form["quality"] = requested
-        self.refresh(recompose=True)
-        self.call_after_refresh(self._focus_library_control, "#library-export-quality")
+        return self._export_controller.handle_library_export_quality_choice(event)
 
     @on(Button.Pressed, "#library-export-destination")
     def handle_library_export_choose_destination(self, event: Button.Pressed) -> None:
-        """Push a ``FileSave`` dialog to pick the export's destination path.
-
-        Mirrors ``_export_library_note``'s dialog flow: a sanitized
-        default filename derived from the export name field, callback via
-        ``call_after_refresh`` so the write-path runs after this handler
-        returns. ``FileSave`` DOES have overwrite handling of its own
-        (``can_overwrite: bool = True`` -- ``False`` blocks picking an
-        existing file outright), but its default imposes no friction, and
-        more importantly it can only ever judge the RAW picked path: the
-        creator coerces the suffix to ``.zip``, so the path that must be
-        confirmed for overwrite is the *normalized* one, which the dialog
-        never sees. The form therefore owns overwrite confirmation of the
-        normalized path (see ``_apply_library_export_destination``), and
-        the dialog is deliberately left at its permissive default rather
-        than ``can_overwrite=False`` (which would wrongly block picking
-        ``report.zip`` even though the user is knowingly replacing it,
-        while failing to block picking ``report`` when ``report.zip``
-        exists).
-
-        Args:
-            event: Button press event emitted by the "Choose destination…"
-                action.
-        """
-        event.stop()
-        raw_name = str(self._library_export_form.get("name", "")).strip() or "bundle"
-        safe_name = (
-            "".join(
-                char for char in raw_name if char.isalnum() or char in (" ", "-", "_")
-            ).rstrip()
-            or "bundle"
-        )
-        self.app.push_screen(
-            FileSave(
-                location=str(Path.home()),
-                title="Choose Export Destination",
-                default_file=f"{safe_name}.zip",
-            ),
-            callback=lambda path: self.call_after_refresh(
-                self._apply_library_export_destination, path
-            ),
-        )
+        return self._export_controller.handle_library_export_choose_destination(event)
 
     def _apply_library_export_destination(self, selected_path: Path | None) -> None:
-        """Validate, ``.zip``-normalize, and apply a ``FileSave``-picked destination.
-
-        Runs the dialog-returned path through ``validate_path_simple``
-        (same base-directory-free validator ``_write_library_note_export_file``
-        uses for any user-chosen save path) BEFORE normalizing its suffix
-        to ``.zip`` -- and normalizes BEFORE checking whether it already
-        exists, so the overwrite line the form shows always names the
-        actual path that will be written, never the raw picked one (the
-        F4 design spec's explicit ordering: "normalized to .zip BEFORE any
-        overwrite confirmation").
-
-        Args:
-            selected_path: The chosen destination, or ``None`` if the
-                dialog was cancelled.
-        """
-        if not selected_path:
-            return
-        try:
-            validated_path = validate_path_simple(selected_path, require_exists=False)
-        except ValueError as exc:
-            logger.warning(
-                f"Rejected Library export destination {selected_path!r}: {exc}"
-            )
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify(f"Rejected export destination: {exc}", severity="warning")
-            return
-        normalized_path = normalize_export_destination(validated_path)
-        self._library_export_form["destination"] = str(normalized_path)
-        self._library_export_form["destination_exists"] = normalized_path.exists()
-        self.refresh(recompose=True)
+        return self._export_controller._apply_library_export_destination(selected_path)
 
     @on(Button.Pressed, ".library-notes-row")
     async def handle_library_notes_row(self, event: Button.Pressed) -> None:
@@ -43906,6 +43398,16 @@ class LibraryScreen(BaseAppScreen):
 # production code always imports `library_screen` before any instance of
 # this controller can exist.
 LibraryConversationsController._safe_text = staticmethod(LibraryScreen._safe_text)
+
+# Same class-level rebinding, one more subsystem: `handle_library_export_submit`
+# (moved to `LibraryExportController`, wave-2 task 3) calls `self._safe_text(...)`
+# on a regular (non-classmethod) instance method, so the SAME staticmethod
+# serves it identically to the conversations controller's own three sites --
+# see that binding's comment immediately above for the full incident this
+# class-level-only shape resolves (a plain class attribute assignment always
+# overwrites a same-named property, so there is deliberately no separate
+# per-instance constructor-dependency for `_safe_text` here either).
+LibraryExportController._safe_text = staticmethod(LibraryScreen._safe_text)
 
 # --- BEGIN generated export-state shims (delete wholesale at cleanup) ---
 # wave-2 task 2: keeps every original `_library_export_<field>` name
