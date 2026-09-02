@@ -1355,6 +1355,114 @@ class ScheduledTasksDB(BaseDB):
         """Sugar for ``set_transfer_state(table_kind, row_id, None, ...)``."""
         return self.set_transfer_state(table_kind, row_id, None, expected=expected)
 
+    def convert_row_to_server_mirror(
+        self,
+        table_kind: str,
+        local_id: str,
+        server_item: dict[str, Any],
+        owner_id: str,
+    ) -> str:
+        """Convert a `transfer_to_server` row into its server-owned mirror.
+
+        Called by `SyncEngine` right after a transfer's create call acks
+        (spec §6.1.4). ``owner_id`` is the DESTINATION scope the transfer
+        targets (the pending mutation's own ``owner_id``, e.g.
+        ``"server:1"``) -- distinct from the transferring row's OWN
+        ``owner_id`` column, which is still ``"local"`` (or whatever it
+        was) until this call changes it. This is the same
+        `target_owner`-vs-row-owner_id distinction
+        `_apply_pulled_reminders`/`upsert_automation_definitions_from_
+        server` already draw for a pull.
+
+        Two outcomes, both inside ONE transaction:
+
+        - A pulled mirror already exists for ``(owner_id, server_id)``
+          (the §4 ``UNIQUE(owner_id, server_id)`` race -- a background
+          pull landed the same server row between this transfer's send
+          and its ack): server-wins, same rule every other pull-mirror
+          write already follows -- keep the PULLED mirror, delete the
+          local transferring row, and transplant its ``created_at`` onto
+          the mirror (plus any `automation_audit_events` rows, definitions
+          only) so the mirror's history/audit linkage doesn't silently
+          reset.
+        - Otherwise: convert the local row in place -- set ``server_id``,
+          reassign ``owner_id`` to the destination scope, and clear
+          ``transfer_state``. Reassigning ``owner_id`` (not just setting
+          ``server_id``) is what actually excludes the row from local
+          execution going forward: every armable filter and
+          `is_server_scoped_owner` key off the ``owner_id`` prefix, not
+          ``transfer_state`` alone (`transfer_state` only covers the
+          in-flight window). Reminders also gain a `sync_mapping` row here
+          (mirrors `_apply_pulled_reminders`'s own bookkeeping for every
+          other server-known reminder); definitions have no equivalent
+          table.
+
+        Args:
+            table_kind: ``"reminder_task"`` or ``"automation_definition"``.
+            local_id: The local row that pushed the transfer.
+            server_item: The server's create response (must carry ``id``).
+            owner_id: The destination owner scope.
+
+        Returns:
+            ``"converted"``, ``"merged"``, or ``"vanished"`` (the local
+            row was already gone by ack time -- same orphan shape as
+            `adopt_server_definition_identity`; nothing left to convert).
+
+        Raises:
+            ValueError: unknown ``table_kind``, or ``server_item`` carries
+                no ``id``.
+        """
+        table = self._TRANSFER_STATE_TABLES.get(table_kind)
+        if table is None:
+            raise ValueError(
+                f"Unknown table_kind for convert_row_to_server_mirror: {table_kind!r}"
+            )
+        server_id = server_item.get("id")
+        if not server_id:
+            raise ValueError(
+                "server_item must carry an 'id' to convert a transferred row"
+            )
+
+        now_iso = self._to_utc_iso(datetime.now(timezone.utc))
+        with self.transaction() as conn:
+            row = conn.execute(
+                f"SELECT created_at FROM {table} WHERE id = ?", (local_id,)
+            ).fetchone()
+            if row is None:
+                return "vanished"
+
+            existing_mirror = conn.execute(
+                f"SELECT id FROM {table} WHERE owner_id = ? AND server_id = ? "
+                "AND id != ?",
+                (owner_id, server_id, local_id),
+            ).fetchone()
+
+            if existing_mirror is not None:
+                mirror_id = existing_mirror["id"]
+                conn.execute(
+                    f"UPDATE {table} SET created_at = ? WHERE id = ?",
+                    (row["created_at"], mirror_id),
+                )
+                if table_kind == "automation_definition":
+                    conn.execute(
+                        "UPDATE automation_audit_events SET definition_id = ? "
+                        "WHERE definition_id = ?",
+                        (mirror_id, local_id),
+                    )
+                conn.execute(f"DELETE FROM {table} WHERE id = ?", (local_id,))
+                return "merged"
+
+            conn.execute(
+                f"UPDATE {table} SET server_id = ?, owner_id = ?, "
+                "transfer_state = NULL, updated_at = ? WHERE id = ?",
+                (server_id, owner_id, now_iso, local_id),
+            )
+            if table_kind == "reminder_task":
+                self._set_sync_mapping_conn(
+                    conn, local_id, server_id, table_kind, owner_id
+                )
+            return "converted"
+
     # ------------------------------------------------------------------
     # Automation definitions
     # ------------------------------------------------------------------

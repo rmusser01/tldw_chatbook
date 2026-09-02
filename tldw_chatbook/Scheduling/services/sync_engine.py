@@ -503,6 +503,14 @@ class SyncEngine:
         )
         counts: dict[str, int] = {}
         for mutation in mutations:
+            payload = mutation.get("payload") or {}
+            if payload.get("transfer_errors"):
+                # A `transfer_to_server` mutation that already settled as a
+                # definitive failure (spec §6.1.5, ruling 3): never
+                # auto-retried by this replay loop -- recovery is a user
+                # retry/cancel via Task 6's facade, not another sync cycle.
+                counts["transfer_skipped"] = counts.get("transfer_skipped", 0) + 1
+                continue
             outcome = await self._push_definition_mutation(mutation, owner_id)
             counts[outcome] = counts.get(outcome, 0) + 1
         return counts
@@ -549,6 +557,14 @@ class SyncEngine:
             if action in ("pause", "resume", "archive"):
                 return await self._push_definition_lifecycle(
                     local_id, mutation_id, owner_id, action, server_definition_id
+                )
+            if action == "transfer_to_server":
+                # Owns its own ServerClientValidationError/definitive-failure
+                # handling internally (spec §6.1.5) -- never raises it back
+                # out, so the generic reject-and-clear except clause below
+                # never sees a transfer mutation.
+                return await self._push_definition_transfer(
+                    local_id, mutation_id, owner_id, payload
                 )
         except ServerClientPolicyError:
             raise
@@ -731,6 +747,162 @@ class SyncEngine:
         self.db.delete_pending_mutation(mutation_id)
         return action
 
+    async def _push_definition_transfer(
+        self,
+        local_id: str,
+        mutation_id: int,
+        owner_id: str,
+        payload: dict[str, Any],
+    ) -> str:
+        """Replay a pending `transfer_to_server` automation_definition mutation.
+
+        Disarm-before-send (spec §6.1.2): CAS `to_server_pending` ->
+        `to_server_sent` (Task 1's `set_transfer_state`) BEFORE the create
+        request goes out, so a crash or a failed send never leaves the row
+        armed both locally and (about to be) on the server. A failed CAS
+        means the row is no longer `to_server_pending` -- a concurrent
+        cancel (which clears the state entirely) or a mutation that is
+        still `to_server_sent` from a PRIOR ambiguous-timeout attempt
+        (deliberately left alone here; un-sticking a stuck `to_server_sent`
+        row is Task 6's startup `recover_inflight_transfers`, not this
+        replay loop) -- either way, this replay is a silent no-op that
+        touches neither the server nor the mutation.
+
+        A definitive failure (an invalid preview, or a
+        `ServerClientValidationError` from the create call itself -- e.g.
+        a 409/422) settles via `_fail_transfer_mutation`: CAS to
+        `to_server_failed` (re-arms the row locally, Task 1) and the
+        mutation is RETAINED with `transfer_errors` embedded, never
+        auto-retried (`_replay_definition_mutations`'s skip check). Any
+        other `ServerClientError` (timeout/5xx/unavailable) is left to
+        propagate so `_run_phase` records one sync error and aborts the
+        phase -- `to_server_sent` and the mutation both stay in place, and
+        the next replay (after Task 6's recovery re-arms it) re-runs
+        preview->create, which is safe because the server's create is
+        hash-idempotent (ruling 4).
+        """
+        disarmed = self.db.set_transfer_state(
+            _DEFINITION_PRIMITIVE,
+            local_id,
+            "to_server_sent",
+            expected=("to_server_pending",),
+        )
+        if not disarmed:
+            logger.info(
+                f"Automation definition {local_id} transfer_to_server mutation "
+                "skipped: not in to_server_pending (concurrent cancel, or "
+                "still to_server_sent from a prior attempt awaiting recovery)"
+            )
+            return "transfer_cas_skipped"
+
+        definition_payload = payload.get("definition_payload") or {}
+        request = dict(definition_payload)
+        request["mode"] = "create"
+        request.pop("definition_id", None)
+        request.pop("definition_version", None)
+        # Single translation site (Task 3 review note): a transfer payload
+        # is stored client-vocab and never pre-translated at queue time --
+        # translate it here, exactly once. This mirrors
+        # `_push_definition_create`'s own translation site rather than
+        # calling into that method, whose ack/failure handling (adopt +
+        # clear-on-invalid) differs from a transfer's (convert-or-merge +
+        # retain-with-errors-on-invalid).
+        schedule = request.get("schedule")
+        if isinstance(schedule, dict):
+            request["schedule"] = to_server_schedule(schedule)
+
+        assert self.server_client is not None
+        try:
+            preview = await self.server_client.preview_automation_definition(request)
+            preview = preview if isinstance(preview, dict) else {}
+            if preview.get("status") != "valid":
+                errors = preview.get("validation_errors") or []
+                error_texts = [
+                    f"{error.get('field')}:{error.get('code')}"
+                    for error in errors
+                    if isinstance(error, dict)
+                ] or ["invalid preview"]
+                self._fail_transfer_mutation(
+                    _DEFINITION_PRIMITIVE, local_id, owner_id, payload, error_texts
+                )
+                return "transfer_failed"
+
+            # The source row's OWN current lifecycle, not the payload's --
+            # a transfer's source definition already exists locally with a
+            # real lifecycle (configured or paused; Task 6's refusal gate
+            # keeps archived/solved rows from ever queuing a transfer).
+            source_row = self.db.get_automation_definition(local_id) or {}
+            initial_lifecycle = source_row.get("lifecycle") or "configured"
+            created = await self.server_client.create_automation_definition(
+                preview.get("id"), initial_lifecycle=initial_lifecycle
+            )
+        except ServerClientPolicyError:
+            raise
+        except ServerClientValidationError as exc:
+            self._fail_transfer_mutation(
+                _DEFINITION_PRIMITIVE, local_id, owner_id, payload, [str(exc)]
+            )
+            return "transfer_failed"
+
+        created = created if isinstance(created, dict) else {}
+        result = self.db.convert_row_to_server_mirror(
+            _DEFINITION_PRIMITIVE, local_id, created, owner_id
+        )
+        self.db.delete_pending_mutation(mutation_id)
+        if result == "vanished":
+            server_id = created.get("id") or "unknown"
+            logger.warning(
+                f"Automation definition {local_id} vanished locally before "
+                f"its transfer_to_server push landed; server definition "
+                f"({server_id}) is not linked to any local automation"
+            )
+            self._record_sync_error(
+                f"Automation definition {local_id} was removed locally while "
+                f"it was being transferred to the server; the server copy "
+                f"({server_id}) is still there and is not linked to any "
+                "local automation",
+                owner_id,
+            )
+            return "transfer_orphaned"
+        return "transferred"
+
+    def _fail_transfer_mutation(
+        self,
+        table_kind: str,
+        local_id: str,
+        owner_id: str,
+        payload: dict[str, Any],
+        errors: list[str],
+    ) -> None:
+        """Settle a definitively-failed `transfer_to_server` mutation (spec §6.1.5).
+
+        CAS `to_server_sent` -> `to_server_failed` -- NOT a dormant state
+        (Task 1), so the row re-arms and keeps executing locally. The
+        mutation is RETAINED, not cleared, with `transfer_errors` embedded
+        in its payload (ruling 3) via `record_pending_mutation`'s existing
+        "INSERT OR REPLACE keyed by (local_id, primitive, owner_id)"
+        upsert -- which also preserves the original `idempotency_key`
+        already present in ``payload``. `_replay_definition_mutations`'s
+        and `_network_phase`'s skip checks (`"transfer_errors" in
+        payload`) then stop this mutation from being retried automatically
+        -- recovery is a user retry/cancel action via Task 6's facade, not
+        another sync cycle.
+        """
+        self.db.set_transfer_state(
+            table_kind, local_id, "to_server_failed", expected=("to_server_sent",)
+        )
+        self.db.record_pending_mutation(
+            local_id, table_kind, owner_id, {**payload, "transfer_errors": errors}
+        )
+        message = "; ".join(errors) or "invalid preview"
+        logger.warning(
+            f"Transfer to server failed for {table_kind} {local_id}: {message}"
+        )
+        self._record_sync_error(
+            f"Transfer to server failed for {table_kind} {local_id}: {message}",
+            owner_id,
+        )
+
     def _reject_definition_mutation(
         self,
         local_id: str,
@@ -858,6 +1030,13 @@ class SyncEngine:
         mutations = self.db.get_pending_mutations(owner_id, primitive=_REMINDER_PRIMITIVE)
         pending_local_ids = {m["local_id"] for m in mutations}
         for mutation in mutations:
+            mutation_payload = mutation.get("payload") or {}
+            if mutation_payload.get("transfer_errors"):
+                # A `transfer_to_server` mutation that already settled as a
+                # definitive failure (spec §6.1.5, ruling 3): never
+                # auto-retried by this replay loop -- recovery is a user
+                # retry/cancel via Task 6's facade, not another sync cycle.
+                continue
             outcome = await self._push_mutation(mutation, owner_id)
             if outcome.get("conflict"):
                 conflicts.append(outcome["conflict"])
@@ -942,6 +1121,16 @@ class SyncEngine:
                     "mutation_id": mutation["id"],
                     "delete_local": True,
                 }
+            if action == "transfer_to_server":
+                # Owns its own ServerClientValidationError/definitive-failure
+                # handling internally (spec §6.1.5) -- never raises it back
+                # out, so the `except ServerClientError: raise` below never
+                # sees a transfer mutation's own definitive failure (a
+                # genuinely retryable error still propagates through it
+                # untouched, same as every other action here).
+                return await self._push_reminder_transfer(
+                    local_id, mutation["id"], owner_id, payload
+                )
             logger.warning(f"Unknown pending mutation action {action!r}")
             return {"local_id": local_id, "mutation_id": mutation["id"]}
         except ServerClientNotFoundError:
@@ -959,6 +1148,87 @@ class SyncEngine:
         except ServerClientError:
             # Abort the whole push phase; caller records one sync error.
             raise
+
+    async def _push_reminder_transfer(
+        self,
+        local_id: str,
+        mutation_id: int,
+        owner_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Replay a pending `transfer_to_server` reminder mutation (spec §6.1).
+
+        Same disarm-before-send / definitive-failure-vs-retryable split as
+        `_push_definition_transfer` (see its docstring for the full
+        reasoning); the differences are reminder-specific:
+
+        - No preview step -- the reminder create call itself is the only
+          request, so a definitive failure is a `ServerClientValidation
+          Error` straight from `create_reminder`.
+        - The create carries `link_type="chatbook_transfer"` +
+          `link_id=<local id>` so an ambiguous timeout is recoverable by
+          Task 6's list-and-match on the next pull (spec §6.1.3) -- the
+          row and its mutation are simply left in place
+          (`to_server_sent`, mutation retained) for that recovery, not
+          retried by this replay loop itself.
+
+        Returns a plain ``{"local_id": ...}`` outcome (no ``server_id``/
+        ``delete_local``/``mutation_id`` keys): unlike create/update/
+        delete, this action does its own DB write immediately
+        (`convert_row_to_server_mirror` + `delete_pending_mutation`, both
+        self-contained transactions) rather than deferring to
+        `_sync_reminders`'s batched apply -- so there is nothing left for
+        that batched loop to do with this outcome.
+        """
+        disarmed = self.db.set_transfer_state(
+            _REMINDER_PRIMITIVE,
+            local_id,
+            "to_server_sent",
+            expected=("to_server_pending",),
+        )
+        if not disarmed:
+            logger.info(
+                f"Reminder {local_id} transfer_to_server mutation skipped: "
+                "not in to_server_pending (concurrent cancel, or still "
+                "to_server_sent from a prior attempt awaiting recovery)"
+            )
+            return {"local_id": local_id}
+
+        task_payload = dict(payload.get("task_payload") or {})
+        task_payload["link_type"] = "chatbook_transfer"
+        task_payload["link_id"] = local_id
+
+        assert self.server_client is not None
+        try:
+            response = await self.server_client.create_reminder(**task_payload)
+        except ServerClientPolicyError:
+            raise
+        except ServerClientValidationError as exc:
+            self._fail_transfer_mutation(
+                _REMINDER_PRIMITIVE, local_id, owner_id, payload, [str(exc)]
+            )
+            return {"local_id": local_id}
+
+        response = response if isinstance(response, dict) else {}
+        result = self.db.convert_row_to_server_mirror(
+            _REMINDER_PRIMITIVE, local_id, response, owner_id
+        )
+        self.db.delete_pending_mutation(mutation_id)
+        if result == "vanished":
+            server_id = response.get("id") or "unknown"
+            logger.warning(
+                f"Reminder {local_id} vanished locally before its "
+                f"transfer_to_server push landed; server reminder "
+                f"({server_id}) is not linked to any local reminder"
+            )
+            self._record_sync_error(
+                f"Reminder {local_id} was removed locally while it was "
+                f"being transferred to the server; the server copy "
+                f"({server_id}) is still there and is not linked to any "
+                "local reminder",
+                owner_id,
+            )
+        return {"local_id": local_id}
 
     async def _push_tombstone(
         self, tombstone: dict, owner_id: str

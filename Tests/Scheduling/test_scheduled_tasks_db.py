@@ -835,6 +835,164 @@ def test_set_transfer_state_concurrent_callers_do_not_both_succeed(tmp_path) -> 
         assert final_state == "to_server_sent"
 
 
+# ----------------------------------------------------------------------
+# convert_row_to_server_mirror (schedules-handoff PR-5, task 4) -- spec
+# §6.1.4 convert-or-merge, called by SyncEngine right after a
+# transfer_to_server create call acks.
+# ----------------------------------------------------------------------
+
+
+def test_convert_row_to_server_mirror_converts_definition_in_place(
+    db: ScheduledTasksDB,
+) -> None:
+    def_id = db.create_automation_definition(
+        owner_id="local", family="recurring_question", name="Daily digest"
+    )
+    db.set_transfer_state(
+        "automation_definition", def_id, "to_server_sent", expected=(None,)
+    )
+
+    result = db.convert_row_to_server_mirror(
+        "automation_definition", def_id, {"id": "srv-def-1"}, "server:1"
+    )
+
+    assert result == "converted"
+    row = db.get_automation_definition(def_id)
+    assert row["server_id"] == "srv-def-1"
+    assert row["owner_id"] == "server:1"
+    assert row["transfer_state"] is None
+
+
+def test_convert_row_to_server_mirror_converts_reminder_in_place_and_maps(
+    db: ScheduledTasksDB,
+) -> None:
+    task_id = db.create_reminder_task(
+        owner_id="local", title="Standup", schedule_kind="one_time"
+    )
+    db.set_transfer_state(
+        "reminder_task", task_id, "to_server_sent", expected=(None,)
+    )
+
+    result = db.convert_row_to_server_mirror(
+        "reminder_task", task_id, {"id": "srv-rem-1"}, "server:1"
+    )
+
+    assert result == "converted"
+    row = db.get_reminder_task(task_id)
+    assert row["server_id"] == "srv-rem-1"
+    assert row["owner_id"] == "server:1"
+    assert row["transfer_state"] is None
+    mapping = db.get_sync_mapping_by_server_id("srv-rem-1", "reminder_task", "server:1")
+    assert mapping is not None
+    assert mapping["local_id"] == task_id
+
+
+def test_convert_row_to_server_mirror_merges_with_existing_pulled_definition_mirror(
+    db: ScheduledTasksDB,
+) -> None:
+    """§4 UNIQUE(owner_id, server_id) race: a background pull already
+    mirrored the same server row while the transfer was in flight. Keep
+    the pulled mirror, delete the local transferring row, and transplant
+    provenance (created_at + audit linkage) onto the mirror."""
+    mirror_id = db.create_automation_definition(
+        owner_id="server:1",
+        family="recurring_question",
+        name="Daily digest",
+        server_id="srv-def-1",
+        created_at="2026-08-01T00:00:00+00:00",
+    )
+    local_id = db.create_automation_definition(
+        owner_id="local",
+        family="recurring_question",
+        name="Daily digest (local)",
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+    db.set_transfer_state(
+        "automation_definition", local_id, "to_server_sent", expected=(None,)
+    )
+    db.log_automation_audit_event(
+        local_id, "local", "created", "user", "Created locally"
+    )
+
+    result = db.convert_row_to_server_mirror(
+        "automation_definition", local_id, {"id": "srv-def-1"}, "server:1"
+    )
+
+    assert result == "merged"
+    assert db.get_automation_definition(local_id) is None, (
+        "the local transferring row must be deleted, not left orphaned"
+    )
+    mirror = db.get_automation_definition(mirror_id)
+    assert mirror is not None
+    assert mirror["created_at"] == "2026-01-01T00:00:00+00:00", (
+        "created_at must transplant from the local row onto the surviving mirror"
+    )
+    with closing(db._get_connection()) as conn:
+        rows = conn.execute(
+            "SELECT definition_id FROM automation_audit_events"
+        ).fetchall()
+    assert [row["definition_id"] for row in rows] == [mirror_id], (
+        "audit linkage must re-point to the surviving mirror"
+    )
+
+
+def test_convert_row_to_server_mirror_merges_with_existing_pulled_reminder_mirror(
+    db: ScheduledTasksDB,
+) -> None:
+    mirror_id = db.create_reminder_task(
+        owner_id="server:1",
+        title="Standup",
+        schedule_kind="one_time",
+        server_id="srv-rem-1",
+        created_at="2026-08-01T00:00:00+00:00",
+    )
+    local_id = db.create_reminder_task(
+        owner_id="local",
+        title="Standup (local)",
+        schedule_kind="one_time",
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+    db.set_transfer_state(
+        "reminder_task", local_id, "to_server_sent", expected=(None,)
+    )
+
+    result = db.convert_row_to_server_mirror(
+        "reminder_task", local_id, {"id": "srv-rem-1"}, "server:1"
+    )
+
+    assert result == "merged"
+    assert db.get_reminder_task(local_id) is None
+    mirror = db.get_reminder_task(mirror_id)
+    assert mirror is not None
+    assert mirror["created_at"] == "2026-01-01T00:00:00+00:00"
+
+
+def test_convert_row_to_server_mirror_vanished_row_is_a_no_op(
+    db: ScheduledTasksDB,
+) -> None:
+    result = db.convert_row_to_server_mirror(
+        "automation_definition", "no-such-id", {"id": "srv-def-9"}, "server:1"
+    )
+    assert result == "vanished"
+
+
+def test_convert_row_to_server_mirror_unknown_table_kind_raises(
+    db: ScheduledTasksDB,
+) -> None:
+    with pytest.raises(ValueError, match="table_kind"):
+        db.convert_row_to_server_mirror("bogus", "any-id", {"id": "srv-1"}, "server:1")
+
+
+def test_convert_row_to_server_mirror_requires_server_item_id(
+    db: ScheduledTasksDB,
+) -> None:
+    def_id = db.create_automation_definition(
+        owner_id="local", family="recurring_question", name="No id"
+    )
+    with pytest.raises(ValueError, match="id"):
+        db.convert_row_to_server_mirror("automation_definition", def_id, {}, "server:1")
+
+
 def test_update_automation_definition(db: ScheduledTasksDB) -> None:
     schedule = {"kind": "cron", "expression": "0 9 * * *"}
     def_id = db.create_automation_definition(
