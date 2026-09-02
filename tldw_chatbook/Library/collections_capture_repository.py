@@ -16,6 +16,7 @@ from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.Subscriptions.html_text import readable_body_text
 
 from .collections_capture_models import (
+    CAPTURE_ANNOTATION_PAGE_SIZE,
     CAPTURE_PAGE_SIZE,
     CAPTURE_STATUSES,
     CaptureActionResult,
@@ -24,8 +25,10 @@ from .collections_capture_models import (
     CaptureDetail,
     CaptureHighlight,
     CaptureHighlightDraft,
+    CaptureHighlightPage,
     CaptureIdentity,
     CaptureNoteLink,
+    CaptureNoteLinkPage,
     CaptureOfflineCopy,
     CapturePage,
     CapturePageRequest,
@@ -85,7 +88,6 @@ _EXTRACTION_FAILURE_REASONS = frozenset(
     }
 )
 _DEFAULT_EXTRACTION_LEASE_SECONDS = 300
-_MAX_ANNOTATION_PAGE_SIZE = 100
 _DEFAULT_OFFLINE_COPY_BYTES = 50 * 1024 * 1024
 _DEFAULT_OFFLINE_AUTHORITY_BYTES = 1024 * 1024 * 1024
 _OFFLINE_FAILURE_REASONS = frozenset(
@@ -901,13 +903,20 @@ class CollectionsCaptureRepository:
         identity: CaptureIdentity,
         *,
         page: int = 1,
-        size: int = _MAX_ANNOTATION_PAGE_SIZE,
-    ) -> tuple[CaptureHighlight, ...]:
+        size: int = CAPTURE_ANNOTATION_PAGE_SIZE,
+    ) -> CaptureHighlightPage:
         """Return one bounded, deterministic page of capture highlights."""
         self._require_identity(identity)
         page, size = self._annotation_page(page, size)
         with self.db.read_transaction() as connection:
             self._active_item_row(connection, identity)
+            total = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM collection_capture_highlights "
+                    "WHERE authority_key = ? AND capture_id = ?",
+                    (self.authority_key, identity.capture_id),
+                ).fetchone()[0]
+            )
             rows = connection.execute(
                 "SELECT * FROM collection_capture_highlights "
                 "WHERE authority_key = ? AND capture_id = ? "
@@ -919,7 +928,13 @@ class CollectionsCaptureRepository:
                     (page - 1) * size,
                 ),
             ).fetchall()
-        return tuple(self._highlight_from_row(identity, row) for row in rows)
+        return CaptureHighlightPage(
+            identity,
+            tuple(self._highlight_from_row(identity, row) for row in rows),
+            total,
+            page,
+            size,
+        )
 
     def save_highlight(
         self,
@@ -1000,13 +1015,20 @@ class CollectionsCaptureRepository:
         identity: CaptureIdentity,
         *,
         page: int = 1,
-        size: int = _MAX_ANNOTATION_PAGE_SIZE,
-    ) -> tuple[CaptureNoteLink, ...]:
+        size: int = CAPTURE_ANNOTATION_PAGE_SIZE,
+    ) -> CaptureNoteLinkPage:
         """Return one bounded, deterministic page of linked Notes."""
         self._require_identity(identity)
         page, size = self._annotation_page(page, size)
         with self.db.read_transaction() as connection:
             self._active_item_row(connection, identity)
+            total = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM collection_capture_note_links "
+                    "WHERE authority_key = ? AND capture_id = ?",
+                    (self.authority_key, identity.capture_id),
+                ).fetchone()[0]
+            )
             rows = connection.execute(
                 "SELECT * FROM collection_capture_note_links "
                 "WHERE authority_key = ? AND capture_id = ? "
@@ -1018,7 +1040,13 @@ class CollectionsCaptureRepository:
                     (page - 1) * size,
                 ),
             ).fetchall()
-        return tuple(self._note_link_from_row(identity, row) for row in rows)
+        return CaptureNoteLinkPage(
+            identity,
+            tuple(self._note_link_from_row(identity, row) for row in rows),
+            total,
+            page,
+            size,
+        )
 
     def link_note(
         self,
@@ -1417,7 +1445,7 @@ class CollectionsCaptureRepository:
     def _annotation_page(cls, page: Any, size: Any) -> tuple[int, int]:
         page = cls._positive_limit(page, "invalid_annotation_page")
         size = cls._positive_limit(size, "invalid_annotation_page_size")
-        if size > _MAX_ANNOTATION_PAGE_SIZE:
+        if size > CAPTURE_ANNOTATION_PAGE_SIZE:
             raise CollectionsCaptureError("invalid_annotation_page_size")
         return page, size
 

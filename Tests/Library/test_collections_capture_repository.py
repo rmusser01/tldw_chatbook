@@ -410,7 +410,9 @@ def test_highlights_note_links_and_hard_delete_tombstone(
         capture.identity,
         CaptureHighlightDraft("Quoted text", note="My note", anchor_json='{"p":1}'),
     )
-    assert repository.list_highlights(capture.identity) == (highlight,)
+    highlight_page = repository.list_highlights(capture.identity)
+    assert highlight_page.items == (highlight,)
+    assert highlight_page.total == 1
 
     with pytest.raises(CollectionsCaptureError) as caught:
         repository.delete_highlight(
@@ -428,7 +430,9 @@ def test_highlights_note_links_and_hard_delete_tombstone(
     note = ExternalNoteReference("notes:profile-a", "note-1")
     link = repository.link_note(capture.identity, note)
     assert repository.link_note(capture.identity, note) == link
-    assert repository.list_note_links(capture.identity) == (link,)
+    note_link_page = repository.list_note_links(capture.identity)
+    assert note_link_page.items == (link,)
+    assert note_link_page.total == 1
     assert repository.unlink_note(capture.identity, link.link_id).success
 
     retained_highlight = repository.save_highlight(
@@ -478,10 +482,21 @@ def test_highlight_and_note_link_reads_are_bounded_and_pageable(
         for index in range(3)
     )
 
-    assert repository.list_highlights(capture.identity, page=1, size=2) == highlights[:2]
-    assert repository.list_highlights(capture.identity, page=2, size=2) == highlights[2:]
-    assert repository.list_note_links(capture.identity, page=1, size=2) == links[:2]
-    assert repository.list_note_links(capture.identity, page=2, size=2) == links[2:]
+    highlight_page_one = repository.list_highlights(capture.identity, page=1, size=2)
+    highlight_page_two = repository.list_highlights(capture.identity, page=2, size=2)
+    note_page_one = repository.list_note_links(capture.identity, page=1, size=2)
+    note_page_two = repository.list_note_links(capture.identity, page=2, size=2)
+
+    assert highlight_page_one.items == highlights[:2]
+    assert highlight_page_one.total == 3
+    assert highlight_page_one.page == 1
+    assert highlight_page_one.size == 2
+    assert highlight_page_two.items == highlights[2:]
+    assert highlight_page_two.total == 3
+    assert note_page_one.items == links[:2]
+    assert note_page_one.total == 3
+    assert note_page_two.items == links[2:]
+    assert note_page_two.total == 3
     with pytest.raises(CollectionsCaptureError) as caught:
         repository.list_highlights(capture.identity, page=1, size=101)
     assert caught.value.reason == "invalid_annotation_page_size"

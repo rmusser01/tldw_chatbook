@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Literal, Protocol
 
 from .collections_capture_models import (
+    CAPTURE_ANNOTATION_PAGE_SIZE,
     CAPTURE_CAPABILITY_NAMES,
     CapabilityState,
     CaptureActionResult,
@@ -20,8 +21,10 @@ from .collections_capture_models import (
     CaptureDetail,
     CaptureHighlight,
     CaptureHighlightDraft,
+    CaptureHighlightPage,
     CaptureIdentity,
     CaptureNoteLink,
+    CaptureNoteLinkPage,
     CaptureOfflineCopy,
     CapturePage,
     CapturePageRequest,
@@ -94,8 +97,12 @@ class CollectionsCaptureBackend(Protocol):
     ) -> SavedCaptureSearch: ...
     async def delete_saved_search(self, search_id: str) -> CaptureActionResult: ...
     async def list_highlights(
-        self, identity: CaptureIdentity
-    ) -> tuple[CaptureHighlight, ...]: ...
+        self,
+        identity: CaptureIdentity,
+        *,
+        page: int = 1,
+        size: int = CAPTURE_ANNOTATION_PAGE_SIZE,
+    ) -> CaptureHighlightPage: ...
     async def save_highlight(
         self,
         identity: CaptureIdentity,
@@ -107,8 +114,12 @@ class CollectionsCaptureBackend(Protocol):
         highlight_id: str,
     ) -> CaptureActionResult: ...
     async def list_note_links(
-        self, identity: CaptureIdentity
-    ) -> tuple[CaptureNoteLink, ...]: ...
+        self,
+        identity: CaptureIdentity,
+        *,
+        page: int = 1,
+        size: int = CAPTURE_ANNOTATION_PAGE_SIZE,
+    ) -> CaptureNoteLinkPage: ...
     async def link_note(
         self,
         identity: CaptureIdentity,
@@ -415,11 +426,20 @@ class LocalCollectionsCaptureService:
     async def list_highlights(
         self,
         identity: CaptureIdentity,
-    ) -> tuple[CaptureHighlight, ...]:
+        *,
+        page: int = 1,
+        size: int = CAPTURE_ANNOTATION_PAGE_SIZE,
+    ) -> CaptureHighlightPage:
         await self._require("highlights")
-        result = await self._call(self.repository.list_highlights, identity)
+        result = await self._call(
+            self.repository.list_highlights,
+            identity,
+            page=page,
+            size=size,
+        )
         self._highlight_revisions.update(
-            ((identity.capture_id, item.highlight_id), item.revision) for item in result
+            ((identity.capture_id, item.highlight_id), item.revision)
+            for item in result.items
         )
         return result
 
@@ -456,9 +476,17 @@ class LocalCollectionsCaptureService:
     async def list_note_links(
         self,
         identity: CaptureIdentity,
-    ) -> tuple[CaptureNoteLink, ...]:
+        *,
+        page: int = 1,
+        size: int = CAPTURE_ANNOTATION_PAGE_SIZE,
+    ) -> CaptureNoteLinkPage:
         await self._require("linked_notes")
-        return await self._call(self.repository.list_note_links, identity)
+        return await self._call(
+            self.repository.list_note_links,
+            identity,
+            page=page,
+            size=size,
+        )
 
     async def link_note(
         self,
@@ -633,7 +661,7 @@ class CollectionsCaptureScopeService:
                 detail.media_reference,
                 "media_reference_unavailable",
             )
-        links = await backend.list_note_links(identity)
+        links = (await backend.list_note_links(identity)).items
         resolved_links = []
         for link in links:
             availability = await self._resolve(
@@ -736,9 +764,18 @@ class CollectionsCaptureScopeService:
         return await self._invoke("delete_saved_search", search_id)
 
     async def list_highlights(
-        self, identity: CaptureIdentity
-    ) -> tuple[CaptureHighlight, ...]:
-        return await self._invoke("list_highlights", identity)
+        self,
+        identity: CaptureIdentity,
+        *,
+        page: int = 1,
+        size: int = CAPTURE_ANNOTATION_PAGE_SIZE,
+    ) -> CaptureHighlightPage:
+        return await self._invoke(
+            "list_highlights",
+            identity,
+            page=page,
+            size=size,
+        )
 
     async def save_highlight(
         self,
@@ -762,9 +799,18 @@ class CollectionsCaptureScopeService:
         return await self._invoke("delete_highlight", identity, highlight_id)
 
     async def list_note_links(
-        self, identity: CaptureIdentity
-    ) -> tuple[CaptureNoteLink, ...]:
-        return await self._invoke("list_note_links", identity)
+        self,
+        identity: CaptureIdentity,
+        *,
+        page: int = 1,
+        size: int = CAPTURE_ANNOTATION_PAGE_SIZE,
+    ) -> CaptureNoteLinkPage:
+        return await self._invoke(
+            "list_note_links",
+            identity,
+            page=page,
+            size=size,
+        )
 
     async def link_note(
         self,

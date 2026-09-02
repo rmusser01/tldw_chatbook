@@ -543,6 +543,32 @@ async def test_server_highlight_delete_verifies_parent_capture() -> None:
 
 
 @pytest.mark.asyncio
+async def test_server_highlights_expose_bounded_page_metadata() -> None:
+    client = FakeReadingClient()
+    client.highlights[1].extend(
+        {
+            "id": index,
+            "item_id": 1,
+            "quote": f"Quote {index}",
+            "created_at": "2026-09-01T12:00:00Z",
+        }
+        for index in range(1, 4)
+    )
+    authority, service = _service(client, {"capabilities": {}})
+
+    page = await service.list_highlights(
+        CaptureIdentity(authority.key, "1"),
+        page=2,
+        size=2,
+    )
+
+    assert [item.highlight_id for item in page.items] == ["3"]
+    assert page.total == 3
+    assert page.page == 2
+    assert page.size == 2
+
+
+@pytest.mark.asyncio
 async def test_feature_route_404_downgrades_only_probed_capability() -> None:
     client = FakeReadingClient()
     client.failures["list_reading_highlights"] = APIResponseError(404, "missing")

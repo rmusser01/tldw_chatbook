@@ -17,6 +17,7 @@ from tldw_chatbook.tldw_api.media_reading_schemas import (
 )
 
 from .collections_capture_models import (
+    CAPTURE_ANNOTATION_PAGE_SIZE,
     CAPTURE_CAPABILITY_NAMES,
     CAPTURE_PROCESSING_STATES,
     CAPTURE_STATUSES,
@@ -31,8 +32,10 @@ from .collections_capture_models import (
     CaptureDetail,
     CaptureHighlight,
     CaptureHighlightDraft,
+    CaptureHighlightPage,
     CaptureIdentity,
     CaptureNoteLink,
+    CaptureNoteLinkPage,
     CaptureOfflineCopy,
     CapturePage,
     CapturePageRequest,
@@ -95,6 +98,14 @@ def _filter_values(value: Any) -> tuple[Any, ...]:
     if isinstance(value, (tuple, list)):
         return tuple(value)
     raise CollectionsCaptureError("invalid_server_response")
+
+
+def _annotation_window(page: Any, size: Any) -> tuple[int, int, int]:
+    page = _positive_id(page, "invalid_annotation_page")
+    size = _positive_id(size, "invalid_annotation_page_size")
+    if size > CAPTURE_ANNOTATION_PAGE_SIZE:
+        raise CollectionsCaptureError("invalid_annotation_page_size")
+    return page, size, (page - 1) * size
 
 
 class ServerCollectionsCaptureService:
@@ -580,12 +591,23 @@ class ServerCollectionsCaptureService:
     async def list_highlights(
         self,
         identity: CaptureIdentity,
-    ) -> tuple[CaptureHighlight, ...]:
+        *,
+        page: int = 1,
+        size: int = CAPTURE_ANNOTATION_PAGE_SIZE,
+    ) -> CaptureHighlightPage:
         await self._require("highlights")
         item_id = self._validate_identity(identity)
-        return tuple(
-            self._highlight(identity, item)
-            for item in await self.client.list_reading_highlights(item_id)
+        page, size, offset = _annotation_window(page, size)
+        raw_items = tuple(await self.client.list_reading_highlights(item_id))
+        return CaptureHighlightPage(
+            identity,
+            tuple(
+                self._highlight(identity, item)
+                for item in raw_items[offset : offset + size]
+            ),
+            len(raw_items),
+            page,
+            size,
         )
 
     async def save_highlight(
@@ -636,12 +658,24 @@ class ServerCollectionsCaptureService:
     async def list_note_links(
         self,
         identity: CaptureIdentity,
-    ) -> tuple[CaptureNoteLink, ...]:
+        *,
+        page: int = 1,
+        size: int = CAPTURE_ANNOTATION_PAGE_SIZE,
+    ) -> CaptureNoteLinkPage:
         await self._require("linked_notes")
         item_id = self._validate_identity(identity)
+        page, size, offset = _annotation_window(page, size)
         response = _mapping(await self.client.list_reading_item_note_links(item_id))
-        return tuple(
-            self._note_link(identity, link) for link in response.get("links", ())
+        raw_items = tuple(response.get("links", ()))
+        return CaptureNoteLinkPage(
+            identity,
+            tuple(
+                self._note_link(identity, link)
+                for link in raw_items[offset : offset + size]
+            ),
+            len(raw_items),
+            page,
+            size,
         )
 
     async def link_note(

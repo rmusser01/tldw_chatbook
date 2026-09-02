@@ -44415,7 +44415,7 @@ class LibraryScreen(BaseAppScreen):
             return
         if not self._library_collection_capture_is_current(identity):
             return
-        self._library_collections_highlights = highlights
+        self._library_collections_highlights = highlights.items
 
     @on(Button.Pressed, "#library-collections-highlight-save")
     async def save_library_collection_capture_highlight(
@@ -44442,7 +44442,7 @@ class LibraryScreen(BaseAppScreen):
                 return
             self._library_collections_highlights = (
                 await controller.scope_service.list_highlights(capture.identity)
-            )
+            ).items
         except CollectionsCaptureError as exc:
             if not self._library_collection_capture_is_current(capture.identity):
                 return
@@ -44476,7 +44476,7 @@ class LibraryScreen(BaseAppScreen):
                 return
             self._library_collections_highlights = (
                 await controller.scope_service.list_highlights(capture.identity)
-            )
+            ).items
         except CollectionsCaptureError as exc:
             if not self._library_collection_capture_is_current(capture.identity):
                 return

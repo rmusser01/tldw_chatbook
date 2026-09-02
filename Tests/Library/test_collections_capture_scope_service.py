@@ -200,7 +200,7 @@ async def test_local_backend_covers_capture_owned_crud_and_bounded_pages(
         quote="Important sentence",
         note="Check this",
     )
-    assert await scope.list_highlights(identity) == (highlight,)
+    assert (await scope.list_highlights(identity)).items == (highlight,)
     assert (await scope.delete_highlight(identity, highlight.highlight_id)).success
 
     link = await scope.link_note(

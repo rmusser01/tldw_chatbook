@@ -9,6 +9,7 @@ from typing import Any, Literal, Mapping
 
 
 CAPTURE_PAGE_SIZE = 20
+CAPTURE_ANNOTATION_PAGE_SIZE = 100
 CAPTURE_STATUSES = ("saved", "reading", "read", "archived")
 CAPTURE_SORTS = (
     "saved_desc",
@@ -740,6 +741,80 @@ class CaptureNoteLink:
 
 
 @dataclass(frozen=True)
+class CaptureHighlightPage:
+    """One bounded page of highlights for a single capture."""
+
+    identity: CaptureIdentity
+    items: tuple[CaptureHighlight, ...]
+    total: int
+    page: int = 1
+    size: int = CAPTURE_ANNOTATION_PAGE_SIZE
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.identity, CaptureIdentity):
+            raise CollectionsCaptureError("invalid_capture_identity")
+        page = _positive_int(self.page, "invalid_annotation_page")
+        size = _positive_int(self.size, "invalid_annotation_page_size")
+        if size > CAPTURE_ANNOTATION_PAGE_SIZE:
+            raise CollectionsCaptureError("invalid_annotation_page_size")
+        if not isinstance(self.items, (tuple, list)):
+            raise CollectionsCaptureError("invalid_highlight_items")
+        items = tuple(self.items)
+        if any(
+            not isinstance(item, CaptureHighlight) or item.identity != self.identity
+            for item in items
+        ):
+            raise CollectionsCaptureError("invalid_highlight_items")
+        total = _validate_page_shape(
+            row_count=len(items),
+            total=self.total,
+            page=page,
+            size=size,
+        )
+        object.__setattr__(self, "items", items)
+        object.__setattr__(self, "total", total)
+        object.__setattr__(self, "page", page)
+        object.__setattr__(self, "size", size)
+
+
+@dataclass(frozen=True)
+class CaptureNoteLinkPage:
+    """One bounded page of linked Notes for a single capture."""
+
+    identity: CaptureIdentity
+    items: tuple[CaptureNoteLink, ...]
+    total: int
+    page: int = 1
+    size: int = CAPTURE_ANNOTATION_PAGE_SIZE
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.identity, CaptureIdentity):
+            raise CollectionsCaptureError("invalid_capture_identity")
+        page = _positive_int(self.page, "invalid_annotation_page")
+        size = _positive_int(self.size, "invalid_annotation_page_size")
+        if size > CAPTURE_ANNOTATION_PAGE_SIZE:
+            raise CollectionsCaptureError("invalid_annotation_page_size")
+        if not isinstance(self.items, (tuple, list)):
+            raise CollectionsCaptureError("invalid_note_link_items")
+        items = tuple(self.items)
+        if any(
+            not isinstance(item, CaptureNoteLink) or item.identity != self.identity
+            for item in items
+        ):
+            raise CollectionsCaptureError("invalid_note_link_items")
+        total = _validate_page_shape(
+            row_count=len(items),
+            total=self.total,
+            page=page,
+            size=size,
+        )
+        object.__setattr__(self, "items", items)
+        object.__setattr__(self, "total", total)
+        object.__setattr__(self, "page", page)
+        object.__setattr__(self, "size", size)
+
+
+@dataclass(frozen=True)
 class ExternalReferenceAvailability:
     state: Literal["available", "unavailable"]
     reason: str | None = None
@@ -859,6 +934,7 @@ class CaptureCapabilities:
 
 
 __all__ = [
+    "CAPTURE_ANNOTATION_PAGE_SIZE",
     "CAPTURE_CAPABILITY_NAMES",
     "CAPTURE_PAGE_SIZE",
     "CAPTURE_PROCESSING_STATES",
@@ -875,8 +951,10 @@ __all__ = [
     "CaptureDetail",
     "CaptureHighlight",
     "CaptureHighlightDraft",
+    "CaptureHighlightPage",
     "CaptureIdentity",
     "CaptureNoteLink",
+    "CaptureNoteLinkPage",
     "CaptureOfflineCopy",
     "CapturePage",
     "CapturePageRequest",
