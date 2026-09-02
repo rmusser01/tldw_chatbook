@@ -75,6 +75,14 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: the final merged tree measures 16,966/563.
 _BUDGETS: dict[str, tuple[str, int, int]] = {
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 16966, 563),
+    #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
+    #: missing for the entire month in which library_screen.py tripled from
+    #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
+    #: New Library code belongs in tldw_chatbook/UI/Library_Modules/ — a
+    #: subsystem's controller file may be created BEFORE its extraction
+    #: series to receive new methods. See
+    #: Docs/superpowers/specs/2026-09-01-library-screen-decomposition-design.md.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 45134, 1300),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide
