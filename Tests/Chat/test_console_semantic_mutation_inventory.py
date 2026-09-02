@@ -303,6 +303,7 @@ class _ContainerTargetEvidence:
     mode: str
     tuple_index: int | None = None
     function_qualname: str | None = None
+    class_qualname: str | None = None
 
 
 @dataclass(frozen=True)
@@ -392,6 +393,18 @@ _DYNAMIC_TARGET_EVIDENCE: dict[
         mode="sequence-tuples",
         tuple_index=0,
         function_qualname="TraceGarbageCollector._sweep_unmarked",
+    ),
+    "tldw_chatbook/Scheduling/db/scheduled_tasks_db.py::"
+    "ScheduledTasksDB.set_transfer_state": _ContainerTargetEvidence(
+        symbol="_TRANSFER_STATE_TABLES",
+        mode="mapping-values",
+        class_qualname="ScheduledTasksDB",
+    ),
+    "tldw_chatbook/Scheduling/db/scheduled_tasks_db.py::"
+    "ScheduledTasksDB.convert_row_to_server_mirror": _ContainerTargetEvidence(
+        symbol="_TRANSFER_STATE_TABLES",
+        mode="mapping-values",
+        class_qualname="ScheduledTasksDB",
     ),
     "tldw_chatbook/Notes/notes_organization_repository.py::"
     "NotesOrganizationRepository.apply_resolved_inventory_merge": (
@@ -519,6 +532,14 @@ _DYNAMIC_TARGET_EVIDENCE_FINGERPRINTS = {
     "tldw_chatbook/Chat/console_trace_maintenance.py::"
     "TraceGarbageCollector._sweep_unmarked": (
         "45c1c48440ae2fbe9927a8e42048df436e47f36effe4c4dc734e983893da5544"
+    ),
+    "tldw_chatbook/Scheduling/db/scheduled_tasks_db.py::"
+    "ScheduledTasksDB.set_transfer_state": (
+        "96a096c28342acc3120a13d51ae81926246cf7f6ab517725efa958fcfba680cf"
+    ),
+    "tldw_chatbook/Scheduling/db/scheduled_tasks_db.py::"
+    "ScheduledTasksDB.convert_row_to_server_mirror": (
+        "96a096c28342acc3120a13d51ae81926246cf7f6ab517725efa958fcfba680cf"
     ),
     "tldw_chatbook/Notes/notes_organization_repository.py::"
     "NotesOrganizationRepository.apply_resolved_inventory_merge": (
@@ -726,6 +747,50 @@ _PROVEN_NON_SEMANTIC_DYNAMIC_SQL = dict(
             domain="notes organization portable identities",
             exact_targets=frozenset(
                 {"keywords", "keyword_collections", "note_folders"}
+            ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/Scheduling/db/scheduled_tasks_db.py::"
+            "ScheduledTasksDB.set_transfer_state",
+            "UPDATE {expression} SET transfer_state = ?, updated_at = ? "
+            "WHERE id = ? AND ({expression})",
+            "f\"UPDATE {table} SET transfer_state = ?, updated_at = ? "
+            "WHERE id = ? AND ({' OR '.join(guard_clauses)})\"",
+            domain="scheduled task ownership transfer state",
+            exact_targets=frozenset(
+                {"reminder_tasks", "automation_definitions"}
+            ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/Scheduling/db/scheduled_tasks_db.py::"
+            "ScheduledTasksDB.convert_row_to_server_mirror",
+            "UPDATE {expression} SET created_at = ? WHERE id = ?",
+            "f'UPDATE {table} SET created_at = ? WHERE id = ?'",
+            domain="scheduled task ownership transfer state",
+            exact_targets=frozenset(
+                {"reminder_tasks", "automation_definitions"}
+            ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/Scheduling/db/scheduled_tasks_db.py::"
+            "ScheduledTasksDB.convert_row_to_server_mirror",
+            "DELETE FROM {expression} WHERE id = ?",
+            "f'DELETE FROM {table} WHERE id = ?'",
+            domain="scheduled task ownership transfer state",
+            exact_targets=frozenset(
+                {"reminder_tasks", "automation_definitions"}
+            ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/Scheduling/db/scheduled_tasks_db.py::"
+            "ScheduledTasksDB.convert_row_to_server_mirror",
+            "UPDATE {expression} SET server_id = ?, owner_id = ?, "
+            "transfer_state = NULL, updated_at = ? WHERE id = ?",
+            "f'UPDATE {table} SET server_id = ?, owner_id = ?, "
+            "transfer_state = NULL, updated_at = ? WHERE id = ?'",
+            domain="scheduled task ownership transfer state",
+            exact_targets=frozenset(
+                {"reminder_tasks", "automation_definitions"}
             ),
         ),
         _reviewed_dynamic_sql_site(
@@ -1611,7 +1676,28 @@ def _container_assignment(
     tree: ast.Module,
     evidence: _ContainerTargetEvidence,
 ) -> ast.Assign | ast.AnnAssign:
-    if evidence.function_qualname is None:
+    if evidence.class_qualname is not None:
+        assert evidence.function_qualname is None
+        class_node = next(
+            (
+                node
+                for node in tree.body
+                if isinstance(node, ast.ClassDef)
+                and node.name == evidence.class_qualname
+            ),
+            None,
+        )
+        assert class_node is not None, (
+            f"dynamic SQL evidence class disappeared: {evidence.class_qualname}"
+        )
+        nodes = list(class_node.body)
+        audit_nodes = list(ast.walk(class_node))
+        relevant_name_ids = frozenset(
+            id(node)
+            for node in audit_nodes
+            if isinstance(node, ast.Name) and node.id == evidence.symbol
+        )
+    elif evidence.function_qualname is None:
         nodes = _module_scope_nodes(tree)
         audit_nodes = list(ast.walk(tree))
         relevant_name_ids = _module_container_name_ids(tree, evidence.symbol)
@@ -1782,6 +1868,9 @@ def _container_targets(
             assert isinstance(item, (ast.List, ast.Tuple))
             targets.add(_literal_string(item.elts[evidence.tuple_index]))
         return frozenset(targets)
+    if evidence.mode == "mapping-values":
+        assert isinstance(value, ast.Dict)
+        return frozenset(_literal_string(item) for item in value.values)
     if evidence.mode == "mapping-value-tuples":
         assert isinstance(value, ast.Dict)
         assert evidence.tuple_index is not None
