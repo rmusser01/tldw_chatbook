@@ -153,6 +153,7 @@ from ...Library.library_export_state import (
 from ...Widgets.Library.library_export_canvas import (
     apply_library_export_submit_gate,
 )
+from ...Chat.Chat_Functions import chat_api_call, extract_response_content
 from ...Library.ingest_analysis import resolve_ingest_analysis_provider
 from ...Library.ingest_capabilities import (
     capabilities_for_backend,
@@ -2413,6 +2414,13 @@ class LibraryScreen(BaseAppScreen):
         # fields. Advertised via ``LIBRARY_INGEST_SHORTCUTS`` (footer+F1),
         # so ``show=False`` like the other contextual keys.
         Binding("r", "library_ingest_retry_last", "Retry this batch", show=False),
+        # task-28005: sequential-review Prev/Next over the current browse
+        # result. ``check_action`` gates both to the media Reader with a
+        # neighbour in that direction (so they no-op at the list ends and
+        # drop from the footer there); a focused Input/TextArea consumes the
+        # printable key first, so "[" / "]" still type in the search box.
+        Binding("]", "library_media_next_item", "Next item", show=False),
+        Binding("[", "library_media_prev_item", "Previous item", show=False),
     ]
 
     #: task-4023 AC#7: which canvas's "Export…" action opened the Export
@@ -2655,7 +2663,18 @@ class LibraryScreen(BaseAppScreen):
         WorkbenchPaneTarget("library-canvas", ("library-media-filter",)),
         WorkbenchPaneTarget(
             "library-media-viewer",
-            ("library-media-reader-find", "library-media-back"),
+            # task-28003: the scrollable content is the first F6 target so
+            # a fresh open has a keyboard scroll path. Raw mode focuses its
+            # inner ScrollView (``-content-text``); rendered-Markdown mode
+            # focuses the scrolling body itself (``-viewer-content``, a
+            # ScrollableContainer -- Qodo #2307). Other Reader modes fall
+            # through to Find, which "/" also reaches.
+            (
+                "library-media-viewer-content-text",
+                "library-media-viewer-content",
+                "library-media-reader-find",
+                "library-media-back",
+            ),
         ),
     )
     _NOTES_WORKBENCH_FOCUS_TARGETS = (
@@ -3920,6 +3939,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_confirming_delete: bool = False
         self._library_media_highlights: list[dict[str, Any]] = []
         self._library_media_editing_analysis: bool = False
+        # task-28006: an LLM analysis generation is in flight for the open item.
+        self._library_media_generating_analysis: bool = False
         self._library_media_content_query: str = ""
         self._library_media_content_match_index: int = 0
         # task-22209: in-content match list for the open item, memoized on
@@ -4890,11 +4911,20 @@ class LibraryScreen(BaseAppScreen):
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
                 and self._library_media_view == "viewer"
             ):
-                return (
+                shortcuts: list[tuple[str, str]] = [
                     ("/", "focus search"),
                     ("F6", "next pane"),
-                    ("esc", self._library_media_escape_label()),
-                )
+                ]
+                # task-28005: advertise Prev/Next only when there IS a
+                # neighbour that way, so the footer stops teaching a key
+                # that no-ops at the list ends.
+                if self._library_media_item_traversal_active():
+                    if self._library_media_adjacent_row(1) is not None:
+                        shortcuts.append(("]", "next item"))
+                    if self._library_media_adjacent_row(-1) is not None:
+                        shortcuts.append(("[", "prev item"))
+                shortcuts.append(("esc", self._library_media_escape_label()))
+                return tuple(shortcuts)
             return self.LIBRARY_DETAIL_BACK_SHORTCUTS
         if self._library_skill_editor_active():
             shortcuts = [("/", "focus search"), ("F6", "next pane")]
@@ -30460,6 +30490,15 @@ class LibraryScreen(BaseAppScreen):
             "library_rag_result_card_open",
         ):
             return self._focused_library_rag_result_card_index() is not None
+        if action in ("library_media_next_item", "library_media_prev_item"):
+            # task-28005: active only in the plain Reader with a neighbour in
+            # that direction, so the key no-ops (and drops from the footer)
+            # at the list ends -- the honest-footer idiom that communicates
+            # the boundary. A focused Input still consumes "[" / "]" first.
+            if not self._library_media_item_traversal_active():
+                return False
+            direction = 1 if action == "library_media_next_item" else -1
+            return self._library_media_adjacent_row(direction) is not None
         if action == "focus_previous_workbench_pane":
             return bool(self._library_selected_row_id)
         return True
@@ -41323,12 +41362,98 @@ class LibraryScreen(BaseAppScreen):
             self._exit_library_media_viewer()
             return
         if layout.items_open:
-            self._focus_library_control("#library-media-filter")
+            self._focus_library_media_items_pane()
         elif layout.library_open:
             self._focus_library_rail_action("#library-search-input")
         else:
             self._exit_library_media_viewer()
         self._register_footer_shortcuts()
+
+    def _library_media_adjacent_row(
+        self, direction: int
+    ) -> tuple[str, str] | None:
+        """Return the (id, title) of the browse row ``direction`` from the current.
+
+        task-28005: neighbours come from the mounted rows -- they carry
+        ``media_id`` in exactly the form ``_selected_media_id`` holds (so no
+        id-format mismatch) and sit in browse order (newest first, so
+        ``direction=+1`` is the next item DOWN the list, matching Down). No
+        neighbour (at a list end, or the current item is off the loaded
+        page) returns None.
+        """
+        rows = list(self.query(".library-media-row"))
+        if not rows:
+            return None
+        selected = str(self._selected_media_id or "")
+        index = next(
+            (
+                i
+                for i, row in enumerate(rows)
+                if str(getattr(row, "media_id", "") or "") == selected
+            ),
+            None,
+        )
+        if index is None:
+            return None
+        neighbour = index + direction
+        if not 0 <= neighbour < len(rows):
+            return None
+        row = rows[neighbour]
+        media_id = str(getattr(row, "media_id", "") or "")
+        title = str(getattr(row, "_library_media_title", "") or media_id)
+        return (media_id, title)
+
+    def _library_media_item_traversal_active(self) -> bool:
+        """True while the Reader is showing a plain item (no sub-state)."""
+        return (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+            and self._library_media_view == "viewer"
+            and not self._library_media_viewer_substate_active()
+            and not self._library_media_select_mode
+        )
+
+    def action_library_media_next_item(self) -> None:
+        """Open the next browse item in the Reader (task-28005)."""
+        self._select_library_media_adjacent_item(1)
+
+    def action_library_media_prev_item(self) -> None:
+        """Open the previous browse item in the Reader (task-28005)."""
+        self._select_library_media_adjacent_item(-1)
+
+    def _select_library_media_adjacent_item(self, direction: int) -> None:
+        if not self._library_media_item_traversal_active():
+            return
+        neighbour = self._library_media_adjacent_row(direction)
+        if neighbour is None:
+            return
+        media_id, title = neighbour
+        self._select_library_media_reader_row(media_id, title, immediate=True)
+
+    def _focus_library_media_items_pane(self) -> None:
+        """Focus the Items pane at its most useful control (task-28004).
+
+        Prefers the loaded/selected item's ROW so the very next Down/Up
+        walks the list -- Escape-then-Down is the sequential-review
+        gesture (Down moves selection and auto-loads the adjacent item).
+        Landing on the "Filter media" Input instead swallowed those
+        keystrokes (typed characters fell into the filter, Down was inert
+        until a Tab) -- live-verified 2026-09-02. Falls back to the first
+        row, then to the filter when the list is empty.
+        """
+        rows = list(self.query(".library-media-row"))
+        if rows:
+            selected = str(self._selected_media_id or "")
+            target = next(
+                (
+                    row
+                    for row in rows
+                    if str(getattr(row, "media_id", "") or "") == selected
+                ),
+                rows[0],
+            )
+            self.set_focus(target)
+            return
+        self._focus_library_control("#library-media-filter")
 
     def _library_media_escape_label(self) -> str:
         """Describe the action Escape will take from the current effective role."""
@@ -42039,6 +42164,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_media_highlights
             ),
             editing_analysis=self._library_media_editing_analysis,
+            generating_analysis=self._library_media_generating_analysis,
             content_query=self._library_media_content_query,
             content_match_index=self._library_media_content_match_index,
             content_mode=self._library_media_content_mode,
@@ -42320,6 +42446,7 @@ class LibraryScreen(BaseAppScreen):
             viewer.confirming_delete = self._library_media_confirming_delete
             viewer.highlights = highlights
             viewer.editing_analysis = self._library_media_editing_analysis
+            viewer.generating_analysis = self._library_media_generating_analysis
             viewer.content_query = self._library_media_content_query
             viewer.content_match_index = self._library_media_content_match_index
             viewer.content_mode = self._library_media_content_mode
@@ -43053,6 +43180,124 @@ class LibraryScreen(BaseAppScreen):
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             notify(message, severity="warning")
+
+    @on(Button.Pressed, "#library-media-analysis-generate")
+    def handle_library_media_analysis_generate(self, event: Button.Pressed) -> None:
+        """Generate an analysis for the open item via the configured provider.
+
+        task-28006: resolves the provider through the same seam the ingest
+        path uses (``resolve_ingest_analysis_provider``), so the promise
+        made here and the ingest receipt can never disagree. Not-ready
+        surfaces the resolver's own honest reason instead of dispatching;
+        ready flips the section into its "Generating analysis…" state and
+        hands the call to a worker.
+
+        Args:
+            event: Button press event from the Analysis section's Generate
+                action.
+        """
+        event.stop()
+        if self._library_media_generating_analysis:
+            return
+        media_id = self._selected_media_id
+        if not media_id:
+            return
+        resolution = resolve_ingest_analysis_provider(self.app_instance.app_config)
+        if not resolution.ready:
+            self._notify_library_media_analysis_warning(
+                resolution.hint
+                or f"Analysis provider not ready: {resolution.short_reason}"
+            )
+            return
+        detail = (
+            self._library_media_detail
+            if isinstance(self._library_media_detail, Mapping)
+            else {}
+        )
+        content = str(detail.get("content") or "")
+        if not content.strip():
+            self._notify_library_media_analysis_warning(
+                "This item has no content to analyze."
+            )
+            return
+        self._library_media_generating_analysis = True
+        self._sync_library_media_viewer_or_recompose()
+        self.run_worker(
+            self._generate_library_media_analysis(
+                media_id, content=content, resolution=resolution
+            ),
+            group="library_media_analysis_generate",
+        )
+
+    async def _generate_library_media_analysis(
+        self, media_id: str, *, content: str, resolution: Any
+    ) -> None:
+        """Dispatch the analysis LLM call off-thread, then persist the result.
+
+        Always clears the generating flag and re-fetches detail so the
+        viewer never sticks in the progress state. On any failure the flag
+        is cleared and a quiet warning is surfaced; nothing is persisted.
+
+        Args:
+            media_id: The open Library media item id.
+            content: The document content to analyze.
+            resolution: The ready ``IngestAnalysisResolution`` describing the
+                provider, credential, and sampling parameters.
+        """
+        try:
+            analysis_text = await asyncio.to_thread(
+                self._dispatch_library_media_analysis, content, resolution
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Analysis generation failed for {media_id!r}."
+            )
+            analysis_text = ""
+        analysis_text = (analysis_text or "").strip()
+        self._library_media_generating_analysis = False
+        if not analysis_text:
+            self._notify_library_media_analysis_warning(
+                "Analysis generation returned nothing; the item is unchanged."
+            )
+            self._sync_library_media_viewer_or_recompose()
+            return
+        await self._save_library_media_analysis(
+            media_id, content=content, analysis_content=analysis_text
+        )
+
+    def _dispatch_library_media_analysis(self, content: str, resolution: Any) -> str:
+        """Call the resolved provider once and return the analysis text.
+
+        Runs on a worker thread (``chat_api_call`` is synchronous). The
+        credential is already resolved by the provider seam, so
+        ``api_key_resolved=True`` bypasses a second lookup.
+
+        Args:
+            content: The document content to analyze.
+            resolution: The ready ``IngestAnalysisResolution``.
+
+        Returns:
+            The extracted analysis text, or ``""`` when the response carried
+            none.
+        """
+        user_prompt = (
+            "Analyze and summarize the following content.\n\n"
+            f"---\n\n{content}"
+        )
+        response = chat_api_call(
+            api_endpoint=resolution.dispatch_name,
+            messages_payload=[{"role": "user", "content": user_prompt}],
+            api_key=resolution.api_key,
+            temp=resolution.temperature,
+            system_message=resolution.system_prompt,
+            streaming=False,
+            minp=resolution.min_p,
+            topp=resolution.top_p,
+            model=resolution.model,
+            max_tokens=resolution.max_tokens,
+            api_key_resolved=True,
+        )
+        return extract_response_content(response)
 
     @on(Button.Pressed, "#library-media-open")
     def handle_library_media_open(self, event: Button.Pressed) -> None:

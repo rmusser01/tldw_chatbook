@@ -327,8 +327,13 @@ async def test_match_index_sync_wraps_status_index() -> None:
 
 
 @pytest.mark.asyncio
-async def test_blank_query_sync_removes_active_search_controls() -> None:
-    """Catch a blank-query transition that leaves stale controls mounted."""
+async def test_blank_query_sync_hides_search_controls() -> None:
+    """Catch a blank-query transition that leaves stale controls visible.
+
+    task-28002: the status/nav children are display-gated, never torn down
+    -- recomposing here destroyed the focused ``Input`` and stranded screen
+    focus on nothing (a live-verified total keyboard deadlock).
+    """
     app = SearchControlsHarness()
     async with app.run_test() as pilot:
         controls = app.query_one("#controls", LibraryMediaContentSearchControls)
@@ -341,14 +346,13 @@ async def test_blank_query_sync_removes_active_search_controls() -> None:
         )
         await pilot.pause()
 
-        assert not app.query("#library-media-content-search-status")
-        assert not app.query("#library-media-content-search-prev")
-        assert not app.query("#library-media-content-search-next")
+        assert not app.query_one("#library-media-content-search-status").display
+        assert not app.query_one("#library-media-content-search-nav").display
 
 
 @pytest.mark.asyncio
-async def test_active_query_sync_mounts_controls_and_markdown_placeholder() -> None:
-    """Catch a blank-to-active transition that fails to recompose its controls."""
+async def test_active_query_sync_reveals_controls_and_markdown_placeholder() -> None:
+    """Catch a blank-to-active transition that fails to reveal its controls."""
     app = BlankSearchControlsHarness()
     async with app.run_test() as pilot:
         controls = app.query_one("#controls", LibraryMediaContentSearchControls)
@@ -363,10 +367,56 @@ async def test_active_query_sync_mounts_controls_and_markdown_placeholder() -> N
         await pilot.pause()
 
         active_input = app.query_one("#library-media-content-search", Input)
-        assert active_input is not blank_input
+        assert active_input is blank_input
         assert active_input.placeholder == "Search content (raw text)…"
-        assert app.query_one("#library-media-content-search-prev", Button)
-        assert app.query_one("#library-media-content-search-next", Button)
+        assert app.query_one("#library-media-content-search-prev", Button).display
+        assert app.query_one("#library-media-content-search-next", Button).display
+        assert str(
+            app.query_one("#library-media-content-search-status", Static).renderable
+        ) == "Match 1 of 1 matches"
+
+
+@pytest.mark.asyncio
+async def test_activity_flip_preserves_focused_search_input() -> None:
+    """task-28002 pinning test: the first submit must not eat keyboard focus.
+
+    Live repro (2026-09-02): typing a first query and pressing Enter
+    recomposed the controls, destroying the focused ``Input`` -- screen
+    focus became None and EVERY key (Escape included) went dead until a
+    mouse click. The input's identity and focus must survive both
+    activity flips.
+    """
+    app = BlankSearchControlsHarness()
+    async with app.run_test() as pilot:
+        controls = app.query_one("#controls", LibraryMediaContentSearchControls)
+        search_input = app.query_one("#library-media-content-search", Input)
+        search_input.focus()
+        await pilot.pause()
+        assert app.focused is search_input
+
+        controls.sync_query_state(
+            is_markdown=True,
+            query="cost",
+            matches=(4,),
+            match_index=0,
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.query_one("#library-media-content-search", Input) is search_input
+        assert app.focused is search_input
+
+        controls.sync_query_state(
+            is_markdown=True,
+            query="",
+            matches=(),
+            match_index=0,
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.query_one("#library-media-content-search", Input) is search_input
+        assert app.focused is search_input
 
 
 # ---------------------------------------------------------------------------

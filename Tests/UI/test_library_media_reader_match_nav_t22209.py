@@ -371,7 +371,9 @@ async def test_clearing_the_search_mid_navigation_drops_every_highlight():
         await _submit_query(screen, pilot, "")
 
         assert screen._library_media_content_query == ""
-        assert not screen.query("#library-media-content-search-status")
+        # task-28002: the status child persists display-gated (tearing it
+        # down recomposed away the focused Input), so "gone" means hidden.
+        assert not screen.query_one("#library-media-content-search-status").display
         raw = _raw_static(screen)
         assert raw._query == ""
         assert _highlighted_words_in_raw(raw) == set()

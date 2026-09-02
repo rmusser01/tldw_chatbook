@@ -77,6 +77,7 @@ class LibraryMediaViewer(Vertical):
         confirming_delete: bool = False,
         highlights: Sequence[LibraryMediaHighlightRow] = (),
         editing_analysis: bool = False,
+        generating_analysis: bool = False,
         content_query: str = "",
         content_match_index: int = 0,
         content_mode: str = "raw",
@@ -100,6 +101,7 @@ class LibraryMediaViewer(Vertical):
         self.confirming_delete = confirming_delete
         self.highlights = tuple(highlights)
         self.editing_analysis = editing_analysis
+        self.generating_analysis = generating_analysis
         self.content_query = content_query
         self.content_match_index = content_match_index
         self.content_mode = content_mode
@@ -549,13 +551,14 @@ class LibraryMediaViewer(Vertical):
                 yield Button("Cancel", id="library-media-edit-cancel", compact=True)
 
     def _compose_analysis(self) -> ComposeResult:
-        """Render the Analysis section: read-only text + Edit toggle, or the edit form.
+        """Render the Analysis section: read-only text + Edit/Generate, or a form.
 
         Always renders (mirroring the Content section's always-present
-        placeholder) so "Edit analysis" is reachable even when no analysis
-        exists yet -- editing an empty analysis simply creates the first
-        one via ``save_analysis_version``. Analysis (re)generation via an
-        LLM is explicitly out of scope; this only edits existing text.
+        placeholder) so the actions are reachable even when no analysis
+        exists yet. "Edit"/"Add" hand-edits text via ``save_analysis_version``;
+        "Generate" (task-28006) runs the configured analysis provider and
+        persists the result the same way. While a generation is in flight
+        the section shows a progress line instead of the actions.
 
         Returns:
             ComposeResult for the Analysis section.
@@ -567,15 +570,32 @@ class LibraryMediaViewer(Vertical):
         )
         if self.editing_analysis:
             yield from self._compose_analysis_edit_form()
-        else:
+            return
+        yield Static(
+            self.viewer.analysis or "No analysis yet.",
+            id="library-media-viewer-analysis-text",
+            markup=False,
+        )
+        if self.generating_analysis:
             yield Static(
-                self.viewer.analysis or "No analysis yet.",
-                id="library-media-viewer-analysis-text",
+                "Generating analysis…",
+                id="library-media-analysis-generating",
+                classes="destination-purpose",
                 markup=False,
             )
+            return
+        with Horizontal(classes="ds-toolbar"):
             yield Button(
                 "Edit analysis" if self.viewer.analysis else "Add analysis",
                 id="library-media-analysis-edit",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            # task-28006: LLM generation, in the reading flow (no detour to
+            # the manager). "Regenerate" when an analysis already exists.
+            yield Button(
+                "Regenerate" if self.viewer.analysis else "Generate",
+                id="library-media-analysis-generate",
                 classes="library-canvas-action",
                 compact=True,
             )

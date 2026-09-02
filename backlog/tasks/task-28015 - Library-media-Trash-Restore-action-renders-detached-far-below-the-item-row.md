@@ -1,0 +1,27 @@
+---
+id: TASK-28015
+title: Library media Trash - Restore action renders detached far below the item row
+status: To Do
+assignee: []
+created_date: '2026-09-02 04:11'
+labels:
+  - library
+  - bug
+dependencies: []
+references:
+  - >-
+    .impeccable/critique/2026-09-02T04-00-36Z__tldw-chatbook-ui-screens-library-screen-py.md
+priority: low
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Re-verified 2026-09-02 live on dev tip (worktree media-ux-fixes @ b7e89b6de, tmux scratch-profile run). Layout defect confirmed: the Trash view renders the item row near the top (pane rows 10-11) and pins its controls (pager + "Restore Delete permanently") to the panel bottom (~rows 47-49) with ~36 empty rows between - Restore is visually detached from the row it acts on. Two updates since filing: "Delete permanently" now EXISTS (task-15130's gap shipped), and the Trash ENTRY button itself is one of the clipped-invisible toolbar buttons (see the toolbar-clipping task from the same run); no palette command reaches Trash either ("trash" query returns only tab-nav entries).
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 Restore is visually associated with the trashed item list (no dead gap)
+- [ ] #2 A keyboard path from a trash row to Restore exists
+<!-- AC:END -->
