@@ -1428,6 +1428,16 @@ class SchedulingService:
         resolution columns, so a resolution change never changes what the
         scheduler should dispatch.
 
+        Refuses (fix round 1) while `transfer_lock_reason` reports the row
+        dormant/in-flight -- same "read-only except cancel" rule `save_
+        definition`/`set_definition_lifecycle` already enforce (spec
+        §6.3). Resolution fields are row-state exactly like `lifecycle`:
+        a local write mid-transfer would be shipped by a create snapshot
+        taken before this task existed, then silently clobbered back to
+        `"open"` by the first mirror pull -- the identical corruption
+        class I7 was written to close, just via a column its guard didn't
+        cover yet.
+
         Args:
             definition_id: The definition's LOCAL row id.
             solved: ``True`` to mark solved, ``False`` to reopen.
@@ -1437,8 +1447,9 @@ class SchedulingService:
         Returns:
             `ResolveOutcome` -- ``"saved"`` on a successful local write or
             server round trip, ``"error"`` (with ``reason``) for an
-            unknown ``definition_id`` or an unreachable/refused server
-            row.
+            unknown ``definition_id``, a row locked by an in-flight
+            transfer, an unsynced result id, or an unreachable/refused
+            server row.
         """
         row = await asyncio.to_thread(self.db.get_automation_definition, definition_id)
         if row is None:
@@ -1446,6 +1457,10 @@ class SchedulingService:
                 status="error",
                 reason=f"Automation definition {definition_id} was not found.",
             )
+
+        locked = self.transfer_lock_reason(row)
+        if locked is not None:
+            return ResolveOutcome(status="error", reason=locked)
 
         owner_id = str(row.get("owner_id") or "local")
         action_desc = "mark this definition solved" if solved else "reopen this definition"
@@ -1478,7 +1493,20 @@ class SchedulingService:
             result_row = await asyncio.to_thread(
                 self.db.get_automation_result, result_id
             )
-            server_result_id = (result_row or {}).get("server_id") or result_id
+            server_result_id = (result_row or {}).get("server_id")
+            if not server_result_id:
+                # Fail closed rather than forwarding the raw LOCAL uuid --
+                # the server has never heard of it and would refuse with
+                # its own opaque `result_not_found`, which the generic
+                # except below would then misreport as a connectivity
+                # problem for a user who is actually connected fine.
+                return ResolveOutcome(
+                    status="error",
+                    reason=(
+                        f"Could not {action_desc}: this result has not been "
+                        "synced to the server yet."
+                    ),
+                )
 
         try:
             if solved:
@@ -1489,6 +1517,24 @@ class SchedulingService:
                 response = await self.server_client.reopen_automation_definition(
                     server_id
                 )
+        except ServerClientPolicyError as exc:
+            # A deterministic, pre-network policy refusal -- retrying
+            # cannot fix it. Same wording split `_seam_failure_warning`
+            # already uses for `preview_definition`'s seam failures.
+            logger.warning(
+                "resolve_definition refused by policy for {definition_id} "
+                "(server row {server_id}): {exc}",
+                definition_id=definition_id,
+                server_id=server_id,
+                exc=exc,
+            )
+            return ResolveOutcome(
+                status="error",
+                reason=(
+                    f"The server refused to {action_desc} ({exc}) -- this "
+                    "will not resolve by retrying."
+                ),
+            )
         except ServerClientError as exc:
             logger.warning(
                 "resolve_definition could not {action} for {definition_id} "
