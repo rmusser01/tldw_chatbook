@@ -13,13 +13,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import functools
+import json
 import os
 import re
 import threading
 import time
 from collections import deque
 from concurrent.futures import TimeoutError as FuturesTimeoutError
-from collections.abc import Mapping, Set as AbstractSet
+from collections.abc import Collection, Mapping, Set as AbstractSet
 from dataclasses import dataclass, field, replace as dataclass_replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, ContextManager, Sequence, cast
@@ -27,6 +28,7 @@ from uuid import uuid4
 
 if TYPE_CHECKING:
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
+    from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
     from tldw_chatbook.UI.Screens.change_review_screen import (
         AgentRunsChangeReviewProvider,
     )
@@ -73,6 +75,7 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents import agent_service as agent_service_module
 from tldw_chatbook.Agents.agent_service import (
+    RUN_LOG_PROMPT_SECTION,
     SUBAGENT_SYSTEM_PROMPT,
     AgentService,
     FirstRequestSchemaPlan,
@@ -81,6 +84,7 @@ from tldw_chatbook.Agents.agent_service import (
     build_first_request_schema_plan,
     build_run_log_request_plan,
 )
+from tldw_chatbook.Agents.agent_runtime import render_tool_protocol
 from tldw_chatbook.Agents.project_instruction_resolver import (
     InstructionPromotionSnapshot,
     InstructionSnapshot,
@@ -92,7 +96,10 @@ from tldw_chatbook.Agents.project_instruction_runtime import (
     InstructionPreparation,
     PromotionSnapshotRevalidation,
 )
-from tldw_chatbook.Agents.native_tools import provider_supports_native_tools
+from tldw_chatbook.Agents.native_tools import (
+    provider_supports_native_tools,
+    schemas_to_openai_tools,
+)
 from tldw_chatbook.Agents.agent_stream import StreamGate
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator, FleetHandle
 # task-24458: these six refusal STRINGS were the last module-scope edge
@@ -116,6 +123,7 @@ from tldw_chatbook.Agents.mcp_tool_provider import (
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     LIBRARY_RESERVED_TOOL_NAMES,
+    PROFILE_RESERVED_TOOL_NAMES,
     SkillToolProvider,
     ToolCatalogRegistry,
     intersect_skill_tools,
@@ -127,6 +135,7 @@ from tldw_chatbook.Tools.raw_cli_executor import (
 )
 from tldw_chatbook.Tools.workspace_file_roots import workspace_context_note
 from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_GLOBAL_WORKSPACE_ID,
     ConsoleActivityPresentation,
     ConsoleActivityStatus,
     ConsoleChatMessage,
@@ -209,8 +218,6 @@ from tldw_chatbook.Internal_Prompts.catalog import CATALOG
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Utils.token_counter import get_model_token_limit
-
-
 def _retire_generation_attempt_after_reply(
     method: Callable[..., Any],
 ) -> Callable[..., Any]:
@@ -3167,6 +3174,7 @@ def _non_colliding_skill_entries(
     *,
     local_names: tuple[str, ...] = (),
     library_names: tuple[str, ...] = (),
+    profile_names: Collection[str] = (),
 ) -> list[Mapping[str, Any]]:
     """Eligible skill entries, excluding any name that collides with a
     builtin, a local tool, OR one of the loop's own in-loop runtime tool
@@ -3208,7 +3216,11 @@ def _non_colliding_skill_entries(
     name set) in agreement with dispatch.
     """
     collision_names = (
-        set(builtin_names) | set(local_names) | set(library_names) | RUNTIME_TOOL_NAMES
+        set(builtin_names)
+        | set(local_names)
+        | set(library_names)
+        | set(profile_names)
+        | RUNTIME_TOOL_NAMES
     )
     return [
         item
@@ -3430,6 +3442,7 @@ def _compose_run_registry_and_allowed(
     library_provider: Any | None = None,
     library_authority: Any | None = None,
     persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
+    profile_provider: Any | None = None,
 ) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     """Build a fresh per-run tool registry + allow-list from a skills snapshot.
 
@@ -3568,11 +3581,16 @@ def _compose_run_registry_and_allowed(
         library_provider, library_authority
     ):
         library_names = tuple(e.name for e in library_provider.list_catalog())
+    profile_names: tuple[str, ...] = ()
+    if profile_provider is not None and not ephemeral:
+        registry.register_provider(profile_provider)
+        profile_names = tuple(e.name for e in profile_provider.list_catalog())
     eligible = _non_colliding_skill_entries(
         context,
         builtin_names,
         local_names=local_names,
         library_names=LIBRARY_RESERVED_TOOL_NAMES,
+        profile_names=PROFILE_RESERVED_TOOL_NAMES,
     )
     # Defense in depth, NOT the guarantee: a temporary session refuses every
     # skill and MCP call at `ToolCatalogRegistry.invoke_by_name` regardless
@@ -3583,12 +3601,15 @@ def _compose_run_registry_and_allowed(
     if eligible and not ephemeral:
         registry.register_provider(SkillToolProvider(eligible))
     skill_names = () if ephemeral else tuple(str(item["name"]) for item in eligible)
-    allowed_tools = tuple(builtin_names) + local_names + library_names + skill_names
+    allowed_tools = (
+        tuple(builtin_names) + local_names + library_names + profile_names + skill_names
+    )
     if mcp_provider is not None and not ephemeral:
         collision_names = (
             set(builtin_names)
             | set(local_names)
             | set(LIBRARY_RESERVED_TOOL_NAMES)
+            | set(PROFILE_RESERVED_TOOL_NAMES)
             | set(skill_names)
             | RUNTIME_TOOL_NAMES
         )
@@ -3668,6 +3689,7 @@ class ConsoleFirstRequestPlan:
     run_log: RunLogRequestPlan
     messages: list[dict]
     api_endpoint: str
+    profile_context_snapshot: ProfileContextSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -3709,6 +3731,7 @@ def build_console_first_request_plan(
     raw_shell_provider: Any | None = None,
     library_provider: Any | None,
     library_authority: Any | None,
+    profile_provider: Any | None = None,
     workspace_id: str | None,
     ephemeral: bool,
     diff_sink: Callable[[tuple[str, str, str, str]], None] | None,
@@ -3727,6 +3750,8 @@ def build_console_first_request_plan(
     fleet_max_live: int = 1,
     run_budget: RunBudget | None = None,
     persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
+    profile_context_service: Any | None = None,
+    personal_context_snapshot: ProfileContextSnapshot | None = None,
 ) -> ConsoleFirstRequestPlan:
     """Build live/preview-identical first-request inputs without live effects.
 
@@ -3760,11 +3785,18 @@ def build_console_first_request_plan(
         fleet_max_live: Maximum simultaneously live agents for this run.
         run_budget: Optional precomputed run budget override.
         persona_policy_rules: Optional persona rules applied to tool composition.
+        profile_context_service: Optional profile snapshot builder for this turn.
+        personal_context_snapshot: Optional prebuilt snapshot used verbatim.
 
     Returns:
         A frozen catalog, config, message, schema, and run-log plan shared by
         preview and live dispatch.
     """
+    from tldw_chatbook.Personal_Context.context_service import (
+        ProfileContextRequest,
+        ProfileContextSnapshot,
+    )
+
     fresh = bool(
         skills_present
         or mcp_provider is not None
@@ -3773,6 +3805,7 @@ def build_console_first_request_plan(
         or virtual_cli_provider is not None
         or raw_shell_provider is not None
         or library_provider is not None
+        or profile_provider is not None
         or scratch_root is not None
         or scratch_lease is not None
     )
@@ -3793,6 +3826,7 @@ def build_console_first_request_plan(
                 library_provider=library_provider,
                 library_authority=library_authority,
                 persona_policy_rules=persona_policy_rules,
+                profile_provider=profile_provider,
             )
         )
     else:
@@ -3810,6 +3844,7 @@ def build_console_first_request_plan(
                 builtin_names,
                 local_names=local_names,
                 library_names=LIBRARY_RESERVED_TOOL_NAMES,
+                profile_names=PROFILE_RESERVED_TOOL_NAMES,
             )
         )
         if skills_present and not ephemeral
@@ -3830,6 +3865,10 @@ def build_console_first_request_plan(
         session_system_prompt,
         offer_find_load=True,
     )
+    workspace_note = workspace_context_note(workspace_id)
+    response_reserve = (
+        getattr(resolution, "max_tokens", None) or DEFAULT_RESPONSE_RESERVATION
+    )
     config = AgentConfig(
         model=resolved_model,
         system_prompt=direct_prompt,
@@ -3844,10 +3883,8 @@ def build_console_first_request_plan(
         allowed_tools=allowed_tools,
         budget=run_budget or console_run_budget(),
         native_tools=native_tools,
-        workspace_context_note=workspace_context_note(workspace_id),
-        response_reserve_tokens=(
-            getattr(resolution, "max_tokens", None) or DEFAULT_RESPONSE_RESERVATION
-        ),
+        workspace_context_note=workspace_note,
+        response_reserve_tokens=response_reserve,
     )
     messages = agent_messages
     if turn_bundle_block:
@@ -3881,6 +3918,81 @@ def build_console_first_request_plan(
         discovery_system_prompt=discovery_prompt,
     )
     config = dataclass_replace(config, system_prompt=schemas.system_prompt)
+    profile_workspace_id = (
+        None if workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID else workspace_id
+    )
+    profile_snapshot = personal_context_snapshot or ProfileContextSnapshot.empty()
+    if personal_context_snapshot is None and profile_context_service is not None:
+        current_user_text = ""
+        for message in reversed(agent_messages):
+            content = message.get("content")
+            if message.get("role") == ConsoleMessageRole.USER.value and isinstance(
+                content, str
+            ):
+                current_user_text = content
+                break
+        try:
+            input_limit = get_model_token_limit(resolved_model, api_endpoint)
+            budget_system_prompt = schemas.system_prompt
+            disclosed_schemas = [
+                *schemas.runtime_schemas,
+                *schemas.active_schemas,
+            ]
+            native = native_tools and provider_supports_native_tools(api_endpoint)
+            native_schema_rows: list[dict] = []
+            if native:
+                native_schema_rows = schemas_to_openai_tools(disclosed_schemas)
+            else:
+                protocol = render_tool_protocol(disclosed_schemas)
+                if protocol:
+                    budget_system_prompt = f"{budget_system_prompt}\n\n{protocol}"
+            if schemas.log_active:
+                budget_system_prompt = (
+                    f"{budget_system_prompt}\n\n{RUN_LOG_PROMPT_SECTION}"
+                )
+            if workspace_note:
+                budget_system_prompt = f"{budget_system_prompt}\n\n{workspace_note}"
+            required_tokens = _count_model_messages(
+                [
+                    {"role": "system", "content": budget_system_prompt},
+                    *messages,
+                ],
+                resolved_model,
+                api_endpoint,
+            )
+            if native_schema_rows:
+                required_tokens += _count_model_messages(
+                    [
+                        {
+                            "role": "system",
+                            "content": json.dumps(
+                                native_schema_rows,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                        }
+                    ],
+                    resolved_model,
+                    api_endpoint,
+                )
+            available_input_tokens = max(
+                0, input_limit - response_reserve - required_tokens
+            )
+            profile_snapshot = profile_context_service.build_snapshot(
+                ProfileContextRequest(
+                    current_user_text=current_user_text,
+                    active_workspace_id=profile_workspace_id,
+                    available_input_tokens=available_input_tokens,
+                    model=resolved_model,
+                    provider=api_endpoint,
+                )
+            )
+        except Exception:  # noqa: BLE001 - personalization must fail closed
+            profile_snapshot = ProfileContextSnapshot.empty()
+    config = dataclass_replace(
+        config,
+        personal_context_block=profile_snapshot.serialized_block,
+    )
     return ConsoleFirstRequestPlan(
         registry=registry,
         allowed_tools=allowed_tools,
@@ -3892,6 +4004,7 @@ def build_console_first_request_plan(
         run_log=run_log,
         messages=messages,
         api_endpoint=api_endpoint,
+        profile_context_snapshot=profile_snapshot,
     )
 
 
@@ -4278,6 +4391,9 @@ class ConsoleAgentBridge:
         request_skill_install_enabled: bool = False,
         request_skill_script_enabled: bool = False,
         persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
+        profile_context_service: Any | None = None,
+        profile_provider: Any | None = None,
+        personal_context_snapshot: ProfileContextSnapshot | None = None,
     ) -> tuple[dict[str, Any], InstructionSnapshot] | None:
         """Build a disposable exact first request without a run or consent."""
         context: Mapping[str, Any] = {}
@@ -4322,6 +4438,7 @@ class ConsoleAgentBridge:
             raw_shell_provider=raw_shell_provider,
             library_provider=None,
             library_authority=None,
+            profile_provider=profile_provider,
             workspace_id=workspace_id,
             ephemeral=ephemeral,
             diff_sink=None,
@@ -4342,6 +4459,8 @@ class ConsoleAgentBridge:
             fleet_max_live=fleet_max_live,
             run_budget=run_budget,
             persona_policy_rules=persona_policy_rules,
+            profile_context_service=profile_context_service,
+            personal_context_snapshot=personal_context_snapshot,
         )
         if plan.run_log.requested:
             # A disposable preview cannot bind a real run-log writer, so it
@@ -4375,6 +4494,77 @@ class ConsoleAgentBridge:
         if request.tools:
             payload["tools"] = [dict(tool) for tool in request.tools]
         return payload, snapshot
+
+    def build_personal_context_preview_snapshot(
+        self,
+        *,
+        workspace_id: str | None,
+        ephemeral: bool,
+        resolution: Any,
+        fallback_model: str,
+        session_system_prompt: str,
+        agent_messages: list[dict],
+        mcp_provider: Any | None = None,
+        builtin_gate: Any | None = None,
+        local_provider: Any | None = None,
+        library_provider: Any | None = None,
+        library_authority: Any | None = None,
+        profile_provider: Any | None = None,
+        scratch_root: Path | None = None,
+        scratch_lease: Callable[[], ContextManager[Path]] | None = None,
+        turn_skill_bindings: tuple[str, ...] = (),
+        turn_bundle_block: str = "",
+        request_skill_install_enabled: bool = False,
+        request_skill_script_enabled: bool = False,
+        profile_context_service: Any | None = None,
+    ) -> ProfileContextSnapshot:
+        """Build the exact reserved profile snapshot for disposable Next Send."""
+
+        context: Mapping[str, Any] = {}
+        if self._skills_service is not None:
+            context = asyncio.run(self._skills_service.get_context(mode="local"))
+        native_tools = (
+            True
+            if self._native_tools_enabled is None
+            else bool(self._native_tools_enabled())
+        )
+        script_tool_enabled = False
+        if self._skills_service is not None and request_skill_script_enabled:
+            from tldw_chatbook.Skills_Interop.skill_script_runner import (
+                sandbox_supported,
+            )
+
+            script_tool_enabled = sandbox_supported()
+        plan = build_console_first_request_plan(
+            shared_registry=self._registry,
+            shared_allowed_tools=self._allowed_tools,
+            context=context,
+            skills_present=self._skills_service is not None,
+            mcp_provider=mcp_provider,
+            builtin_gate=builtin_gate,
+            local_provider=local_provider,
+            library_provider=library_provider,
+            library_authority=library_authority,
+            profile_provider=profile_provider,
+            workspace_id=workspace_id,
+            ephemeral=ephemeral,
+            diff_sink=None,
+            scratch_root=scratch_root,
+            scratch_lease=scratch_lease,
+            resolution=resolution,
+            fallback_model=fallback_model,
+            session_system_prompt=session_system_prompt,
+            native_tools=native_tools,
+            turn_skill_bindings=turn_skill_bindings,
+            turn_bundle_block=turn_bundle_block,
+            install_skill_enabled=bool(
+                self._skills_service is not None and request_skill_install_enabled
+            ),
+            run_skill_script_enabled=script_tool_enabled,
+            agent_messages=agent_messages,
+            profile_context_service=profile_context_service,
+        )
+        return plan.profile_context_snapshot
 
     # -- run ------------------------------------------------------------
 
@@ -4421,6 +4611,7 @@ class ConsoleAgentBridge:
         library_provider: Any | None = None,
         library_authority: Any | None = None,
         managed_skill_promotion_gate: Any | None = None,
+        profile_provider: Any | None = None,
         # PR2a Task 7: called with the run id of every sub-agent this turn
         # cancels or abandons, so its still-armed approval cards are failed
         # closed and taken off screen instead of staying pressable for a
@@ -4458,6 +4649,8 @@ class ConsoleAgentBridge:
         capture_mode: ConsoleTraceCaptureMode = ConsoleTraceCaptureMode.CAPTURE_OFF,
         trace_request: PreparedConsoleRequest | None = None,
         persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
+        profile_context_service: Any | None = None,
+        personal_context_snapshot: ProfileContextSnapshot | None = None,
     ) -> tuple[str, RunOutcome]:
         if generation_token is None:
             generation_token = self._store.begin_generation_attempt(
@@ -4627,6 +4820,7 @@ class ConsoleAgentBridge:
             raw_shell_provider=raw_shell_provider,
             library_provider=library_provider,
             library_authority=library_authority,
+            profile_provider=profile_provider,
             workspace_id=run_workspace_id,
             ephemeral=run_is_ephemeral,
             diff_sink=pending_diffs.append,
@@ -4648,6 +4842,8 @@ class ConsoleAgentBridge:
             fleet_max_live=fleet_max_live,
             run_budget=run_budget,
             persona_policy_rules=persona_policy_rules,
+            profile_context_service=profile_context_service,
+            personal_context_snapshot=personal_context_snapshot,
         )
         registry = first_request_plan.registry
         allowed_tools = first_request_plan.allowed_tools

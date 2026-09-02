@@ -25,7 +25,7 @@ rows and already have coverage in their owning feature's test file.
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 
 import pytest
 
@@ -325,6 +325,27 @@ async def test_flat_browser_has_no_retired_workspace_group_toggles():
             )
         ]
         assert toggles == []
+
+
+@pytest.mark.asyncio
+async def test_workspace_files_controls_carry_stable_workspace_ids() -> None:
+    """The tree menu target addresses a workspace without parsing its label."""
+    app = _build_test_app()
+    app.workspace_registry_service.create_workspace(
+        workspace_id="ws-a", name="Workspace [label only]"
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=_ROUTING_SIZE) as pilot:
+        console = await _mounted_console(host, pilot)
+        console._workspace._workspace_files_availability_by_id = MappingProxyType(
+            {"ws-a": True}
+        )
+        target = console._workspace_menu_target("ws-a")
+
+        assert target.workspace_id == "ws-a"
+        assert target.name == "Workspace [label only]"
+        assert target.files_available is True
 
 
 # --------------------------------------------------------------------------

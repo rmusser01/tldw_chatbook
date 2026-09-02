@@ -152,7 +152,7 @@ def test_jargon_rows_carry_plain_language_subtitles():
     assert subtitles["browse-media"] == "your files"
     assert subtitles[LIBRARY_ROW_BROWSE_PROMPTS] == "reuse"
     assert subtitles[LIBRARY_ROW_BROWSE_SKILLS] == "AI add-ons"
-    assert subtitles["browse-collections"] == "item sets"
+    assert subtitles["browse-collections"] == "saved captures"
     assert subtitles["browse-search"] == "find all"
     # Plain-language rows carry no gloss.
     assert subtitles["browse-conversations"] == ""
@@ -190,7 +190,7 @@ def test_collections_row_is_count_pending_not_count_loading():
 
 def test_short_title_fallbacks_are_set_for_the_rows_that_need_them():
     """LIB-18: rows whose title risks a mid-word ellipsis cut at the
-    rail's real minimum width (Conversations/Flashcards/Collections) carry
+        rail's real minimum width (Conversations/Flashcards/Collections) carry
     a ``short_title`` fallback; every other row's title is short enough
     that it does not need one."""
     shell = build_library_shell_state(LibraryShellInput())
@@ -198,7 +198,7 @@ def test_short_title_fallbacks_are_set_for_the_rows_that_need_them():
         row.row_id: row for section in shell.sections for row in section.rows
     }
     assert rows["browse-conversations"].short_title == "Chats"
-    assert rows["browse-collections"].short_title == "Sets"
+    assert rows["browse-collections"].short_title == "Captures"
     assert rows["create-flashcards"].short_title == "Cards"
     no_short_title_ids = {
         "browse-media",

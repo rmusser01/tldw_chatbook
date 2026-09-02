@@ -38,13 +38,14 @@ def test_state_vocabulary_matches_the_database():
 
 
 @pytest.mark.unit
-def test_root_menu_offers_the_five_requested_entries():
+def test_root_menu_offers_the_six_requested_entries():
     labels = [item.label for item in build_conversation_menu(_saved())]
     assert labels == [
         "Favourite",
         "Change status",
         "Archive",
         "Rename…",
+        "Copy as",
         "More",
     ]
 
@@ -71,7 +72,9 @@ def test_archive_is_the_resolved_state_and_toggles_to_unarchive():
 def test_unsaved_conversation_disables_actions_with_a_stated_reason():
     """A disabled control with no explanation is the defect being removed."""
     items = build_conversation_menu(ConversationMenuTarget(conversation_id=None))
-    actionable = [item for item in items if item.action_id != "page:more"]
+    actionable = [
+        item for item in items if not item.action_id.startswith("page:")
+    ]
     assert actionable, "expected some gated entries"
     for item in actionable:
         assert not item.enabled

@@ -1278,7 +1278,13 @@ async def test_exchange_action_opens_governed_export_with_immutable_capture() ->
 @pytest.mark.asyncio
 async def test_exchange_call_title_includes_capture_provenance() -> None:
     cap = _capture_with_project_instruction_row()
-    cap = replace(cap, capture_detail=CaptureDetail.FULL)
+    cap = replace(
+        cap,
+        capture_detail=CaptureDetail.FULL,
+        trace_provenance="legacy_snapshot",
+        trace_chronology="recorded_call_only",
+        trace_uncertainty=("legacy_message_source_unknown",),
+    )
 
     async def loader(_native_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
         return [(cap, False)]
@@ -1297,6 +1303,9 @@ async def test_exchange_call_title_includes_capture_provenance() -> None:
         await _wait_until(pilot, lambda: bool(turn.query(Collapsible)))
         call = turn.query_one("#console-inspector-exchange-call-0-0", Collapsible)
         assert "capture: Full" in _rendered_title(call)
+        assert "legacy snapshot" in _rendered_title(call)
+        assert "chronology: recorded call only" in _rendered_title(call)
+        assert "uncertainty disclosed" in _rendered_title(call)
 
 
 @pytest.mark.asyncio
@@ -1855,3 +1864,58 @@ def test_messages_section_title_states_original_and_elided_counts() -> None:
     )
     plain_title = str(inspector._build_messages_section(plain_capture, "k").title)
     assert plain_title == "Messages (3)"
+
+
+# --- task-25836: payload-based Next Send header token estimate --------------
+
+
+async def _payload_snapshot() -> ConsoleContextSnapshot:
+    return ConsoleContextSnapshot(
+        current_messages=[],
+        next_send_payload={
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_next_send_payload_estimate_replaces_header_count_once_loaded():
+    """task-25836: after the snapshot loads, the Next Send header's "~N
+    tokens" count must reflect the assembled next-send payload (system +
+    tools + staged evidence included), not the draft-only factory value."""
+    app = InspectorHarness(
+        **_default_kwargs(
+            snapshot_factory=_payload_snapshot,
+            estimate_factory=lambda: 7,
+            token_estimate=7,
+            payload_estimate=lambda snapshot: 4242,
+            initial_tab=TAB_NEXT_SEND,
+        )
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        modal = app.screen
+        header = modal.query_one("#console-inspector-next-send-header", Static)
+        await _wait_until(pilot, lambda: "~4242 tokens" in str(header.renderable))
+
+
+@pytest.mark.asyncio
+async def test_next_send_payload_estimate_none_falls_back_to_factory():
+    """A payload estimate of ``None`` (nothing estimable, e.g. an
+    assembly-error payload) falls back to the draft-only factory rather
+    than dropping the count."""
+    app = InspectorHarness(
+        **_default_kwargs(
+            snapshot_factory=_payload_snapshot,
+            estimate_factory=lambda: 9,
+            token_estimate=7,
+            payload_estimate=lambda snapshot: None,
+            initial_tab=TAB_NEXT_SEND,
+        )
+    )
+
+    async with app.run_test(size=(120, 44)) as pilot:
+        modal = app.screen
+        header = modal.query_one("#console-inspector-next-send-header", Static)
+        await _wait_until(pilot, lambda: "~9 tokens" in str(header.renderable))

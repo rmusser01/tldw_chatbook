@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from threading import Barrier, Event, Lock
+from time import monotonic, sleep
 
 import pytest
 
@@ -17,6 +18,7 @@ from tldw_chatbook.Terminal.contracts import (
     CleanupAttempt,
     CleanupProof,
     CleanupSchedule,
+    MAX_IO_CHUNK_BYTES,
     MAX_SESSION_RECORDS,
     TerminalLaunchRequest,
     TerminalLifecycle,
@@ -105,6 +107,62 @@ class RecordingBackend:
         return self.cleanup_proof
 
 
+class RuntimeBackend(RecordingBackend):
+    """Backend fake exposing the manager-owned live runtime contract."""
+
+    def __init__(
+        self,
+        *,
+        output: tuple[bytes, ...] = (),
+        cleanup_proof: CleanupProof = CleanupProof(True, True, True),
+        block_cleanup: bool = False,
+    ) -> None:
+        super().__init__(cleanup_proof=cleanup_proof)
+        self._output = list(output)
+        self._runtime_lock = Lock()
+        self._exit_ready = Event()
+        self._exit_code = 0
+        self.cleanup_started = Event()
+        self.cleanup_release = Event()
+        self.read_after_cleanup = Event()
+        self.wait_after_cleanup = Event()
+        self.read_sizes: list[int] = []
+        self.finalize_calls = 0
+        if not block_cleanup:
+            self.cleanup_release.set()
+
+    def read(self, maximum: int) -> bytes | None:
+        if self.cleanup_started.is_set():
+            self.read_after_cleanup.set()
+        with self._runtime_lock:
+            self.read_sizes.append(maximum)
+            if not self._output:
+                return None
+            chunk = self._output.pop(0)
+        assert len(chunk) <= maximum
+        return chunk
+
+    def wait_for_shell_exit(self, *, timeout_seconds: float) -> int | None:
+        if self.cleanup_started.is_set():
+            self.wait_after_cleanup.set()
+        if not self._exit_ready.wait(timeout_seconds):
+            return None
+        return self._exit_code
+
+    def announce_exit(self, exit_code: int) -> None:
+        self._exit_code = exit_code
+        self._exit_ready.set()
+
+    def cleanup(self, attempt: CleanupAttempt) -> CleanupProof:
+        self.cleanup_attempts.append(attempt)
+        self.cleanup_started.set()
+        assert self.cleanup_release.wait(1)
+        return self.cleanup_proof
+
+    def finalize_shutdown(self) -> None:
+        self.finalize_calls += 1
+
+
 class ManualClock:
     """Thread-safe manually advanced monotonic clock."""
 
@@ -130,6 +188,149 @@ def create_running_session(
     assert result.admitted is True
     assert result.projection is not None
     return result.projection.session_id
+
+
+def wait_until(predicate: Callable[[], bool], *, timeout: float = 1.0) -> None:
+    """Wait boundedly for one manager-owned runtime observation."""
+    deadline = monotonic() + timeout
+    while monotonic() < deadline:
+        if predicate():
+            return
+        sleep(0.005)
+    assert predicate()
+
+
+def test_runtime_bridge_drains_input_output_and_observes_shell_exit() -> None:
+    backend = RuntimeBackend(output=(b"runtime output",))
+    terminal = TerminalSessionManager(lambda: True, lambda: backend)
+    terminal.arm(acknowledge_disclosure=True)
+    session_id = create_running_session(terminal, "live-runtime")
+    view = terminal.attach_view()
+
+    assert terminal.send_key(session_id, b"a", view=view).accepted is True
+    assert (
+        terminal.send_paste(
+            session_id,
+            "line\n",
+            bracketed=False,
+            view=view,
+        ).accepted
+        is True
+    )
+    wait_until(lambda: backend.writes == [b"a", b"line\n"])
+
+    def output_is_visible() -> bool:
+        state = terminal.view_state(view)
+        return bool(
+            state
+            and state.sessions
+            and state.sessions[0].screen.lines[0].text.startswith("runtime output")
+        )
+
+    wait_until(output_is_visible)
+    assert backend.read_sizes
+    assert all(0 < size <= 64 * 1024 for size in backend.read_sizes)
+
+    backend.announce_exit(7)
+    wait_until(
+        lambda: (
+            terminal.projection(session_id) is not None
+            and terminal.projection(session_id).lifecycle is TerminalLifecycle.EXITED  # type: ignore[union-attr]
+        )
+    )
+    exited = terminal.projection(session_id)
+    assert exited is not None
+    assert exited.exit_code == 7
+    assert exited.stream_closed is True
+    assert exited.output_complete is True
+    terminal.finalize_shutdown()
+
+
+def test_runtime_bridge_splits_one_large_input_event_into_bounded_writes() -> None:
+    backend = RuntimeBackend()
+    terminal = TerminalSessionManager(lambda: True, lambda: backend)
+    terminal.arm(acknowledge_disclosure=True)
+    session_id = create_running_session(terminal, "bounded-runtime-input")
+    view = terminal.attach_view()
+    payload = "x" * (MAX_IO_CHUNK_BYTES + 17)
+
+    assert (
+        terminal.send_paste(
+            session_id,
+            payload,
+            bracketed=False,
+            view=view,
+        ).accepted
+        is True
+    )
+    wait_until(lambda: sum(map(len, backend.writes)) == len(payload))
+
+    assert b"".join(backend.writes) == payload.encode()
+    assert all(0 < len(chunk) <= MAX_IO_CHUNK_BYTES for chunk in backend.writes)
+    terminal.finalize_shutdown()
+
+
+@pytest.mark.parametrize("failure", ["read", "write"])
+def test_runtime_io_failure_is_content_free_and_starts_cleanup(failure: str) -> None:
+    cleanup_release = Event()
+
+    class FailingRuntimeBackend(RuntimeBackend):
+        def __init__(self) -> None:
+            super().__init__(block_cleanup=True)
+            self.cleanup_release = cleanup_release
+
+        def read(self, maximum: int) -> bytes | None:
+            if failure == "read":
+                raise OSError("private terminal output")
+            return super().read(maximum)
+
+        def write(self, data: bytes) -> None:
+            if failure == "write":
+                raise OSError("private terminal input")
+            super().write(data)
+
+    backend = FailingRuntimeBackend()
+    terminal = TerminalSessionManager(lambda: True, lambda: backend)
+    terminal.arm(acknowledge_disclosure=True)
+    session_id = create_running_session(terminal, f"failed-{failure}")
+    view = terminal.attach_view()
+    if failure == "write":
+        assert terminal.send_key(session_id, b"secret", view=view).accepted is True
+
+    assert backend.cleanup_started.wait(1)
+    failed = terminal.projection(session_id)
+    assert failed is not None
+    assert failed.lifecycle is TerminalLifecycle.CLOSING
+    assert failed.reason is TerminalReason.IO_FAILED
+    assert "private terminal" not in repr(failed)
+    assert terminal.accepts_input(session_id) is False
+
+    cleanup_release.set()
+    assert terminal.wait_for_cleanup(session_id, timeout_seconds=1)
+    terminal.finalize_shutdown()
+
+
+@pytest.mark.parametrize("action", ["disarm", "shutdown"])
+@pytest.mark.asyncio
+async def test_runtime_bridge_stops_before_cleanup(action: str) -> None:
+    backend = RuntimeBackend(block_cleanup=True)
+    terminal = TerminalSessionManager(lambda: True, lambda: backend)
+    terminal.arm(acknowledge_disclosure=True)
+    session_id = create_running_session(terminal, f"stop-{action}")
+    wait_until(lambda: bool(backend.read_sizes))
+
+    try:
+        if action == "disarm":
+            terminal.disarm()
+        else:
+            assert await terminal.shutdown(deadline_seconds=0.01) is False
+        assert backend.cleanup_started.wait(1)
+        assert backend.read_after_cleanup.wait(0.05) is False
+        assert backend.wait_after_cleanup.wait(0.05) is False
+    finally:
+        backend.cleanup_release.set()
+    assert terminal.wait_for_cleanup(session_id, timeout_seconds=1)
+    terminal.finalize_shutdown()
 
 
 def test_create_session_docstring_documents_parameter_and_result() -> None:
@@ -408,6 +609,23 @@ def test_shell_exit_uses_one_absolute_attempt_and_retains_exited_record() -> Non
     assert backend.cleanup_attempts == [CleanupAttempt(100.0)]
 
 
+def test_close_dismisses_proven_exited_record_without_second_cleanup() -> None:
+    backend = RecordingBackend(cleanup_proof=CleanupProof(True, True, True))
+    terminal = TerminalSessionManager(lambda: True, lambda: backend)
+    terminal.arm(acknowledge_disclosure=True)
+    session_id = create_running_session(terminal, "dismiss-exited")
+    receipt = terminal.shell_exited(session_id, exit_code=0)
+    assert receipt is not None
+    assert terminal.wait_for_cleanup(session_id, timeout_seconds=1)
+    view = terminal.attach_view()
+
+    assert terminal.close_session(session_id, view=view) == receipt
+
+    assert terminal.projection(session_id) is None
+    assert backend.cleanup_attempts == [receipt.attempt]
+    terminal.finalize_shutdown()
+
+
 def test_disarm_starts_one_parallel_cleanup_cohort_after_clearing_arm() -> None:
     clock = ManualClock(200.0)
     cleanup_started = Barrier(3)
@@ -680,6 +898,41 @@ def test_parser_failure_disables_input_and_raw_drains_only_after_death() -> None
     assert terminal.wait_for_cleanup(session_id, timeout_seconds=1)
     assert raw_drain_process_dead == [True]
     assert backend.raw_cleanup_attempts == [CleanupAttempt(700.0)]
+    assert terminal.projection(session_id) is None
+
+
+def test_parser_failure_prefers_explicit_cleanup_with_original_attempt() -> None:
+    clock = ManualClock(705.0)
+
+    class ParserFailureAwareBackend(RecordingBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self.parser_failure_attempts: list[CleanupAttempt] = []
+
+        def cleanup(self, attempt: CleanupAttempt) -> CleanupProof:
+            self.cleanup_attempts.append(attempt)
+            raise AssertionError("generic cleanup consumed the parser-failure deadline")
+
+        def cleanup_parser_failure(self, attempt: CleanupAttempt) -> CleanupProof:
+            self.parser_failure_attempts.append(attempt)
+            return CleanupProof(True, True, False)
+
+    backend = ParserFailureAwareBackend()
+    terminal = TerminalSessionManager(
+        lambda: True,
+        lambda: backend,
+        monotonic_clock=clock,
+    )
+    terminal.arm(acknowledge_disclosure=True)
+    session_id = create_running_session(terminal, "explicit-parser-cleanup")
+
+    receipt = terminal.parser_failed(session_id)
+
+    assert receipt is not None
+    assert terminal.wait_for_cleanup(session_id, timeout_seconds=1)
+    assert backend.parser_failure_attempts == [receipt.attempt]
+    assert receipt.attempt == CleanupAttempt(705.0)
+    assert backend.cleanup_attempts == []
     assert terminal.projection(session_id) is None
 
 
@@ -1132,6 +1385,72 @@ async def test_shutdown_returns_at_its_wait_bound_when_cleanup_is_still_running(
     assert terminal.wait_for_cleanup(session_id, timeout_seconds=1)
 
 
+@pytest.mark.asyncio
+async def test_finalize_shutdown_closes_each_retained_backend_once_without_waiting() -> (
+    None
+):
+    cleanup_started = Event()
+    finish_cleanup = Event()
+
+    class FinalizableBackend(RecordingBackend):
+        def __init__(self) -> None:
+            super().__init__(on_cleanup=self._blocking_cleanup)
+            self.finalize_calls = 0
+
+        def _blocking_cleanup(self, _attempt: CleanupAttempt) -> CleanupProof:
+            cleanup_started.set()
+            assert finish_cleanup.wait(1)
+            return CleanupProof(True, True, True)
+
+        def finalize_shutdown(self) -> None:
+            self.finalize_calls += 1
+
+    backend = FinalizableBackend()
+    terminal = TerminalSessionManager(lambda: True, lambda: backend)
+    terminal.arm(acknowledge_disclosure=True)
+    session_id = create_running_session(terminal, "final-handle-close")
+
+    try:
+        assert await terminal.shutdown(deadline_seconds=0.01) is False
+        terminal.finalize_shutdown()
+        terminal.finalize_shutdown()
+        assert backend.finalize_calls == 1
+    finally:
+        finish_cleanup.set()
+    assert terminal.wait_for_cleanup(session_id, timeout_seconds=1)
+
+
+def test_finalize_shutdown_stops_runtime_before_closing_backend_handles() -> None:
+    finalized = Event()
+    runtime_after_finalize = Event()
+
+    class FinalizeOrderingBackend(RuntimeBackend):
+        def read(self, maximum: int) -> bytes | None:
+            if finalized.is_set():
+                runtime_after_finalize.set()
+            return super().read(maximum)
+
+        def wait_for_shell_exit(self, *, timeout_seconds: float) -> int | None:
+            if finalized.is_set():
+                runtime_after_finalize.set()
+            return super().wait_for_shell_exit(timeout_seconds=timeout_seconds)
+
+        def finalize_shutdown(self) -> None:
+            finalized.set()
+            super().finalize_shutdown()
+
+    backend = FinalizeOrderingBackend()
+    terminal = TerminalSessionManager(lambda: True, lambda: backend)
+    terminal.arm(acknowledge_disclosure=True)
+    create_running_session(terminal, "finalize-runtime-order")
+    wait_until(lambda: bool(backend.read_sizes))
+
+    terminal.finalize_shutdown()
+
+    assert finalized.is_set()
+    assert runtime_after_finalize.wait(0.05) is False
+
+
 def test_managed_process_inventory_is_test_only_and_content_free() -> None:
     class InventoryBackend(RecordingBackend):
         def managed_process_inventory_for_tests(
@@ -1417,7 +1736,7 @@ def test_attempted_start_failure_runs_cleanup_before_releasing_ownership(
     assert terminal.projections() == ()
 
 
-def test_shell_exit_without_eof_retains_cleanup_unproven_not_exited() -> None:
+def test_process_only_proof_without_eof_retains_cleanup_unproven() -> None:
     backend = RecordingBackend(cleanup_proof=CleanupProof(True, False, False))
     terminal = TerminalSessionManager(lambda: True, lambda: backend)
     terminal.arm(acknowledge_disclosure=True)

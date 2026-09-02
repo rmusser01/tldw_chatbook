@@ -2387,3 +2387,41 @@ class TestEnvKeyFirstRunNotice:
             {"OPENAI_API_KEY": "sk-live-abc123456789"},
         )
         assert names == ()
+
+
+class TestSetupAttentionIds:
+    """TASK-25716: a visited step that configured nothing must not wear the ✓."""
+
+    def _ids(self, wizard_data, probe_failed=False):
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import setup_attention_ids
+
+        return setup_attention_ids(wizard_data, probe_failed=probe_failed)
+
+    def test_unconfigured_provider_and_model_earn_attention(self):
+        assert self._ids({}) == frozenset({"provider", "model"})
+
+    def test_configured_provider_and_model_are_clean(self):
+        wizard_data = {
+            "provider": {"provider_key": "llama_cpp"},
+            "model": {"model_id": "local-model"},
+        }
+        assert self._ids(wizard_data) == frozenset()
+
+    def test_blank_values_do_not_count_as_configured(self):
+        wizard_data = {"provider": {"provider_key": "   "}, "model": {"model_id": ""}}
+        assert self._ids(wizard_data) == frozenset({"provider", "model"})
+
+    def test_probe_failure_still_flags_both(self):
+        wizard_data = {
+            "provider": {"provider_key": "openai"},
+            "model": {"model_id": "gpt-4.1"},
+        }
+        assert self._ids(wizard_data, probe_failed=True) == frozenset(
+            {"provider", "model"}
+        )
+
+    def test_optional_steps_are_never_flagged(self):
+        """Skipping voice or protection is legitimate; do not cry wolf."""
+        flagged = self._ids({})
+        assert "voice" not in flagged
+        assert "protect-keys" not in flagged

@@ -38,7 +38,7 @@ Nothing outside the TUI can learn that a run finished. Verified on origin/dev: a
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Signed run-lifecycle webhooks. completed+failed shipped and tested; needs-approval (the third 'at minimum' event) split to TASK-26043 because it fires from the app-context approval bridge, not a clean run-state seam.
+Signed run-lifecycle webhooks. completed+failed shipped and tested; needs-approval (the third 'at minimum' event) split to TASK-27020 because it fires from the app-context approval bridge, not a clean run-state seam.
 
 Approach (tldw_chatbook/Agents/run_webhooks.py, new):
 - build_webhook_payload: identifiers + outcome only, never content/args/creds (AC#3).
@@ -49,7 +49,7 @@ Approach (tldw_chatbook/Agents/run_webhooks.py, new):
 - Wired at AgentService._set_terminal_status (the atomic terminal choke point): a FRESH persist of RUN_DONE->completed, RUN_ERROR/RUN_STUCK->failed schedules a webhook; cancelled/superseded do not notify. Best-effort, never breaks persistence.
 - [webhooks] section added to config.py CONFIG_TOML_CONTENT (enabled=false, url/secret/events/timeout), documented.
 
-AC#1 partial: completed+failed fire (the headline 'notify my dashboard when a long run finishes'); needs-approval deferred to TASK-26043.
+AC#1 partial: completed+failed fire (the headline 'notify my dashboard when a long run finishes'); needs-approval deferred to TASK-27020.
 
 Tests: Tests/Agents/test_run_webhooks.py (12: payload redaction, HMAC, config default-off, delivery gating/egress/success/failure, scheduler gating+delivery, and the AgentService terminal-seam mapping). 194 agent-service tests stay green.
 

@@ -23,6 +23,24 @@ CONVERSATIONS = ROOT / "tldw_chatbook/css/features/_conversations.tcss"
 SIDEBARS = ROOT / "tldw_chatbook/css/layout/_sidebars.tcss"
 LAYOUT_TABS = ROOT / "tldw_chatbook/css/layout/_tabs.tcss"
 BUNDLE = ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
+
+# TASK-25812: the console/library/settings-owned rules were split out of the
+# boot bundle into per-screen sheets the app loads lazily. Contracts that
+# read "the generated CSS" read the union.
+_SPLIT_SHEETS = tuple(
+    ROOT / "tldw_chatbook/css" / name
+    for name in (
+        "screen_agentic_console.tcss",
+        "screen_agentic_library.tcss",
+        "screen_agentic_settings.tcss",
+    )
+)
+
+
+def _bundle_union_text() -> str:
+    return "\n".join(
+        path.read_text(encoding="utf-8") for path in (BUNDLE, *_SPLIT_SHEETS)
+    )
 CODING = ROOT / "tldw_chatbook/css/features/_coding.tcss"
 CODE_REPO = ROOT / "tldw_chatbook/css/features/_code_repo.tcss"
 CONFIG_SEARCH = ROOT / "tldw_chatbook/css/features/config_search.tcss"
@@ -486,7 +504,7 @@ def test_global_button_focus_uses_two_non_obscuring_cues():
 def test_shared_button_hover_uses_non_obscuring_surface_contract():
     for label, text in (
         ("components/_buttons.tcss", BUTTONS.read_text(encoding="utf-8")),
-        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         blocks = css_blocks(text, "Button:hover")
         assert blocks, f"{label} is missing Button:hover"
@@ -541,7 +559,7 @@ def test_native_toggle_focus_states_use_non_obscuring_contracts():
 
 
 def test_bundled_native_toggle_focus_states_match_source_contracts():
-    text = BUNDLE.read_text(encoding="utf-8")
+    text = _bundle_union_text()
     for selector in (
         "ToggleButton:focus > .toggle--label",
         "ToggleButton.-textual-compact:focus > .toggle--label",
@@ -575,7 +593,7 @@ def test_bundled_compact_focus_outline_opt_outs_match_source_contracts():
     two-surface shape (module source and bundle must agree)."""
     for label, text in (
         ("components/_forms.tcss", FORMS.read_text(encoding="utf-8")),
-        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         toggle_focus = css_block(text, "ToggleButton:focus")
         assert "outline: none;" in toggle_focus, (
@@ -629,7 +647,7 @@ def test_library_list_row_focus_uses_readable_non_obscuring_contract():
     """
     for label, text in (
         ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
-        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         for selector in (
             ".library-media-row:focus",
@@ -643,8 +661,14 @@ def test_library_list_row_focus_uses_readable_non_obscuring_contract():
 
 
 def test_console_selected_message_actions_keep_clickable_hit_targets():
-    for path in (AGENTIC, BUNDLE):
-        text = path.read_text(encoding="utf-8")
+    # The union's FIRST css_block match for these selectors is a weaker
+    # non-agentic rule; the generated home of the console-owned rules is the
+    # console sheet, which is also the copy that wins at runtime (parsed
+    # after the bundle).
+    for text in (
+        AGENTIC.read_text(encoding="utf-8"),
+        _SPLIT_SHEETS[0].read_text(encoding="utf-8"),
+    ):
         action_row = css_block(text, ".console-transcript-action-row")
         action_button = css_block(text, ".console-transcript-action-button")
 
@@ -661,8 +685,10 @@ def test_console_modal_headers_are_decoupled_from_transcript_action_rows():
         assert 'classes="console-transcript-action-row"' not in text
         assert "console-modal-header" in text
 
-    for path in (AGENTIC, BUNDLE):
-        text = path.read_text(encoding="utf-8")
+    for text in (
+        AGENTIC.read_text(encoding="utf-8"),
+        _bundle_union_text(),
+    ):
         modal_header = css_block(text, ".console-modal-header")
         assert css_int_declaration(modal_header, "height") == 1
         assert css_int_declaration(modal_header, "min-height") == 1
@@ -671,7 +697,7 @@ def test_console_modal_headers_are_decoupled_from_transcript_action_rows():
 def test_console_session_tab_active_state_uses_selected_contract():
     for text in (
         AGENTIC.read_text(encoding="utf-8"),
-        BUNDLE.read_text(encoding="utf-8"),
+        _bundle_union_text(),
     ):
         for selector in (
             ".console-session-tab-active",
@@ -690,7 +716,7 @@ def test_console_composer_action_availability_states_are_visually_distinct():
 
     for text in (
         AGENTIC.read_text(encoding="utf-8"),
-        BUNDLE.read_text(encoding="utf-8"),
+        _bundle_union_text(),
     ):
         console_button_base = next(
             block
@@ -769,7 +795,7 @@ def test_library_mode_chip_selector_is_retired_from_focus_contracts():
     """Retired Library and Notes mode-chip selectors stay absent."""
     for text in (
         AGENTIC.read_text(encoding="utf-8"),
-        BUNDLE.read_text(encoding="utf-8"),
+        _bundle_union_text(),
     ):
         selectors = css_selectors(text)
         assert not css_selectors_contain_class(selectors, ".library-mode-chip")
@@ -849,7 +875,7 @@ def test_console_structural_separators_use_visible_column_line_token():
 def test_console_settings_modal_select_uses_compact_focus_outline():
     for _, text in (
         ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
-        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         base = css_block(text, "ConsoleSettingsModal Select")
         focus = css_block(text, "ConsoleSettingsModal Select:focus")
@@ -874,7 +900,7 @@ def test_console_settings_modal_focused_inputs_keep_value_row_visible():
     """Focused settings inputs must keep Textual's editable value row visible."""
     for _, text in (
         ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
-        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         base = css_block(text, "ConsoleSettingsModal Input")
         focus = css_block(text, "ConsoleSettingsModal Input:focus")
@@ -892,7 +918,7 @@ def test_console_settings_modal_focused_inputs_keep_value_row_visible():
 def test_console_settings_modal_select_current_preserves_visible_value_row():
     for _, text in (
         ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
-        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         current = css_block(text, "ConsoleSettingsModal Select > SelectCurrent")
         current_focus = css_block(
@@ -915,7 +941,7 @@ def test_console_settings_modal_select_current_preserves_visible_value_row():
 def test_console_settings_modal_select_overlay_is_readable():
     for _, text in (
         ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
-        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         overlay = css_block(text, "ConsoleSettingsModal Select > SelectOverlay")
         option = css_block(text, "ConsoleSettingsModal Select > SelectOverlay Option")
@@ -954,7 +980,7 @@ def test_console_transcript_focus_uses_stable_border_geometry():
     """
     for _, text in (
         ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
-        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         base = css_block(text, "#console-native-transcript")
         focus = css_block(text, "#console-native-transcript:focus")
@@ -975,7 +1001,7 @@ def test_console_transcript_focus_uses_stable_border_geometry():
 def test_console_transcript_selected_message_uses_selected_contract_without_geometry():
     for _, text in (
         ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
-        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         selected = css_block(text, ".console-transcript-message-selected")
         assert_readable_selected_state_contract(selected)
@@ -1059,7 +1085,7 @@ def test_settings_detail_and_inspector_panes_scroll_long_content():
 def test_settings_category_active_states_use_selected_contract():
     for text in (
         AGENTIC.read_text(encoding="utf-8"),
-        BUNDLE.read_text(encoding="utf-8"),
+        _bundle_union_text(),
     ):
         for selector in (
             ".settings-active-section",
@@ -1076,7 +1102,7 @@ def test_settings_category_active_states_use_selected_contract():
 def test_acp_selected_session_row_uses_selected_contract():
     for text in (
         AGENTIC.read_text(encoding="utf-8"),
-        BUNDLE.read_text(encoding="utf-8"),
+        _bundle_union_text(),
     ):
         blocks = css_blocks(text, ".acp-selected-session-row")
         assert len(blocks) == 1
@@ -1129,7 +1155,7 @@ def test_shared_section_container_collapse_button_hover_is_non_obscuring():
 def test_library_rag_collapsible_header_hover_uses_non_obscuring_surface_contract():
     for label, text in (
         ("components/_widgets.tcss", WIDGETS.read_text(encoding="utf-8")),
-        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         base = css_block(
             text, "#settings-library-rag-card Collapsible > CollapsibleTitle"
@@ -1159,7 +1185,7 @@ def test_shared_collapsible_header_focus_is_underlined_and_non_heavy():
 def test_conversations_collapsible_active_header_uses_selected_contract():
     for text in (
         CONVERSATIONS.read_text(encoding="utf-8"),
-        BUNDLE.read_text(encoding="utf-8"),
+        _bundle_union_text(),
     ):
         blocks = css_blocks(text, "Collapsible.-active > CollapsibleTitle")
         assert blocks, "Missing CSS block for Collapsible.-active > CollapsibleTitle"
@@ -1213,7 +1239,7 @@ def test_layout_tab_active_states_use_underlined_selected_contracts():
 
     for text in (
         LAYOUT_TABS.read_text(encoding="utf-8"),
-        BUNDLE.read_text(encoding="utf-8"),
+        _bundle_union_text(),
     ):
         active_link = css_block(text, ".tab-link.-active")
         assert "$accent" not in active_link
@@ -1223,7 +1249,7 @@ def test_layout_tab_active_states_use_underlined_selected_contracts():
         assert "text-style: bold underline;" in active_link
 
     for selector in ("#tabs Button.-active", "TabbedContent Tab.-active"):
-        blocks = css_blocks(BUNDLE.read_text(encoding="utf-8"), selector)
+        blocks = css_blocks(_bundle_union_text(), selector)
         assert blocks
         for block in blocks:
             assert_readable_selected_state_contract(block)
@@ -1231,7 +1257,7 @@ def test_layout_tab_active_states_use_underlined_selected_contracts():
     assert_all_native_tab_selectors_follow_contracts(
         LAYOUT_TABS.read_text(encoding="utf-8")
     )
-    assert_all_native_tab_selectors_follow_contracts(BUNDLE.read_text(encoding="utf-8"))
+    assert_all_native_tab_selectors_follow_contracts(_bundle_union_text())
 
 
 def test_feature_buttons_inherit_shared_button_focus_contract_without_duplicate_rules():
@@ -1295,7 +1321,7 @@ def test_wizard_progress_active_states_are_readable_without_dominant_fill():
 
 
 def test_bundled_wizard_progress_active_states_match_source_contracts():
-    assert_wizard_progress_active_contracts(BUNDLE.read_text(encoding="utf-8"))
+    assert_wizard_progress_active_contracts(_bundle_union_text())
 
 
 def test_wizard_progress_default_css_matches_active_state_contract():
@@ -1317,7 +1343,7 @@ def test_wizard_selection_states_are_readable_without_dominant_fill():
 
 
 def test_bundled_wizard_selection_states_match_source_contracts():
-    assert_wizard_selection_active_contracts(BUNDLE.read_text(encoding="utf-8"))
+    assert_wizard_selection_active_contracts(_bundle_union_text())
 
 
 def test_evaluation_unified_focus_overrides_defer_to_shared_contracts():
@@ -1347,7 +1373,7 @@ def test_embeddings_focus_and_active_states_follow_shared_contracts():
 
 
 def test_bundled_embeddings_focus_and_active_states_match_source_contracts():
-    text = BUNDLE.read_text(encoding="utf-8")
+    text = _bundle_union_text()
     assert_embeddings_focus_and_active_contracts(text)
 
 
@@ -1375,7 +1401,7 @@ def test_tab_dropdown_option_hover_uses_neutral_readable_surface():
     selector = "#tab-dropdown-select SelectOverlay Option:hover"
     for label, text in (
         ("_tab_dropdown.tcss", TAB_DROPDOWN.read_text(encoding="utf-8")),
-        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         blocks = css_blocks(text, selector)
         assert blocks, f"{label} is missing {selector}"
@@ -1403,7 +1429,7 @@ def test_feature_navigation_hover_states_use_neutral_readable_surface(
     assert len(source_blocks) == 1, f"{path.name} should define exactly one {selector}"
     assert_native_row_hover_state_contract(source_blocks[0])
 
-    bundled_blocks = css_blocks(BUNDLE.read_text(encoding="utf-8"), selector)
+    bundled_blocks = css_blocks(_bundle_union_text(), selector)
     assert bundled_blocks, f"tldw_cli_modular.tcss is missing {selector}"
     assert len(bundled_blocks) == 1, (
         f"tldw_cli_modular.tcss should define exactly one {selector}"
@@ -1412,7 +1438,7 @@ def test_feature_navigation_hover_states_use_neutral_readable_surface(
 
 
 def test_bundled_feature_navigation_states_match_source_contracts():
-    text = BUNDLE.read_text(encoding="utf-8")
+    text = _bundle_union_text()
     tab_base = css_block(text, "#tab-dropdown-select")
     tab_focus = css_block(text, "#tab-dropdown-select:focus")
     assert_stable_solid_border_geometry(tab_base, tab_focus)
@@ -1472,7 +1498,7 @@ def test_source_only_css_modules_are_not_part_of_app_bundle():
 
 
 def test_bundled_residual_active_selected_states_match_source_contracts():
-    text = BUNDLE.read_text(encoding="utf-8")
+    text = _bundle_union_text()
     for _, selector in BUNDLED_RESIDUAL_ACTIVE_SELECTED_CONTRACTS:
         block = css_block(text, selector)
         assert_readable_selected_state_contract(block)
@@ -1489,7 +1515,7 @@ def test_native_listview_row_states_follow_shared_contracts():
 
 
 def test_bundled_native_listview_row_states_keep_effective_contracts():
-    text = BUNDLE.read_text(encoding="utf-8")
+    text = _bundle_union_text()
     assert len(css_blocks(text, "ListView ListItem:hover")) == 1
     assert len(css_blocks(text, "ListView ListItem.-highlight")) == 1
     assert "height: auto;" in css_blocks(text, "ListView ListItem")[-1]
@@ -1534,7 +1560,7 @@ def test_native_datatable_row_states_follow_shared_contracts():
 
 
 def test_bundled_native_datatable_row_states_keep_effective_contracts():
-    text = BUNDLE.read_text(encoding="utf-8")
+    text = _bundle_union_text()
     for selector in (
         "DataTable > .datatable--cursor",
         "DataTable > .datatable--hover",
@@ -1577,7 +1603,7 @@ def test_native_choice_and_tree_states_follow_shared_contracts():
 
 
 def test_bundled_native_choice_and_tree_states_match_source_contracts():
-    text = BUNDLE.read_text(encoding="utf-8")
+    text = _bundle_union_text()
     for selector in (
         "OptionList > .option-list--option-highlighted",
         "OptionList:focus > .option-list--option-highlighted",
@@ -1602,7 +1628,7 @@ def test_file_notes_tree_cursor_uses_readable_high_contrast_focus_contract():
     selector = "LibraryFileNotesWorkspace Tree:focus > .tree--cursor"
     for text in (
         LISTS.read_text(encoding="utf-8"),
-        BUNDLE.read_text(encoding="utf-8"),
+        _bundle_union_text(),
     ):
         assert_readable_selected_state_contract(css_block(text, selector))
 
@@ -1624,7 +1650,7 @@ def test_file_picker_list_highlight_uses_high_contrast_override_contract():
     """
     for _, text in (
         ("components/_lists.tcss", LISTS.read_text(encoding="utf-8")),
-        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         for selector in NATIVE_CHOICE_HIGH_CONTRAST_OVERRIDES:
             block = css_block(text, selector)
@@ -1659,7 +1685,7 @@ def test_media_selected_and_active_states_follow_shared_contracts():
 
 
 def test_bundled_media_selected_states_match_source_contracts():
-    text = BUNDLE.read_text(encoding="utf-8")
+    text = _bundle_union_text()
     for selector in (
         ".keyword-list .keyword-item.selected",
         ".keyword-list .keyword-item.selected:hover",
@@ -1680,7 +1706,7 @@ def test_bundled_media_selected_states_match_source_contracts():
 def test_media_keyword_and_review_hover_states_use_neutral_surface(selector: str):
     for label, text in (
         ("_media.tcss", MEDIA.read_text(encoding="utf-8")),
-        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         blocks = css_blocks(text, selector)
         assert blocks, f"{label} is missing {selector}"
@@ -1701,7 +1727,7 @@ def test_media_keyword_and_review_hover_states_use_neutral_surface(selector: str
 def test_media_review_item_styles_are_scoped_to_media_review_list(selector: str):
     for label, text in (
         ("_media.tcss", MEDIA.read_text(encoding="utf-8")),
-        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         assert css_blocks(text, selector) == [], (
             f"{label} should not define unscoped {selector}"
@@ -1730,7 +1756,7 @@ def test_repo_tree_widget_states_match_code_repo_contract():
 
     for text in (
         CODE_REPO.read_text(encoding="utf-8"),
-        BUNDLE.read_text(encoding="utf-8"),
+        _bundle_union_text(),
     ):
         assert_native_row_hover_state_contract(
             css_block(text, ".tree-expand-btn:hover")
@@ -1781,7 +1807,7 @@ def test_library_rag_result_card_focus_uses_stable_border_geometry():
     is selected"."""
     for _, text in (
         ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
-        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         base = css_block(text, ".library-rag-result-card")
         focus = css_block(text, ".library-rag-result-card:focus")
@@ -1893,7 +1919,7 @@ def test_sidebar_inputs_use_stable_base_geometry_for_shared_focus(selector: str)
     "selector", (".setting-input", ".sidebar-input", ".sidebar Select")
 )
 def test_bundled_sidebar_inputs_keep_stable_effective_geometry(selector: str):
-    text = BUNDLE.read_text(encoding="utf-8")
+    text = _bundle_union_text()
     blocks = css_blocks(text, selector)
     assert blocks
     block = blocks[-1]
@@ -1918,15 +1944,17 @@ def test_sidebar_hover_states_use_neutral_readable_surface(selector: str):
     )
     assert_native_row_hover_state_contract(source_blocks[0])
 
-    bundled_blocks = css_blocks(BUNDLE.read_text(encoding="utf-8"), selector)
+    bundled_blocks = css_blocks(_bundle_union_text(), selector)
     assert bundled_blocks, f"tldw_cli_modular.tcss is missing {selector}"
     assert_native_row_hover_state_contract(bundled_blocks[-1])
 
 
 def test_library_notes_focus_cues_are_visible_without_obscuring_content():
     """Database Notes gives scroll surfaces and conflict recovery real focus cues."""
-    for path in (AGENTIC, BUNDLE):
-        text = path.read_text(encoding="utf-8")
+    for text in (
+        AGENTIC.read_text(encoding="utf-8"),
+        _bundle_union_text(),
+    ):
 
         for selector in (
             "#library-note-preview-region:focus",
@@ -1946,7 +1974,7 @@ def test_library_notes_focus_cues_are_visible_without_obscuring_content():
 
 def test_library_notes_labeled_fields_keep_stable_non_semantic_focus_geometry():
     """Filter, title, body, and both keyword editors use the shared thin cue."""
-    text = BUNDLE.read_text(encoding="utf-8")
+    text = _bundle_union_text()
     for selector in (
         "Input:focus",
         "TextArea:focus",

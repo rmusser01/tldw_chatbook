@@ -33,6 +33,7 @@ import json
 import re
 from typing import Any, Mapping, Sequence
 
+from rich.markup import escape
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
@@ -185,20 +186,6 @@ def _row_header_tooltip(entry: Mapping[str, Any]) -> str:
 #: recovery-route error `validate_path_multi` raises at dispatch).
 _PATH_PRECHECK_SUFFIX = " -- path outside allowed folders; will fail even if approved"
 
-_ARGS_SUMMARY_LIMIT = 80
-
-#: TASK-695: per-VALUE budget inside the summary above. Without it a single
-#: bulk argument (a `write_file` body, a pasted document) consumes the whole
-#: line and every other argument -- including the destination the decision
-#: turns on -- is clipped away. Sized so a typical path survives intact
-#: while a payload is obviously abbreviated.
-_ARGS_VALUE_LIMIT = 34
-
-#: Floor for a shared value budget: below this a value is all ellipsis and
-#: tells the reader nothing, so it is better to overflow the line cap (which
-#: clips the tail) than to render every argument as noise.
-_ARGS_MIN_VALUE_LIMIT = 10
-
 #: TASK-1845: needs-decision was a border + 10% tint with no text change, so
 #: the state vanished in monochrome. PRODUCT.md: "colour must never be the
 #: only carrier of meaning."
@@ -247,6 +234,9 @@ def _collapse_pending_calls(calls: Sequence[Mapping[str, Any]]) -> list[dict[str
 
     Each entry carries ``count`` (for the "×N" suffix) and ``all_arguments``
     (every grouped call's arguments, so a count never conceals a target).
+    ADR-090 (task 5): each entry also carries the group's first non-empty
+    ``rationale`` (the row's advisory context line) and ``description``
+    (the tool definition's own text, for the external summarizer).
     """
     grouped: dict[str, dict[str, Any]] = {}
     order: list[str] = []
@@ -264,11 +254,22 @@ def _collapse_pending_calls(calls: Sequence[Mapping[str, Any]]) -> list[dict[str
             # reads of three different files rendered as one, so the user
             # approved three things having seen one.
             entry["all_arguments"] = [call.get("arguments")]
+            # ADR-090 (task 5): seed the group's advisory-context slots so
+            # every entry carries them; the fill-in below lets the first
+            # NON-EMPTY value win even when it arrives on a later call.
+            entry.setdefault("rationale", "")
+            entry.setdefault("description", "")
             grouped[name] = entry
             order.append(name)
         else:
             grouped[name]["count"] += 1
             grouped[name].setdefault("all_arguments", []).append(call.get("arguments"))
+        # ADR-090 (task 5): first non-empty wins -- a blank rationale on an
+        # earlier call must not mask a real reason stated on a later one.
+        if call.get("rationale") and not grouped[name].get("rationale"):
+            grouped[name]["rationale"] = str(call.get("rationale"))
+        if call.get("description") and not grouped[name].get("description"):
+            grouped[name]["description"] = str(call.get("description"))
     return [grouped[name] for name in order]
 
 
@@ -297,37 +298,52 @@ def _format_row_header(entry: Mapping[str, Any]) -> str:
     return header
 
 
+# ---------------------------------------------------------------------------
+# Shared display helpers (ADR-090). These lived in a dedicated module
+# (``tldw_chatbook.Chat.approval_display``) earlier in this PR; that module
+# pushed the ``_ui_ready`` module census one over its never-rises ratchet
+# (ADR-097 / TASK-23029), so they are folded back into this -- already
+# mount-leg-resident -- module, their original pre-PR home. The public
+# names stay importable from here for the summarizer service and the
+# pending-row producers.
+# ---------------------------------------------------------------------------
+
+#: ADR-090: display cap for one advisory line (tail-biased).
+RATIONALE_DISPLAY_CAP = 240
+CONTEXT_LABEL = "Model context:"
+SUMMARY_LABEL = "Summary:"
+
+#: ADR-090 (Qodo review #7): single named cap for tool-description capture
+#: at the three pending-row producers (MCP, local, builtin) and the
+#: summarizer prompt -- one constant so the egress bound cannot drift
+#: between tool owners.
+TOOL_DESCRIPTION_CAPTURE_CAP = 300
+
+_ARGS_SUMMARY_LIMIT = 80
+
+#: TASK-695: per-VALUE budget inside the summary above. Without it a single
+#: bulk argument (a `write_file` body, a pasted document) consumes the whole
+#: line and every other argument -- including the destination the decision
+#: turns on -- is clipped away. Sized so a typical path survives intact
+#: while a payload is obviously abbreviated.
+_ARGS_VALUE_LIMIT = 34
+
+#: Floor for a shared value budget: below this a value is all ellipsis and
+#: tells the reader nothing, so it is better to overflow the line cap (which
+#: clips the tail) than to render every argument as noise.
+_ARGS_MIN_VALUE_LIMIT = 10
+
 #: TASK-695: argument names that say WHERE a call acts. Matched as whole
 #: tokens (see `_is_destination_key`), so `profile` is not a file and
 #: `urinal` is not a URL.
 _DESTINATION_TOKENS: frozenset[str] = frozenset(
     {
-        "path",
-        "paths",
-        "filepath",
-        "file",
-        "files",
-        "filename",
-        "dir",
-        "dirs",
-        "directory",
-        "folder",
-        "dest",
-        "destination",
-        "target",
-        "output",
-        "out",
-        "src",
-        "source",
-        "input",
-        "url",
-        "uri",
-        "endpoint",
-        "host",
-        "hostname",
-        "cmd",
-        "command",
-        "script",
+        "path", "paths", "filepath", "file", "files", "filename",
+        "dir", "dirs", "directory", "folder",
+        "dest", "destination", "target", "output", "out",
+        "src", "source", "input",
+        "url", "uri", "endpoint", "host", "hostname",
+        "cmd", "command", "script",
     }
 )
 
@@ -377,7 +393,7 @@ def _is_destination_key(key: Any) -> bool:
     return bool(tokens & _DESTINATION_TOKENS)
 
 
-def _summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
+def summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
     """Return ONE payload as a compact, ``markup=False``-safe summary.
 
     TASK-695: the summary used to be one ``json.dumps`` blob clipped at
@@ -443,7 +459,7 @@ def _summarize_arguments(arguments: Mapping[str, Any] | None) -> str:
     return text
 
 
-def _summarize_row_arguments(entry: Mapping[str, Any]) -> str:
+def summarize_row_arguments(entry: Mapping[str, Any]) -> str:
     """Return the summary for one COLLAPSED row -- every call's arguments.
 
     TASK-1845: a row that says "x3" must show all three targets or the count
@@ -462,14 +478,35 @@ def _summarize_row_arguments(entry: Mapping[str, Any]) -> str:
     if not sets:
         # Not a collapsed entry (or a row with no arguments at all): fall
         # back to the single payload so a caller can never render nothing.
-        return _summarize_arguments(entry.get("arguments"))
-    rendered = [_summarize_arguments(payload) for payload in sets]
+        return summarize_arguments(entry.get("arguments"))
+    rendered = [summarize_arguments(payload) for payload in sets]
     # De-duplicate identical payloads while preserving order: N identical
     # calls are one decision with one target, and repeating it N times
     # would bury a genuinely different target further down.
     seen: set[str] = set()
     unique = [r for r in rendered if not (r in seen or seen.add(r))]
     return "\n".join(unique)
+
+
+# Historical underscore names this module's own code and the existing
+# suites import.
+_summarize_arguments = summarize_arguments
+_summarize_row_arguments = summarize_row_arguments
+
+
+def format_context_line(text: object, cap: int = RATIONALE_DISPLAY_CAP) -> str:
+    """Tail-biased display clip for one advisory context/summary line.
+
+    Args:
+        text: Raw advisory text (model rationale or summarizer output).
+        cap: Maximum rendered length including the ellipsis.
+
+    Returns:
+        The clipped line, or "" for blank/absent input.
+    """
+    from tldw_chatbook.Agents.agent_models import normalize_rationale
+
+    return normalize_rationale(text, cap=cap)
 
 
 class ChatApprovalCard(Container):
@@ -580,6 +617,10 @@ class ChatApprovalCard(Container):
         self._batch_round_id: str | None = None
         self._batch_phase = "approval"
         self._batch_calls_snapshot: list[dict[str, Any]] = []
+        #: ADR-090 (task 5): the current batch's advisory summary (payload
+        #: carriage on ``set_batch``, patchable in place via ``set_summary``
+        #: for a matching round), re-rendered by ``_render_summary_line``.
+        self._batch_summary: str | None = None
         # task-17500: the initial hide is CONSTRUCTION state, never deferred
         # mount work. This used to live in `on_mount` (`self.display =
         # False` plus a `call_after_refresh(_hide_batch_body)` for the batch
@@ -599,6 +640,14 @@ class ChatApprovalCard(Container):
         deadline = Static("", id="approval-deadline", markup=False)
         deadline.display = False
         yield deadline
+        # ADR-090 (task 5): the batch-level advisory summary line, built
+        # hidden like the deadline above (task-17500 pattern -- see
+        # __init__). markup=True because the dim/italic styling requires
+        # markup; the payload text goes through rich's ``escape()`` before
+        # it lands here, so brackets in model output cannot inject tags.
+        summary = Static("", id="approval-summary", markup=True)
+        summary.display = False
+        yield summary
         # task-17500: built hidden, like the deadline above -- see __init__.
         batch_body = Container(id="approval-batch-body")
         batch_body.display = False
@@ -632,6 +681,7 @@ class ChatApprovalCard(Container):
         timeout_seconds: float,
         round_id: str | None = None,
         phase: str = "approval",
+        summary: str | None = None,
     ) -> None:
         """Render one row per unique ``llm_name`` in ``calls``.
 
@@ -657,6 +707,8 @@ class ChatApprovalCard(Container):
                 resolve THIS exact round rather than guessing from
                 whichever session happens to be active when the decision
                 is delivered.
+            summary: ADR-090 advisory batch summary carried by the
+                payload, re-rendered on every remount.
 
         Raises:
             NoMatches: When the card's composed containers are not attached
@@ -692,6 +744,9 @@ class ChatApprovalCard(Container):
         title.update(
             "Finishing — Stop will not cancel" if finishing else "Approval required"
         )
+        # ADR-090 (task 5): stash the payload-carried summary so any remount
+        # re-renders it (a live `set_summary` patch is for THIS mount only).
+        self._batch_summary = format_context_line(summary) if summary else None
         # TASK-1844: actually surface the deadline the docstring promised.
         try:
             deadline = self.query_one("#approval-deadline", Static)
@@ -700,6 +755,7 @@ class ChatApprovalCard(Container):
             deadline.display = bool(text)
         except NoMatches:
             pass
+        self._render_summary_line()
         if not calls:
             self.display = False
             self.can_focus = False
@@ -845,6 +901,20 @@ class ChatApprovalCard(Container):
                         classes="approval-row-effects",
                     )
                 )
+            # ADR-090 (task 5): the row's advisory context line, directly
+            # below the details it annotates. markup=True because the
+            # dim/italic styling requires markup; ``escape()`` neutralizes
+            # bracket injection in the model-authored text. Rendered only
+            # when the collapsed entry carries a non-empty rationale.
+            context = format_context_line(entry.get("rationale"))
+            if context:
+                detail_children.append(
+                    Static(
+                        f"[dim italic]{CONTEXT_LABEL} {escape(context)}[/dim italic]",
+                        markup=True,
+                        id=f"approval-context-{generation}-{index}",
+                    )
+                )
             if single_row:
                 fast_approve = Button(
                     "Run once" if _is_raw_shell_row(entry) else "Approve once",
@@ -890,6 +960,45 @@ class ChatApprovalCard(Container):
         rows_container.remove_children()
         if rows:
             rows_container.mount(*rows)
+
+    def _render_summary_line(self) -> None:
+        """Render the batch-level advisory summary line (ADR-090).
+
+        Plain, dim/italic, visually subordinate to every machine-owned
+        field; hidden entirely when there is nothing to show.
+        """
+        try:
+            summary = self.query_one("#approval-summary", Static)
+        except NoMatches:
+            return
+        text = self._batch_summary or ""
+        if text:
+            summary.update(
+                f"[dim italic]{SUMMARY_LABEL} {escape(text)}[/dim italic]"
+            )
+            summary.display = True
+        else:
+            summary.update("")
+            summary.display = False
+
+    def set_summary(self, round_id: str | None, text: str) -> None:
+        """Patch ONLY the batch summary line for a matching round (ADR-090).
+
+        Guarded by the card's current round id -- a late result from a
+        prior round must never land on the current card -- and never
+        re-runs ``set_batch``, so per-row Selects and in-progress decisions
+        are untouched.
+
+        Args:
+            round_id: The approval round the summary belongs to; dropped
+                unless it equals this card's current round id.
+            text: The advisory summary text; clipped and control-stripped
+                by ``format_context_line`` before rendering.
+        """
+        if round_id is None or self._batch_round_id != round_id:
+            return
+        self._batch_summary = format_context_line(text)
+        self._render_summary_line()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""

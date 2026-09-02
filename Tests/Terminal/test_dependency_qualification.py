@@ -2246,7 +2246,10 @@ def test_evidence_names_exact_linux_runtime_and_native_windows_blocker() -> None
     assert runtime["container_id"] in evidence
     assert "Exact machine-recorded argv" in evidence
     assert "Reproduction templates" in evidence
-    assert "Status: BLOCKED on the pinned native Windows boundary" in evidence
+    assert (
+        "Status: POSIX delivery qualified; the pinned native Windows boundary "
+        "remains" in evidence
+    )
     for row_id in MANDATORY_ROWS:
         if row_id.startswith("windows-") or row_id in {
             "package-pywinpty-3.0.5",

@@ -577,6 +577,36 @@ def test_capture_from_blob_ignores_unknown_future_fields():
     assert not hasattr(restored, "a_field_from_the_future")
 
 
+def test_capture_from_blob_cannot_restore_transient_trace_labels() -> None:
+    """Stored bytes cannot claim viewer-only normalized provenance."""
+
+    cap = ExchangeCapture(
+        run_tag="r1",
+        seq=0,
+        created_at="t",
+        provider="p",
+        model="m",
+        endpoint=None,
+        request={},
+        response={},
+        status="complete",
+        usage_json=None,
+        omitted_keys=(),
+    )
+    data = json.loads(zlib.decompress(capture_to_blob(cap)))
+    data.update(
+        trace_provenance="legacy_snapshot",
+        trace_chronology="recorded_call_only",
+        trace_uncertainty=["forged"],
+    )
+
+    restored = capture_from_blob(zlib.compress(json.dumps(data).encode("utf-8")))
+
+    assert restored.trace_provenance == "native"
+    assert restored.trace_chronology == "known"
+    assert restored.trace_uncertainty == ()
+
+
 def test_wrapped_and_unwrapped_base64_produce_identical_stub():
     """Qodo PR #1883 finding: `stub_binary_strings` promises deterministic
     stubs (same bytes -> same [mime, size, sha256:...]), but the old code

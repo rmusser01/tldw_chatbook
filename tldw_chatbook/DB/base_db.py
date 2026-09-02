@@ -26,6 +26,7 @@ from tldw_chatbook.Utils.private_paths import lexical_path
 
 
 SEMANTIC_MUTATION_GUARD_FUNCTION = "console_semantic_mutation_authorized"
+TRACE_GC_DELETE_GUARD_FUNCTION = "console_trace_gc_delete_authorized"
 
 
 class _SemanticMutationAuthorization:
@@ -41,6 +42,9 @@ class _SemanticMutationAuthorization:
         self._operations: frozenset[str] = frozenset()
         self._transaction_generation = 0
         self._authorized_generation: int | None = None
+        self._trace_gc_lease_id: str | None = None
+        self._trace_gc_marked_epoch: int | None = None
+        self._trace_gc_generation: int | None = None
 
     def trace_transaction(self, statement: str) -> None:
         """Advance connection-local identity at transaction boundaries."""
@@ -60,7 +64,7 @@ class _SemanticMutationAuthorization:
         """Deny transaction escape while a mutation scope is active."""
 
         del argument2, database, trigger
-        if self._message_id is not None and (
+        if (self._message_id is not None or self._trace_gc_lease_id is not None) and (
             (
                 action == sqlite3.SQLITE_TRANSACTION
                 and (argument1 or "").upper() in {"COMMIT", "ROLLBACK"}
@@ -129,6 +133,65 @@ class _SemanticMutationAuthorization:
         ):
             raise RuntimeError("semantic_mutation_transaction_changed")
 
+    @contextmanager
+    def _authorize_trace_gc_deletion(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        lease_id: str,
+        marked_epoch: int,
+    ) -> Iterator[None]:
+        """Grant deletion only to the exact validated sweep transaction."""
+
+        if cursor.connection is not self._connection:
+            raise RuntimeError("trace_gc_connection_mismatch")
+        if not self._connection.in_transaction:
+            raise RuntimeError("caller_transaction_required")
+        if self._trace_gc_lease_id is not None or self._message_id is not None:
+            raise RuntimeError("trace_gc_authorization_already_active")
+        if type(lease_id) is not str or not lease_id:
+            raise ValueError("lease_id")
+        if type(marked_epoch) is not int or marked_epoch < 0:
+            raise ValueError("marked_epoch")
+        row = cursor.execute(
+            """SELECT maintenance.state, maintenance.lease_id,
+                      maintenance.marked_epoch, epoch.epoch,
+                      julianday(maintenance.lease_expires_at) > julianday('now')
+                 FROM console_trace_maintenance_state AS maintenance
+                 JOIN console_trace_graph_epoch AS epoch
+                   ON epoch.singleton_id = maintenance.singleton_id
+                WHERE maintenance.singleton_id = 1"""
+        ).fetchone()
+        if row is None or tuple(row) != (
+            "sweeping",
+            lease_id,
+            marked_epoch,
+            marked_epoch,
+            1,
+        ):
+            raise RuntimeError("trace_gc_epoch_or_lease_mismatch")
+        self._trace_gc_lease_id = lease_id
+        self._trace_gc_marked_epoch = marked_epoch
+        self._trace_gc_generation = self._transaction_generation
+        try:
+            yield
+        finally:
+            self._trace_gc_lease_id = None
+            self._trace_gc_marked_epoch = None
+            self._trace_gc_generation = None
+
+    def _sqlite_trace_gc_delete_authorized(self, entity_kind: object) -> int:
+        """Return one only inside the exact collector-owned sweep scope."""
+
+        return int(
+            type(entity_kind) is str
+            and bool(entity_kind)
+            and self._trace_gc_lease_id is not None
+            and self._trace_gc_marked_epoch is not None
+            and self._connection.in_transaction
+            and self._trace_gc_generation == self._transaction_generation
+        )
+
 
 def register_semantic_mutation_guard(
     connection: sqlite3.Connection,
@@ -140,6 +203,11 @@ def register_semantic_mutation_guard(
         SEMANTIC_MUTATION_GUARD_FUNCTION,
         2,
         authorization._sqlite_authorized,
+    )
+    connection.create_function(
+        TRACE_GC_DELETE_GUARD_FUNCTION,
+        1,
+        authorization._sqlite_trace_gc_delete_authorized,
     )
     connection.set_trace_callback(authorization.trace_transaction)
     connection.set_authorizer(authorization.sqlite_authorizer)

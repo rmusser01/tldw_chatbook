@@ -1170,6 +1170,426 @@ ConsoleRunLogModal {
     color: $ds-action-focus;
 }
 
+#library-collections-reader-shell > .library-adaptive-reader-pane-grip {
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+}
+
+#library-collections-reader-shell > .library-adaptive-reader-pane-grip:focus {
+    background: $ds-input-focus-bg;
+    color: $ds-action-focus;
+}
+
+#library-collections-reader-shell #library-canvas {
+    padding: 0;
+    margin: 0;
+    border: none;
+    overflow-x: hidden;
+}
+
+#library-collections-scopes {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+}
+
+.library-collections-scope-row {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    content-align: left middle;
+}
+
+.library-collections-scope-row:focus,
+#library-collections-more-saved-searches:focus {
+    background: $ds-input-focus-bg;
+    color: $ds-action-focus;
+    text-style: bold;
+    outline: none;
+}
+
+#library-collections-more-saved-searches {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    color: $ds-text-muted;
+    content-align: left middle;
+}
+
+#library-collections-items,
+#library-collections-work {
+    width: 1fr;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    background: $ds-surface-panel;
+}
+
+#library-collections-items {
+    padding: 0;
+}
+
+#library-collections-work {
+    padding: 0 1;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+#library-collections-items-toolbar,
+#library-collections-page-toolbar,
+#library-collections-primary-toolbar,
+#library-collections-mode-toolbar,
+#library-collections-archive-receipt {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+    margin: 0;
+}
+
+#library-collections-items-toolbar > Button,
+#library-collections-sort-toolbar > Button,
+#library-collections-page-toolbar > Button,
+#library-collections-primary-toolbar > Button,
+#library-collections-secondary-toolbar > Button,
+#library-collections-mode-toolbar > Button,
+#library-collections-archive-receipt > Button {
+    width: auto;
+    min-width: 0;
+    margin: 0;
+    padding: 0 1;
+}
+
+#library-collections-filter {
+    width: 100%;
+    min-width: 0;
+    height: 3;
+    min-height: 3;
+    margin: 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+}
+
+#library-collections-filter:focus {
+    border: tall $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
+}
+
+#library-collections-quick-capture-form,
+#library-collections-filters-form {
+    width: 100%;
+    height: auto;
+    margin: 0 0 1 0;
+    padding: 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+}
+
+#library-collections-capture-url,
+#library-collections-capture-title,
+#library-collections-capture-tags,
+#library-collections-filter-domain,
+#library-collections-filter-tags,
+#library-collections-filter-date-from,
+#library-collections-filter-date-to,
+#library-collections-highlight-quote,
+#library-collections-highlight-note,
+#library-collections-linked-note-id {
+    width: 100%;
+    min-width: 0;
+    margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-panel;
+}
+
+#library-collections-highlight-quote {
+    height: 5;
+    min-height: 3;
+}
+
+#library-collections-capture-note {
+    width: 100%;
+    min-width: 0;
+    height: 5;
+    min-height: 3;
+    margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-panel;
+}
+
+#library-collections-capture-url:focus,
+#library-collections-capture-title:focus,
+#library-collections-capture-tags:focus,
+#library-collections-capture-note:focus,
+#library-collections-filter-domain:focus,
+#library-collections-filter-tags:focus,
+#library-collections-filter-date-from:focus,
+#library-collections-filter-date-to:focus,
+#library-collections-highlight-quote:focus,
+#library-collections-highlight-note:focus,
+#library-collections-linked-note-id:focus {
+    border: tall $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
+}
+
+#library-collections-items-scroll {
+    width: 100%;
+    min-width: 0;
+    height: 1fr;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+.library-collections-item-row {
+    width: 100%;
+    min-width: 0;
+    height: 2;
+    min-height: 2;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    content-align: left top;
+}
+
+.library-collections-item-row:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+}
+
+#library-collections-page-stale,
+#library-collections-page-error,
+#library-collections-page-loading,
+#library-collections-items-empty,
+#library-collections-reader-loading,
+#library-collections-reader-error,
+#library-collections-reader-empty {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+    color: $ds-text-muted;
+}
+
+#library-collections-page-error,
+#library-collections-reader-error,
+#library-collections-hard-delete-copy {
+    color: $ds-status-error;
+}
+
+#library-collections-page-range,
+#library-collections-reader-identity,
+#library-collections-reader-byline {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    color: $ds-text-muted;
+}
+
+#library-collections-reader-title {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+    text-style: bold;
+    color: $ds-text-primary;
+    margin: 1 0 0 0;
+}
+
+#library-collections-read-body,
+#library-collections-info-body {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+    margin-top: 1;
+    padding-bottom: 1;
+    color: $ds-text-primary;
+}
+
+#library-collections-freeform-note {
+    width: 100%;
+    min-width: 0;
+    height: 6;
+    min-height: 4;
+    margin: 0 0 1 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+}
+
+#library-collections-freeform-note:focus {
+    border: tall $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
+}
+
+#library-collections-primary-toolbar {
+    margin-top: 1;
+    padding-bottom: 1;
+    border-bottom: solid $ds-grid-line;
+}
+
+#library-collections-mode-toolbar {
+    margin: 1 0 0 0;
+}
+
+#library-collections-primary-toolbar > Button:focus,
+#library-collections-secondary-toolbar > Button:focus,
+#library-collections-mode-toolbar > Button:focus,
+#library-collections-page-toolbar > Button:focus,
+#library-collections-items-toolbar > Button:focus,
+#library-collections-sort-toolbar > Button:focus,
+#library-collections-archive-receipt > Button:focus {
+    background: $ds-input-focus-bg;
+    color: $ds-action-focus;
+    text-style: bold;
+    outline: none;
+}
+
+#library-collections-summarize,
+#library-collections-listen,
+#library-collections-save-offline,
+#library-collections-retry-extraction,
+#library-collections-hard-delete,
+#library-collections-legacy-recovery,
+#library-collections-capture-save,
+#library-collections-capture-cancel,
+#library-collections-capture-refresh,
+#library-collections-capture-retry-confirm,
+#library-collections-capture-retry-back,
+#library-collections-filters-apply,
+#library-collections-filters-clear,
+#library-collections-highlight-save,
+#library-collections-freeform-note-save,
+#library-collections-linked-note-save,
+#library-collections-legacy-recovery-export,
+#library-collections-legacy-recovery-close,
+.library-collections-highlight-delete,
+.library-collections-linked-note-unlink {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    margin: 0 1 0 0;
+    padding: 0 1;
+    border: none;
+}
+
+#library-collections-capture-save:focus,
+#library-collections-capture-cancel:focus,
+#library-collections-capture-refresh:focus,
+#library-collections-capture-retry-confirm:focus,
+#library-collections-capture-retry-back:focus,
+#library-collections-filters-apply:focus,
+#library-collections-filters-clear:focus,
+#library-collections-highlight-save:focus,
+#library-collections-freeform-note-save:focus,
+#library-collections-linked-note-save:focus,
+#library-collections-legacy-recovery-export:focus,
+#library-collections-legacy-recovery-close:focus,
+.library-collections-highlight-delete:focus,
+.library-collections-linked-note-unlink:focus {
+    background: $ds-input-focus-bg;
+    color: $ds-action-focus;
+    text-style: bold;
+    outline: none;
+}
+
+#library-collections-action-status,
+#library-collections-action-content,
+#library-collections-capture-unknown,
+#library-collections-capture-retry-warning,
+#library-collections-legacy-recovery-heading,
+#library-collections-legacy-recovery-content,
+.library-collections-highlight-entry,
+.library-collections-linked-note-entry {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+}
+
+#library-collections-action-status,
+#library-collections-legacy-recovery-heading {
+    margin-top: 1;
+    text-style: bold;
+}
+
+#library-collections-capture-unknown,
+#library-collections-capture-retry-warning {
+    margin: 0 0 1 0;
+    color: $ds-status-warning;
+    text-style: bold;
+}
+
+#library-collections-action-content,
+#library-collections-legacy-recovery-content {
+    margin: 0 0 1 0;
+    color: $ds-text-muted;
+}
+
+#library-collections-legacy-recovery-inspector {
+    width: 100%;
+    height: auto;
+    margin-top: 1;
+    padding: 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+}
+
+#library-collections-hard-delete-copy {
+    width: 100%;
+    height: auto;
+    margin: 1 0 0 0;
+    padding: 1;
+    border: tall $ds-status-error;
+    background: $ds-surface-raised;
+}
+
+#library-collections-freeform-note-heading,
+#library-collections-linked-notes-heading {
+    width: 100%;
+    height: auto;
+    margin-top: 1;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#library-collections-highlights-empty,
+#library-collections-linked-notes-empty,
+#library-collections-media-provenance {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+}
+
+#library-collections-archive-receipt {
+    margin-top: 1;
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+}
+
 #library-conversations-reader-shell #library-canvas {
     padding: 0;
     margin: 0;
@@ -3760,6 +4180,90 @@ with stray left-edge border fragments), and padding 0 1 so the full
     padding: 0;
 }
 
+ConsoleTerminalWorkspace#console-main-column {
+    layout: grid;
+    grid-size: 6;
+    grid-columns: 1fr 1fr 1fr 1fr 1fr 1fr;
+    grid-rows: auto auto auto auto 1fr auto auto auto;
+    grid-gutter: 0;
+    width: 13fr;
+    min-width: 60;
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+    overflow: hidden;
+    background: $ds-surface-panel;
+}
+
+#console-terminal-danger,
+#console-terminal-access,
+#console-terminal-open-settings,
+#console-terminal-arm,
+#console-terminal-metadata,
+#console-terminal-viewport,
+#console-terminal-status {
+    column-span: 6;
+}
+
+#console-terminal-danger,
+#console-terminal-access,
+#console-terminal-metadata,
+#console-terminal-status {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    padding: 0 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#console-terminal-danger {
+    background: $ds-status-error 20%;
+    color: $ds-status-error;
+    text-style: bold;
+}
+
+#console-terminal-access,
+#console-terminal-metadata,
+#console-terminal-status {
+    color: $ds-text-muted;
+}
+
+ConsoleTerminalWorkspace Button {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    content-align: center middle;
+}
+
+ConsoleTerminalWorkspace Button:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+#console-terminal-viewport {
+    width: 100%;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+    overflow: hidden;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#console-terminal-viewport:focus {
+    outline: solid $ds-action-focus;
+}
+
 #console-right-rail {
     width: 4fr;
     min-width: 34;
@@ -3940,11 +4444,26 @@ with stray left-edge border fragments), and padding 0 1 so the full
     content-align: left middle;
 }
 
+/* TASK-25715: the Context header and the Inspector's group heading are one
+   shared band -- same background, colour and padding -- and a contract test
+   pins them together. #2220/TASK-24609 moved the Inspector side to `padding:
+   0` so its headings start in the same column as the rows they label, which
+   silently broke the band from the other side.
+
+   Context follows the Inspector rather than the reverse. Re-indenting the
+   Inspector heading would restore the band by re-opening the heading/row
+   misalignment TASK-24609 fixed, and padding its ROWS instead was already
+   measured and rejected there: it costs each row a column and wrapped two
+   live-work rows at the rail's 46-column width. Dropping this indent costs
+   the Context header nothing -- the raised background still spans the full
+   row -- and gives the section title one more column, which the 27-column
+   rail can use. The border-top rule and the 2-row minimum are deliberate
+   (TASK-23193) and stay. */
 .console-rail-section-header {
     height: auto;
     min-height: 2;
     border-top: solid $ds-column-line;
-    padding: 0 1;
+    padding: 0;
     background: $ds-surface-raised;
     color: $ds-text-primary;
     content-align: center middle;
@@ -4149,6 +4668,28 @@ ConsoleBoundedSection {
     height: auto;
     color: $ds-status-running;
     text-style: dim;
+}
+
+.console-pinned-terminal-action {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    background: $ds-surface-raised;
+    color: $ds-authority-local;
+    text-align: left;
+    content-align: left middle;
+}
+
+.console-pinned-terminal-action:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .console-agent-drilldown-back {
@@ -5513,6 +6054,200 @@ VideoPlayerScreen .video-player-frame {
     background: $ds-surface-raised;
     color: $ds-text-primary;
     text-style: bold;
+}
+
+/* TASK-26042: read-only Workspace Files modal.  The modal's rows are pinned;
+   only the tree and safe viewer scroll.  At compact widths it deliberately
+   becomes full-screen, so there is no misleading visible backdrop target. */
+ConsoleWorkspaceFilesModal {
+    align: center middle;
+}
+
+#console-workspace-files-modal {
+    width: 110;
+    max-width: 96%;
+    height: 34;
+    max-height: 90%;
+    padding: 1 2;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+#console-workspace-files-pinned,
+#console-workspace-files-contract,
+#console-workspace-files-attention,
+#console-workspace-files-status {
+    height: 1;
+    min-height: 1;
+    color: $ds-text-muted;
+    overflow: hidden;
+}
+
+#console-workspace-files-fold {
+    display: none;
+    height: 1;
+    min-height: 1;
+    color: $ds-text-muted;
+    overflow: hidden;
+}
+
+#console-workspace-files-binding-row,
+#console-workspace-files-filter-row,
+#console-workspace-files-actions {
+    height: 3;
+    min-height: 3;
+    width: 100%;
+}
+
+.console-workspace-files-binding {
+    width: auto;
+    max-width: 1fr;
+    margin-right: 1;
+}
+
+.console-workspace-files-binding.-selected {
+    background: $ds-action-focus;
+    color: $ds-text-primary;
+}
+
+#console-workspace-files-filter {
+    width: 1fr;
+    min-width: 16;
+}
+
+#console-workspace-files-filter-row Button,
+#console-workspace-files-actions Button {
+    width: auto;
+    min-width: 9;
+    margin-left: 1;
+}
+
+#console-workspace-files-body {
+    width: 100%;
+    height: 1fr;
+    min-height: 10;
+}
+
+#console-workspace-files-tree,
+#console-workspace-files-viewer {
+    height: 100%;
+    min-width: 0;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+}
+
+#console-workspace-files-tree {
+    width: 42%;
+    min-width: 28;
+    margin-right: 1;
+}
+
+#console-workspace-files-viewer {
+    width: 1fr;
+    padding: 0 1;
+}
+
+.console-workspace-files-entry,
+.console-workspace-files-file {
+    width: 100%;
+    min-width: 0;
+}
+
+.console-workspace-files-path {
+    color: $ds-text-muted;
+    text-style: bold;
+}
+
+#console-workspace-files-preview {
+    height: auto;
+    color: $ds-text-primary;
+}
+
+ConsoleWorkspaceFilesModal.-fullscreen #console-workspace-files-modal {
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    max-height: 100%;
+    border: none;
+    padding: 0 1;
+}
+
+ConsoleWorkspaceFilesModal.-compact #console-workspace-files-body {
+    height: 1fr;
+}
+
+ConsoleWorkspaceFilesModal.-compact #console-workspace-files-tree {
+    width: 100%;
+    min-width: 0;
+    margin-right: 0;
+}
+
+ConsoleWorkspaceFilesModal.-compact #console-workspace-files-viewer {
+    display: none;
+}
+
+ConsoleWorkspaceFilesModal.-compact.-viewer-stage #console-workspace-files-tree {
+    display: none;
+}
+
+ConsoleWorkspaceFilesModal.-compact.-viewer-stage #console-workspace-files-viewer {
+    display: block;
+    width: 100%;
+}
+
+#console-workspace-files-back-to-files {
+    display: none;
+}
+
+ConsoleWorkspaceFilesModal.-compact.-viewer-stage #console-workspace-files-back-to-files {
+    display: block;
+}
+
+ConsoleWorkspaceFilesModal.-compact #console-workspace-files-actions Button {
+    min-width: 0;
+    width: 1fr;
+}
+
+/* Keep the two stage/visit exits legible in the one-row compact strip. */
+ConsoleWorkspaceFilesModal.-compact #console-workspace-files-actions #console-workspace-files-back {
+    width: 17;
+    min-width: 17;
+}
+
+ConsoleWorkspaceFilesModal.-compact #console-workspace-files-actions #console-workspace-files-back-to-files {
+    width: 15;
+    min-width: 15;
+}
+
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-modal {
+    height: 100%;
+    max-height: 100%;
+    padding: 0 1;
+}
+
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-fold {
+    display: block;
+}
+
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-body {
+    min-height: 0;
+}
+
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-binding-row,
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-filter-row,
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions {
+    height: 1;
+    min-height: 1;
+}
+
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-filter-row Button,
+ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
+    height: 1;
+    min-height: 1;
 }
 
 ConsoleCitationSourcesModal {
@@ -7741,136 +8476,6 @@ ListItem.personas-library-row.is-active.-highlight {
     outline: none;
 }
 
-#library-collection-form Input {
-    height: 3;
-    min-height: 3;
-    padding: 0 1;
-    border: tall $ds-grid-line;
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
-}
-
-#library-collection-form Input:focus {
-    border: tall $ds-input-focus-accent;
-    outline: none;
-    background: $ds-input-focus-bg;
-    color: $ds-text-primary;
-    text-style: bold;
-}
-
-/* Collections keeps the pager fixed beneath an independently scrolling row
-   viewport. The outer workbench still owns the established list/detail split;
-   only the row stack scrolls, so page controls remain reachable at 100x30. */
-#library-collections-panel {
-    height: 100%;
-    min-height: 0;
-}
-
-#library-collections-workbench {
-    width: 100%;
-    height: 1fr;
-    min-height: 0;
-}
-
-#library-collections-list,
-#library-collection-detail {
-    width: 1fr;
-    min-width: 0;
-    height: 100%;
-    min-height: 0;
-}
-
-#library-collections-list {
-    overflow: hidden;
-}
-
-#library-collections-rows-scroll {
-    width: 100%;
-    min-width: 0;
-    height: 1fr;
-    min-height: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-
-#library-collection-detail {
-    margin-left: 1;
-    padding: 0 1;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-
-.library-collection-row {
-    width: 100%;
-    min-width: 0;
-}
-
-#library-collections-range,
-#library-collections-page,
-#library-collections-page-status {
-    width: 100%;
-    min-width: 0;
-    height: auto;
-    min-height: 1;
-}
-
-#library-collections-pager-actions {
-    width: 100%;
-    height: auto;
-    min-height: 1;
-    align: left middle;
-}
-
-#library-collections-pager-actions Button {
-    margin-right: 1;
-}
-
-#library-collection-actions {
-    height: 1;
-    min-height: 1;
-    margin-top: 1;
-    align: left middle;
-}
-
-#library-collection-actions Button {
-    height: 1;
-    min-height: 1;
-    margin-right: 1;
-    padding: 0 1;
-    border: none;
-    background: transparent;
-    color: $ds-text-primary;
-    content-align: left middle;
-    text-style: none;
-}
-
-#library-collection-actions Button:focus {
-    border: none;
-    background: transparent;
-    color: $ds-focus-fg;
-    outline: none;
-    text-style: bold underline;
-}
-
-/* task-4023 AC#1 (RC-07): the ID-scoped Button rule above (1,0,1)
-   outranks the shared `Button.library-source-action:disabled` escape
-   (0,2,1) for color/background, so this container needs its own
-   disabled variant at (1,1,1). Measured 2.30:1 before (the three
-   compounding dimmers over `$ds-text-primary`); `$ds-text-muted` on
-   this row's own surface clears the 3:1 floor while staying plainly
-   dimmer than the enabled `$ds-text-primary` label beside it. The
-   background stays transparent to match this row's resting/focus
-   convention -- the "○" label marker (library_disabled_action_label)
-   is the structural inert cue here. */
-#library-collection-actions Button:disabled {
-    opacity: 100%;
-    text-opacity: 100%;
-    border: none;
-    background: transparent;
-    color: $ds-text-muted;
-    text-style: none;
-}
-
 /* Regression fix: #library-canvas (this panel's parent) and this panel's
  * own body never scrolled, so once the Query/Scope/Results/History regions'
  * combined natural height exceeded the fixed canvas box, whatever fell
@@ -9450,6 +10055,21 @@ ImageGenSettingsPanel Checkbox.-on > .toggle--button {
    The Console states every temporary-chat restriction on a disabled row, so
    an illegible disabled label voids that whole convention. Disabled stays
    plainly dimmer than enabled (12.63:1) so the state is still obvious. */
+/* TASK-25825: six actions previously cost ~30 rows -- `height: 3` plus a
+   trailing `margin-bottom: 1` on every row -- and every label was centred,
+   so the list scanned badly and occluded the transcript to present very
+   little. The trailing gap also pushed each disabled row's explanatory
+   reason a blank line away from the row it explains, weakening exactly the
+   association that reason exists to make.
+
+   Declared HERE and not in the modal's DEFAULT_CSS for the reason the
+   sibling `:disabled` rule below is: Button's own rules outrank a modal's
+   DEFAULT_CSS, where an identical rule measured no change. */
+.console-composer-menu-item {
+    text-align: left;
+    margin: 0;
+}
+
 .console-composer-menu-item:disabled {
     text-style: none;
     text-opacity: 1;

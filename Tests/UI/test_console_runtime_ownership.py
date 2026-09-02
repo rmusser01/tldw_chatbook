@@ -25,6 +25,7 @@ import asyncio
 import inspect
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from textual.events import Key
@@ -267,6 +268,7 @@ def test_attach_and_detach_cover_exactly_the_same_slot_set():
             for name in inspect.signature(ConsoleFleetLifecycleController).parameters
         }
     )
+    screen._library_activity = SimpleNamespace(build_provider=no_op)
     declared = {slot.name for slot in CONSOLE_VIEW_HOOK_SLOTS}
     provided = set(ChatScreen.console_view_hooks(screen))
 
@@ -289,6 +291,7 @@ async def test_second_console_visit_reuses_the_runtime(tmp_path):
     app = _build_test_app()
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
+    terminal_manager = app.terminal_session_manager
 
     async with app.run_test(size=(160, 48)) as pilot:
         chat = ChatScreen(app)
@@ -360,6 +363,7 @@ async def test_second_console_visit_reuses_the_runtime(tmp_path):
         controller_two = chat_two._ensure_console_chat_controller()
         runtime_two = getattr(app, CONSOLE_RUNTIME_ATTR, None)
         assert runtime_two is runtime_one, "the SAME runtime serves visit two"
+        assert app.terminal_session_manager is terminal_manager
         assert controller_two is controller_one
         assert runtime_two.chat_store is store_one
         assert runtime_two.agent_bridge is bridge_one
@@ -652,6 +656,34 @@ def test_raw_cli_runtime_is_app_owned_unarmed_and_reads_config_replacements():
     runtime.shutdown()
 
 
+@pytest.mark.unit
+def test_terminal_manager_is_app_owned_unarmed_and_reads_config_replacements():
+    """The app owns one launch-local Terminal arm over its latest config."""
+    from tldw_chatbook.Terminal.session_manager import TerminalSessionManager
+    from tldw_chatbook.app import TldwCli
+
+    initializer = inspect.getsource(TldwCli.__init__)
+    config_load = initializer.index("self.app_config = load_settings()")
+    terminal_manager = initializer.index("self.terminal_session_manager")
+    console_runtime = initializer.index("self.console_runtime")
+    assert config_load < terminal_manager < console_runtime, initializer
+
+    app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": True}})
+    manager = app.terminal_session_manager
+    assert isinstance(manager, TerminalSessionManager)
+    assert manager.permitted is True
+    assert manager.armed is False
+
+    app.app_config = {"console": {"raw_cli_permitted": "true"}}
+    assert manager.arm(acknowledge_disclosure=True).armed is False
+    app.app_config = {"console": {"raw_cli_permitted": 1}}
+    assert manager.arm(acknowledge_disclosure=True).armed is False
+    app.app_config = {"console": {"raw_cli_permitted": True}}
+    assert manager.arm(acknowledge_disclosure=True).armed is True
+    assert app.terminal_session_manager is manager
+    manager.disarm()
+
+
 @pytest.mark.asyncio
 async def test_raw_cli_runtime_shutdown_is_once_and_precedes_console_shutdown():
     """Both Textual shutdown paths share one raw-runtime shutdown task."""
@@ -676,6 +708,129 @@ async def test_raw_cli_runtime_shutdown_is_once_and_precedes_console_shutdown():
     raw = source.index("_shutdown_raw_cli_runtime")
     console = source.index("_shutdown_console_runtime")
     assert raw < console, source
+
+
+@pytest.mark.asyncio
+async def test_terminal_manager_shutdown_is_shared_and_shielded_from_waiter_cancel():
+    """One app task owns the five-second drain and final handle closure."""
+    from tldw_chatbook.app import TldwCli
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls: list[object] = []
+
+    class Manager:
+        async def shutdown(self, *, deadline_seconds: float) -> bool:
+            calls.append(("shutdown", deadline_seconds))
+            entered.set()
+            await release.wait()
+            return False
+
+        def finalize_shutdown(self) -> None:
+            calls.append("finalize")
+
+    app = object.__new__(TldwCli)
+    app.terminal_session_manager = Manager()
+    app._terminal_session_manager_shutdown_task = None
+
+    first = asyncio.create_task(TldwCli._shutdown_terminal_session_manager(app))
+    await asyncio.wait_for(entered.wait(), 1)
+    second = asyncio.create_task(TldwCli._shutdown_terminal_session_manager(app))
+    await asyncio.sleep(0)
+
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    assert calls == [("shutdown", 5.0)]
+
+    release.set()
+    await asyncio.wait_for(second, 1)
+    assert calls == [("shutdown", 5.0), "finalize"]
+
+    source = inspect.getsource(TldwCli._shutdown_app_owned_lifecycles)
+    terminal = source.index("_shutdown_terminal_session_manager")
+    console = source.index("_shutdown_console_runtime")
+    buddy = source.index("_shutdown_persona_buddy")
+    assert terminal < console < buddy, source
+
+
+@pytest.mark.asyncio
+async def test_app_shutdown_drains_and_finalizes_a_real_terminal_manager():
+    """The app boundary drives real manager cleanup through finalization."""
+    from tldw_chatbook.Terminal.contracts import (
+        AdmissionGate,
+        BackendIdentity,
+        CleanupAttempt,
+        CleanupProof,
+        TerminalLaunchRequest,
+    )
+    from tldw_chatbook.Terminal.session_manager import TerminalSessionManager
+    from tldw_chatbook.app import TldwCli
+
+    cleanup_entered = threading.Event()
+    cleanup_release = threading.Event()
+
+    class Backend:
+        def __init__(self) -> None:
+            self.finalize_calls = 0
+
+        def start(
+            self,
+            _request: TerminalLaunchRequest,
+            admission: AdmissionGate,
+        ) -> BackendIdentity:
+            return BackendIdentity(session_id=admission.token)
+
+        def read(self, _maximum: int = 64 * 1024) -> bytes | None:
+            return None
+
+        def write(self, _data: bytes) -> None:
+            return None
+
+        def resize(self, _columns: int, _rows: int) -> None:
+            return None
+
+        def request_priority_close(self) -> None:
+            return None
+
+        def cleanup(self, _attempt: CleanupAttempt) -> CleanupProof:
+            cleanup_entered.set()
+            assert cleanup_release.wait(1)
+            return CleanupProof()
+
+        def finalize_shutdown(self) -> None:
+            self.finalize_calls += 1
+
+    backend = Backend()
+    manager = TerminalSessionManager(lambda: True, lambda: backend)
+    manager.arm(acknowledge_disclosure=True)
+    created = manager.create_session(
+        TerminalLaunchRequest(
+            name="app-shutdown-integration",
+            shell="default",
+            start_directory=str(Path.cwd()),
+            columns=80,
+            rows=24,
+        )
+    )
+    assert created.admitted is True
+
+    app = object.__new__(TldwCli)
+    app.terminal_session_manager = manager
+    app._terminal_session_manager_shutdown_task = None
+
+    first = asyncio.create_task(TldwCli._shutdown_terminal_session_manager(app))
+    assert await asyncio.to_thread(cleanup_entered.wait, 1)
+    second = asyncio.create_task(TldwCli._shutdown_terminal_session_manager(app))
+
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    assert backend.finalize_calls == 0
+
+    cleanup_release.set()
+    await asyncio.wait_for(second, 1)
+    assert backend.finalize_calls == 1
 
 
 @pytest.mark.unit
@@ -866,6 +1021,8 @@ async def test_app_fences_console_then_drains_buddy_before_profile_teardown(
 
     from tldw_chatbook.app import TldwCli
 
+    terminal_entered = asyncio.Event()
+    terminal_release = asyncio.Event()
     console_entered = asyncio.Event()
     console_release = asyncio.Event()
     buddy_entered = asyncio.Event()
@@ -893,6 +1050,20 @@ async def test_app_fences_console_then_drains_buddy_before_profile_teardown(
     async def no_op_lifecycle() -> None:
         return None
 
+    terminal_task: asyncio.Task[None] | None = None
+
+    async def terminal_runner() -> None:
+        events.append("terminal-start")
+        terminal_entered.set()
+        await terminal_release.wait()
+        events.append("terminal-finished")
+
+    async def shutdown_terminal_manager() -> None:
+        nonlocal terminal_task
+        if terminal_task is None:
+            terminal_task = asyncio.create_task(terminal_runner())
+        await asyncio.shield(terminal_task)
+
     console_task: asyncio.Task[None] | None = None
 
     async def console_runner() -> None:
@@ -914,6 +1085,7 @@ async def test_app_fences_console_then_drains_buddy_before_profile_teardown(
     app.audio_cpp_model_install_owner = AsyncOwner()
     app._shutdown_notes_sync_runtime = no_op_lifecycle
     app._shutdown_raw_cli_runtime = no_op_lifecycle
+    app._shutdown_terminal_session_manager = shutdown_terminal_manager
     app._shutdown_console_image_edits = later_lifecycle
     app._shutdown_console_runtime = shutdown_console_runtime
     app._shutdown_file_notes_session_owner = later_lifecycle
@@ -924,8 +1096,8 @@ async def test_app_fences_console_then_drains_buddy_before_profile_teardown(
 
     monkeypatch.setattr(App, "_shutdown", profile_teardown)
     draining = asyncio.create_task(TldwCli._shutdown(app))
-    await asyncio.wait_for(console_entered.wait(), 2)
-    assert events == ["console-start"]
+    await asyncio.wait_for(terminal_entered.wait(), 2)
+    assert events == ["terminal-start"]
     assert not draining.done()
 
     draining.cancel()
@@ -933,17 +1105,27 @@ async def test_app_fences_console_then_drains_buddy_before_profile_teardown(
     draining.cancel()
     await asyncio.sleep(0)
     assert not draining.done()
+    assert not console_entered.is_set()
     assert not buddy_entered.is_set()
+
+    terminal_release.set()
+    await asyncio.wait_for(console_entered.wait(), 2)
+    assert events[:3] == [
+        "terminal-start",
+        "terminal-finished",
+        "console-start",
+    ]
 
     console_release.set()
     await asyncio.wait_for(buddy_entered.wait(), 2)
-    assert events[:3] == ["console-start", "console-finished", "buddy-start"]
+    assert events[2:5] == ["console-start", "console-finished", "buddy-start"]
     assert "profile-teardown" not in events
 
     buddy_release.set()
     with pytest.raises(asyncio.CancelledError):
         await draining
 
+    assert events.index("terminal-finished") < events.index("console-start")
     assert events.index("console-finished") < events.index("buddy-start")
     assert events.index("buddy-finished") < events.index("profile-teardown")
     assert events[-1] == "profile-teardown"

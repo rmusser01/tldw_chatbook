@@ -62,3 +62,27 @@ A first attempt at finding dead selectors mechanically produced a false 609/609 
 result, because the detection grep used `\w` inside a POSIX ERE. Any dead-CSS sweep here needs a
 real parser, not a grep.
 <!-- SECTION:NOTES:END -->
+
+## Progress via TASK-25812 (2026-08-31) — largely satisfied, with two honest gaps
+
+The owner-approved split-by-screen shipped on
+`perf/task-25812-split-agentic-css`. Against this task's ACs:
+
+- **#1 — partial, by a different mechanism.** The BOOT BUNDLE no longer
+  carries the Console/Library/Settings rules (the three big owners:
+  201,596 B moved to per-screen `CSS_PATH` sheets). But the SOURCE file is
+  deliberately untouched — the split happens in `build_css.py`, keeping one
+  source of truth and a build-time lossless-partition assertion. And the
+  smaller owners this AC names (MCP, Lab, Workflows, Personas, Watchlists,
+  ~15,7 KB combined) still ride the bundle: each is small, and each would
+  need its own screen `CSS_PATH` + cross-surface token audit to move.
+- **#2 — done.** Boot rules 4,231 → 3,304, recorded here and on TASK-25812.
+- **#3 — not done by this change.** The byte ratchet was tightened
+  (860,000 → 705,000), but a boot RULE-COUNT ratchet still does not exist.
+  (The bare-type-subject ratchet on the #2258 branch guards candidate
+  breadth, which is a different quantity.)
+- **#4 / #5 — verified with the split in place**: latency-guardrail tour
+  and preflight run in the implementation branch's gate.
+
+Left To Do for the remaining scope (#1's small owners, #3's rule-count
+ratchet) rather than closed.

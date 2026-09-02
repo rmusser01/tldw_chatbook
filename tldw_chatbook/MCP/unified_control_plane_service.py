@@ -2,16 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
+import math
+import secrets
+import threading
 import time
-from collections.abc import Mapping
-from dataclasses import replace
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from loguru import logger
 
-from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 from .execution_log import MCPExecutionLog, build_record
@@ -19,6 +23,7 @@ from .hub_tool_catalog import (
     HubTool,
     builtin_tools_from_inventory,
     local_tools_from_record,
+    schema_argument_names,
 )
 from .local_control_service import MCPGovernanceDenied
 from .local_runtime_delegate import (
@@ -42,10 +47,25 @@ from .permission_store import (
     resolve_effective_state,
     resolve_effective_state_by_key,
 )
+from .redaction import is_secret_key, redact_mapping
 from .readiness import BUILTIN_SERVER_KEY
 from .server_target_store import ConfiguredServerTargetStore
 from .unified_context_store import UnifiedMCPContextStore
 from .unified_control_models import ServerAccessContext, UnifiedMCPContext
+from tldw_chatbook.Utils.filesystem_identity import DirectoryChain
+
+if TYPE_CHECKING:
+    from .hub_test_execution import (
+        LocalHubDecision,
+        LocalHubExecutionCoordinator,
+        LocalHubExecutionOutcome,
+        OneShotLocalHubApproval,
+        RegisteredToolTestPreview,
+        ToolTestAdmissionBlocked,
+        ToolTestAdmissionPreview,
+        ToolTestAdmissionStale,
+        ToolTestPreviewRegistry,
+    )
 
 # Task 6 (PR-T3), Route B: refusal copy for the Advanced runner's
 # `tool.execute` action when the Hub's per-tool permission gate resolves the
@@ -110,7 +130,9 @@ _ADVANCED_EXECUTE_BLOCKED_MESSAGE = "{tool} is set to Off in Permissions."
 # everything AFTER the first character, silently mangling any acronym a
 # future clause might contain -- see that function's own docstring in
 # `local_runtime_delegate.py` for the proof.
-_ADVANCED_EXECUTE_GATE_ERROR_MESSAGE = f"{capitalize_first(PERMISSION_STATE_UNRESOLVED_CLAUSE)}."
+_ADVANCED_EXECUTE_GATE_ERROR_MESSAGE = (
+    f"{capitalize_first(PERMISSION_STATE_UNRESOLVED_CLAUSE)}."
+)
 
 # task-2539 (PR-T3 fix round B, item 3): the exact message
 # `execute_hub_tool()` raises below for a server-source `server_key`. Its
@@ -166,6 +188,16 @@ class MCPHubGateDeniedError(PermissionError):
     """
 
 
+@dataclass(frozen=True, slots=True)
+class _ResolvedHubTest:
+    """One fresh, service-owned Hub Test Tool resolution."""
+
+    tool: HubTool
+    authority: DirectoryChain | None = None
+    safe_authority_label: str | None = None
+    unavailable_reason: str | None = None
+
+
 # Task 6 (PR-T3), Route B, second door: `runtime.request`/`runtime.batch` are
 # Advanced descriptors too, and the in-process runtime speaks the real
 # protocol -- `{"method": "tools/call"}` reaches the SAME
@@ -210,12 +242,41 @@ class UnifiedMCPControlPlaneService:
             else UnifiedMCPContext()
         )
         self._execution_log: MCPExecutionLog | None = None
+        self._execution_log_init_lock = threading.Lock()
         self._permission_store: MCPPermissionStore | None = None
+        self._hub_test_state_lock = threading.Lock()
+        self._hub_test_previews: ToolTestPreviewRegistry | None = None
+        self._local_hub_execution: LocalHubExecutionCoordinator | None = None
         # Chat bridge (Phase 5): in-memory-only, app-run-lifetime session
         # approvals. Never persisted -- a fresh process/instance starts
         # empty, and `clear_session_approvals()` is the only other way
         # entries leave this set.
         self._session_approvals: set[tuple[str, str]] = set()
+
+    def _ensure_hub_test_state(
+        self,
+    ) -> tuple[ToolTestPreviewRegistry, LocalHubExecutionCoordinator]:
+        """Create first-use Hub test state without charging app startup."""
+        previews = self._hub_test_previews
+        execution = self._local_hub_execution
+        if previews is not None and execution is not None:
+            return previews, execution
+        with self._hub_test_state_lock:
+            previews = self._hub_test_previews
+            execution = self._local_hub_execution
+            if previews is None:
+                from .hub_test_execution import (
+                    ToolTestPreviewRegistry,
+                )
+
+                previews = ToolTestPreviewRegistry()
+                self._hub_test_previews = previews
+            if execution is None:
+                from .hub_test_execution import LocalHubExecutionCoordinator
+
+                execution = LocalHubExecutionCoordinator()
+                self._local_hub_execution = execution
+            return previews, execution
 
     @property
     def selected_source(self) -> str:
@@ -2260,8 +2321,10 @@ class UnifiedMCPControlPlaneService:
         if store is None:
             return None
         log_path = Path(store.path).with_name("mcp_execution_log.jsonl")
-        self._execution_log = MCPExecutionLog(log_path)
-        return self._execution_log
+        with self._execution_log_init_lock:
+            if self._execution_log is None:
+                self._execution_log = MCPExecutionLog(log_path)
+            return self._execution_log
 
     def _record_tool_execution(
         self,
@@ -2342,7 +2405,9 @@ class UnifiedMCPControlPlaneService:
         execution-log record reflects who ran the tool and under what
         permission decision. Every attempt — success, failure, or
         timeout — is recorded to the execution log best-effort before the
-        result or error propagates.
+        result or error propagates. Test Tool cancellation is recorded here;
+        agent-bridge cancellation is re-raised for that bridge's outer owner
+        to record once.
 
         Args:
             server_key: Prefixed server key (``local:<profile_id>`` or
@@ -2425,6 +2490,25 @@ class UnifiedMCPControlPlaneService:
                 decision=decision,
             )
             raise RuntimeError(message) from None
+        except asyncio.CancelledError:
+            if initiator == "test":
+                duration_ms = int((time.monotonic() - started) * 1000)
+                self._record_tool_execution(
+                    normalized_key,
+                    normalized_tool_name,
+                    ok=False,
+                    duration_ms=duration_ms,
+                    status="cancelled",
+                    error_category="cancelled",
+                    exception_type="CancelledError",
+                    status_code=None,
+                    arguments=normalized_arguments,
+                    registered_argument_names=registered_argument_names,
+                    result=None,
+                    initiator=initiator,
+                    decision=decision,
+                )
+            raise
         except MCPGovernanceDenied as exc:
             # Item 1 (PR-T3 fix round D). Without this branch, a governance
             # refusal fell into the generic `except Exception` below and was
@@ -2574,6 +2658,1424 @@ class UnifiedMCPControlPlaneService:
             registered_argument_names=registered_argument_names,
         )
 
+    def prepare_hub_test(self, tool: HubTool) -> ToolTestAdmissionPreview:
+        """Resolve and register an immutable preview for one Hub test panel.
+
+        The caller's ``HubTool`` supplies only the exact catalog identity. The
+        definition, gate, eligibility, and workspace authority all come from a
+        fresh service-owned resolution so a stale UI row cannot mint authority.
+        """
+        resolved = self._resolve_hub_test(tool.server_key, tool.name)
+        if resolved is None:
+            raise KeyError(f"Unknown Hub tool: {tool.tool_id}")
+        return self._issue_hub_test_preview(resolved)
+
+    def revoke_hub_test_preview(self, nonce: str) -> None:
+        """Revoke one prepared Hub test nonce if it is still live."""
+        if self._hub_test_previews is not None:
+            self._hub_test_previews.revoke(str(nonce or ""))
+
+    async def execute_prepared_hub_test(
+        self,
+        nonce: str,
+        intent: Literal["run", "approve_once"],
+        arguments: dict[str, Any],
+    ) -> (
+        dict[str, Any]
+        | LocalHubExecutionOutcome
+        | ToolTestAdmissionBlocked
+        | ToolTestAdmissionStale
+    ):
+        """Atomically admit one preview-bound Hub Test Tool invocation.
+
+        Argument validation deliberately precedes nonce consumption. Everything
+        after consumption is re-resolved from live service state and compared to
+        the immutable preview before either the legacy MCP seam or the private
+        local-Hub seam can be reached.
+        """
+        from .hub_test_execution import (
+            ToolTestAdmissionBlocked,
+            ToolTestAdmissionStale,
+            canonicalize_arguments,
+        )
+
+        canonical_bytes, dispatch_arguments = canonicalize_arguments(arguments)
+        previews, _execution = self._ensure_hub_test_state()
+        registered = previews.consume(str(nonce or ""))
+        if registered is None:
+            return ToolTestAdmissionStale(reason="preview_unavailable")
+
+        public = registered.public
+        if intent not in {"run", "approve_once"}:
+            if public.server_key == "local:__local__":
+                refresh_task = asyncio.create_task(
+                    asyncio.to_thread(self._refresh_hub_test_preview, public)
+                )
+                cancelled: asyncio.CancelledError | None = None
+                while not refresh_task.done():
+                    try:
+                        await asyncio.shield(refresh_task)
+                    except asyncio.CancelledError as exc:
+                        if refresh_task.cancelled():
+                            raise
+                        if cancelled is None:
+                            cancelled = exc
+                refreshed = refresh_task.result()
+                if cancelled is not None and refreshed is not None:
+                    self.revoke_hub_test_preview(refreshed.nonce)
+                result = ToolTestAdmissionBlocked(
+                    reason="intent_invalid", refreshed_preview=refreshed
+                )
+                try:
+                    await self._attempt_local_hub_audit(
+                        lambda: self._record_prepared_hub_block(public, result.reason),
+                        "Local Hub intent review",
+                    )
+                except asyncio.CancelledError as exc:
+                    if cancelled is None:
+                        cancelled = exc
+                    if refreshed is not None:
+                        self.revoke_hub_test_preview(refreshed.nonce)
+                if cancelled is not None:
+                    raise cancelled
+                return result
+            refreshed = await asyncio.to_thread(self._refresh_hub_test_preview, public)
+            return self._hub_test_blocked(
+                public,
+                reason="intent_invalid",
+                refreshed=refreshed,
+            )
+
+        if public.server_key == "local:__local__":
+            return await self._execute_owned_prepared_local_hub_test(
+                registered=registered,
+                intent=intent,
+                canonical_arguments=canonical_bytes,
+                arguments=dispatch_arguments,
+            )
+
+        resolved = self._resolve_hub_test(public.server_key, public.tool_name)
+        if resolved is None:
+            return self._hub_test_stale(public, reason="identity_changed")
+
+        fresh_preview = self._preview_fields(resolved)
+        if (
+            fresh_preview.server_key != public.server_key
+            or fresh_preview.tool_name != public.tool_name
+        ):
+            return self._hub_test_stale(
+                public,
+                reason="identity_changed",
+                refreshed=self._issue_hub_test_preview(resolved),
+            )
+        rendered_gate = public.rendered_gate
+        fresh_gate = fresh_preview.rendered_gate
+        if rendered_gate not in {"allow", "ask"}:
+            return self._hub_test_blocked(
+                public,
+                reason=(
+                    "permission_unresolved"
+                    if rendered_gate in {"unavailable", "unresolved"}
+                    else "permission_denied"
+                ),
+                refreshed=self._issue_hub_test_preview(resolved),
+            )
+        if resolved.unavailable_reason is not None:
+            return self._hub_test_stale(
+                public,
+                reason=resolved.unavailable_reason,
+                refreshed=self._issue_hub_test_preview(resolved),
+            )
+
+        if fresh_preview.definition_hash != public.definition_hash:
+            return self._hub_test_stale(
+                public,
+                reason="definition_changed",
+                refreshed=self._issue_hub_test_preview(resolved),
+            )
+        if (
+            fresh_preview.authority_fingerprint != public.authority_fingerprint
+            or resolved.authority != registered.authority
+            or fresh_preview.safe_authority_label != public.safe_authority_label
+        ):
+            return self._hub_test_stale(
+                public,
+                reason="authority_changed",
+                refreshed=self._issue_hub_test_preview(resolved),
+            )
+
+        if rendered_gate == "allow":
+            if intent != "run":
+                return self._hub_test_blocked(
+                    public,
+                    reason="intent_mismatch",
+                    refreshed=self._issue_hub_test_preview(resolved),
+                )
+            if fresh_gate != "allow":
+                return self._hub_test_stale(
+                    public,
+                    reason="gate_changed",
+                    refreshed=self._issue_hub_test_preview(resolved),
+                )
+        elif rendered_gate == "ask":
+            if intent != "approve_once":
+                return self._hub_test_blocked(
+                    public,
+                    reason="intent_mismatch",
+                    refreshed=self._issue_hub_test_preview(resolved),
+                )
+            if fresh_gate not in {"ask", "allow"}:
+                return self._hub_test_stale(
+                    public,
+                    reason="gate_changed",
+                    refreshed=self._issue_hub_test_preview(resolved),
+                )
+
+        # Re-encode the independent object immediately before dispatch. This
+        # turns any accidental internal mutation into a closed refusal instead
+        # of dispatching arguments different from the admitted canonical bytes.
+        dispatch_bytes, dispatch_copy = canonicalize_arguments(dispatch_arguments)
+        if dispatch_bytes != canonical_bytes:
+            return self._hub_test_blocked(
+                public,
+                reason="arguments_changed",
+                refreshed=self._issue_hub_test_preview(resolved),
+            )
+
+        decision = "approved" if fresh_gate == "ask" else "allowed"
+        return await self.test_hub_tool(
+            resolved.tool.server_key,
+            resolved.tool.name,
+            dispatch_copy,
+            decision=decision,
+            registered_argument_names=schema_argument_names(resolved.tool.input_schema),
+        )
+
+    @staticmethod
+    async def _attempt_local_hub_audit(
+        callback: Callable[[], None], label: str
+    ) -> None:
+        """Await one off-loop audit attempt, preserving caller cancellation."""
+        audit_task = asyncio.create_task(asyncio.to_thread(callback))
+        cancelled: asyncio.CancelledError | None = None
+        failed = False
+        while not audit_task.done():
+            try:
+                await asyncio.shield(audit_task)
+            except asyncio.CancelledError as exc:
+                if audit_task.cancelled():
+                    failed = True
+                    break
+                if cancelled is None:
+                    cancelled = exc
+            except BaseException:
+                failed = True
+                break
+        if not failed:
+            try:
+                audit_task.result()
+            except BaseException:
+                failed = True
+        if failed:
+            logger.warning("{} audit failed", label)
+        if cancelled is not None:
+            raise cancelled
+
+    def _review_prepared_local_hub_test(
+        self,
+        *,
+        registered: RegisteredToolTestPreview,
+        intent: Literal["run", "approve_once"],
+        canonical_arguments: bytes,
+        arguments: dict[str, Any],
+    ) -> (
+        tuple[_ResolvedHubTest, str, dict[str, Any]]
+        | ToolTestAdmissionBlocked
+        | ToolTestAdmissionStale
+    ):
+        """Rebuild and compare one consumed local preview on a worker thread."""
+        from .hub_test_execution import (
+            ToolTestAdmissionBlocked,
+            ToolTestAdmissionStale,
+            canonicalize_arguments,
+        )
+
+        public = registered.public
+        resolved = self._resolve_hub_test(public.server_key, public.tool_name)
+        if resolved is None:
+            return ToolTestAdmissionStale(reason="identity_changed")
+
+        fresh_preview = self._preview_fields(resolved)
+        if (
+            fresh_preview.server_key != public.server_key
+            or fresh_preview.tool_name != public.tool_name
+        ):
+            return ToolTestAdmissionStale(
+                reason="identity_changed",
+                refreshed_preview=self._issue_hub_test_preview(resolved),
+            )
+        rendered_gate = public.rendered_gate
+        fresh_gate = fresh_preview.rendered_gate
+        if rendered_gate not in {"allow", "ask"}:
+            return ToolTestAdmissionBlocked(
+                reason=(
+                    "permission_unresolved"
+                    if rendered_gate in {"unavailable", "unresolved"}
+                    else "permission_denied"
+                ),
+                refreshed_preview=self._issue_hub_test_preview(resolved),
+            )
+        if resolved.unavailable_reason is not None:
+            return ToolTestAdmissionStale(
+                reason=resolved.unavailable_reason,
+                refreshed_preview=self._issue_hub_test_preview(resolved),
+            )
+        if fresh_preview.definition_hash != public.definition_hash:
+            return ToolTestAdmissionStale(
+                reason="definition_changed",
+                refreshed_preview=self._issue_hub_test_preview(resolved),
+            )
+        if (
+            fresh_preview.authority_fingerprint != public.authority_fingerprint
+            or resolved.authority != registered.authority
+            or fresh_preview.safe_authority_label != public.safe_authority_label
+        ):
+            return ToolTestAdmissionStale(
+                reason="authority_changed",
+                refreshed_preview=self._issue_hub_test_preview(resolved),
+            )
+        if rendered_gate == "allow":
+            if intent != "run":
+                return ToolTestAdmissionBlocked(
+                    reason="intent_mismatch",
+                    refreshed_preview=self._issue_hub_test_preview(resolved),
+                )
+            if fresh_gate != "allow":
+                return ToolTestAdmissionStale(
+                    reason="gate_changed",
+                    refreshed_preview=self._issue_hub_test_preview(resolved),
+                )
+        else:
+            if intent != "approve_once":
+                return ToolTestAdmissionBlocked(
+                    reason="intent_mismatch",
+                    refreshed_preview=self._issue_hub_test_preview(resolved),
+                )
+            if fresh_gate not in {"ask", "allow"}:
+                return ToolTestAdmissionStale(
+                    reason="gate_changed",
+                    refreshed_preview=self._issue_hub_test_preview(resolved),
+                )
+
+        dispatch_bytes, dispatch_copy = canonicalize_arguments(arguments)
+        if dispatch_bytes != canonical_arguments:
+            return ToolTestAdmissionBlocked(
+                reason="arguments_changed",
+                refreshed_preview=self._issue_hub_test_preview(resolved),
+            )
+        return resolved, fresh_gate, dispatch_copy
+
+    def _execute_prepared_local_hub_test(
+        self,
+        *,
+        tool: HubTool,
+        authority: DirectoryChain | None,
+        intent: Literal["run", "approve_once"],
+        fresh_gate: str,
+        canonical_arguments: bytes,
+        arguments: dict[str, Any],
+        started_at: float,
+        cancellation_requested: threading.Event,
+        caller_task: asyncio.Task[Any] | None,
+        handler_started: threading.Event,
+        definitive_after_start: threading.Event,
+        deadline_ready: threading.Event,
+        effective_deadline: dict[str, float],
+        approval_state: dict[str, OneShotLocalHubApproval | None],
+    ) -> LocalHubExecutionOutcome:
+        """Construct, invoke, sanitize, and close one local provider in-worker."""
+        from tldw_chatbook.Agents.agent_models import ToolResult
+        from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
+        from . import local_server_tools
+        from .hub_test_execution import (
+            LocalHubExecutionOutcome,
+            LocalHubFinalGate,
+            LocalHubStatus,
+            OneShotLocalHubApproval,
+            authority_fingerprint,
+        )
+
+        handle = None
+        approval_callback: OneShotLocalHubApproval | None = None
+
+        def _duration_ms() -> int:
+            return max(0, int((time.monotonic() - started_at) * 1000))
+
+        def _synthetic(
+            status: str, category: str, message: str
+        ) -> LocalHubExecutionOutcome:
+            approval_consumed = (
+                approval_callback.consumed if approval_callback is not None else False
+            )
+            return LocalHubExecutionOutcome(
+                decision=(
+                    "approved"
+                    if approval_consumed
+                    else "allowed"
+                    if handler_started.is_set()
+                    else "denied"
+                ),
+                status=cast(LocalHubStatus, status),
+                error_category=category,
+                final_gate=cast(
+                    LocalHubFinalGate,
+                    "allow" if approval_consumed else fresh_gate,
+                ),
+                approval_consumed=approval_consumed,
+                dispatch_started=handler_started.is_set(),
+                provider_terminal="not_started",
+                duration_ms=_duration_ms(),
+                result=ToolResult(
+                    ok=False,
+                    error=message,
+                    outcome=("cancelled" if status == "cancelled" else "blocked"),
+                ),
+            )
+
+        def _dispatch_guard() -> bool:
+            if cancellation_requested.is_set() or (
+                caller_task is not None and caller_task.cancelling()
+            ):
+                return False
+            handler_started.set()
+            return True
+
+        def _cancelled() -> bool:
+            return cancellation_requested.is_set() or (
+                caller_task is not None and bool(caller_task.cancelling())
+            )
+
+        try:
+            if _cancelled():
+                return _synthetic(
+                    "cancelled",
+                    "cancelled",
+                    "Local tool test was cancelled before dispatch.",
+                )
+            if authority is None:
+                return _synthetic(
+                    "blocked",
+                    "authority_changed",
+                    "Selected workspace authority changed.",
+                )
+            try:
+                enabled = coerce_bool_setting(
+                    get_cli_setting("console", "local_tools_enabled", True),
+                    True,
+                )
+            except BaseException:
+                return _synthetic(
+                    "blocked",
+                    "local_configuration_unavailable",
+                    "Local tool configuration is unavailable.",
+                )
+            if not enabled:
+                return _synthetic(
+                    "blocked", "local_tools_disabled", "Local tools are disabled."
+                )
+            try:
+                root = local_server_tools.resolve_server_workspace_root()
+                approval_callback = (
+                    OneShotLocalHubApproval(
+                        invocation_id=secrets.token_urlsafe(),
+                        server_key=tool.server_key,
+                        tool_name=tool.name,
+                        definition_hash=definition_hash(
+                            tool.description, tool.input_schema
+                        ),
+                        authority_fingerprint=authority_fingerprint(authority),
+                        canonical_arguments=canonical_arguments,
+                    )
+                    if intent == "approve_once" and fresh_gate == "ask"
+                    else None
+                )
+                approval_state["callback"] = approval_callback
+                handle = local_server_tools.build_hub_local_provider(
+                    root,
+                    resolve_state=self.gate_tool_test,
+                    approval_callback=approval_callback,
+                    dispatch_guard=_dispatch_guard,
+                )
+            except BaseException:
+                return _synthetic(
+                    "blocked",
+                    "local_provider_unavailable",
+                    "Local tool provider is unavailable.",
+                )
+            if handle.authority != authority:
+                return _synthetic(
+                    "blocked",
+                    "authority_changed",
+                    "Selected workspace authority changed.",
+                )
+            provider = handle.provider
+            live_tool = next(
+                (
+                    candidate
+                    for candidate in provider.hub_tools()
+                    if candidate.server_key == tool.server_key
+                    and candidate.name == tool.name
+                    and definition_hash(candidate.description, candidate.input_schema)
+                    == definition_hash(tool.description, tool.input_schema)
+                ),
+                None,
+            )
+            if live_tool is None:
+                return _synthetic(
+                    "blocked",
+                    "local_tool_ineligible",
+                    "Local tool is not eligible for Hub execution.",
+                )
+            if _cancelled():
+                return _synthetic(
+                    "cancelled",
+                    "cancelled",
+                    "Local tool test was cancelled before dispatch.",
+                )
+
+            policy = provider.execution_policy_for(tool.name)
+            if policy is ToolExecutionPolicy.DEFINITIVE_AFTER_START:
+                definitive_after_start.set()
+            timeout_floor = provider.timeout_for(tool.name)
+            if (
+                timeout_floor is not None
+                and isinstance(timeout_floor, (int, float))
+                and not isinstance(timeout_floor, bool)
+                and math.isfinite(float(timeout_floor))
+                and float(timeout_floor) > 0
+            ):
+                effective_deadline["value"] = max(
+                    effective_deadline["value"],
+                    started_at + float(timeout_floor),
+                )
+            deadline_ready.set()
+            if _cancelled():
+                return _synthetic(
+                    "cancelled",
+                    "cancelled",
+                    "Local tool test was cancelled before dispatch.",
+                )
+
+            if approval_callback is None:
+                detail = provider.invoke_detailed(tool.name, arguments)
+            else:
+                with approval_callback.invocation_scope():
+                    detail = provider.invoke_detailed(tool.name, arguments)
+            return self._local_hub_outcome_from_detail(
+                detail,
+                handle.authority.canonical_root,
+                _duration_ms(),
+            )
+        except BaseException:
+            return _synthetic(
+                "error", "execution_failed", "Local tool execution failed."
+            )
+        finally:
+            if handle is not None:
+                try:
+                    handle.close()
+                except BaseException:
+                    pass
+
+    async def _execute_owned_prepared_local_hub_test(
+        self,
+        *,
+        registered: RegisteredToolTestPreview,
+        intent: Literal["run", "approve_once"],
+        canonical_arguments: bytes,
+        arguments: dict[str, Any],
+    ) -> LocalHubExecutionOutcome | ToolTestAdmissionBlocked | ToolTestAdmissionStale:
+        """Own local review through terminal audit independently of its caller."""
+        from tldw_chatbook.Agents.agent_models import ToolResult
+        from .hub_test_execution import (
+            LocalHubExecutionOutcome,
+            LocalHubFinalGate,
+            LocalHubStatus,
+            ToolTestAdmissionBlocked,
+            ToolTestAdmissionStale,
+        )
+
+        public = registered.public
+        key = (public.server_key, public.tool_name)
+        started_at = time.monotonic()
+        loop = asyncio.get_running_loop()
+        presentation: asyncio.Future[Any] = loop.create_future()
+        cancellation_requested = threading.Event()
+        caller_task = asyncio.current_task()
+        handler_started = threading.Event()
+        definitive_after_start = threading.Event()
+        deadline_ready = threading.Event()
+        effective_deadline = {"value": started_at + 45.0}
+        approval_state: dict[str, OneShotLocalHubApproval | None] = {"callback": None}
+        gate_state = {"value": public.rendered_gate}
+        audit_tool = {
+            "value": HubTool(
+                server_key=public.server_key,
+                server_label="Local workspace",
+                source="local",
+                name=public.tool_name,
+                description="",
+                input_schema={"type": "object", "properties": {}},
+                tags=(),
+                stale=False,
+                executable=False,
+            )
+        }
+        sealed = False
+
+        def _duration_ms() -> int:
+            return max(0, int((time.monotonic() - started_at) * 1000))
+
+        def _synthetic(
+            status: str,
+            category: str,
+            message: str,
+        ) -> LocalHubExecutionOutcome:
+            callback = approval_state["callback"]
+            approval_consumed = callback.consumed if callback is not None else False
+            return LocalHubExecutionOutcome(
+                decision=(
+                    "approved"
+                    if approval_consumed
+                    else "allowed"
+                    if handler_started.is_set()
+                    else "denied"
+                ),
+                status=cast(LocalHubStatus, status),
+                error_category=category,
+                final_gate=cast(
+                    LocalHubFinalGate,
+                    "allow" if approval_consumed else gate_state["value"],
+                ),
+                approval_consumed=approval_consumed,
+                dispatch_started=handler_started.is_set(),
+                provider_terminal="not_started",
+                duration_ms=_duration_ms(),
+                result=ToolResult(
+                    ok=False,
+                    error=message,
+                    outcome=(
+                        "timeout"
+                        if status == "timeout"
+                        else "cancelled"
+                        if status == "cancelled"
+                        else "blocked"
+                    ),
+                ),
+            )
+
+        async def _seal_local(outcome: LocalHubExecutionOutcome) -> None:
+            nonlocal sealed
+            if sealed:
+                return
+            sealed = True
+            try:
+                await self._attempt_local_hub_audit(
+                    lambda: self._record_local_hub_outcome(
+                        audit_tool["value"], arguments, outcome
+                    ),
+                    "Local Hub terminal",
+                )
+            finally:
+                if not presentation.done():
+                    presentation.set_result(outcome)
+
+        async def _seal_review(
+            result: ToolTestAdmissionBlocked | ToolTestAdmissionStale,
+        ) -> None:
+            nonlocal sealed
+            if sealed:
+                return
+            sealed = True
+            try:
+                await self._attempt_local_hub_audit(
+                    lambda: self._record_prepared_hub_block(public, result.reason),
+                    "Local Hub review",
+                )
+            finally:
+                if not presentation.done():
+                    presentation.set_result(result)
+
+        def _transaction():
+            try:
+                try:
+                    lifecycle_timeout = self._lifecycle_timeout()
+                except BaseException:
+                    lifecycle_timeout = 45.0
+                if not math.isfinite(lifecycle_timeout) or lifecycle_timeout <= 0:
+                    lifecycle_timeout = 45.0
+                effective_deadline["value"] = started_at + float(lifecycle_timeout)
+                deadline_ready.set()
+                if cancellation_requested.is_set():
+                    return _synthetic(
+                        "cancelled",
+                        "cancelled",
+                        "Local tool test was cancelled before dispatch.",
+                    )
+                reviewed = self._review_prepared_local_hub_test(
+                    registered=registered,
+                    intent=intent,
+                    canonical_arguments=canonical_arguments,
+                    arguments=arguments,
+                )
+                if isinstance(
+                    reviewed, (ToolTestAdmissionBlocked, ToolTestAdmissionStale)
+                ):
+                    return reviewed
+                resolved, fresh_gate, dispatch_copy = reviewed
+                audit_tool["value"] = resolved.tool
+                gate_state["value"] = fresh_gate
+                if cancellation_requested.is_set():
+                    return _synthetic(
+                        "cancelled",
+                        "cancelled",
+                        "Local tool test was cancelled before dispatch.",
+                    )
+                return self._execute_prepared_local_hub_test(
+                    tool=resolved.tool,
+                    authority=resolved.authority,
+                    intent=intent,
+                    fresh_gate=fresh_gate,
+                    canonical_arguments=canonical_arguments,
+                    arguments=dispatch_copy,
+                    started_at=started_at,
+                    cancellation_requested=cancellation_requested,
+                    caller_task=caller_task,
+                    handler_started=handler_started,
+                    definitive_after_start=definitive_after_start,
+                    deadline_ready=deadline_ready,
+                    effective_deadline=effective_deadline,
+                    approval_state=approval_state,
+                )
+            except BaseException:
+                return _synthetic(
+                    "error", "execution_failed", "Local tool execution failed."
+                )
+
+        async def _owner() -> None:
+            worker: asyncio.Task[Any] | None = None
+            try:
+                worker = asyncio.create_task(asyncio.to_thread(_transaction))
+                while not worker.done():
+                    definitive_running = (
+                        definitive_after_start.is_set() and handler_started.is_set()
+                    )
+                    if cancellation_requested.is_set() and not definitive_running:
+                        await _seal_local(
+                            _synthetic(
+                                "cancelled",
+                                "cancelled",
+                                "Local tool test was cancelled before dispatch.",
+                            )
+                        )
+                        return
+                    if (
+                        deadline_ready.is_set()
+                        and time.monotonic() >= effective_deadline["value"]
+                        and not definitive_running
+                    ):
+                        cancellation_requested.set()
+                        await _seal_local(
+                            _synthetic(
+                                "timeout", "timeout", "Local tool test timed out."
+                            )
+                        )
+                        return
+                    await asyncio.sleep(0.005)
+                result = await worker
+                if cancellation_requested.is_set() and not (
+                    definitive_after_start.is_set() and handler_started.is_set()
+                ):
+                    await _seal_local(
+                        _synthetic(
+                            "cancelled",
+                            "cancelled",
+                            "Local tool test was cancelled before dispatch.",
+                        )
+                    )
+                elif isinstance(result, LocalHubExecutionOutcome):
+                    await _seal_local(result)
+                else:
+                    await _seal_review(result)
+            except asyncio.CancelledError:
+                try:
+                    await _seal_local(
+                        _synthetic(
+                            "cancelled",
+                            "cancelled",
+                            "Local tool test was cancelled before dispatch.",
+                        )
+                    )
+                finally:
+                    raise
+            except BaseException:
+                await _seal_local(
+                    _synthetic(
+                        "error", "execution_failed", "Local tool execution failed."
+                    )
+                )
+            finally:
+                if worker is not None and not worker.done():
+                    try:
+                        await worker
+                    except BaseException:
+                        pass
+
+        _previews, execution = self._ensure_hub_test_state()
+        owner = execution.start(key, _owner())
+        if owner is None:
+            outcome = LocalHubExecutionOutcome(
+                decision="denied",
+                status="blocked",
+                error_category="already_active",
+                final_gate=public.rendered_gate,
+                approval_consumed=False,
+                dispatch_started=False,
+                provider_terminal="not_started",
+                duration_ms=_duration_ms(),
+                result=ToolResult.blocked(
+                    "A test for this local tool is already active."
+                ),
+            )
+            await self._attempt_local_hub_audit(
+                lambda: self._record_local_hub_outcome(
+                    audit_tool["value"], arguments, outcome
+                ),
+                "Local Hub duplicate",
+            )
+            return outcome
+        try:
+            return await asyncio.shield(presentation)
+        except asyncio.CancelledError:
+            cancellation_requested.set()
+            if not (definitive_after_start.is_set() and handler_started.is_set()):
+                await asyncio.shield(presentation)
+            raise
+
+    def hub_test_active(self, server_key: str, tool_name: str) -> bool:
+        """Return whether the service owns an active exact local Hub test."""
+        execution = self._local_hub_execution
+        return (
+            execution.active(server_key, tool_name) if execution is not None else False
+        )
+
+    @staticmethod
+    def _safe_local_hub_result(result: Any, root: Path, *, hide_error: bool) -> Any:
+        """Root-redact, secret-redact, and bound one provider ToolResult."""
+        from tldw_chatbook.Agents.agent_models import ToolResult
+        from tldw_chatbook.Agents.tool_catalog import redact_root_locator
+
+        def _sanitize_json(value: Any) -> Any:
+            if isinstance(value, Mapping):
+                return redact_mapping(value)
+            if isinstance(value, list):
+                return [_sanitize_json(item) for item in value]
+            if isinstance(value, tuple):
+                return tuple(_sanitize_json(item) for item in value)
+            return value
+
+        def _scrub_secret_fragments(value: str) -> str:
+            """Scrub secret-key assignments even in provider-truncated JSON."""
+
+            def _quoted_end(start: int) -> tuple[int, bool]:
+                quote = value[start]
+                index = start + 1
+                escaped = False
+                while index < len(value):
+                    character = value[index]
+                    if escaped:
+                        escaped = False
+                    elif character == "\\":
+                        escaped = True
+                    elif character == quote:
+                        return index + 1, True
+                    index += 1
+                return len(value), False
+
+            def _container_end(start: int) -> tuple[int, bool]:
+                pairs = {"{": "}", "[": "]"}
+                stack = [pairs[value[start]]]
+                index = start + 1
+                quote: str | None = None
+                escaped = False
+                while index < len(value):
+                    character = value[index]
+                    if quote is not None:
+                        if escaped:
+                            escaped = False
+                        elif character == "\\":
+                            escaped = True
+                        elif character == quote:
+                            quote = None
+                    elif character in {'"', "'"}:
+                        quote = character
+                    elif character in pairs:
+                        stack.append(pairs[character])
+                    elif character == stack[-1]:
+                        stack.pop()
+                        if not stack:
+                            return index + 1, True
+                    index += 1
+                return len(value), False
+
+            def _key_at(start: int) -> tuple[str, int] | None:
+                if value[start] in {'"', "'"}:
+                    end, closed = _quoted_end(start)
+                    if not closed:
+                        return None
+                    raw = value[start:end]
+                    try:
+                        key = json.loads(raw) if raw.startswith('"') else raw[1:-1]
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        key = raw[1:-1]
+                    return str(key), end
+                if not (value[start].isalnum() or value[start] in "_-"):
+                    return None
+                end = start + 1
+                while end < len(value) and (value[end].isalnum() or value[end] in "_-"):
+                    end += 1
+                return value[start:end], end
+
+            output: list[str] = []
+            retained_from = 0
+            index = 0
+            while index < len(value):
+                candidate = _key_at(index)
+                if candidate is None:
+                    index += 1
+                    continue
+                key, key_end = candidate
+                separator = key_end
+                while separator < len(value) and value[separator].isspace():
+                    separator += 1
+                if (
+                    not is_secret_key(key)
+                    or separator >= len(value)
+                    or value[separator] not in ":="
+                ):
+                    index = key_end
+                    continue
+                secret_start = separator + 1
+                while secret_start < len(value) and value[secret_start].isspace():
+                    secret_start += 1
+                output.append(value[retained_from:secret_start])
+                if secret_start < len(value) and value[secret_start] in {'"', "'"}:
+                    secret_end, closed = _quoted_end(secret_start)
+                    quote = value[secret_start]
+                    output.append(f"{quote}***{quote if closed else ''}")
+                elif secret_start < len(value) and value[secret_start] in "[{":
+                    secret_end, _closed = _container_end(secret_start)
+                    output.append('"***"')
+                else:
+                    secret_end = secret_start
+                    while secret_end < len(value) and value[secret_end] not in (
+                        ",;\r\n}]"
+                    ):
+                        secret_end += 1
+                    output.append("***")
+                retained_from = secret_end
+                index = secret_end
+            output.append(value[retained_from:])
+            return "".join(output)
+
+        def _safe_text(value: str, limit: int) -> str:
+            rooted = str(redact_root_locator(str(value), root))
+            try:
+                decoded = json.loads(rooted)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                decoded = None
+            if isinstance(decoded, (Mapping, list, tuple)):
+                rooted = json.dumps(_sanitize_json(decoded), sort_keys=True)
+            rooted = _scrub_secret_fragments(rooted)
+            encoded = rooted.encode("utf-8")
+            if len(encoded) <= limit:
+                return rooted
+            return encoded[:limit].decode("utf-8", errors="ignore") + "\n… [truncated]"
+
+        return ToolResult(
+            ok=bool(result.ok),
+            content=_safe_text(result.content, 32 * 1024),
+            error=(
+                "Local tool execution failed."
+                if hide_error
+                else _safe_text(result.error, 300)
+            ),
+            outcome=result.outcome,
+        )
+
+    def _local_hub_outcome_from_detail(
+        self,
+        detail: Any,
+        root: Path,
+        duration_ms: int,
+    ) -> LocalHubExecutionOutcome:
+        """Derive a terminal exclusively from structured provider facts."""
+        from .hub_test_execution import (
+            LocalHubExecutionOutcome,
+            LocalHubFinalGate,
+            LocalHubProviderTerminal,
+            LocalHubStatus,
+        )
+
+        raw_reason = str(getattr(detail.reason_code, "value", detail.reason_code))
+        raw_terminal = str(
+            getattr(detail.provider_terminal, "value", detail.provider_terminal)
+        )
+        known_reasons = {
+            "unknown_tool",
+            "invalid_arguments",
+            "permission_off",
+            "permission_unresolved",
+            "approval_refused",
+            "approval_timeout",
+            "root_changed",
+            "authority_unavailable",
+            "handler_returned",
+            "handler_raised",
+        }
+        reason = raw_reason if raw_reason in known_reasons else "execution_failed"
+        terminal = (
+            raw_terminal
+            if raw_terminal in {"not_started", "returned", "raised"}
+            else "raised"
+        )
+        malformed = reason != raw_reason or terminal != raw_terminal
+        hide_error = malformed or terminal == "raised" or reason == "handler_raised"
+        safe_result = self._safe_local_hub_result(
+            detail.result, root, hide_error=hide_error
+        )
+        if malformed or terminal == "raised" or reason == "handler_raised":
+            status = "error"
+            category = "execution_failed"
+        elif terminal == "returned" and reason == "handler_returned":
+            status = "success" if detail.result.ok else "error"
+            category = None if detail.result.ok else "tool_failed"
+        elif terminal == "not_started" and reason != "handler_returned":
+            status = "blocked"
+            category = reason
+        else:
+            status = "error"
+            category = "execution_failed"
+        raw_gate = str(detail.final_gate)
+        final_gate = (
+            raw_gate
+            if raw_gate
+            in {
+                "allow",
+                "deny",
+                "gate_error",
+                "kill_switch",
+                "no_callback",
+                "not_checked",
+                "timeout",
+            }
+            else "unresolved"
+        )
+        approval_consumed = bool(detail.approval_consumed)
+        dispatch_started = bool(detail.dispatch_started)
+        decision: LocalHubDecision = (
+            "approved"
+            if approval_consumed
+            else "allowed"
+            if dispatch_started
+            else "denied"
+        )
+        return LocalHubExecutionOutcome(
+            decision=decision,
+            status=cast(LocalHubStatus, status),
+            error_category=category,
+            final_gate=cast(LocalHubFinalGate, final_gate),
+            approval_consumed=approval_consumed,
+            dispatch_started=dispatch_started,
+            provider_terminal=cast(LocalHubProviderTerminal, terminal),
+            duration_ms=max(0, int(duration_ms)),
+            result=safe_result,
+        )
+
+    def _record_local_hub_outcome(
+        self,
+        tool: HubTool,
+        arguments: dict[str, Any],
+        outcome: LocalHubExecutionOutcome,
+    ) -> None:
+        """Attempt one best-effort terminal row from the shared outcome."""
+        exception_type = (
+            "TimeoutError"
+            if outcome.status == "timeout"
+            else "CancelledError"
+            if outcome.status == "cancelled"
+            else "LocalToolError"
+            if outcome.status == "error"
+            else None
+        )
+        self._record_tool_execution(
+            tool.server_key,
+            tool.name,
+            ok=outcome.status == "success",
+            duration_ms=outcome.duration_ms,
+            status=outcome.status,
+            error_category=outcome.error_category,
+            exception_type=exception_type,
+            status_code=None,
+            arguments=arguments,
+            registered_argument_names=schema_argument_names(tool.input_schema),
+            result=outcome.result,
+            initiator="test",
+            decision=outcome.decision,
+        )
+
+    def _resolve_hub_test(
+        self, server_key: str, tool_name: str
+    ) -> _ResolvedHubTest | None:
+        """Recapture one exact live Hub identity and any local authority."""
+        normalized_key = str(server_key or "").strip()
+        normalized_name = str(tool_name or "").strip()
+        if normalized_key == "local:__local__":
+            return self._resolve_local_hub_test(normalized_name)
+
+        if normalized_key.startswith("local:"):
+            try:
+                records = self.local_service.get_external_servers()
+            except Exception as exc:  # noqa: BLE001 -- admission fails closed
+                logger.warning(
+                    "MCP Hub test external catalog unavailable (exception_type={})",
+                    type(exc).__name__,
+                )
+                return None
+            if not isinstance(records, list):
+                return None
+            for record in records or []:
+                if not isinstance(record, Mapping):
+                    continue
+                for candidate in local_tools_from_record(dict(record)):
+                    if (
+                        candidate.server_key == normalized_key
+                        and candidate.name == normalized_name
+                    ):
+                        return _ResolvedHubTest(tool=candidate)
+            return None
+
+        if normalized_key.startswith("builtin:"):
+            try:
+                inventory = self.local_service.get_inventory()
+            except Exception as exc:  # noqa: BLE001 -- admission fails closed
+                logger.warning(
+                    "MCP Hub test built-in catalog unavailable (exception_type={})",
+                    type(exc).__name__,
+                )
+                return None
+            if not isinstance(inventory, Mapping):
+                return None
+            for candidate in builtin_tools_from_inventory(dict(inventory)):
+                if (
+                    candidate.server_key == normalized_key
+                    and candidate.name == normalized_name
+                ):
+                    return _ResolvedHubTest(tool=candidate)
+        return None
+
+    def _resolve_local_hub_test(self, tool_name: str) -> _ResolvedHubTest | None:
+        """Rebuild local inspection and eligible provider state fail-closed."""
+        from . import local_server_tools
+
+        inspection_handle = None
+        executable_handle = None
+        try:
+            try:
+                inspection_handle = (
+                    local_server_tools.build_hub_local_inspection_provider(
+                        Path.cwd(),
+                        resolve_state=self.gate_tool_test,
+                    )
+                )
+                inspection = next(
+                    (
+                        tool
+                        for tool in inspection_handle.provider.hub_tools()
+                        if tool.server_key == "local:__local__"
+                        and tool.name == tool_name
+                    ),
+                    None,
+                )
+            except Exception as exc:  # noqa: BLE001 -- admission fails closed
+                logger.warning(
+                    "MCP Hub test local inspection unavailable (exception_type={})",
+                    type(exc).__name__,
+                )
+                return None
+            if inspection is None:
+                return None
+
+            try:
+                enabled = coerce_bool_setting(
+                    get_cli_setting("console", "local_tools_enabled", True),
+                    True,
+                )
+            except Exception as exc:  # noqa: BLE001 -- admission fails closed
+                logger.warning(
+                    "MCP Hub test local configuration unavailable (exception_type={})",
+                    type(exc).__name__,
+                )
+                return _ResolvedHubTest(
+                    tool=replace(inspection, executable=False),
+                    unavailable_reason="local_configuration_unavailable",
+                )
+            if not enabled:
+                return _ResolvedHubTest(
+                    tool=replace(inspection, executable=False),
+                    unavailable_reason="local_tools_disabled",
+                )
+
+            try:
+                root = local_server_tools.resolve_server_workspace_root()
+                executable_handle = local_server_tools.build_hub_local_provider(
+                    root,
+                    resolve_state=self.gate_tool_test,
+                    approval_callback=None,
+                )
+                executable_tools = executable_handle.provider.hub_tools()
+            except Exception as exc:  # noqa: BLE001 -- admission fails closed
+                logger.warning(
+                    "MCP Hub test local provider unavailable (exception_type={})",
+                    type(exc).__name__,
+                )
+                return _ResolvedHubTest(
+                    tool=replace(inspection, executable=False),
+                    unavailable_reason="local_provider_unavailable",
+                )
+
+            current_hash = definition_hash(
+                inspection.description, inspection.input_schema
+            )
+            eligible = next(
+                (
+                    tool
+                    for tool in executable_tools
+                    if tool.server_key == inspection.server_key
+                    and tool.name == inspection.name
+                    and definition_hash(tool.description, tool.input_schema)
+                    == current_hash
+                ),
+                None,
+            )
+            if eligible is None:
+                return _ResolvedHubTest(
+                    tool=replace(inspection, executable=False),
+                    unavailable_reason="local_tool_ineligible",
+                )
+            return _ResolvedHubTest(
+                tool=replace(inspection, executable=True),
+                authority=executable_handle.authority,
+                safe_authority_label="Selected workspace",
+            )
+        finally:
+            for handle in (executable_handle, inspection_handle):
+                if handle is None:
+                    continue
+                try:
+                    handle.close()
+                except Exception as exc:  # noqa: BLE001 -- admission stays bounded
+                    logger.warning(
+                        "MCP Hub test provider cleanup failed (exception_type={})",
+                        type(exc).__name__,
+                    )
+
+    def _preview_fields(self, resolved: _ResolvedHubTest) -> ToolTestAdmissionPreview:
+        """Build comparison-only preview fields without registering a nonce."""
+        from .hub_test_execution import (
+            ToolTestAdmissionPreview,
+            authority_fingerprint,
+        )
+
+        rendered_gate = "unavailable"
+        if resolved.tool.executable and resolved.unavailable_reason is None:
+            try:
+                gate = self.gate_tool_test(resolved.tool)
+                rendered_gate = (
+                    gate.state
+                    if gate.origin != "gate_error"
+                    and gate.state in {"allow", "ask", "deny"}
+                    else "unresolved"
+                )
+            except Exception as exc:  # noqa: BLE001 -- gate errors are unavailable
+                logger.warning(
+                    "MCP Hub test permission unavailable (exception_type={})",
+                    type(exc).__name__,
+                )
+                rendered_gate = "unresolved"
+        return ToolTestAdmissionPreview(
+            nonce="",
+            server_key=resolved.tool.server_key,
+            tool_name=resolved.tool.name,
+            definition_hash=definition_hash(
+                resolved.tool.description, resolved.tool.input_schema
+            ),
+            rendered_gate=rendered_gate,
+            authority_fingerprint=(
+                authority_fingerprint(resolved.authority)
+                if resolved.authority is not None
+                else None
+            ),
+            safe_authority_label=resolved.safe_authority_label,
+        )
+
+    def _issue_hub_test_preview(
+        self, resolved: _ResolvedHubTest
+    ) -> ToolTestAdmissionPreview:
+        fields = self._preview_fields(resolved)
+        previews, _execution = self._ensure_hub_test_state()
+        return previews.issue(
+            server_key=fields.server_key,
+            tool_name=fields.tool_name,
+            definition_hash=fields.definition_hash,
+            rendered_gate=fields.rendered_gate,
+            authority=resolved.authority,
+            safe_authority_label=fields.safe_authority_label,
+        )
+
+    def _refresh_hub_test_preview(
+        self, public: ToolTestAdmissionPreview
+    ) -> ToolTestAdmissionPreview | None:
+        resolved = self._resolve_hub_test(public.server_key, public.tool_name)
+        return self._issue_hub_test_preview(resolved) if resolved is not None else None
+
+    def _record_prepared_hub_block(
+        self, public: ToolTestAdmissionPreview, reason: str
+    ) -> None:
+        self.record_tool_decision(
+            public.server_key,
+            public.tool_name,
+            decision="denied",
+            initiator="test",
+            error_category=reason,
+        )
+
+    def _hub_test_blocked(
+        self,
+        public: ToolTestAdmissionPreview,
+        *,
+        reason: str,
+        refreshed: ToolTestAdmissionPreview | None = None,
+    ) -> ToolTestAdmissionBlocked:
+        from .hub_test_execution import ToolTestAdmissionBlocked
+
+        self._record_prepared_hub_block(public, reason)
+        return ToolTestAdmissionBlocked(reason=reason, refreshed_preview=refreshed)
+
+    def _hub_test_stale(
+        self,
+        public: ToolTestAdmissionPreview,
+        *,
+        reason: str,
+        refreshed: ToolTestAdmissionPreview | None = None,
+    ) -> ToolTestAdmissionStale:
+        from .hub_test_execution import ToolTestAdmissionStale
+
+        self._record_prepared_hub_block(public, reason)
+        return ToolTestAdmissionStale(
+            reason=reason,
+            refreshed_preview=(
+                refreshed
+                if refreshed is not None
+                else self._refresh_hub_test_preview(public)
+            ),
+        )
+
+    def local_hub_tools(self) -> list[HubTool]:
+        """Project the full local catalog with exact executable identities.
+
+        Inspection always comes from the ordinary, unfiltered provider. A
+        second descriptor-filtered composition contributes only an exact
+        ``(server_key, name, definition_hash)`` eligibility set. Configuration
+        or filtered-composition failures therefore remove execution authority
+        without removing visible local rows.
+        """
+        from . import local_server_tools
+
+        inspection_handle = None
+        executable_handle = None
+        try:
+            try:
+                inspection_handle = (
+                    local_server_tools.build_hub_local_inspection_provider(
+                        Path.cwd(),
+                        resolve_state=self.gate_tool_test,
+                    )
+                )
+                inspection = [
+                    replace(tool, executable=False)
+                    for tool in inspection_handle.provider.hub_tools()
+                ]
+            except Exception as exc:  # noqa: BLE001 -- catalog is fail-soft
+                logger.warning(
+                    "MCP local inspection catalog unavailable (exception_type={})",
+                    type(exc).__name__,
+                )
+                return []
+
+            enabled = coerce_bool_setting(
+                get_cli_setting("console", "local_tools_enabled", True),
+                True,
+            )
+            if not enabled:
+                return inspection
+
+            try:
+                root = local_server_tools.resolve_server_workspace_root()
+                executable_handle = local_server_tools.build_hub_local_provider(
+                    root,
+                    resolve_state=self.gate_tool_test,
+                    approval_callback=None,
+                )
+                executable_identities = {
+                    (
+                        tool.server_key,
+                        tool.name,
+                        definition_hash(tool.description, tool.input_schema),
+                    )
+                    for tool in executable_handle.provider.hub_tools()
+                }
+            except Exception as exc:  # noqa: BLE001 -- inspection remains useful
+                logger.warning(
+                    "MCP local executable projection unavailable (exception_type={})",
+                    type(exc).__name__,
+                )
+                return inspection
+
+            return [
+                replace(
+                    tool,
+                    executable=(
+                        tool.server_key,
+                        tool.name,
+                        definition_hash(tool.description, tool.input_schema),
+                    )
+                    in executable_identities,
+                )
+                for tool in inspection
+            ]
+        finally:
+            for handle in (executable_handle, inspection_handle):
+                if handle is None:
+                    continue
+                try:
+                    handle.close()
+                except Exception as exc:  # noqa: BLE001 -- catalog stays fail-soft
+                    logger.warning(
+                        "MCP local provider cleanup failed (exception_type={})",
+                        type(exc).__name__,
+                    )
+
     # ---- Local MCP prompt-reduction recommendations -----------------------
     # This is intentionally local/MCP-only (ADR-081): no shell command
     # analysis, no telemetry, no model-based auto-approval.
@@ -2585,8 +4087,7 @@ class UnifiedMCPControlPlaneService:
             records = await self.local_external_catalog()
         except Exception as exc:
             logger.warning(
-                "MCP prompt-reduction local catalog read failed "
-                "(exception_type={})",
+                "MCP prompt-reduction local catalog read failed (exception_type={})",
                 type(exc).__name__,
             )
             records = []
@@ -2617,8 +4118,7 @@ class UnifiedMCPControlPlaneService:
             log = self.execution_log
         except Exception as exc:
             logger.warning(
-                "MCP prompt-reduction execution log access failed "
-                "(exception_type={})",
+                "MCP prompt-reduction execution log access failed (exception_type={})",
                 type(exc).__name__,
             )
             return []
@@ -2628,8 +4128,7 @@ class UnifiedMCPControlPlaneService:
             return log.read_recent(limit)
         except Exception as exc:
             logger.warning(
-                "MCP prompt-reduction execution log read failed "
-                "(exception_type={})",
+                "MCP prompt-reduction execution log read failed (exception_type={})",
                 type(exc).__name__,
             )
             return []
@@ -2889,9 +4388,7 @@ class UnifiedMCPControlPlaneService:
         normalized_tool_name = str(tool_name or "").strip()
         normalized_arguments = dict(arguments or {})
         try:
-            state = self.gate_tool_test_by_key(
-                BUILTIN_SERVER_KEY, normalized_tool_name
-            )
+            state = self.gate_tool_test_by_key(BUILTIN_SERVER_KEY, normalized_tool_name)
         except Exception as exc:
             logger.warning(
                 "MCP advanced tool.execute gate check failed for {}; failing closed: {}",

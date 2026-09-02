@@ -27,6 +27,11 @@ from tldw_chatbook.MCP.unified_control_models import (
     ServerAccessContext,
     UnifiedMCPContext,
 )
+from tldw_chatbook.Notes.note_folder_models import (
+    NoteFolderChildPage,
+    NotePlacementPage,
+    NotePlacementRecord,
+)
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError, RuntimeSourceState
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
@@ -151,6 +156,37 @@ class StaticLibraryNotesScopeService:
     async def list_notes(self, **kwargs):
         self.calls.append(kwargs)
         return {"items": list(self.notes), "pagination": {"total": len(self.notes)}}
+
+    async def page_note_folder_children(self, **kwargs):
+        """Expose an empty root folder page through the current Notes seam."""
+        offset = kwargs["offset"]
+        return NoteFolderChildPage(
+            folders=(),
+            total_folders=0,
+            start_offset=offset,
+            previous_offset=None,
+            next_offset=None,
+        )
+
+    async def page_note_placements(self, **kwargs):
+        """Page the fixture's unfiled notes through the production contract."""
+        offset = kwargs["offset"]
+        limit = kwargs["limit"]
+        placements = tuple(
+            NotePlacementRecord(note=dict(note), folder_id=None, membership=None)
+            for note in self.notes[offset : offset + limit]
+        )
+        previous_offset = max(0, offset - limit) if offset else None
+        next_offset = offset + len(placements)
+        if next_offset >= len(self.notes):
+            next_offset = None
+        return NotePlacementPage(
+            placements=placements,
+            total_placements=len(self.notes),
+            start_offset=offset,
+            previous_offset=previous_offset,
+            next_offset=next_offset,
+        )
 
     async def count_notes(self, *, scope, user_id=None, **kwargs):
         """Mirror ``NotesScopeService.count_notes``'s local-scope signature

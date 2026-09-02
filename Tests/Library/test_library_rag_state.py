@@ -39,7 +39,6 @@ def test_scope_state_exposes_library_source_scope_and_empty_recovery() -> None:
         conversations=0,
         prompts=0,
         workspaces=0,
-        collections=0,
         selected=("notes", "media"),
     )
 
@@ -52,7 +51,6 @@ def test_scope_state_exposes_library_source_scope_and_empty_recovery() -> None:
         "conversations",
         "prompts",
         "workspaces",
-        "collections",
     )
     assert scope.option_by_type("notes").label == "Notes"
     assert scope.option_by_type("notes").count_label == "2 sources"
@@ -70,7 +68,6 @@ def test_scope_state_exposes_library_source_scope_and_empty_recovery() -> None:
         conversations=0,
         prompts=0,
         workspaces=0,
-        collections=0,
     )
 
     assert empty_scope.has_available_sources is False
@@ -854,7 +851,6 @@ def test_panel_state_tracks_retrieval_status_and_console_action_readiness() -> N
             "media": 0,
             "conversations": 0,
             "workspaces": 0,
-            "collections": 0,
         },
         query="What changed?",
     )
@@ -2100,7 +2096,7 @@ class TestLibraryRagEmptyStateQuietCopy:
 def test_scope_source_type_map_is_a_superset_of_the_semantic_source_type_map() -> None:
     """`_SCOPE_SOURCE_TYPE_MAP` must agree with `_SEMANTIC_SOURCE_TYPE_MAP`
     on every key the semantic map defines -- the semantic map is
-    deliberately NARROWER (it omits prompts/workspaces/collections, which
+    deliberately NARROWER (it omits prompts/workspaces, which
     have no semantic-index seam at all, per its own module comment), never
     disagreeing on a shared key."""
     scope_map = _rag_state_module._SCOPE_SOURCE_TYPE_MAP
@@ -2118,12 +2114,13 @@ def test_scope_source_type_map_is_a_superset_of_the_semantic_source_type_map() -
         )
 
 
-def test_scope_source_type_map_matches_open_source_type_map_except_prompt() -> None:
+def test_scope_source_type_map_matches_open_source_type_map_except_prompts() -> None:
     """`_SCOPE_SOURCE_TYPE_MAP` and `_OPEN_SOURCE_TYPE_MAP` agree on every
-    shared key EXCEPT "prompt": `_OPEN_SOURCE_TYPE_MAP` deliberately keeps
-    it singular (`_open_library_item_by_id`'s dispatch key), while
-    `_SCOPE_SOURCE_TYPE_MAP` canonicalizes it to the plural "prompts"
-    scope-toggle key -- the one documented, intentional divergence. This
+        shared key EXCEPT the singular/plural prompt aliases:
+        `_OPEN_SOURCE_TYPE_MAP` deliberately keeps both singular
+        (`_open_library_item_by_id`'s dispatch key), while
+        `_SCOPE_SOURCE_TYPE_MAP` canonicalizes both to the plural "prompts"
+        scope-toggle key. This
     asserts that ACTUAL delta rather than forcing false identity between
     the two maps."""
     scope_map = _rag_state_module._SCOPE_SOURCE_TYPE_MAP
@@ -2134,10 +2131,10 @@ def test_scope_source_type_map_matches_open_source_type_map_except_prompt() -> N
         "Expected both maps to define 'prompt' -- the documented divergence "
         "this test pins no longer applies if either map dropped it."
     )
-    for raw_source_type in shared_keys - {"prompt"}:
+    for raw_source_type in shared_keys - {"prompt", "prompts"}:
         assert open_map[raw_source_type] == scope_map[raw_source_type], (
             "_OPEN_SOURCE_TYPE_MAP and _SCOPE_SOURCE_TYPE_MAP disagree on "
-            f"{raw_source_type!r} outside the documented 'prompt' divergence."
+                f"{raw_source_type!r} outside the documented prompt divergence."
         )
     assert open_map["prompt"] == "prompt"  # _open_library_item_by_id's dispatch key
     assert scope_map["prompt"] == "prompts"  # the plural scope-toggle key

@@ -69,7 +69,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from textual import on
@@ -103,7 +103,6 @@ from tldw_chatbook.Chat.console_exchange_capture import (
 )
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_trace_projection import project_capture_for_viewer
-from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
 from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
@@ -112,13 +111,18 @@ from tldw_chatbook.Widgets.pausable_progress import PausableLoadingIndicator
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Utils.token_counter import estimate_tokens
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
-from tldw_chatbook.Widgets.Console.console_project_instructions import (
-    ConsoleProjectInstructionContextPanel,
-)
 from tldw_chatbook.Widgets.Console.console_capture_policy_dialog import (
     CapturePolicyBindings,
     ConsoleTracePrivacyDialog,
 )
+from tldw_chatbook.Widgets.Console.console_project_instructions import (
+    ConsoleProjectInstructionContextPanel,
+)
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
+else:
+    TraceViewerProfile = Any
 
 MODAL_ID = "console-inspector-modal"
 CLOSE_BUTTON_ID = "console-inspector-close"
@@ -355,6 +359,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         snapshot_factory: SnapshotFactory,
         token_estimate: int | None = None,
         estimate_factory: Callable[[], int | None] | None = None,
+        payload_estimate: Callable[[ConsoleContextSnapshot], int | None] | None = None,
         in_progress: bool = False,
         ephemeral: bool = False,
         project_instruction_state: ConsoleProjectInstructionState | None = None,
@@ -394,6 +399,13 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 tab's header, or ``None``.
             estimate_factory: Re-estimate callback for a Next Send refresh,
                 or ``None``.
+            payload_estimate: task-25836 -- optional callback computing the
+                header count from a LOADED snapshot (the whole next-send
+                request: system row, messages incl. the draft turn, tool
+                schemas, staged evidence), preferred over
+                ``estimate_factory`` once the snapshot arrives; ``None``
+                keeps the draft-only ``estimate_factory`` contract exactly
+                as before.
             in_progress: Whether a response is currently in flight (shows
                 the Next Send tab's in-progress warning line and disables
                 its Refresh button).
@@ -426,6 +438,8 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             initial_tab: Which tab id starts active -- ``"inspector-costs"``
                 from the cost chip, ``"inspector-next-send"`` from Ctrl+Shift+P.
         """
+        from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
+
         super().__init__()
         self._rows = list(rows)
         self._totals = totals
@@ -460,6 +474,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         self._snapshot_factory = snapshot_factory
         self._token_estimate = token_estimate
         self._estimate_factory = estimate_factory
+        self._payload_estimate = payload_estimate
         self._in_progress = in_progress
         self._ephemeral = ephemeral
         self._project_instruction_state = project_instruction_state
@@ -737,6 +752,8 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
 
     async def action_viewer_profile(self) -> None:
         """Switch disclosure profile, confirming every Safe-to-Full change."""
+
+        from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
 
         if self._viewer_profile is TraceViewerProfile.FULL:
             self._viewer_profile = TraceViewerProfile.SAFE
@@ -1144,6 +1161,12 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         )
         if abandoned:
             text += " [abandoned regeneration]"
+        if capture.trace_provenance == "legacy_snapshot":
+            text += " · legacy snapshot · chronology: recorded call only"
+        elif capture.trace_provenance == "legacy_blob":
+            text += " · legacy blob (normalization pending) · chronology: recorded call only"
+        if capture.trace_uncertainty:
+            text += " · uncertainty disclosed"
         return text
 
     @staticmethod
@@ -1952,7 +1975,20 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             # header text -- assigning the snapshot first would render
             # with the PRIOR estimate, one refresh stale (a real bug in
             # the retired standalone context modal this was ported from).
-            if self._estimate_factory is not None:
+            # task-25836: prefer the payload-based estimate (the whole
+            # next-send request -- system row, messages incl. the draft
+            # turn, tool schemas, staged evidence) over the draft-only
+            # factory; fall back to the factory when the payload yields
+            # nothing estimable (e.g. an assembly-error payload).
+            if self._payload_estimate is not None:
+                payload_tokens = self._payload_estimate(new_snapshot)
+                if payload_tokens is not None:
+                    self._token_estimate = payload_tokens
+                elif self._estimate_factory is not None:
+                    self._token_estimate = self._estimate_factory()
+                else:
+                    self._token_estimate = None
+            elif self._estimate_factory is not None:
                 self._token_estimate = self._estimate_factory()
             self.snapshot = new_snapshot
             self.call_after_refresh(self._focus_initial_control)

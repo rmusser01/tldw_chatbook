@@ -3,7 +3,7 @@
 Spec §4/§8: ``library_save_note`` maps to the new ``library.notes``
 resource with a ``save`` action -- the local Library agent-tools policy
 home (the same ``library_collections`` capability that owns
-``library.collections.*``, ``library.templates`` and ``library.media``),
+``library.templates`` and ``library.media``),
 NOT the notes UI's own ``notes.*`` CRUD verbs (those model the notes
 screen's row operations; the agent tool is the Library write surface) and
 NOT the derived notes read action the MCP mapping would otherwise resolve

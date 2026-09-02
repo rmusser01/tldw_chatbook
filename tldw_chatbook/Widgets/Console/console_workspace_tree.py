@@ -188,6 +188,7 @@ class WorkspaceTreeMenuRequested(Message):
         workspace_id: str,
         conversation_id: str | None = None,
         title: str = "",
+        native_session_id: str = "",
         screen_x: int,
         screen_y: int,
     ) -> None:
@@ -202,6 +203,9 @@ class WorkspaceTreeMenuRequested(Message):
                 menu must never hand to persistence APIs).
             title: The row's display title (first physical line), for the
                 conversation menu's target.
+            native_session_id: The open session id behind an unsaved native
+                row (the synthetic key's suffix), so Copy-as-markdown can
+                read the live transcript; empty for persisted rows.
             screen_x: Absolute column to anchor the menu at.
             screen_y: Absolute row to anchor the menu at (the screen mounts
                 the menu just below this row).
@@ -210,6 +214,7 @@ class WorkspaceTreeMenuRequested(Message):
         self.workspace_id = workspace_id
         self.conversation_id = conversation_id
         self.title = title
+        self.native_session_id = native_session_id
         self.screen_x = screen_x
         self.screen_y = screen_y
         super().__init__()
@@ -217,7 +222,7 @@ class WorkspaceTreeMenuRequested(Message):
 
 def _menu_conversation_payload(
     data: WorkspaceTreeNodeData,
-) -> tuple[str | None, str]:
+) -> tuple[str | None, str, str]:
     """Return the menu's persisted conversation id and title for one row.
 
     TASK-25712 review (PR #2255): unsaved native rows carry a synthetic
@@ -226,13 +231,19 @@ def _menu_conversation_payload(
     commands ("Send or save this chat first") instead of handing the
     synthetic key to the database. The title is the row's first physical
     line, so rename/delete/confirmations name the chat the user pressed.
+
+    TASK-25886: the synthetic key's suffix IS the open session's id --
+    returned separately so Copy-as-markdown can read the live chat-store
+    transcript for open tabs instead of the database.
     """
 
     conversation_id = data.conversation_id
+    native_session_id = ""
     if conversation_id is not None and conversation_id.startswith("native:"):
+        native_session_id = conversation_id[len("native:") :]
         conversation_id = None
     first_line = str(data.raw_label or "").splitlines()[:1]
-    return conversation_id, (first_line[0] if first_line else "")
+    return conversation_id, (first_line[0] if first_line else ""), native_session_id
 
 
 class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
@@ -976,7 +987,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
                 # instead of selecting/activating, exactly like the grouped
                 # browser's asterisk column.
                 self._last_pointer_click_key = None
-                conversation_id, title = _menu_conversation_payload(data)
+                conversation_id, title, native_sid = _menu_conversation_payload(data)
                 self.post_message(
                     WorkspaceTreeMenuRequested(
                         kind=(
@@ -987,6 +998,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
                         workspace_id=str(data.workspace_id or ""),
                         conversation_id=conversation_id,
                         title=title,
+                        native_session_id=native_sid,
                         screen_x=event.screen_x,
                         screen_y=event.screen_y + 1,
                     )
@@ -1029,7 +1041,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         anchor_y = region.y + max(
             0, line - int(self.scroll_offset.y)
         ) + 1
-        conversation_id, title = _menu_conversation_payload(data)
+        conversation_id, title, native_sid = _menu_conversation_payload(data)
         self.post_message(
             WorkspaceTreeMenuRequested(
                 kind=(
@@ -1040,6 +1052,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
                 workspace_id=str(data.workspace_id or ""),
                 conversation_id=conversation_id,
                 title=title,
+                native_session_id=native_sid,
                 screen_x=anchor_x,
                 screen_y=anchor_y,
             )

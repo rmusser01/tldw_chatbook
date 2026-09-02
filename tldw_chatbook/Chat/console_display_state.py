@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from html import escape as html_escape
@@ -28,6 +29,7 @@ from tldw_chatbook.RAG_Search.local_citation_capture import (
     normalize_console_evidence_references,
 )
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Utils.token_counter import count_tokens_messages
 
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID = "console-inspector-review-approval"
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_LABEL = "Review approval"
@@ -986,6 +988,102 @@ def console_prompted_evidence_text(launch: ConsoleLiveWorkLaunch | None) -> str:
     """
     formatted = _console_prompted_evidence_context(launch)
     return formatted.context if formatted is not None else ""
+
+
+def estimate_console_next_send_tokens(
+    *,
+    payload_messages: Sequence[Mapping[str, Any]] = (),
+    payload_system: Any = None,
+    tools_info: Mapping[str, Any] | None = None,
+    extra_texts: Sequence[str] = (),
+    model: str = "",
+    provider: str = "",
+) -> Optional[int]:
+    """Estimate the tokens the next Console send will actually carry.
+
+    task-25836: the Next Send tab's "~N tokens" header estimated the
+    composer draft alone, so a first message in a fresh conversation read
+    "~3 tokens" while the real request ships the system prompt,
+    project-instruction bodies, tool schemas, and staged evidence on top of
+    the draft. This estimator counts the assembled request: every payload
+    message row (which already includes the leading system row and a
+    synthetic draft turn), the native tool schemas as JSON (tool
+    definitions are request tokens; ``tools_info``'s prose notes are not),
+    and any ``extra_texts`` (e.g. staged evidence text, which the preview
+    payload lists as label-only metadata) as one user row each.
+
+    All counting routes through :func:`count_tokens_messages` -- the same
+    real counter (custom tokenizer -> tiktoken -> chars floor, with
+    per-message framing) the settings estimate and cost chip already use --
+    so the number stays an estimate with consistent semantics everywhere it
+    appears.
+
+    Args:
+        payload_messages: ``next_send_payload["messages"]`` rows (role +
+            content; content may be a provider part-list for multimodal
+            turns, which the counter normalizes).
+        payload_system: ``next_send_payload["system"]`` -- a list of
+            message rows that DUPLICATES the leading system row when one is
+            present in ``payload_messages`` (the snapshot's by-design
+            duplication). Counted only when ``payload_messages`` carries no
+            system row of its own, so the prompt is never double-counted.
+        tools_info: ``next_send_payload["tools"]``; only its
+            ``native_schemas`` entries contribute.
+        extra_texts: Additional texts the send carries outside the payload
+            messages; blank/whitespace entries are ignored.
+        model: Model name (selects the tokenizer and framing convention).
+        provider: Provider name (selects the chars-floor ratio when no
+            tokenizer is installed).
+
+    Returns:
+        The estimated token count, or ``None`` when there is nothing to
+        send (no message rows, no schemas, no non-blank extra texts) -- the
+        caller renders no count rather than a misleading zero.
+    """
+    rows: list[dict[str, Any]] = []
+    for message in payload_messages:
+        if not isinstance(message, Mapping):
+            continue
+        rows.append(
+            {
+                "role": message.get("role", ""),
+                "content": message.get("content", ""),
+            }
+        )
+    if not any(row["role"] == "system" for row in rows) and isinstance(
+        payload_system, (list, tuple)
+    ):
+        for message in payload_system:
+            if isinstance(message, Mapping):
+                rows.append(
+                    {
+                        "role": message.get("role", "system"),
+                        "content": message.get("content", ""),
+                    }
+                )
+    schemas = (
+        tools_info.get("native_schemas")
+        if isinstance(tools_info, Mapping)
+        else None
+    )
+    if schemas:
+        # Serialization is guarded, not assumed: a schema object whose
+        # repr raises (or a cyclic structure a provider handed back) must
+        # degrade to "no tools row" rather than propagate out of the
+        # estimator -- "no count is better than a wrong one" cuts both
+        # ways.
+        try:
+            schemas_text = json.dumps(schemas, default=str)
+        except (TypeError, ValueError):
+            schemas_text = ""
+        if schemas_text:
+            rows.append({"role": "system", "content": schemas_text})
+    for text in extra_texts:
+        if str(text).strip():
+            rows.append({"role": "user", "content": text})
+    if not rows:
+        return None
+    return count_tokens_messages(rows, model, provider)
 
 
 @dataclass(frozen=True)

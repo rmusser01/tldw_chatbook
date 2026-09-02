@@ -63,17 +63,58 @@ class SafeTerminalCell:
     width: int = 0
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class SafeTerminalRun:
-    """Adjacent safe cells sharing one style."""
+    """Adjacent safe cells sharing one style in compact immutable storage."""
 
-    cells: tuple[SafeTerminalCell, ...] = ()
+    _text: str
+    _layout: bytes
     style: SafeTerminalStyle = SafeTerminalStyle()
+
+    def __init__(
+        self,
+        cells: tuple[SafeTerminalCell, ...] = (),
+        style: SafeTerminalStyle = SafeTerminalStyle(),
+    ) -> None:
+        """Compact cell text plus scalar-length/column-width byte pairs."""
+        text_parts: list[str] = []
+        layout = bytearray()
+        for cell in cells:
+            scalar_count = len(cell.text)
+            if scalar_count > MAX_CELL_SCALARS or not 0 <= cell.width <= 2:
+                raise ValueError("terminal run cell is outside contract")
+            text_parts.append(cell.text)
+            layout.extend((scalar_count, cell.width))
+        object.__setattr__(self, "_text", "".join(text_parts))
+        object.__setattr__(self, "_layout", bytes(layout))
+        object.__setattr__(self, "style", style)
+
+    @property
+    def cells(self) -> tuple[SafeTerminalCell, ...]:
+        """Reconstruct immutable cells only for consumers that need them."""
+        cells: list[SafeTerminalCell] = []
+        text_offset = 0
+        for index in range(0, len(self._layout), 2):
+            scalar_count = self._layout[index]
+            next_offset = text_offset + scalar_count
+            cells.append(
+                SafeTerminalCell(
+                    text=self._text[text_offset:next_offset],
+                    width=self._layout[index + 1],
+                )
+            )
+            text_offset = next_offset
+        return tuple(cells)
 
     @property
     def text(self) -> str:
         """Return the run's safe text."""
-        return "".join(cell.text for cell in self.cells)
+        return self._text
+
+    @property
+    def column_width(self) -> int:
+        """Return the total retained terminal-cell width."""
+        return sum(self._layout[1::2])
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,7 +132,7 @@ class SafeTerminalLine:
     @property
     def column_width(self) -> int:
         """Return the retained terminal-cell width."""
-        return sum(cell.width for run in self.runs for cell in run.cells)
+        return sum(run.column_width for run in self.runs)
 
 
 @dataclass(frozen=True, slots=True)
@@ -425,8 +466,33 @@ class _AlternateScreenAdapter:
     def resize(self, *, columns: int, rows: int) -> None:
         """Resize both isolated buffers while preserving their cursor state."""
         for screen in (self.primary, self.alternate):
+            if rows < screen.lines:
+                cursor_y = max(0, min(screen.cursor.y, screen.lines - 1))
+                start = cursor_y - rows + 1 if cursor_y >= rows else 0
+                if screen._on_scroll is not None:
+                    for old_row in range(start):
+                        screen._on_scroll(screen.buffer[old_row])
+                retained = {
+                    new_row: screen.buffer[old_row]
+                    for new_row, old_row in enumerate(range(start, start + rows))
+                }
+                screen.buffer.clear()
+                screen.buffer.update(retained)
+                screen.cursor.y = cursor_y - start
+                for savepoint in screen.savepoints:
+                    savepoint.cursor.y = max(
+                        0, min(savepoint.cursor.y - start, rows - 1)
+                    )
+                screen.lines = rows
             screen.resize(lines=rows, columns=columns)
+            screen.set_margins()
+            screen.cursor.y = max(0, min(screen.cursor.y, rows - 1))
+            screen.cursor.x = max(0, min(screen.cursor.x, columns))
+            for savepoint in screen.savepoints:
+                savepoint.cursor.y = max(0, min(savepoint.cursor.y, rows - 1))
+                savepoint.cursor.x = max(0, min(savepoint.cursor.x, columns))
             screen._join_cell = None
+            screen.dirty.clear()
             screen.dirty.update(range(rows))
 
     def _forward(self, name: str, *args: Any, **kwargs: Any) -> Any:
@@ -534,6 +600,8 @@ class TerminalScreenModel:
             raise ValueError("terminal columns outside contract")
         if not MIN_ROWS <= rows <= MAX_ROWS:
             raise ValueError("terminal rows outside contract")
+        if columns == self.columns and rows == self.rows:
+            return
         self._screens.resize(columns=columns, rows=rows)
         self.columns = columns
         self.rows = rows

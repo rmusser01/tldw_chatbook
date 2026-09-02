@@ -9,6 +9,24 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## Current-version repair hooks must gate on the schema that introduced their columns
+
+**TASK-23113.8, 2026-08-31.** The trace-GC migration matrix reopened a genuine
+v56 fixture while temporarily pinning the code's target version to v56. Schema
+initialization took the "already current" branch and ran the Notes organization
+sync-ID repair under a `version >= 56` guard, even though the repaired `sync_id`
+columns and lookup tables do not exist until v58. Ordinary current-schema tests
+never exposed the mismatch because those columns were present by then. Raising
+both repair-hook gates to v58 made the genuine v53→v56 reopen pass again.
+
+**What to do.** Gate every current-version repair or index-restoration hook on
+the first schema version that contains every column and table it touches, not on
+the task or migration version that first motivated the repair. Include pinned
+historical-current reopen fixtures; testing only migration all the way to the
+latest version cannot exercise these intermediate "already current" branches.
+
+---
+
 ## Rebase before measuring a startup import closure
 
 **PR #2250 follow-up, 2026-08-30.** The Agent Lessons branch passed its focused
@@ -420,6 +438,24 @@ commit (`github.sha`) and print `git rev-parse HEAD` in the job summary. Compare
 that recorded SHA with the intended branch head before treating results as
 evidence. A workflow may legitimately load its definition from one ref and test
 another, so the workflow name, step names, and dispatch ref are not sufficient.
+## Cancelling a Textual worker does not cancel its underlying thread
+
+**TASK-24406, 2026-08-30.** The Personal Context review modal originally ran
+its commit worker with ``exclusive=True`` and still allowed Escape, backdrop,
+and Close dismissal while the service call was blocked. A production-shaped
+test released the blocked call after dismissal and proved that the canonical
+profile mutation still completed: Textual cancelled the worker task, but it
+could not stop the thread already executing the synchronous commit. The hidden
+completion could leave durable data changed with no success or recovery state
+visible to the user.
+
+**What to do.** Treat an irreversible threaded operation as a modal state, not
+as a cancellable UI task. Before the canonical mutation, persist a compare-and-
+swap reservation such as ``committing``; freeze selection and edit controls;
+block Escape, backdrop, and Close dismissal; and expose a distinct
+outcome-unknown recovery state if rollback cannot restore the reserved draft.
+Verify with a production-shaped blocking test that tries every dismissal path,
+then releases the real thread and inspects durable state.
 
 ## A privacy assertion must inspect every default durable owner, not only the primary database
 
@@ -453,6 +489,26 @@ locator with a placeholder before the generic path detector ran. The real-seam p
 large safe non-file result plus an actual file result—exposed both errors. Durable
 sanitization must keep each owner's fidelity contract and must classify known file
 tools by tool identity, not only by content that an earlier boundary may have altered.
+
+## Privacy cleanup must preserve SQLite's concurrency contract
+
+**TASK-24723, 2026-08-30.** Terminal Personal Context proposals were correctly
+reduced to content-free receipts in their live rows, but an exact-byte inventory
+found the old encrypted payload and wrapped DEK still present in SQLite storage.
+The first correction forced ``journal_mode=DELETE`` together with
+``secure_delete=ON``. That made the byte inventory pass, but the existing
+production-shaped export snapshot tests then timed out or raised ``database is
+locked``: changing the journal mode had silently removed the WAL concurrency
+contract that lets writers proceed while an export holds a stable read snapshot.
+
+**What to do.** Keep WAL enabled when the repository's readers rely on snapshot
+concurrency. Use ``secure_delete=ON`` for freed database pages, attempt a
+zero-wait ``wal_checkpoint(TRUNCATE)`` after privacy-sensitive commits, and retry
+cleanup after an application-owned read snapshot closes. A reader may
+legitimately pin historical WAL frames until it finishes, so verify both halves
+of the contract: exact old ciphertext/DEK bytes disappear once the snapshot is
+released, and a writer still completes while the snapshot is open. A passing
+shredding test obtained by changing journal mode is not sufficient evidence.
 
 ---
 
@@ -6853,6 +6909,16 @@ using cancellation as admission control, and shield/join admitted thread work
 when an outer UI task is cancelled. Cancelling the awaitable is not evidence the
 thread stopped.
 
+**Recurred, TASK-24402 (2026-08-29).** My Profile reused one exclusive Textual
+worker group for authority changes and secure-removal actions. Review forced the
+cancelled worker's underlying thread to finish late: an old authority selection
+could overwrite a newer restrictive selection, and delayed key deletion could
+run after Start Fresh provisioned a new generation. The fix belongs below the
+UI worker boundary: runtime-policy writes carry the snapshot's expected version,
+and the service serializes the complete remove/finish/start lifecycle. Event-gated
+tests force the reversed completion order; ordinary sequential UI tests cannot
+prove this class of safety.
+
 ## `CREATE IF NOT EXISTS` can adopt foreign schema objects (TASK-19004, 2026-08-21)
 
 The first lasting-sync migration validated its required tables after running
@@ -9839,6 +9905,29 @@ messages on both sides.
 anyway, `git diff --stat` before AND after the swap and compare the numbers —
 that is the only cheap detector for both failure modes above.
 
+**Extension — TASK-25715, 2026-08-31: pick the base commit, not `dev`.** The
+worktree method above is right, but "the base" is the commit your work branched
+from, not wherever `dev` is now. Two Console rail tests were failing on my
+branch; I ran them in a pristine `origin/dev` worktree, saw them fail there too,
+and wrote "pre-existing on dev, not from this branch" into a PR body. The
+measurement was real and the conclusion did not follow: `dev` had by then
+absorbed my own two earlier PRs, so red-on-dev could no longer separate someone
+else's regression from mine. Re-run at the pre-branch commit, both tests
+**passed** — meaning I had shipped a claim of innocence I had not tested.
+
+They did turn out to be someone else's, but only a first-parent binary search
+over the 60 merges in between could say so: the header-padding failure came
+from #2220 changing the *Inspector* side of a band the test pins to the Context
+side, and the reveal-queue failure from #2252 resolving `#console-left-rail-body`
+unguarded. The same search is what actively cleared my own merges — which is the
+part "it fails on dev too" can never do.
+
+**What to do.** Once any of your work has merged to the base branch, `dev` is no
+longer a neutral witness about your work. Verify at the commit you branched from,
+and if that is green, bisect — a binary search over first-parent merges costs
+~6 test runs and names a commit, where "pre-existing" names nobody and quietly
+includes you.
+
 ## A focusable widget can be painting nothing (TASK-23100, 2026-08-28)
 
 A UX critique drove the real Schedules create form and found that choosing "Recurring"
@@ -10223,6 +10312,25 @@ Do not keep and press a control captured before a branch refresh.
 
 ---
 
+## Callback turns are not layout evidence after same-size recomposition
+
+**TASK-18918, 2026-08-30.** Media Back retained the correct semantic row and
+requested scroll `(0, 42)`, but a same-size cross-reader recompose could keep the
+previous Notes presentation long enough for the replacement Media list to clamp
+at `(0, 33)`. Four remedies based on adding callback turns sometimes passed and
+sometimes failed in fresh processes because none proved that the current scroll
+owner had received its final geometry.
+
+The gate became deterministic only when `LibraryMediaRowScroll`, the producer
+that owns the relevant geometry, emitted Resize-derived evidence for its current
+owner and presentation epoch. Five fresh-process exact-return runs and the
+four-size live walkthrough then passed. When correctness depends on layout after
+recomposition, fixed callback counts or sleeps are not readiness signals; wait
+for a public event from the current geometry owner and fence it by identity and
+epoch.
+
+---
+
 ## A required check that exempts admins or accepts a stale base is advisory
 
 **Incident.** TASK-25705, 2026-08-30. PR #2228 merged into `dev` before its
@@ -10238,3 +10346,349 @@ merger and to the current base revision. Enforce required checks for
 administrators, require the latest base, and verify the live protection API
 after changing it. The workflow's eventual failure proves the checker works;
 it does not prove the branch was protected at merge time.
+
+---
+
+## A strict gate slower than the base branch's merge cadence punishes eager rebasing
+
+**Incident.** PR #2260, 2026-08-31. The follow-on cost of the fix above. With
+`strict: true`, any movement on `dev` makes an open PR out-of-date, so my merge
+loop rebased and force-pushed the moment it saw itself behind. It never landed.
+
+Measured afterwards: `Derived artifacts reproduce from their sources` is
+`needs: [pr-fast-lane]`, and that lane runs a pytest suite — **~20 minutes**
+end-to-end including shared-pool queue. `dev` was merging every **~13 minutes**
+that day. Each rebase restarted a 20-minute clock that a 13-minute cadence was
+already beating, so the gate never reported for the commit that was still HEAD.
+It had in fact **passed three times** — for `6ab0cf5e`, `8493ddbf` and
+`92e325ec` — each time finishing after I had already replaced the commit it was
+green for. One run went green six minutes *after* I force-pushed past it.
+
+I spent an hour reporting this as CI queue congestion, citing an existing
+backlog task about exactly that, without once opening
+`.github/workflows/derived-artifacts.yml`. The workflow's own header comment
+documents the same pathology from the cancellation side (TASK-21250: 45
+cancelled / 14 success over 60 runs, a 23% success rate for a required check).
+
+**What to do.** Poll and merge the *instant* the gate is green; never rebase
+pre-emptively. Move HEAD only when GitHub itself reports `BEHIND`, and prefer
+`gh pr update-branch` over a rebase + force-push so the commits stay reviewable.
+Check `gh pr merge --auto` first — it removes your reaction time from the race
+entirely — but confirm it is enabled: `enablePullRequestAutoMerge` is off for
+this repository, which is why the polling loop is necessary here.
+
+**Before blaming shared CI, read the workflow file.** `gh run view <id> --json
+jobs` shows whether the job ran and what it was waiting on, and it is the
+difference between "the queue is slow" and "I keep invalidating my own green
+check".
+
+---
+
+## A mechanism assembled from verified links is still a hypothesis
+
+**Incident.** TASK-26835, 2026-09-01. Chasing the Console's paint stalls, I
+read five Textual internals in source — `call_after_refresh`, the Screen's
+idle handler, `Timer._run`, `App._end_batch`, `App._on_idle` — verified each
+individually, composed them into a "screen frozen until the next input event"
+mechanism, and filed a HIGH task describing it as "verified link by link".
+The reproduction test refuted it the same hour: a bare app recomposing under
+batch paints promptly, because two relays my derivation had missed
+(`Widget.refresh` → widget Idle → `_check_refresh` → `Update`/`Layout` posted
+to the screen) close the loop. A second composed theory — deferred callbacks
+waiting on an ambient tick — died the same way earlier that day.
+
+What settled it was neither derivation: instrumenting the LIVE app to sample
+the actual invariants (`batch_count`, timer paused/running, dirty count, which
+idle branch ran) every 10ms inside stall windows. The real mechanism was
+nested App-level batches held open 250-400ms by tray recompose cascades —
+observable directly as `screen.Idle guarded(batch=3)` and
+`STATE batch=2 dirty=71`, no assembly required.
+
+**What to do.** Source-reading tells you what CAN happen; only a failing
+reproduction or live-state sampling tells you what DOES. Write the failing
+repro BEFORE filing the mechanism as fact — it is also what stops you
+shipping a fix against it. When a composed mechanism spans more than two
+components, prefer instrumenting the running system to derivation: print the
+invariants the theory depends on and let the system disagree. And when the
+repro passes unpatched, say REFUTED in the record, loudly — the plausible
+version left standing costs the next person a day.
+
+---
+
+## Sweep the files that ASSERT on your change, not the files you edited
+
+**Incident.** TASK-25715, 2026-08-31. Across seven batches of Console Context
+rail work I ran the test files I had touched, plus the ones whose names matched
+the widgets I had touched. `Tests/UI/test_workbench_visual_snapshots.py` matched
+neither: it edits nothing, is named after no widget I opened, and asserts on
+whole-screen SVG renders of the Console. It is therefore precisely the file a
+Console UI change breaks.
+
+It went unswept twice. The first time it was holding four failures I had caused,
+undetected across all seven batches. The second time — a post-merge sweep of the
+whole `Tests/UI/` directory, run only because I was closing out the DoD — it
+returned **five** failures where I was tracking two. Bisecting all five showed
+none of the three new ones were mine, but I could not have known that without
+running the file, and the first incident proves the coin lands the other way too.
+
+**What to do.** Build the sweep list from what *asserts on* your change, not from
+what you edited. For UI work that means the snapshot/visual-render files by
+default, whatever they are named. When a change is broad enough to have batches,
+run the whole containing test directory once before opening the PR — it is
+minutes, and it is the only step that catches the file you did not think to name.
+
+**Corollary.** When a sweep returns more failures than you were tracking, bisect
+every one of them before writing any of them off. Three of the five here were
+new since the branch point and two of those three traced to a single commit
+(#2220) — a pattern invisible if you check only the failure you recognise.
+
+---
+
+## Establish that a failure is DETERMINISTIC before bisecting it
+
+**Incident.** TASK-25715, 2026-08-31, immediately after the entry above. Of the
+three failures I bisected there, one was flaky, and the bisect did not tell me
+so — it returned a specific, plausible, wrong commit (`0ef6f3fd4`, #2252), which
+I then published in two PR bodies as an attribution.
+
+A binary search assumes the predicate is a function of the commit. Run once per
+step against a ~1-in-12 flake, it instead converges on wherever the coin landed.
+Measured after the fact: **11 passed / 1 failed of 12 at the very commit the
+search had called FIRST BAD**, and 12/12 at the tip. Even the two failures that
+made me open the investigation were the flake — hit twice while the machine was
+busy running other pytest processes concurrently.
+
+Nothing about the output looked wrong. `GOOD / GOOD / BAD / GOOD` reads exactly
+the same whether the predicate is real or a coin. The two genuinely deterministic
+failures in the same batch re-measured 0/5, and their bisects held.
+
+**What to do.** Before bisecting, run the failing test **N times at the tip and N
+times at the presumed-good base** (N≈10 is cheap for a UI test). Bisect only if
+it is 0/N at one end and N/N at the other. If both ends are mixed, you have a
+flake — a different defect with a different owner, and no commit to blame. After
+a bisect names a commit, confirm by re-running the test several times at that
+commit and its parent; a single run at each is the same coin flip that produced
+the answer.
+
+**And be suspicious of your own machine.** Concurrent test runs raise flake rates
+for timing-sensitive UI tests, so failures observed while sweeps or other bisects
+are running deserve a quiet-machine re-check before they become findings.
+
+---
+
+## Encrypted repository deletion must be tested with stale open instances (TASK-24400, 2026-08-29)
+
+**What happened.** The first Personal Context repository implementation passed
+single-instance key-destruction, reopen, transaction, and plaintext-canary
+tests. An independent review then kept a second repository instance open across
+destruction. That stale instance retained the old encryption and integrity keys
+in memory and could commit a fresh encrypted outbox object after the first
+instance had deleted every row and removed the protected key. The same review
+found a separate first-open race: key creation happened before SQLite schema
+ownership was serialized, so two processes could cache different keys while
+only the last protector write survived.
+
+**What to do.** Treat key custody, durable repository state, and cached process
+state as three separate participants. Serialize first key creation with a
+repository-owned write transaction and recheck schema ownership after taking
+the lock. For deletion, commit a durable generation/destroyed fence inside the
+same transaction that purges content, and check that fence inside every later
+mutation transaction. Test with two simultaneously open repository instances,
+not only close/reopen: a stale writer must either commit before the purge and be
+removed by it, or acquire the lock afterward and be rejected. Also inject a
+protector deletion failure and prove crypto-erasure can be retried without
+re-enabling writes.
+
+---
+
+## A valid questionnaire is not evidence its complete answer set can commit (TASK-24407, 2026-08-29)
+
+**What happened.** The workspace interview's production pack validated every
+question independently, but several questions reused broad topics such as
+`goal`, `working_context`, and `convention`. Proposal conversion reused those
+topics as semantic-key subjects, so answering the whole questionnaire produced
+duplicate keys and the atomic commit failed. Unit tests for individual answers
+and payload types stayed green; the failure appeared only when one test answered,
+reviewed, selected, and committed the complete production pack.
+
+**What to do.** Treat a questionnaire pack as one transactional input, not a
+bag of valid questions. Give each intended record a stable namespaced semantic
+subject, assert the generated semantic keys are unique, and run at least one
+end-to-end test that answers and commits every question in the real pack. This
+is especially important when a compact topic label also participates in record
+identity.
+
+---
+
+## A profiled cost is not a felt cost — re-time hot paths without the profiler
+
+**Incident.** TASK-25888, 2026-08-31, the Console button-latency hunt. cProfile
+showed `Screen._refresh_layout` at 61 ms per rail click, and I built the whole
+"110-165 ms per click" latency model on it — filed in the task description and
+argued to the user. A paired direct measurement (perf_counter around the same
+calls, same harness, no profiler) put layout at **8.5 ms**. The profiler's own
+tracing overhead had inflated the hot path ~7x, and everything downstream of
+that number was proportionally wrong.
+
+Same investigation, two more instrument traps, all three now demonstrated in
+one session:
+
+- **Worker-thread cumtime does not add to the measured path.** The profile
+  showed the config save at 166 ms/press cumulative; stubbing it moved the
+  press median by ~6-11 ms. Concurrent GIL time shows up in cumtime as if it
+  were serial.
+- **Pick the paint that matches the felt thing.** press→FIRST paint said
+  30 ms (measures the ack, misses the bill). press→SETTLED said ~210 ms on
+  both sides of a fix (measures the tail of a trailing reconcile cascade the
+  user never feels). The metric that tracked the fix was **summed main-thread
+  blocking** inside layout+paint per press.
+
+**What to do.** Use cProfile to find WHERE time goes, never to say HOW MUCH:
+before quoting any per-call figure, re-time that call with perf_counter and no
+profiler attached. Report worker-thread work as concurrent, and prove its
+main-thread tax by stubbing it, not by reading cumtime. And when a fix is
+claimed to make something faster, measure the quantity the user feels —
+blocking time, bytes written — with the same instrument on both trees.
+
+---
+
+---
+
+## A deterministic artifact is indistinguishable from a real effect by repetition
+
+**Incident (2026-08-30 holistic perf review, TASK-25811, retracted).** A probe
+reported that a Console -> Library switch spends **71% of its style work on the
+screen being LEFT** — 1,107 applies of 1,577. It reproduced *to the call* across
+three runs (332 / 389 / 1,577 / 384 every time). Reproducibility was cited as the
+reason to trust it, a root cause was written up, a task was filed, and the finding
+was committed and pushed.
+
+It was an artifact. `switch_screen` posts `ScreenResume` to the **new** screen and
+`post_message` is asynchronous. The navigation helper returned as soon as
+`app.screen` changed — before that message drained — so every measurement window
+opened with the **previous** navigation's resume still queued and counted it
+against the switch under test. The screen it named as "being left" was simply the
+screen that had just become current.
+
+Draining messages before each window:
+
+| window | resumes seen | applies | on "outgoing" |
+|---|---|---:|---:|
+| not settled | ChatScreen **and** LibraryScreen | 1,274 | 913 (72%) |
+| settled | LibraryScreen only | 289 | **1 (0%)** |
+
+Node counts also rose (207 -> 265) once settled: the unsettled runs were measuring
+screens **mid-construction**.
+
+**The rule.** Repetition tests for *noise*, not for *bias*. A window that always
+straddles the same two activities always mis-attributes the same way, and looks
+rock solid doing it. To test a measurement's validity you must **change the
+measurement**, not repeat it: settle the system, move the window boundaries, or
+measure the same quantity by an independent route. If three runs agree exactly and
+the number is surprising, suspect the window before believing the finding.
+
+The 2026-08-29 review had already recorded "a measurement window containing two
+activities cannot attribute cost to either". It was quoted in the same document's
+method notes and then violated three sections later — knowing the trap is not the
+same as checking for it.
+
+## Measure parse and boot costs in a COLD SUBPROCESS
+
+**Incident (same review, TASK-25812).** An in-app probe timed a fresh
+`Stylesheet` parsing the 671 KB boot bundle at **0.48 ms** — 1.4 GB/s, which no
+Python tokenizer achieves. Clearing the two module-level caches that could be
+found (`textual.css.parse.parse_selectors`, `is_id_selector`) did not change it.
+The same content in a **cold interpreter** takes **121 ms** (5.5 MB/s, a
+believable rate). Instrumenting the real `Stylesheet.parse` during boot
+independently gave 191 ms, confirming the cold figure.
+
+The fast number very nearly produced the conclusion "boot CSS parse is free",
+which would have closed a real 191 ms finding — ~11-14% of a ~1.7 s cold start.
+
+**The rule.** Anything memoised anywhere in the stack — parser caches, `lru_cache`
+on selector parsing, interned strings, warm `sys.modules` — makes in-process
+"cold" timing meaningless, and you cannot reliably enumerate every cache. Spawn a
+fresh interpreter. **Sanity-check the rate: if a measurement implies more than
+~100 MB/s of Python text processing, it is a cache artefact, not a result.**
+
+## A failure list from a suite you have never run clean attributes nothing
+
+**Incident (same review, verifying a global CSS-application change).** Two long
+sweeps were run to check for regressions — 90 minutes and 33 minutes — producing
+lists of 39-40 failing UI tests. Neither answered the question, because there was
+no baseline: with no clean run to compare against, a failure list says nothing
+about whether *your change* caused any of it. Both were discarded.
+
+What worked was **paired arms**: the same 82 CSS-sensitive test files (1,105
+tests) run twice, ~33 minutes each, once with the change and once with the
+implementation reverted, then diffing the failure sets.
+
+```
+filter ON : 39 failed, 1064 passed
+filter OFF: 40 failed, 1063 passed
+broken by the change: NONE
+pre-existing (both arms): 39
+```
+
+Several failures had looked alarming on the first arm — workbench visual
+snapshots, eight visual-parity tests, CSS contract and build-integrity guards —
+and all of them failed identically without the change.
+
+**Two corollaries.**
+
+* The single test that passed *only* in the changed arm was **not** a fix: it
+  fails 4/4 in isolation with the change installed, and had passed through
+  ordering luck. Do not claim a fix you did not engineer; check the candidate in
+  isolation first.
+* Paying for the baseline arm is the cost of an attributable answer. A cheaper
+  run that cannot attribute is not cheaper — it is worthless.
+
+## A manually pumped component path does not prove production wiring
+
+**TASK-22512 Task 15, 2026-09-01.** Persistent-terminal component tests passed
+because the tests themselves moved bytes between the backend and manager: they
+called the backend reader, offered the bytes to the output actor, took queued
+input, and wrote it back to the backend. No production owner performed those
+steps. The first mounted real-shell proof therefore admitted and rendered a
+Terminal workspace whose queued user input could never reach the PTY and whose
+PTY output could never reach the screen. Adding the app-owned bridge made one
+old native test fail for the opposite reason: its manual reader raced the now
+real production reader and double-offered output.
+
+**What to do.** When a component test connects two layers by hand, inventory
+who owns that connection in production and add one mounted or end-to-end test
+that crosses it without test-side pumping. After the real bridge exists,
+component tests must observe it or use a backend without the runtime protocol;
+they must not become a second runtime.
+
+## Do not block a UI loop on work whose completion posts back to that loop
+
+**TASK-22512 Task 15, 2026-09-01.** The mounted Disarm proof synchronously
+called `wait_for_cleanup` from Textual's event-loop thread. Backend cleanup
+finished quickly in an isolated real-PTY test, but the manager's final
+subscriber notification used Textual's thread-safe UI handoff. The worker
+could not return until the event loop handled that notification, while the
+event loop was blocked waiting for the worker: a deterministic test-created
+deadlock that looked like cleanup exceeding its five-second deadline.
+
+**What to do.** In mounted async tests and production UI handlers, keep
+blocking future/process waits off the event-loop thread. Await the async owner
+API when one exists or move only the blocking wait to a worker thread; then
+assert the UI projection after the loop has had a chance to process the final
+notification.
+
+## A PTY `EIO` is not final EOF while an owned descendant can still write
+
+**TASK-22512 Task 15, 2026-09-01.** The production runtime bridge continuously
+read the macOS PTY master and treated `EIO` after exact shell exit as irreversible
+EOF. A same-session descendant still held the slave, reopened it after the shell
+disappeared, and successfully wrote a delayed cleanup marker. The eager reader had
+already latched EOF, so cleanup reported a complete stream without ever handing the
+marker to the screen. The older component test had hidden this because it stopped
+reading before shell exit and left final draining entirely to cleanup.
+
+**What to do.** A running PTY read may treat `EIO` or an empty read as final only
+after the shell reaper has fired and a complete ownership scan observes no owned
+process. Until then it is backpressure, not proof. Keep the stronger two-scan,
+deadline-bounded process and stream proof in the cleanup owner, and test delayed
+descendant output through the production reader rather than a manually paused one.

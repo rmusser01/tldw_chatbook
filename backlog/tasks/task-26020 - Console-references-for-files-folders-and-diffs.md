@@ -33,13 +33,13 @@ There is no way to put a file into the prompt by name. Verified on origin/dev: a
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Pure parser find_reference_candidates (emails/decorators excluded)\n2. Pure expand_references with injected resolver + git_runner\n3. Impure resolver reusing is_within + allowed_file_roots + sensitive-paths + binary/size guards\n4. run_git_reference for @diff/@staged\n5. Send-path application + transcript records + composer completion = TASK-26044 (app-context)
+1. Pure parser find_reference_candidates (emails/decorators excluded)\n2. Pure expand_references with injected resolver + git_runner\n3. Impure resolver reusing is_within + allowed_file_roots + sensitive-paths + binary/size guards\n4. run_git_reference for @diff/@staged\n5. Send-path application + transcript records + composer completion = TASK-27021 (app-context)
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Shipped the tested @-reference engine; send-path application + completion split to TASK-26044 (app-context, needs live verification).
+Shipped the tested @-reference engine; send-path application + completion split to TASK-27021 (app-context, needs live verification).
 
 Engine (Chat/console_references.py, new):
 - find_reference_candidates: an @ preceded by a word char is an email/handle, excluded (AC#7). Trailing punctuation trimmed.
@@ -47,7 +47,7 @@ Engine (Chat/console_references.py, new):
 - resolve_reference / build_console_reference_resolver: reuses file_operation_tools.is_within + workspace_file_roots.allowed_file_roots(write=False) + Utils.sensitive_paths -> a reference can never read what the file tools cannot (AC#3, tested against a real tmp root incl. outside-roots refusal). Binary (NUL/non-text ratio) and >256KB files are refused (AC#4). Nonexistent -> literal.
 - run_git_reference: git diff / git diff --staged in the launch cwd, output-bounded (AC#2).
 
-Fully met at the engine level: AC#3 (roots/sensitive), AC#4 (binary/size), AC#7 (non-reference @ untouched). AC#1/#2/#6 are engine-complete; applying the expansion to the draft before send + rendering the records in the transcript is TASK-26044. AC#5 (composer completion) is TASK-26044.
+Fully met at the engine level: AC#3 (roots/sensitive), AC#4 (binary/size), AC#7 (non-reference @ untouched). AC#1/#2/#6 are engine-complete; applying the expansion to the draft before send + rendering the records in the transcript is TASK-27021. AC#5 (composer completion) is TASK-27021.
 
 Tests: Tests/Chat/test_console_references.py (19: parser email/decorator/line-range, expander file/folder/diff/staged/refused, resolver against a real tmp workspace incl. outside-roots/binary/oversized refusal).
 

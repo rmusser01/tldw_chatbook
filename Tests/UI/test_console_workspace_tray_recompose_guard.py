@@ -145,20 +145,36 @@ async def test_a_structural_change_still_recomposes():
 
 @pytest.mark.asyncio
 async def test_a_text_only_change_still_recomposes():
-    """The guard is not "structure only" -- any value change repaints.
+    """The guard is not "structure only" -- any RENDERED value change repaints.
 
-    A heading change moves no click target, but the tray renders it, so
-    skipping would leave stale text on screen. The structural signature is an
-    ADDITIONAL requirement on top of value equality, never a replacement for it.
+    A text change moves no click target, but the tray renders it, so skipping
+    would leave stale text on screen. The structural signature is an
+    ADDITIONAL requirement on top of value equality, never a replacement.
+
+    TASK-26836 revision: this test originally changed ``heading`` -- but this
+    tray is built with ``show_heading=False``, so that field is provably
+    never rendered here and the read-aware guard now (correctly) skips it;
+    ``test_console_tray_read_aware_recompose.py`` pins that skip. The
+    text-only field used must be one this tray's DOM was actually built
+    from: the browser's selected-conversation summary line.
     """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
     async with host.run_test(size=APP_SIZE) as pilot:
         _console, tray = await _settled_tray(host, pilot)
+        browser = tray.state.conversation_browser
+        assert browser is not None
 
         with _RecomposeCounter() as counter:
-            tray.sync_state(replace(tray.state, heading="Changed heading"))
+            tray.sync_state(
+                replace(
+                    tray.state,
+                    conversation_browser=replace(
+                        browser, selected_summary="Changed summary line"
+                    ),
+                )
+            )
             assert counter.calls == 1
 
 

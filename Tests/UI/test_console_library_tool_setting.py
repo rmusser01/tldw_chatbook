@@ -390,7 +390,7 @@ async def test_settings_library_rag_renders_separate_provider_mode_selector(
         # Provider mode is visibly subordinate to Allowed access and cannot
         # be mistaken for either per-conversation policy axis.
         assert "Automatic retrieval" in text
-        assert "Assistant Library access" in text
+        assert "Agent Library access" in text
         assert screen.query_one(
             "#settings-library-rag-console-defaults-card"
         ).border_title == "New Console conversations"

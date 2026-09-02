@@ -3304,7 +3304,7 @@ def test_mcp_rows_carry_their_call_id_so_two_targets_are_two_decisions():
     from tldw_chatbook.Chat.console_chat_controller import _collect_mcp_pending
 
     class _Provider:
-        def pending_gate_for(self, llm_name, args, call_id=""):
+        def pending_gate_for(self, llm_name, args, call_id="", rationale=""):
             return MCPPendingCall(
                 llm_name=llm_name,
                 server_key="local:fs",
@@ -3312,6 +3312,7 @@ def test_mcp_rows_carry_their_call_id_so_two_targets_are_two_decisions():
                 server_label="FS",
                 arguments=dict(args or {}),
                 call_id=call_id,
+                rationale=rationale,
                 reason="ask",
             )
 

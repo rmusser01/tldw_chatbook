@@ -6,9 +6,10 @@ Console is the app's chat and agent workbench: you talk to your configured
 provider here, stage Library sources and RAG evidence into the
 conversation, run agents in parallel tabs, and approve or deny the actions
 those runs request. Advanced users can also run an explicitly armed, user-only
-raw host command without involving a model. Reach for it to send a message,
-drive a live run, or hand work off between your sources and a model. This page is the
-orientation tour; the details live on six child pages:
+raw host command or open a separately armed persistent Terminal without
+involving a model. Reach for Console to send a message, drive a live run, hand
+work off between your sources and a model, or use a real interactive shell.
+This page is the orientation tour; the details live on the child pages:
 
 - [Chat basics](console/chat-basics.md) — compose, send, stream, stop, act on messages.
 - [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md) — tab strip, "Switch Session", conversation browser, workspaces.
@@ -527,7 +528,8 @@ operation immediately, no restart needed.
 
 - **Settings ▸ Console Behavior** — parallel-run limit, paste collapse, and
   other Console preferences. **Settings ▸ Privacy & Security** owns the saved
-  raw CLI unlock and this launch's Arm/Disarm controls.
+  raw CLI unlock plus independent per-launch Arm/Disarm controls for raw CLI
+  and Terminal.
 - `config.toml`: `[chat_defaults]` (default provider/model/sampling),
   `[api_settings.*]` (per-provider keys, endpoints, streaming — the modern
   form; an explicit key here now outranks that provider's environment
@@ -535,7 +537,8 @@ operation immediately, no restart needed.
   lowest precedence of the three, normalized once at load into the same
   credential both this screen's readiness check and Library's RAG Answer
   gate use), `[console]` and `[console.background_effects]` (paste
-  collapse, ambience, and the false-by-default `raw_cli_permitted` unlock),
+  collapse, ambience, and the false-by-default shared
+  `raw_cli_permitted` unlock; Terminal's arm and sessions are never saved),
   `[chat.images]` (attachments), `[general]` `default_tab` (start
   here) and `focus_mode` (start the Console chrome-free every
   launch — the config-file twin of `--focus`).

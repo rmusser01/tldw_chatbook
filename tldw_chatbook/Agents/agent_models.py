@@ -10,7 +10,8 @@ import hashlib
 import json
 import math
 import re
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import dataclass, field, replace
 from typing import Callable, Literal, TypeAlias
 
 from tldw_chatbook.Chat.provider_continuation import (
@@ -230,6 +231,67 @@ class ToolSchema:
     parameters: dict
 
 
+#: ADR-090: cap for rationale text captured at parse time (tail-biased).
+RATIONALE_CAPTURE_CAP = 500
+
+_RATIONALE_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_RATIONALE_WHITESPACE = re.compile(r"\s+")
+
+
+def normalize_rationale(text: object, cap: int = RATIONALE_CAPTURE_CAP) -> str:
+    """Normalize model-authored advisory text for display-surface transit.
+
+    Untrusted-content hygiene (ADR-090 §Security): strip control characters,
+    collapse all whitespace to single spaces, and cap length keeping the
+    TAIL (the end of a preamble is the part adjacent to the tool call; the
+    head is often an unrelated answer to the user), prefixing an ellipsis
+    when truncated.
+
+    Args:
+        text: Raw model-authored text of any type; non-strings degrade to "".
+        cap: Maximum length of the returned string, including the ellipsis.
+
+    Returns:
+        The normalized string, at most ``cap`` characters, or "".
+    """
+    if not isinstance(text, str):
+        return ""
+    cleaned = _RATIONALE_WHITESPACE.sub(
+        " ", _RATIONALE_CONTROL_CHARS.sub(" ", text)
+    ).strip()
+    if not cleaned:
+        return ""
+    if len(cleaned) > cap:
+        return "\N{HORIZONTAL ELLIPSIS}" + cleaned[-(cap - 1) :]
+    return cleaned
+
+
+def with_preamble_rationale(
+    calls: Sequence[ToolCall], preamble: str
+) -> tuple[ToolCall, ...]:
+    """Attach a turn's preamble text as the rationale of calls lacking one.
+
+    The hybrid rule (ADR-090): an explicit fence ``rationale`` key wins, so
+    calls that already carry a rationale pass through untouched; everything
+    else (native turn text, fence preamble) fills in from ``preamble``.
+
+    Args:
+        calls: The turn's parsed tool calls.
+        preamble: The model's visible text for the turn (native text or the
+            fence's preceding text).
+
+    Returns:
+        Tuple of calls with preamble-derived rationale applied.
+    """
+    normalized = normalize_rationale(preamble)
+    if not normalized:
+        return tuple(calls)
+    return tuple(
+        call if call.rationale else replace(call, rationale=normalized)
+        for call in calls
+    )
+
+
 @dataclass(frozen=True)
 class ToolLoadSelection:
     """Side-effect-free outcome of resolving one catalog working-set request."""
@@ -246,6 +308,11 @@ class ToolCall:
     args: dict
     call_id: str = ""
     raw_arguments: str = ""
+    #: ADR-090: the model's own stated reason for this call (explicit fence
+    #: ``rationale`` key, else the turn's preamble text). Advisory display
+    #: data for the approval card ONLY -- never persisted, never serialized
+    #: into durable captures, never an input to any security verdict.
+    rationale: str = ""
 
 
 @dataclass(frozen=True)
@@ -608,6 +675,9 @@ class AgentConfig:
             with launch-relative, never absolute, paths). Empty for the default
             workspace, so the common case adds nothing. Carried on the config
             so it propagates verbatim onto spawned sub-agents' configs.
+        personal_context_block: Immutable, already-authorized user-owned data
+            block appended to every model request in this run tree. Empty by
+            default so existing request bytes are unchanged.
         response_reserve_tokens: Non-negative output-token capacity excluded
             from project-instruction input admission.
     """
@@ -618,6 +688,7 @@ class AgentConfig:
     budget: RunBudget = field(default_factory=RunBudget)
     native_tools: bool = True
     workspace_context_note: str = ""
+    personal_context_block: str = ""
     response_reserve_tokens: int = 2048
 
     def __post_init__(self) -> None:

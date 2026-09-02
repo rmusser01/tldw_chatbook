@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import replace
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -863,3 +864,343 @@ async def test_build_console_cost_state_includes_a_survivors_post_turn_spend():
         state = console._build_console_cost_state()
         assert state is not None
         assert "Sub-agents: 1.3k tok (not priced)" in state.tooltip
+
+
+# --- task-25836: first-send context/tool/draft rows -------------------------
+#
+# The chip's running total ignored everything a FIRST send actually ships
+# (session system prompt, tool schemas, the draft itself), so a brand-new
+# conversation with a typed draft still read "0 tok" until the first reply
+# landed. The fold-in is first-send-only: once a reply (or any usage row)
+# exists, the chip reverts to the running-total semantics.
+
+
+_DEMO_TOOL_SCHEMA = {
+    "name": "demo_tool",
+    "description": "does demo things",
+    "parameters": {"type": "object", "properties": {}},
+}
+
+
+def _first_send_tool_bridge():
+    """Stub agent bridge: the real native schemas for the fold-in, plus a
+    permissive fallback for the OTHER bridge surfaces the Console sync
+    paths touch on a tick (e.g. ``subagent_counts``) -- a bare
+    SimpleNamespace made those workers raise ``AttributeError``."""
+
+    class _BridgeStub:
+        def native_tool_schemas(self):
+            return [_DEMO_TOOL_SCHEMA]
+
+        def subagent_counts(self, conversation_ids):
+            return {}
+
+        def __getattr__(self, name):
+            # Unknown bridge surface: callable returning an empty mapping
+            # keeps tick-path consumers happy without encoding each one.
+            def _empty(*_args, **_kwargs):
+                return {}
+
+            return _empty
+
+    return _BridgeStub()
+
+
+def _row_roles(rows) -> list[str]:
+    return [str(getattr(row.role, "value", row.role)) for row in rows]
+
+
+@pytest.mark.asyncio
+async def test_first_send_pseudo_rows_absent_while_draft_is_blank():
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        assert console._console_first_send_pseudo_rows() == []
+        state = console._build_console_cost_state()
+        assert state is not None
+        assert "Tokens: 0" in state.tooltip
+
+
+@pytest.mark.asyncio
+async def test_first_send_pseudo_rows_carry_system_tools_and_draft():
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        console._session._apply_console_session_system_prompt(
+            "You are a thorough assistant. " * 5
+        )
+        console._ensure_console_agent_bridge = _first_send_tool_bridge
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello, this is my first message")
+
+        rows = console._console_first_send_pseudo_rows()
+        roles = _row_roles(rows)
+        contents = [row.content for row in rows]
+        assert all(getattr(row, "usage", "missing") is None for row in rows)
+        system_contents = [
+            content for role, content in zip(roles, contents) if role == "system"
+        ]
+        assert any("thorough assistant" in content for content in system_contents)
+        assert any('"demo_tool"' in content for content in system_contents)
+        assert any(
+            role == "user" and "first message" in content
+            for role, content in zip(roles, contents)
+        )
+
+        state = console._build_console_cost_state()
+        assert state is not None
+        assert "Tokens: 0" not in state.tooltip
+        assert state.label.startswith("~")
+
+
+@pytest.mark.asyncio
+async def test_first_send_pseudo_rows_draft_only_without_prompt_or_tools():
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("just a draft")
+
+        rows = console._console_first_send_pseudo_rows()
+        assert _row_roles(rows) == ["user"]
+        assert "just a draft" in rows[0].content
+
+
+@pytest.mark.asyncio
+async def test_first_send_pseudo_rows_stop_once_a_reply_exists():
+    gateway = _AnthropicCostGateway(PRICED_USAGE, reply="the priced answer")
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _send_and_settle(console, pilot, "hello", "the priced answer")
+
+        before = console._build_console_cost_state()
+        assert before is not None
+
+        # Everything the fold-in would count, queued behind a finished reply:
+        # none of it may leak into the conversation's running total.
+        console._session._apply_console_session_system_prompt(
+            "You are a thorough assistant. " * 20
+        )
+        console._ensure_console_agent_bridge = _first_send_tool_bridge
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("a queued follow-up message " * 100)
+
+        assert console._console_first_send_pseudo_rows() == []
+
+        after = console._build_console_cost_state()
+        assert after is not None
+
+        def _tokens_line(state):
+            return next(
+                line
+                for line in state.tooltip.splitlines()
+                if line.startswith("Tokens:")
+            )
+
+        assert _tokens_line(after) == _tokens_line(before)
+
+
+@pytest.mark.asyncio
+async def test_console_next_send_token_estimate_counts_context_not_just_draft():
+    """task-25836: the estimate wired into the inspector's Next Send header
+    must count the assembled payload (system prompt + draft turn), not the
+    draft text alone -- the first-message case where the gap is largest."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
+    from tldw_chatbook.Utils.token_counter import estimate_tokens
+
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        session_id = store.active_session_id or store.ensure_session(
+            title="First message"
+        ).id
+        console._session._apply_console_session_system_prompt(
+            "You are a thorough assistant. " * 5
+        )
+        await pilot.pause()
+
+        snapshot = await controller.build_context_snapshot(
+            draft="hello there", session_id=session_id
+        )
+        estimate = console._console_next_send_token_estimate(snapshot)
+
+        draft_only = estimate_tokens("hello there", "", "")
+        assert estimate is not None
+        assert estimate > draft_only
+
+        degraded = ConsoleContextSnapshot(
+            current_messages=[], next_send_payload={"error": "boom"}
+        )
+        assert console._console_next_send_token_estimate(degraded) is None
+
+
+# --- Qodo review fixes (task-25836 round 2) ---------------------------------
+
+
+@pytest.mark.asyncio
+async def test_first_send_pseudo_rows_skip_draft_once_it_is_the_trailing_row():
+    """Qodo finding 2 (High): during the mouse-send window the real user
+    row is already in the store while the composer draft is not yet
+    cleared -- the draft pseudo-row must be dropped, not double-counted."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello, this is my first message")
+        store.append_message(
+            session_id,
+            role=ConsoleMessageRole.USER,
+            content="hello, this is my first message",
+        )
+        await pilot.pause()
+
+        rows = console._console_first_send_pseudo_rows()
+        assert all(
+            not (row.role == "user" and "first message" in str(row.content))
+            for row in rows
+        ), f"draft re-added next to its own persisted row: {rows}"
+        # The persisted user row itself is what the chip prices for the
+        # draft now -- the fold-in may still carry system/tools context.
+        state = console._build_console_cost_state()
+        assert state is not None
+
+
+@pytest.mark.asyncio
+async def test_first_send_pseudo_rows_include_prefill_and_memory_projection():
+    """Qodo finding 1: the fold-in must reuse the controller's own
+    effective-memory and prefill projections instead of under-counting a
+    configured session."""
+    from types import SimpleNamespace as _NS
+
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        controller = console._ensure_console_chat_controller()
+        store.set_session_one_shot_prefill(session_id, "Sure thing:")
+
+        original_projection = controller._project_session_effective_memory
+        controller._project_session_effective_memory = (
+            lambda sid, rows: (
+                None,
+                _NS(memory=[{"role": "system", "content": "MEMORY FACTS"}]),
+            )
+        )
+        try:
+            composer = console.query_one(
+                "#console-native-composer", ConsoleComposerBar
+            )
+            composer.load_draft("hello")
+            rows = console._console_first_send_pseudo_rows()
+        finally:
+            controller._project_session_effective_memory = original_projection
+
+        contents = [str(row.content) for row in rows]
+        assert any("MEMORY FACTS" in content for content in contents)
+        assert any(
+            row.role == "assistant" and "Sure thing:" in str(row.content)
+            for row in rows
+        )
+
+
+@pytest.mark.asyncio
+async def test_next_send_estimate_gates_staged_evidence_on_session():
+    """Qodo finding 4: staged evidence belongs to the ACTIVE session; an
+    estimate captured for a different session must not splice it in."""
+    from tldw_chatbook.Chat.citation_evidence_models import (
+        EvidenceBundle,
+        EvidenceReference,
+    )
+    from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
+    from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+
+    app = _build_test_app()
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+
+        big_reference = EvidenceReference(
+            evidence_id="S1",
+            source_id="media-1",
+            source_type="media",
+            title="Big corpus",
+            snippet="staged evidence text " * 5_000,
+            authority_label="local",
+            status="available",
+            source_owner="local",
+        )
+        bundle = EvidenceBundle(
+            bundle_id="bundle-gate",
+            query="question",
+            source="Library Search/RAG",
+            references=(big_reference,),
+        )
+        launch = ConsoleLiveWorkLaunch.from_values(
+            source="Library Search/RAG",
+            title="Library Search/RAG retrieval",
+            payload={"query": "question", "evidence_bundle": bundle.to_payload()},
+            status="staged",
+        )
+        console._retrieval._stage_console_library_rag_launch(launch)
+        await pilot.pause()
+
+        snapshot = ConsoleContextSnapshot(
+            current_messages=[],
+            next_send_payload={
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+        active_id = store.active_session_id
+        with_staging = console._console_next_send_token_estimate(
+            snapshot, session_id=active_id
+        )
+        without_staging = console._console_next_send_token_estimate(
+            snapshot, session_id="a-different-session"
+        )
+
+        assert with_staging is not None and without_staging is not None
+        assert with_staging > without_staging

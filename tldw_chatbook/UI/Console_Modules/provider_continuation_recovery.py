@@ -113,9 +113,17 @@ class TraceCallRecoveryCallout(Vertical):
     """Terminal-native warning with explicit, focusable recovery actions."""
 
     BUNDLED_CSS = """
+    /* TASK-25830: `height: auto` was unbounded, so at 80x24 -- the default
+       terminal size -- this card grew until NO transcript was visible and the
+       user was asked to choose an action without being able to see the message
+       it applied to. Bounded to just over half the region and scrolled inside
+       that bound; Textual scrolls a focused button into view, so keyboard
+       traversal still reaches every action. */
     TraceCallRecoveryCallout {
         width: 100%;
         height: auto;
+        max-height: 60%;
+        overflow-y: auto;
         border: round $warning;
         background: $boost;
         color: $text;
@@ -138,10 +146,12 @@ class TraceCallRecoveryCallout(Vertical):
         height: auto;
         margin-top: 1;
     }
+    /* A trailing row under each of four buttons is four rows of a 24-row
+       screen; the buttons' own borders already separate them. */
     TraceCallRecoveryCallout Button {
         width: 100%;
         min-width: 20;
-        margin-bottom: 1;
+        margin-bottom: 0;
     }
     """
 

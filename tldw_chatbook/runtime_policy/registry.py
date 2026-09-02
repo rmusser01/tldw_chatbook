@@ -630,12 +630,7 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("outputs.render_jobs", actions=(LIST, DETAIL, LAUNCH, OBSERVE)),
         ),
     ),
-    # task-1337 (plan Task 9): policy home for the local Library Collections
-    # agent tools (`library_list/search/get_collection`). Dedicated local-only
-    # list/detail resource -- deliberately NOT mapped onto
-    # `collections.reading_list.*`, whose CRUD surface models the read-it-later
-    # feature, not read-only agent retrieval over Library collections.
-    # chunking-agent-tools (Tasks 4-5, spec §6): the same capability is the
+    # chunking-agent-tools (Tasks 4-5, spec §6): this stable capability is the
     # local Library agent-tools policy home -- `library.templates/save` backs
     # `library_save_chunk_spec` over the v7 template store (deliberately NOT
     # `rag.template.*`, the RAG-admin UI seam's verbs, ADR-003 ownership),
@@ -648,11 +643,10 @@ AUDITED_CAPABILITY_SEEDS = (
     # model the screen's row operations; this is the Library write surface).
     _capability(
         "library_collections",
-        "Library Collections & agent tools (local)",
+        "Library agent tools (local)",
         "library_collections",
         sources=LOCAL_ONLY_SOURCES,
         resources=(
-            _resource("library.collections", actions=(LIST, DETAIL)),
             _resource("library.templates", actions=(SAVE,)),
             _resource("library.media", actions=(RECHUNK,)),
             _resource("library.notes", actions=(SAVE,)),
@@ -1152,8 +1146,10 @@ AUDITED_CAPABILITY_SEEDS = (
             # server's definitions and triggering a manual run are distinct
             # from workflow jobs -- the notifications.reminders resource
             # covers reminder CRUD, this one covers the agent-automation
-            # control plane.
-            _resource("scheduler.automations", actions=(LIST, LAUNCH)),
+            # control plane. CONFIGURE (schedules-handoff PR-3) gates
+            # reviewing a result's review_state/note -- a metadata mutation,
+            # not a launch or a list, same class as reminder CRUD.
+            _resource("scheduler.automations", actions=(LIST, LAUNCH, CONFIGURE)),
         ),
     ),
     _capability(

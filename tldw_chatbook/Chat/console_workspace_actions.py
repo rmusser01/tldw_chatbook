@@ -3,8 +3,8 @@
 TASK-23200 gave the Context rail's conversation rows an asterisk that opens a
 paged action menu; TASK-25709 made that menu dismissable everywhere. This
 module extends the same pattern to the Workspaces tree's workspace nodes:
-an asterisk that opens Activate / New chat / Rename… / RAG scope… / More ▸
-Archive.
+an asterisk that opens Activate / New chat / Show files / Rename… / RAG
+scope… / More ▸ Archive.
 
 Everything here is pure: given what is true of one workspace, return the
 items to paint. No DOM, no database, no service lookups -- so the menu's
@@ -29,6 +29,7 @@ MenuPage = Literal["root", "more"]
 #: screen handler and the tests all name them the same way.
 ACTION_ACTIVATE = "activate"
 ACTION_NEW_CHAT = "new-chat"
+ACTION_SHOW_FILES = "show-files"
 ACTION_RENAME = "rename"
 ACTION_RAG_SCOPE = "rag-scope"
 ACTION_ARCHIVE = "archive"
@@ -74,11 +75,15 @@ class WorkspaceMenuTarget:
         name: Current workspace name, for notifications.
         is_active: Whether this workspace is the active one. Drives the
             Activate entry's current-mark/gating and the RAG scope gate.
+        files_available: Whether the last off-loop binding snapshot found a
+            local folder. Preserved on the menu target so a stale click can
+            open the inspector's pinned recovery state without retargeting.
     """
 
     workspace_id: str
     name: str = ""
     is_active: bool = False
+    files_available: bool = False
 
 
 def build_workspace_menu(
@@ -112,6 +117,7 @@ def _root_page(
             is_current=target.is_active,
         ),
         WorkspaceMenuItem(action_id=ACTION_NEW_CHAT, label="New chat"),
+        WorkspaceMenuItem(action_id=ACTION_SHOW_FILES, label="Show files"),
         WorkspaceMenuItem(action_id=ACTION_RENAME, label="Rename…"),
         WorkspaceMenuItem(
             action_id=ACTION_RAG_SCOPE,

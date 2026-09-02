@@ -67,6 +67,8 @@ class SettingsAppearanceDefaults:
     library_reader_library_width: int = LIBRARY_REFERENCE_WIDTH
     library_media_items_open: bool = True
     library_media_items_width: int = ITEMS_TARGET_WIDTH
+    library_collections_items_open: bool = True
+    library_collections_items_width: int = ITEMS_TARGET_WIDTH
     library_conversations_items_open: bool = True
     library_conversations_items_width: int = ITEMS_TARGET_WIDTH
     library_notes_items_open: bool = True
@@ -182,7 +184,14 @@ def load_appearance_defaults(
 
     destination_readers = {
         name: destination_reader(f"{name}_reader")
-        for name in ("media", "conversations", "notes", "prompts", "skills")
+        for name in (
+            "media",
+            "collections",
+            "conversations",
+            "notes",
+            "prompts",
+            "skills",
+        )
     }
     notes_reader = _mapping_child(library, "notes_reader")
     files_tree_width = notes_reader.get("files_tree_width")
@@ -245,6 +254,10 @@ def load_appearance_defaults(
         library_reader_library_width=shared_width,
         library_media_items_open=destination_readers["media"].items_open,
         library_media_items_width=destination_readers["media"].items_width,
+        library_collections_items_open=destination_readers["collections"].items_open,
+        library_collections_items_width=destination_readers[
+            "collections"
+        ].items_width,
         library_conversations_items_open=(
             destination_readers["conversations"].items_open
         ),
@@ -352,6 +365,11 @@ def validate_appearance_defaults(
             values.library_media_items_width,
         ),
         (
+            "Collections Items",
+            values.library_collections_items_open,
+            values.library_collections_items_width,
+        ),
+        (
             "Conversations Items",
             values.library_conversations_items_open,
             values.library_conversations_items_width,
@@ -434,7 +452,14 @@ def build_appearance_save_sections(
         }
     )
     library["reader"] = reader
-    for destination in ("media", "conversations", "notes", "prompts", "skills"):
+    for destination in (
+        "media",
+        "collections",
+        "conversations",
+        "notes",
+        "prompts",
+        "skills",
+    ):
         section_name = f"{destination}_reader"
         destination_reader = dict(deepcopy(_mapping_child(library, section_name)))
         destination_reader.update(

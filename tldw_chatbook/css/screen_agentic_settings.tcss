@@ -1,0 +1,1064 @@
+/* ========================================
+ * GENERATED FILE - DO NOT EDIT DIRECTLY
+ * ========================================
+ * settings-owned rules split out of components/_agentic_terminal.tcss
+ * by build_css.py (TASK-25812). Loaded via the owning screen's CSS_PATH,
+ * so these bytes are parsed on first visit instead of before first paint.
+ * Edit components/_agentic_terminal.tcss and re-run build_css.py.
+ * ======================================== */
+
+$ds-surface-panel: $panel;
+$ds-surface-raised: $surface;
+$ds-surface-inspector: $surface;
+$ds-grid-line: $surface-lighten-1;
+$ds-column-line: $surface-lighten-2;
+$ds-text-primary: $text;
+$ds-text-muted: $text-muted;
+$ds-text-disabled: $text-disabled;
+$ds-action-focus: $primary;
+$ds-focus-fg: $ds-text-primary;
+$ds-focus-bg: #51677e;
+$ds-focus-accent: $primary;
+$ds-input-focus-border: $primary;
+$ds-input-focus-bg: $ds-focus-bg;
+$ds-input-focus-accent: $primary;
+$ds-control-edge: $surface-lighten-2;
+$ds-status-ready: $success;
+$ds-status-running: $primary;
+$ds-status-info: $accent;
+$ds-status-warning: $warning;
+$ds-status-approval-required: $warning;
+$ds-status-blocked: $error;
+$ds-status-error: $error;
+$ds-status-error-readable: #ff8fa3;
+$ds-text-placeholder: #8a8a8a;
+$ds-text-disabled-readable: #8a8a8a;
+$ds-status-paused: $warning;
+$ds-status-unsaved: $warning;
+$ds-status-recovered: $success;
+$ds-authority-local: $success;
+$ds-authority-server: $primary;
+$ds-authority-workspace: $accent;
+$ds-authority-remote-only: $warning;
+$ds-source-role-context: $accent;
+$ds-source-role-evidence: $accent;
+$ds-source-role-editable-target: $warning;
+$ds-source-role-output-seed: $secondary;
+
+$ds-chat-user-accent: $text-primary;
+$ds-chat-user-accent-dark: #8bd5ff;
+$ds-chat-user-accent-light: #004d6d;
+$ds-chat-assistant-accent-dark: #ffc473;
+$ds-chat-assistant-accent-light: #704000;
+$ds-chat-rp-speech-dark: #8bd5ff;
+$ds-chat-rp-speech-light: #004d6d;
+$ds-chat-rp-thought-dark: #2dd4bf;
+$ds-chat-rp-thought-light: #0b5d4a;
+$ds-chat-rp-action-dark: #d7b2ff;
+$ds-chat-rp-action-light: #5e3578;
+$ds-chat-rp-strong-dark: #fff0a6;
+$ds-chat-rp-strong-light: #665000;
+$ds-destination-header-height: 1;
+$ds-destination-compact-strip-height: 1;
+$ds-home-dashboard-grid-height: 18;
+$ds-home-control-button-height: 1;
+$ds-home-compact-row-height: 1;
+$ds-home-followup-row-height: 6;
+$ds-console-workspace-grid-height: 1fr;
+$ds-console-composer-height: 1;
+$ds-library-mode-chip-height: 1;
+$ds-library-mode-chip-min-width: 10;
+$ds-library-source-action-width: auto;
+$ds-library-source-action-min-width: 0;
+$ds-library-source-action-height: 1;
+$ds-library-source-browser-width: 31;
+
+
+.tldw-agentic-split-preamble-end { }
+
+
+#settings-category-pane {
+    width: 30;
+    max-width: 34;
+    /* min-width (task-1342): worst label is "> Privacy & Security *" (22
+       cells) plus Button line-pad (2), border (2), padding (2), list
+       scrollbar (1) and pane border (2) -- 31; width:30 alone clips the
+       dirty "*" marker off edited categories. */
+    min-width: 32;
+    overflow-y: hidden;
+    overflow-x: hidden;
+}
+
+#settings-category-list {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    /* task-1712: $ds-grid-line blended into the panel, hiding that four
+       categories sit below the fold on common heights -- the overflow
+       cue must actually read as one. */
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+/* Qodo PR #1147: both panes are fixed-header-over-scroll-body now (the
+   detail pane since task-1716, the impact pane since task-1560) -- the
+   scrollbar theming has to sit on the -body children that actually
+   scroll, or the real scroll containers render stock scrollbars. The
+   outer panes keep only their column width and clip. */
+#settings-detail-pane {
+    width: 6fr;
+    overflow-y: hidden;
+    overflow-x: hidden;
+}
+
+#settings-impact-pane {
+    /* min-width: longest inspector word is "Read-only/WIP;" (14 cells) plus
+       border (2), padding (2), scrollbar (1) and row padding (2), so words
+       wrap on whitespace instead of folding mid-word (task-1342). */
+    width: 2fr;
+    min-width: 21;
+    overflow-y: hidden;
+    overflow-x: hidden;
+}
+
+#settings-detail-pane-body,
+#settings-impact-pane-body {
+    width: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+/* Narrow-width compact workbench (task-1342), following the personas
+   precedent (personas-workbench-compact): at <=100 cols the 3:6:2 split
+   leaves slivers, so the category pane becomes a fixed-width sidebar, the
+   inspector pane and its divider drop out, and the detail pane takes the
+   rest. The search help/status rows hide so category rows stay visible at
+   24-row heights. */
+#settings-workbench.settings-workbench-compact {
+    padding: 0;
+}
+
+#settings-category-pane.settings-workbench-compact-pane {
+    width: 32;
+    min-width: 32;
+    padding: 0 1;
+}
+
+#settings-detail-pane.settings-workbench-compact-pane {
+    width: 1fr;
+    min-width: 0;
+    padding: 0 1;
+}
+
+#settings-impact-pane.settings-workbench-compact-pane,
+#settings-workbench.settings-workbench-compact #settings-detail-impact-divider {
+    display: none;
+}
+
+#settings-workbench.settings-workbench-compact .settings-category-search-help,
+#settings-workbench.settings-workbench-compact .settings-category-search-status {
+    display: none;
+}
+
+/* Settings density: the workbench panes themselves carry borders and
+   padding, so the frame would only double them up. */
+#settings-workbench {
+    padding: 0;
+    border: none;
+}
+
+.settings-active-section {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+Button.settings-category-button {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+    padding: 0 1;
+    /* Textual 8 Buttons default to line-pad: 1, reserving one cell on each
+       side of the label (line-pad: 0 is not expressible in CSS). The
+       #settings-category-pane min-width absorbs those 2 cells so labels
+       never wrap into this clipped second line (task-1342). */
+    content-align: left middle;
+    text-align: left;
+    background: $ds-surface-panel;
+}
+
+Button.settings-category-button.settings-active-section {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+Button.settings-category-button:focus {
+    outline: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+Button.settings-category-button.settings-active-section:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+Button.settings-category-button.settings-active-section:hover,
+Button.settings-category-button.settings-active-section:hover:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+Button.settings-category-button.settings-primary-search-match {
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+Button.settings-category-button.settings-secondary-search-match {
+    color: $ds-text-muted;
+}
+
+#settings-category-search {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+    padding: 0 1;
+    /* No border: at height 1 a border would clip the content row. The
+       raised background carries the "this is a field" affordance, and
+       focus/active below swap background+weight only, so the strip never
+       changes height (stable-border-geometry contract). */
+    border: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#settings-category-search:focus {
+    border: none;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+    text-style: bold;
+    outline: none;
+}
+
+#settings-category-search.settings-category-search-active {
+    border: none;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+}
+
+.settings-category-search-help {
+    width: 100%;
+    min-height: 1;
+    padding: 0 1;
+    margin: 0 0 1 0;
+    color: $ds-text-muted;
+}
+
+.settings-category-search-status {
+    width: 100%;
+    min-height: 2;
+    padding: 0 1;
+    margin: 0 0 1 0;
+    color: $ds-text-primary;
+    background: $ds-surface-panel;
+}
+
+.settings-search-empty {
+    width: 100%;
+    min-height: 3;
+    padding: 1;
+    margin: 1 0 0 0;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-muted;
+}
+
+#settings-shell Button:focus,
+#settings-shell Button:hover:focus {
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold underline;
+    outline: none;
+}
+
+.settings-category-group-title {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    margin: 0;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+/* Collapsible rail-group toggle (Domain Defaults): renders like a group
+   heading but behaves like the compact category buttons. */
+Button.settings-category-group-toggle {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    content-align: left middle;
+    text-align: left;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+Button.settings-category-group-toggle:focus {
+    outline: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.settings-state-banner {
+    width: 100%;
+    min-height: 1;
+    padding: 0 1;
+    margin: 0;
+    /* task-1625: the State strip reads as a raised status surface (the
+       task-345 focus steel at low alpha), not another flat prose row --
+       it now leads with the persistence badge (task-1717), so it earns
+       the emphasis. */
+    background: $ds-focus-bg 30%;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.settings-detail-row {
+    width: 100%;
+    min-height: 1;
+    padding: 0 1;
+    margin: 0;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+/* The narrow Scope Inspector keeps the airy row rhythm: its prose wraps at
+   ~30 columns, so the blank line between rows earns its keep there (and
+   the F6 fold-geometry contract measures against it). */
+#settings-impact-pane .settings-detail-row {
+    margin: 0 0 1 0;
+}
+
+.settings-input-row {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+}
+
+/* The provider search is content-sized, while its OptionList owns a bounded
+   scrolling viewport. Explicit sizing keeps following fields in document
+   order at both the standard and compact Settings workbench widths. */
+#settings-provider-picker-block {
+    width: 100%;
+    height: auto;
+    min-height: 9;
+}
+
+#settings-provider-picker {
+    width: 100%;
+    height: 6;
+    min-height: 6;
+    max-height: 6;
+}
+
+.settings-select-row {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    margin: 0;
+}
+
+.settings-compact-input {
+    width: 1fr;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0 1;
+    /* task-1586 control convention: the one-column left edge marks "this
+       row is editable" at rest; full borders stay off because they cost
+       a row above and below on these one-row fields. */
+    border: none;
+    border-left: solid $ds-control-edge;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+}
+
+.settings-compact-input:focus {
+    border: none;
+    border-left: thick $ds-action-focus;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    /* No underline: it made placeholder copy read as a link (task-185). */
+    text-style: bold;
+    outline: none;
+}
+
+.settings-compact-input.settings-invalid-input,
+.settings-compact-select.settings-invalid-input {
+    background: $ds-status-error 18%;
+    color: $ds-text-primary;
+    text-style: bold;
+    outline: none;
+}
+
+.settings-compact-input.settings-invalid-input:focus,
+.settings-compact-select.settings-invalid-input:focus {
+    /* task-1369: keep the error tint while focused so the invalid marker is
+       not lost; slightly stronger than the unfocused 18% to still read as
+       focused. */
+    background: $ds-status-error 28%;
+    color: $ds-text-primary;
+    text-opacity: 1;
+    text-style: bold;
+    outline: none;
+}
+
+.settings-compact-select {
+    width: 1fr;
+    height: 3;
+    min-height: 3;
+    margin: 0;
+    padding: 0;
+    border: solid $ds-grid-line;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+}
+
+.settings-compact-select > SelectCurrent {
+    width: 1fr;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+    content-align: left middle;
+}
+
+.settings-compact-select:focus {
+    border: solid $ds-action-focus;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+    outline: none;
+}
+
+.settings-compact-select:focus > SelectCurrent {
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.settings-compact-select > SelectOverlay {
+    padding: 0 1;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    min-width: 30;
+}
+
+.settings-compact-select > SelectOverlay Option {
+    padding: 0 2;
+    min-height: 3;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+}
+
+.settings-compact-select > SelectOverlay Option:hover {
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+}
+
+.settings-provider-manual-hidden {
+    display: none;
+}
+
+/* task-189: generation-profile rows a provider does not support are hidden
+   entirely; the Generation defaults disclosure shows one summary line instead
+   of per-row "Unavailable for <provider>" placeholders. */
+.settings-gated-profile-hidden {
+    display: none;
+}
+
+.settings-status-row {
+    width: 100%;
+    min-height: 1;
+    padding: 0 1;
+    margin: 0;
+    background: $ds-surface-inspector;
+    color: $ds-text-muted;
+}
+
+/* task-1341: intentional instant-apply controls are visually separated from
+   staged fields with a bordered group plus an inline italic hint.
+   task-1367: explicit height:auto -- the default Vertical 1fr never resolves
+   inside the auto-height providers card and clipped every control. */
+.settings-instant-apply-group {
+    height: auto;
+    border: solid $ds-column-line;
+    background: $ds-surface-panel;
+    padding: 0 1;
+}
+
+.settings-instant-apply-hint {
+    color: $ds-text-muted;
+    text-style: italic;
+    padding: 0 1;
+}
+
+.settings-storage-check-result {
+    min-height: 7;
+}
+
+.settings-dirty-category {
+    color: $ds-status-unsaved;
+    text-style: bold;
+}
+
+/* RAG profile-manager region (task-2): read-only note for a built-in active
+   profile -- attention-worthy like #library-skill-warnings above, not muted
+   like the surrounding .settings-status-row lines. */
+.settings-library-rag-readonly-banner {
+    color: $ds-status-warning;
+    text-style: bold;
+}
+
+/* RAG profile editor (task-3 review): reranker top-k vs default-results
+   advisory -- same attention-worthy treatment as the readonly banner above.
+   Purely informational (never gates Save; see soft_config_warnings). */
+.settings-library-rag-soft-warning {
+    color: $ds-status-warning;
+    text-style: bold;
+}
+
+/* Task 4 (541 v2 UX AC1): profile-picker PREVIEW banner -- shown only while
+   the editor is displaying a browsed, non-active profile read-only. Same
+   attention-worthy treatment as the readonly banner above (hidden by
+   default via Static.display, toggled by _set_library_rag_preview_banner). */
+.settings-library-rag-preview-banner {
+    color: $ds-status-warning;
+    text-style: bold;
+}
+
+.settings-rag-profile-modal {
+    width: 60;
+    height: auto;
+    padding: 1 2;
+    border: thick $ds-action-focus;
+    background: $ds-surface-panel;
+}
+
+.settings-speech-credential-modal {
+    width: 70;
+    max-width: 90%;
+    height: auto;
+    padding: 1 2;
+    border: thick $ds-action-focus;
+    background: $ds-surface-panel;
+}
+
+/* task-2835: keyboard-reachable mirror of the focused control's tooltip,
+   one muted line pinned under the Settings workbench. */
+#settings-focus-help {
+    height: 1;
+    padding: 0 1;
+    color: $ds-text-muted;
+    background: $ds-surface-panel;
+}
+
+.settings-focus-card {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    margin: 0 0 1 0;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+}
+
+/* RAW CLI DANGER GATE START */
+.settings-raw-cli-danger {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    padding: 1;
+    border: solid $surface-lighten-2;
+    background: $surface;
+}
+
+.settings-raw-cli-danger.settings-raw-cli-armed {
+    border: solid $error;
+    background: $error 10%;
+}
+
+#settings-raw-cli-title,
+#settings-raw-cli-state,
+.settings-raw-cli-disclosure,
+#settings-raw-cli-immediate {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+    text-wrap: wrap;
+}
+
+#settings-raw-cli-title,
+#settings-raw-cli-state {
+    color: $error;
+    text-style: bold;
+}
+
+.settings-raw-cli-disclosure {
+    color: $text;
+    margin: 0 0 1 0;
+}
+
+#settings-raw-cli-permitted {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+}
+
+.settings-raw-cli-action-row {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 0;
+}
+
+#settings-raw-cli-immediate {
+    color: $text-muted;
+}
+
+#settings-shell Button#settings-raw-cli-arm {
+    width: 100%;
+    min-width: 0;
+    height: 3;
+    min-height: 3;
+    margin: 0;
+    border: none;
+    outline: none;
+    background: $error 20%;
+    color: $text;
+    text-style: bold;
+}
+
+#settings-shell Button#settings-raw-cli-arm:focus,
+#settings-shell Button#settings-raw-cli-arm:hover,
+#settings-shell Button#settings-raw-cli-arm:hover:focus {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    margin: 0;
+    border: none;
+    outline: none;
+    background: $error 20%;
+    color: $text;
+    text-style: bold underline;
+}
+
+/* App-tier Legible Disabled: Textual's Button dimming compounds with the
+   theme's disabled opacity. The label itself states the recovery action,
+   while the inert surface remains visibly distinct and above the measured
+   3:1 disabled-label contrast floor. */
+#settings-shell Button#settings-raw-cli-arm:disabled,
+#settings-shell Button#settings-raw-cli-arm:disabled:hover,
+#settings-shell Button#settings-raw-cli-arm:disabled:hover:focus {
+    opacity: 100%;
+    text-opacity: 100%;
+    text-style: none;
+    color: $text;
+    background: $surface-darken-1;
+    border: none;
+    outline: none;
+}
+/* RAW CLI DANGER GATE END */
+
+#settings-advanced-config-card {
+    height: 1fr;
+    min-height: 0;
+}
+
+.settings-secondary-card {
+    /* task-1625: border titles ("Profiles") were dim grey on the border
+       line -- near-invisible in the critique captures. */
+    border-title-color: $ds-text-primary;
+    border-title-style: bold;
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    margin: 0 0 1 0;
+    border: solid $ds-column-line;
+    background: $ds-surface-panel;
+}
+
+/* Task 5 (541 v2 UX AC5): first-run starter panel -- replaces the "wall of
+   disabled fields" a brand-new install used to show with a direct next
+   step (Clone/Backfill). Accent border (same treatment as
+   .settings-rag-profile-modal above) so it reads as the primary call to
+   action, not just another secondary card. Hidden by default via
+   Static.display, toggled by `_refresh_rag_first_run_panel_state`/composed
+   directly by `_render_library_rag_detail`. */
+.settings-library-rag-starter-panel {
+    border: thick $ds-action-focus;
+}
+
+#settings-console-behavior-card {
+    min-height: 12;
+}
+
+.settings-action-row {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+}
+
+.settings-action-row Button {
+    height: 1;
+    min-height: 1;
+    margin: 0 1 0 0;
+}
+
+.settings-action-row Button:focus,
+#settings-impact-pane Button:focus {
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold underline;
+    outline: none;
+}
+
+/* UX review item 7 (delete danger styling): visually separate the RAG
+   profile-manager's destructive Delete button from the other three
+   (Set active/Clone/Rename) in the same row -- variant="error" alone
+   (settings_screen.py) gives it distinct color, but it still read as just
+   another button in the row without the extra gap. */
+.settings-library-rag-profile-delete-button {
+    margin-left: 2;
+}
+
+.settings-sync-safety-row {
+    width: 100%;
+    padding: 0 1;
+    background: $ds-surface-raised;
+}
+
+.settings-advanced-safety-status {
+    background: $ds-status-unsaved 10%;
+    color: $ds-status-unsaved;
+    text-style: bold;
+}
+
+#settings-advanced-config-editor {
+    height: 1fr;
+    min-height: 10;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+}
+
+/* Settings > Image Gen: the whole panel and its nested backend-editor
+   scroll region default to Textual's framework-level width/height
+   fallback (1fr) since neither `Vertical`/`VerticalScroll` declares one
+   in DEFAULT_CSS for a widget shaped like this -- fine for a SINGLE
+   dominant 1fr child (see InternalPromptsPanel's #internal-prompts-list),
+   but this panel has MANY siblings (Backends block, the backend-editor
+   region, Generation defaults, Style templates, Save/Revert) all
+   competing for the SAME bounded 1fr height, which starved the backend-
+   editor region down to ~1 row (verified live: region height 1 vs
+   virtual_size height 46) and clipped everything below it (Generation
+   defaults, Save/Revert) off the bottom entirely -- `settings-detail-
+   pane` (the ancestor Settings already scrolls the WHOLE category
+   through) is the one and only scroll owner here. */
+#settings-imagegen-panel {
+    height: auto;
+}
+
+#settings-imagegen-editor {
+    height: auto;
+}
+
+/* Settings > Speech & TTS: the Settings detail pane is the single scroll
+   owner. The panel must grow to its content instead of becoming a hidden-
+   overflow 1fr viewport that strands Save below the terminal. */
+#settings-speech-tts-panel {
+    height: auto;
+}
+
+.settings-speech-provider-form,
+.settings-speech-credential,
+.settings-speech-control-stack {
+    width: 100%;
+    height: auto;
+}
+
+/* Mode-specific audio.cpp groups remain mounted so switching modes preserves
+   focus and dormant values. They must size to their content; Textual's
+   Vertical default of 1fr would otherwise add hundreds of blank rows and
+   strand Save below the Settings scroll owner. */
+#settings-speech-audio-cpp-external-fields,
+#settings-speech-audio-cpp-managed-fields,
+#settings-speech-audio-cpp-managed-lifecycle-fields,
+#settings-speech-audio-cpp-manual-json-fields,
+#settings-speech-audio-cpp-guided-fields,
+#settings-speech-audio-cpp-guided-advanced-fields,
+.settings-speech-audio-cpp-packages,
+.settings-speech-audio-cpp-package-row {
+    width: 100%;
+    height: auto;
+}
+
+.settings-speech-audio-cpp-package-row {
+    min-height: 1;
+    margin: 1 0;
+    padding: 0 1;
+    background: $ds-surface-panel;
+}
+
+.settings-speech-audio-cpp-package-copy {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+}
+
+.settings-speech-audio-cpp-package-remove {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    margin: 1 0 0 0;
+}
+
+/* Field errors live below their control. As a third child of a Horizontal,
+   the shared width:100% status row reduced otherwise usable controls to two
+   cells even while empty. */
+.settings-speech-input-row {
+    height: auto;
+    min-height: 1;
+    align: left top;
+}
+
+.settings-speech-input-row.settings-select-row {
+    min-height: 3;
+}
+
+.settings-speech-field-error {
+    display: none;
+    width: 100%;
+    min-height: 1;
+    margin: 0;
+    color: $ds-status-error;
+}
+
+.settings-speech-field-error-visible {
+    display: block;
+}
+
+.settings-speech-path-control {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+}
+
+.settings-speech-path-control .settings-compact-input {
+    width: 1fr;
+}
+
+.settings-speech-path-picker {
+    width: auto;
+    min-width: 9;
+    height: 1;
+    min-height: 1;
+    margin: 0 0 0 1;
+}
+
+.settings-speech-stacked .settings-speech-input-row {
+    layout: vertical;
+    height: auto;
+    min-height: 3;
+    margin-bottom: 1;
+}
+
+.settings-speech-stacked #settings-speech-actions {
+    layout: vertical;
+    height: 4;
+}
+
+.settings-speech-stacked #settings-speech-actions Button {
+    width: 100%;
+    min-width: 0;
+    margin-right: 0;
+}
+
+#settings-speech-details,
+#settings-speech-scope-inspector {
+    width: 100%;
+    height: auto;
+    min-height: 3;
+    margin: 1 0 0 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+}
+
+#settings-speech-inspector {
+    width: 100%;
+    height: auto;
+}
+
+#settings-speech-details > CollapsibleTitle,
+#settings-speech-scope-inspector > CollapsibleTitle {
+    width: 100%;
+    min-width: 0;
+    height: 3;
+    min-height: 3;
+    padding: 1;
+}
+
+#settings-speech-details > Contents,
+#settings-speech-scope-inspector > Contents {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    background: transparent;
+}
+
+/* One row per backend inside the Backends block -- label, status badge,
+   Enabled checkbox, default marker, Test button. height:auto (not the
+   base .settings-input-row's fixed height:1) so the row never clips a
+   wrapped Checkbox/Button. */
+.settings-imagegen-backend-row {
+    width: 100%;
+    height: auto;
+    min-height: 3;
+    margin: 0 0 1 0;
+    align: left middle;
+}
+
+/* min-width 6 (not Button's own default 16) + no left margin: at a
+   120-column launch the "Preference Detail" pane is only ~53 columns
+   wide, and this row packs 5 pieces (label, badge, checkbox, default
+   marker, Test) -- every column here is contested (verified live:
+   without this, the DEFAULT backend's row -- the one carrying "★
+   Default" -- clipped Test entirely off the visible/clickable area). */
+.settings-imagegen-backend-row Button {
+    height: 1;
+    min-height: 1;
+    min-width: 6;
+    margin: 0;
+}
+
+/* _conversations.tcss's bare `Checkbox { width: 100%; height: 2; }` is an
+   unscoped TYPE selector that reaches every Checkbox app-wide (verified
+   live: region.width computed to the ROW's full width, overlapping/
+   clipping the marker and Test button that come after it in the SAME
+   row) -- override both Enabled checkboxes (one per backend row) and the
+   standalone "Context LLM enabled" checkbox back to a natural, single-
+   line size within this panel specifically; never touching that shared
+   global rule, which other screens may rely on. The backend-row Checkbox
+   also drops its horizontal padding (unlike the roomier standalone
+   context_llm_enabled one) -- same narrow-terminal column budget as the
+   Button rule above. */
+.settings-imagegen-backend-row Checkbox {
+    width: auto;
+    height: 1;
+    min-height: 1;
+    margin-bottom: 0;
+    border: none;
+    padding: 0;
+}
+
+
+
+#settings-imagegen-context_llm_enabled {
+    width: auto;
+    height: 1;
+    min-height: 1;
+    margin-bottom: 0;
+    border: none;
+    padding: 0 1;
+}
+
+/* No horizontal padding (final review): "Not configured" (14 chars) is
+   the longest value this ever holds -- padding just wasted 2 more
+   contested columns in the narrow-terminal row budget above. */
+.settings-imagegen-badge {
+    width: auto;
+    min-width: 14;
+    color: $ds-text-muted;
+}
+
+/* No min-width (final review): reserving 10 columns even when this row
+   isn't the default (the common case -- 5 of 6 rows) was pure waste on a
+   narrow terminal, where every column in a backend row is contested; let
+   it shrink to 0 for an empty marker and grow only for "★ Default". */
+.settings-imagegen-default-marker {
+    width: auto;
+    color: $ds-status-info;
+    text-style: bold;
+}
+
+.settings-imagegen-hint {
+    width: 100%;
+    min-height: 1;
+    padding: 0 1;
+    margin: 0 0 1 0;
+    color: $ds-text-muted;
+}
+
+.settings-imagegen-key-source {
+    color: $ds-status-warning;
+}
+
+/* Task 5: the secret field's row grows an inline Clear button next to the
+   masked Input -- Button's own default min-width (16) plus the fixed-
+   width label would overflow the base .settings-input-row's width:100%/
+   height:1 (no wrap headroom), so this row gets its own auto-height class
+   and the Clear button gets a narrower min-width. */
+.settings-imagegen-secret-row {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+}
+
+.settings-imagegen-secret-row Button.settings-imagegen-clear-button {
+    width: auto;
+    min-width: 8;
+    height: 1;
+    min-height: 1;
+    margin: 0 0 0 1;
+}
+
+/* SwarmUI's swarm_token is optional for local installs -- its "missing"
+   source line must not read as an error like the four remote API keys. */
+.settings-imagegen-key-source-neutral {
+    color: $ds-text-muted;
+}

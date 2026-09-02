@@ -69,6 +69,8 @@ if TYPE_CHECKING:
     )
 
 from loguru import logger
+
+from tldw_chatbook.Utils.persistent_diagnostics import persist_event
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 
@@ -579,7 +581,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 63  # Auxiliary-attempt ledger accepts 'timed_out'.
+    _CURRENT_SCHEMA_VERSION = 64  # Auxiliary-attempt ledger accepts 'timed_out' (after v63 trace-graph GC).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -3378,6 +3380,19 @@ UPDATE db_schema_version
             authorization, _SemanticMutationAuthorization
         ):
             raise RuntimeError("semantic_mutation_connection_mismatch")
+        return authorization
+
+    def _trace_gc_deletion_authorization_for_collector(
+        self, connection: sqlite3.Connection
+    ) -> _SemanticMutationAuthorization:
+        """Return the private epoch-validated trace deletion capability."""
+
+        current = self.get_connection()
+        authorization = getattr(self._local, "semantic_mutation_authorization", None)
+        if connection is not current or not isinstance(
+            authorization, _SemanticMutationAuthorization
+        ):
+            raise RuntimeError("trace_gc_connection_mismatch")
         return authorization
 
     @staticmethod
@@ -7453,15 +7468,14 @@ UPDATE db_schema_version
                 f"{type(exc).__name__}"
             ) from exc
 
-
     def _migrate_from_v62_to_v63(self, conn: sqlite3.Connection) -> None:
-        """Widen the auxiliary-attempt status CHECK to accept 'timed_out'."""
+        """Install epoch-safe semantic trace GC metadata and delete guards."""
 
         self._require_migration_entry_version(conn, 62, "V62→V63")
         migration_path = (
             Path(__file__).parent
             / "migrations"
-            / "chachanotes_v62_to_v63_auxiliary_timed_out_status.sql"
+            / "chachanotes_v62_to_v63_console_trace_gc_guard.sql"
         )
         try:
             with self.transaction() as cursor:
@@ -7470,6 +7484,8 @@ UPDATE db_schema_version
                     migration_path.read_text(encoding="utf-8"),
                     "V62→V63",
                 )
+                if cursor.execute("PRAGMA foreign_key_check").fetchall():
+                    raise SchemaError("Console trace GC migration foreign key audit failed")
                 version_cursor = cursor.execute(
                     "UPDATE db_schema_version SET version = 63 "
                     "WHERE schema_name = ? AND version = 62",
@@ -7483,12 +7499,48 @@ UPDATE db_schema_version
                 raise SchemaError(
                     f"[{self._SCHEMA_NAME} V62→V63] Migration version check failed"
                 )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V62 to V63 failed for '{self._SCHEMA_NAME}': "
+                f"{type(exc).__name__}"
+            ) from exc
+
+    def _migrate_from_v63_to_v64(self, conn: sqlite3.Connection) -> None:
+        """Widen the auxiliary-attempt status CHECK to accept 'timed_out'."""
+
+        self._require_migration_entry_version(conn, 63, "V63→V64")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v63_to_v64_auxiliary_timed_out_status.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V63→V64",
+                )
+                version_cursor = cursor.execute(
+                    "UPDATE db_schema_version SET version = 64 "
+                    "WHERE schema_name = ? AND version = 63",
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V63→V64] Migration version update was not applied"
+                    )
+            if self._get_db_version(conn) != 64:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V63→V64] Migration version check failed"
+                )
         except SchemaError:
             raise
         except Exception as exc:
             raise SchemaError(
-                f"Migration from V62 to V63 failed for '{self._SCHEMA_NAME}': {exc}"
+                f"Migration from V63 to V64 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -7630,9 +7682,9 @@ UPDATE db_schema_version
                 # read this method's docstring first.
 
                 if current_db_version == target_version:
-                    if current_db_version >= 56:
+                    if current_db_version >= 58:
                         self._repair_missing_notes_organization_sync_ids(conn)
-                    if current_db_version >= 57:
+                    if current_db_version >= 58:
                         self._ensure_notes_organization_link_lookup_indexes(conn)
                     self._ensure_notes_fts_update_trigger_handles_undelete(conn)
                     logger.debug(
@@ -7704,6 +7756,7 @@ UPDATE db_schema_version
                     60: self._migrate_from_v60_to_v61,
                     61: self._migrate_from_v61_to_v62,
                     62: self._migrate_from_v62_to_v63,
+                    63: self._migrate_from_v63_to_v64,
                 }
 
                 if current_db_version == 0:
@@ -7748,6 +7801,33 @@ UPDATE db_schema_version
                 f"db_sha256={self._db_diagnostic_ref} "
                 f"exception_type={type(e).__name__}"
             )
+            # TASK-25816: Console tells the user to "check the app log for the
+            # database error", but PersistentDiagnosticFilter admits only
+            # records marked by persist_event -- an ordinary logger.error above
+            # never reaches that file, so the instruction led nowhere. The
+            # filter is a deliberate privacy boundary (exception text can carry
+            # paths and secrets), so this emits the fault as METADATA ONLY:
+            # error class and a quick_check verdict, never the message.
+            try:
+                # Deliberately NO probe query here. Re-entering the connection
+                # from inside a failed __init__ deadlocked
+                # test_unopenable_database_still_sends_a_temporary_conversation.
+                # `sqlite3.DatabaseError` with a malformed image is the
+                # repairable shape (an index rebuild fixes it); classify from
+                # the exception alone and keep this path allocation-free.
+                text = str(e).lower()
+                repairable = "malformed" in text or "corrupt" in text
+                persist_event(
+                    "database",
+                    "database_open_failed",
+                    level=logging.ERROR,
+                    schema=self._SCHEMA_NAME,
+                    error_type=type(e).__name__,
+                    repairable=repairable,
+                )
+            except Exception:
+                # Diagnostics must never replace the original failure.
+                pass
             raise SchemaError(
                 f"Schema initialization/migration for '{self._SCHEMA_NAME}' failed: {e}"
             ) from e

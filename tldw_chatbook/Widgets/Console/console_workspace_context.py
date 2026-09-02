@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 from typing import Any, Literal
 
 from rich.cells import cell_len
@@ -31,6 +33,7 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
 from tldw_chatbook.Workspaces.display_state import (
     ConsoleWorkspaceContextState,
 )
+from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 
@@ -508,6 +511,46 @@ class ConsoleWorkspaceStatusPair(Horizontal):
         yield value_widget
 
 
+class _ComposeReadView:
+    """Attribute-recording view of the tray state, live only during compose.
+
+    TASK-26836: ``_can_skip_recompose`` used whole-state value equality, so a
+    delta in a field this tray's ``content`` never renders (probe-observed:
+    ``conversation_browser`` pushed into the ``content="workspace"`` tray)
+    still forced a full recompose -- and its paint-blocking App batch. The
+    tray now records which top-level state fields ``compose`` actually reads,
+    exactly as it already records the row signature of what it builds, and
+    the guard skips when only unread fields changed.
+
+    The view delegates everything to the real state; reads observed while it
+    is live can only ADD fields to the recorded set, so interleaved readers
+    during a compose window bias toward recomposing more, never less.
+    """
+
+    __slots__ = ("_target", "_reads")
+
+    def __init__(self, target: object, reads: set) -> None:
+        object.__setattr__(self, "_target", target)
+        object.__setattr__(self, "_reads", reads)
+
+    def __getattr__(self, name: str):
+        if not name.startswith("_"):
+            self._reads.add(name)
+        return getattr(self._target, name)
+
+    def __eq__(self, other: object) -> bool:
+        return self._target == getattr(other, "_target", other)
+
+    def __ne__(self, other: object) -> bool:
+        return not self.__eq__(other)
+
+    def __bool__(self) -> bool:
+        return self._target is not None
+
+    def __repr__(self) -> str:
+        return f"_ComposeReadView({self._target!r})"
+
+
 class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     """Render workspace selection, conversation scope, and recovery copy."""
 
@@ -529,6 +572,14 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     _composed_fixed_signature: tuple[str, ...] | None = None
     #: Live collector for the compose pass currently running, or None.
     _composing_fixed_signature: list[str] | None = None
+
+    class WorkspaceFilesRequested(Message):
+        """Typed request to inspect one stable workspace without activation."""
+
+        def __init__(self, workspace_id: str, *, expected_available: bool = False) -> None:
+            super().__init__()
+            self.workspace_id = str(workspace_id or "").strip()
+            self.expected_available = bool(expected_available)
 
     class Relabeled(Message):
         """Posted after a width-driven relabel recompose.
@@ -558,6 +609,12 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             **kwargs: Additional arguments forwarded to Textual's ``Vertical``.
         """
         super().__init__(**kwargs)
+        # TASK-26836: `state` is a property. `_state_field_reads` is a live
+        # set only while compose runs; `_composed_state_reads` is the frozen
+        # record of which top-level fields the LAST completed compose read.
+        self._state: Any = None
+        self._state_field_reads: set[str] | None = None
+        self._composed_state_reads: frozenset[str] | None = None
         self.state = state
         self.show_heading = show_heading
         self.content = content
@@ -592,6 +649,18 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
 
         self.call_after_refresh(self._fit_height_to_content)
 
+    @property
+    def state(self) -> Any:
+        """The tray's display state; records field reads during compose."""
+        reads = self._state_field_reads
+        if reads is None or self._state is None:
+            return self._state
+        return _ComposeReadView(self._state, reads)
+
+    @state.setter
+    def state(self, value: Any) -> None:
+        self._state = value
+
     def sync_state(self, state: ConsoleWorkspaceContextState) -> None:
         """Refresh the mounted workspace context tray from new display state.
 
@@ -621,6 +690,11 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         # a recompose already latched) fails that proof and recomposes
         # exactly as before.
         if self._can_skip_recompose(state):
+            # TASK-26836: adopt the state even when the DOM needs no rebuild
+            # (the delta may live entirely in fields this tray never
+            # renders); otherwise the same unread delta re-diffs forever and
+            # the screen-side equality skip never re-arms.
+            self.state = state
             return
         self.state = state
         self.styles.min_height = 0
@@ -696,8 +770,24 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             return False
         if not self.is_mounted or not self.children:
             return False
-        if state != self.state:
-            return False
+        if state != self._state:
+            # TASK-26836: not value-equal -- but a recompose is only owed if
+            # a field the last completed compose actually READ changed. The
+            # read set is recorded at compose time (see `compose`), so this
+            # cannot go stale against compose edits; with no record, fall
+            # back to recomposing, exactly as before.
+            reads = self._composed_state_reads
+            if reads is None:
+                return False
+            for field_info in dataclasses.fields(state):
+                name = field_info.name
+                if name in reads and getattr(state, name) != getattr(
+                    self._state, name
+                ):
+                    return False
+            # Only unrendered fields changed: the mounted DOM provably does
+            # not depend on this delta. Fall through to the DOM signature
+            # proof (condition 6) before skipping.
         mounted_rows, mounted_fixed = self._mounted_signatures(composed_fixed)
         return mounted_rows == composed_rows and mounted_fixed == composed_fixed
 
@@ -1199,10 +1289,13 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         # None, which forbids skipping.
         collected: list[tuple[str, str]] = []
         collected_fixed: list[str] = []
+        state_reads: set[str] = set()
         self._composing_row_signature = collected
         self._composing_fixed_signature = collected_fixed
         self._composed_row_signature = None
         self._composed_fixed_signature = None
+        self._state_field_reads = state_reads
+        self._composed_state_reads = None
         try:
             if self.show_heading:
                 yield self._record_composed_node(
@@ -1221,8 +1314,16 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                     show_selected_summary=self.content == "session"
                 )
 
-            browser = self.state.conversation_browser
-            if self.content in {"all", "conversations"} and browser is not None:
+            # TASK-26836: read the browser state only when this content mode
+            # renders it -- the read set drives the recompose guard, and an
+            # unconditional read here made the workspaces tray rebuild for
+            # every browser delta (the probe-observed wasted batch).
+            browser = (
+                self.state.conversation_browser
+                if self.content in {"all", "conversations"}
+                else None
+            )
+            if browser is not None:
                 yield from self._compose_conversation_browser(
                     browser,
                     show_heading=self.content == "all",
@@ -1236,8 +1337,10 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         finally:
             self._composing_row_signature = None
             self._composing_fixed_signature = None
+            self._state_field_reads = None
         self._composed_row_signature = tuple(collected)
         self._composed_fixed_signature = tuple(collected_fixed)
+        self._composed_state_reads = frozenset(state_reads)
 
     def _compose_workspace_context(self) -> ComposeResult:
         """Render active workspace identity and workspace-scoped actions.
@@ -1321,6 +1424,33 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         # workspace rows open the workspace action menu -- the same
         # one-asterisk-per-row pattern the grouped browser adopted in
         # TASK-23200. The ``s`` star-toggle binding on the tree remains.
+
+        # This is deliberately its own row: the primary workspace action row
+        # is geometry constrained and cannot safely absorb another control.
+        # Keep it adjacent to the primary actions so keyboard traversal reaches
+        # Show Files before the workspace search/status controls.
+        with self._record_composed_node(
+            Horizontal(
+                id="console-workspace-files-row",
+                classes="console-workspace-action-row",
+            )
+        ):
+            files_button = Button(
+                "Show Files",
+                id="console-workspace-files-open",
+                classes="console-workspace-action",
+                compact=True,
+            )
+            files_button.workspace_id = self.state.workspace_id
+            files_button.workspace_files_expected_available = bool(
+                self.state.workspace_files_available
+            )
+            files_button.tooltip = (
+                "Show files for this workspace"
+                if self.state.workspace_files_available
+                else "No local folders are attached. Add one in Settings."
+            )
+            yield self._record_composed_node(files_button)
 
         yield self._record_composed_node(
             ConsoleBrowserSearchInput(
@@ -1692,6 +1822,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 compact=True,
             )
             toggle.group_id = group.group_id
+            toggle.styles.width = 3
+            toggle.styles.min_width = 3
+            toggle.styles.max_width = 3
             # TASK-1233 AC#1: same collapsed/capped aggregate-marker split
             # as the label above, decoded into the already-existing toggle
             # tooltip rather than a new tooltip surface.
@@ -1703,6 +1836,24 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 f"{action_verb} {group.label}", header_marker
             )
             yield toggle
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Translate the active workspace's Show Files control into a typed intent."""
+        button_id = str(event.button.id or "")
+        if button_id != "console-workspace-files-open":
+            return
+        event.stop()
+        workspace_id = str(
+            getattr(event.button, "workspace_id", "") or DEFAULT_WORKSPACE_ID
+        ).strip()
+        self.post_message(
+            self.WorkspaceFilesRequested(
+                workspace_id,
+                expected_available=bool(
+                    getattr(event.button, "workspace_files_expected_available", False)
+                ),
+            )
+        )
 
     def _compose_conversation_browser_row(
         self,
@@ -1806,6 +1957,10 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             menu_button.tooltip = f"Actions for {title}"
             menu_button.row_key = row.row_key
             menu_button.conversation_id = row.conversation_id
+            # PR #2262 review: Copy-as-markdown reads open native sessions
+            # live; the asterisk needs the same identity the row button
+            # carries, or unsaved rows gate Copy as empty.
+            menu_button.native_session_id = row.native_session_id
             menu_button.starred = row.starred
             menu_button.marks_available = marks_available
             menu_button.conversation_title = row.title

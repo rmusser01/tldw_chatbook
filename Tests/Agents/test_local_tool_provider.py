@@ -1,3 +1,4 @@
+import copy
 import json
 import logging
 import os
@@ -609,6 +610,107 @@ def test_local_executor_boundary_failures_map_to_pinned_refusals(
     assert not result.ok and result.outcome == "blocked"
     assert result.error == expected
     assert executor.calls == [("fs_list", {"path": "."}, "read")]
+
+
+@pytest.mark.parametrize(
+    ("code", "expected_reason", "expected_error", "expected_outcome"),
+    (
+        (
+            "root_pin_failed",
+            local_tool_provider.LocalToolInvocationReason.ROOT_CHANGED,
+            LOCAL_ROOT_CHANGED_REFUSAL,
+            "blocked",
+        ),
+        (
+            "containment_unavailable",
+            local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
+            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+            "blocked",
+        ),
+        (
+            "spawn_failed",
+            local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
+            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+            "blocked",
+        ),
+        (
+            "cleanup_unproven",
+            local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
+            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+            "blocked",
+        ),
+        (
+            "worker_timed_out",
+            local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
+            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+            "blocked",
+        ),
+        (
+            "worker_crashed",
+            local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
+            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+            "blocked",
+        ),
+        (
+            "worker_failure",
+            local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
+            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+            "blocked",
+        ),
+        (
+            "protocol_failure",
+            local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
+            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+            "blocked",
+        ),
+        (
+            "invalid_request",
+            local_tool_provider.LocalToolInvocationReason.HANDLER_RAISED,
+            "workspace operation failed (invalid_request)",
+            None,
+        ),
+        (
+            "tool_failure",
+            local_tool_provider.LocalToolInvocationReason.HANDLER_RAISED,
+            "workspace operation failed (tool_failure)",
+            None,
+        ),
+    ),
+)
+def test_workspace_executor_detailed_reason_matches_ordinary_result(
+    tmp_path,
+    code,
+    expected_reason,
+    expected_error,
+    expected_outcome,
+):
+    detailed_executor = RecordingWorkspaceExecutor(error=code)
+    ordinary_executor = RecordingWorkspaceExecutor(error=code)
+    detailed_provider = make_provider(
+        root=tmp_path,
+        workspace_executor=detailed_executor,
+    )
+    ordinary_provider = make_provider(
+        root=tmp_path,
+        workspace_executor=ordinary_executor,
+    )
+    arguments = {"path": "."}
+
+    detailed = detailed_provider.invoke_detailed(
+        "local:fs_list", copy.deepcopy(arguments)
+    )
+    ordinary = ordinary_provider.invoke("local:fs_list", copy.deepcopy(arguments))
+
+    assert ordinary == detailed.result
+    assert detailed.result.error == expected_error
+    assert detailed.result.outcome == expected_outcome
+    assert detailed.reason_code is expected_reason
+    assert detailed.dispatch_started
+    assert (
+        detailed.provider_terminal is local_tool_provider.LocalProviderTerminal.RAISED
+    )
+    assert detailed_executor.calls == [("fs_list", {"path": "."}, "read")]
+    assert ordinary_executor.calls == [("fs_list", {"path": "."}, "read")]
 
 
 def test_local_executor_domain_failure_text_is_redacted_and_bounded(tmp_path):
@@ -1615,6 +1717,244 @@ def test_invoke_unknown_tool(tmp_path):
     assert not r.ok and "Unknown local tool" in r.error
 
 
+def _probe_provider(tmp_path, handler, **kwargs):
+    return make_provider(
+        root=tmp_path,
+        specs=[
+            LocalToolSpec(
+                name="probe",
+                description="Structured invocation probe",
+                parameters={"type": "object"},
+                handler=handler,
+                exposure=LocalToolExposure.CONSOLE_ONLY,
+                approval_effects=(),
+            )
+        ],
+        **kwargs,
+    )
+
+
+def test_invoke_detailed_distinguishes_pre_dispatch_reasons(tmp_path):
+    def unresolved(_hub):
+        raise RuntimeError("permission store unavailable")
+
+    roots = (
+        admitted_root(
+            alias="a",
+            root=tmp_path / "a",
+            allow_write=True,
+            executor=RecordingWorkspaceExecutor(),
+        ),
+        admitted_root(
+            alias="b",
+            root=tmp_path / "b",
+            allow_write=True,
+            executor=RecordingWorkspaceExecutor(),
+        ),
+    )
+    cases = (
+        (
+            make_provider(root=tmp_path),
+            "local:nope",
+            {},
+            "unknown_tool",
+            "not_checked",
+        ),
+        (
+            make_provider(root=tmp_path, admitted_roots=roots),
+            "local:fs_list",
+            {"path": "."},
+            "invalid_arguments",
+            "not_checked",
+        ),
+        (
+            make_provider(state=DENY, root=tmp_path),
+            "local:fs_list",
+            {"path": "."},
+            "permission_off",
+            "deny",
+        ),
+        (
+            make_provider(root=tmp_path, resolve_state=unresolved),
+            "local:fs_list",
+            {"path": "."},
+            "permission_unresolved",
+            "gate_error",
+        ),
+        (
+            make_provider(
+                state=ASK,
+                root=tmp_path,
+                approval_callback=lambda _pending: {"fs_list": "deny"},
+            ),
+            "local:fs_list",
+            {"path": "."},
+            "approval_refused",
+            "deny",
+        ),
+        (
+            make_provider(
+                state=ASK,
+                root=tmp_path,
+                approval_callback=lambda _pending: {"fs_list": "timeout"},
+            ),
+            "local:fs_list",
+            {"path": "."},
+            "approval_timeout",
+            "timeout",
+        ),
+    )
+
+    outcomes = []
+    for provider, tool_id, arguments, reason, final_gate in cases:
+        outcome = provider.invoke_detailed(tool_id, arguments)
+        outcomes.append(outcome)
+        assert outcome.reason_code.value == reason
+        assert outcome.final_gate == final_gate
+        assert not outcome.approval_consumed
+        assert not outcome.dispatch_started
+        assert outcome.provider_terminal.value == "not_started"
+
+    assert {outcome.provider_terminal.value for outcome in outcomes} == {"not_started"}
+
+
+def test_invoke_detailed_distinguishes_root_and_authority_refusals(tmp_path):
+    class UnavailableAuthority:
+        def __enter__(self):
+            raise RuntimeError("scratch lease revoked")
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    root_changed = make_provider(root=tmp_path, root_guard=lambda: False)
+    authority_unavailable = make_provider(
+        root=tmp_path,
+        authority_scope=UnavailableAuthority,
+    )
+
+    changed = root_changed.invoke_detailed("local:fs_list", {"path": "."})
+    unavailable = authority_unavailable.invoke_detailed("local:fs_list", {"path": "."})
+
+    assert changed.reason_code.value == "root_changed"
+    assert changed.final_gate == "not_checked"
+    assert not changed.dispatch_started
+    assert changed.provider_terminal.value == "not_started"
+    assert unavailable.reason_code.value == "authority_unavailable"
+    assert unavailable.final_gate == "allow"
+    assert not unavailable.dispatch_started
+    assert unavailable.provider_terminal.value == "not_started"
+
+
+def test_invoke_detailed_keeps_consumed_approval_on_post_gate_root_change(tmp_path):
+    root_checks = iter((True, False))
+    provider = make_provider(
+        state=ASK,
+        root=tmp_path,
+        root_guard=lambda: next(root_checks),
+        approval_callback=lambda _pending: {"fs_list": "approve_once"},
+    )
+
+    outcome = provider.invoke_detailed("local:fs_list", {"path": "."})
+
+    assert outcome.reason_code.value == "root_changed"
+    assert outcome.final_gate == "allow"
+    assert outcome.approval_consumed
+    assert not outcome.dispatch_started
+    assert outcome.provider_terminal.value == "not_started"
+
+
+def test_invoke_detailed_records_handler_terminal_and_approval_consumption(tmp_path):
+    returned = _probe_provider(tmp_path, lambda _args: "ok")
+
+    def boom(_args):
+        raise RuntimeError("boom")
+
+    raised = _probe_provider(tmp_path, boom)
+    approved = _probe_provider(
+        tmp_path,
+        lambda _args: "approved",
+        state=ASK,
+        approval_callback=lambda _pending: {"probe": "approve_once"},
+    )
+
+    returned_outcome = returned.invoke_detailed("local:probe", {})
+    raised_outcome = raised.invoke_detailed("local:probe", {})
+    approved_outcome = approved.invoke_detailed("local:probe", {})
+
+    assert returned_outcome.reason_code.value == "handler_returned"
+    assert returned_outcome.dispatch_started
+    assert not returned_outcome.approval_consumed
+    assert returned_outcome.provider_terminal.value == "returned"
+    assert raised_outcome.reason_code.value == "handler_raised"
+    assert raised_outcome.dispatch_started
+    assert not raised_outcome.approval_consumed
+    assert raised_outcome.provider_terminal.value == "raised"
+    assert approved_outcome.reason_code.value == "handler_returned"
+    assert approved_outcome.dispatch_started
+    assert approved_outcome.approval_consumed
+    assert approved_outcome.provider_terminal.value == "returned"
+    assert {
+        returned_outcome.provider_terminal.value,
+        raised_outcome.provider_terminal.value,
+        approved_outcome.provider_terminal.value,
+    } == {"returned", "raised"}
+    assert {
+        terminal.value for terminal in local_tool_provider.LocalProviderTerminal
+    } == {"not_started", "returned", "raised"}
+
+
+def _compatibility_provider(case, tmp_path):
+    if case == "unknown_tool":
+        return make_provider(root=tmp_path), "local:nope", {}
+    if case == "permission_off":
+        return make_provider(state=DENY, root=tmp_path), "local:fs_list", {"path": "."}
+    if case == "approval_once":
+        return (
+            _probe_provider(
+                tmp_path,
+                lambda _args: "approved",
+                state=ASK,
+                approval_callback=lambda _pending: {"probe": "approve_once"},
+            ),
+            "local:probe",
+            {},
+        )
+    if case == "handler_raised":
+
+        def boom(_args):
+            raise RuntimeError("boom")
+
+        return _probe_provider(tmp_path, boom), "local:probe", {}
+    return _probe_provider(tmp_path, lambda _args: "ok"), "local:probe", {}
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "handler_returned",
+        "handler_raised",
+        "unknown_tool",
+        "permission_off",
+        "approval_once",
+    ],
+)
+def test_ordinary_invoke_matches_detailed_result_on_fresh_provider(
+    tmp_path,
+    case,
+):
+    detailed_provider, tool_id, arguments = _compatibility_provider(case, tmp_path)
+    ordinary_provider, ordinary_tool_id, ordinary_arguments = _compatibility_provider(
+        case, tmp_path
+    )
+
+    detailed = detailed_provider.invoke_detailed(tool_id, copy.deepcopy(arguments))
+    ordinary = ordinary_provider.invoke(
+        ordinary_tool_id, copy.deepcopy(ordinary_arguments)
+    )
+
+    assert ordinary == detailed.result
+
+
 def test_kill_switch_refuses(tmp_path):
     r = make_provider(root=tmp_path, kill=True).invoke("local:fs_list", {"path": "."})
     assert not r.ok and r.error == LOCAL_KILL_SWITCH_REFUSAL
@@ -1678,6 +2018,13 @@ def test_pending_gate_for_ask_returns_pending_call(tmp_path):
     assert gate.server_key == "local:__local__" and gate.tool_name == "fs_list"
     assert gate.reason == "ask"
     assert p.pending_gate_for("unknown", {}) is None
+
+
+def test_pending_gate_for_carries_rationale(tmp_path):
+    p = make_provider(state=ASK, root=tmp_path)
+    row = p.pending_gate_for("fs_list", {"path": "."}, rationale="checking config")
+    assert row is not None
+    assert row.rationale == "checking config"
 
 
 def test_stamp_scope_isolates_nested_run(tmp_path):

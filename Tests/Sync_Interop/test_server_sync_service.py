@@ -19,6 +19,17 @@ from tldw_chatbook.tldw_api import (
     SyncSendLogEntry,
     SyncV2Envelope,
 )
+from tldw_chatbook.tldw_api.exceptions import (
+    PersonalContextBootstrapAttentionError,
+)
+from tldw_chatbook.tldw_api.sync_schemas import (
+    SyncPersonalContextQuotaAttention,
+    SyncPersonalContextSchemaAttention,
+)
+
+
+class FakeWrappingProvider:
+    public_key_pem = "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----\n"
 
 
 def _payload() -> ClientChangesPayload:
@@ -75,6 +86,44 @@ def _sync_v2_envelope(
     )
 
 
+def _personal_context_capabilities(
+    *, available: bool = True, max_batch_size: int = 100
+) -> dict:
+    blockers = [] if available else ["personal_context_profile_key_unavailable"]
+    domains = [
+        "personal_context.manifest",
+        "personal_context.scope",
+        "personal_context.record",
+        "personal_context.proposal",
+        "personal_context.purge",
+    ]
+    return {
+        "protocol_version": "sync-v2-m1",
+        "max_batch_size": max_batch_size,
+        "domains": domains,
+        "operations": {domain: ["upsert", "tombstone"] for domain in domains},
+        "supported_adapter_versions": {domain: [1] for domain in domains},
+        "writable_adapter_versions": {domain: [1] for domain in domains},
+        "encryption_policies": ["server_trusted_v1"],
+        "personal_context": {
+            "available": available,
+            "blockers": blockers,
+            "authorization_policy": "server_trusted_v1",
+            "min_schema_version": 1,
+            "max_schema_version": 1,
+            "integrity_algorithm": "hmac-sha256-v1",
+            "integrity_key_distribution": "wrapped-bootstrap-v1",
+            "privacy_cleanup_ack": "personal-context-cleanup-v1",
+            "purge_generation": "personal-context-purge-v1",
+            "max_record_bytes": 16_384,
+            "max_search_results": 20,
+            "max_proposals_per_turn": 5,
+            "max_proposals_per_session": 25,
+            "max_unresolved_proposals": 200,
+        },
+    }
+
+
 class FakeSyncClient:
     def __init__(
         self, *, push_response=None, pull_response=None, capabilities_response=None
@@ -106,8 +155,12 @@ class FakeSyncClient:
             "latest_change_id": 33,
         }
 
-    async def get_sync_v2_capabilities(self):
-        self.calls.append(("get_sync_v2_capabilities",))
+    async def get_sync_v2_capabilities(self, *, dataset_id=None):
+        self.calls.append(
+            ("get_sync_v2_capabilities",)
+            if dataset_id is None
+            else ("get_sync_v2_capabilities", dataset_id)
+        )
         if self.capabilities_response is not None:
             return self.capabilities_response
         return {
@@ -148,6 +201,23 @@ class FakeSyncClient:
             "server_capabilities": await self.get_sync_v2_capabilities(),
             "required_actions": [],
         }
+
+    async def bootstrap_sync_v2_personal_context(self, request_data):
+        self.calls.append(
+            ("bootstrap_sync_v2_personal_context", request_data.model_dump(mode="json"))
+        )
+        return {
+            "dataset_id": "dataset-personal-context",
+            "quotas": dict(request_data.required_quotas),
+        }
+
+    async def complete_sync_v2_personal_context_link(self, request_data):
+        self.calls.append(
+            (
+                "complete_sync_v2_personal_context_link",
+                request_data.model_dump(mode="json"),
+            )
+        )
 
     async def enroll_sync_v2_dataset(self, request_data):
         self.calls.append(
@@ -385,6 +455,40 @@ async def test_server_sync_service_dry_run_maps_coarse_requests_to_m1_dotted_dom
 
 
 @pytest.mark.asyncio
+async def test_notes_only_dry_run_ignores_malformed_future_transport_entries(
+    tmp_path,
+) -> None:
+    client = FakeSyncClient(
+        capabilities_response={
+            "protocol_version": "sync-v2-m1",
+            "domains": ["notes.note", "future.domain"],
+            "operations": {
+                "notes.note": ["upsert", "tombstone"],
+                "future.domain": {"future": True},
+            },
+            "supported_adapter_versions": {"future.domain": ["v2"]},
+            "writable_adapter_versions": {"future.domain": [False]},
+        }
+    )
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    service = ServerSyncService(client=client, state_repository=repo)
+
+    result = await service.run_v2_dry_run(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        display_name="Laptop",
+        domains=["notes"],
+    )
+
+    assert result["domains"] == ["notes.note"]
+    register_call = next(
+        call for call in client.calls if call[0] == "register_sync_v2_device"
+    )
+    assert register_call[1]["supported_domains"] == ["notes.note"]
+
+
+@pytest.mark.asyncio
 async def test_server_sync_service_dry_run_falls_back_when_domains_value_is_none(
     tmp_path,
 ):
@@ -411,6 +515,325 @@ async def test_server_sync_service_dry_run_falls_back_when_domains_value_is_none
         call for call in client.calls if call[0] == "register_sync_v2_device"
     )
     assert register_call[1]["supported_domains"] == ["notes.note"]
+
+
+@pytest.mark.asyncio
+async def test_server_sync_service_blocks_unavailable_personal_context_before_link(
+    tmp_path,
+) -> None:
+    client = FakeSyncClient(
+        capabilities_response=_personal_context_capabilities(available=False)
+    )
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    service = ServerSyncService(client=client, state_repository=repo)
+
+    with pytest.raises(ValueError, match="personal_context_profile_key_unavailable"):
+        await service.bootstrap_personal_context_link(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            display_name="Laptop",
+            wrapping_key_provider=FakeWrappingProvider(),
+        )
+
+    assert not any(call[0] == "register_sync_v2_device" for call in client.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("attention_kind", ["schema", "quota"])
+async def test_personal_context_bootstrap_reaches_typed_attention_for_safe_readiness_blockers(
+    tmp_path,
+    attention_kind: str,
+) -> None:
+    capabilities = _personal_context_capabilities()
+    if attention_kind == "schema":
+        capabilities["personal_context"].update(
+            min_schema_version=2,
+            max_schema_version=3,
+        )
+        attention = SyncPersonalContextSchemaAttention(
+            kind="schema_incompatible",
+            required_schema_version=1,
+            server_min_schema_version=2,
+            server_max_schema_version=3,
+        )
+    else:
+        capabilities["personal_context"]["max_record_bytes"] = 8_192
+        attention = SyncPersonalContextQuotaAttention(
+            kind="quota_incompatible",
+            required_quotas={"max_record_bytes": 16_384},
+            available_quotas={"max_record_bytes": 8_192},
+            insufficient_quotas=["max_record_bytes"],
+        )
+
+    class AttentionClient(FakeSyncClient):
+        async def bootstrap_sync_v2_personal_context(self, request_data):
+            self.calls.append(
+                (
+                    "bootstrap_sync_v2_personal_context",
+                    request_data.model_dump(mode="json"),
+                )
+            )
+            raise PersonalContextBootstrapAttentionError(attention)
+
+    client = AttentionClient(capabilities_response=capabilities)
+    service = ServerSyncService(
+        client=client,
+        state_repository=SyncStateRepository(tmp_path / "sync.db"),
+    )
+
+    with pytest.raises(PersonalContextBootstrapAttentionError) as exc_info:
+        await service.bootstrap_personal_context_link(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            display_name="Laptop",
+            wrapping_key_provider=FakeWrappingProvider(),
+            required_schema_version=1,
+            required_quotas={"max_record_bytes": 16_384},
+        )
+
+    assert exc_info.value.attention is attention
+    assert [call[0] for call in client.calls].count("register_sync_v2_device") == 1
+    assert [call[0] for call in client.calls].count(
+        "bootstrap_sync_v2_personal_context"
+    ) == 1
+
+
+@pytest.mark.asyncio
+async def test_personal_context_bootstrap_keeps_mixed_readiness_failure_fail_closed(
+    tmp_path,
+) -> None:
+    capabilities = _personal_context_capabilities()
+    capabilities["personal_context"].update(
+        min_schema_version=2,
+        max_schema_version=3,
+        integrity_algorithm="unsupported",
+    )
+    client = FakeSyncClient(capabilities_response=capabilities)
+    service = ServerSyncService(
+        client=client,
+        state_repository=SyncStateRepository(tmp_path / "sync.db"),
+    )
+
+    with pytest.raises(ValueError, match="personal_context_integrity_incompatible"):
+        await service.bootstrap_personal_context_link(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            display_name="Laptop",
+            wrapping_key_provider=FakeWrappingProvider(),
+            required_schema_version=1,
+        )
+
+    assert not any(call[0] == "register_sync_v2_device" for call in client.calls)
+    assert not any(
+        call[0] == "bootstrap_sync_v2_personal_context" for call in client.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_server_sync_service_rejects_partial_personal_context_before_mutation(
+    tmp_path,
+) -> None:
+    client = FakeSyncClient(
+        capabilities_response=_personal_context_capabilities(available=True)
+    )
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    service = ServerSyncService(client=client, state_repository=repo)
+
+    with pytest.raises(ValueError, match="personal_context_requires_reviewed_first_link"):
+        await service.run_v2_dry_run(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            display_name="Laptop",
+            domains=["personal_context.record"],
+            encryption_policy="server_trusted_v1",
+        )
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_server_sync_service_never_negotiates_personal_context_via_generic_enroll(
+    tmp_path,
+) -> None:
+    client = FakeSyncClient(
+        capabilities_response=_personal_context_capabilities(available=True)
+    )
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    service = ServerSyncService(client=client, state_repository=repo)
+
+    with pytest.raises(ValueError, match="personal_context_requires_reviewed_first_link"):
+        await service.run_v2_dry_run(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            display_name="Laptop",
+            domains=["personal_context"],
+            encryption_policy="server_trusted_v1",
+        )
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_personal_context_bootstrap_registers_wrapping_key_without_generic_enroll(
+    tmp_path,
+) -> None:
+    client = FakeSyncClient(
+        capabilities_response=_personal_context_capabilities(
+            available=True, max_batch_size=17
+        )
+    )
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    service = ServerSyncService(client=client, state_repository=repo)
+
+    response = await service.bootstrap_personal_context_link(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        display_name="Laptop",
+        wrapping_key_provider=FakeWrappingProvider(),
+        required_schema_version=1,
+        required_quotas={"max_record_bytes": 16_384},
+        expected_purge_generation=2,
+    )
+
+    assert response == {
+        "device_id": "device-1",
+        "dataset_id": "dataset-personal-context",
+        "quotas": {"max_record_bytes": 16_384},
+        "_sync_capabilities": {"max_batch_size": 17},
+    }
+    register = next(call for call in client.calls if call[0] == "register_sync_v2_device")
+    assert register[1]["capabilities"]["personal_context_wrapping_public_key"].startswith(
+        "-----BEGIN PUBLIC KEY-----"
+    )
+    bootstrap = next(
+        call for call in client.calls if call[0] == "bootstrap_sync_v2_personal_context"
+    )
+    assert bootstrap[1] == {
+        "device_id": "device-1",
+        "required_schema_version": 1,
+        "required_quotas": {"max_record_bytes": 16_384},
+        "expected_purge_generation": 2,
+    }
+    assert not any(call[0] == "enroll_sync_v2_dataset" for call in client.calls)
+    assert not any(call[0] == "push_sync_v2_envelopes" for call in client.calls)
+
+
+@pytest.mark.asyncio
+async def test_personal_context_bootstrap_rejects_success_missing_requested_quota(
+    tmp_path,
+) -> None:
+    class MissingQuotaClient(FakeSyncClient):
+        async def bootstrap_sync_v2_personal_context(self, request_data):
+            self.calls.append(
+                (
+                    "bootstrap_sync_v2_personal_context",
+                    request_data.model_dump(mode="json"),
+                )
+            )
+            return {"dataset_id": "dataset-personal-context", "quotas": {}}
+
+    client = MissingQuotaClient(
+        capabilities_response=_personal_context_capabilities(available=True)
+    )
+    service = ServerSyncService(
+        client=client,
+        state_repository=SyncStateRepository(tmp_path / "sync_state.db"),
+    )
+
+    with pytest.raises(
+        ValueError, match="personal_context_bootstrap_quota_map_incomplete"
+    ):
+        await service.bootstrap_personal_context_link(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            display_name="Laptop",
+            wrapping_key_provider=FakeWrappingProvider(),
+            required_quotas={"required_unknown_zero": 0},
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("quotas", (None, {}), ids=("omitted", "empty"))
+async def test_personal_context_bootstrap_rejects_missing_or_empty_success_quotas(
+    tmp_path,
+    quotas,
+) -> None:
+    class InvalidQuotaMapClient(FakeSyncClient):
+        async def bootstrap_sync_v2_personal_context(self, request_data):
+            self.calls.append(
+                (
+                    "bootstrap_sync_v2_personal_context",
+                    request_data.model_dump(mode="json"),
+                )
+            )
+            response = {"dataset_id": "dataset-personal-context"}
+            if quotas is not None:
+                response["quotas"] = quotas
+            return response
+
+    service = ServerSyncService(
+        client=InvalidQuotaMapClient(
+            capabilities_response=_personal_context_capabilities(available=True)
+        ),
+        state_repository=SyncStateRepository(tmp_path / "sync_state.db"),
+    )
+
+    with pytest.raises(
+        ValueError, match="personal_context_bootstrap_quota_map_incomplete"
+    ):
+        await service.bootstrap_personal_context_link(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            display_name="Laptop",
+            wrapping_key_provider=FakeWrappingProvider(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_personal_context_complete_uses_exact_reviewed_binding() -> None:
+    client = FakeSyncClient()
+    service = ServerSyncService(client=client)
+
+    await service.complete_personal_context_link(
+        device_id="device-1",
+        dataset_id="dataset-1",
+        bootstrap_cursor="sha256:" + "a" * 64,
+    )
+
+    assert client.calls == [
+        (
+            "complete_sync_v2_personal_context_link",
+            {
+                "device_id": "device-1",
+                "dataset_id": "dataset-1",
+                "bootstrap_cursor": "sha256:" + "a" * 64,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_generic_dry_run_rejects_personal_context_before_device_mutation(
+    tmp_path,
+) -> None:
+    client = FakeSyncClient(
+        capabilities_response=_personal_context_capabilities(available=True)
+    )
+    service = ServerSyncService(
+        client=client,
+        state_repository=SyncStateRepository(tmp_path / "sync.db"),
+    )
+
+    with pytest.raises(ValueError, match="personal_context_requires_reviewed_first_link"):
+        await service.run_v2_dry_run(
+            server_profile_id="server-a",
+            authenticated_principal_id="user-a",
+            display_name="Laptop",
+            domains=["personal_context"],
+            encryption_policy="server_trusted_v1",
+        )
+
+    assert client.calls == []
 
 
 @pytest.mark.asyncio
@@ -876,6 +1299,103 @@ async def test_server_sync_service_rejects_mismatched_v2_pull_response_dataset_a
         )
 
     assert [call[0] for call in client.calls] == ["pull_sync_v2_envelopes"]
+
+
+@pytest.mark.asyncio
+async def test_public_pull_rejects_personal_context_before_transport_dispatch():
+    client = FakeSyncClient()
+    service = ServerSyncService(client=client)
+
+    with pytest.raises(ValueError, match="reviewed_first_link"):
+        await service.pull_v2_envelopes(
+            dataset_id="dataset-1",
+            device_id="device-1",
+            domains=["personal_context.record"],
+        )
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_public_pull_has_no_personal_context_bypass_flag():
+    client = FakeSyncClient()
+    service = ServerSyncService(client=client)
+
+    with pytest.raises(TypeError, match="_personal_context_first_link"):
+        await service.pull_v2_envelopes(
+            dataset_id="dataset-1",
+            device_id="device-1",
+            domains=["personal_context.record"],
+            _personal_context_first_link=True,
+        )
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_private_first_link_pull_uses_reviewed_transport_path():
+    client = FakeSyncClient(
+        pull_response={
+            "dataset_id": "dataset-1",
+            "envelopes": [],
+            "next_cursor": "cursor-2",
+            "has_more": False,
+        }
+    )
+    service = ServerSyncService(client=client)
+
+    result = await service._pull_v2_personal_context_first_link(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        cursor="cursor-1",
+        domains=["personal_context.record"],
+        page_size=None,
+        include_own_changes=True,
+    )
+
+    assert result["next_cursor"] == "cursor-2"
+    assert [call[0] for call in client.calls] == ["pull_sync_v2_envelopes"]
+
+
+@pytest.mark.asyncio
+async def test_public_push_rejects_personal_context_before_transport_dispatch():
+    client = FakeSyncClient()
+    service = ServerSyncService(client=client)
+
+    with pytest.raises(ValueError, match="reviewed_first_link"):
+        await service.push_v2_envelopes(
+            dataset_id="dataset-1",
+            device_id="device-1",
+            domains=["personal_context.record"],
+            envelopes=[_sync_v2_envelope(domain="personal_context.record")],
+        )
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_private_first_link_push_uses_reviewed_transport_path():
+    envelope = _sync_v2_envelope(domain="personal_context.record")
+    client = FakeSyncClient(
+        push_response={
+            "dataset_id": "dataset-1",
+            "accepted": [{"client_envelope_id": envelope.client_envelope_id}],
+            "rejected": [],
+            "conflicts": [],
+            "next_cursor": "cursor-2",
+        }
+    )
+    service = ServerSyncService(client=client)
+
+    result = await service._push_v2_personal_context_first_link(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        domains=["personal_context.record"],
+        envelopes=[envelope],
+    )
+
+    assert result["next_cursor"] == "cursor-2"
+    assert [call[0] for call in client.calls] == ["push_sync_v2_envelopes"]
 
 
 @pytest.mark.asyncio

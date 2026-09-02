@@ -6,12 +6,14 @@ methods in the matching `DB/*.py` module. Filenames are
 
 ## Which schemas live here (and which do not)
 
-Three of the eight versioned schemas do: `chachanotes` (`ChaChaNotes_DB.py`),
-`workspaces` (`Workspace_DB.py`), and subscriptions (`Subscriptions_DB.py`,
-beginning with its v1-to-v2 briefing-provenance table rebuild). The other five
-— media (`Client_Media_DB_v2.py`), agent runs, prompts, library ingest jobs, and
-library collections — keep each step as a module-level SQL constant and run it
-from their own migration method. No `media_*.sql` has ever existed here.
+Four of the eight versioned schemas do: `chachanotes` (`ChaChaNotes_DB.py`),
+`workspaces` (`Workspace_DB.py`), subscriptions (`Subscriptions_DB.py`,
+beginning with its v1-to-v2 briefing-provenance table rebuild), and Library
+Collections (`Library_Collections_DB.py`, beginning with its v2-to-v3
+extraction-lease columns). The other four — media (`Client_Media_DB_v2.py`),
+agent runs, prompts, and library ingest jobs — keep each step as a module-level
+SQL constant and run it from their own migration method. No `media_*.sql` has
+ever existed here.
 
 That is a scope statement, not a backlog item, and it is written down because
 reviewers keep reading "add `<db>_v<n>_to_v<n+1>.sql`" as repo-wide and filing

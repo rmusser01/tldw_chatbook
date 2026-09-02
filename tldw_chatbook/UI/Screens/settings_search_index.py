@@ -20,6 +20,7 @@ from .settings_config_models import SettingsCategoryId
 #: rows on the Appearance category (shared with settings_screen).
 LIBRARY_READER_DESTINATIONS = (
     ("media", "Media"),
+    ("collections", "Collections"),
     ("conversations", "Conversations"),
     ("notes", "Notes"),
     ("prompts", "Prompts"),
@@ -601,6 +602,15 @@ def build_field_search_index() -> None:
                 ),
                 (
                     "settings-library-rag-assistant-access-default",
+                    # TASK-25732: one noun for this permission everywhere --
+                    # the Console chip says "Agent blocked", and "Assistant"
+                    # already names the persona in that same status strip.
+                    "Agent Library access",
+                ),
+                (
+                    "settings-library-rag-assistant-access-default",
+                    # Alias: renaming must not cost anyone who searches the
+                    # wording this control shipped under.
                     "Assistant Library access",
                 ),
             ),

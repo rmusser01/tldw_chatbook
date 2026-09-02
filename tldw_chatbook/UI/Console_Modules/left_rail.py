@@ -320,6 +320,9 @@ class ConsoleLeftRail(Vertical):
     class ReactionPickerRequested(Message):
         """The Character section asked its owning screen to open reactions."""
 
+    class TerminalRequested(Message):
+        """The pinned Context action asked its owning screen for Terminal."""
+
     def __init__(
         self,
         *,
@@ -1492,7 +1495,15 @@ class ConsoleLeftRail(Vertical):
     def _snapshot_outer_viewport_height(self) -> int:
         """Return the no-hint Context viewport height for counterfactual policy."""
 
-        outer = self.query_one("#console-left-rail-body", VerticalScroll)
+        # TASK-25715 finding 2 (captured traceback, 2026-09-01): a deferred
+        # _prepare_allocation_reconcile invoked after this rail's removal
+        # reached this query with `is_mounted` still True and crashed on
+        # NoMatches. A rail with no body has no viewport; report it as such
+        # instead of raising out of a stale callback.
+        try:
+            outer = self.query_one("#console-left-rail-body", VerticalScroll)
+        except (NoMatches, QueryError):
+            return 0
         height = outer.content_region.height
         try:
             hint = self.query_one("#console-left-rail-outer-hint", Static)
@@ -1942,6 +1953,13 @@ class ConsoleLeftRail(Vertical):
         fleet_summary.styles.height = "auto"
         fleet_summary.styles.display = "block" if self._fleet_line else "none"
         yield fleet_summary
+
+        yield Button(
+            "Terminal",
+            id="console-terminal-open",
+            classes="console-pinned-terminal-action",
+            compact=True,
+        )
 
         with _ContextOuterBody(
             owner=self,
@@ -2413,6 +2431,10 @@ class ConsoleLeftRail(Vertical):
         if button_id == "console-character-reaction-open":
             event.stop()
             self.post_message(self.ReactionPickerRequested())
+            return
+        if button_id == "console-terminal-open":
+            event.stop()
+            self.post_message(self.TerminalRequested())
             return
         if not button_id.startswith(RAIL_SECTION_TOGGLE_PREFIX):
             return

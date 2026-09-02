@@ -17,10 +17,11 @@ DOM or reach through sibling controllers.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from functools import partial
+from types import MappingProxyType
 from typing import Any, Optional, TYPE_CHECKING
 import asyncio
 import inspect
@@ -57,6 +58,11 @@ from ...Widgets.Console import (
     ConsoleWorkspaceSwitcherModal,
 )
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
+from ...Workspaces.models import (
+    RuntimeBindingKind,
+    RuntimeBindingStatus,
+    WorkspaceRuntimeBinding,
+)
 from ...Widgets.project_skills_import_modal import maybe_offer_project_skills_import
 from ...Workspaces import (
     CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
@@ -88,6 +94,12 @@ from ..character_display_text import sanitize_character_display_label
 
 if TYPE_CHECKING:
     from ...Chat.console_chat_controller import ConsoleChatController
+    from ...Widgets.Console.console_workspace_files_modal import (
+        ConsoleWorkspaceFilesModal,
+        WorkspaceFilesAttention,
+        WorkspaceFilesBinding,
+        WorkspaceFilesService,
+    )
     from ...Widgets.workspace_create_modal import WorkspaceCreateResult
     from ..Screens.chat_screen import ChatScreen
 
@@ -130,6 +142,15 @@ class UnknownMembership:
 
 _MEMBERSHIP_UNKNOWN = UnknownMembership()
 
+# TASK-25827: two unrelated failures used to share one sentence, so the rail
+# could not tell "we could not check your access" from "the query failed" --
+# and at the rail's width the shared sentence clipped to "Workspace
+# conversations a...", which named neither. Keep these short enough to read
+# in the rail and distinct enough to act on.
+WORKSPACE_CONVERSATIONS_ACCESS_UNKNOWN = "Workspace access unknown."
+WORKSPACE_CONVERSATIONS_LOAD_FAILED = "Couldn't load conversations."
+
+
 
 @dataclass(slots=True)
 class SearchAttemptState:
@@ -168,6 +189,26 @@ class PageAttemptState:
     retry_cursor: int | None = None
     membership_unknown: bool = False
     worker: Any = None
+
+
+WORKSPACE_FILES_AVAILABILITY_CACHE_TTL_SECONDS = 1.0
+WORKSPACE_FILES_NO_FOLDERS_COPY = "No local folders are attached. Add one in Settings."
+WORKSPACE_FILES_OTHER_VISIT_COPY = (
+    "Close Workspace Files before inspecting another workspace."
+)
+WORKSPACE_FILES_MINIMUM_COPY = "Workspace Files needs at least 80 × 24 terminal cells."
+
+
+@dataclass(frozen=True)
+class _WorkspaceFilesResolution:
+    """Off-loop registry snapshot used to construct one pinned visit."""
+
+    workspace_id: str
+    workspace_name: str
+    active_workspace_id: str | None
+    active_workspace_name: str
+    bindings: tuple[WorkspaceFilesBinding, ...]
+    had_bindings: bool
 
 
 def _normalized_console_workspace_id(workspace_id: str | None) -> str:
@@ -551,6 +592,24 @@ class ConsoleWorkspaceController:
             lambda _conversation_id: None
         )
         self._rail_body_height_accessor = rail_body_height_accessor
+        self._workspace_files_visit_workspace_id: str | None = None
+        self._workspace_files_modal: ConsoleWorkspaceFilesModal | None = None
+        self._workspace_files_attention_generation = 0
+        self._workspace_files_admission_lock = asyncio.Lock()
+        self._workspace_files_admission_claim: str | None = None
+        # Folder binding status may touch the filesystem.  Context rendering
+        # runs on Textual's event loop, so it reads only this immutable cache;
+        # one controller-owned worker refreshes it off-loop below.
+        self._workspace_files_availability_by_id: Mapping[str, bool] = (
+            MappingProxyType({})
+        )
+        self._workspace_files_runtime_bindings_by_id: Mapping[
+            str, tuple[WorkspaceRuntimeBinding, ...]
+        ] = MappingProxyType({})
+        self._workspace_files_availability_requested_ids: tuple[str, ...] = ()
+        self._workspace_files_availability_generation = 0
+        self._workspace_files_availability_refresh_in_flight = False
+        self._workspace_files_availability_cached_at = 0.0
 
         self._workspace_tree_search = SearchAttemptState()
         self._flat_conversation_search = SearchAttemptState()
@@ -722,6 +781,272 @@ class ConsoleWorkspaceController:
     def push_screen(self) -> Any:
         """`Screen.app.push_screen`, bound. See `__init__`'s docstring."""
         return self._screen.app.push_screen
+
+    def open_workspace_files_modal(
+        self,
+        *,
+        inspector: WorkspaceFilesService,
+        inspected_workspace_id: str,
+        inspected_workspace_name: str,
+        active_workspace_id: str | None,
+        active_workspace_name: str,
+        bindings: Sequence[WorkspaceFilesBinding],
+        attention: WorkspaceFilesAttention | None = None,
+        on_back_to_console: Callable[[], None] | None = None,
+        on_visit_closed: Callable[[], None] | None = None,
+    ) -> Any:
+        """Push one already-resolved, read-only Workspace Files visit.
+
+        This deliberately accepts only presentation-safe identities and the
+        narrow read-only inspector supplied by its future entry owner.  It
+        neither reads the registry nor updates Console workspace/session/
+        context state; Task 3 owns admission and resolution from its controls.
+
+        Args:
+            inspector: Narrow read-only filesystem service for this visit.
+            inspected_workspace_id: Stable identity of the workspace being viewed.
+            inspected_workspace_name: Presentation name of the viewed workspace.
+            active_workspace_id: Stable identity of the unchanged active workspace.
+            active_workspace_name: Presentation name of the active workspace.
+            bindings: Presentation-safe binding scopes for the viewed workspace.
+            attention: Optional privacy-minimized Console attention snapshot.
+            on_back_to_console: Optional callback after explicit Console return.
+            on_visit_closed: Optional callback after terminal visit teardown.
+
+        Returns:
+            The pushed, pinned Workspace Files modal.
+        """
+        from ...Widgets.Console.console_workspace_files_modal import (
+            ConsoleWorkspaceFilesModal,
+        )
+
+        safe_bindings = tuple(
+            binding
+            if (
+                binding.scope is None
+                or binding.scope.workspace_id == inspected_workspace_id
+            )
+            else replace(
+                binding,
+                scope=None,
+                available=False,
+                availability_copy="Unavailable: binding belongs to a different workspace.",
+            )
+            for binding in bindings
+        )
+        modal = ConsoleWorkspaceFilesModal(
+            inspector=inspector,
+            inspected_workspace_id=inspected_workspace_id,
+            inspected_workspace_name=inspected_workspace_name,
+            active_workspace_id=active_workspace_id,
+            active_workspace_name=active_workspace_name,
+            bindings=safe_bindings,
+            attention=attention,
+            on_back_to_console=on_back_to_console,
+            on_visit_closed=on_visit_closed,
+        )
+        self.push_screen(modal)
+        return modal
+
+    async def request_workspace_files(
+        self, workspace_id: str, *, expected_available: bool = False
+    ) -> None:
+        """Admit one non-activating Workspace Files visit for ``workspace_id``.
+
+        Registry and binding inspection happens off the event loop.  The only
+        main-loop effects are the modal push/focus and a generic notification;
+        neither changes the Console workspace, session, or staged context.
+
+        Args:
+            workspace_id: Stable identity of the workspace to inspect.
+            expected_available: Whether the clicked cached route previously
+                advertised an attached folder, allowing recovery to open if the
+                binding changed during admission.
+
+        Returns:
+            None after refusal, focus recovery, or modal admission.
+        """
+        requested_id = str(workspace_id or DEFAULT_WORKSPACE_ID).strip()
+        size = self._screen.size
+        if size.width < 80 or size.height < 24:
+            self.app_instance.notify(WORKSPACE_FILES_MINIMUM_COPY, severity="warning")
+            return
+
+        async with self._workspace_files_admission_lock:
+            modal = self._workspace_files_modal
+            if modal is not None:
+                if self._workspace_files_visit_workspace_id == requested_id:
+                    if modal.is_mounted:
+                        modal.query_one("#console-workspace-files-back").focus()
+                else:
+                    self.app_instance.notify(WORKSPACE_FILES_OTHER_VISIT_COPY, severity="warning")
+                return
+            if self._workspace_files_admission_claim is not None:
+                if self._workspace_files_admission_claim != requested_id:
+                    self.app_instance.notify(WORKSPACE_FILES_OTHER_VISIT_COPY, severity="warning")
+                return
+            self._workspace_files_admission_claim = requested_id
+        try:
+            resolution = await asyncio.to_thread(
+                self._resolve_workspace_files_visit, requested_id
+            )
+            if resolution is None or (
+                not resolution.had_bindings and not expected_available
+            ):
+                self.app_instance.notify(
+                    WORKSPACE_FILES_NO_FOLDERS_COPY, severity="warning"
+                )
+                return
+
+            attention = self._workspace_files_attention_snapshot()
+
+            def _closed() -> None:
+                if self._workspace_files_visit_workspace_id == resolution.workspace_id:
+                    self._workspace_files_visit_workspace_id = None
+                    self._workspace_files_modal = None
+
+            async with self._workspace_files_admission_lock:
+                if self._workspace_files_modal is not None:
+                    # A closing visit owns the ledger until its awaited
+                # unmount callback clears it; never retarget it.
+                    return
+                self._workspace_files_visit_workspace_id = resolution.workspace_id
+                try:
+                    from ...Workspaces.file_inspector import WorkspaceFileInspector
+
+                    self._workspace_files_modal = self.open_workspace_files_modal(
+                        inspector=WorkspaceFileInspector(
+                            getattr(self.app_instance, "workspace_registry_service", None)
+                        ),
+                        inspected_workspace_id=resolution.workspace_id,
+                        inspected_workspace_name=resolution.workspace_name,
+                        active_workspace_id=resolution.active_workspace_id,
+                        active_workspace_name=resolution.active_workspace_name,
+                        bindings=resolution.bindings,
+                        attention=attention,
+                        on_visit_closed=_closed,
+                    )
+                except Exception:
+                    self._workspace_files_visit_workspace_id = None
+                    self._workspace_files_modal = None
+                    raise
+        finally:
+            # Cancellation is a normal outcome for a Textual exclusive
+            # worker. Claim access is confined to this event loop, so the
+            # await-free compare-and-clear is atomic with respect to other
+            # request coroutines. Reacquiring the lock here would make the
+            # cleanup itself interruptible by a second cancellation.
+            if self._workspace_files_admission_claim == requested_id:
+                self._workspace_files_admission_claim = None
+
+    def _resolve_workspace_files_visit(
+        self, workspace_id: str
+    ) -> _WorkspaceFilesResolution | None:
+        """Read current workspace/bindings and capture safe scopes off-loop."""
+        from ...Widgets.Console.console_workspace_files_modal import (
+            WorkspaceFilesBinding,
+        )
+        from ...Workspaces.file_inspector import (
+            ScopeCaptureError,
+            WorkspaceFileInspector,
+        )
+
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry is None or workspace_id == DEFAULT_WORKSPACE_ID:
+            return None
+        try:
+            workspace = registry.get_workspace(workspace_id)
+            if workspace is None or workspace.archived:
+                return None
+            raw_bindings = tuple(registry.list_folder_bindings(workspace_id))
+            active = registry.get_active_workspace()
+        except Exception:
+            return None
+        inspector = WorkspaceFileInspector(registry)
+        bindings: list[WorkspaceFilesBinding] = []
+        for binding in raw_bindings:
+            access = str(getattr(binding, "metadata", {}).get("access", "ro")).lower()
+            access_label = "Read/write" if access == "rw" else "Read-only"
+            try:
+                scope = inspector.capture_binding(workspace_id, binding.binding_id)
+            except ScopeCaptureError:
+                bindings.append(
+                    WorkspaceFilesBinding(
+                        binding_id=binding.binding_id,
+                        label=binding.label,
+                        scope=None,
+                        access_label=access_label,
+                        available=False,
+                        availability_copy="Unavailable: folder access changed.",
+                    )
+                )
+            else:
+                bindings.append(
+                    WorkspaceFilesBinding(
+                        binding_id=binding.binding_id,
+                        label=binding.label,
+                        scope=scope,
+                        access_label=access_label,
+                    )
+                )
+        return _WorkspaceFilesResolution(
+            workspace_id=workspace.workspace_id,
+            workspace_name=workspace.name,
+            active_workspace_id=(active.workspace_id if active is not None else None),
+            active_workspace_name=(active.name if active is not None else "Local Default"),
+            bindings=tuple(bindings),
+            had_bindings=bool(raw_bindings),
+        )
+
+    def _workspace_files_attention_snapshot(self) -> WorkspaceFilesAttention:
+        """Return only generic Console-attention copy; never payload details."""
+        from ...Widgets.Console.console_workspace_files_modal import (
+            WorkspaceFilesAttention,
+        )
+
+        count_getter = getattr(self._screen, "_console_pending_approval_count", None)
+        count = int(count_getter()) if callable(count_getter) else 0
+        controller = self._current_chat_controller_accessor()
+        run_state = getattr(controller, "run_state", None)
+        status = str(getattr(run_state, "status", "") or "").casefold()
+        # These all derive from existing Console state: run status and the
+        # durable fleet-unseen marker. No raw tool/approval payload crosses
+        # this boundary.
+        blocked = "block" in status or "approval" in status
+        failed = "fail" in status or "error" in status
+        new_activity = bool(self._fleet_unseen_ids_accessor())
+        if count:
+            noun = "approval" if count == 1 else "approvals"
+            return WorkspaceFilesAttention(
+                f"Console needs attention · {count} {noun} waiting",
+                pending_approval_count=count,
+                has_blocked_activity=blocked,
+                has_failed_activity=failed,
+                has_new_activity=new_activity,
+            )
+        if blocked or failed or new_activity:
+            return WorkspaceFilesAttention(
+                "Console has new activity",
+                has_blocked_activity=blocked,
+                has_failed_activity=failed,
+                has_new_activity=new_activity,
+            )
+        return WorkspaceFilesAttention()
+
+    def update_workspace_files_attention(self) -> None:
+        """Publish one monotonically ordered generic attention snapshot.
+
+        Returns:
+            None after publishing to an open visit or finding no active visit.
+        """
+        modal = self._workspace_files_modal
+        if modal is None:
+            return
+        self._workspace_files_attention_generation += 1
+        modal.update_attention(
+            self._workspace_files_attention_snapshot(),
+            self._workspace_files_attention_generation,
+        )
 
     @property
     def call_after_refresh(self) -> Any:
@@ -1223,7 +1548,7 @@ class ConsoleWorkspaceController:
         membership_token = self._workspace_membership_token(workspace_id)
         if membership_token is _MEMBERSHIP_UNKNOWN:
             attempt.loading = False
-            attempt.error = "Workspace conversations are unavailable."
+            attempt.error = WORKSPACE_CONVERSATIONS_ACCESS_UNKNOWN
             attempt.retry_cursor = cursor
             attempt.membership_unknown = True
             self._sync_console_workspace_context()
@@ -1414,7 +1739,7 @@ class ConsoleWorkspaceController:
         ):
             return
         attempt = self._workspace_page_attempts[workspace_id]
-        attempt.error = "Workspace conversations are unavailable."
+        attempt.error = WORKSPACE_CONVERSATIONS_LOAD_FAILED
         attempt.retry_cursor = request_key[3] if request_key is not None else None
         attempt.membership_unknown = False
 
@@ -1499,10 +1824,12 @@ class ConsoleWorkspaceController:
             )
             result = await result if inspect.isawaitable(result) else result
         except Exception:
-            logger.opt(exception=True).debug(
+            # TASK-25827: this was the ONLY record of why the rail failed and
+            # it sat at debug, so "check the app log" led nowhere.
+            logger.opt(exception=True).warning(
                 "Unable to load Console workspace page workspace_id={}", workspace_id
             )
-            return (), None, "Workspace conversations are unavailable."
+            return (), None, WORKSPACE_CONVERSATIONS_LOAD_FAILED
         if not isinstance(result, dict):
             return (), 0, ""
         items = result.get("items") if isinstance(result.get("items"), list) else []
@@ -1720,7 +2047,7 @@ class ConsoleWorkspaceController:
         attempt = self._workspace_page_attempts.get(workspace_id)
         if attempt is None:
             return
-        attempt.error = "Workspace conversations are unavailable."
+        attempt.error = WORKSPACE_CONVERSATIONS_ACCESS_UNKNOWN
         attempt.loading = False
         attempt.retry_cursor = (
             attempt.next_cursor if attempt.next_cursor is not None else 0
@@ -3399,6 +3726,27 @@ class ConsoleWorkspaceController:
         """Console-side post-create sync; the modal already created/bound."""
         if result is None:
             return
+        if result.offer_profile_interview:
+            from ...Personal_Context.interview_launch import (
+                launch_workspace_profile_interview_after_commit,
+            )
+
+            launch_workspace_profile_interview_after_commit(
+                self.app_instance,
+                workspace_id=result.workspace_id,
+                workspace_label=result.name,
+                continuation=lambda: (
+                    ConsoleWorkspaceController._continue_workspace_create_result(
+                        self, result
+                    )
+                ),
+            )
+            return
+        ConsoleWorkspaceController._continue_workspace_create_result(self, result)
+
+    def _continue_workspace_create_result(self, result: WorkspaceCreateResult) -> None:
+        """Run the established Console sync after the optional interview."""
+
         registry_service = getattr(
             self.app_instance, "workspace_registry_service", None
         )
@@ -4194,6 +4542,116 @@ class ConsoleWorkspaceController:
         finally:
             self._console_tick_builds = None
 
+    def _request_workspace_files_availability_refresh(
+        self, workspace_ids: Sequence[str]
+    ) -> None:
+        """Coalesce one off-loop local-folder availability snapshot.
+
+        The context rail is refreshed on the Textual loop.  Calling the
+        registry's ``list_folder_bindings`` there recomputes filesystem
+        status and can stall every Console interaction, so renderers only
+        enqueue this best-effort cache refresh and fail closed until it lands.
+        """
+        requested_ids = tuple(sorted({str(item or "").strip() for item in workspace_ids if str(item or "").strip()}))
+        now = time.monotonic()
+        if (
+            requested_ids == self._workspace_files_availability_requested_ids
+            and (
+                self._workspace_files_availability_refresh_in_flight
+                or now - self._workspace_files_availability_cached_at
+                < WORKSPACE_FILES_AVAILABILITY_CACHE_TTL_SECONDS
+            )
+        ):
+            return
+        self._workspace_files_availability_requested_ids = requested_ids
+        self._workspace_files_availability_generation += 1
+        if self._workspace_files_availability_refresh_in_flight:
+            return
+        if not requested_ids or not self._screen_running_accessor():
+            return
+        self._workspace_files_availability_refresh_in_flight = True
+        self.run_worker(
+            self._refresh_workspace_files_availability_snapshot(),
+            group="console-workspace-files-availability",
+            exclusive=False,
+        )
+
+    def _capture_workspace_files_availability(
+        self, workspace_ids: Sequence[str]
+    ) -> tuple[dict[str, bool], dict[str, tuple[WorkspaceRuntimeBinding, ...]]]:
+        """Read runtime bindings and folder readiness off-loop into a snapshot."""
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        availability: dict[str, bool] = {}
+        bindings_by_id: dict[str, tuple[WorkspaceRuntimeBinding, ...]] = {}
+        for workspace_id in workspace_ids:
+            if registry is None:
+                availability[workspace_id] = False
+                bindings_by_id[workspace_id] = ()
+                continue
+            try:
+                folder_bindings = tuple(registry.list_folder_bindings(workspace_id))
+                list_runtime_bindings = getattr(registry, "list_runtime_bindings", None)
+                runtime_bindings = (
+                    tuple(list_runtime_bindings(workspace_id))
+                    if callable(list_runtime_bindings)
+                    else folder_bindings
+                )
+                refreshed_by_binding_id = {
+                    str(getattr(binding, "binding_id", "")): binding
+                    for binding in folder_bindings
+                }
+                bindings_by_id[workspace_id] = tuple(
+                    refreshed_by_binding_id.get(
+                        str(getattr(binding, "binding_id", "")), binding
+                    )
+                    for binding in runtime_bindings
+                )
+                availability[workspace_id] = any(
+                    binding.binding_kind is RuntimeBindingKind.LOCAL_FILESYSTEM
+                    and binding.status is RuntimeBindingStatus.READY
+                    for binding in folder_bindings
+                )
+            except Exception:
+                availability[workspace_id] = False
+                bindings_by_id[workspace_id] = ()
+        return availability, bindings_by_id
+
+    async def _refresh_workspace_files_availability_snapshot(self) -> None:
+        """Publish only the latest completed folder-availability generation."""
+        try:
+            while self._screen_running_accessor():
+                generation = self._workspace_files_availability_generation
+                workspace_ids = self._workspace_files_availability_requested_ids
+                availability_snapshot, bindings_snapshot = await asyncio.to_thread(
+                    self._capture_workspace_files_availability, workspace_ids
+                )
+                if generation == self._workspace_files_availability_generation:
+                    self._workspace_files_availability_by_id = MappingProxyType(
+                        {
+                            workspace_id: bool(
+                                availability_snapshot.get(workspace_id, False)
+                            )
+                            for workspace_id in workspace_ids
+                        }
+                    )
+                    self._workspace_files_runtime_bindings_by_id = MappingProxyType(
+                        {
+                            workspace_id: tuple(bindings_snapshot.get(workspace_id, ()))
+                            for workspace_id in workspace_ids
+                        }
+                    )
+                    self._workspace_files_availability_cached_at = time.monotonic()
+                    self._workspace_files_availability_refresh_in_flight = False
+                    self._sync_console_workspace_context()
+                    return
+        except asyncio.CancelledError:
+            raise
+        finally:
+            # A screen-owned worker is cancelled during teardown.  Do not
+            # retain an in-flight claim that would make a resumed screen think
+            # a non-existent worker still owns its snapshot.
+            self._workspace_files_availability_refresh_in_flight = False
+
     def _build_console_workspace_context_state(self) -> ConsoleWorkspaceContextState:
         builds = getattr(self, "_console_tick_builds", None)
         if builds is not None and builds.accepts_current_task():
@@ -4218,11 +4676,43 @@ class ConsoleWorkspaceController:
                 "workspace_acp_handoff_state",
                 None,
             ),
+            runtime_bindings_by_workspace=self._workspace_files_runtime_bindings_by_id,
         )
         state = self._with_native_console_session_rows(state)
-        return self._with_console_conversation_browser_state(
+        state = self._with_console_conversation_browser_state(
             state,
             current_conversation_id=current_conversation,
+        )
+        workspace_ids = tuple(
+            dict.fromkeys(
+                workspace_id
+                for workspace_id in (
+                    str(state.workspace_id or "").strip(),
+                    *(
+                        str(workspace.workspace_id or "").strip()
+                        for workspace in self._console_browser_workspace_records()
+                    ),
+                )
+                if workspace_id
+            )
+        )
+        self._request_workspace_files_availability_refresh(workspace_ids)
+        availability = MappingProxyType(
+            {
+                workspace_id: bool(
+                    self._workspace_files_availability_by_id.get(workspace_id, False)
+                )
+                for workspace_id in workspace_ids
+            }
+        )
+        return replace(
+            state,
+            workspace_files_available=bool(
+                self._workspace_files_availability_by_id.get(
+                    state.workspace_id, False
+                )
+            ),
+            workspace_files_available_by_id=availability,
         )
 
     def _console_workspace_build_fingerprint(self) -> tuple | None:
@@ -4277,9 +4767,7 @@ class ConsoleWorkspaceController:
                         controller.activity_for(session.id).queued_count
                         for session in sessions
                     )
-            run_status = (
-                controller.run_state.status if controller is not None else None
-            )
+            run_status = controller.run_state.status if controller is not None else None
             flat_lane = self._flat_conversation_search
             workspace_lane = self._workspace_tree_search
             attempts_token = tuple(
@@ -4890,8 +5378,6 @@ class ConsoleWorkspaceController:
             state: A canonical conversation state.
             conversation_title: Title for the confirmation toast.
         """
-        from ...Chat.console_conversation_actions import conversation_state_label
-
         db = getattr(self.app_instance, "chachanotes_db", None)
         if db is None:
             self.app_instance.notify(

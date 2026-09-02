@@ -1,0 +1,134 @@
+---
+id: TASK-26042
+title: Console Workspace Files read-only inspector
+status: Done
+assignee: []
+created_date: '2026-08-31 16:24'
+updated_date: '2026-09-01 06:02'
+labels: []
+dependencies: []
+references:
+  - Docs/superpowers/specs/2026-08-31-workspace-files-inspector-design.md
+  - >-
+    backlog/decisions/079-workspace-file-inspector-direct-user-authority-and-save-publication.md
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Give Console users a safe way to inspect files from any visible named workspace without activating it or changing the current task, session, conversation, composer, approvals, or workspace context. Deliver the non-activating modal, explicit binding scope, bounded tree/filter, safe viewer, large-file paging, attention return path, and lifecycle behavior as a useful read-only slice.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [x] #1 Either Console entry point opens exactly one inspector visit for the selected named workspace while every active Console context fingerprint remains unchanged.
+- [x] #2 Every current local-folder binding is represented with explicit identity, access mode, and availability; no unavailable or changed binding silently falls back or retargets the modal.
+- [x] #3 The modal provides bounded directory paging and selected-binding-only literal filtering with visible loading, progress, partial, empty, cancelled, failed, and truncated states.
+- [x] #4 Safe UTF-8 files are viewable, files over 200,000 decoded characters through 8 MiB use revision-pinned pages of at most 100,000 characters, and files over 8 MiB remain metadata-only.
+- [x] #5 Hostile filesystem names and unsafe file control text render as visible escaped text without markup or terminal injection while raw path identity remains separate and revalidated.
+- [x] #6 Back to Console, Escape, backdrop dismissal, resize, duplicate activation, generic Console attention, and graceful quit preserve the specified focus, state, privacy, and teardown behavior.
+- [x] #7 Production-shaped Textual and live scratch evidence covers 80x24, 100x30, 120x40, and 160x50 layouts, non-active context preservation, paging, hostile text, privacy, and prohibited side effects.
+- [x] #8 List, read, and filter work is bounded, coalesced, cancellable where safe, stale-result resistant, and leaves no workers or transient modal resources after graceful teardown.
+<!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes
+ADR path: backlog/decisions/079-workspace-file-inspector-direct-user-authority-and-save-publication.md
+Reason: Implements ADR-079's non-activating Console modal, direct-user read authority, revalidation, privacy, and bounded lifecycle boundaries.
+
+1. Build the revalidating read-only filesystem service with bounded list/filter/read paging and hostile-text safety.
+2. Build the Console safe modal with bounded worker lanes, responsive layouts, focus/dismiss behavior, and viewer states.
+3. Wire both typed non-activating entry points, single-visit admission, privacy-minimized attention, and graceful lifecycle behavior.
+4. Complete production-shaped and isolated live scratch evidence, documentation, independent whole-slice review, and task closure.
+
+Detailed plan: Docs/superpowers/plans/2026-08-31-task-26042-workspace-files-read-only.md
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Task 4 added four-size production-CSS evidence using the real Textual Console
+screen and isolated temporary workspace/profile/database roots. The 80x24
+route follows the existing single-pane shell contract through the typed
+controller admission seam; the 100x30, 120x40, and 160x50 routes use visible,
+scrolled, real pointer clicks on both active and non-active entry controls.
+The evidence fingerprints Console context, approvals, bindings, temporary
+files, and redirected profile/config/data/registry-database content before
+and after modal navigation/dismissal. It revealed and fixed a compact-mount
+status-query race in the modal. ADR-079 remains applicable; no new ADR or
+lesson is required. Targeted verification is recorded in the Task 4 report.
+The remaining gate was completed in a real `python -m tldw_chatbook.app`
+process under an isolated tmux PTY rooted at `/private/tmp/task-26042-live`.
+Terminal input opened both the active `Live Active` action and the non-active
+`Live Other` workspace Files action; the latter continued to display `Console
+remains Live Active` while previewing `other-root`. The run covered escaped
+hostile names, literal filtering, 100,000-character UTF-8 paging, 160x50,
+120x40, 100x30, and 80x24 resizes, Escape and explicit-back dismissal, and
+Ctrl+Q teardown. Before/after SHA-256 fingerprints for both recursive roots and
+the disposable config, plus a logical digest of all workspace-registry tables,
+were identical; the visible active conversation/workspace and `Approvals: 0`
+also remained unchanged, and no tmux/app process remained. The automated
+four-size test was strengthened to fingerprint both workspace roots
+recursively and passes 4/4. AC #7 and Definition of Done #4 are now evidenced.
+Final review then found and TDD-closed two bounded-lifecycle gaps: the modal
+now coalesces the service's live filter progress into generation-checked
+visited/result copy, and final untrusted file opens use non-blocking no-follow
+flags before `fstat`, so a listed file swapped to a FIFO is rejected without
+hanging read, dismissal, or quit. The combined service/modal/integration run is
+80 passed; focused Ruff and `git diff --check` are clean.
+An independent whole-slice re-review approved the final implementation with no
+Critical or Important findings. Final targeted verification passed all 80
+service/modal/integration tests and all 11 CSS integrity tests; focused Ruff
+and `git diff --check` are clean. The final self-review confirmed the recorded
+security, privacy, accessibility, performance, licensing, dependency, and
+regression gates without requiring a new ADR or lesson.
+Before PR creation, the branch was rebased onto current `dev`, whose Workspaces
+tree had replaced the former grouped workspace headers. The non-active entry
+was moved into the tree's existing workspace action menu, preserving the same
+stable-id, cached-availability, and non-activating admission contracts; stale
+binding and four-size integration evidence were rerun against that current UI.
+The final current-dev verification passed 80 service/modal/integration tests,
+21 workspace-tree action/routing/geometry tests, and both exact Workspace Files
+modal-contract checks; focused Ruff and `git diff --check` also passed. A wider
+modal-contract sweep retained the same three launch-inventory/model-popover
+failures reproduced on pristine `origin/dev`. After regenerating the new
+current-dev split CSS outputs, the CSS integrity file passed 18/19 checks; its
+remaining inspector-handle minimum-height failure likewise
+reproduces unchanged on pristine `origin/dev` and is outside this feature's CSS
+and behavior scope. The full suite was not run under the repository's
+targeted-verification policy.
+Post-PR Qodo and Cubic review was then resolved on the latest `dev`: root
+descriptor failures now close their opened fd, NUL and negative paging inputs
+fail closed, filter results contain only files and blank filters never walk the
+tree, and the outer revision/page cache is bounded. The modal now fences
+directory results across binding round-trips without suppressing independent
+expanded-directory results, deduplicates pending continuations, reports invalid
+UTF-8 truthfully, synchronizes compact viewer state immediately, focuses the
+actual selected binding, and keeps Show Files immediately after the primary/RAG
+actions. Foreign scopes are stripped even when already unavailable, the feature
+modules are first-use imports, the required off-loop availability worker is
+explicitly inventoried, test waits are bounded, and the rebased split-CSS test
+harness loads the production Console sheet. Targeted verification passed 94
+service/modal/integration tests, 11 controller/routing/dismissal tests, 20
+workspace-action/CSS integrity tests, both startup ratchets, focused Ruff, and
+`git diff --check`; no new ADR or generalized lesson was required.
+The final Qodo rerun found one cancellation-cleanup gap in the controller's
+single-visit admission claim. Cleanup now uses an await-free, event-loop-local
+compare-and-clear, so cancellation cannot interrupt a lock reacquisition and
+strand the claim. A double-cancellation regression reproduced the old leak and
+passes with the fix; all 11 Workspace Files controller tests pass. This
+hardening stays within ADR-079's existing lifecycle boundary and requires no
+new ADR or generalized lesson.
+<!-- SECTION:NOTES:END -->
+
+## Definition of Done
+<!-- DOD:BEGIN -->
+- [x] #1 All acceptance criteria are checked only after their behavior and prohibited side effects are evidenced.
+- [x] #2 The task is moved to In Progress before an Implementation Plan is added, and that plan records ADR required: yes, ADR-079, and the reason.
+- [x] #3 Targeted automated tests, relevant static checks, and git diff --check pass; a full suite is run only after explicit user approval.
+- [x] #4 Production-shaped Textual evidence and an isolated live scratch verification cover the user-facing path and preserve unrelated Console and profile state.
+- [x] #5 Relevant documentation and concise Implementation Notes identify the approach, trade-offs, files changed, verification, and any plan deviation.
+- [x] #6 A self-review confirms security, privacy, accessibility, performance, licensing, task dependencies, and no unrelated regression before the task is set to Done.
+<!-- DOD:END -->

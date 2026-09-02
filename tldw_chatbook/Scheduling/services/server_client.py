@@ -387,3 +387,77 @@ class SchedulingServerClient:
             definition_id,
             retry=False,
         )
+
+    async def list_automation_results(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        definition_id: str | None = None,
+        review_state: str | None = None,
+    ) -> dict[str, Any]:
+        """List the server's scheduled-task results (spec §4.2).
+
+        Args:
+            limit: Page size to request from the server.
+            offset: Pagination offset to request from the server.
+            definition_id: Optional filter to one definition's results.
+            review_state: Optional review-state filter.
+
+        Returns:
+            The result list response (``items``/``total``/pagination).
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientValidationError: If the request is rejected by policy
+                or the server.
+            ServerClientServerError: If the server returns a server error after
+                retries are exhausted.
+            ServerClientTimeoutError: If the request times out after retries.
+        """
+        return await self._call_with_retry(
+            "list_scheduled_automation_results",
+            limit=limit,
+            offset=offset,
+            definition_id=definition_id,
+            review_state=review_state,
+            is_read=True,
+        )
+
+    async def review_automation_result(
+        self,
+        result_id: str,
+        review_state: str,
+        *,
+        review_note: str | None = None,
+    ) -> dict[str, Any]:
+        """Set one result's review state, retried on failure.
+
+        Unlike ``run_automation_definition_now``, replaying the same review
+        state is idempotent server-side -- a retry cannot double-fire
+        anything, so this call keeps the default retry behavior.
+
+        Args:
+            result_id: The server result to update.
+            review_state: New review state (``read``/``dismissed``/etc).
+            review_note: Optional free-text note attached to the review.
+
+        Returns:
+            The updated result row.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientNotFoundError: If the result does not exist
+                server-side (e.g. retired).
+            ServerClientValidationError: If the request is rejected by policy
+                or the server.
+            ServerClientServerError: If the server returns a server error after
+                retries are exhausted.
+            ServerClientTimeoutError: If the request times out after retries.
+        """
+        return await self._call_with_retry(
+            "review_scheduled_automation_result",
+            result_id,
+            review_state,
+            review_note=review_note,
+        )

@@ -11,6 +11,7 @@ from tldw_chatbook.Chat.console_workspace_actions import (
     ACTION_NEW_CHAT,
     ACTION_RAG_SCOPE,
     ACTION_RENAME,
+    ACTION_SHOW_FILES,
     WorkspaceMenuTarget,
     build_workspace_menu,
     page_from_action,
@@ -24,11 +25,12 @@ def _workspace(**overrides) -> WorkspaceMenuTarget:
 
 
 @pytest.mark.unit
-def test_root_menu_offers_the_five_approved_entries():
+def test_root_menu_offers_workspace_files_without_activation():
     labels = [item.label for item in build_workspace_menu(_workspace())]
     assert labels == [
         "Activate",
         "New chat",
+        "Show files",
         "Rename…",
         "RAG scope…",
         "More",
@@ -50,12 +52,12 @@ def test_activate_marks_and_disables_the_active_workspace():
 
 @pytest.mark.unit
 def test_rag_scope_gates_on_active_workspace_with_a_stated_reason():
-    inactive = build_workspace_menu(_workspace(is_active=False))[3]
+    inactive = build_workspace_menu(_workspace(is_active=False))[4]
     assert inactive.action_id == ACTION_RAG_SCOPE
     assert inactive.enabled is False
     assert "Activate" in inactive.disabled_reason
 
-    active = build_workspace_menu(_workspace(is_active=True))[3]
+    active = build_workspace_menu(_workspace(is_active=True))[4]
     assert active.enabled is True
     assert active.disabled_reason == ""
 
@@ -86,6 +88,7 @@ def test_root_commands_carry_no_page_navigation():
             assert item.action_id in {
                 ACTION_ACTIVATE,
                 ACTION_NEW_CHAT,
+                ACTION_SHOW_FILES,
                 ACTION_RENAME,
                 ACTION_RAG_SCOPE,
             }

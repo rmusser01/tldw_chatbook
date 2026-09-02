@@ -729,3 +729,138 @@ def test_app_wiring_briefing_projection_is_live_not_a_frozen_none():
         app.scheduling_service.briefing_projection
         is app.scheduler_loop.queue.briefing_projection
     )
+
+
+# ---------------------------------------------------------------------------
+# review_automation_result (schedules-handoff PR-3, task 5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_review_automation_result_local_only_updates_without_mutation(db):
+    result_id = db.create_automation_result(
+        "local", "def-1", "run-1", "finding", "T", "S", "key-1"
+    )
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    ok = await svc.review_automation_result(result_id, "dismissed", "not relevant")
+
+    assert ok is True
+    row = db.get_automation_result(result_id)
+    assert row["review_state"] == "dismissed"
+    assert row["review_note"] == "not relevant"
+    assert db.get_pending_mutations("local", primitive="automation_result_review") == []
+
+
+@pytest.mark.asyncio
+async def test_review_automation_result_server_mirrored_records_pending_mutation(db):
+    result_id = db.create_automation_result(
+        "server:1", "def-1", "run-1", "finding", "T", "S", "key-1",
+        server_id="srv-res-1",
+    )
+    svc = SchedulingService(db=db, runtime_source="server:1")
+
+    ok = await svc.review_automation_result(result_id, "dismissed", "noise")
+
+    assert ok is True
+    row = db.get_automation_result(result_id)
+    assert row["review_state"] == "dismissed"
+
+    pending = db.get_pending_mutations("server:1", primitive="automation_result_review")
+    assert len(pending) == 1
+    assert pending[0]["local_id"] == result_id
+    assert pending[0]["payload"] == {
+        "server_result_id": "srv-res-1",
+        "review_state": "dismissed",
+        "review_note": "noise",
+        "idempotency_key": pending[0]["payload"]["idempotency_key"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_review_automation_result_records_mutation_under_row_owner(db):
+    """F1 (task-23105-review): the row's own owner_id is authoritative.
+
+    The workbench can toggle the service's active owner independently of
+    which owner a given result row belongs to -- recording the pending
+    mutation under ``self.owner_id`` would strand it where the row's real
+    owner never sees it via ``get_pending_mutations``.
+    """
+    result_id = db.create_automation_result(
+        "server:1", "def-1", "run-1", "finding", "T", "S", "key-1",
+        server_id="srv-res-1",
+    )
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    ok = await svc.review_automation_result(result_id, "dismissed", "noise")
+
+    assert ok is True
+    pending = db.get_pending_mutations("server:1", primitive="automation_result_review")
+    assert len(pending) == 1
+    assert pending[0]["local_id"] == result_id
+    assert db.get_pending_mutations("local", primitive="automation_result_review") == []
+
+
+@pytest.mark.asyncio
+async def test_review_automation_result_rejects_unknown_review_state(db):
+    result_id = db.create_automation_result(
+        "local", "def-1", "run-1", "finding", "T", "S", "key-1"
+    )
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    ok = await svc.review_automation_result(result_id, "bogus")
+
+    assert ok is False
+    row = db.get_automation_result(result_id)
+    assert row["review_state"] == "unread"  # untouched
+
+
+@pytest.mark.asyncio
+async def test_review_automation_result_unknown_id_returns_false(db):
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    ok = await svc.review_automation_result("no-such-id", "dismissed")
+
+    assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_review_automation_result_server_mirrored_makes_a_single_db_call(db):
+    """review round 1 finding: the review write and its outbox mutation
+    must be ONE ``update_result_review(..., pending_mutation=...)`` call --
+    not a separate ``record_pending_mutation`` call after -- so the two
+    can never land in different transactions.
+    """
+    result_id = db.create_automation_result(
+        "server:1", "def-1", "run-1", "finding", "T", "S", "key-1",
+        server_id="srv-res-1",
+    )
+    svc = SchedulingService(db=db, runtime_source="server:1")
+
+    real_update = db.update_result_review
+    calls: list[dict] = []
+
+    def _spy_update(*args, **kwargs):
+        calls.append(kwargs)
+        return real_update(*args, **kwargs)
+
+    db.update_result_review = _spy_update  # type: ignore[method-assign]
+    db.record_pending_mutation = MagicMock(  # type: ignore[method-assign]
+        side_effect=AssertionError(
+            "record_pending_mutation must not be called separately from "
+            "review_automation_result -- it must go through "
+            "update_result_review(pending_mutation=...)"
+        )
+    )
+
+    ok = await svc.review_automation_result(result_id, "dismissed", "noise")
+
+    assert ok is True
+    assert len(calls) == 1
+    mutation = calls[0]["pending_mutation"]
+    assert mutation["local_id"] == result_id
+    assert mutation["owner_id"] == "server:1"
+    assert mutation["payload"]["server_result_id"] == "srv-res-1"
+
+    pending = db.get_pending_mutations("server:1", primitive="automation_result_review")
+    assert len(pending) == 1

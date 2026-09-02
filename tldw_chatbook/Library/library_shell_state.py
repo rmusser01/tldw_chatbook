@@ -231,7 +231,7 @@ class LibraryRailRow:
     # while loading, count when known, no suffix when the source is off).
     count_loading: bool = False
     # LIB-15: True for a row whose count is not fetched yet but WILL be
-    # (e.g. Collections, whose count only loads on first canvas visit --
+    # (e.g. Collections, whose capture count only loads on first visit --
     # see ``count_loading``'s own docstring for why it is NOT used for this
     # row: showing a "(…)" placeholder before any fetch has even started
     # would misrepresent an idle row as actively loading). Distinct from a
@@ -240,7 +240,7 @@ class LibraryRailRow:
     # cases are indistinguishable from ``count``/``count_known`` alone.
     # ``_row_label``'s gloss-fit check reserves a stable minimum width for
     # this row's eventual count so the gloss's visibility does not flip the
-    # instant the count arrives (the observed "Collections — item sets" ->
+    # instant the count arrives (the observed "Collections — saved captures" ->
     # "(0)", gloss silently dropping on the SAME terminal width just
     # because the count went from absent to a single digit).
     count_pending: bool = False
@@ -410,19 +410,19 @@ def build_library_shell_state(
             target_id="collections",
             count=state.collections_count,
             count_known=state.collections_known,
-            subtitle="item sets",
-            # LIB-15: Collections' count is fetched lazily (on first canvas
+            subtitle="saved captures",
+            # Collections' authority-qualified capture count is fetched lazily
+            # on first canvas
             # visit), unlike every other counts_loading row -- flagging it
             # pending (rather than "off", Search/RAG's case) lets the
             # gloss-fit check reserve stable width for the count that is
             # coming, so the gloss does not silently drop the instant the
             # count arrives at the same terminal width.
             count_pending=True,
-            # LIB-18: "Collections" (11 cells) fits the ~17-cell row budget
-            # only while its count stays single-digit; "Sets" (matching
-            # this row's own "item sets" gloss) is the fallback once a
+            # "Collections" fits the narrow rail only while its count stays
+            # short; "Captures" is the truthful fallback once a
             # longer count would otherwise force a mid-word cut.
-            short_title="Sets",
+            short_title="Captures",
         ),
         LibraryRailRow(
             row_id=LIBRARY_ROW_BROWSE_SEARCH,

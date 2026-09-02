@@ -2202,6 +2202,22 @@ class ConsoleProviderGateway:
         self._trace_call_boundary_factory = trace_call_boundary_factory
         self._adapter_admission_issuer = object()
 
+    @property
+    def supports_durable_capture(self) -> bool:
+        """Whether this gateway can actually reserve a durable trace call.
+
+        TASK-25814: `trace_call_boundary_factory` is documented as optional
+        ("Optional hard-off normalized-writer seam"), and in production it is
+        never supplied -- both callers of `ensure_provider_gateway` omit it.
+        Capture-On dispatch nonetheless requires it, so a turn prepared as
+        Capture-On against a gateway without one can only ever be refused.
+        Callers that CHOOSE the capture mode consult this first, so the
+        refusal in `_reserve_trace_call` stays what it is meant to be -- a
+        guard against a real failure, not the default outcome of every send.
+        """
+
+        return self._trace_call_boundary_factory is not None
+
     def _capture_off_admission(
         self, route: ConsoleRequestRoute | None
     ) -> _ProviderAdapterAdmission:

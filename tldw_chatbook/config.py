@@ -1875,6 +1875,7 @@ def _load_settings_uncached(
     normalized_destination_readers: dict[str, dict[str, Any]] = {}
     for section_name in (
         "media_reader",
+        "collections_reader",
         "conversations_reader",
         "notes_reader",
         "prompts_reader",
@@ -3349,6 +3350,11 @@ custom_widths_enabled = false
 library_width = 31
 items_width = 40
 
+[library.collections_reader]
+# Environment overrides use TLDW_LIBRARY_COLLECTIONS_READER_<KEY>.
+items_open = true
+items_width = 40
+
 [library.conversations_reader]
 # Environment overrides use TLDW_LIBRARY_CONVERSATIONS_READER_<KEY>.
 items_open = true
@@ -4354,6 +4360,20 @@ default_keyword_filter = ""
 auto_save = false
 # Show analysis button in media viewer by default
 show_analysis_button = true
+
+[permission_summary]
+# ADR-090: advisory summaries on Console approval cards.
+# mode: off (default) | fallback (only when the model gave no rationale)
+# | always (every approval round). Enabling sends a bounded tail of the
+# conversation (user/assistant text only) to this provider.
+mode = "off"
+provider = ""
+model = ""
+# api_key = ""           # optional; else the provider's configured key
+timeout_seconds = 4
+max_tokens = 120
+tail_max_chars = 4000
+# system_prompt = ""     # optional override of the built-in neutral prompt
 
 [llm_management]
 # LLM Management settings

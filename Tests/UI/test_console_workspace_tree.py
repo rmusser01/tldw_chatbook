@@ -147,7 +147,7 @@ def test_failed_page_offers_retry_without_a_competing_load_more_action() -> None
                 "w",
                 "Workspace",
                 ("c", "Settled"),
-                error="Workspace conversations are unavailable.",
+                error="Couldn't load conversations.",
                 next_cursor=75,
             ),
         ),

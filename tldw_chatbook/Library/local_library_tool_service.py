@@ -1,8 +1,8 @@
 """Shared synchronous core for the direct Library tools (task-1337, ADR-030).
 
 One ``LocalLibraryToolService`` owns the public operation contract and
-delegates storage work to the six existing local backend services (media,
-notes, prompts, skills, conversations, collections) plus the dedicated
+delegates storage work to the five current local backend services (media,
+notes, prompts, skills, conversations) plus the dedicated
 media chunk-tool service (structure/fetch/spec operations). Organization-aware
 note saves cross one Notes-owned transaction seam, so a failed placement cannot
 leave behind a partially-created note or folder.
@@ -79,7 +79,6 @@ _LIST_METHODS = {
     "prompt": "list_library_prompts",
     "skill": "list_library_skills",
     "conversation": "list_library_conversations",
-    "collection": "list_library_collections",
 }
 
 _SEARCH_METHODS = {
@@ -88,7 +87,6 @@ _SEARCH_METHODS = {
     "prompt": "search_library_prompts",
     "skill": "search_library_skills",
     "conversation": "search_library_conversations",
-    "collection": "search_library_collections",
 }
 
 _PROMPT_SECTIONS = ("details", "system_prompt", "user_prompt", "prompt_definition")
@@ -455,7 +453,6 @@ class LocalLibraryToolService:
         prompt_service: Any = None,
         skills_service: Any = None,
         conversation_service: Any = None,
-        collections_service: Any = None,
         media_chunk_service: Any = None,
         notes_user_id: str = "local_library",
         notes_scope_service: Any = None,
@@ -466,7 +463,6 @@ class LocalLibraryToolService:
         self._prompts = prompt_service
         self._skills = skills_service
         self._conversations = conversation_service
-        self._collections = collections_service
         self._media_chunk = media_chunk_service
         self._notes_user_id = notes_user_id
         # Retained constructor compatibility for older composition sites. The
@@ -572,7 +568,7 @@ class LocalLibraryToolService:
         """Route one media chunking operation to its dedicated service.
 
         The chunk tools own their backend handles (media DB, reading
-        service, template interop), so they do NOT resolve through the six
+        service, template interop), so they do NOT resolve through the five
         item-type backends; a missing chunk service degrades its tools to
         the same structured ``feature_unavailable`` as any missing backend.
         """
@@ -604,7 +600,6 @@ class LocalLibraryToolService:
             "prompt": self._prompts,
             "skill": self._skills,
             "conversation": self._conversations,
-            "collection": self._collections,
         }[item_type]
         if backend is None:
             raise LibraryToolError(
@@ -801,23 +796,7 @@ class LocalLibraryToolService:
                 ),
                 **common,
             )
-        return _make_brief(
-            item_type,
-            raw_id=raw["collection_id"],
-            display_key="name",
-            display_value=raw.get("name"),
-            preview=raw.get("description"),
-            keywords=None,
-            keyword_total=0,
-            keywords_truncated=False,
-            matched_fields=raw.get("matched_fields"),
-            matched_keywords=raw.get("matched_keywords"),
-            metadata=(
-                ("item_count", raw.get("item_count")),
-                ("created_at", raw.get("created_at")),
-                ("updated_at", raw.get("updated_at")),
-            ),
-        )
+        raise AssertionError(f"unhandled Library item type: {item_type}")
 
     # -- Get dispatch ------------------------------------------------------------
 
@@ -840,7 +819,7 @@ class LocalLibraryToolService:
             return self._get_skill(backend, public_id, raw_id, arguments)
         if item_type == "conversation":
             return self._get_conversation(backend, public_id, raw_id, arguments)
-        return self._get_collection(backend, public_id, raw_id, arguments)
+        raise AssertionError(f"unhandled Library item type: {item_type}")
 
     @staticmethod
     def _cursor_state(
@@ -1441,69 +1420,5 @@ class LocalLibraryToolService:
             if serialized_size(payload) <= MAX_RESULT_BYTES:
                 break
         return payload
-
-    # -- Get: collections (direct-membership pages) ----------------------------
-
-    def _get_collection(
-        self, backend: Any, public_id: str, raw_id: str, arguments: Mapping[str, Any]
-    ) -> dict[str, Any]:
-        limit, offset = validate_page_args(
-            arguments.get("limit"), arguments.get("offset")
-        )
-        cursor = self._cursor_state(arguments, public_id)
-        if cursor is not None:
-            offset = cursor["off"]
-        detail = backend.get_library_collection(raw_id, limit=limit, offset=offset)
-        if detail is None:
-            raise _not_found()
-        revision = str(detail.get("updated_at"))
-        if cursor is not None:
-            check_cursor_revision(cursor, revision)
-        item = _metadata_item(
-            public_id,
-            "collection",
-            "name",
-            detail.get("name"),
-            (
-                ("description", detail.get("description")),
-                ("created_at", detail.get("created_at")),
-                ("updated_at", detail.get("updated_at")),
-            ),
-        )
-        members = [
-            {key: _json_safe(value) for key, value in member.items()}
-            for member in detail.get("members") or ()
-        ]
-        member_total = int(detail.get("member_total") or 0)
-        payload: dict[str, Any] = {
-            "item": item,
-            "member_total": member_total,
-            "offset": offset,
-            "limit": limit,
-            "has_more": False,
-            "next_offset": None,
-            "next_cursor": None,
-            "members": members,
-        }
-        for _ in range(8):
-            # Pop with the previous round's cursor still in place so the minted
-            # cursor cannot push the sealed page over the ceiling.
-            while members and serialized_size(payload) > MAX_RESULT_BYTES:
-                members.pop()
-            returned = len(members)
-            has_more = offset + returned < member_total
-            payload["has_more"] = has_more
-            payload["next_offset"] = offset + returned if has_more else None
-            payload["next_cursor"] = (
-                make_cursor(
-                    item_id=public_id, revision=revision, offset=offset + returned
-                )
-                if has_more
-                else None
-            )
-            if serialized_size(payload) <= MAX_RESULT_BYTES:
-                break
-        return payload
-
 
 __all__ = ["LocalLibraryToolService"]

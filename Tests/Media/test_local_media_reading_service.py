@@ -3,6 +3,7 @@ from importlib.util import module_from_spec, spec_from_file_location
 import io
 import json
 from pathlib import Path
+import threading
 import zipfile
 
 import pytest
@@ -164,6 +165,63 @@ class LibrarySummaryRecordingDb:
     def get_distinct_media_types(self):
         self.type_calls += 1
         return [f"private-type-{index:02}" for index in range(61)]
+
+
+class LibraryTrashRecordingDb:
+    def __init__(self):
+        self.calls = []
+
+    def list_library_media_trash_page(
+        self, *, query="", media_type=None, limit=20, offset=0
+    ):
+        self.calls.append(
+            {
+                "query": query,
+                "media_type": media_type,
+                "limit": limit,
+                "offset": offset,
+            }
+        )
+        return {
+            "items": [
+                {
+                    "id": 41,
+                    "title": "",
+                    "type": "",
+                    "trash_date": "2026-08-30T12:00:00Z",
+                }
+            ],
+            "total": 45,
+            "limit": limit,
+            "offset": offset,
+            "types": ["pdf", "article"],
+        }
+
+
+def test_local_service_forwards_library_media_trash_page_without_repair():
+    db = LibraryTrashRecordingDb()
+
+    payload = LocalMediaReadingService(db).list_library_media_trash(
+        query="doc", media_type="pdf", limit=20, offset=40
+    )
+
+    assert db.calls == [
+        {"query": "doc", "media_type": "pdf", "limit": 20, "offset": 40}
+    ]
+    assert payload == {
+        "items": [
+            {
+                "id": 41,
+                "title": "",
+                "type": "",
+                "trash_date": "2026-08-30T12:00:00Z",
+            }
+        ],
+        "total": 45,
+        "limit": 20,
+        "offset": 40,
+        "types": ["pdf", "article"],
+    }
 
 
 def test_local_service_library_media_summary_uses_exact_db_offset_and_projection():
@@ -425,6 +483,140 @@ def test_local_service_direct_media_management_round_trips(memory_db_factory):
     assert deleted_again == {"ok": True, "media_id": media_id}
     assert permanent == {"ok": True, "media_id": media_id}
     assert after_permanent["items"] == []
+
+
+def test_media_trash_permanent_delete_cascades_fts_without_sync_log(
+    memory_db_factory,
+):
+    """The one-item Trash seam preserves the existing irreversible DB contract."""
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Cascade target",
+        content="unique permanent deletion sentinel",
+        media_type="document",
+        keywords=["cascade-keyword"],
+        chunks=[
+            {"text": "first child chunk", "chunk_type": "text"},
+            {"text": "second child chunk", "chunk_type": "text"},
+        ],
+    )
+    db.save_media_to_read_it_later(media_id)
+    assert db.mark_as_trash(media_id) is True
+    connection = db.get_connection()
+    child_tables = (
+        "MediaKeywords",
+        "UnvectorizedMediaChunks",
+        "MediaReadItLaterState",
+    )
+    assert all(
+        connection.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE media_id = ?", (media_id,)
+        ).fetchone()[0]
+        > 0
+        for table in child_tables
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM media_fts WHERE rowid = ?", (media_id,)
+        ).fetchone()[0]
+        == 1
+    )
+    sync_count_before = connection.execute("SELECT COUNT(*) FROM sync_log").fetchone()[
+        0
+    ]
+
+    result = LocalMediaReadingService(db).permanently_delete_media_item(media_id)
+
+    assert result == {"ok": True, "media_id": media_id}
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM Media WHERE id = ?", (media_id,)
+        ).fetchone()[0]
+        == 0
+    )
+    assert all(
+        connection.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE media_id = ?", (media_id,)
+        ).fetchone()[0]
+        == 0
+        for table in child_tables
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM media_fts WHERE rowid = ?", (media_id,)
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute("SELECT COUNT(*) FROM sync_log").fetchone()[0]
+        == sync_count_before
+    )
+
+
+def test_media_trash_permanent_delete_rechecks_trash_in_delete_transaction(
+    tmp_path, monkeypatch
+):
+    """A concurrent restore must win before the irreversible delete begins."""
+    from tldw_chatbook.DB import Client_Media_DB_v2 as media_db_module
+
+    db_path = tmp_path / "trash-delete-race.sqlite"
+    deleting_db = Database(db_path=db_path, client_id="delete-race")
+    restoring_db = Database(db_path=db_path, client_id="restore-race")
+    entered_delete = threading.Event()
+    resume_delete = threading.Event()
+    outcome: dict[str, object] = {}
+    worker: threading.Thread | None = None
+    try:
+        media_id, _, _ = deleting_db.add_media_with_keywords(
+            title="Concurrent restore target",
+            content="private race content",
+            media_type="document",
+            keywords=[],
+        )
+        assert deleting_db.mark_as_trash(media_id)
+        original_delete = media_db_module.permanently_delete_item
+
+        def coordinated_delete(db_instance, target_id):
+            entered_delete.set()
+            assert resume_delete.wait(5)
+            return original_delete(db_instance, target_id)
+
+        monkeypatch.setattr(
+            media_db_module, "permanently_delete_item", coordinated_delete
+        )
+
+        def delete_in_worker() -> None:
+            try:
+                outcome["result"] = LocalMediaReadingService(
+                    deleting_db
+                ).permanently_delete_media_item(media_id)
+            except Exception as exc:  # surfaced in the test thread below
+                outcome["error"] = exc
+
+        worker = threading.Thread(target=delete_in_worker)
+        worker.start()
+        assert entered_delete.wait(5)
+
+        assert restoring_db.restore_from_trash(media_id)
+        restored = restoring_db.get_media_by_id(media_id)
+        assert restored is not None
+        assert restored["is_trash"] in {0, False}
+
+        resume_delete.set()
+        worker.join(5)
+
+        assert not worker.is_alive()
+        assert "result" not in outcome
+        assert isinstance(outcome.get("error"), ValueError)
+        still_active = restoring_db.get_media_by_id(media_id)
+        assert still_active is not None
+        assert still_active["is_trash"] in {0, False}
+    finally:
+        resume_delete.set()
+        if worker is not None:
+            worker.join(5)
+        restoring_db.close_connection()
+        deleting_db.close_connection()
 
 
 def test_local_service_list_media_items_carries_last_modified_for_list_card_age(

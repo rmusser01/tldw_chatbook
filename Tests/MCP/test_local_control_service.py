@@ -1922,11 +1922,9 @@ async def test_mcp_client_tool_resource_and_prompt_calls_use_jsonrpc_requests(
 
 # -- task-1337 (plan Task 9): Library tool policy mapping ----------------------
 #
-# Each of the 18 descriptor-backed ``library_*`` tools resolves to a read
-# action owned by its Library item type (list/search -> the type's ``list``
-# action, get -> its ``detail`` action). Collections get the dedicated
-# local-only ``library.collections`` resource -- never
-# ``collections.reading_list.*``. Both ``tool.execute`` previews and
+# Each current descriptor-backed ``library_*`` tool resolves to a read action
+# owned by its Library item type (list/search -> the type's ``list`` action,
+# get -> its ``detail`` action). Both ``tool.execute`` previews and
 # ``tools/call`` runtime requests resolve through the same mapping, with the
 # generic MCP trigger retained as the fallback seam for unknown names.
 
@@ -1955,18 +1953,6 @@ _LIBRARY_TOOL_POLICY_EXPECTATIONS = {
     "library_list_conversations": ("chat.list.local", "chat"),
     "library_get_conversation": ("chat.detail.local", "chat"),
     "library_search_conversations": ("chat.list.local", "chat"),
-    "library_list_collections": (
-        "library.collections.list.local",
-        "library_collections",
-    ),
-    "library_get_collection": (
-        "library.collections.detail.local",
-        "library_collections",
-    ),
-    "library_search_collections": (
-        "library.collections.list.local",
-        "library_collections",
-    ),
     # chunking-agent-tools siblings: the read tools ride the existing media
     # read path (spec §6 "no new verbs") at the matching LEVEL -- structure
     # and chunk fetch are single-item detail reads (by id, like get), spec
@@ -2052,28 +2038,6 @@ def test_unknown_tools_keep_the_generic_mcp_trigger_fallback():
 
     assert preview["resolved_action_id"] == "mcp.runtime.trigger.local"
     assert preview["registry_capability_id"] == "local_mcp_runtime"
-
-
-@pytest.mark.asyncio
-async def test_library_collections_deny_rule_blocks_execute_and_tools_call():
-    service = _library_policy_control_service()
-    service.save_governance_rule(
-        {
-            "rule_id": "rule-deny-library-collections",
-            "capability_id": "library.collections.list.local",
-            "decision": "deny",
-            "notes": "Library collection listing is blocked.",
-        }
-    )
-
-    with pytest.raises(PermissionError, match="library.collections.list.local"):
-        await service.execute_tool("library_list_collections", {})
-
-    with pytest.raises(PermissionError, match="library.collections.list.local"):
-        await service.run_runtime_request(
-            "tools/call",
-            {"name": "library_search_collections", "arguments": {"query": "x"}},
-        )
 
 
 def test_control_service_forwards_its_policy_enforcer_to_the_default_delegate():

@@ -81,7 +81,7 @@ Scope Inspector's buttons lose their "— no changes" suffix.
 | **Draft — save with s** | Edits are held as a draft; press **s** (or **Save (s)**) to write them. | Providers & Models, Speech & TTS, Appearance, Console Behavior, Storage, Privacy & Security, [RAG](settings/rag.md) |
 | **Draft — save/revert below** | Drafted, but the panel has its own **Save** and **Revert**. | Image Gen |
 | **Auto-saved** | Written as you make each change; nothing to save. | Splash Screen |
-| **Applies immediately** | Each action takes effect at once; no draft to save or revert. | Workspaces |
+| **Applies immediately** | Each action takes effect at once; no draft to save or revert. | Workspaces, [My Profile](settings/personal-context-profile.md) |
 | **Managed in editor** | The editor's own **Apply** / **Save** / **Reset** persist things. | Theme |
 | **Per-item Save/Reset** | Each item saves and resets on its own, inside its editor. | Internal Prompts |
 | **Validate, then Save** | Save stays blocked until the current text validates. | Advanced Config |
@@ -113,6 +113,7 @@ unless you run Manual sync from Overview yourself.
 | Interface | **Console Behavior** | Rail presentation, composer behavior, and chat-flow defaults. | Draft — save with s |
 | Data & Privacy | **Storage** | Config path, local databases, and file locations. | Draft — save with s |
 | Data & Privacy | **Workspaces** | Create, rename, archive, and bind folders for agent file tools. | Applies immediately |
+| Data & Privacy | **My Profile** → [own page](settings/personal-context-profile.md) | Personal and workspace context, interviews, agent proposals, authority, export, and removal. | Applies immediately |
 | Data & Privacy | **Privacy & Security** | Secrets, encryption, redaction, local privacy boundaries, and the raw CLI host-access gate. | Draft — save with s |
 | Troubleshooting | **Diagnostics** (view) | Config validation, logs, and troubleshooting signals. | Read-only here |
 | Troubleshooting | **About** (view) | Version, license, and project links. | Read-only here |
@@ -474,6 +475,22 @@ physically typed `! ` command is a direct user action: once armed, it executes
 without a model approval card and is not controlled by the model-tool kill
 switch. See [Raw CLI: direct user commands and model `shell_exec`](console/agent-runs-and-tools.md#raw-cli-direct-user-commands-and-model-shell_exec)
 for the complete boundary.
+
+The same saved unlock also enables a separate **Arm Terminal** control. Its arm
+is independent: arming Terminal does not arm raw `!` commands or model
+`shell_exec`, and arming raw CLI does not arm Terminal. Both arms live only for
+this Chatbook launch. Terminal starts a normal interactive account shell, so
+startup profiles may restore secrets and commands despite the scrubbed initial
+environment; shell history and other side effects can be written anywhere the
+OS user can access. The selected Workspace or home directory is only the
+starting directory, never confinement. Disarming Terminal immediately blocks
+new input and begins bounded cleanup of every retained Terminal session.
+
+Terminal is user-only: it never registers a model tool and its input, output,
+screen, names, or paths are not added to conversation history, run logs,
+exports, or reconnect state. There is no `terminal_armed` config field. Current
+builds support POSIX PTYs on macOS/Linux and fail closed on Windows; a qualified
+Windows boundary requires a new or superseding ADR.
 
 ### Troubleshooting — Diagnostics
 

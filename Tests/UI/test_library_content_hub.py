@@ -14,10 +14,6 @@ from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
     LIBRARY_NAV_CONTEXT_MODE,
 )
-from tldw_chatbook.Widgets.Library.library_collections_panel import (
-    LIBRARY_COLLECTIONS_STATUS_LINE,
-)
-
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     StaticLibraryConversationScopeService,
@@ -80,71 +76,6 @@ async def _wait_for_library_conversation_selection(
         f"selected={getattr(screen, '_selected_conversation_id', None)!r}; "
         f"visible={_visible_text(screen)}"
     )
-
-
-class StaticLibraryCollectionsService:
-    """Small mounted-test service for Library Collections snapshots."""
-
-    def __init__(self, records) -> None:
-        self.records = tuple(records)
-
-    def list_collections(self):
-        return self.records
-
-    @staticmethod
-    def _summary(record):
-        updated_at = str(record.get("updated_at", "2026-01-01T00:00:00Z"))
-        return {
-            "collection_id": str(record["collection_id"]),
-            "name": str(record["name"]),
-            "description": str(record.get("description", "")),
-            "item_count": int(record.get("item_count", 0)),
-            "created_at": str(record.get("created_at", updated_at)),
-            "updated_at": updated_at,
-        }
-
-    def _ordered(self):
-        return sorted(
-            (self._summary(record) for record in self.records),
-            key=lambda record: (
-                record["created_at"],
-                record["name"].casefold(),
-                record["collection_id"],
-            ),
-        )
-
-    def list_library_collections(self, *, limit=20, offset=0):
-        records = self._ordered()
-        return {
-            "items": records[offset : offset + limit],
-            "total": len(records),
-            "limit": limit,
-            "offset": offset,
-        }
-
-    def locate_library_collection_page(self, collection_id, *, limit=20):
-        records = self._ordered()
-        rank = next(
-            (
-                index
-                for index, record in enumerate(records)
-                if record["collection_id"] == collection_id
-            ),
-            None,
-        )
-        if rank is None:
-            return None
-        offset = rank // limit * limit
-        return {
-            "items": records[offset : offset + limit],
-            "total": len(records),
-            "limit": limit,
-            "offset": offset,
-            "page": offset // limit + 1,
-            "target_id": collection_id,
-            "target_rank": rank,
-            "target_index": rank - offset,
-        }
 
 
 class StaticLibraryRagSearchService:
@@ -388,7 +319,7 @@ async def test_library_source_rail_marks_active_mode_without_mutating_action_lab
         await _wait_for_library_shell_ready(screen, pilot)
         collections_row = screen.query_one("#library-row-browse-collections", Button)
         collections_row.press()
-        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+        await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
 
         collections_row = screen.query_one("#library-row-browse-collections", Button)
         assert collections_row.has_class("library-rail-row-selected")
@@ -531,139 +462,3 @@ async def test_library_conversations_snapshot_requests_all_scopes() -> None:
             "Console workspace chat",
         )
         assert "Console workspace chat" in _visible_text(screen)
-
-
-@pytest.mark.asyncio
-async def test_library_collections_selection_explains_membership_workspace_and_actions() -> (
-    None
-):
-    """``LibraryCollectionsPanel`` (mounted verbatim in the canvas) still
-    explains status and action availability for a selected Collection. The
-    retired 3-pane inspector column duplicated this same copy under
-    different ids (``library-collection-inspector-*``) with a few
-    inspector-only lines ("Selected Collection Record" heading, "Collection
-    item reader: not wired locally yet.", the two "Disabled: collection item
-    ... is not wired yet." lines, and the Search/RAG recovery sentence) that
-    have no successor in the single-pane canvas.
-
-    TASK-2855: the spec/roadmap block ("Item reader readiness", "Authority:
-    local", "Content use boundary", "Blocked later: ...", "Next: collection
-    item adapters...") is gone, replaced by one plain-language status line;
-    the "Stored item count: N items" line (redundant with the item count
-    already in the Collections list row and the Details disclosure) is
-    gone too."""
-    app = _build_test_app()
-    _seed_library_content(app)
-    app.library_collections_service = StaticLibraryCollectionsService(
-        [
-            {
-                "collection_id": "collection-1",
-                "name": "Launch Evidence",
-                "description": "Sources for release review.",
-                "item_count": 3,
-                "source_authority": "local",
-                "sync_status": "local-only",
-                "updated_at": "2026-06-09T12:00:00Z",
-            }
-        ]
-    )
-    host = DestinationHarness(app, "library")
-
-    async with host.run_test(size=(180, 50)) as pilot:
-        screen = _active_destination_screen(host)
-        await _wait_for_library_shell_ready(screen, pilot)
-        screen.query_one("#library-row-browse-collections", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-collections-panel")
-
-        visible = _visible_text(screen)
-
-        assert "Launch Evidence" in visible
-        assert "Stored collection content" in visible
-        assert "Selected: Launch Evidence" in visible
-        assert LIBRARY_COLLECTIONS_STATUS_LINE in visible
-        assert "Available now: create, rename, delete records" in visible
-        for forbidden in (
-            "Item reader readiness",
-            "Content use boundary",
-            "Blocked later:",
-            "Next: collection item adapters",
-            "Write Sync Safety",
-            "Stored item count:",
-        ):
-            assert forbidden not in visible, forbidden
-        # The standalone "Authority: {source_authority}" label is gone;
-        # substring-matching "Authority: local" isn't safe here because a
-        # real sync dry-run promotion readout legitimately includes an
-        # "Authority: ..." label sourced from Sync_Interop -- check the
-        # retired widget id directly instead.
-        assert not screen.query("#library-collection-source-authority")
-        assert screen.query_one("#library-row-browse-collections", Button).has_class(
-            "library-rail-row-selected"
-        )
-        use_in_console = screen.query_one("#library-use-in-console", Button)
-        assert use_in_console.disabled is False
-        assert use_in_console.has_class("library-source-action-blocked")
-
-
-@pytest.mark.asyncio
-async def test_library_collections_empty_state_keeps_global_browse_rule_and_blocks_wip_actions() -> (
-    None
-):
-    """``LibraryCollectionsPanel``'s empty branch still teaches content entry
-    and keeps the create/rename/delete form inert until a name is entered.
-    The dead-inspector-only lines dropped here mirror the sibling selection
-    test above (no live successor exists for them).
-
-    TASK-2855: the three enable-Create helper sentences collapse into one
-    (``#library-collection-form-guidance``, shown only while Create is
-    disabled), and the "No stored collection items..." sentence renders
-    once instead of twice (the "Stored content preview" duplicate is
-    gone)."""
-    app = _build_test_app()
-    _seed_library_content(app)
-    app.library_collections_service = StaticLibraryCollectionsService([])
-    host = DestinationHarness(app, "library")
-
-    async with host.run_test(size=(180, 50)) as pilot:
-        screen = _active_destination_screen(host)
-        await _wait_for_library_shell_ready(screen, pilot)
-        screen.query_one("#library-row-browse-collections", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-collections-empty")
-
-        visible = _visible_text(screen)
-
-        # task-4023 AC#7: the empty state is TWO lines now -- the fact and
-        # one purpose+next-action sentence. The old stacked sentences
-        # (separate next-action line, purpose dump, and a meaningless
-        # "No Collection selected." with zero collections) must not return.
-        assert "No Collections yet." in visible
-        assert (
-            "Collections gather saved content for reading and review — "
-            "create one below to start." in visible
-        )
-        assert "No stored collection items are available locally yet." not in visible
-        assert "No Collection selected." not in visible
-        assert not screen.query("#library-collection-empty-reader")
-        assert not screen.query("#library-collection-empty-reader-title")
-        assert not screen.query("#library-collection-form-action-state")
-        assert not screen.query("#library-collection-form-action-boundary")
-
-        form_guidance = screen.query_one("#library-collection-form-guidance", Static)
-        assert str(form_guidance.renderable) == "Enter a Collection name."
-        assert (
-            form_guidance.region.y
-            < screen.query_one("#library-create-collection", Button).region.y
-        )
-
-        name_input = screen.query_one("#library-collection-name-input", Input)
-        name_input.value = "Research"
-        await pilot.pause()
-        assert not screen.query("#library-collection-form-guidance")
-        assert screen.query_one("#library-create-collection", Button).disabled is (
-            False
-        )
-
-        assert not screen.query("#library-collections-workbench")
-        use_in_console = screen.query_one("#library-use-in-console", Button)
-        assert use_in_console.disabled is False
-        assert use_in_console.has_class("library-source-action-blocked")

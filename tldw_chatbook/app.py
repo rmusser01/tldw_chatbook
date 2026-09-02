@@ -220,6 +220,8 @@ from tldw_chatbook.Chat.console_settings_defaults import ConsoleDefaultDurabilit
 from tldw_chatbook.Chat.server_chat_conversation_service import (
     ServerChatConversationService,
 )
+from tldw_chatbook.Terminal.session_manager import TerminalSessionManager  # noqa: E402
+
 from tldw_chatbook.DB.Client_Media_DB_v2 import (
     DatabaseError as MediaDatabaseError,
     InputError as MediaInputError,
@@ -360,6 +362,7 @@ from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
 from tldw_chatbook.TTS.profile_types import ProfileRepositoryState
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
+
 # TASK-21108: `TTS/voice_bundle_service` (1,857 lines) is imported
 # function-locally in `_ensure_tts_voice_bundle_service` -- the only place
 # that constructs it, on first use, long after first paint. The name below is
@@ -421,6 +424,7 @@ from .Notes.Notes_Library import NotesInteropService
 from .Notes.file_notes_git_service import build_file_notes_session_owner
 from .Notes.note_folder_repository import LocalNoteFolderRepository
 from .Notes.notes_scope_service import NotesScopeService, ScopeType
+
 # TASK-21108: `notes_sync_runtime` (and `notes_sync_legacy`, which the
 # TASK-21112 start gate reads) are imported inside
 # `_construct_notes_sync_runtime_owner`, the single place that needs them, so the
@@ -445,6 +449,7 @@ from .Actor_Packs.export import ActorPackExportService
 from .Actor_Packs.import_controller import ActorPackImportController
 from .Actor_Packs.importer import ActorPackImportError, ActorPackImportService
 from .Actor_Packs.repository import ActorPackRepository
+
 # Persona_Buddy is deliberately NOT imported at module scope (TASK-21103):
 # its controller drags Persona_Visual and PIL (1.28 s cold) onto the boot
 # path. See the lazy persona_buddy_controller property.
@@ -614,6 +619,9 @@ from tldw_chatbook.Media import (  # noqa: E402
     MediaReadingScopeService,
     ServerMediaReadingService,
 )
+from tldw_chatbook.Media.media_reading_scope_service import (  # noqa: E402
+    MediaReadingBackend,
+)
 from tldw_chatbook.Meetings_Interop import MeetingsScopeService, ServerMeetingsService  # noqa: E402
 from tldw_chatbook.MCP.local_control_service import LocalMCPControlService  # noqa: E402
 from tldw_chatbook.MCP.local_store import LocalMCPStore  # noqa: E402
@@ -766,15 +774,29 @@ from tldw_chatbook.Audio_Services_Interop import (  # noqa: E402
 from .Evals.eval_orchestrator import EvaluationOrchestrator  # noqa: E402
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Library.collections_capture_models import (
+        ExternalMediaReference,
+        ExternalNoteReference,
+        ExternalReferenceAvailability,
+    )
+    from tldw_chatbook.Terminal.backend import TerminalBackend
     from tldw_chatbook.Model_Artifacts.service import ArtifactRef
     from tldw_chatbook.LLM_Provider_Catalog.model_discovery_disk_cache import (
         ModelCatalogDiskStore,
     )
     from tldw_chatbook.tldw_api import MCPUnifiedClient
+else:
+    TerminalBackend = Any
+
+_PERSONAL_CONTEXT_SERVICE_BOOTSTRAP_LOCK = threading.Lock()
 
 API_IMPORTS_SUCCESSFUL = True
 
 DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
+#: Collections capture persistence and remote adapters are first-use work.
+#: Compose them after the first interactive frame, or synchronously when a
+#: caller enters Collections before this timer fires.
+DEFERRED_COLLECTIONS_CAPTURE_WIRING_DELAY_SECONDS = 0.1
 #: Notes organization composition is not needed for the first interactive
 #: frame. Keep its repository, validator, and agent-lesson seed imports beyond
 #: the ADR-097 UI-ready module census.
@@ -1065,6 +1087,15 @@ def _read_app_raw_cli_permitted(app: object) -> bool:
         return False
     console = config.get("console")
     return isinstance(console, Mapping) and console.get("raw_cli_permitted") is True
+
+
+def _build_terminal_backend() -> "TerminalBackend":
+    """Build the supported platform backend without eager platform imports."""
+    if os.name != "posix":
+        raise OSError("persistent Terminal backend unavailable")
+    from tldw_chatbook.Terminal.posix_backend import PosixTerminalBackend
+
+    return PosixTerminalBackend()
 
 
 # --- Global variable for config ---
@@ -3470,9 +3501,7 @@ class LibraryIngestQueueMixin:
             operation = operation_store.get(operation_id)
         except Exception:
             operation = None
-        operation_source = getattr(
-            getattr(operation, "data_source", None), "value", ""
-        )
+        operation_source = getattr(getattr(operation, "data_source", None), "value", "")
         expected_origin = (
             operation_source if operation_source in {"local", "server"} else ""
         )
@@ -6087,10 +6116,9 @@ class LibraryIngestQueueMixin:
         context = get_context()
         profile_id = str(getattr(context, "active_server_id", "") or "").strip()
         principal_id = event_principal_id_from_active_context(context) or ""
-        if (
-            profile_id != getattr(operation, "server_profile_id", "")
-            or principal_id != getattr(operation, "principal_id", "")
-        ):
+        if profile_id != getattr(
+            operation, "server_profile_id", ""
+        ) or principal_id != getattr(operation, "principal_id", ""):
             raise ValueError(
                 "The captured Server workspace authority changed; restore it and retry."
             )
@@ -6145,9 +6173,12 @@ class LibraryIngestQueueMixin:
                 ingest_options=ingest_options,
                 research_source_operation_id=research_source_operation_id,
             )
-            return self.library_ingest_jobs.mark_failed(
-                job.job_id, error=str(exc), permanent=True
-            ) or job
+            return (
+                self.library_ingest_jobs.mark_failed(
+                    job.job_id, error=str(exc), permanent=True
+                )
+                or job
+            )
         self._dispatch_research_source_catalog_job(job.job_id)
         return job
 
@@ -6200,9 +6231,12 @@ class LibraryIngestQueueMixin:
                 ingest_options=ingest_options,
                 research_source_operation_id=research_source_operation_id,
             )
-            return self.library_ingest_jobs.mark_failed(
-                job.job_id, error=str(exc), permanent=True
-            ) or job
+            return (
+                self.library_ingest_jobs.mark_failed(
+                    job.job_id, error=str(exc), permanent=True
+                )
+                or job
+            )
         self._dispatch_research_source_catalog_job(job.job_id)
         return job
 
@@ -6999,6 +7033,151 @@ def _select_profile_database(notes_service: object | None) -> Any:
     return seed_builtin_content(injected) if injected else get_chachanotes_db_lazy()
 
 
+def _external_reference_payload_id(payload: Any, *keys: str) -> str | None:
+    """Read one owner identifier without trusting a response's concrete type."""
+    if payload is None:
+        return None
+    if isinstance(payload, Mapping):
+        values = payload
+    else:
+        model_dump = getattr(payload, "model_dump", None)
+        values = model_dump(mode="json") if callable(model_dump) else None
+    for key in keys:
+        value = values.get(key) if isinstance(values, Mapping) else getattr(payload, key, None)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return None
+
+
+def _external_reference_failure_reason(error: Exception, owner: str) -> str:
+    """Map owner failures to bounded provenance reasons."""
+    status_code = getattr(error, "status_code", None)
+    if status_code in {401, 403} or isinstance(error, PermissionError):
+        return f"{owner}_reference_unauthorized"
+    if status_code == 404 or isinstance(error, (KeyError, LookupError)):
+        return f"{owner}_reference_missing"
+    return "reference_resolution_retryable"
+
+
+def _collections_reference_authority_kind(app: Any, authority_key: str) -> str | None:
+    """Return the active owner kind for an exact opaque capture authority."""
+    for kind, attribute in (
+        ("local", "local_collections_capture_authority"),
+        ("server", "server_collections_capture_authority"),
+    ):
+        authority = getattr(app, attribute, None)
+        if authority is not None and getattr(authority, "key", None) == authority_key:
+            return kind
+    return None
+
+
+async def _resolve_collections_media_reference(
+    app: Any,
+    reference: "ExternalMediaReference",
+) -> "ExternalReferenceAvailability":
+    """Resolve a capture's stored backing-Media identity through its owner."""
+    from tldw_chatbook.Library.collections_capture_models import (
+        ExternalReferenceAvailability,
+    )
+
+    kind = _collections_reference_authority_kind(app, reference.authority_key)
+    if kind is None:
+        return ExternalReferenceAvailability(
+            "unavailable", "media_reference_authority_mismatch"
+        )
+    mode = (
+        MediaReadingBackend.LOCAL
+        if kind == "local"
+        else MediaReadingBackend.SERVER
+    )
+    try:
+        payload = await app.media_reading_scope_service.get_backing_media_item(
+            mode=mode,
+            media_id=reference.item_id,
+            include_content=False,
+            include_versions=False,
+        )
+    except Exception as exc:
+        return ExternalReferenceAvailability(
+            "unavailable", _external_reference_failure_reason(exc, "media")
+        )
+    resolved_id = _external_reference_payload_id(payload, "id", "media_id")
+    if resolved_id is None:
+        return ExternalReferenceAvailability("unavailable", "media_reference_missing")
+    if resolved_id != reference.item_id:
+        return ExternalReferenceAvailability(
+            "unavailable", "media_reference_identity_mismatch"
+        )
+    return ExternalReferenceAvailability("available")
+
+
+async def _resolve_collections_note_reference(
+    app: Any,
+    reference: "ExternalNoteReference",
+) -> "ExternalReferenceAvailability":
+    """Resolve a capture's note link through Local or Server Notes only."""
+    from tldw_chatbook.Library.collections_capture_models import (
+        ExternalReferenceAvailability,
+    )
+
+    kind = _collections_reference_authority_kind(app, reference.authority_key)
+    if kind is None:
+        return ExternalReferenceAvailability(
+            "unavailable", "note_reference_authority_mismatch"
+        )
+    scope = ScopeType.LOCAL_NOTE if kind == "local" else ScopeType.SERVER_NOTE
+    try:
+        payload = await app.notes_scope_service.get_note_detail(
+            scope=scope,
+            note_id=reference.note_id,
+            user_id=getattr(app, "notes_user_id", None) if kind == "local" else None,
+        )
+    except Exception as exc:
+        return ExternalReferenceAvailability(
+            "unavailable", _external_reference_failure_reason(exc, "note")
+        )
+    resolved_id = _external_reference_payload_id(payload, "id", "note_id")
+    if resolved_id is None:
+        return ExternalReferenceAvailability("unavailable", "note_reference_missing")
+    if resolved_id != reference.note_id:
+        return ExternalReferenceAvailability(
+            "unavailable", "note_reference_identity_mismatch"
+        )
+    return ExternalReferenceAvailability("available")
+
+
+def _extract_collections_article(url: str) -> Mapping[str, Any]:
+    """Fetch one capture through the existing guarded article extractor."""
+    from tldw_chatbook.Local_Ingestion.web_article_ingestion import (
+        extract_article_for_ingest,
+    )
+
+    return extract_article_for_ingest(url, {})
+
+
+class _DeferredCollectionsCaptureScope:
+    """Stable app seam that composes the real capture scope on first use."""
+
+    def __init__(self, owner: Any) -> None:
+        object.__setattr__(self, "_owner", owner)
+
+    def _resolve(self) -> Any:
+        owner = object.__getattribute__(self, "_owner")
+        scope = TldwCli.ensure_collections_capture_services(owner)
+        if scope is None or scope is self:
+            raise RuntimeError("collections_capture_scope_unavailable")
+        return scope
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._resolve(), name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        setattr(self._resolve(), name, value)
+
+    def __delattr__(self, name: str) -> None:
+        delattr(self._resolve(), name)
+
+
 class TldwCli(
     # TextSelectionCrashGuard sits before App so its on_event wrapper is the
     # last line of defense against Textual 8.x's text-selection MouseDown
@@ -7051,6 +7230,19 @@ class TldwCli(
     CSS_PATH = [
         str(build_css.screen_css_paths(Path(__file__).parent / "css")[0]),
         str(Path(__file__).parent / "css/tldw_cli_modular.tcss"),
+        # TASK-25812: the CONSOLE sheet split from the agentic-terminal
+        # module rides the boot parse deliberately, unlike its library and
+        # settings siblings (those load lazily via their screens'
+        # `CSS_PATH`). The Console is the initial tab: loading its sheet at
+        # first ChatScreen mount instead put a one-time parse + full-app
+        # `stylesheet.update` (~100 ms) on the mount leg for every user, and
+        # on splashless boots that leg precedes `_ui_ready`, where it
+        # dragged deferred-family imports across the module-census line
+        # (972 -> 979 locally, 981 on the slower CI runner). Boot-parsing it
+        # costs ~30 ms against the ~85 ms the split saves and keeps the
+        # first Console mount free of restyle work -- `_load_screen_css`
+        # sees `has_source` and does nothing.
+        str(Path(__file__).parent / "css/screen_agentic_console.tcss"),
         str(build_css.screen_css_paths(Path(__file__).parent / "css")[1]),
     ]
 
@@ -7094,31 +7286,28 @@ class TldwCli(
 
     # Shell shortcuts are keyed by stable destination ID so inserting a new
     # destination cannot transfer an existing shortcut to another screen.
-    BINDINGS = (
-        [
-            Binding("ctrl+q", "quit", "Quit App", show=True),
-            Binding("ctrl+p", "command_palette", "Palette Menu", show=True),
-            Binding("f1", "show_workbench_help", "Help", show=True),
-            Binding("f6", "focus_next_workbench_pane", "Next Pane", show=True),
-            Binding(
-                "ctrl+shift+f",
-                FOCUS_TOGGLE_PALETTE_ENTRY[1],
-                "Focus Mode",
-                show=False,
+    BINDINGS = [
+        Binding("ctrl+q", "quit", "Quit App", show=True),
+        Binding("ctrl+p", "command_palette", "Palette Menu", show=True),
+        Binding("f1", "show_workbench_help", "Help", show=True),
+        Binding("f6", "focus_next_workbench_pane", "Next Pane", show=True),
+        Binding(
+            "ctrl+shift+f",
+            FOCUS_TOGGLE_PALETTE_ENTRY[1],
+            "Focus Mode",
+            show=False,
+        ),
+    ] + [
+        Binding(
+            SHELL_DESTINATION_SHORTCUTS[destination.destination_id],
+            f"shell_destination({destination.destination_id!r})",
+            f"Go to {destination.accessible_label}",
+            show=SHELL_DESTINATION_SHORTCUTS[destination.destination_id].startswith(
+                "f"
             ),
-        ]
-        + [
-            Binding(
-                SHELL_DESTINATION_SHORTCUTS[destination.destination_id],
-                f"shell_destination({destination.destination_id!r})",
-                f"Go to {destination.accessible_label}",
-                show=SHELL_DESTINATION_SHORTCUTS[
-                    destination.destination_id
-                ].startswith("f"),
-            )
-            for destination in SHELL_DESTINATION_ORDER
-        ]
-    )
+        )
+        for destination in SHELL_DESTINATION_ORDER
+    ]
     COMMANDS = App.COMMANDS | {
         ThemeProvider,
         TabNavigationProvider,
@@ -7267,6 +7456,11 @@ class TldwCli(
         self.app_config = load_settings()
         self.raw_cli_runtime = RawCliRuntime(lambda: _read_app_raw_cli_permitted(self))
         self._raw_cli_runtime_shutdown_task: asyncio.Task[Any] | None = None
+        self.terminal_session_manager = TerminalSessionManager(
+            lambda: _read_app_raw_cli_permitted(self),
+            _build_terminal_backend,
+        )
+        self._terminal_session_manager_shutdown_task: asyncio.Task[None] | None = None
         # Default-save failures belong to the application lifetime rather
         # than whichever Console screen happens to be mounted.  New-chat
         # generation advances only after a Make Default intent is fully
@@ -7645,6 +7839,7 @@ class TldwCli(
             policy_enforcer=self.service_policy_enforcer,
             sync_scope_service=getattr(self, "sync_scope_service", None),
         )
+        TldwCli._reset_collections_capture_services(self)
         # TASK-21108: the lasting-sync runtime is built on FIRST ACCESS, not
         # here. Its construction is what drags `Notes/notes_sync_runtime` and
         # (through the TASK-21112 start gate) `Notes/notes_sync_legacy` --
@@ -7835,8 +8030,7 @@ class TldwCli(
             # which is the safe direction and is memoized.
             start_evidence=(
                 lambda settings=self.app_config, state_path=notes_sync_state_path: (
-                    legacy_sync_directory_configured(settings)
-                    or state_path.exists()
+                    legacy_sync_directory_configured(settings) or state_path.exists()
                 )
             ),
             watcher_interval_seconds=notes_sync_watcher_interval,
@@ -8215,7 +8409,9 @@ class TldwCli(
         """
         self._server_credential_store = store
         self._server_credential_store_unavailable_reason = (
-            store.message if isinstance(store, UnavailableServerCredentialStore) else None
+            store.message
+            if isinstance(store, UnavailableServerCredentialStore)
+            else None
         )
 
     @property
@@ -8538,11 +8734,7 @@ class TldwCli(
                     notify_unavailable=False,
                 )
             )
-            requeued = (
-                None
-                if operation_id
-                else self.retry_library_ingest_job(job_id)
-            )
+            requeued = None if operation_id else self.retry_library_ingest_job(job_id)
             if research_retry_requested:
                 basename = escape_markup(
                     Path(str(source.source_path)).name or str(source.source_path)
@@ -9093,6 +9285,205 @@ class TldwCli(
             self.local_library_collections_service = None
             self.library_collections_service = None
 
+    def _wire_collections_capture_services(self) -> None:
+        """Compose the profile-owned Local capture authority and scope seam."""
+        from tldw_chatbook.Library.collections_capture_repository import (
+            CollectionsCaptureRepository,
+        )
+        from tldw_chatbook.Library.collections_capture_service import (
+            CollectionsCaptureScopeService,
+            LocalCollectionsCaptureService,
+            build_local_capture_authority,
+        )
+        from tldw_chatbook.Library.collections_legacy_recovery import (
+            LegacyCollectionsRecovery,
+            LegacyCollectionsRecoveryError,
+        )
+        from tldw_chatbook.Library.collections_offline_store import (
+            CollectionsOfflineStore,
+        )
+
+        TldwCli._reset_collections_capture_services(self)
+        self.collections_capture_scope_service = CollectionsCaptureScopeService(
+            resolve_media_reference=functools.partial(
+                _resolve_collections_media_reference, self
+            ),
+            resolve_note_reference=functools.partial(
+                _resolve_collections_note_reference, self
+            ),
+        )
+        try:
+            database_path = get_library_collections_db_path()
+            database = getattr(self, "local_library_collections_db", None)
+            if not isinstance(database, LibraryCollectionsDB):
+                database = LibraryCollectionsDB(database_path, CLI_APP_CLIENT_ID)
+                self.local_library_collections_db = database
+            data_root = get_user_data_dir()
+            authority = build_local_capture_authority(
+                profile_id=str(data_root.resolve()),
+                database_identity=str(database_path.resolve()),
+            )
+            repository = CollectionsCaptureRepository(
+                database,
+                authority_key=authority.key,
+            )
+            offline_store = CollectionsOfflineStore(
+                repository,
+                data_root=data_root,
+                authority_fingerprint=authority.fingerprint,
+            )
+            legacy_recovery = LegacyCollectionsRecovery(database)
+            try:
+                legacy_recovery.list_collections(page=1, size=1)
+                legacy_recovery_available = True
+            except LegacyCollectionsRecoveryError:
+                legacy_recovery_available = False
+            service = LocalCollectionsCaptureService(
+                authority,
+                repository,
+                offline_store=offline_store,
+                extractor=_extract_collections_article,
+                legacy_recovery_available=legacy_recovery_available,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Local Collections capture service unavailable during app wiring"
+            )
+            return
+
+        self.collections_capture_repository = repository
+        self.collections_offline_store = offline_store
+        self.collections_legacy_recovery_service = legacy_recovery
+        self.local_collections_capture_authority = authority
+        self.local_collections_capture_service = service
+        TldwCli._activate_collections_capture_authority(self)
+
+    def _reset_collections_capture_services(self) -> None:
+        """Install inert capture seams without importing their implementations."""
+        self.collections_capture_repository = None
+        self.collections_offline_store = None
+        self.collections_legacy_recovery_service = None
+        self.local_collections_capture_authority = None
+        self.local_collections_capture_service = None
+        self.server_collections_capture_authority = None
+        self.server_collections_capture_service = None
+        self.collections_capture_scope_service = _DeferredCollectionsCaptureScope(self)
+
+    def ensure_collections_capture_services(self) -> Any | None:
+        """Compose capture services once, after readiness or on first use."""
+        scope = getattr(self, "collections_capture_scope_service", None)
+        if scope is None or isinstance(scope, _DeferredCollectionsCaptureScope):
+            TldwCli._wire_collections_capture_services(self)
+            scope = getattr(self, "collections_capture_scope_service", None)
+        return scope
+
+    def _deferred_wire_collections_capture_services(self) -> None:
+        """Compose and reconcile capture services after the first frame."""
+        self.ensure_collections_capture_services()
+        if getattr(self, "collections_capture_repository", None) is not None:
+            self._create_deferred_startup_task(
+                self._reconcile_collections_capture_startup(),
+                name="deferred_collections_capture_reconciliation",
+            )
+
+    def _activate_collections_capture_authority(self) -> None:
+        """Activate the capture owner selected by the committed runtime source."""
+        scope = getattr(self, "collections_capture_scope_service", None)
+        if scope is None:
+            return
+        runtime_policy = getattr(self, "runtime_policy", None)
+        runtime_state = getattr(runtime_policy, "state", None)
+        source = str(getattr(runtime_state, "active_source", "local") or "local")
+        if source.strip().lower() != "server":
+            authority = getattr(self, "local_collections_capture_authority", None)
+            service = getattr(self, "local_collections_capture_service", None)
+            if authority is not None and service is not None:
+                scope.activate(authority, service)
+            else:
+                deactivate = getattr(scope, "deactivate", None)
+                if callable(deactivate):
+                    deactivate()
+            return
+
+        from tldw_chatbook.Library.collections_capture_service import (
+            build_server_capture_authority,
+        )
+        from tldw_chatbook.Library.server_collections_capture_service import (
+            ServerCollectionsCaptureService,
+        )
+
+        provider = getattr(self, "server_context_provider", None)
+        try:
+            context = provider.get_active_context()
+            profile_id = str(getattr(context, "active_server_id", "") or "").strip()
+            principal_id = event_principal_id_from_active_context(context) or ""
+            if not profile_id or not principal_id:
+                raise ValueError("server_capture_identity_unavailable")
+            authority = build_server_capture_authority(profile_id, principal_id)
+            client = provider.build_client()
+            token = str(getattr(context, "auth_token", "") or "")
+            credential_fingerprint = hashlib.sha256(
+                token.encode("utf-8")
+            ).hexdigest()[:24]
+            service = getattr(self, "server_collections_capture_service", None)
+            prior_fingerprint = getattr(
+                self, "_server_collections_credential_fingerprint", None
+            )
+            if not (
+                isinstance(service, ServerCollectionsCaptureService)
+                and service.authority == authority
+                and service.client is client
+                and prior_fingerprint == credential_fingerprint
+            ):
+                async def docs_info_provider() -> Any:
+                    get_docs_info = getattr(client, "get_server_docs_info", None)
+                    if not callable(get_docs_info):
+                        raise RuntimeError("server_docs_info_unavailable")
+                    return await get_docs_info()
+
+                service = ServerCollectionsCaptureService(
+                    authority,
+                    client,
+                    docs_info_provider=docs_info_provider,
+                    credential_fingerprint=credential_fingerprint,
+                )
+                self.server_collections_capture_authority = authority
+                self.server_collections_capture_service = service
+                self._server_collections_credential_fingerprint = (
+                    credential_fingerprint
+                )
+            scope.activate(authority, service)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Server Collections capture authority unavailable during activation"
+            )
+            deactivate = getattr(scope, "deactivate", None)
+            if callable(deactivate):
+                deactivate()
+
+    async def _reconcile_collections_capture_startup(self) -> None:
+        """Repair interrupted Local capture state outside the event loop."""
+        repository = getattr(self, "collections_capture_repository", None)
+        if repository is not None:
+            await asyncio.to_thread(repository.interrupt_stale_extractions)
+        offline_store = getattr(self, "collections_offline_store", None)
+        if offline_store is not None:
+            await asyncio.to_thread(offline_store.reconcile_batch, limit=25)
+
+    async def _shutdown_collections_capture_runtime(self) -> None:
+        """Fence capture authority before cancelling app-owned extraction work."""
+        scope = getattr(self, "collections_capture_scope_service", None)
+        if scope is not None and not isinstance(
+            scope,
+            _DeferredCollectionsCaptureScope,
+        ):
+            deactivate = getattr(scope, "deactivate", None)
+            if callable(deactivate):
+                deactivate()
+        local_service = getattr(self, "local_collections_capture_service", None)
+        if local_service is not None:
+            await local_service.cancel_extractions()
+
     def _wire_workspace_registry_services(self) -> None:
         self.change_review_consent_service = None
         try:
@@ -9579,6 +9970,20 @@ class TldwCli(
                 if getattr(self, "scheduler_loop", None) is not None
                 else None
             ),
+            # schedules-handoff PR-2, Task 6: `run_automation_now` (manual
+            # dispatch) resolves the app for read-time health
+            # (`compute_local_health`) and the automation handler through
+            # these getters rather than importing the handler module
+            # itself (ADR-097 boot-census rule) or holding either
+            # reference directly -- both are late-binding lambdas closing
+            # over `self`, same discipline as `on_queue_changed` above:
+            # `self` is still mid-`__init__` here, and
+            # `_get_automation_definition_handler` reads
+            # `self.scheduling_service` (assigned by this very statement)
+            # and `self.notification_dispatch_service`, neither resolved
+            # until the getter is actually called.
+            app_getter=lambda: self,
+            automation_handler_getter=lambda: self._get_automation_definition_handler(),
         )
 
         watchlist_checks_enabled = get_cli_setting(
@@ -9636,13 +10041,36 @@ class TldwCli(
 
         handlers: dict[str, Handler] = {
             "reminder": ReminderHandler(
-                dispatch_service=self.notification_dispatch_service
+                dispatch_service=self.notification_dispatch_service,
+                app_getter=lambda: self,
             ),
         }
         if watchlist_handler is not None:
             handlers["watchlist_job"] = watchlist_handler
         if briefing_handler is not None:
             handlers["briefing_job"] = briefing_handler
+
+        # schedules-handoff PR-2, Task 5: local automation definitions
+        # (`family="recurring_question"` in v1) are real queue rows, not
+        # gated behind a config flag the way watchlist/briefing checks are
+        # -- `PriorityQueue.load` only ever arms a row that is already
+        # `lifecycle="configured"` with a real `next_run_at`, so there is
+        # nothing here for an absent handler to leave silently unhandled.
+        #
+        # ADR-097 (boot-census ratchet): `AutomationDefinitionHandler`'s
+        # import chain (the handler module + `schedule_compute` +
+        # `slot_keys`) stays OFF the boot path -- constructed lazily on
+        # the first dispatched `automation_definition` row, not here at
+        # wiring time, then cached on `self` so every later dispatch
+        # reuses the SAME instance. The overlap-claim guard
+        # (`_claimed`/`_pending` on the handler) only works across calls
+        # if it is the same object each time; building a fresh handler
+        # per dispatch would silently defeat that guard.
+        async def _dispatch_automation_definition(task: dict[str, Any]) -> None:
+            handler = self._get_automation_definition_handler()
+            await handler.handle(task)
+
+        handlers["automation_definition"] = _dispatch_automation_definition
 
         self.scheduler_loop = SchedulerLoop(
             self.scheduling_service.db,
@@ -10028,6 +10456,9 @@ class TldwCli(
             local_store=getattr(self, "sync_v2_local_store", None),
             dataset_keys=self.sync_v2_dataset_keys,
             notes_organization_repository=self.notes_organization_repository,
+            personal_context_runtime_loader=(
+                self._load_personal_context_sync_runtime
+            ),
         )
         self.sync_restore_service = SyncRestoreService(
             server_service=self.server_sync_service,
@@ -10197,6 +10628,46 @@ class TldwCli(
             self.notification_dispatch_service
         )
         self.local_watchlists_service.notification_app = self
+
+    def _get_automation_definition_handler(self) -> Any:
+        """Lazily construct and memoize the automation-definition handler.
+
+        ADR-097 (boot-census ratchet): `AutomationDefinitionHandler`'s
+        import chain (the handler module + `schedule_compute` +
+        `slot_keys`) stays OFF the boot path -- built on first use, then
+        cached on `self` so every later call (scheduled dispatch via
+        `_dispatch_automation_definition` above, and manual dispatch via
+        `SchedulingService.run_automation_now`'s injected
+        `automation_handler_getter`) reuses the SAME instance. The
+        overlap-claim guard (`_claimed`/`_pending` on the handler) only
+        works across calls if it is the same object each time; a fresh
+        handler per call would silently defeat it -- and would let a
+        manual run race a scheduled one for the same definition.
+        """
+        handler = getattr(self, "_automation_definition_handler", None)
+        if handler is None:
+            from .Scheduling.scheduler.handlers.automation_handler import (
+                AutomationDefinitionHandler,
+            )
+
+            handler = AutomationDefinitionHandler(
+                db=self.scheduling_service.db,
+                app_getter=lambda: self,
+                dispatch_service=self.notification_dispatch_service,
+                handler_timeout_seconds=get_cli_setting(
+                    "scheduling", "handler_timeout_seconds", HANDLER_TIMEOUT_SECONDS
+                ),
+                # task-18937/Finding D precedent (`on_queue_changed` above):
+                # a schedule advance written here would otherwise sit
+                # unseen by the live queue until its periodic ~30-minute
+                # reload. Same lazy-getattr discipline -- `scheduler_loop`
+                # is constructed after `self.scheduling_service`, so this
+                # lambda must not resolve it eagerly.
+                on_queue_changed=lambda: getattr(self, "scheduler_loop", None)
+                and self.scheduler_loop.request_reload(),
+            )
+            self._automation_definition_handler = handler
+        return handler
 
     def _backfill_subscription_items_fts(self) -> None:
         """Worker body: index subscription_items rows that predate the FTS
@@ -10508,6 +10979,8 @@ class TldwCli(
                 updated_state.active_server_id,
             )
         _wire_notes_sync_services(self)
+        self.ensure_collections_capture_services()
+        self._activate_collections_capture_authority()
 
         resolved_backend = (
             str(self.runtime_policy.state.active_source or normalized_backend)
@@ -11197,6 +11670,356 @@ class TldwCli(
             return self._create_research_workspace_screen(screen_class)
         return screen_class(self)
 
+    def prepare_personal_context_interview_request(
+        self,
+        *,
+        kind: str,
+        mode: str = "fixed",
+        scope_id: str | None = None,
+        local_workspace_id: str | None = None,
+        workspace_label: str = "",
+        source: str | None = None,
+    ):
+        """Resolve one canonical scope without touching workspace ownership."""
+
+        from tldw_profile_core import ScopeKind
+
+        from .Personal_Context.interview_launch import ProfileInterviewLaunchRequest
+
+        if kind not in {"personal", "workspace"}:
+            raise ValueError("Unknown Personal Context interview kind.")
+        if mode not in {"fixed", "adaptive"}:
+            raise ValueError("Unknown Personal Context interview mode.")
+        if source not in {None, "setup", "workspace", "settings"}:
+            raise ValueError("Unknown Personal Context interview source.")
+        service = self.get_personal_context_service(retry_locked=True)
+        status = service.status()
+        if status.state.value == "absent":
+            service.create_profile()
+        elif status.state.value in {"locked", "removed"}:
+            raise ValueError("Personal Context is unavailable.")
+        scopes = service.list_scopes()
+        if scope_id is not None:
+            scope = next((item for item in scopes if item.scope_id == scope_id), None)
+            expected = ScopeKind.GLOBAL if kind == "personal" else ScopeKind.WORKSPACE
+            if scope is None or scope.kind is not expected:
+                raise ValueError("Personal Context scope does not match interview.")
+        elif kind == "personal":
+            scope = next(
+                (item for item in scopes if item.kind is ScopeKind.GLOBAL), None
+            )
+            if scope is None:
+                raise ValueError("Global Personal Context scope is unavailable.")
+        else:
+            local_workspace_id = str(local_workspace_id or "").strip()
+            if not local_workspace_id:
+                raise ValueError("Workspace interview requires a local workspace.")
+            bindings = service.list_workspace_bindings()
+            scope = next(
+                (
+                    item
+                    for item in scopes
+                    if item.kind is ScopeKind.WORKSPACE
+                    and bindings.get(item.scope_id, {}).get("local_workspace_id")
+                    == local_workspace_id
+                ),
+                None,
+            )
+            if scope is None:
+                scope = service.create_workspace_scope(
+                    local_workspace_id,
+                    workspace_label or "Workspace",
+                )
+        return ProfileInterviewLaunchRequest(
+            kind=kind,
+            scope_id=scope.scope_id,
+            local_workspace_id=local_workspace_id,
+            mode=mode,
+            source=source,
+        )
+
+    def build_personal_context_interview_screen(self, request):
+        """Build a fresh profile interview screen for one resolved request."""
+
+        from .Personal_Context.interview_launch import build_profile_interview_screen
+
+        return build_profile_interview_screen(self, request)
+
+    def launch_personal_context_interview(
+        self,
+        kind: str,
+        scope_id: str,
+        mode: str = "fixed",
+    ) -> None:
+        """Settings re-interview seam over the shared post-commit launcher."""
+
+        from .Personal_Context.interview_launch import (
+            launch_profile_interview_after_commit,
+        )
+
+        request = self.prepare_personal_context_interview_request(
+            kind=kind,
+            scope_id=scope_id,
+            mode=mode,
+            source="settings",
+        )
+        launch_profile_interview_after_commit(
+            self,
+            request,
+            lambda: TldwCli._reload_personal_context_settings_panel(self),
+        )
+
+    def _reload_personal_context_settings_panel(self) -> None:
+        """Reload the mounted My Profile panel after a re-interview returns."""
+
+        from .Widgets.Settings_Widgets.personal_context_panel import (
+            PersonalContextSettingsPanel,
+        )
+
+        try:
+            panel = self.query_one(
+                "#personal-context-settings-panel", PersonalContextSettingsPanel
+            )
+        except QueryError:
+            return
+        panel.load_records(retry_locked=True)
+
+    def launch_personal_context_link(self) -> None:
+        """Open the reviewed home-server link flow from canonical Settings."""
+
+        self.run_worker(
+            self._run_personal_context_link(),
+            group="personal-context-first-link",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    def _load_personal_context_sync_runtime(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+    ) -> None:
+        """Restore exact protected Personal Context Sync collaborators after restart."""
+
+        from .Personal_Context.link_key_custody import (
+            KeyringPersonalContextLinkKeyCustodian,
+        )
+        from .Personal_Context.link_service import (
+            PersonalContextLinkService,
+            authenticate_legacy_completed_link_artifacts,
+            cleanup_completed_link_artifacts,
+        )
+
+        link = self.sync_state_repository.get_personal_context_link_state(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+        )
+        if link is None or link["state"] != "complete":
+            raise ValueError("personal_context_link_incomplete")
+        custodian = KeyringPersonalContextLinkKeyCustodian()
+        storage_key = custodian.load_storage_key(
+            **PersonalContextLinkService._key_binding(link)
+        )
+        service = self.get_personal_context_service(retry_locked=True)
+        authenticate_legacy_completed_link_artifacts(service, custodian, link)
+        cleanup_completed_link_artifacts(service, link)
+        custodian.delete(**PersonalContextLinkService._key_binding(link))
+        dispatcher = service.build_personal_context_outbox_dispatcher(
+            state_repository=self.sync_state_repository,
+            integrity_key_id=str(link["integrity_key_id"]),
+        )
+        self.sync_v2_dataset_keys[str(link["dataset_id"])] = storage_key
+        self.local_first_sync_service.personal_context_outbox_dispatcher = dispatcher
+        self.local_first_sync_service.personal_context_service = service
+
+    async def _run_personal_context_link(self) -> None:
+        """Plan, review, and apply one content-safe first-link attempt."""
+
+        import platform
+
+        from .Personal_Context.link_key_custody import (
+            KeyringPersonalContextLinkKeyCustodian,
+            KeyringPersonalContextWrappingKeyProvider,
+        )
+        from .Personal_Context.link_service import (
+            PersonalContextLinkAttentionRequired,
+            PersonalContextLinkService,
+        )
+        from .Personal_Context.key_protector import ProfileLockedError
+        from .Personal_Context.paths import get_personal_context_db_path
+        from .Personal_Context.repository import (
+            release_first_link_freeze_for_recovery,
+        )
+        from .Widgets.Settings_Widgets.personal_context_link_modal import (
+            PersonalContextLinkModal,
+        )
+
+        scope = self._server_notification_event_scope()
+        server_profile_id = scope.get("server_profile_id")
+        if not server_profile_id:
+            self.notify(
+                "Choose and authenticate a home server before linking your profile.",
+                severity="warning",
+            )
+            return
+        try:
+            wrapping_provider = KeyringPersonalContextWrappingKeyProvider()
+            key_custodian = KeyringPersonalContextLinkKeyCustodian()
+            existing = self.sync_state_repository.get_personal_context_link_state(
+                server_profile_id=str(server_profile_id),
+                authenticated_principal_id=scope.get("authenticated_principal_id"),
+            )
+            recovered_apply = False
+            if existing is not None and existing["state"] == "applying":
+                binding = PersonalContextLinkService._key_binding(existing)
+                try:
+                    staged_integrity_key = key_custodian.load(**binding)
+                    from .Personal_Context.bootstrap import (
+                        bootstrap_personal_context_service,
+                    )
+
+                    recovered_service = bootstrap_personal_context_service(
+                        recovery_integrity_key=staged_integrity_key,
+                        expected_recovery_profile_id=str(existing["profile_id"]),
+                    )
+                except (ProfileLockedError, ValueError):
+                    recovered_service = None
+                if (
+                    recovered_service is not None
+                    and recovered_service.status().state.value == "ready"
+                ):
+                    self._personal_context_service = recovered_service
+                    recovered_apply = True
+            coordinator = PersonalContextLinkService(
+                personal_context_service=self.get_personal_context_service(
+                    retry_locked=True
+                ),
+                server_sync_service=self.server_sync_service,
+                state_repository=self.sync_state_repository,
+                wrapping_key_provider=wrapping_provider,
+                key_custodian=key_custodian,
+                freeze_release_fallback=lambda plan_id: (
+                    release_first_link_freeze_for_recovery(
+                        get_personal_context_db_path(), plan_id=plan_id
+                    )
+                ),
+                local_first_sync_service=self.local_first_sync_service,
+                server_profile_id=str(server_profile_id),
+                authenticated_principal_id=scope.get("authenticated_principal_id"),
+                display_name=platform.node() or "Chatbook",
+            )
+            if existing is not None and existing["state"] == "complete":
+                await coordinator.resume()
+                self._load_personal_context_sync_runtime(
+                    server_profile_id=str(server_profile_id),
+                    authenticated_principal_id=scope.get(
+                        "authenticated_principal_id"
+                    ),
+                )
+                self.notify("Profile is already linked. Sync is ready.")
+                self._reload_personal_context_settings_panel()
+                return
+            if recovered_apply:
+                await coordinator.resume_after_local_activation(
+                    rebaseline_version=(
+                        self.get_personal_context_service()
+                        .first_link_rebaseline_version()
+                    )
+                )
+                self.notify("Profile link completed.")
+                self._reload_personal_context_settings_panel()
+                return
+            if existing is not None and existing["state"] == "applying":
+                active_reader = getattr(
+                    coordinator,
+                    "authenticated_committed_rebaseline_version",
+                    None,
+                )
+                active_version = active_reader() if callable(active_reader) else None
+                if active_version is not None:
+                    await coordinator.resume_after_local_activation(
+                        rebaseline_version=active_version
+                    )
+                    self.notify("Profile link completed.")
+                    self._reload_personal_context_settings_panel()
+                    return
+                if not coordinator.abandon_uncommitted_apply():
+                    mark_attention = getattr(
+                        coordinator, "mark_ambiguous_apply_attention", None
+                    )
+                    if callable(mark_attention):
+                        mark_attention()
+                    raise ProfileLockedError(
+                        "Interrupted Personal Context link recovery is pending."
+                    )
+            if existing is not None and existing["state"] in {
+                "local_rebaseline_complete",
+                "reconciling",
+            }:
+                await coordinator.resume()
+                self.notify("Profile link completed.")
+                self._reload_personal_context_settings_panel()
+                return
+            while True:
+                manifest = self.get_personal_context_service().get_manifest()
+                try:
+                    plan = await coordinator.plan(
+                        expected_purge_generation=manifest.purge_generation
+                    )
+                except PersonalContextLinkAttentionRequired as exc:
+                    attention_result = await self.push_screen_wait(
+                        PersonalContextLinkModal.for_bootstrap_attention(
+                            exc.attention,
+                            retry_callback=True,
+                        )
+                    )
+                    if attention_result is not None and attention_result.retry:
+                        continue
+                    return
+                result = await self.push_screen_wait(
+                    PersonalContextLinkModal(plan, retry_callback=True)
+                )
+                if result is None:
+                    coordinator.cancel(plan.plan_id)
+                    return
+                if result.retry:
+                    coordinator.cancel(plan.plan_id)
+                    continue
+                await coordinator.apply(result.plan_id, result.decisions)
+                break
+        except Exception:
+            self.notify(
+                "Profile linking needs attention. No profile content was shown; retry from Settings.",
+                severity="error",
+            )
+            return
+        self.notify("Profile linked to the home server.")
+        self._reload_personal_context_settings_panel()
+
+    def get_personal_context_service(self, *, retry_locked: bool = False):
+        """Return the app-owned service, explicitly retrying a locked facade."""
+
+        service = getattr(self, "_personal_context_service", None)
+        status = getattr(service, "status", None)
+        if service is not None and not (
+            retry_locked and callable(status) and status().state == "locked"
+        ):
+            return service
+        with _PERSONAL_CONTEXT_SERVICE_BOOTSTRAP_LOCK:
+            service = getattr(self, "_personal_context_service", None)
+            status = getattr(service, "status", None)
+            if service is None or (
+                retry_locked and callable(status) and status().state == "locked"
+            ):
+                from .Personal_Context.bootstrap import (
+                    bootstrap_personal_context_service,
+                )
+
+                service = bootstrap_personal_context_service()
+                self._personal_context_service = service
+        return service
+
     def _create_research_workspace_screen(self, screen_class: type):
         """Late-bind the foundation to the currently active owner services."""
 
@@ -11244,9 +12067,7 @@ class TldwCli(
             overlay_store=overlay_store,
             operation_store=operation_store,
             association_scheduler=association_scheduler,
-            paste_staging_store=getattr(
-                self, "research_paste_staging_store", None
-            ),
+            paste_staging_store=getattr(self, "research_paste_staging_store", None),
         )
 
     async def _reconcile_research_quick_notes_startup(self) -> None:
@@ -13243,6 +14064,24 @@ class TldwCli(
         )
         self.loguru_logger.info(f"on_mount completed in {mount_duration:.3f} seconds")
 
+        # Stale-run reconciliation (spec §4.1): an app killed mid-run must
+        # not leave a phantom `running`/`queued` automation_runs row in the
+        # UI forever. Cutoff is generous on purpose -- longer than any run
+        # this process itself would let live (handler timeout) plus two
+        # poll intervals of scheduling slack -- so a run still genuinely
+        # in flight is never reconciled out from under itself. Guarded:
+        # a diagnostics-adjacent startup step must never block the
+        # scheduler from starting.
+        try:
+            self.scheduling_service.db.reconcile_stale_automation_runs(
+                older_than_seconds=HANDLER_TIMEOUT_SECONDS
+                + 2 * SCHEDULER_POLL_INTERVAL_SECONDS
+            )
+        except Exception:
+            self.loguru_logger.exception(
+                "Failed to reconcile stale automation runs at startup"
+            )
+
         # Start the background scheduler loop for reminders and scheduled tasks.
         # A COROUTINE worker, never thread=True: scheduled watchlist checks
         # dispatch from this loop, and the watchlists in-flight guard
@@ -13845,6 +14684,59 @@ class TldwCli(
             first_run.pop(key, None)
 
     def _handle_first_run_wizard_result(self, result: dict | None) -> None:
+        """Optionally chain personalization before the existing continuation."""
+
+        if type(result) is dict and result.get("offer_profile_interview") is True:
+            completed = result.get("completed")
+            exit_route = result.get("exit_route")
+            exit_context = result.get("exit_context")
+            eligible = completed is True and exit_route in {None, TAB_CHAT, TAB_HOME}
+            if exit_route is None:
+                eligible = eligible and exit_context is None
+            else:
+                eligible = eligible and (
+                    exit_context is None
+                    or (type(exit_context) is dict and not exit_context)
+                )
+            if eligible:
+
+                def continuation() -> None:
+                    TldwCli._continue_first_run_wizard_result(self, result)
+
+                try:
+                    request = self.prepare_personal_context_interview_request(
+                        kind="personal",
+                        mode="fixed",
+                        source="setup",
+                    )
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "First-run profile interview preparation failed"
+                    )
+                    notify = getattr(self, "notify", None)
+                    if callable(notify):
+                        try:
+                            notify(
+                                "Setup was saved, but profile personalization is unavailable.",
+                                severity="warning",
+                            )
+                        except Exception:
+                            logger.opt(exception=True).warning(
+                                "First-run profile failure notification failed"
+                            )
+                    continuation()
+                    return
+                from .Personal_Context.interview_launch import (
+                    launch_profile_interview_after_commit,
+                )
+
+                launch_profile_interview_after_commit(self, request, continuation)
+                return
+        TldwCli._continue_first_run_wizard_result(self, result)
+
+    def _continue_first_run_wizard_result(self, result: dict | None) -> None:
+        """Preserve the pre-interview first-run result handling byte-for-byte."""
+
         if type(result) is not dict:
             return  # cancelled / finish-later: recovery state handles next launch
         exit_route = result.get("exit_route")
@@ -14359,6 +15251,10 @@ class TldwCli(
         self.set_timer(
             DEFERRED_AUDIO_SERVICE_DELAY_SECONDS,
             self._start_deferred_audio_service_initialization,
+        )
+        self.set_timer(
+            DEFERRED_COLLECTIONS_CAPTURE_WIRING_DELAY_SECONDS,
+            self._deferred_wire_collections_capture_services,
         )
         self.set_timer(
             DEFERRED_NOTES_ORGANIZATION_WIRING_DELAY_SECONDS,
@@ -15620,6 +16516,27 @@ class TldwCli(
             self._raw_cli_runtime_shutdown_task = task
         await asyncio.shield(task)
 
+    async def _run_terminal_session_manager_shutdown(self) -> None:
+        """Drain Terminal once, then close remaining parent-owned handles."""
+        manager = getattr(self, "terminal_session_manager", None)
+        if manager is None:
+            return
+        try:
+            await manager.shutdown(deadline_seconds=5.0)
+        finally:
+            manager.finalize_shutdown()
+
+    async def _shutdown_terminal_session_manager(self) -> None:
+        """Share one cancellation-resistant Terminal shutdown task."""
+        task = getattr(self, "_terminal_session_manager_shutdown_task", None)
+        if task is None:
+            task = asyncio.create_task(
+                self._run_terminal_session_manager_shutdown(),
+                name="shutdown_terminal_session_manager",
+            )
+            self._terminal_session_manager_shutdown_task = task
+        await asyncio.shield(task)
+
     async def _shutdown_console_settings_durability(self) -> None:
         """Drain admitted settings writes without cancelling thread work.
 
@@ -15640,12 +16557,14 @@ class TldwCli(
         coordinator = getattr(self, "watchlists_operation_coordinator", None)
         if coordinator is not None:
             await coordinator.shutdown()
+        await self._shutdown_collections_capture_runtime()
         await self._shutdown_notes_sync_runtime()
         await self._shutdown_actor_pack_import()
         await self._shutdown_actor_pack_export()
         # Console shutdown terminally fences every trusted Buddy producer
         # before Buddy itself closes admission and drains owned work.
         await self._shutdown_raw_cli_runtime()
+        await self._shutdown_terminal_session_manager()
         await self._shutdown_console_settings_durability()
         await self._shutdown_console_runtime()
         change_review = getattr(self, "change_review_consent_service", None)
@@ -16733,6 +17652,17 @@ def _generated_css_is_stale(package_root: Path) -> tuple[bool, str]:
         css_dir / build_css.WIDGET_DEFAULTS_SCOPED_FILENAME,
         css_dir / build_css.SCREEN_CSS_SELF_FILENAME,
         css_dir / build_css.SCREEN_CSS_SCOPED_FILENAME,
+        # TASK-25812 (Qodo #2281): the per-screen sheets split from the
+        # agentic module are generated outputs too -- a missing or stale one
+        # must trigger the same rebuild, or visiting that screen loads
+        # nothing (the bundle no longer carries its rules). Required only
+        # when the SOURCE module is part of this tree, mirroring
+        # `build_agentic_split`'s own skip for partial/scratch checkouts.
+        *(
+            (css_dir / name for name in build_css.AGENTIC_SPLIT_SHEETS.values())
+            if (css_dir / build_css.AGENTIC_SPLIT_MODULE).is_file()
+            else ()
+        ),
     ]
     missing = [path.name for path in generated if not path.is_file()]
     if missing:

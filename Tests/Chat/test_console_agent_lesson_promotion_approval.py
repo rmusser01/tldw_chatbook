@@ -215,9 +215,7 @@ def test_broad_allow_still_requires_exact_prepare_and_apply_reviews(tmp_path):
         assert rows[0].options == ("approve_once", "deny")
         return {rows[0].call_id: "approve_once"}
 
-    _, prepared = _review_and_invoke(
-        provider, _prepare_args(), "prepare-call", approve
-    )
+    _, prepared = _review_and_invoke(provider, _prepare_args(), "prepare-call", approve)
 
     assert prepared.ok
     proposal = json.loads(prepared.content)
@@ -246,6 +244,29 @@ def test_broad_allow_still_requires_exact_prepare_and_apply_reviews(tmp_path):
     assert reused.error == PROMOTION_APPROVAL_REQUIRED
 
 
+def test_detailed_promotion_reports_consumed_stamp_after_post_stamp_failure(tmp_path):
+    target = tmp_path / "AGENTS.md"
+    target.write_text("# Old\n")
+    context = _LiveInstructionContext(tmp_path)
+    provider = _provider(tmp_path, context)
+    args = _prepare_args()
+    call_id = "prepare-call"
+    hook = build_local_review_hook(
+        provider,
+        lambda rows: {rows[0].call_id: "approve_once"},
+    )
+
+    with use_run_actor(CurrentRunActor("primary", RUN, None)):
+        hook([ToolCall("fs_write", args, call_id)], RUN)
+        provider._promotion_snapshotter = None
+        with use_tool_call_id(call_id):
+            outcome = provider.invoke_detailed("fs_write", args)
+
+    assert outcome.result.error == PROMOTION_APPROVAL_REQUIRED
+    assert outcome.approval_consumed is True
+    assert outcome.dispatch_started is False
+
+
 def test_promotion_accepts_alias_distinct_from_binding_id_with_multiple_roots(
     tmp_path,
 ):
@@ -263,9 +284,7 @@ def test_promotion_accepts_alias_distinct_from_binding_id_with_multiple_roots(
         return {rows[0].call_id: "approve_once"}
 
     prepare_args = {**_prepare_args(), "root_alias": "latest-dev"}
-    _, prepared = _review_and_invoke(
-        provider, prepare_args, "prepare-call", approve
-    )
+    _, prepared = _review_and_invoke(provider, prepare_args, "prepare-call", approve)
 
     assert prepared.ok
     proposal = json.loads(prepared.content)
@@ -306,9 +325,7 @@ def test_preparing_second_proposal_does_not_discard_first(tmp_path):
         "expected_sha256": first["expected_sha256"],
         "proposal_digest": first["proposal_digest"],
     }
-    _, applied = _review_and_invoke(
-        provider, apply_first, "apply-first", approve
-    )
+    _, applied = _review_and_invoke(provider, apply_first, "apply-first", approve)
 
     assert applied.ok
     assert target.read_text() == "# First\n"
@@ -319,11 +336,11 @@ def test_target_change_after_preview_refuses_without_overwriting(tmp_path):
     target.write_text("# Old\n")
     context = _LiveInstructionContext(tmp_path)
     provider = _provider(tmp_path, context)
+
     def approve(rows):
         return {rows[0].call_id: "approve_once"}
-    _, prepared = _review_and_invoke(
-        provider, _prepare_args(), "prepare-call", approve
-    )
+
+    _, prepared = _review_and_invoke(provider, _prepare_args(), "prepare-call", approve)
     proposal = json.loads(prepared.content)
     target.write_text("# User edit\n")
     apply_args = {

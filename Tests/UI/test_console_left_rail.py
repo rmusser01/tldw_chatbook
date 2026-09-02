@@ -20,6 +20,7 @@ from contextlib import asynccontextmanager
 import pytest
 from textual.containers import Horizontal
 from textual.css.query import NoMatches
+from textual.message import Message
 from textual.pilot import OutOfBounds
 from textual.widgets import Button
 
@@ -33,6 +34,7 @@ from tldw_chatbook.Widgets.Console.console_bounded_section import (
     ConsoleBoundedSection,
 )
 from tldw_chatbook.Widgets.destination_rail import DestinationRailSectionHeader
+from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
 
 
 @asynccontextmanager
@@ -345,6 +347,33 @@ async def test_context_direct_bodies_use_six_bounded_wrappers_in_dom_order():
         assert fleet.parent is screen.query_one("#console-left-rail")
         assert not list(fleet.query("ConsoleBoundedSection"))
         assert fleet not in list(body.walk_children())
+
+
+@pytest.mark.asyncio
+async def test_pinned_terminal_action_posts_typed_request_outside_six_sections(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Terminal is always visible without reviving the retired Sessions section."""
+
+    assert issubclass(ConsoleLeftRail.TerminalRequested, Message)
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        calls: list[None] = []
+        monkeypatch.setattr(
+            screen,
+            "action_open_console_terminal",
+            lambda: calls.append(None),
+        )
+
+        terminal = screen.query_one("#console-terminal-open", Button)
+        body = screen.query_one("#console-left-rail-body")
+        assert terminal.parent is screen.query_one("#console-left-rail")
+        assert terminal not in list(body.walk_children())
+        assert len(list(body.query("ConsoleBoundedSection"))) == 6
+
+        assert await pilot.click(terminal)
+        await pilot.pause()
+        assert calls == [None]
 
 
 @pytest.mark.asyncio

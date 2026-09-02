@@ -218,6 +218,17 @@ class SetupRadioSet(RadioSet):
         self.post_message(self.AdvanceRequested())
 
 
+#: TASK-25821: steps 1-5 teach "Esc skip setup" / "Esc exit setup" and Esc
+#: works. On the summary the cancel button is hidden and Esc goes inert, but
+#: the hint line simply dropped the exit vocabulary -- so the key the wizard
+#: spent five screens teaching stopped working with no explanation, and
+#: nothing said how setup actually ends. Name the finish route instead of
+#: leaving a gap. Deliberately does NOT mention Esc: it does not exit here,
+#: and the footer must only advertise keys that work (same rule as the
+#: Console footer's setup-blocked variant).
+SUMMARY_KEY_HINTS = "Ctrl+B back · choose an action below to finish"
+
+
 class SetupWizardProgress(WizardProgress):
 
     #: TASK-21148 (UAT F-2/F-3): the stacked number+title layout. Declared
@@ -7087,6 +7098,12 @@ class SummaryStep(SetupStep):
             yield Static(
                 "", id="setup-summary-footer", classes="setup-subtitle", markup=False
             )
+            yield Checkbox(
+                "Get to know you after setup",
+                False,
+                id="setup-profile-interview-offer",
+                compact=True,
+            )
         # The exit actions are a DIRECT child of the step (the .setup-step
         # scroll container), not of the scrolling .setup-summary Vertical:
         # Textual docks position against the container's visible frame and
@@ -7384,7 +7401,10 @@ class SummaryStep(SetupStep):
         return True, ""
 
     def get_step_data(self) -> Dict[str, Any]:
-        return {"exit_route": self.exit_route}
+        result: Dict[str, Any] = {"exit_route": self.exit_route}
+        if self.query_one("#setup-profile-interview-offer", Checkbox).value:
+            result["offer_profile_interview"] = True
+        return result
 
 
 class _ProviderSaveStatus(Static):
@@ -8229,7 +8249,7 @@ class SetupWizardContainer(WizardContainer):
         cancel.display = not on_summary
         cancel.variant = "default"
         if on_summary:
-            hints.update("Ctrl+B back")
+            hints.update(SUMMARY_KEY_HINTS)
         elif step_id == wizard_state.STEP_WELCOME:
             cancel.label = "Skip setup"
             cancel.tooltip = (
@@ -8747,11 +8767,13 @@ class SetupWizardContainer(WizardContainer):
         try:
             # TASK-21143 (UAT N-7): a visited Provider/Model pair whose
             # probe failed shows "!" instead of the ✓ users read as "OK".
-            attention: frozenset[str] = frozenset()
-            if self.provider_probe_failure():
-                attention = frozenset(
-                    {wizard_state.STEP_PROVIDER, wizard_state.STEP_MODEL}
-                )
+            # TASK-25818 widens that to the step the user simply walked
+            # through without configuring: the summary already reports it as
+            # unconfigured, and the tracker must not disagree.
+            attention = wizard_state.setup_attention_ids(
+                self.wizard_data,
+                probe_failed=bool(self.provider_probe_failure()),
+            )
             items = wizard_state.build_setup_progress(
                 self.active_ids,
                 self._active_position(self.current_step or 0),
@@ -9653,6 +9675,7 @@ class SetupWizardContainer(WizardContainer):
     def _handle_complete(self, wizard_data: Dict[str, Any]) -> None:
         summary_data = wizard_data.get(wizard_state.STEP_SUMMARY, {})
         exit_route = summary_data.get("exit_route")
+        offer_profile_interview = summary_data.get("offer_profile_interview") is True
         # F-B fix: BaseWizard.complete_wizard() calls this callback
         # SYNCHRONOUSLY (self.on_complete(self.wizard_data)), and it is
         # itself invoked synchronously from _advance() -- which is the body
@@ -9673,10 +9696,16 @@ class SetupWizardContainer(WizardContainer):
         # comment) by using a dedicated group; do the same here rather than
         # relying on a scheduling accident.
         self.run_worker(
-            self._finalize(exit_route), exclusive=True, group="setup-wizard-finalize"
+            self._finalize(exit_route, offer_profile_interview),
+            exclusive=True,
+            group="setup-wizard-finalize",
         )
 
-    async def _finalize(self, exit_route: Optional[str]) -> None:
+    async def _finalize(
+        self,
+        exit_route: Optional[str],
+        offer_profile_interview: bool = False,
+    ) -> None:
         """F3 hardening: a second entry is a clean no-op.
 
         Checked here (not just inside ``_dismiss_screen``) so a duplicate
@@ -9701,7 +9730,10 @@ class SetupWizardContainer(WizardContainer):
         if exit_route == TAB_CHAT and not self._stage_console_first_chat_handoff():
             self._show_first_chat_handoff_error()
             return
-        self._dismiss_screen({"completed": True, "exit_route": exit_route})
+        result = {"completed": True, "exit_route": exit_route}
+        if offer_profile_interview:
+            result["offer_profile_interview"] = True
+        self._dismiss_screen(result)
 
     def _stage_console_first_chat_handoff(self) -> bool:
         """Stage a revision-fenced, secret-free target after setup commits."""

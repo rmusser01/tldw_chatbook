@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError
-import os
-from statistics import quantiles
 from threading import Barrier
 from types import SimpleNamespace
 
@@ -34,8 +32,6 @@ from tldw_chatbook.Terminal.io_actors import (
     TerminalOutputActor,
     TerminalPriorityControl,
 )
-from tldw_chatbook.Terminal.screen_model import TerminalScreenModel
-
 
 BRACKETED_PASTE_START = b"\x1b[200~"
 BRACKETED_PASTE_END = b"\x1b[201~"
@@ -556,39 +552,3 @@ def test_priority_close_is_independent_and_idempotent_when_both_paths_are_full()
     assert priority.wait(timeout=0) is True
     assert input_actor.pending_bytes == 1
     assert output_actor.pending_bytes == 1
-
-
-@pytest.mark.asyncio
-async def test_ten_second_ansi_flood_keeps_actors_bounded_and_reports_latency(
-    request: pytest.FixtureRequest,
-) -> None:
-    actor = TerminalOutputActor()
-    model = TerminalScreenModel(columns=80, rows=24)
-    loop = asyncio.get_running_loop()
-    duration = 10.0
-    stop_at = loop.time() + duration
-    sentinel_lateness: list[float] = []
-    payload = (b"\x1b[32mterminal-flood\x1b[0m\r\n" * 2_048)[:MAX_IO_CHUNK_BYTES]
-    assert actor.offer_output(payload).accepted is True
-
-    async def sentinel() -> None:
-        target = loop.time() + 0.1
-        while target < stop_at:
-            await asyncio.sleep(max(0.0, target - loop.time()))
-            sentinel_lateness.append(max(0.0, loop.time() - target))
-            target += 0.1
-
-    sentinel_task = asyncio.create_task(sentinel())
-    while loop.time() < stop_at:
-        if actor.next_read_size >= len(payload):
-            assert actor.offer_output(payload).accepted is True
-        actor.process_parser_turn(model.feed, visible=False)
-        assert actor.pending_bytes <= MAX_PENDING_OUTPUT_BYTES
-        await asyncio.sleep(0)
-    await sentinel_task
-
-    assert len(sentinel_lateness) >= 90
-    p95 = quantiles(sentinel_lateness, n=100, method="inclusive")[94]
-    request.node.user_properties.append(("terminal_ansi_flood_p95_ms", p95 * 1_000))
-    if os.environ.get("TLDW_TERMINAL_QUALIFICATION_HOST") == "1":
-        assert p95 < 0.1

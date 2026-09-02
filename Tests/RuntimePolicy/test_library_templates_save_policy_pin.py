@@ -3,7 +3,7 @@
 Spec §6 picked a DEDICATED verb deliberately: ``library_save_chunk_spec``
 maps to the new ``library.templates`` resource with a ``save`` action --
 the local Library agent-tools policy home (the same ``library_collections``
-capability that owns ``library.collections.*``), NOT the RAG-admin surface's
+stable Library-agent capability), NOT the RAG-admin surface's
 ``rag.template.*`` actions (those belong to the RAG-admin UI seam per
 ADR-003's verb-ownership precedent) and NOT the derived media read action
 the MCP mapping used provisionally while the tool refused everything.

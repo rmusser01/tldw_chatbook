@@ -16,6 +16,23 @@ _AGENTIC_SOURCE = _CSS_ROOT / "components/_agentic_terminal.tcss"
 _SETTINGS_SOURCE = _CSS_ROOT / "components/_settings_splash_theme.tcss"
 _SHARED_SOURCE = _CSS_ROOT / "components/_shared_components.tcss"
 _BUNDLED_STYLESHEET = _CSS_ROOT / "tldw_cli_modular.tcss"
+
+# TASK-25812: the build now emits the bundle PLUS three per-screen sheets
+# split from the agentic-terminal module. "Reaches the generated output"
+# means the union -- a rule in a split sheet is exactly as live as one in
+# the bundle (the app loads it via the owning screen's CSS_PATH).
+_GENERATED_SHEETS = (
+    _BUNDLED_STYLESHEET,
+    _CSS_ROOT / "screen_agentic_console.tcss",
+    _CSS_ROOT / "screen_agentic_library.tcss",
+    _CSS_ROOT / "screen_agentic_settings.tcss",
+)
+
+
+def _generated_css_text() -> str:
+    return "\n".join(
+        sheet.read_text(encoding="utf-8") for sheet in _GENERATED_SHEETS
+    )
 _LIBRARY_SCREEN_SOURCE = _REPO_ROOT / "tldw_chatbook/UI/Screens/library_screen.py"
 
 _LIBRARY_NOTES_COMPACT_GEOMETRY = {
@@ -340,20 +357,60 @@ def _bundled_module(bundle: str, module_path: str) -> str:
     return bundle.split(marker, 1)[1].split("/* ===== MODULE:", 1)[0].strip()
 
 
+def _generated_agentic_css() -> str:
+    """The agentic module as the app actually loads it, post-split.
+
+    TASK-25812 split the module across the bundle (multi-screen remainder)
+    and three per-screen sheets. Contracts about "the generated form of this
+    module" now run against the union of those outputs.
+    """
+    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    parts = [_bundled_module(bundle, "components/_agentic_terminal.tcss")]
+    for filename in css_builder.AGENTIC_SPLIT_SHEETS.values():
+        parts.append((_CSS_ROOT / filename).read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
+
 def test_library_notes_compact_source_module_is_exactly_bundled() -> None:
-    source = _AGENTIC_SOURCE.read_text(encoding="utf-8").strip()
+    """Every byte of the source module reaches exactly one generated output.
+
+    Pre-split this was `bundle section == source`. The split makes that
+    false BY DESIGN, so the contract is now the splitter's own lossless
+    partition, re-checked here against the COMMITTED outputs: the bundle's
+    module section must equal the remainder, and each split sheet must end
+    with its owner's moved blocks. A hand-edit to any generated file still
+    fails loudly, which is this test's entire purpose.
+    """
+    source = _AGENTIC_SOURCE.read_text(encoding="utf-8")
+    remainder, _ = css_builder.split_agentic_terminal(source, css_dir=_CSS_ROOT)
     bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
 
-    assert _bundled_module(bundle, "components/_agentic_terminal.tcss") == source
+    assert (
+        _bundled_module(bundle, "components/_agentic_terminal.tcss")
+        == remainder.strip()
+    )
+    # EXACT equality against a fresh rebuild, not endswith: a suffix check
+    # accepts stale or hand-inserted CSS ahead of the expected tail (Qodo
+    # #2281), which is precisely the drift this test exists to refuse.
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as rebuilt_dir:
+        css_builder.build_agentic_split(_CSS_ROOT, Path(rebuilt_dir))
+        for filename in css_builder.AGENTIC_SPLIT_SHEETS.values():
+            committed = (_CSS_ROOT / filename).read_text(encoding="utf-8")
+            rebuilt = (Path(rebuilt_dir) / filename).read_text(encoding="utf-8")
+            assert committed == rebuilt, (
+                f"{filename} differs from a fresh build_agentic_split -- "
+                "regenerate with build_css.py and commit the result"
+            )
 
 
 def test_console_bounded_sections_have_no_legacy_fractional_css_owner() -> None:
     """Only the bounded viewport may own direct-section scrolling geometry."""
 
-    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
     stylesheets = (
         _AGENTIC_SOURCE.read_text(encoding="utf-8"),
-        _bundled_module(bundle, "components/_agentic_terminal.tcss"),
+        _generated_agentic_css(),
     )
 
     for css in stylesheets:
@@ -377,7 +434,7 @@ def test_library_notes_compact_geometry_matches_fallback_source_and_bundle() -> 
     stylesheets = (
         _library_screen_default_css(),
         _AGENTIC_SOURCE.read_text(encoding="utf-8"),
-        _BUNDLED_STYLESHEET.read_text(encoding="utf-8"),
+        _generated_css_text(),
     )
 
     for selector, expected in _LIBRARY_NOTES_COMPACT_GEOMETRY.items():
@@ -393,7 +450,7 @@ def test_library_notes_compact_geometry_matches_fallback_source_and_bundle() -> 
 def test_file_notes_error_ink_and_disabled_opacity_are_app_tier() -> None:
     stylesheets = (
         _AGENTIC_SOURCE.read_text(encoding="utf-8"),
-        _BUNDLED_STYLESHEET.read_text(encoding="utf-8"),
+        _generated_css_text(),
     )
 
     for css in stylesheets:
@@ -458,7 +515,7 @@ def test_css_manifest_declares_only_existing_settings_source() -> None:
 def test_settings_splash_theme_rules_have_source_and_bundle_integrity() -> None:
     assert _SETTINGS_SOURCE.is_file()
     settings_source = _SETTINGS_SOURCE.read_text(encoding="utf-8")
-    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundle = _generated_css_text()
     # The live, feature-scoped theme-editor + splash-viewer selectors remain.
     required_selectors = (
         "#settings-theme-tree",
@@ -516,7 +573,7 @@ def test_splash_theme_module_has_no_bare_or_generic_component_selectors() -> Non
 def test_relocated_shared_component_rules_are_present() -> None:
     """The moved generic rules live in _shared_components and reach the bundle."""
     shared = _SHARED_SOURCE.read_text(encoding="utf-8")
-    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundle = _generated_css_text()
     for selector in (
         ".setting-label",
         ".section-header",
@@ -532,7 +589,7 @@ def test_relocated_shared_component_rules_are_present() -> None:
 
 def test_console_inspector_handle_full_height_rule_reaches_generated_bundle() -> None:
     source = _AGENTIC_SOURCE.read_text(encoding="utf-8")
-    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundle = _generated_css_text()
 
     for css in (source, bundle):
         inspector_handle = _rule_body(css, ".console-inspector-rail-handle")
@@ -545,7 +602,7 @@ def test_console_inspector_handle_full_height_rule_reaches_generated_bundle() ->
 def test_library_modular_css_compact_shell_and_emergency_return_reach_bundle() -> None:
     """Production CSS owns the narrow box model and its visible return seam."""
     source = _AGENTIC_SOURCE.read_text(encoding="utf-8")
-    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundle = _generated_css_text()
 
     for css in (source, bundle):
         compact = _declarations(css, "#library-shell-grid.library-notes-compact")
@@ -563,7 +620,7 @@ def test_library_modular_css_compact_shell_and_emergency_return_reach_bundle() -
 def test_console_edge_ownership_rules_reach_generated_bundle() -> None:
     """Source and bundle retain the edge-native Console shell contract."""
     source = _AGENTIC_SOURCE.read_text(encoding="utf-8")
-    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundle = _generated_css_text()
 
     for css in (source, bundle):
         grid = _declarations(css, "#console-workspace-grid")
@@ -591,7 +648,7 @@ def test_console_edge_ownership_rules_reach_generated_bundle() -> None:
 
 def test_settings_category_rules_have_source_and_bundle_integrity() -> None:
     source = _AGENTIC_SOURCE.read_text(encoding="utf-8")
-    bundle = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    bundle = _generated_css_text()
 
     for css in (source, bundle):
         category_pane = _rule_body(css, "#settings-category-pane")
@@ -605,3 +662,146 @@ def test_settings_category_rules_have_source_and_bundle_integrity() -> None:
 
         group_title = _rule_body(css, ".settings-category-group-title")
         assert "margin: 0;" in group_title
+
+
+# --- TASK-25812: split_agentic_terminal unit contracts (Qodo #2281 #3) ------
+
+
+def test_split_partition_is_lossless_and_ownership_is_conservative() -> None:
+    """The splitter's classification rules, each on a minimal input.
+
+    A block moves only when EVERY id/class token belongs to exactly one
+    owner; anything ambiguous stays. These are the shapes that decide
+    whether a rule silently vanishes from a surface, so each gets a named
+    case rather than trusting the full-file run to cover them.
+    """
+    css = (
+        "/* header comment { brace inside comment } */\n"
+        ".console-thing { color: red; }\n"
+        ".library-thing > Button { color: blue; }\n"
+        ".console-thing .library-thing { color: green; }\n"
+        "Button { color: white; }\n"
+        ".ds-panel .console-thing { color: black; }\n"
+        ".settings-input-label { color: grey; }\n"
+        "#settings-only { padding: 1; }\n"
+        "/* tail comment */\n"
+    )
+    remainder, moved = css_builder.split_agentic_terminal(css)
+
+    # Lossless: every byte lands in exactly one output.
+    reassembled = sorted(
+        remainder.splitlines()
+        + [line for text in moved.values() for line in text.splitlines()]
+    )
+    assert reassembled == sorted(css.splitlines())
+
+    assert ".console-thing { color: red; }" in moved["console"]
+    assert ".library-thing > Button" in moved["library"]
+    assert "#settings-only" in moved["settings"]
+    # Multi-owner selector stays.
+    assert ".console-thing .library-thing" in remainder
+    # Bare TYPE subject stays.
+    assert "Button { color: white; }" in remainder
+    # A non-owner token anywhere pins the block to the bundle.
+    assert ".ds-panel .console-thing" in remainder
+    # Pinned cross-surface vocabulary stays even though it prefix-matches.
+    assert ".settings-input-label" in remainder
+    # Comments (including braces inside them) travel with the next block.
+    assert "brace inside comment" in remainder + moved["console"]
+
+
+def test_split_demotes_moved_blocks_that_later_kept_blocks_tie_with() -> None:
+    """Intra-module cascade-order safety, both directions.
+
+    A moved block parses after the whole bundle. A KEPT block later in the
+    module that shares its selector used to win the tie by source order and
+    would now lose it -- so the moved block must be demoted. A kept block
+    EARLIER keeps its relative order and must not cause demotion.
+    """
+    # A tie needs the SAME selector (equal specificity); the incident case
+    # was a comma group carrying the moved rule's exact selector.
+    css = (
+        ".console-a { color: red; }\n"
+        ".mixed-tok, .console-a { color: blue; }\n"  # kept, LATER, exact tie
+        ".console-b { color: green; }\n"
+    )
+    remainder, moved = css_builder.split_agentic_terminal(css)
+    assert ".console-a { color: red; }" in remainder, (
+        "moved block sharing a selector with a LATER kept block must be "
+        "demoted or it wins a cascade tie it used to lose"
+    )
+    assert ".console-b" in moved["console"]
+
+    css2 = (
+        ".mixed-tok, .console-c { color: blue; }\n"  # kept, EARLIER
+        ".console-c { color: red; }\n"
+    )
+    remainder2, moved2 = css_builder.split_agentic_terminal(css2)
+    assert ".console-c { color: red; }" in moved2["console"], (
+        "a kept block EARLIER in the module preserves relative order and "
+        "must not force a demotion"
+    )
+
+
+def test_split_demotion_sees_later_modules(tmp_path: Path) -> None:
+    """Cross-module cascade-order safety (Qodo #2281 #8).
+
+    A selector collision with a module AFTER the agentic one in
+    CSS_MODULES (features, utilities) must demote the moved block: those
+    modules used to win the tie by bundle order and a screen sheet would
+    now beat them.
+    """
+    css_dir = tmp_path / "css"
+    (css_dir / "utilities").mkdir(parents=True)
+    (css_dir / "utilities" / "_overrides.tcss").write_text(
+        ".console-x { color: white; }\n", encoding="utf-8"
+    )
+    css = ".console-x { color: red; }\n.console-y { color: green; }\n"
+
+    remainder, moved = css_builder.split_agentic_terminal(css, css_dir=css_dir)
+    assert ".console-x" in remainder, (
+        "a moved block colliding with a LATER module's selector must be "
+        "demoted -- utilities exist to override anything"
+    )
+    assert ".console-y" in moved["console"]
+
+    # Without a tree, only the intra-module pass applies.
+    remainder_none, moved_none = css_builder.split_agentic_terminal(css)
+    assert ".console-x" in moved_none["console"]
+
+
+def test_split_sheets_carry_only_their_own_owners_rules() -> None:
+    """No sheet holds another surface's tokens (Qodo #2281 finding 8).
+
+    The union harnesses deliberately model the steady-state app, so they
+    cannot catch a Console rule generated into the Library sheet -- a
+    misplacement that would strand the rule behind the wrong screen's
+    first-visit load. This checks ownership at the GENERATION level
+    instead: every ``{owner}-`` prefixed token in a sheet belongs to that
+    sheet's owner (the pinned cross-surface vocabulary lives in the bundle
+    and must not appear in any sheet at all).
+    """
+    owners = tuple(css_builder.AGENTIC_SPLIT_SHEETS)
+    for owner, filename in css_builder.AGENTIC_SPLIT_SHEETS.items():
+        text = re.sub(
+            r"/\*.*?\*/",
+            "",
+            (_CSS_ROOT / filename).read_text(encoding="utf-8"),
+            flags=re.DOTALL,
+        )
+        selector_text = " ".join(
+            match for match in re.findall(r"([^{}]+)\{", text)
+        )
+        tokens = set(re.findall(r"[#.]([A-Za-z0-9_-]+)", selector_text))
+        for token in sorted(tokens):
+            assert token not in css_builder.AGENTIC_SPLIT_PINNED_TOKENS, (
+                f"{filename}: pinned cross-surface token .{token} must stay "
+                "in the bundle -- regenerate with build_css.py"
+            )
+            for other in owners:
+                if other == owner:
+                    continue
+                assert token != other and not token.startswith(other + "-"), (
+                    f"{filename}: token .{token} belongs to the {other} "
+                    f"surface but was generated into the {owner} sheet"
+                )

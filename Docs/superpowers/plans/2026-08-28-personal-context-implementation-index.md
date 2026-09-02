@@ -14,15 +14,15 @@
 
 ```text
 ADR required: yes
-ADR path: backlog/decisions/099-personal-context-profile-authority-sync-and-encryption.md
+ADR path: backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md
 Reason: The work creates a new encrypted data authority, shared schema,
 migration and conflict policy, service boundary, agent permission contract,
 and long-lived setup/settings UX.
 ```
 
-ADR-099 is provisional until its number is swept across remote refs, worktrees,
-and open PRs immediately before creation. If occupied, the implementer renumbers
-the ADR and updates the spec plus every plan in this suite before code begins.
+ADR-102 was selected after a sweep of local decisions, active worktrees, and
+fetched refs. Open-PR metadata was unavailable during that sweep; the result
+must be rechecked before any later ADR allocation.
 
 ## Scope decomposition
 
@@ -71,7 +71,7 @@ then updates every supported consumer before release.
 
 ## Global constraints
 
-- Read the spec, ADR-008, ADR-032, ADR-037, and ADR-099 before implementation.
+- Read the spec, ADR-008, ADR-032, ADR-037, and ADR-102 before implementation.
 - Use a fresh worktree at execution time; do not implement in the current dirty
   checkout.
 - Before each Backlog task, sweep all remote refs and worktrees for task-ID

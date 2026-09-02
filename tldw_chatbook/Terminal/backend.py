@@ -36,6 +36,28 @@ class TerminalBackend(Protocol):
         """
         ...
 
+    def read(self, maximum: int) -> bytes | None:
+        """Read one nonblocking bounded output chunk.
+
+        Args:
+            maximum: Positive actor credit available for this read.
+
+        Returns:
+            Output bytes, ``None`` when no bytes are ready, or ``b""`` at EOF.
+        """
+        ...
+
+    def wait_for_shell_exit(self, *, timeout_seconds: float) -> int | None:
+        """Observe the backend's sole authoritative shell reaper.
+
+        Args:
+            timeout_seconds: Maximum bounded wait duration.
+
+        Returns:
+            Exact exit code, or ``None`` when the wait expires.
+        """
+        ...
+
     def resize(self, columns: int, rows: int) -> None:
         """Resize the terminal allocation.
 
@@ -47,6 +69,10 @@ class TerminalBackend(Protocol):
 
     def request_priority_close(self) -> None:
         """Request out-of-band idempotent cleanup."""
+        ...
+
+    def finalize_shutdown(self) -> None:
+        """Fence future startup and close parent-owned handles without waiting."""
         ...
 
     def cleanup(self, attempt: CleanupAttempt) -> CleanupProof:

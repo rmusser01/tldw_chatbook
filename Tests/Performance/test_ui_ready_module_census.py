@@ -110,6 +110,9 @@ MAX_TLDW_MODULES_AT_UI_READY = 972
 #: trajectory family TASK-22213 took off the Chat leg.
 ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Chunking",
+    # Personal Context is user/setup/settings/send work. Its encrypted store,
+    # interview coordinator, and agent tools must not delay the first frame.
+    "tldw_chatbook.Personal_Context",
     "tldw_chatbook.RAG_Search.simplified",
 )
 ABSENT_AT_READY_MODULES = (
@@ -139,6 +142,23 @@ ABSENT_AT_READY_MODULES = (
     "tldw_chatbook.Sync_Interop.notes_organization",
     "tldw_chatbook.Sync_Interop.notes_organization_sync_service",
     "tldw_chatbook.Sync_Interop.notes_outbox_producer",
+    # ADR-090: the external-summary LLM graph is approval-time work.
+    "tldw_chatbook.Chat.permission_summary_service",
+    "tldw_chatbook.Agents.profile_tool_provider",
+    "tldw_chatbook.Sync_Interop.personal_context_adapter",
+    # TASK-23113.7: normalization is idle maintenance. Its adapter and worker
+    # import graph must stay outside the first-interactive-frame window even
+    # on slow runners where mount settling continues after ``_ui_ready``.
+    "tldw_chatbook.Chat.console_trace_legacy",
+    "tldw_chatbook.Chat.console_trace_maintenance",
+    # TASK-3605: Hub Test Tool admission is first-use work. Importing its
+    # execution coordinator and preview registry during service construction
+    # spends first-paint budget before an operator opens the MCP Hub.
+    "tldw_chatbook.MCP.hub_test_execution",
+    # TASK-26042: Workspace Files is an explicit Console interaction. Its
+    # modal and descriptor-backed reader stay outside the first-paint graph.
+    "tldw_chatbook.Widgets.Console.console_workspace_files_modal",
+    "tldw_chatbook.Workspaces.file_inspector",
 )
 
 #: Anti-vacuity: if these are not resident, the boot did not actually mount
@@ -306,9 +326,7 @@ def test_ui_ready_module_census_stays_at_the_pinned_size(
     on_leg = [
         m
         for m in mods
-        if any(
-            m == p or m.startswith(p + ".") for p in ABSENT_AT_READY_PREFIXES
-        )
+        if any(m == p or m.startswith(p + ".") for p in ABSENT_AT_READY_PREFIXES)
         or m in ABSENT_AT_READY_MODULES
     ]
     assert not on_leg, (

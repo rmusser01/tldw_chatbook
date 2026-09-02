@@ -8,7 +8,10 @@ from tldw_chatbook.runtime_policy.enforcement import (
     ServicePolicyEnforcer,
     classify_backend_exception,
 )
-from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
+from tldw_chatbook.runtime_policy.registry import (
+    AUDITED_CAPABILITY_SEEDS,
+    CAPABILITY_REGISTRY,
+)
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError, RuntimeSourceState
 from tldw_chatbook.tldw_api.exceptions import APIResponseError, AuthenticationError
 
@@ -121,13 +124,11 @@ EXPECTED_AUDITED_CAPABILITIES = {
             "server": FULL_CRUD_AND_LAUNCH_AND_OBSERVE,
         },
     },
-    # task-1337 (plan Task 9): dedicated local-only list/detail resource for
-    # the Library Collections agent tools -- deliberately NOT folded into the
-    # reading-list capability.
+    # Stable policy home for the remaining local Library write tools.
     "library_collections": {
         "expected_domain_ids": {"library_collections"},
         "expected_action_kinds_by_source": {
-            "local": _action_kinds("browse", "detail", "update", "launch"),
+            "local": _action_kinds("update", "launch"),
         },
     },
     "watchlists": {
@@ -574,8 +575,6 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         collections.feeds.websub.launch.server
     """),
     "library_collections": _action_ids("""
-        library.collections.detail.local
-        library.collections.list.local
         library.media.rechunk.local
         library.notes.save.local
         library.templates.save.local
@@ -1330,6 +1329,7 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         research.sessions.update.server
     """),
     "scheduler_workflows": _action_ids("""
+        scheduler.automations.configure.server
         scheduler.automations.launch.server
         scheduler.automations.list.server
         scheduler.workflows.configure.server
@@ -2004,25 +2004,32 @@ def test_runtime_policy_registry_contains_full_audited_rows():
             )
 
 
-def test_library_collections_registers_dedicated_local_list_and_detail_actions():
-    """task-1337 (plan Task 9): the Library Collections agent tools resolve to
-    a dedicated local-only ``library.collections`` resource -- never the
-    reading-list capability's ``collections.reading_list.*`` actions."""
-    list_entry = CAPABILITY_REGISTRY["library.collections.list.local"]
-    detail_entry = CAPABILITY_REGISTRY["library.collections.detail.local"]
+def test_library_agent_tools_retire_generic_collection_policy_actions():
+    assert not any(
+        action_id.startswith("library.collections.")
+        for action_id in CAPABILITY_REGISTRY
+    )
 
-    for entry in (list_entry, detail_entry):
-        assert entry.capability_id == "library_collections"
-        assert entry.domain_id == "library_collections"
-        assert entry.required_source == "local"
-        assert entry.authority_owner == "local"
-        assert entry.enabled is True
-    assert list_entry.action_kind == "browse"
-    assert detail_entry.action_kind == "detail"
-
-    # Local-only resource: no server variant and no write actions.
-    assert "library.collections.list.server" not in CAPABILITY_REGISTRY
-    assert "library.collections.create.local" not in CAPABILITY_REGISTRY
+    siblings = {
+        action_id: CAPABILITY_REGISTRY[action_id]
+        for action_id in (
+            "library.templates.save.local",
+            "library.media.rechunk.local",
+            "library.notes.save.local",
+        )
+    }
+    assert {entry.capability_id for entry in siblings.values()} == {
+        "library_collections"
+    }
+    assert {entry.domain_id for entry in siblings.values()} == {
+        "library_collections"
+    }
+    seed = next(
+        seed
+        for seed in AUDITED_CAPABILITY_SEEDS
+        if seed.capability_id == "library_collections"
+    )
+    assert seed.display_name == "Library agent tools (local)"
 
 
 def test_backend_exception_classifier_handles_authentication_errors():

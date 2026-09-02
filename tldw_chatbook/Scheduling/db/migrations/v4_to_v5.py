@@ -1,9 +1,11 @@
 """Migration from schema version 4 to version 5.
 
-TASK-26027: a durable failure-incidents table. Repeated failures of one task
-with the same normalized error signature group into a single incident
-(alerting -> acknowledged -> closed) so a task failing hourly for a week is
-one acknowledgeable incident, not a week of identical notifications.
+TASK-26026: a durable per-dispatch run ledger for reminders and briefings,
+mirroring ``local_watchlist_runs`` (the shape the watchlist handler already
+uses). Reminder/briefing history used to be a single overwritten
+``last_status``/``last_run_at`` pair on the task, so run N-1 was
+unrecoverable. This table records one row per dispatch (start, finish,
+outcome, error); the task row keeps its missed-fire accounting unchanged.
 """
 
 from __future__ import annotations
@@ -19,60 +21,53 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
         def _get_connection(self) -> Any: ...
 
 
-_CREATE_INCIDENTS_TABLE = """
-    CREATE TABLE IF NOT EXISTS task_incidents (
+_CREATE_RUNS_TABLE = """
+    CREATE TABLE IF NOT EXISTS scheduled_task_runs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         task_id TEXT NOT NULL,
         task_type TEXT NOT NULL,
-        signature TEXT NOT NULL,
         status TEXT NOT NULL,
-        occurrence_count INTEGER NOT NULL DEFAULT 1,
-        first_seen_at TEXT NOT NULL,
-        last_seen_at TEXT NOT NULL,
-        acknowledged_at TEXT,
-        closed_at TEXT
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        error_msg TEXT,
+        created_at TEXT NOT NULL
     )
 """
 
-# One OPEN incident per (task_id, signature): a partial unique index over
-# the non-closed rows enforces the grouping invariant at the DB level.
-_CREATE_OPEN_INCIDENT_INDEX = """
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_task_incidents_open
-        ON task_incidents(task_id, signature)
-        WHERE status != 'closed'
-"""
-
-_CREATE_LOOKUP_INDEX = """
-    CREATE INDEX IF NOT EXISTS idx_task_incidents_task
-        ON task_incidents(task_id, id DESC)
+_CREATE_RUNS_INDEX = """
+    CREATE INDEX IF NOT EXISTS idx_scheduled_task_runs_task
+        ON scheduled_task_runs(task_id, id DESC)
 """
 
 
 def migrate(db: _MigrationCapableDB) -> None:
     """Apply the v4 -> v5 schema migration. Idempotent."""
     with closing(db._get_connection()) as conn:
+        # Same memory-correctness rule as the earlier migrations: a fresh
+        # :memory: connection with no reminder_tasks has no v3 schema to
+        # migrate. The runs table is additive, so a missing reminder_tasks
+        # means this connection is pre-v1 and the v0->v1 step owns it.
         existing = conn.execute("PRAGMA table_info(reminder_tasks)").fetchall()
         if not existing:
             return
-        conn.execute(_CREATE_INCIDENTS_TABLE)
-        conn.execute(_CREATE_OPEN_INCIDENT_INDEX)
-        conn.execute(_CREATE_LOOKUP_INDEX)
+        conn.execute(_CREATE_RUNS_TABLE)
+        conn.execute(_CREATE_RUNS_INDEX)
         row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
         current_version = int(row[0]) if row and row[0] is not None else 0
         if current_version < 5:
             conn.execute("DELETE FROM schema_version")
             conn.execute("INSERT INTO schema_version (version) VALUES (?)", (5,))
         conn.commit()
-    logger.debug("Scheduling schema migrated to version 5 (task_incidents)")
+    logger.debug("Scheduling schema migrated to version 5 (scheduled_task_runs)")
 
 
 def rollback(db: _MigrationCapableDB) -> None:
-    """Drop the incidents table, returning ``db`` to schema version 4."""
+    """Drop the run ledger, returning ``db`` to schema version 4."""
     with closing(db._get_connection()) as conn:
-        conn.execute("DROP TABLE IF EXISTS task_incidents")
+        conn.execute("DROP TABLE IF EXISTS scheduled_task_runs")
         row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
         current_version = int(row[0]) if row and row[0] is not None else 0
-        if current_version >= 5:
+        if current_version >= 4:
             conn.execute("DELETE FROM schema_version")
-            conn.execute("INSERT INTO schema_version (version) VALUES (?)", (4,))
+            conn.execute("INSERT INTO schema_version (version) VALUES (?)", (3,))
         conn.commit()

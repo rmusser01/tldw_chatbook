@@ -36,6 +36,7 @@ import weakref
 from loguru import logger
 from rich.markup import escape as escape_markup
 
+from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import TOOL_DESCRIPTION_CAPTURE_CAP
 from tldw_chatbook.Character_Chat.emote_directives import (
     CharacterEmoteAssetReference,
     CharacterEmoteRunSnapshot,
@@ -52,6 +53,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_CAP_REFUSAL_TITLE_LIMIT,
     CONSOLE_DEFAULT_MAX_PARALLEL_RUNS,
     CONSOLE_DISPATCH_DISCARDED_COPY,
+    CONSOLE_GLOBAL_WORKSPACE_ID,
     ConsoleChatMessage,
     ConsoleControllerActivity,
     ConsoleLifecycleImpact,
@@ -130,6 +132,7 @@ from tldw_chatbook.Chat.console_auxiliary_routing import (
     auxiliary_selection_from_config,
     select_auxiliary_or_main,
 )
+from tldw_chatbook.Agents.agent_service import append_personal_context
 from tldw_chatbook.Chat.console_context_compaction import (
     NO_LEGACY_MEMORY,
     CompactionAdmission,
@@ -328,7 +331,6 @@ from tldw_chatbook.Chat.console_skill_resolver import (
     resolve_skill_command,
 )
 from tldw_chatbook.Chat.prompt_history import PromptHistory
-
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.agent_lesson_promotion import ManagedSkillProposalGate
     from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
@@ -381,6 +383,7 @@ from tldw_chatbook.config import (
     get_cli_setting,
     apply_console_capture_settings,
     runtime_capture_policy,
+    get_runtime_config_snapshot,
 )
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 from tldw_chatbook.Library.library_rag_service import (
@@ -441,6 +444,12 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+    from tldw_chatbook.Agents.profile_tool_provider import ProfileToolProvider
+    from tldw_chatbook.Personal_Context.context_service import (
+        ProfileContextService,
+        ProfileContextSnapshot,
+    )
+    from tldw_chatbook.Personal_Context.service import PersonalContextService
 
 
 def get_internal_prompt(prompt_id: str) -> str:
@@ -1404,11 +1413,65 @@ def _collect_mcp_pending(
     pending: list["MCPPendingCall"] = []
     for call in calls:
         gate = provider.pending_gate_for(
-            call.name, call.args, str(getattr(call, "call_id", "") or "")
+            call.name,
+            call.args,
+            str(getattr(call, "call_id", "") or ""),
+            rationale=str(getattr(call, "rationale", "") or ""),
         )
         if gate is not None:
             pending.append(gate)
     return pending
+
+
+def _build_approval_payload(
+    round_id: str,
+    session_id: str,
+    run_id: str,
+    pending: "list[MCPPendingCall]",
+    timeout_seconds: float,
+    deadline: float | None,
+) -> dict[str, Any]:
+    """Marshal one approval round's card payload.
+
+    ADR-090: rows carry ``rationale`` (the model's advisory context) and
+    ``description`` (the tool definition's own text, for the external
+    summarizer); the payload carries a ``summary`` slot that starts ``None``
+    and is filled by the advisory summarizer -- payload-carried so any
+    remount re-renders it rather than depending on a live patch surviving.
+    """
+    return {
+        "round_id": round_id,
+        "session_id": session_id,
+        "run_id": run_id,
+        "calls": [
+            {
+                "llm_name": call.llm_name,
+                "server_key": call.server_key,
+                "tool_name": call.tool_name,
+                "server_label": call.server_label,
+                "arguments": dict(call.arguments or {}),
+                "reason": call.reason,
+                "options": list(call.options),
+                "effects": list(call.effects),
+                "execution_policy": (
+                    call.execution_policy.value
+                    if isinstance(call.execution_policy, ToolExecutionPolicy)
+                    else ToolExecutionPolicy.BOUNDED_ABANDONABLE.value
+                ),
+                "path_precheck_failed": call.path_precheck_failed,
+                "call_id": call.call_id,
+                "full_command": call.full_command,
+                "warning": call.warning,
+                "scope_notice": call.scope_notice,
+                "rationale": str(getattr(call, "rationale", "") or ""),
+                "description": str(getattr(call, "description", "") or ""),
+            }
+            for call in pending
+        ],
+        "timeout_seconds": timeout_seconds,
+        "deadline_monotonic": deadline,
+        "summary": None,
+    }
 
 
 def build_mcp_review_hook(
@@ -1823,6 +1886,10 @@ def build_tool_review_hook(
                     # refuse another in the same batch. Empty on the fence
                     # path, where the runtime falls back to the name.
                     call_id=str(getattr(call, "call_id", "") or ""),
+                    rationale=str(getattr(call, "rationale", "") or ""),
+                    description=str(getattr(tool, "description", "") or "")[
+                        :TOOL_DESCRIPTION_CAPTURE_CAP
+                    ],
                     reason="risk_floored" if state.risk_floored else "ask",
                     options=("approve_once", "approve_session", "deny"),
                     # TASK-1231/F3 AC2: pre-flight the roots check for the
@@ -2023,6 +2090,10 @@ def build_local_review_hook(
                 call.name,
                 call.args,
                 str(getattr(call, "call_id", "") or ""),
+                # Qodo review #10: the local owner must receive the call's
+                # advisory rationale like the MCP and builtin owners do, or
+                # every local approval row renders without model context.
+                rationale=str(getattr(call, "rationale", "") or ""),
                 run_id=run_id,
             )
             if gate is not None:
@@ -2667,6 +2738,90 @@ def _retire_generation_before_agent_handoff(method: Callable[..., Any]):
                 )
 
     return wrapped
+_PERSONAL_CONTEXT_SERVICE_UNSET = object()
+
+
+def _empty_profile_context_snapshot() -> "ProfileContextSnapshot":
+    """Create the fail-closed snapshot without loading profiles at startup."""
+
+    from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
+
+    return ProfileContextSnapshot.empty()
+
+
+def _compose_profile_tool_provider(
+    service: PersonalContextService,
+    *,
+    workspace_id: str | None,
+    ephemeral: bool,
+    run_id: str,
+    session_id: str,
+    current_user_message: ConsoleChatMessage | None,
+    kill_switch: Callable[[], bool],
+    reserve_direct_update_schema: bool = False,
+) -> ProfileToolProvider | None:
+    """Capture one stable, fail-closed profile authority for a Console run."""
+
+    if ephemeral:
+        return None
+    from tldw_chatbook.Agents.profile_tool_provider import (
+        ProfileToolProvider,
+        ProfileToolRunScope,
+    )
+
+    active_workspace_id = (
+        None if workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID else workspace_id
+    )
+    try:
+        first_view = service.authorized_context_view(
+            active_workspace_id=active_workspace_id
+        )
+        scopes = service.list_scopes()
+        scope_id = first_view.workspace_scope_id or next(
+            scope.scope_id for scope in scopes if scope.kind.value == "global"
+        )
+        authority = service.get_scope_authority(scope_id)
+        stable_view = service.authorized_context_view(
+            active_workspace_id=active_workspace_id
+        )
+        if (
+            stable_view.generation != first_view.generation
+            or stable_view.authority_revision != first_view.authority_revision
+            or stable_view.workspace_scope_id != first_view.workspace_scope_id
+        ):
+            return None
+        manifest = service.get_manifest()
+    except Exception:  # noqa: BLE001 - optional profile tools fail soft
+        return None
+
+    trusted_message = (
+        current_user_message
+        if current_user_message is not None
+        and current_user_message.role is ConsoleMessageRole.USER
+        else None
+    )
+    return ProfileToolProvider(
+        service,
+        run_scope=ProfileToolRunScope(
+            run_id=run_id,
+            session_id=session_id,
+            profile_id=manifest.profile_id,
+            scope_id=scope_id,
+            authority=authority,
+            generation=stable_view.generation,
+            authority_revision=stable_view.authority_revision,
+            current_user_message_id=(
+                trusted_message.persisted_message_id or trusted_message.id
+                if trusted_message is not None
+                else None
+            ),
+            current_user_text=(
+                trusted_message.content if trusted_message is not None else None
+            ),
+        ),
+        kill_switch=kill_switch,
+        reserve_direct_update_schema=reserve_direct_update_schema,
+    )
 
 
 class ConsoleChatController:
@@ -3230,6 +3385,11 @@ class ConsoleChatController:
         #: _set_console_pending_approval``). Always invoked through
         #: ``self.app.call_from_thread`` from ``request_mcp_approvals``.
         self.set_pending_approval: Callable[[dict[str, Any] | None], None] | None = None
+        #: ADR-090: UI-thread bridge that patches a mounted approval card's
+        #: advisory summary line ``(round_id, text)``. Registered by the
+        #: Console screen alongside ``set_pending_approval``; None in
+        #: headless contexts and delivery silently no-ops.
+        self.update_pending_approval_summary: Callable[[str, str], None] | None = None
         #: Task 9 (parked background approvals): UI-thread callback invoked
         #: (via ``self.app.call_from_thread``) when ``request_mcp_approvals``
         #: raises a round for a NON-active session -- sets the fleet
@@ -7178,6 +7338,24 @@ class ConsoleChatController:
                         ConsoleSubmissionOrigin.QUEUED,
                     }
                     and admission_policy.effective_capture_enabled
+                    # TASK-25814: policy alone is not enough -- the RUNTIME has
+                    # to be able to honour it. The gateway's durable-capture
+                    # seam is optional and unsupplied in production, so
+                    # preparing Capture-On against a gateway without one
+                    # guaranteed a pre-dispatch refusal on EVERY send
+                    # (`_reserve_trace_call` raises on its first statement).
+                    # Capture Off is the app's own modelled outcome for "no
+                    # capture" (`one_shot_capture_off`), so fall back to it
+                    # rather than promise something that cannot be recorded.
+                    # The dispatch guard itself is a deliberate invariant and
+                    # is untouched.
+                    and bool(
+                        getattr(
+                            self.provider_gateway,
+                            "supports_durable_capture",
+                            False,
+                        )
+                    )
                     else ConsoleTraceCaptureMode.CAPTURE_OFF
                 )
             except Exception as exc:
@@ -7867,6 +8045,11 @@ class ConsoleChatController:
                 before_provider_dispatch=(
                     enter_ephemeral_provider_dispatch
                     if deferred_provider_dispatch
+                    else None
+                ),
+                trusted_profile_user_message_id=(
+                    echoed_user.id
+                    if echoed_user.role is ConsoleMessageRole.USER
                     else None
                 ),
             )
@@ -8919,6 +9102,7 @@ class ConsoleChatController:
                     propagate_trace_call_persistence_errors=(
                         continuation.origin is ConsoleSubmissionOrigin.MANUAL
                     ),
+                    trusted_profile_user_message_id=commit.user_message_id,
                 ),
                 fingerprint=fingerprint,
             )
@@ -9757,9 +9941,15 @@ class ConsoleChatController:
         # "card state derives from the run's pending review state" rule
         # every other activation path follows.
         if self.set_pending_approval is not None:
-            self.set_pending_approval(
-                self._head_round_payload(self._parked_approval_payloads, session.id)
+            payload = self._head_round_payload(
+                self._parked_approval_payloads, session.id
             )
+            self.set_pending_approval(payload)
+            # ADR-090: this re-derive bypasses `_marshal_pending_approval`,
+            # so the summary trigger is armed here too (always None for a
+            # fresh session today; fire-once guards any future payload).
+            if isinstance(payload, dict):
+                self._maybe_fire_permission_summary(payload)
         # TASK-910: same re-derive for the skill-install/script cards -- a
         # brand-new session can never itself have a parked confirm, so this
         # always resolves to clearing whatever the session being left behind
@@ -10129,9 +10319,16 @@ class ConsoleChatController:
         # parking -- the round now stays alive until its own resolution
         # (decision, cancel, or timeout).
         if self.set_pending_approval is not None:
-            self.set_pending_approval(
-                self._head_round_payload(self._parked_approval_payloads, session_id)
+            payload = self._head_round_payload(
+                self._parked_approval_payloads, session_id
             )
+            self.set_pending_approval(payload)
+            # ADR-090: this mount of a stored payload bypasses
+            # `_marshal_pending_approval`, so a round that armed while
+            # parked fires its advisory summary HERE (fire-once makes the
+            # switch-away-and-back re-mount safe).
+            if isinstance(payload, dict):
+                self._maybe_fire_permission_summary(payload)
         # TASK-910: skill-install/script confirms now get the SAME park/
         # re-derive treatment as MCP batch approvals above -- a context
         # change (switch away) no longer force-denies either bridge's
@@ -10301,11 +10498,15 @@ class ConsoleChatController:
         if new_active_id is not None and new_active_id != previous_active_id:
             self.mark_session_visited(new_active_id)
             if self.set_pending_approval is not None:
-                self.set_pending_approval(
-                    self._head_round_payload(
-                        self._parked_approval_payloads, new_active_id
-                    )
+                payload = self._head_round_payload(
+                    self._parked_approval_payloads, new_active_id
                 )
+                self.set_pending_approval(payload)
+                # ADR-090: neighbor auto-activation is a mount of a stored
+                # payload outside `_marshal_pending_approval` -- arm the
+                # summary trigger here too (fire-once; None clears no-op).
+                if isinstance(payload, dict):
+                    self._maybe_fire_permission_summary(payload)
             # TASK-910: same re-derive for the skill-install/script cards --
             # closing the ACTIVE session auto-activates a neighbor, which is
             # now the VIEWED session exactly as if `switch_session` had
@@ -10845,6 +11046,11 @@ class ConsoleChatController:
             # approval` snapshots the box before writing to it) can never
             # turn a revoked round back into an approval.
             "revoked": False,
+            # ADR-090: advisory summary for this round (payload-carried so
+            # remounts re-render it) and the fire-once guard for the
+            # external summarizer (no-call outcomes also consume it).
+            "summary": None,
+            "summary_fired": False,
         }
         # F2b fix (Qodo wave): guard the round registration -- the UI
         # thread's `resolve_pending_approval` (TASK-913: fails closed by
@@ -10860,40 +11066,18 @@ class ConsoleChatController:
         # card renders no countdown copy for 0; see
         # `format_approval_deadline`).
         deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
-        payload = {
-            "round_id": round_id,
-            "session_id": owning_session_id,
-            "run_id": owning_run_id,
-            "calls": [
-                {
-                    "llm_name": call.llm_name,
-                    "server_key": call.server_key,
-                    "tool_name": call.tool_name,
-                    "server_label": call.server_label,
-                    "arguments": dict(call.arguments or {}),
-                    "reason": call.reason,
-                    "options": list(call.options),
-                    "effects": list(call.effects),
-                    "execution_policy": (
-                        call.execution_policy.value
-                        if isinstance(call.execution_policy, ToolExecutionPolicy)
-                        else ToolExecutionPolicy.BOUNDED_ABANDONABLE.value
-                    ),
-                    "path_precheck_failed": call.path_precheck_failed,
-                    "call_id": call.call_id,
-                    "full_command": call.full_command,
-                    "warning": call.warning,
-                    "scope_notice": call.scope_notice,
-                }
-                for call in pending
-            ],
-            "timeout_seconds": timeout_seconds,
-            # Qodo PR #1836 finding 1: the absolute deadline, so a mount
-            # that happens AFTER arm (promotion, switch-back, attach) can
-            # show the remaining window instead of the arm-time total --
-            # see `_head_round_payload`'s snapshot.
-            "deadline_monotonic": deadline,
-        }
+        # Qodo PR #1836 finding 1: the absolute deadline, so a mount
+        # that happens AFTER arm (promotion, switch-back, attach) can
+        # show the remaining window instead of the arm-time total --
+        # see `_head_round_payload`'s snapshot.
+        payload = _build_approval_payload(
+            round_id,
+            owning_session_id,
+            owning_run_id,
+            pending,
+            timeout_seconds,
+            deadline,
+        )
         # Task 9: park rather than mount when this round's session is a
         # DIFFERENT, background session -- `session_id is None` (a legacy
         # caller with no session context) always mounts, matching every
@@ -10957,12 +11141,23 @@ class ConsoleChatController:
                 if self.app is not None and self.park_pending_approval is not None:
                     self.app.call_from_thread(self.park_pending_approval, session_id)
             elif is_head:
-                self._marshal_pending_approval(payload)
+                # ADR-090: deliver the payload WITHOUT the summary fire hook
+                # here -- the human-input wait mark below must be entered
+                # with dev's original marshal→mark spacing, or the hook's
+                # config read widens the window in which an armed round is
+                # not yet marked as waiting (regression caught by
+                # test_request_mcp_approvals_marks_human_input_wait_while_round_armed).
+                self._marshal_pending_approval(payload, fire_summary=False)
             # ADR-067: mark this run as waiting on a human decision for the
             # duration of the wait, so a per-call wrapper hosting this round
             # (the invoke-path fallback approval) pauses its deadline -- an
             # indefinite wait must not trip `max_tool_call_seconds`.
             with use_human_input_wait(owning_run_id):
+                # ADR-090: fire the advisory summarizer now, INSIDE the
+                # wait mark -- the payload is already mounted and the mark
+                # is already process state, so the hook's config read
+                # cannot delay either.
+                self._maybe_fire_permission_summary(payload)
                 while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
                     if self._is_session_cancelled(
                         session_id,
@@ -11158,10 +11353,153 @@ class ConsoleChatController:
                     "Failed to record cancelled MCP approval decision"
                 )
 
-    def _marshal_pending_approval(self, payload: dict[str, Any] | None) -> None:
-        """Push ``payload`` (or clear it) onto the UI thread, if wired."""
+    def _marshal_pending_approval(
+        self, payload: dict[str, Any] | None, *, fire_summary: bool = True
+    ) -> None:
+        """Push ``payload`` (or clear it) onto the UI thread, if wired.
+
+        Args:
+            payload: The approval payload dict, or ``None`` to clear.
+            fire_summary: Whether to run the ADR-090 advisory-summary
+                trigger check after delivery. The arm-time head-mount site
+                passes ``False`` and fires the check itself inside the
+                ``use_human_input_wait`` mark, so the hook's config read
+                cannot sit between payload delivery and the wait mark.
+        """
         if self.app is not None and self.set_pending_approval is not None:
             self.app.call_from_thread(self.set_pending_approval, payload)
+        if fire_summary and isinstance(payload, dict):
+            self._maybe_fire_permission_summary(payload)
+
+    def _maybe_fire_permission_summary(self, payload: dict[str, Any]) -> None:
+        """Fire the external summarizer once per round, if configured.
+
+        ADR-090 trigger: ``fallback`` only when some pending row lacks a
+        rationale, ``always`` for every round with rows. One call per
+        ``round_id`` -- no-call outcomes also consume the once-flag, so
+        exactly one trigger check runs per round no matter how many times
+        it mounts. Called from EVERY path that marshals a stored approval
+        payload to the UI: ``_marshal_pending_approval`` (arm-time head
+        mount), the session-activation mounts (``new_session``/
+        ``switch_session``/``close_session`` neighbor activation,
+        ``remount_pending_approval_for_active_session`` headless attach)
+        and ``_remount_head`` (sibling promotion on resolve/revoke) -- so
+        a round that armed while parked fires when its card actually
+        mounts. Never raises.
+        """
+        round_id = str(payload.get("round_id") or "")
+        rows = payload.get("calls") or []
+        if not round_id or not rows:
+            return
+        # Lock order: config lock FIRST, then `_approval_state_lock` (see
+        # `run_if_runtime_config_generation_current` in config.py) -- so the
+        # config read happens before the approval lock is taken.
+        try:
+            from tldw_chatbook.Chat.permission_summary_service import (
+                resolve_permission_summary,
+            )
+
+            resolution = resolve_permission_summary(
+                get_runtime_config_snapshot().values
+            )
+        except Exception:  # noqa: BLE001 -- advisory only
+            resolution = None
+        # A wasted resolve when the once-flag is already consumed is harmless.
+        with self._approval_state_lock:
+            state = self._pending_approval_rounds.get(round_id)
+            if state is None or state.get("summary_fired"):
+                return
+            if resolution is None or not resolution.active:
+                state["summary_fired"] = True
+                return
+            needs = resolution.mode == "always" or any(
+                not str(row.get("rationale") or "") for row in rows
+            )
+            state["summary_fired"] = True
+            if not needs:
+                return
+        try:
+            threading.Thread(
+                target=self._permission_summary_worker,
+                args=(round_id, payload, resolution),
+                daemon=True,
+                name=f"permission-summary-{round_id}",
+            ).start()
+        except Exception:  # noqa: BLE001 -- advisory only
+            # A failed spawn must not destroy the approval round; the summary
+            # lane is advisory-only, so swallow it (content-free log below).
+            logger.debug("permission summary thread spawn failed")
+
+    def _permission_summary_worker(
+        self, round_id: str, payload: dict[str, Any], resolution: object
+    ) -> None:
+        """Worker THREAD: run the advisory call, deliver on the UI thread.
+
+        The approval wait loop is never blocked and the round's deadline is
+        unaffected; a slow call that outlives the round is dropped on
+        delivery. Content-free failures only (ADR-090).
+        """
+        from tldw_chatbook.Chat.permission_summary_service import (
+            build_messages_tail,
+            pending_calls_info_from_payload,
+            summarize_pending_round,
+        )
+
+        try:
+            tail = build_messages_tail(
+                self._summary_tail_messages(payload), resolution.tail_max_chars
+            )
+            info = pending_calls_info_from_payload(payload.get("calls") or [])
+            text = summarize_pending_round(resolution, tail, info)
+        except Exception:  # noqa: BLE001 -- advisory only
+            text = None
+        if not text or self.app is None:
+            return
+        self.app.call_from_thread(
+            self._deliver_permission_summary, round_id, payload, text
+        )
+
+    def _summary_tail_messages(self, payload: dict[str, Any]) -> list:
+        """User/assistant text projection of the round's stored conversation.
+
+        Uses the same message flattening as world-info scanning
+        (``_normalize_world_info_history``) and the same stored-message
+        source its call sites feed it (``_provider_messages_for_session``,
+        which reads ``self.store.messages_for_session`` and emits the
+        provider-dict shape the flattener consumes); keeps the defensive
+        no-raise posture.
+        """
+        try:
+            session_id = str(payload.get("session_id") or "")
+            messages: list = list(
+                self._provider_messages_for_session(session_id)
+                if session_id
+                else []
+            )
+        except Exception:  # noqa: BLE001 -- advisory only
+            return []
+        return _normalize_world_info_history(messages)
+
+    def _deliver_permission_summary(
+        self, round_id: str, payload: dict[str, Any], text: str
+    ) -> None:
+        """UI THREAD: store the summary, then patch the mounted card.
+
+        Drops resolved/revoked rounds and unknown ids; writes the payload's
+        ``summary`` slot (the source of truth for remounts) before the live
+        patch. Never re-runs ``set_batch``.
+        """
+        with self._approval_state_lock:
+            state = self._pending_approval_rounds.get(round_id)
+            if state is None or state["event"].is_set():
+                return
+            state["summary"] = text
+        payload["summary"] = text
+        if self.update_pending_approval_summary is not None:
+            try:
+                self.update_pending_approval_summary(round_id, text)
+            except Exception:  # noqa: BLE001 -- advisory only
+                pass
 
     # -- PR0: per-round retained payloads ------------------------------
     #
@@ -11288,13 +11626,21 @@ class ConsoleChatController:
             return
 
         def _apply() -> None:
-            if session_id is None:
-                active = self.store.active_session_id or ""
-                setter(self._head_round_payload(store, active))
+            target = session_id
+            if target is None:
+                target = self.store.active_session_id or ""
+            elif target != (self.store.active_session_id or ""):
                 return
-            if session_id != (self.store.active_session_id or ""):
-                return
-            setter(self._head_round_payload(store, session_id))
+            payload = self._head_round_payload(store, target)
+            setter(payload)
+            # ADR-090: this is the promotion mount (a head resolving or a
+            # run revoking hands the card to the queued sibling) and it
+            # bypasses `_marshal_pending_approval`, so the summary trigger
+            # is armed here too. No-op for non-MCP stores sharing this
+            # helper (skill bridges): their rounds are unknown to
+            # `_pending_approval_rounds`, and fire-once guards repeats.
+            if isinstance(payload, dict):
+                self._maybe_fire_permission_summary(payload)
 
         self.app.call_from_thread(_apply)
 
@@ -11333,6 +11679,11 @@ class ConsoleChatController:
         if payload is None:
             return False
         self.set_pending_approval(payload)
+        # ADR-090: a headless attach is often the FIRST mount a parked
+        # round ever gets -- arm the summary trigger here (bypasses
+        # `_marshal_pending_approval`; fire-once makes re-attaches safe).
+        if isinstance(payload, dict):
+            self._maybe_fire_permission_summary(payload)
         return True
 
     def _approval_view_is_detached(self) -> bool:
@@ -14882,6 +15233,7 @@ class ConsoleChatController:
             skill_bindings=skill_bindings,
             skill_bundle_block=skill_bundle_block,
             turn_context=turn_context,
+            trusted_profile_user_message_id=edited_message.id,
         )
 
     async def build_context_snapshot(
@@ -15050,6 +15402,37 @@ class ConsoleChatController:
                 for row in provider_messages
             ]
 
+            personal_context_snapshot = _empty_profile_context_snapshot()
+            if dispatch_eligible:
+                personal_context_snapshot = await self._build_personal_context_snapshot(
+                    session,
+                    exact_provider_messages,
+                    provider_selection=provider_selection,
+                    turn_configuration=turn_context,
+                    turn_skill_bindings=skill_bindings,
+                    turn_bundle_block=skill_bundle_block,
+                )
+            if personal_context_snapshot.serialized_block:
+                provider_messages = copy.deepcopy(provider_messages)
+                if (
+                    provider_messages
+                    and provider_messages[0].get("role")
+                    == ConsoleMessageRole.SYSTEM.value
+                    and isinstance(provider_messages[0].get("content"), str)
+                ):
+                    provider_messages[0]["content"] = append_personal_context(
+                        provider_messages[0]["content"],
+                        personal_context_snapshot.serialized_block,
+                    )
+                else:
+                    provider_messages.insert(
+                        0,
+                        {
+                            "role": ConsoleMessageRole.SYSTEM.value,
+                            "content": personal_context_snapshot.serialized_block,
+                        },
+                    )
+
             # Replace image data with placeholders for the preview, including historical images.
             provider_messages = self._replace_image_data_with_placeholders(
                 provider_messages
@@ -15118,6 +15501,7 @@ class ConsoleChatController:
                     provider_selection=provider_selection,
                     turn_skill_bindings=skill_bindings,
                     turn_bundle_block=skill_bundle_block,
+                    personal_context_snapshot=personal_context_snapshot,
                 )
             if preview is not None:
                 next_send_payload = preview.next_send_payload
@@ -15125,6 +15509,7 @@ class ConsoleChatController:
                 current_messages=copied_messages,
                 next_send_payload=next_send_payload,
                 project_instruction_preview=preview,
+                personal_context_snapshot=personal_context_snapshot,
             )
         except Exception as exc:
             logger.exception(
@@ -15173,7 +15558,196 @@ class ConsoleChatController:
                     },
                     "error": f"Failed to build context snapshot: {exc}",
                 },
+                personal_context_snapshot=_empty_profile_context_snapshot(),
             )
+
+    async def _personal_context_service(self) -> PersonalContextService | None:
+        """Resolve the app-owned Personal Context service off the UI loop."""
+
+        getter = getattr(
+            getattr(self, "app", None), "get_personal_context_service", None
+        )
+        if not callable(getter):
+            return None
+        try:
+            return await asyncio.to_thread(getter)
+        except Exception:  # noqa: BLE001 - personalization never blocks chat
+            return None
+
+    async def _personal_context_builder(
+        self,
+        service: PersonalContextService | None | object = (
+            _PERSONAL_CONTEXT_SERVICE_UNSET
+        ),
+    ) -> ProfileContextService | None:
+        """Build the read-only profile projection from the app-owned service."""
+
+        resolved = (
+            await self._personal_context_service()
+            if service is _PERSONAL_CONTEXT_SERVICE_UNSET
+            else service
+        )
+        from tldw_chatbook.Personal_Context.context_service import (
+            ProfileContextService,
+        )
+
+        return ProfileContextService(resolved) if resolved is not None else None
+
+    async def _build_personal_context_snapshot(
+        self,
+        session: ConsoleChatSession | None,
+        provider_messages: list[dict[str, Any]],
+        *,
+        provider_selection: ConsoleProviderSelection,
+        turn_configuration: Any | None = None,
+        turn_skill_bindings: tuple[str, ...] = (),
+        turn_bundle_block: str = "",
+    ) -> ProfileContextSnapshot:
+        """Ask the agent planner for one fully reserved Next Send snapshot."""
+
+        personal_context_service = await self._personal_context_service()
+        builder = await self._personal_context_builder(personal_context_service)
+        bridge = self._agent_bridge
+        build_preview = getattr(bridge, "build_personal_context_preview_snapshot", None)
+        if builder is None or session is None or not callable(build_preview):
+            return _empty_profile_context_snapshot()
+        try:
+            resolution = await self.provider_gateway.resolve_for_send(
+                provider_selection
+            )
+            if not getattr(resolution, "ready", True):
+                return _empty_profile_context_snapshot()
+            profile_provider = await asyncio.to_thread(
+                _compose_profile_tool_provider,
+                personal_context_service,
+                workspace_id=session.workspace_id,
+                ephemeral=session.ephemeral,
+                run_id=f"preview:{session.id}",
+                session_id=session.id,
+                current_user_message=None,
+                kill_switch=(self._console_tool_kill_switch_reader() or (lambda: False)),
+                reserve_direct_update_schema=True,
+            )
+            configuration = (
+                turn_configuration
+                if turn_configuration is not None
+                else self.resolve_turn_execution_context(session.id)
+            )
+            library_provider: Any | None = None
+            library_authority: Any | None = None
+            if self._library_provider_factory is not None:
+                try:
+                    captured_authority = await self._capture_turn_library_authority(
+                        session.id,
+                        configuration,
+                    )
+                    complete_context = self._finalize_turn_execution_context(
+                        configuration,
+                        captured_authority,
+                        resolution,
+                    )
+                    library_selection = self._library_provider_for_context(
+                        complete_context
+                    )
+                    if library_selection is not None:
+                        library_provider, library_authority = library_selection
+                except Exception:  # noqa: BLE001 - match live fail-soft semantics
+                    logger.opt(exception=True).warning(
+                        "library_provider_factory failed; previewing without "
+                        "Library tools"
+                    )
+            project_selection = None
+            if session.project_instruction_state.project_instructions_enabled:
+                try:
+                    registry = getattr(self.app, "workspace_registry_service", None)
+                    project_selection = resolve_project_instruction_binding(
+                        session,
+                        registry,
+                    )
+                except Exception:  # noqa: BLE001 - preview cannot repair authority
+                    project_selection = None
+            scratch_snapshot = configuration.scratch_space
+            scratch_lease = (
+                functools.partial(self._scratch_spaces.lease, scratch_snapshot)
+                if scratch_snapshot is not None
+                else None
+            )
+            (
+                mcp_provider,
+                builtin_gate,
+                local_provider,
+                _review_hook,
+            ) = await self._compose_agent_request_providers(
+                session_id=session.id,
+                project_selection=project_selection,
+                project_authority_guard=None,
+                turn_context=configuration,
+                publish_mcp_counts=False,
+            )
+            model = str(
+                getattr(resolution, "model", "")
+                or provider_selection.explicit_model
+                or provider_selection.configured_model
+                or ""
+            )
+            provider = str(
+                getattr(resolution, "execution_key", "")
+                or getattr(resolution, "provider", "")
+                or provider_selection.provider
+                or "agent"
+            )
+            bound = bound_messages_to_window(
+                copy.deepcopy(provider_messages),
+                model=model,
+                provider=provider,
+                response_reservation=(
+                    getattr(resolution, "max_tokens", None)
+                    or DEFAULT_RESPONSE_RESERVATION
+                ),
+            )
+            agent_messages = list(bound.messages)
+            session_system_prompt = ""
+            if (
+                agent_messages
+                and agent_messages[0].get("role") == ConsoleMessageRole.SYSTEM.value
+            ):
+                session_system_prompt = str(agent_messages[0].get("content", ""))
+                agent_messages = agent_messages[1:]
+        except Exception:  # noqa: BLE001 - uncertain budget fails closed
+            return _empty_profile_context_snapshot()
+        try:
+            return await asyncio.to_thread(
+                build_preview,
+                workspace_id=session.workspace_id,
+                ephemeral=session.ephemeral,
+                resolution=resolution,
+                fallback_model=(
+                    provider_selection.explicit_model
+                    or provider_selection.configured_model
+                    or ""
+                ),
+                session_system_prompt=session_system_prompt,
+                agent_messages=agent_messages,
+                mcp_provider=mcp_provider,
+                builtin_gate=builtin_gate,
+                local_provider=local_provider,
+                library_provider=library_provider,
+                library_authority=library_authority,
+                profile_provider=profile_provider,
+                scratch_root=(
+                    scratch_snapshot.root if scratch_snapshot is not None else None
+                ),
+                scratch_lease=scratch_lease,
+                turn_skill_bindings=turn_skill_bindings,
+                turn_bundle_block=turn_bundle_block,
+                request_skill_install_enabled=True,
+                request_skill_script_enabled=(
+                    self.set_pending_skill_script is not None
+                ),
+                profile_context_service=builder,
+            )
+        except Exception:  # noqa: BLE001 - personalization never blocks preview
+            return _empty_profile_context_snapshot()
 
     async def _build_project_instruction_preview_for_session(
         self,
@@ -15184,6 +15758,7 @@ class ConsoleChatController:
         provider_selection: ConsoleProviderSelection | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
+        personal_context_snapshot: ProfileContextSnapshot | None = None,
     ) -> ProjectInstructionPreview | None:
         """Securely reread root guidance into a disposable preview only."""
         if not self._agent_runtime_enabled or self._agent_bridge is None:
@@ -15303,6 +15878,20 @@ class ConsoleChatController:
             turn_context=preview_turn_context,
             project_root=selection.root,
         )
+        personal_context_service = await self._personal_context_service()
+        profile_provider = None
+        if personal_context_service is not None:
+            profile_provider = await asyncio.to_thread(
+                _compose_profile_tool_provider,
+                personal_context_service,
+                workspace_id=session.workspace_id,
+                ephemeral=session.ephemeral,
+                run_id=f"preview:{session.id}",
+                session_id=session.id,
+                current_user_message=None,
+                kill_switch=(self._console_tool_kill_switch_reader() or (lambda: False)),
+                reserve_direct_update_schema=True,
+            )
         try:
             preview_result = await asyncio.to_thread(
                 bridge.build_project_instruction_preview_request,
@@ -15321,6 +15910,7 @@ class ConsoleChatController:
                 local_provider=local_provider,
                 virtual_cli_provider=virtual_cli_provider,
                 raw_shell_provider=raw_shell_provider,
+                profile_provider=profile_provider,
                 scratch_root=scratch_snapshot.root,
                 scratch_lease=scratch_lease,
                 turn_skill_bindings=turn_skill_bindings,
@@ -15334,6 +15924,7 @@ class ConsoleChatController:
                     if preview_turn_context is not None
                     else None
                 ),
+                personal_context_snapshot=personal_context_snapshot,
             )
         except Exception:  # noqa: BLE001 - preview failure stays content-free
             return None
@@ -16616,10 +17207,17 @@ class ConsoleChatController:
         persistence = self.store.persistence
         if persistence is None or getattr(persistence, "db", None) is None:
             visible_copy = (
+                # TASK-25816: the old copy said "Restart Chatbook, and check
+                # the app log". Restarting cannot repair an on-disk fault, and
+                # the persistent log admitted only metadata-only records, so
+                # the error was never in the file it named -- the whole
+                # instruction was a dead end. The failure is now recorded as a
+                # `database_open_failed` event (ChaChaNotes_DB), so pointing at
+                # Logs is finally true.
                 "Not sent: your conversation database could not be opened, so "
-                "this message could not be saved. Restart Chatbook, and check "
-                "the app log for the database error if it keeps happening. "
-                "Your draft was kept; a temporary chat still sends."
+                "this message could not be saved. Your draft was kept; a "
+                "temporary chat still sends. Open Logs (F8) for the recorded "
+                "database error."
             )
         else:
             visible_copy = (
@@ -18725,6 +19323,7 @@ class ConsoleChatController:
         capture_mode_override: ConsoleTraceCaptureMode | None = None,
         trace_request: PreparedConsoleRequest | None = None,
         propagate_trace_call_persistence_errors: bool = False,
+        trusted_profile_user_message_id: str | None = None,
     ) -> ConsoleSubmitResult:
         try:
             return await self._stream_assistant_response_inner(
@@ -18750,6 +19349,7 @@ class ConsoleChatController:
                 propagate_trace_call_persistence_errors=(
                     propagate_trace_call_persistence_errors
                 ),
+                trusted_profile_user_message_id=trusted_profile_user_message_id,
             )
         finally:
             if isinstance(turn_context, ConsoleTurnExecutionContext):
@@ -18787,6 +19387,7 @@ class ConsoleChatController:
         capture_mode_override: ConsoleTraceCaptureMode | None = None,
         trace_request: PreparedConsoleRequest | None = None,
         propagate_trace_call_persistence_errors: bool = False,
+        trusted_profile_user_message_id: str | None = None,
     ) -> ConsoleSubmitResult:
         try:
             owner_id = self.store.session_id_for_message(assistant_message_id)
@@ -19070,6 +19671,9 @@ class ConsoleChatController:
                     trace_request=trace_request,
                     propagate_trace_call_persistence_errors=(
                         propagate_trace_call_persistence_errors
+                    ),
+                    trusted_profile_user_message_id=(
+                        trusted_profile_user_message_id
                     ),
                 )
             return await self._run_direct_provider_reply(
@@ -20465,6 +21069,7 @@ class ConsoleChatController:
         trace_request: PreparedConsoleRequest | None = None,
         propagate_trace_call_persistence_errors: bool = False,
         _generation_handoff: _GenerationTokenHandoff | None = None,
+        trusted_profile_user_message_id: str | None = None,
     ) -> ConsoleSubmitResult:
         """Run the agent loop as the reply engine, streaming into the target row."""
         logger.info(
@@ -20920,6 +21525,33 @@ class ConsoleChatController:
                 assistant_message_id,
                 generation_token=generation_token,
             )
+        personal_context_service = await self._personal_context_service()
+        profile_context_service = await self._personal_context_builder(
+            personal_context_service
+        )
+        trusted_profile_user_message = None
+        if trusted_profile_user_message_id is not None:
+            try:
+                candidate = self.store.get_message(trusted_profile_user_message_id)
+                if (
+                    candidate.role is ConsoleMessageRole.USER
+                    and self.store.session_id_for_message(candidate.id) == session_id
+                ):
+                    trusted_profile_user_message = candidate
+            except KeyError:
+                pass
+        profile_provider = None
+        if personal_context_service is not None and session is not None:
+            profile_provider = await asyncio.to_thread(
+                _compose_profile_tool_provider,
+                personal_context_service,
+                workspace_id=session.workspace_id,
+                ephemeral=session.ephemeral,
+                run_id=assistant_message_id,
+                session_id=session_id,
+                current_user_message=trusted_profile_user_message,
+                kill_switch=(self._console_tool_kill_switch_reader() or (lambda: False)),
+            )
         try:
             # run_reply returns (run_id, outcome): run_id lets us write the
             # produced reply's PERSISTED id back onto the run after
@@ -20967,6 +21599,7 @@ class ConsoleChatController:
                 # them as the run's narrowing-only advertising filter and
                 # per-run call caps.
                 persona_policy_rules=turn_context.persona_policy_rules,
+                profile_provider=profile_provider,
                 native_tools_enabled=bool(
                     turn_context.tool_configuration.get(
                         "native_tool_calls_enabled", True
@@ -21030,6 +21663,7 @@ class ConsoleChatController:
                 capture_mode=capture_mode,
                 trace_request=trace_request,
                 _generation_handoff=_generation_handoff,
+                profile_context_service=profile_context_service,
             )
         except asyncio.CancelledError:
             if cancel_event.is_set():
@@ -21713,11 +22347,7 @@ class ConsoleChatController:
         if session_id is None:
             return self.system_prompt
         session = next(
-            (
-                candidate
-                for candidate in self.store.sessions()
-                if candidate.id == session_id
-            ),
+            (candidate for candidate in self.store.sessions() if candidate.id == session_id),
             None,
         )
         if (

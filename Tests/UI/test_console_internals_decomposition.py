@@ -4689,6 +4689,26 @@ async def test_console_command_provider_session_settings_targets_guarded_action(
 
 
 @pytest.mark.asyncio
+async def test_console_command_provider_terminal_targets_guarded_action():
+    """The palette and pinned rail must share the screen's guarded action."""
+    from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        assert hasattr(console, "action_open_console_terminal")
+
+        provider = ConsoleCommandProvider(screen=console, match_style=None)
+        hits = [hit async for hit in provider.search("open terminal")]
+        matching = [hit for hit in hits if "Open Terminal" in str(hit.text)]
+        assert matching, "expected a 'Console: Open Terminal' hit"
+        assert matching[0].command == console.action_open_console_terminal
+
+
+@pytest.mark.asyncio
 async def test_console_session_settings_action_noop_while_setup_modal_blocking():
     # With the first-run setup modal blocking, invoking the guarded action
     # (as the palette command now does) must not open the settings modal.
@@ -4834,12 +4854,21 @@ async def test_console_left_rail_section_headers_all_visible_without_scrolling()
         await _wait_for_selector(console, pilot, "#console-workspace-context")
         body = console.query_one("#console-left-rail-body")
 
-        default_open = ("session", "workspace", "conversations", "model")
+        section_names = (
+            "workspace",
+            "conversations",
+            "model",
+            "agent",
+            "details",
+            "character",
+        )
+        terminal = console.query_one("#console-terminal-open")
+        assert terminal.parent is not body
         previous: tuple[tuple[int, int], ...] | None = None
         for _ in range(40):
             current = tuple(
                 (header.region.y, header.region.height)
-                for name in default_open
+                for name in section_names
                 for header in (
                     console.query_one(f"#console-rail-section-header-{name}"),
                 )
@@ -4851,7 +4880,7 @@ async def test_console_left_rail_section_headers_all_visible_without_scrolling()
 
         assert body.scroll_offset.y == 0
         viewport_bottom = body.region.y + body.region.height
-        for name in default_open:
+        for name in section_names:
             header = console.query_one(f"#console-rail-section-header-{name}")
             assert header.region.height >= 1, f"{name} header not rendered"
             assert body.region.y <= header.region.y < viewport_bottom, (

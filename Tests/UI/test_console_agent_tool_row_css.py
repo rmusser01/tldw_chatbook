@@ -10,10 +10,29 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscriptMessage
 
 
+# TASK-25812: the console-owned transcript rules were split out of the boot
+# bundle into the console screen sheet -- but blocks whose selectors carry a
+# non-console token (`.-dark-mode .console-assistant-turn`) stay in the
+# bundle. The generated arm of this contract is therefore the UNION of the
+# bundle and the console sheet: "the styling the running app loads".
+_GENERATED = (
+    Path("tldw_chatbook/css/tldw_cli_modular.tcss"),
+    Path("tldw_chatbook/css/screen_agentic_console.tcss"),
+)
 _STYLESHEETS = (
     Path("tldw_chatbook/css/components/_agentic_terminal.tcss"),
-    Path("tldw_chatbook/css/tldw_cli_modular.tcss"),
+    _GENERATED,
 )
+
+
+def _stylesheet_text(entry) -> tuple[str, str]:
+    """(label, text) for one contract arm -- a path or a union of paths."""
+    if isinstance(entry, Path):
+        return entry.name, entry.read_text(encoding="utf-8")
+    return (
+        " + ".join(p.name for p in entry),
+        "\n".join(p.read_text(encoding="utf-8") for p in entry),
+    )
 
 
 def _css_block(text: str, selector: str) -> str:
@@ -40,19 +59,22 @@ def test_tool_message_row_has_tool_class():
 
 
 def test_tool_row_class_is_styled_in_source_and_bundle():
-    for path in _STYLESHEETS:
-        assert ".console-transcript-message-tool" in path.read_text(encoding="utf-8")
+    for entry in _STYLESHEETS:
+        label, text = _stylesheet_text(entry)
+        assert ".console-transcript-message-tool" in text, label
 
 
 def test_agent_rail_section_css_is_styled_in_source_and_bundle():
-    for path in _STYLESHEETS:
-        assert ".console-agent-section-steps" in path.read_text(encoding="utf-8")
+    for entry in _STYLESHEETS:
+        label, text = _stylesheet_text(entry)
+        assert ".console-agent-section-steps" in text, label
 
 
 def test_tool_diff_row_class_is_styled_in_source_and_bundle():
     """TASK-1366: the inline diff row under a file-write TOOL marker."""
-    for path in _STYLESHEETS:
-        assert ".console-transcript-tool-diff" in path.read_text(encoding="utf-8")
+    for entry in _STYLESHEETS:
+        label, text = _stylesheet_text(entry)
+        assert ".console-transcript-tool-diff" in text, label
 
 
 def test_assistant_turn_stylesheet_contract_in_source_and_bundle() -> None:
@@ -116,8 +138,8 @@ def test_assistant_turn_stylesheet_contract_in_source_and_bundle() -> None:
         ".console-activity-status-done": "$ds-surface-panel",
     }
 
-    for path in _STYLESHEETS:
-        text = path.read_text(encoding="utf-8")
+    for entry in _STYLESHEETS:
+        _, text = _stylesheet_text(entry)
         for selector, declarations in contract.items():
             block = _css_block(text, selector)
             for declaration in declarations:

@@ -3113,7 +3113,7 @@ class _FakeReviewProvider:
         self._stamped: dict[tuple[str, str], str] = {}
 
     def pending_gate_for(
-        self, name: str, args: dict, call_id: str = ""
+        self, name: str, args: dict, call_id: str = "", rationale: str = ""
     ) -> MCPPendingCall | None:
         if name not in self._gated_names:
             return None
@@ -3127,6 +3127,8 @@ class _FakeReviewProvider:
             # carries the per-call key so the card can offer one decision per
             # TARGET instead of one per tool name.
             call_id=call_id,
+            # ADR-090: mirrors the real provider's rationale pass-through.
+            rationale=rationale,
             reason="ask",
         )
 

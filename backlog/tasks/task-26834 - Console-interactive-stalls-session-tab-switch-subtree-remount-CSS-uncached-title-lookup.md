@@ -1,0 +1,207 @@
+---
+id: TASK-26834
+title: >-
+  Console interactive stalls: session-tab switch, subtree remount CSS, uncached
+  title lookup
+status: To Do
+assignee: []
+created_date: '2026-09-01 06:23'
+labels:
+  - console
+  - performance
+dependencies: []
+priority: high
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+In-terminal sampling of the real app (2026-08-31, iTerm2, 55 clicks) shows Console clicks are fast at the median (15.7ms to first paint) but carry a heavy tail: p95 735ms, max 1255ms. The tail, not the median, is the reported button sluggishness. Each stall over 100ms was stack-sampled at 10ms resolution and attributes to three causes below; screen NAVIGATION cost (nav-console 1255ms) is excluded here as already owned by TASK-1320/TASK-24452/TASK-24455.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 Clicking a session tab paints its answer in under 150ms on the reference terminal, or the remaining wait is attributed to a named worker operation with its own task
+- [ ] #2 Interactions that restyle or remount a Console subtree no longer spend >100ms in stylesheet apply/selector matching on the main thread
+- [ ] #3 _active_console_provider_model_display_uncached no longer performs a registry get_workspace per invocation on the click path
+- [ ] #4 Improvements are measured with the same in-terminal sampler that produced the baseline, before and after
+<!-- AC:END -->
+
+## Evidence (real app, real terminal — not a headless harness)
+
+Probe: `Screen._forward_event` stamps each Click; `Screen._compositor_refresh`
+closes the window; a daemon thread samples the main thread's stack every 10ms
+while a window is open. iTerm2 3.5.14, local, 55 clicks. Headless harnesses
+measured this same app at ~10-30ms per click for a week and missed all of it —
+none of the causes below reproduce without real session state.
+
+```
+all interactions (n=55): median 15.7ms  p95 734.8ms  max 1255.2ms
+slowest: nav-console 1255ms(owned elsewhere) | workspace-tree 848ms |
+         session-tab 735ms | RoleplayMarkdownParagraph 518ms |
+         session-tab 402ms | model-search-picker-input 378ms
+```
+
+### Cause 1 — waiting, not computing (~720ms sampled in `selectors.py:select`)
+
+The largest bucket has the main thread IDLE in the event loop while a click's
+answering paint is pending. Session-tab clicks (735ms, 402ms, full=0) fit
+this: the click dispatches work to a worker and the UI paints only on its
+callback. The main-thread sampler cannot see into the worker; probe v3
+(all-thread sampling) exists to name it. Do not start on this cause without
+that attribution — "waiting" has looked like three different culprits already
+this week and been wrong twice.
+
+### Cause 2 — CSS selector matching over remounted subtrees (~550ms sampled)
+
+Five distinct stacks, all `stylesheet.apply -> _check_rule -> match`, arriving
+via `app.py:_register` (fresh mounts) and `update_nodes/update_styles`
+(restyles). They pass through `textual_css_fastpath.py:127` — the NARROWED
+branch, so the TASK-15450-era fastpath is installed and working; the residual
+cost is per-NODE volume, not per-rule: a session-tab switch remounts a
+transcript's worth of widgets and each pays narrowed matching. Same disease as
+TASK-24452's "re-mints 559 widgets", but for in-Console interactions rather
+than screen entry. Likely shape of a fix: reuse/recycle transcript widgets on
+session switch instead of remounting.
+
+### Cause 3 — uncached registry lookup on the click path (~60ms sampled)
+
+`registry_service.py:499:get_workspace` inside
+`workspace.py:3855:_console_workspace_session_title` inside
+`chat_screen.py:6778:_active_console_provider_model_display_uncached`. The
+function's own name says uncached; the samples say it runs during click
+handling.
+
+### Excluded, already owned
+
+`click:nav-console` 1255ms is screen-switch cost: TASK-1320 (mount I/O off the
+message pump, In Progress), TASK-24452 (559 re-minted widgets), TASK-24455
+(598 query_one lookups). Evidence here corroborates them; no new task filed.
+
+## Second run (v3, all-thread sampling): the waits are TIMERS, not work
+
+The v3 probe sampled every thread while the main thread sat idle in a
+click->paint window. Result: **no thread in the process was computing.**
+The two large "other threads" buckets decode as noise, recorded so nobody
+chases them:
+
+- `thread.py:90:_worker`, 528 samples — idle ThreadPoolExecutor threads
+  blocked in C-level `SimpleQueue.get` (the C frame is invisible, so the
+  Python caller shows as top-of-stack). 528 ≈ 87 sampling ticks x ~6 pool
+  threads.
+- `ui_responsiveness.py:79:_drain_stalls`, 87 samples — the stall monitor's
+  own drain thread, blocked the same way.
+
+So the residual stall class (this run: `model-search-picker-input` 352ms and
+192ms with 720/126-byte answering paints, `SelectOverlay` 300ms,
+`ConsoleModelPopover` 142ms) is **scheduling latency**: the answering paint
+arrives when a timer or deferred-callback chain fires, not when work
+completes. The Console leans heavily on `call_after_refresh` chains, and each
+hop waits for a refresh tick. The picker's `_BLUR_RESTORE_DELAY_SECONDS` is
+only 0.05s, so no single constant explains 300ms — multi-hop chains are the
+suspect, unproven.
+
+Cause-2 CSS matching measured ~150ms total this session vs ~550ms in run 1 —
+the cost tracks how much remounting the session's clicks did, consistent with
+the per-node-volume reading.
+
+**Instrument preserved** as `Helper_Scripts/console_latency_probe.py` (this
+task's AC requires re-measuring with the same sampler; the scratchpad copy
+dies with the session). Known limitation documented in its docstring: the
+window closes at the FIRST paint, so interactions that ack early
+under-report — median figures are optimistic, the tail is trustworthy.
+
+**Next instrument, if the timer-chain suspicion needs proof:** log
+`Timer.__init__`/`call_later`/`call_after_refresh` call sites with timestamps
+while a window is open, so a 300ms wait decomposes into named hops.
+
+## Third run (v4, scheduling timelines): cause 1 RESOLVED to the tray recompose batch
+
+The v4 probe recorded every `set_timer`/`call_later`/`call_after_refresh`
+issued inside each stall window. Slowest interactive clicks this run:
+`console-workspace-conversation-2` 557ms, `console-workspace-conversation-1`
+484ms — both full=0, i.e. no full redraw, just a LATE first paint.
+
+The conversation-row timeline names the whole chain, and each link was then
+verified in source:
+
+```
++  2.6ms  set_timer 0.200s -> remove_class            (Button press effect)
++  4.4ms  call_after_refresh _prepare_allocation_reconcile   ConsoleLeftRail
++ 27.7ms  call_after_refresh _schedule_recomposed_content_fit  x2  Tray
++ 27.8ms  call_after_refresh _run_scheduled_reconcile   _ContextBoundedSection
++ 33.5ms  call_after_refresh _schedule_recomposed_content_fit  x2  Tray
++ 90.9ms  call_after_refresh refresh_bindings
++127.4ms  call_after_refresh _run_scheduled_reconcile  x2
+... 26 more, first paint at +557ms
+```
+
+**Verified mechanism, link by link:**
+
+1. A row click changes tray state; `ConsoleWorkspaceContextTray` recomposes
+   unless `_can_skip_recompose` can PROVE the mounted DOM current (the guard
+   is deliberately conservative -- its own comments record that skipping
+   recompose broke collapse rendering, so "no proof" means full recompose).
+2. Textual's `Widget.recompose()` runs `async with self.batch()` --
+   **no compositor paints while the batch is open** (`_on_timer_update` and
+   `_on_idle` both skip under `app._batch_count`).
+3. The remount pays per-node CSS apply -- the 90-150ms `stylesheet.apply`
+   buckets sampled in every run -- plus the `call_after_refresh` reconcile
+   hops visible above, stretching the batch's wall time.
+4. First paint (including the selection highlight the user clicked FOR)
+   lands only when the batch closes: ~500ms of frozen screen per row click.
+
+Fix directions, in preference order: (a) make row selection an in-place
+update (toggle row classes) that never recomposes the tray; (b) teach
+`_can_skip_recompose` to prove selection-only changes; (c) at minimum, paint
+a selection ack before entering the recompose path.
+
+**Also resolved -- a probe framing artifact, recorded so it is not chased:**
+`click:console-workspace-tree` 354ms shows ONE deferral at +1ms then 341ms of
+nothing: a click with no visible response at all. `Screen._on_idle` invokes
+pending callbacks immediately when nothing is dirty, so the callback ran
+promptly; the "answering paint" that closed the window was an unrelated
+tooltip/hover repaint. Clicks that legitimately paint nothing record as slow.
+
+**Ruled out:** the earlier suspicion that `call_after_refresh` waits for an
+ambient tick. `_on_idle` flushes callbacks directly when the screen is clean;
+the waits are batches and cascades, not a paused timer.
+
+## Fourth run (v6, live invariants): cause 1 fully attributed, fix targets exact
+
+Probe v6 sampled `batch_count`, the update-timer flag, dirty counts and the
+Idle branch every 10ms inside stall windows. Two shapes, directly observed:
+
+**The real freeze -- nested batches held open 250-400ms.** The 406ms tree
+click shows `screen.Idle guarded(batch=2, current=True)` at +107ms and
+`STATE batch=2 timer=PAUSED dirty=71 lay=1 rep=1` at +250ms, with widget
+mounts still landing at +261ms. The 325ms window reaches `batch=3`. Textual
+withholds ALL paints while any batch is open (by design); each tray/section
+recompose opens one, they nest, and the mount + CSS + reconcile storm runs
+INSIDE them. First paint = last batch closing. The earlier "frozen until next
+input" theory (TASK-26835) is refuted -- no input rescue is involved.
+
+**Not-a-bug shape, recorded so it is not chased:** several 215-273ms tree
+clicks show `dirty=0 cb=0 batch=0` for 26 straight ticks -- the app owed
+nothing; the click had no visible response and the eventual ~2.4KB paint was
+hover styling from the next mouse move. Probe framing artifact (window closes
+on first paint of ANY cause) plus, at most, a missing click acknowledgement.
+
+**Exact fix targets, in value order:**
+
+1. `tray.sync_state delta=conversation_browser` alone forces a FULL tray
+   recompose (observed directly). Browser-rows-only deltas should update the
+   browser section in place; the recompose (and its batch) disappears for
+   the most common tree/row interactions.
+2. One click recomposes BOTH tray instances (`console-workspaces-context`
+   AND `console-workspace-context`) back to back -- two nested batches, twice
+   the mounts, for one interaction.
+3. The `_run_scheduled_reconcile` x6 + `_schedule_recomposed_content_fit`
+   storm runs inside the batch window; coalescing it (one settled pass) or
+   letting it run after first paint shortens the batch either way.
+
+Also seen this run, small but real: the workspace-title `get_workspace`
+lookup (cause 3) sampled again at ~40ms across two stacks, and
+`_recompute_filesystem_binding_status` doing `pathlib.stat` on the main
+thread inside `build_console_workspace_state` (~20ms) -- filesystem I/O in a
+click-path state build.

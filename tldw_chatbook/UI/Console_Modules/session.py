@@ -3151,8 +3151,19 @@ class ConsoleSessionController:
         ):
             return defaults
         workspace_id = store.workspace_context.active_workspace_id
+        # TASK-26839: `ensure_session` uses `title` only when it CREATES a
+        # session; with one active the argument is discarded. Deriving the
+        # workspace title is a synchronous registry `get_workspace` SQLite
+        # query, and this method runs on every provider/model display
+        # rebuild -- the in-terminal probe sampled that discarded lookup on
+        # the main thread in three separate sessions. Compute it only for
+        # the creation case this method already knows about.
         session = store.ensure_session(
-            title=self._workspace_initial_session_title(workspace_id),
+            title=(
+                self._workspace_initial_session_title(workspace_id)
+                if creating_blank_session
+                else DEFAULT_CONSOLE_SESSION_TITLE
+            ),
             workspace_id=workspace_id,
             settings=defaults,
             canonical_settings_baseline=defaults,

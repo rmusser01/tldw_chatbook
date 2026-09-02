@@ -194,6 +194,37 @@ def test_collapsed_rows_disclose_every_argument_set():
 
 
 @pytest.mark.unit
+def test_grouped_rows_take_the_first_non_empty_rationale():
+    """ADR-090 (task 5): a blank-earlier rationale must not mask a later one.
+
+    Fence-path calls collapse by `llm_name`; if the first call's `rationale`
+    is blank but a later same-name call states one, the group's row must
+    show that first NON-EMPTY reason -- and `description` follows the same
+    rule. A group where every rationale is blank stays blank.
+    """
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        _collapse_pending_calls,
+    )
+
+    calls = [
+        {"llm_name": "read_file", "rationale": "", "description": "",
+         "arguments": {"path": "a.md"}},
+        {"llm_name": "read_file", "rationale": "checking references",
+         "description": "Reads a file", "arguments": {"path": "b.md"}},
+    ]
+    collapsed = _collapse_pending_calls(calls)
+    assert len(collapsed) == 1
+    assert collapsed[0]["rationale"] == "checking references"
+    assert collapsed[0]["description"] == "Reads a file"
+
+    blanks = [
+        {"llm_name": "read_file", "rationale": "", "arguments": {"path": "a.md"}},
+        {"llm_name": "read_file", "rationale": "", "arguments": {"path": "b.md"}},
+    ]
+    assert _collapse_pending_calls(blanks)[0]["rationale"] == ""
+
+
+@pytest.mark.unit
 def test_needs_decision_state_is_text_labelled_not_colour_only():
     """TASK-1845: PRODUCT.md forbids colour as the only carrier of meaning.
 

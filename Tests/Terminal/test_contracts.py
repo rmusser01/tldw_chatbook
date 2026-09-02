@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import inspect
+import os
+import subprocess
+import sys
+import textwrap
 from dataclasses import FrozenInstanceError, replace
+from pathlib import Path
 
 import pytest
 
@@ -37,6 +42,103 @@ from tldw_chatbook.Terminal.contracts import (
     slot_held,
     validate_transition,
 )
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _run_isolated_terminal_import(
+    tmp_path: Path, code: str
+) -> subprocess.CompletedProcess[str]:
+    """Run an import-boundary assertion in a clean Python process."""
+
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "HOME": str(tmp_path / "home"),
+            "XDG_CONFIG_HOME": str(tmp_path / "config"),
+            "XDG_DATA_HOME": str(tmp_path / "data"),
+            "TLDW_TEST_MODE": "1",
+        }
+    )
+    return subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(code)],
+        cwd=REPO_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_package_terminal_backend_export_is_lazy_and_bounded(tmp_path: Path) -> None:
+    result = _run_isolated_terminal_import(
+        tmp_path,
+        """
+        import sys
+        import tldw_chatbook.Terminal as terminal
+
+        assert "tldw_chatbook.Terminal.backend" not in sys.modules
+        try:
+            terminal.not_a_real_export
+        except AttributeError as exc:
+            assert exc.args == ("not_a_real_export",)
+        else:
+            raise AssertionError("unsupported package attribute unexpectedly resolved")
+        assert "tldw_chatbook.Terminal.backend" not in sys.modules
+
+        backend = terminal.TerminalBackend
+        assert backend.__module__ == "tldw_chatbook.Terminal.backend"
+        assert backend.__name__ == "TerminalBackend"
+        assert "tldw_chatbook.Terminal.backend" in sys.modules
+        """,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_deferred_annotations_resolve_without_loading_implementations(
+    tmp_path: Path,
+) -> None:
+    result = _run_isolated_terminal_import(
+        tmp_path,
+        """
+        import sys
+        from typing import Any, get_type_hints
+
+        from tldw_chatbook.Terminal import session_manager
+
+        deferred_terminal = {
+            "tldw_chatbook.Terminal.backend",
+            "tldw_chatbook.Terminal.io_actors",
+            "tldw_chatbook.Terminal.screen_model",
+        }
+        assert deferred_terminal.isdisjoint(sys.modules)
+        assert get_type_hints(session_manager.TerminalSessionView)["screen"] is Any
+        assert get_type_hints(session_manager.TerminalSessionManager.offer_output)["return"] is Any
+        assert deferred_terminal.isdisjoint(sys.modules)
+
+        from tldw_chatbook.Chat import console_trace_projection as projection
+        assert "tldw_chatbook.Chat.trace_export_profiles" not in sys.modules
+        assert get_type_hints(projection.project_capture_for_viewer)["profile"] is Any
+        assert "tldw_chatbook.Chat.trace_export_profiles" not in sys.modules
+
+        from tldw_chatbook.Chat import console_trace_provenance as provenance
+        assert "tldw_chatbook.Chat.console_semantic_revision" not in sys.modules
+        assert get_type_hints(provenance.admit_message_provenance)["coordinator"] is Any
+        assert "tldw_chatbook.Chat.console_semantic_revision" not in sys.modules
+
+        from tldw_chatbook.Widgets.Console import console_conversation_inspector as inspector
+        getter = inspector.ConsoleConversationInspector.viewer_profile.fget
+        assert getter is not None
+        assert get_type_hints(getter)["return"] is Any
+
+        import tldw_chatbook.app as app
+        assert "tldw_chatbook.Terminal.backend" not in sys.modules
+        assert get_type_hints(app._build_terminal_backend)["return"] is Any
+        assert "tldw_chatbook.Terminal.backend" not in sys.modules
+        """,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
 
 
 def running_projection() -> TerminalProjection:
@@ -142,6 +244,9 @@ def test_terminal_backend_protocol_signatures_match_the_brief() -> None:
             return_annotation=None,
         ),
         "request_priority_close": inspect.Signature(
+            [parameter("self", positional)], return_annotation=None
+        ),
+        "finalize_shutdown": inspect.Signature(
             [parameter("self", positional)], return_annotation=None
         ),
         "cleanup": inspect.Signature(

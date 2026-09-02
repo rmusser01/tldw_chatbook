@@ -14,7 +14,7 @@
 
 ```text
 ADR required: yes
-ADR path: backlog/decisions/099-personal-context-profile-authority-sync-and-encryption.md
+ADR path: backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md
 Reason: This plan defines replication domains, conflict and cleanup policy,
 device expiry/rebootstrap, first-link ownership, and global purge convergence.
 ```
@@ -47,6 +47,14 @@ device expiry/rebootstrap, first-link ownership, and global purge convergence.
   the profile DB and Sync state DB.
 - Purge generations are monotonic and content-free. A device below the current
   generation cannot upload profile objects and must purge/rebootstrap first.
+
+Implementation contract pin (2026-08-31): tldw_server commit
+`6455ab08cb12ec239c53b7b9180b1cc1ea5f8375` returns strict content-free HTTP 409
+attention for schema incompatibility, quota shortfall, or purge-generation
+mismatch and requires a separate opaque `sync_transport_cursor` in every
+successful Personal Context bootstrap. Chatbook must validate the complete
+discriminated shape, keep the semantic bootstrap receipt distinct from the
+transport watermark, and fail closed on malformed or missing fields.
 
 ---
 
