@@ -26,6 +26,7 @@ from tldw_chatbook.Tool_Packs.catalog_snapshot import (
     PermissionInventoryRegistry,
     PermissionInventorySnapshot,
     PermissionInventoryTool,
+    capture_v1_inventory,
     thaw_hub_tool,
 )
 from tldw_chatbook.Tool_Packs.contracts import (
@@ -302,7 +303,7 @@ class ToolPackExportService:
         if profile_lifecycle_disposition(profile) in {"invalid", "tombstone"}:
             raise ToolPackError("export", "profile_invalid")
         try:
-            inventory = self._inventory.capture_for_export()
+            inventory = capture_v1_inventory(self._inventory)
         except ToolPackError:
             raise
         except Exception:
@@ -344,6 +345,7 @@ class ToolPackExportService:
         rules.extend(pending)
         rules.sort(key=lambda item: (item.authority, item.server_key, item.tool_name))
         fallback_ids = {("mcp", "*"), ("builtin", BUILTIN_TOOL_SERVER_KEY)}
+        fallback_ids.update(inventory.namespaces)
         fallback_ids.update((item.authority, item.tool.server_key) for item in inventory.tools)
         fallback_ids.update((item.authority, item.server_key) for item in rules)
         fallbacks = [

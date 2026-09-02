@@ -10,6 +10,7 @@ from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.Tool_Packs.catalog_snapshot import (
     PermissionInventoryAdapter,
     PermissionInventoryRegistry,
+    capture_v1_inventory,
     thaw_hub_tool,
 )
 from tldw_chatbook.Tool_Packs.contracts import (
@@ -43,6 +44,18 @@ class _ToolsAdapter(PermissionInventoryAdapter):
 
     def snapshot(self) -> tuple[HubTool, ...]:
         return self._snapshot() if self._snapshot is not None else self._tools
+
+
+class _LocalControlService:
+    def __init__(self, inventory: object, external_servers: object) -> None:
+        self._inventory = inventory
+        self._external_servers = external_servers
+
+    def get_inventory(self) -> object:
+        return self._inventory
+
+    def get_external_servers(self) -> object:
+        return self._external_servers
 
 
 def test_unclassified_permission_namespace_blocks_export() -> None:
@@ -227,10 +240,10 @@ def test_concrete_v1_provider_inventory_is_complete_unbound_and_path_private(
             "discovery_snapshot": {"tools": []},
         },
     ]
+    local_service = _LocalControlService(builtin_inventory, external_catalog)
     registry = PermissionInventoryRegistry.v1(
+        local_service,
         fallback_root=sentinel_root,
-        builtin_mcp_inventory=lambda: builtin_inventory,
-        external_catalog=lambda: external_catalog,
         excluded_counts=lambda: {
             "display_only_server_source": 3,
             "library_capability": 2,
@@ -239,7 +252,7 @@ def test_concrete_v1_provider_inventory_is_complete_unbound_and_path_private(
             "skills": 5,
         },
     )
-    snapshot = registry.capture_for_export()
+    snapshot = capture_v1_inventory(registry)
     identities = {item.identity for item in snapshot.tools}
     assert ("builtin", "agent:builtin", "calculator") in identities
     assert ("mcp", "builtin:tldw_chatbook", "search_media") in identities
@@ -314,11 +327,11 @@ def test_v1_registry_rejects_missing_or_partial_raw_provider_inventory(
     builtin_inventory: dict[str, object],
     external_catalog: list[dict[str, object]],
 ) -> None:
+    local_service = _LocalControlService(builtin_inventory, external_catalog)
     registry = PermissionInventoryRegistry.v1(
+        local_service,
         fallback_root=tmp_path,
-        builtin_mcp_inventory=lambda: builtin_inventory,
-        external_catalog=lambda: external_catalog,
     )
 
     with pytest.raises(ToolPackError, match=r"inventory_incomplete$"):
-        registry.capture_for_export()
+        capture_v1_inventory(registry)

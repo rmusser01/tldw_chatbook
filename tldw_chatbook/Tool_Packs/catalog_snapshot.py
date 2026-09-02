@@ -221,23 +221,17 @@ class PermissionInventoryRegistry:
             tuple(inventory), snapshot_namespaces, excluded_items, digest
         )
 
-    def capture_for_export(self) -> PermissionInventorySnapshot:
-        """Reject generic assembly at the production export boundary."""
-        raise ToolPackError("export", "inventory_incomplete")
-
     @classmethod
     def v1(
         cls,
+        local_control_service: object,
         *,
         fallback_root: object,
-        builtin_mcp_inventory: Callable[[], object],
-        external_catalog: Callable[[], object],
         excluded_counts: Callable[[], dict[str, int]] | None = None,
     ) -> "_V1PermissionInventoryRegistry":
         return _V1PermissionInventoryRegistry(
             fallback_root=fallback_root,
-            builtin_mcp_inventory=builtin_mcp_inventory,
-            external_catalog=external_catalog,
+            local_control_service=local_control_service,
             excluded_counts=excluded_counts,
         )
 
@@ -288,16 +282,14 @@ class _V1PermissionInventoryRegistry(PermissionInventoryRegistry):
         self,
         *,
         fallback_root: object,
-        builtin_mcp_inventory: Callable[[], object],
-        external_catalog: Callable[[], object],
+        local_control_service: object,
         excluded_counts: Callable[[], dict[str, int]] | None,
     ) -> None:
         self._fallback_root = fallback_root
-        self._builtin_mcp_inventory = builtin_mcp_inventory
-        self._external_catalog = external_catalog
+        self._local_control_service = local_control_service
         self._v1_excluded_counts = excluded_counts
 
-    def capture_for_export(self) -> PermissionInventorySnapshot:
+    def _capture_v1(self) -> PermissionInventorySnapshot:
         try:
             from tldw_chatbook.Agents.builtin_tool_gate import tool_ref
             from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
@@ -318,13 +310,19 @@ class _V1PermissionInventoryRegistry(PermissionInventoryRegistry):
                 ref = tool_ref(tool)
                 builtin_tools.setdefault(tool.name, HubTool(ref.server_key, "Built-in tools", "builtin", tool.name, ref.description, ref.input_schema, ref.tags, False, True))
 
-            builtin_raw = self._builtin_mcp_inventory()
+            get_inventory = getattr(self._local_control_service, "get_inventory", None)
+            get_external_servers = getattr(
+                self._local_control_service, "get_external_servers", None
+            )
+            if not callable(get_inventory) or not callable(get_external_servers):
+                raise ToolPackError("export", "inventory_incomplete")
+            builtin_raw = get_inventory()
             if not isinstance(builtin_raw, Mapping):
                 raise ToolPackError("export", "inventory_incomplete")
             builtin_mcp = _strict_raw_tools(builtin_raw.get("tools"), namespace="builtin:tldw_chatbook", label="tldw_chatbook")
             local = tuple(LocalToolProvider(workspace_root=self._fallback_root, admitted_roots=None, todo_store=SessionTodoStore()).hub_tools()) + (RawShellToolProvider.hub_tool(),)
             virtual = tuple(VirtualCliProvider(workspace_root=self._fallback_root, admitted_roots=None).hub_tools())
-            catalog = self._external_catalog()
+            catalog = get_external_servers()
             if type(catalog) is not list:
                 raise ToolPackError("export", "inventory_incomplete")
             external: list[_SnapshotAdapter] = []
@@ -365,11 +363,21 @@ class _V1PermissionInventoryRegistry(PermissionInventoryRegistry):
             raise ToolPackError("export", "inventory_incomplete") from None
 
 
+def capture_v1_inventory(
+    registry: PermissionInventoryRegistry,
+) -> PermissionInventorySnapshot:
+    """Capture only the sealed, code-owned V1 inventory assembly."""
+    if type(registry) is not _V1PermissionInventoryRegistry:
+        raise ToolPackError("export", "inventory_incomplete")
+    return registry._capture_v1()
+
+
 __all__ = [
     "PermissionInventoryAdapter",
     "PermissionInventoryRegistry",
     "PermissionInventorySnapshot",
     "PermissionInventoryTool",
     "NONPORTABLE_CATEGORIES",
+    "capture_v1_inventory",
     "thaw_hub_tool",
 ]
