@@ -77,17 +77,25 @@ class ConsoleTraceNativeReader:
             return ()
         with self.database.transaction() as cursor:
             row = cursor.execute(
-                "SELECT conversation_id FROM messages WHERE id = ?",
+                """SELECT conversation_id, parent_message_id,
+                          COALESCE(role, sender)
+                     FROM messages WHERE id = ?""",
                 (message_id,),
             ).fetchone()
             if row is None or not row[0]:
                 return ()
             conversation_id = str(row[0])
+            turn_id = (
+                str(row[1])
+                if row[1] and str(row[2] or "").casefold() == "assistant"
+                else message_id
+            )
             result: list[NormalizedTraceCall] = []
             for call in self.repository.iter_message_call_lineage(
                 cursor,
                 conversation_id,
                 message_id,
+                turn_id=turn_id,
             ):
                 if (
                     call.route_identity == "legacy_snapshot"

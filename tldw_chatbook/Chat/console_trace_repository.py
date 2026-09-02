@@ -752,6 +752,8 @@ class ConsoleTraceRepository:
         cursor: sqlite3.Cursor,
         conversation_id: str,
         message_id: str,
+        *,
+        turn_id: str | None = None,
     ) -> Iterator[TraceCallRecord]:
         """Yield only calls associated with one message in bounded SQL pages.
 
@@ -759,6 +761,8 @@ class ConsoleTraceRepository:
             cursor: Caller-owned transaction cursor.
             conversation_id: Durable conversation whose attached lineage is read.
             message_id: Selected request or response message identity.
+            turn_id: Durable user-turn identity associated with the selected
+                message, when it differs from ``message_id``.
 
         Yields:
             Matching trace calls in root-to-leaf event order.
@@ -767,6 +771,8 @@ class ConsoleTraceRepository:
             RuntimeError: If a referenced lineage call cannot be reconstructed.
         """
 
+        associated_turn_id = message_id if turn_id is None else turn_id
+        _nonempty(associated_turn_id, "turn_id")
         owner_row = cursor.execute(
             """SELECT owner_id, conversation_id, root_segment_id, attached,
                       detached_at FROM console_trace_owners
@@ -786,6 +792,7 @@ class ConsoleTraceRepository:
                 params: list[object] = [
                     segment_id,
                     message_id,
+                    associated_turn_id,
                     message_id,
                     last_sequence,
                     last_sequence,
@@ -809,6 +816,7 @@ class ConsoleTraceRepository:
                                ON revision.revision_id = response.semantic_revision_id
                             WHERE call.segment_id = ?
                               AND (call.turn_id = ?
+                                   OR call.turn_id = ?
                                    OR revision.source_message_id = ?)
                          GROUP BY call.call_id
                        )

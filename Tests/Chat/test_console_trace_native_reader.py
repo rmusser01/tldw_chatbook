@@ -6,6 +6,7 @@ from tldw_chatbook.Chat.console_trace_models import (
     FrozenTracePolicy,
     SemanticRevisionRef,
     TraceCallState,
+    TraceContentRef,
     new_opaque_id,
 )
 from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
@@ -17,17 +18,27 @@ class _MessageLineageRepository(ConsoleTraceRepository):
     def __init__(self) -> None:
         super().__init__()
         self.requested_message_ids: list[str] = []
+        self.requested_turn_ids: list[str | None] = []
 
     def read_conversation_call_lineage(self, cursor, conversation_id):
         del cursor, conversation_id
         raise AssertionError("native reads must not load the whole conversation")
 
-    def iter_message_call_lineage(self, cursor, conversation_id, message_id):
+    def iter_message_call_lineage(
+        self,
+        cursor,
+        conversation_id,
+        message_id,
+        *,
+        turn_id=None,
+    ):
         self.requested_message_ids.append(message_id)
+        self.requested_turn_ids.append(turn_id)
         yield from super().iter_message_call_lineage(
             cursor,
             conversation_id,
             message_id,
+            turn_id=turn_id,
         )
 
 
@@ -44,12 +55,14 @@ def _message(
     *,
     sender: str,
     content: str,
+    parent_message_id: str | None = None,
 ) -> tuple[str, str]:
     message_id = database.add_message(
         {
             "conversation_id": conversation_id,
             "sender": sender,
             "content": content,
+            "parent_message_id": parent_message_id,
         }
     )
     assert message_id is not None
@@ -63,7 +76,7 @@ def _message(
     return message_id, str(row[0])
 
 
-def test_native_reader_reconstructs_production_route_call_for_assistant_message(
+def test_native_reader_reconstructs_revision_and_artifact_calls_for_assistant(
     database: CharactersRAGDB,
 ) -> None:
     repository = _MessageLineageRepository()
@@ -80,6 +93,7 @@ def test_native_reader_reconstructs_production_route_call_for_assistant_message(
         conversation_id,
         sender="assistant",
         content="answer",
+        parent_message_id=user_id,
     )
     policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
     occurred_at = "2026-09-01T00:00:00Z"
@@ -166,11 +180,71 @@ def test_native_reader_reconstructs_production_route_call_for_assistant_message(
             call_id=call.call_id,
         )
 
+        artifact_call = repository.reserve_call(
+            cursor,
+            owner_id=owner.owner_id,
+            segment_id=segment.segment_id,
+            turn_id=user_id,
+            run_id="run-artifact",
+            call_sequence=1,
+            idempotency_key="native-reader-artifact-call",
+            policy_id=policy.policy_id,
+        )
+        repository.bind_call(
+            cursor,
+            call_id=artifact_call.call_id,
+            surface_node_id=surface.node_id,
+            request_header_id=header.header_id,
+            provider_name="openai",
+            model_name="gpt-test",
+            route_identity="fresh",
+        )
+        repository.advance_call_state(
+            cursor,
+            call_id=artifact_call.call_id,
+            target=TraceCallState.DISPATCH_STARTED,
+            occurred_at=occurred_at,
+            integrity_state="complete",
+        )
+        repository.advance_call_state(
+            cursor,
+            call_id=artifact_call.call_id,
+            target=TraceCallState.RESPONSE_STARTED,
+            occurred_at=occurred_at,
+            integrity_state="complete",
+        )
+        artifact = repository.store_sanitized_artifact(
+            cursor,
+            sanitized_bytes=b'{"content":"transformed","role":"assistant"}',
+            media_type="application/json",
+            normalization_version="provider-response-v1",
+        )
+        repository.store_response_link(
+            cursor,
+            call_id=artifact_call.call_id,
+            response=TraceContentRef(artifact.artifact_id, "provider_response"),
+        )
+        repository.advance_call_state(
+            cursor,
+            call_id=artifact_call.call_id,
+            target=TraceCallState.COMPLETE,
+            occurred_at=occurred_at,
+            usage={"provider": "openai", "model": "gpt-test", "output": 1},
+            integrity_state="complete",
+        )
+        repository.append_event(
+            cursor,
+            segment_id=segment.segment_id,
+            sequence=1,
+            event_type="call_boundary",
+            call_id=artifact_call.call_id,
+        )
+
     calls = ConsoleTraceNativeReader(database, repository=repository).read_calls(
         assistant_id
     )
 
-    assert len(calls) == 1
+    assert len(calls) == 2
     native = calls[0]
     assert native.call_id == call.call_id
     assert native.verification_status == "verified"
@@ -184,7 +258,13 @@ def test_native_reader_reconstructs_production_route_call_for_assistant_message(
         {"role": "user", "content": "question"}
     ]
     assert native.capture.response == {"role": "assistant", "content": "answer"}
+    assert calls[1].call_id == artifact_call.call_id
+    assert calls[1].capture.response == {
+        "content": "transformed",
+        "role": "assistant",
+    }
     assert repository.requested_message_ids == [assistant_id]
+    assert repository.requested_turn_ids == [user_id]
 
 
 def test_native_reader_ignores_legacy_snapshot_routes(
