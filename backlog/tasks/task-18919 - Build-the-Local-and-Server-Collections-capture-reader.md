@@ -1,11 +1,11 @@
 ---
 id: TASK-18919
 title: Build the Local and Server Collections capture reader
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-15 02:52'
-updated_date: '2026-09-01 15:03'
+updated_date: '2026-09-02 00:12'
 labels:
   - library
   - collections
@@ -60,6 +60,7 @@ Replace Chatbook's stale generic-container interpretation of Collections with th
 
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 1. Land the independent `tldw_server` prerequisite that evaluates Reading List count, rows, and tag hydration under one database snapshot and advertises exact `hasReadingSnapshotPagesV1=true` through docs-info.
 2. Add Chatbook's atomic schema-v2 capture tables plus schema-v3 extraction leases, future-version refusal, capture-owned contracts, exact Local paging, canonical-URL upsert, revisions, extraction state, saved searches, highlights, and linked-Note references beside untouched v1 tables.
 3. Add transactionally quota-reserved, authority-rooted private offline files with two-phase publication, restart reconciliation, purge tombstones, and bounded resumable scavenging by composing existing private-path primitives.
@@ -75,9 +76,11 @@ ADR required: yes
 ADR path: `backlog/decisions/107-collections-capture-authority-and-legacy-boundary.md`
 
 Reason: TASK-18919 changes durable Collections storage, source authority, migration, service, and legacy-data boundaries.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Replaced generic Collections with an authority-qualified capture domain backed by additive Local
 schema-v3 storage and the authenticated Server Reading List API. The shared adaptive reader now
 owns exact scopes and paging, Quick Capture, trustworthy Read/Highlights/Notes/Info content,
@@ -89,7 +92,7 @@ Local and enabled-Server production-shaped walkthroughs cover source replacement
 all collapse postures, reclaimed Items width, F6 focus, all four required terminal sizes, confirmed
 and controlled-unknown saves, archive/Undo, and return to Local. Integration testing additionally
 corrected the real docs-info response contract, retained Quick Capture drafts across recomposition,
-and found a tldw_server SQLite schema-memo defect now covered in its prerequisite branch. Detailed
+and found a tldw_server SQLite schema-memo defect now covered in merged prerequisite PR #2851. Detailed
 evidence is in `Docs/superpowers/reviews/2026-08-31-library-collections-live-verification.md`.
 
 ADR required: yes
@@ -99,4 +102,6 @@ ADR path: `backlog/decisions/107-collections-capture-authority-and-legacy-bounda
 Reason: TASK-18919 changes durable Collections storage, source authority, migration, service, and
 legacy-data boundaries.
 
-TASK-18919 remains In Progress only until the updated tldw_server prerequisite PR #2851 lands.
+The cross-repository prerequisite landed in tldw_server PR #2851 at merge commit
+`8140c679f3ea0334cea2dc1be32feb5b80e22ebe`; TASK-18919 is complete.
+<!-- SECTION:NOTES:END -->

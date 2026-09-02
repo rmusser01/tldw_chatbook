@@ -18,9 +18,9 @@
   `hasReadingSnapshotPagesV1: true` through the versioned docs-info endpoint. The mounted reader
   then completed the 45-plus-capture source-replacement, paging, geometry, focus, mode, workspace,
   save, archive/Undo, and controlled-unknown-save walkthrough without bypassing capabilities.
-- **Integration status: pending prerequisite merge.** The walkthrough found and corrected a
-  SQLite schema-memo defect in the open tldw_server prerequisite PR. TASK-18919 remains
-  **In Progress** until that updated prerequisite is merged.
+- **Integration status: PASS.** The walkthrough found and corrected a SQLite schema-memo defect in
+  the tldw_server prerequisite. PR #2851 merged at
+  `8140c679f3ea0334cea2dc1be32feb5b80e22ebe`, completing the cross-repository gate.
 
 ## Local walkthrough evidence
 
@@ -89,7 +89,8 @@ The run verified:
    requires exact snapshot attestation for browse.
 7. The Server's Collections schema memo indexed SQLite mapping rows positionally, so verification
    failed and replayed the complete schema bootstrap for every database adapter. It now reads the
-   named `name` field, with a regression proving the second adapter skips bootstrap.
+   named `name` field, with a regression proving the second adapter skips bootstrap; the correction
+   landed in tldw_server PR #2851.
 8. Background reader recomposition could erase text already entered into Quick Capture. Input and
    note changes now update the retained draft immediately, with a mounted regression covering all
    fields.
@@ -100,12 +101,12 @@ The run verified:
 - Complete capture feature and Local live gate: **206 passed**.
 - Production-shaped cross-reader closeout after the final save-recovery hardening: **490 passed**.
 - Final Local/Server service, configuration, mounted-reader, and enabled live gate: **61 passed**.
-- tldw_server SQLite schema-memo regression gate: **2 passed**.
+- tldw_server snapshot, docs-info, and schema-memo regression gate: **51 passed**.
 - Static validation covers the edited Python modules, CSS regeneration, bytecode compilation, and
   whitespace/error checks.
 
-## Remaining integration gate
+## Integration closure
 
-Commit and merge the SQLite schema-memo correction into the open tldw_server prerequisite PR #2851.
-The implementation and required Local/Server walkthrough evidence are otherwise complete; do not
-mark TASK-18919 Done until that cross-repository prerequisite has landed.
+tldw_server PR #2851 merged at `8140c679f3ea0334cea2dc1be32feb5b80e22ebe` after its required
+checks passed and all review threads were resolved. The implementation and required Local/Server
+walkthrough evidence are complete, and TASK-18919 is Done.
