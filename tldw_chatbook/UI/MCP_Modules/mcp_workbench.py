@@ -20,7 +20,7 @@ from textual.css.query import QueryError
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import ContentSwitcher
-from textual.worker import Worker, WorkerState
+from textual.worker import Worker
 
 from tldw_chatbook.Agents.builtin_tool_gate import (
     LOCAL_TOOLS_DEFAULT_ENABLED,
@@ -711,9 +711,6 @@ class MCPWorkbench(Container):
         # when Textual cancels the worker before its coroutine starts.
         self.tool_profile_lifecycle: object | None = None
         self._tool_policy_profile_id = "default"
-        self._tool_test_profile_leases: dict[
-            Worker[Any], _ToolProfileLeaseHandoff
-        ] = {}
         # T7: the batch `EffectiveToolState` resolution `_sync_permissions_
         # mode()` most recently computed (via `service.effective_tool_
         # states()`), keyed the same as that method's own return value --
@@ -4045,7 +4042,8 @@ class MCPWorkbench(Container):
         handed_off = False
         try:
             worker = self.run_worker(
-                self._run_prepared_tool_test_with_profile_lease(
+                partial(
+                    self._run_prepared_tool_test_with_profile_lease,
                     tool,
                     event.preview_nonce,
                     event.intent,
@@ -4058,7 +4056,14 @@ class MCPWorkbench(Container):
                 exclusive=False,
             )
             if lease_handoff is not None:
-                self._tool_test_profile_leases[worker] = lease_handoff
+                worker_task = getattr(worker, "_task", None)
+                add_done_callback = getattr(worker_task, "add_done_callback", None)
+                if not callable(add_done_callback):
+                    worker.cancel()
+                    raise RuntimeError(
+                        "Tool Test worker completion tracking is unavailable."
+                    )
+                add_done_callback(lambda _task: lease_handoff.release())
             handed_off = True
         finally:
             if lease_handoff is not None and not handed_off:
@@ -4086,18 +4091,6 @@ class MCPWorkbench(Container):
         finally:
             if lease_handoff is not None:
                 lease_handoff.release()
-
-    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
-        """Release leases when a Test Tool worker never starts its coroutine."""
-        if event.state not in {
-            WorkerState.CANCELLED,
-            WorkerState.ERROR,
-            WorkerState.SUCCESS,
-        }:
-            return
-        lease_handoff = self._tool_test_profile_leases.pop(event.worker, None)
-        if lease_handoff is not None:
-            lease_handoff.release()
 
     async def _run_prepared_tool_test(
         self,

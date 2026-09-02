@@ -26,7 +26,6 @@ from textual.widgets import (
     Static,
     TextArea,
 )
-from textual.worker import Worker, WorkerState
 
 import tldw_chatbook
 import tldw_chatbook.MCP.local_server_tools as local_server_tools_module
@@ -3817,7 +3816,6 @@ async def test_cancelled_before_start_prepared_test_releases_profile_lease(
 ) -> None:
     app = ToolTestApp()
     lifecycle = ToolProfileLifecycleCoordinator()
-    captured: dict[str, object] = {}
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -3826,25 +3824,19 @@ async def test_cancelled_before_start_prepared_test_releases_profile_lease(
         workbench._tool_policy_profile_id = "research"
         tool = next(tool for tool in workbench._last_hub_tools if tool.name == "fetch")
         event = _prepared_test_event(app.unified_mcp_service, tool, {})
-        worker = Worker(workbench, lambda: None)
+        run_worker = workbench.run_worker
 
-        def capture_worker(work, **_kwargs):
-            captured["work"] = work
+        def cancel_before_start(work, **kwargs):
+            worker = run_worker(work, **kwargs)
+            worker.cancel()
             return worker
 
-        monkeypatch.setattr(workbench, "run_worker", capture_worker)
+        monkeypatch.setattr(workbench, "run_worker", cancel_before_start)
         workbench.on_mcp_inspector_tool_test_requested(event)
 
         assert lifecycle.active_lease_count("research") == 1
-        try:
-            workbench.on_worker_state_changed(
-                Worker.StateChanged(worker, WorkerState.CANCELLED)
-            )
-            assert lifecycle.active_lease_count("research") == 0
-        finally:
-            captured_work = captured.get("work")
-            if captured_work is not None:
-                captured_work.close()
+        await pilot.pause()
+        assert lifecycle.active_lease_count("research") == 0
 
 
 async def _select_tools_mode_row(app: App, pilot, row: int) -> None:
