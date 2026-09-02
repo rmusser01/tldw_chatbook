@@ -2559,17 +2559,19 @@ class ConsoleSessionController:
     def _session_close_impact(
         self, session_id: str
     ) -> ConsoleSessionCloseImpact | None:
-        """Capture transcript and controller loss impact for one exact session."""
+        """Capture tree-wide transcript and controller loss for one session."""
 
         store = self._ensure_console_chat_store()
         try:
-            messages = store.messages_for_session(session_id)
+            messages = store.all_messages_for_session(session_id)
         except KeyError:
             return None
         controller = self._ensure_console_chat_controller()
         return ConsoleSessionCloseImpact(
             session_id=session_id,
-            transcript_message_count=len(messages),
+            transcript_message_count=sum(
+                message.persisted_message_id is None for message in messages
+            ),
             lifecycle=controller.lifecycle_impact(session_id=session_id),
         )
 
