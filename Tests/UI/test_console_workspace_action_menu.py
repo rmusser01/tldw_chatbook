@@ -13,14 +13,28 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from textual.color import Color
 from textual.widgets import Button
 
+from Tests.UI.test_console_dictation import (
+    FakeDictationSession,
+    _wait_for_mic_label,
+)
 from Tests.UI.test_console_left_rail import (
     _click_rail_toggle,
     make_console_pilot,
 )
 from Tests.UI.test_console_workspace_tree_cursor_layout import (
     _console_with_probe_tree,
+)
+from tldw_chatbook.UI.Console_Modules import dictation as dictation_module
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+from tldw_chatbook.Widgets.Console import (
+    console_conversation_action_menu as conversation_action_menu_module,
+)
+from tldw_chatbook.Widgets.Console import (
+    console_workspace_action_menu as workspace_action_menu_module,
 )
 from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
     ConsoleConversationActionMenu,
@@ -31,6 +45,9 @@ from tldw_chatbook.Widgets.Console.console_workspace_action_menu import (
 from tldw_chatbook.Widgets.Console.console_workspace_tree import (
     WorkspaceTreeMenuRequested,
 )
+
+
+_MENU_SETTLE_SECONDS = 0.4
 
 
 def _stub_registry():
@@ -61,6 +78,49 @@ def _request_menu(console, *, kind: str, **kwargs) -> None:
     console.on_workspace_tree_menu_requested(WorkspaceTreeMenuRequested(**payload))
 
 
+async def _click_tree_marker(pilot, tree, node) -> None:
+    """Click one rendered row marker through the mounted production tree."""
+    edge = tree.scrollable_content_region.width
+    line = int(node._line) - int(tree.scroll_offset.y)
+    assert await pilot.click(tree, offset=(edge - 1, line))
+    await pilot.pause(_MENU_SETTLE_SECONDS)
+
+
+@pytest.mark.parametrize(
+    ("conversation_menus", "workspace_menus", "expected"),
+    [
+        ([], [], False),
+        ([SimpleNamespace(_pruning=False)], [], True),
+        ([], [SimpleNamespace(_pruning=False)], True),
+        (
+            [SimpleNamespace(_pruning=True)],
+            [SimpleNamespace(_pruning=True)],
+            False,
+        ),
+    ],
+)
+def test_row_action_menu_open_tracks_only_live_unpruned_menus(
+    monkeypatch,
+    conversation_menus: list[SimpleNamespace],
+    workspace_menus: list[SimpleNamespace],
+    expected: bool,
+) -> None:
+    """The Escape gate ignores empty and already-pruning registries."""
+    monkeypatch.setattr(
+        conversation_action_menu_module,
+        "conversation_action_menus_on_screen",
+        lambda _screen: conversation_menus,
+    )
+    monkeypatch.setattr(
+        workspace_action_menu_module,
+        "workspace_action_menus_on_screen",
+        lambda _screen: workspace_menus,
+    )
+
+    screen = ChatScreen.__new__(ChatScreen)
+    assert screen._console_row_action_menu_open() is expected
+
+
 @pytest.mark.asyncio
 async def test_tree_rows_paint_distinct_right_edge_affordances() -> None:
     """Workspace and chat rows carry distinct openers in one edge column."""
@@ -69,7 +129,7 @@ async def test_tree_rows_paint_distinct_right_edge_affordances() -> None:
         console, _rail, tree = await _console_with_probe_tree(host, pilot)
 
         await _click_rail_toggle(pilot, "workspace")
-        await pilot.pause(0.4)
+        await pilot.pause(_MENU_SETTLE_SECONDS)
         assert tree.region, "workspace section stayed collapsed"
 
         workspace_key = tree.workspace_nodes["ws-alpha"].data.key
@@ -99,6 +159,158 @@ async def test_tree_rows_paint_distinct_right_edge_affordances() -> None:
 
 
 @pytest.mark.asyncio
+async def test_marker_menus_claim_escape_before_hands_free_exit(monkeypatch) -> None:
+    """A row popup owns Escape before the priority hands-free binding.
+
+    Removing the row-menu gate from ``check_action`` makes the first Escape
+    exit hands-free while leaving the popup stranded. This drives both real
+    marker paths and pins the approved submenu-back, root-close, then
+    hands-free-exit order.
+    """
+    fake = FakeDictationSession()
+    monkeypatch.setattr(
+        dictation_module.ConsoleDictationController,
+        "_create_console_dictation_session",
+        lambda self: fake,
+    )
+
+    async with make_console_pilot(size=(160, 44), production_styles=True) as pilot:
+        host = pilot.app
+        console, _rail, tree = await _console_with_probe_tree(host, pilot)
+        console.app_instance.workspace_registry_service = _stub_registry()
+        await _click_rail_toggle(pilot, "workspace")
+        await pilot.pause(_MENU_SETTLE_SECONDS)
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        console.action_toggle_console_hands_free()
+        await _wait_for_mic_label(composer, pilot, "Dictating")
+
+        await _click_tree_marker(pilot, tree, tree.workspace_nodes["ws-alpha"])
+        workspace_menu = console.query_one(ConsoleWorkspaceActionMenu)
+        next(
+            button
+            for button in workspace_menu.query(Button)
+            if getattr(button, "workspace_action_id", "") == "page:more"
+        ).press()
+        await pilot.pause(_MENU_SETTLE_SECONDS)
+        assert workspace_menu.page == "more"
+
+        await pilot.press("escape")
+        await pilot.pause(_MENU_SETTLE_SECONDS)
+        assert workspace_menu.page == "root"
+        assert console._console_hands_free is not None
+
+        await pilot.press("escape")
+        await pilot.pause(_MENU_SETTLE_SECONDS)
+        assert not console.query(ConsoleWorkspaceActionMenu)
+        assert console._console_hands_free is not None
+
+        await _click_tree_marker(pilot, tree, tree.conversation_nodes["conv-a0"])
+        assert console.query(ConsoleConversationActionMenu)
+        console.set_focus(composer)
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await pilot.pause(_MENU_SETTLE_SECONDS)
+        assert not console.query(ConsoleConversationActionMenu)
+        assert console._console_hands_free is not None
+
+        await pilot.press("escape")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
+        assert console._console_hands_free is None
+        assert fake.stop_calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("node_key", "menu_type", "handler_name"),
+    [
+        (
+            "ws-alpha",
+            ConsoleWorkspaceActionMenu,
+            "on_workspace_action_chosen",
+        ),
+        (
+            "conv-a0",
+            ConsoleConversationActionMenu,
+            "on_conversation_action_chosen",
+        ),
+    ],
+)
+async def test_real_marker_menu_dismisses_on_outside_click(
+    monkeypatch,
+    node_key: str,
+    menu_type: type[ConsoleWorkspaceActionMenu] | type[ConsoleConversationActionMenu],
+    handler_name: str,
+) -> None:
+    """The production marker path closes without acting or stealing focus."""
+    async with make_console_pilot(size=(160, 44), production_styles=True) as pilot:
+        host = pilot.app
+        console, _rail, tree = await _console_with_probe_tree(host, pilot)
+        console.app_instance.workspace_registry_service = _stub_registry()
+        await _click_rail_toggle(pilot, "workspace")
+        await pilot.pause(_MENU_SETTLE_SECONDS)
+
+        node = (
+            tree.workspace_nodes[node_key]
+            if node_key.startswith("ws-")
+            else tree.conversation_nodes[node_key]
+        )
+        await _click_tree_marker(pilot, tree, node)
+        assert console.query(menu_type)
+
+        dispatched: list[object] = []
+        monkeypatch.setattr(
+            console,
+            handler_name,
+            lambda event: dispatched.append(event),
+        )
+        composer = console.query_one("#console-native-composer")
+        assert await pilot.click(composer)
+        await pilot.pause(0.3)
+        assert not console.query(menu_type)
+        assert dispatched == []
+        assert pilot.app.focused is composer
+
+
+@pytest.mark.asyncio
+async def test_escape_focus_restore_keeps_two_row_workspace_tree_visible() -> None:
+    """The restored focus cue remains visible without overpainting rows."""
+    async with make_console_pilot(size=(160, 44), production_styles=True) as pilot:
+        host = pilot.app
+        console, _rail, tree = await _console_with_probe_tree(host, pilot)
+        console.app_instance.workspace_registry_service = _stub_registry()
+        await _click_rail_toggle(pilot, "workspace")
+        tree.styles.height = 2
+        await pilot.pause(_MENU_SETTLE_SECONDS)
+        assert tree.region.height == 2
+
+        await _click_tree_marker(pilot, tree, tree.workspace_nodes["ws-alpha"])
+        assert console.query(ConsoleWorkspaceActionMenu)
+        await pilot.press("escape")
+        await pilot.pause(_MENU_SETTLE_SECONDS)
+
+        assert tree.has_focus
+        assert not tree.styles.outline, (
+            "the global focus outline consumes both rows of the compact tree"
+        )
+        focused_cursor = tree.get_component_styles("tree--cursor").background
+        assert focused_cursor == Color.parse("#51677e")
+        rendered = "\n".join(
+            tree.render_line(row).text for row in range(tree.region.height)
+        )
+        assert "@" in rendered and "*" in rendered
+
+        composer = console.query_one("#console-native-composer")
+        console.set_focus(composer)
+        await pilot.pause()
+        blurred_cursor = tree.get_component_styles("tree--cursor").background
+        assert focused_cursor != blurred_cursor, (
+            "the focused tree cursor is indistinguishable from its blurred state"
+        )
+
+
+@pytest.mark.asyncio
 async def test_workspace_menu_opens_with_the_six_approved_entries(
     monkeypatch,
 ) -> None:
@@ -107,7 +319,7 @@ async def test_workspace_menu_opens_with_the_six_approved_entries(
         console.app_instance.workspace_registry_service = _stub_registry()
 
         _request_menu(console, kind="workspace")
-        await pilot.pause(0.4)
+        await pilot.pause(_MENU_SETTLE_SECONDS)
 
         menu = console.query_one(ConsoleWorkspaceActionMenu)
         labels = [str(button.label).strip() for button in menu.query(Button)]
@@ -138,7 +350,7 @@ async def test_workspace_menu_pages_and_escapes_like_the_conversation_menu(
         console.app_instance.workspace_registry_service = _stub_registry()
 
         _request_menu(console, kind="workspace")
-        await pilot.pause(0.4)
+        await pilot.pause(_MENU_SETTLE_SECONDS)
 
         more = next(
             b
@@ -205,7 +417,7 @@ async def test_unsaved_native_rows_get_none_and_gate_saved_only_actions() -> Non
         _request_menu(
             console, kind="conversation", conversation_id=None, title="Untitled"
         )
-        await pilot.pause(0.4)
+        await pilot.pause(_MENU_SETTLE_SECONDS)
         menu = console.query_one(ConsoleConversationActionMenu)
         assert menu.target.conversation_id is None
         # Rename carries the unsaved reason regardless of whether the marks
@@ -226,7 +438,7 @@ async def test_tree_menu_target_carries_the_row_title() -> None:
             conversation_id="conv-a0",
             title="Alpha conversation 0",
         )
-        await pilot.pause(0.4)
+        await pilot.pause(_MENU_SETTLE_SECONDS)
         menu = console.query_one(ConsoleConversationActionMenu)
         assert menu.target.title == "Alpha conversation 0"
 
@@ -317,7 +529,7 @@ async def test_tree_chat_row_opens_the_shared_conversation_menu() -> None:
         _request_menu(
             console, kind="conversation", conversation_id="conv-a0"
         )
-        await pilot.pause(0.4)
+        await pilot.pause(_MENU_SETTLE_SECONDS)
 
         menu = console.query_one(ConsoleConversationActionMenu)
         labels = [str(button.label).strip() for button in menu.query(Button)]
@@ -339,7 +551,7 @@ async def test_m_binding_opens_the_menu_for_the_cursor_workspace_row(
         # (the section-header click a real user made first is what opens
         # it); click that toggle exactly as the rail suite's helper does.
         await _click_rail_toggle(pilot, "workspace")
-        await pilot.pause(0.4)
+        await pilot.pause(_MENU_SETTLE_SECONDS)
         assert tree.region, "workspace section stayed collapsed"
 
         # Walk the cursor onto a workspace row.
@@ -368,7 +580,7 @@ async def test_workspace_menu_dismisses_on_outside_click_and_stranded_escape(
         console.app_instance.workspace_registry_service = _stub_registry()
 
         _request_menu(console, kind="workspace")
-        await pilot.pause(0.4)
+        await pilot.pause(_MENU_SETTLE_SECONDS)
         assert console.query(ConsoleWorkspaceActionMenu)
 
         await pilot.click("#console-native-composer")
@@ -378,7 +590,7 @@ async def test_workspace_menu_dismisses_on_outside_click_and_stranded_escape(
         )
 
         _request_menu(console, kind="workspace")
-        await pilot.pause(0.4)
+        await pilot.pause(_MENU_SETTLE_SECONDS)
         composer = console.query_one("#console-native-composer")
         console.set_focus(composer)
         await pilot.pause()

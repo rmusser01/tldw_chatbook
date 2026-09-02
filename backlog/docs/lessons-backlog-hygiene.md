@@ -71,6 +71,18 @@ carried a bad number.
   `sed -nE 's#.*/task-([0-9]+).*#\1#p'` — and treat "the CLI offers a number above my swept
   max" as proof the sweep is broken, never as CLI error.
 
+- **2026-09-02, Personal Context documentation closeout.** The feature branch resolved
+  a newly merged collision by renaming the younger upstream MCP `TASK-27019` to
+  `TASK-28228` and assigning `TASK-27019` to the older documentation task. A final gate
+  still demanded that every local/remote ref and every worktree contain only the new
+  filename. That gate could not pass before merge: `origin/dev` and historical worktrees
+  necessarily retained the pre-rename MCP snapshot, even though the proposed merge tree
+  was unique and GitHub's Backlog Guard was green. The correct closeout evidence is the
+  merge candidate itself: prove the winning task is the sole owner of the ID, the losing
+  path is absent, and the renamed task and all inbound references use the replacement ID.
+  Historical refs remain useful collision-discovery inputs, but they are immutable
+  snapshots—not a uniqueness invariant a feature PR can retroactively repair.
+
 **What to do.** Before filing, sweep **every remote ref** plus every worktree, and
 re-check at merge time — dev moves under you. Never trust the CLI's auto-assignment.
 When a collision is found after both tasks have started, use add-commit provenance:

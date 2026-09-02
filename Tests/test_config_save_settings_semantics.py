@@ -7,6 +7,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
+from tldw_chatbook.Chat.console_trace_custom_pii import (
+    custom_pii_ruleset_for_revision,
+)
 from tldw_chatbook.config import ConfigMutationResult
 
 
@@ -290,7 +293,9 @@ def test_runtime_capture_policy_concurrent_generation_refresh_is_equivalent(
     )
 
     with ThreadPoolExecutor(max_workers=8) as pool:
-        policies = list(pool.map(lambda _index: config_module.runtime_capture_policy(), range(32)))
+        policies = list(
+            pool.map(lambda _index: config_module.runtime_capture_policy(), range(32))
+        )
 
     assert set(policies) == {
         config_module.RuntimeCapturePolicy(False, CaptureDetail.SAFE, 51)
@@ -473,6 +478,54 @@ def test_versioned_viewer_and_pii_choices_restore_independently(monkeypatch) -> 
     assert policy.enabled is False
     assert policy.pii_redaction_enabled is True
     assert policy.viewer_profile == "full"
+
+
+def test_runtime_capture_policy_freezes_valid_custom_pii_rules(monkeypatch) -> None:
+    secret_pattern = r"private-prefix-\d{8}"
+    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 621)
+    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(
+        config_module,
+        "_published_runtime_config_snapshot",
+        lambda: config_module.RuntimeConfigSnapshot(
+            621,
+            {
+                "console": {
+                    "exchange_capture_pii_redaction": True,
+                    "trace_custom_pii_rules": {
+                        "version": 1,
+                        "revision_id": "11111111-1111-4111-8111-111111111111",
+                        "rules": [
+                            {
+                                "id": "customer-id",
+                                "label": "Customer ID",
+                                "category": "customer_id",
+                                "pattern": secret_pattern,
+                                "flags": [],
+                                "enabled": True,
+                                "priority": 10,
+                            }
+                        ],
+                    },
+                }
+            },
+        ),
+    )
+
+    policy = config_module.runtime_capture_policy()
+
+    assert policy.custom_pii_ruleset is not None
+    assert policy.custom_pii_ruleset.revision_id == (
+        "11111111-1111-4111-8111-111111111111"
+    )
+    assert [rule.rule_id for rule in policy.custom_pii_ruleset.runnable_rules] == [
+        "customer-id"
+    ]
+    assert (
+        custom_pii_ruleset_for_revision(policy.custom_pii_ruleset.revision_id)
+        == policy.custom_pii_ruleset
+    )
+    assert secret_pattern not in repr(policy)
 
 
 def test_malformed_privacy_config_falls_back_to_all_safe_defaults(monkeypatch) -> None:

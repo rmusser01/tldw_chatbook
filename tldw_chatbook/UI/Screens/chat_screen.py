@@ -1855,8 +1855,13 @@ class ChatScreen(BaseAppScreen):
         if action == "exit_console_hands_free":
             # One-line delegation (wave-2 console decomposition, task 1).
             # See `ConsoleHandsFreeController.console_hands_free_exit_
-            # available` for the real implementation.
-            return self._hands_free.console_hands_free_exit_available()
+            # available` for the real implementation. TASK-28226: a row
+            # action menu claims Escape before the priority hands-free
+            # binding so its own submenu-back/root-close behavior can run.
+            return (
+                self._hands_free.console_hands_free_exit_available()
+                and not self._console_row_action_menu_open()
+            )
         return super().check_action(action, parameters)
 
     def action_exit_console_hands_free(self) -> None:
@@ -4834,6 +4839,32 @@ class ChatScreen(BaseAppScreen):
         self._workspace._create_console_workspace()
 
     # ---- Conversation action menu (TASK-23200) -------------------------
+
+    def _console_row_action_menu_open(self) -> bool:
+        """Return whether either kind of Console row action menu is open.
+
+        TASK-28226: the priority hands-free Escape binding must yield while
+        an ``@`` workspace menu or ``*`` conversation menu is mounted. This
+        lets the menu's existing key handler preserve submenu-back before
+        root-close, while the screen fallback still closes a menu whose
+        focus has moved elsewhere. Menus already scheduled for pruning do
+        not claim another key. The widget registries avoid a DOM walk.
+
+        Returns:
+            True when a conversation or workspace row menu is open.
+        """
+        from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
+            conversation_action_menus_on_screen,
+        )
+        from tldw_chatbook.Widgets.Console.console_workspace_action_menu import (
+            workspace_action_menus_on_screen,
+        )
+
+        menus = (
+            *conversation_action_menus_on_screen(self),
+            *workspace_action_menus_on_screen(self),
+        )
+        return any(not getattr(menu, "_pruning", False) for menu in menus)
 
     def _dismiss_console_conversation_action_menus(self) -> bool:
         """Fold any open row action menu; True when one was open.
@@ -16331,7 +16362,7 @@ class ChatScreen(BaseAppScreen):
         tool results and the streamed partial, re-run the turn with the
         correction as a plain user message.
 
-        TASK-26000. /steer lets the current response finish; this is for
+        TASK-28227. /steer lets the current response finish; this is for
         when it is already wrong. Stop is untouched and remains terminal.
         Refusals surface as a notify, never a silent drop.
         """

@@ -65,6 +65,9 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderResolution,
     ConsoleProviderStreamSignals,
 )
+from tldw_chatbook.Chat.console_trace_custom_pii import (
+    validate_custom_pii_rules_config,
+)
 from tldw_chatbook.Chat.console_trace_provenance import ConsoleTraceCaptureMode
 from tldw_chatbook.Chat.console_trace_service import TraceCallPersistenceError
 from tldw_chatbook.Chat.console_turn_preparation import (
@@ -134,6 +137,98 @@ def test_legacy_exchange_signals_are_disabled_by_default():
     controller = _new_controller()
     signals = controller._new_run_stream_signals()
     assert signals.exchange_capture_enabled is False
+
+
+def test_capture_policy_snapshot_freezes_active_custom_pii_revision(monkeypatch):
+    controller = _new_controller()
+    session = controller.store.ensure_session()
+    revision_id = "66666666-6666-4666-8666-666666666666"
+    ruleset = validate_custom_pii_rules_config(
+        {
+            "version": 1,
+            "revision_id": revision_id,
+            "rules": [
+                {
+                    "id": "customer-id",
+                    "label": "Customer ID",
+                    "category": "customer_id",
+                    "pattern": r"customer-[A-Z]{8}",
+                    "flags": [],
+                    "enabled": True,
+                    "priority": 10,
+                }
+            ],
+        }
+    ).ruleset
+    assert ruleset is not None
+    monkeypatch.setattr(
+        controller_module,
+        "runtime_capture_policy",
+        lambda: SimpleNamespace(
+            enabled=True,
+            detail=CaptureDetail.SAFE,
+            generation=7,
+            pii_redaction_enabled=True,
+            viewer_profile="safe",
+            custom_pii_ruleset=ruleset,
+        ),
+    )
+
+    snapshot = controller.capture_policy_snapshot(session.id)
+
+    assert snapshot.pii_redaction_enabled is True
+    assert snapshot.pii_ruleset_revision_id == revision_id
+
+
+def test_admission_keeps_frozen_custom_pii_revision_after_runtime_change(monkeypatch):
+    controller = _new_controller()
+    session = controller.store.ensure_session()
+    first_revision = "66666666-6666-4666-8666-666666666666"
+    second_revision = "77777777-7777-4777-8777-777777777777"
+
+    def ruleset(revision_id):
+        validated = validate_custom_pii_rules_config(
+            {
+                "version": 1,
+                "revision_id": revision_id,
+                "rules": [
+                    {
+                        "id": "customer-id",
+                        "label": "Customer ID",
+                        "category": "customer_id",
+                        "pattern": r"customer-[A-Z]{8}",
+                        "flags": [],
+                        "enabled": True,
+                        "priority": 10,
+                    }
+                ],
+            }
+        ).ruleset
+        assert validated is not None
+        return validated
+
+    runtime = SimpleNamespace(
+        enabled=True,
+        detail=CaptureDetail.SAFE,
+        generation=7,
+        legacy_writes_enabled=True,
+        pii_redaction_enabled=True,
+        viewer_profile="safe",
+        custom_pii_ruleset=ruleset(first_revision),
+    )
+    monkeypatch.setattr(controller_module, "runtime_capture_policy", lambda: runtime)
+    frozen = controller.capture_policy_snapshot(session.id)
+    runtime.custom_pii_ruleset = ruleset(second_revision)
+
+    signals = controller._admit_capture_policy(
+        session.id,
+        ConsoleSubmissionOrigin.MANUAL,
+        frozen_capture_enabled=frozen.effective_capture_enabled,
+        frozen_pii_redaction_enabled=frozen.pii_redaction_enabled,
+        frozen_pii_ruleset_revision_id=frozen.pii_ruleset_revision_id,
+    )
+
+    assert signals.pii_ruleset_revision_id == first_revision
 
 
 def test_normalized_capture_does_not_duplicate_legacy_exchange_blobs(monkeypatch):

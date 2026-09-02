@@ -2665,7 +2665,7 @@ class _StreamingModelAdapter:
         self._resolution = resolution
         self._assistant_message_id = assistant_message_id
         self._should_cancel = should_cancel
-        # TASK-26000: armed by run_reply's redirect-ready hook; cuts the
+        # TASK-28227: armed by run_reply's redirect-ready hook; cuts the
         # PRIMARY's in-flight stream only (see stream_cut in chat_call).
         self._primary_stream_abort: Callable[[], bool] = lambda: False
         self._loop = loop
@@ -2806,7 +2806,7 @@ class _StreamingModelAdapter:
             messages_payload, native_tools=self._native_tools
         )
         is_subagent = self._is_subagent(transport_messages)
-        # TASK-26000: a redirect aborts only the PRIMARY's in-flight
+        # TASK-28227: a redirect aborts only the PRIMARY's in-flight
         # model stream. Children keep the plain cancel predicate --
         # cutting a fleet child's stream on a primary redirect would
         # truncate its turn with no redirect entry in ITS mailbox to
@@ -3061,7 +3061,7 @@ class _StreamingModelAdapter:
             if tool_call is not None or native_calls:
                 self._store.reset_stream_content(self._assistant_message_id)
             elif self._primary_stream_abort():
-                # TASK-26000 review F2: this prose turn was cut by a
+                # TASK-28227 review F2: this prose turn was cut by a
                 # redirect and the re-asked turn will stream into the SAME
                 # message -- without a separator the transcript glues
                 # "...theRight — ..." together. The loop drains the redirect
@@ -4593,7 +4593,7 @@ class ConsoleAgentBridge:
         | None = None,
         on_steer_ready: Callable[[Callable[[str], str | None]], None]
         | None = None,
-        # TASK-26000: fired once the run's mailbox registers, with a bound
+        # TASK-28227: fired once the run's mailbox registers, with a bound
         # `redirect(text) -> refusal | None` -- the Redirect button's and
         # /redirect's hook, exactly like on_steer_ready is /steer's.
         on_redirect_ready: Callable[[Callable[[str], str | None]], None]
@@ -5766,7 +5766,7 @@ class ConsoleAgentBridge:
                 )
 
         def _redirect_ready(redirect_fn, abort_probe):
-            # TASK-26000: arm the primary stream's abort probe,
+            # TASK-28227: arm the primary stream's abort probe,
             # then hand the Console its redirect hook. The probe
             # reaches ONLY the adapter's stream_cut predicate --
             # LoopDeps.should_cancel never sees it, so a

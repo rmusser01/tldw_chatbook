@@ -141,6 +141,48 @@ def test_privacy_posture_reports_compact_trace_rollout_without_content():
     assert "Trace history: compact and legacy traces are readable" in rows
 
 
+def test_privacy_posture_reports_custom_pii_rules_without_pattern_text():
+    secret_pattern = r"private-prefix-\d{8}"
+    posture = build_settings_privacy_posture(
+        {
+            "console": {
+                "trace_custom_pii_rules": {
+                    "version": 1,
+                    "revision_id": "11111111-1111-4111-8111-111111111111",
+                    "rules": [
+                        {
+                            "id": "customer-id",
+                            "label": "Customer ID",
+                            "category": "customer_id",
+                            "pattern": secret_pattern,
+                            "flags": [],
+                            "enabled": True,
+                            "priority": 10,
+                        },
+                        {
+                            "id": "invalid-rule",
+                            "label": "Invalid",
+                            "category": "customer_id",
+                            "pattern": "(",
+                            "flags": [],
+                            "enabled": True,
+                            "priority": 20,
+                        },
+                    ],
+                }
+            }
+        },
+        environ={},
+    )
+
+    rows = build_privacy_posture_rows(posture)
+    rendered = "\n".join(rows)
+
+    assert "Custom PII rules: 1 enabled, 0 disabled, 1 invalid" in rows
+    assert "invalid-rule: invalid_pattern" in rendered
+    assert secret_pattern not in rendered
+
+
 def test_privacy_posture_coerces_string_trace_rollout_settings():
     posture = build_settings_privacy_posture(
         {

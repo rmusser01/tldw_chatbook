@@ -5,13 +5,13 @@ from __future__ import annotations
 
 # Imports
 import copy
-import shutil
-from contextlib import ExitStack, contextmanager
+import difflib
 import importlib.util
 import json
+import shutil
 import sys
-import difflib
-from dataclasses import dataclass
+from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 if sys.version_info < (3, 11):
@@ -58,6 +58,7 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
+    from tldw_chatbook.Chat.console_trace_custom_pii import CustomPIIRuleset
 from tldw_chatbook.Utils.adaptive_reader_state import (
     ITEMS_MAX_WIDTH,
     ITEMS_MIN_WIDTH,
@@ -7191,6 +7192,7 @@ class RuntimeCapturePolicy:
     normalized_writes_enabled: bool = True
     normalized_reads_enabled: bool = True
     legacy_writes_enabled: bool = False
+    custom_pii_ruleset: CustomPIIRuleset | None = field(default=None, repr=False)
 
 
 _TRACE_ROLLOUT_BOOLEAN_ADAPTER = TypeAdapter(bool)
@@ -7304,6 +7306,23 @@ def resolve_trace_rollout_settings(
     )
 
 
+def _register_runtime_custom_pii_ruleset(
+    ruleset: CustomPIIRuleset | None,
+) -> CustomPIIRuleset | None:
+    """Register valid rules for future masks or disable a reused revision."""
+
+    if ruleset is None or not ruleset.runnable_rules:
+        return ruleset
+    from tldw_chatbook.Chat.console_trace_custom_pii import (
+        register_custom_pii_ruleset,
+    )
+
+    if register_custom_pii_ruleset(ruleset):
+        return ruleset
+    logger.warning("custom_pii_ruleset_revision_conflict")
+    return None
+
+
 def _publish_runtime_capture_policy(
     enabled: bool,
     detail: CaptureDetail,
@@ -7313,14 +7332,21 @@ def _publish_runtime_capture_policy(
     normalized_writes_enabled: bool = True,
     normalized_reads_enabled: bool = True,
     legacy_writes_enabled: bool = False,
+    custom_pii_ruleset: CustomPIIRuleset | None = None,
 ) -> RuntimeCapturePolicy:
     """Publish one validated capture policy without touching general caches."""
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
+    from tldw_chatbook.Chat.console_trace_custom_pii import CustomPIIRuleset
 
     if not isinstance(detail, CaptureDetail):
         raise TypeError("detail must be CaptureDetail")
     if viewer_profile not in {"safe", "full"}:
         raise ValueError("viewer_profile")
+    if custom_pii_ruleset is not None and not isinstance(
+        custom_pii_ruleset, CustomPIIRuleset
+    ):
+        raise TypeError("custom_pii_ruleset")
+    custom_pii_ruleset = _register_runtime_custom_pii_ruleset(custom_pii_ruleset)
     rollout_environment = _trace_rollout_environment()
     rollout = resolve_trace_rollout_settings(
         {
@@ -7339,6 +7365,7 @@ def _publish_runtime_capture_policy(
         rollout.normalized_writes_enabled,
         rollout.normalized_reads_enabled,
         rollout.legacy_writes_enabled,
+        custom_pii_ruleset,
     )
     global _RUNTIME_CAPTURE_POLICY, _RUNTIME_CAPTURE_POLICY_ENV
     with _RUNTIME_CAPTURE_POLICY_LOCK:
@@ -7384,6 +7411,14 @@ def runtime_capture_policy() -> RuntimeCapturePolicy:
         privacy = validate_trace_privacy_config(console)
         pii_redaction_enabled = privacy.exchange_capture_pii_redaction
         viewer_profile = privacy.effective_viewer_profile
+        from tldw_chatbook.Chat.console_trace_custom_pii import (
+            validate_custom_pii_rules_config,
+        )
+
+        custom_pii_ruleset = validate_custom_pii_rules_config(
+            console.get("trace_custom_pii_rules")
+        ).ruleset
+        custom_pii_ruleset = _register_runtime_custom_pii_ruleset(custom_pii_ruleset)
         rollout = resolve_trace_rollout_settings(
             console,
             environ=_trace_rollout_environment_mapping(rollout_environment),
@@ -7397,6 +7432,7 @@ def runtime_capture_policy() -> RuntimeCapturePolicy:
             rollout.normalized_writes_enabled,
             rollout.normalized_reads_enabled,
             rollout.legacy_writes_enabled,
+            custom_pii_ruleset,
         )
         _RUNTIME_CAPTURE_POLICY = current
         _RUNTIME_CAPTURE_POLICY_ENV = rollout_environment
@@ -7455,6 +7491,7 @@ def apply_console_capture_settings(
             current.normalized_writes_enabled,
             current.normalized_reads_enabled,
             current.legacy_writes_enabled,
+            current.custom_pii_ruleset,
         )
 
     def publish_after_replace() -> None:
@@ -7473,6 +7510,7 @@ def apply_console_capture_settings(
             current.normalized_writes_enabled,
             current.normalized_reads_enabled,
             current.legacy_writes_enabled,
+            current.custom_pii_ruleset,
         )
 
     more_revealing = (

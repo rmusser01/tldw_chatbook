@@ -1,4 +1,4 @@
-"""The bridge half of TASK-26000: the redirect abort cuts ONLY the primary's
+"""The bridge half of TASK-28227: the redirect abort cuts ONLY the primary's
 in-flight stream, and a cut prose turn gets a separator so the re-asked
 turn's chunks don't glue onto the partial in the same transcript message
 (review F2)."""

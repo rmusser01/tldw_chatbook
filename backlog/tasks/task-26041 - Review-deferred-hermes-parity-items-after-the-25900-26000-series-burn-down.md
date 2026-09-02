@@ -16,7 +16,7 @@ priority: low
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Holding task for the 73 capability rows from the 2026-08-31 hermes parity report that were reviewed and deliberately not filed. The list, with per-row reasoning, is backlog/docs/hermes-parity-deferred-items.md; the evidence behind each row is qa/hermes-parity-2026-08-31/report.md and gap-candidates.md. Owner's direction was to revisit these only after the 56 filed tasks (TASK-25900-25914 and TASK-26000-26040) are burned down. This exists so the deferred set is recoverable from the board rather than surviving only in a report nobody re-reads. It is a review task: its output is decisions, not code.
+Holding task for the 73 capability rows from the 2026-08-31 hermes parity report that were reviewed and deliberately not filed. The list, with per-row reasoning, is backlog/docs/hermes-parity-deferred-items.md; the evidence behind each row is qa/hermes-parity-2026-08-31/report.md and gap-candidates.md. Owner's direction was to revisit these only after the 56 filed tasks (TASK-25900-25914, TASK-26001-26040, and TASK-28227, formerly TASK-26000) are burned down. This exists so the deferred set is recoverable from the board rather than surviving only in a report nobody re-reads. It is a review task: its output is decisions, not code.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

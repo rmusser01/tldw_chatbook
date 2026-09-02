@@ -1,0 +1,49 @@
+---
+id: TASK-28228
+title: >-
+  MCP: wire server-initiated sampling/elicitation to the live chat provider and
+  approval surface
+status: To Do
+assignee: []
+created_date: '2026-09-01 23:28'
+labels:
+  - mcp
+  - interop
+dependencies:
+  - TASK-26029
+priority: medium
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+TASK-26029 shipped the protocol-correct handler + connection dispatch for server-initiated sampling/elicitation, fail-closed and tested with injected callables. Production enablement requires the app to construct the dispatcher with the REAL chat provider (chat_api_call) as complete_fn and the REAL approval surface (async create-request then await resolution) as elicit_fn, source the per-server SamplingPolicy from config, and set client._server_request_dispatcher at the MCPClient creation site (MCP/local_control_service.py:778). This half is app-context and not headless-verifiable, so it was split out.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 A server-initiated sampling request is fulfilled through the live chat provider (chat_api_call) and returned
+- [ ] #2 A server-initiated elicitation request is presented through the live approval surface and the response returned
+- [ ] #3 Per-server SamplingPolicy (allow + rate + token caps) is sourced from config, default deny
+- [ ] #4 client._server_request_dispatcher is set where MCPClient is created, so stdio and (future) remote servers both route through it
+<!-- AC:END -->
+
+## Renumbering provenance
+
+This task originally held id TASK-26042, colliding with the
+"Console-Workspace-Files-read-only-inspector" task that arrived on origin/dev
+first. It renumbered to TASK-27019 on 2026-09-02 after a sweep whose maximum was
+27018.
+
+TASK-27019 then collided with the older "Document Personal Context Profile for
+Chatbook users and developers" task (created 2026-09-01 14:45); this MCP task
+was created later, at 2026-09-01 23:28. Per the owner rule decided 2026-08-21
+in TASK-19601 (**older id keeps it; the younger task renumbers with a provenance
+note, regardless of status**), this task renumbered again to TASK-28228 after a
+fresh sweep across the current tree, all refs, and all registered worktrees
+found a maximum id of 28227 and no TASK-28228 claim.
+
+Citations to TASK-26042 before the first renumber, or TASK-27019 between the two
+renumbers, refer to THIS MCP task. The dev-resident TASK-26042 holder remains
+the Workspace Files task; TASK-27019 remains the Personal Context documentation
+task.

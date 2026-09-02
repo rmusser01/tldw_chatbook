@@ -9,7 +9,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Generic, Literal, TypeAlias, TypeVar, cast, overload
+from typing import Generic, TypeVar, cast, overload
 from weakref import ReferenceType, ref
 
 from tldw_chatbook.Chat.console_prepared_request import freeze_json
@@ -40,6 +40,10 @@ from tldw_chatbook.Chat.console_trace_models import (
     TraceContentRef,
     TraceOmission,
 )
+from tldw_chatbook.Chat.console_trace_custom_pii import (
+    CUSTOM_PII_RULESET_UNAVAILABLE,
+    redact_pii_value_for_ruleset_revision,
+)
 from tldw_chatbook.Chat.console_trace_provenance import (
     DerivedTraceProvenance,
     OmittedTraceProvenance,
@@ -54,9 +58,7 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     _project_verified_provider_request_provenance,
 )
 from tldw_chatbook.Chat.console_trace_redaction import (
-    PII_DETECTOR_UNAVAILABLE,
     PIIRedactionSpan,
-    redact_pii_value,
 )
 from tldw_chatbook.Chat.console_trace_repository import (
     ConsoleTraceRepository,
@@ -162,7 +164,7 @@ class TraceCallIdentity:
 # leaf `console_trace_errors` so boot-resident callers that need ONLY the
 # exception do not pull this module's whole trace stack onto the boot path.
 # Re-exported here so existing importers keep the SAME class object.
-from tldw_chatbook.Chat.console_trace_errors import (  # noqa: F401
+from tldw_chatbook.Chat.console_trace_errors import (  # noqa: E402, F401
     TraceCallPersistenceError,
     TraceCallReservationStatus,
 )
@@ -2133,15 +2135,14 @@ class ConsoleTraceService:
 
         def matches(active_index: int, incoming_index: int) -> bool:
             key = active[active_index][2]
-            return (
-                _surface_reference_domain(key) == domains[incoming_index]
-                and self._durable_reference_matches(
-                    cursor,
-                    descriptors[incoming_index],
-                    values[incoming_index],
-                    key,
-                    durable_values,
-                )
+            return _surface_reference_domain(key) == domains[
+                incoming_index
+            ] and self._durable_reference_matches(
+                cursor,
+                descriptors[incoming_index],
+                values[incoming_index],
+                key,
+                durable_values,
             )
 
         prefix = 0
@@ -2166,7 +2167,10 @@ class ConsoleTraceService:
                 # continuation. Append only that message: descriptor domains
                 # reconstruct provider order without rewriting the suffix.
                 admitted_to = prefix + 1
-            elif incoming_changed != 1 or not 1 <= active_changed <= MAX_SURFACE_REPLACEMENT_SPAN:
+            elif (
+                incoming_changed != 1
+                or not 1 <= active_changed <= MAX_SURFACE_REPLACEMENT_SPAN
+            ):
                 raise ValueError("unsupported_surface_change")
             else:
                 changed_entries = active[prefix : len(active) - suffix]
@@ -2234,12 +2238,16 @@ class ConsoleTraceService:
         else:
             message_delta = tuple(
                 descriptor
-                for index, descriptor in enumerate(descriptors[admitted_from:admitted_to], admitted_from)
+                for index, descriptor in enumerate(
+                    descriptors[admitted_from:admitted_to], admitted_from
+                )
                 if domains[index] == "messages_payload"
             )
             continuation_delta = tuple(
                 descriptor
-                for index, descriptor in enumerate(descriptors[admitted_from:admitted_to], admitted_from)
+                for index, descriptor in enumerate(
+                    descriptors[admitted_from:admitted_to], admitted_from
+                )
                 if domains[index] == "provider_continuations"
             )
             delta_provenance = replace(
@@ -3128,9 +3136,7 @@ class ConsoleTraceService:
         entries = _sequence_entries(root_node)
         root = _ProjectionRoot(None, base=tuple(entries))
         inherited_lineage = (
-            ()
-            if inherited_projection is None
-            else inherited_projection.lineage_domains
+            () if inherited_projection is None else inherited_projection.lineage_domains
         )
         projection = _SurfaceProjection(
             head_id,
@@ -3852,9 +3858,7 @@ class ConsoleTraceService:
         if revision.source_conversation_id == owner.conversation_id:
             return
         segment = self.repository.get_segment(cursor, owner.root_segment_id)
-        inherited_head = (
-            None if segment is None else segment.inherited_surface_head_id
-        )
+        inherited_head = None if segment is None else segment.inherited_surface_head_id
         head = (
             None
             if inherited_head is None
@@ -3881,7 +3885,24 @@ class ConsoleTraceService:
         *,
         policy: FrozenTracePolicy | None = None,
     ) -> TraceContentRef:
-        projected = self._pii_projected_value(value, policy=policy)
+        redaction = None
+        projected = value
+        if policy is not None and policy.pii_redaction_enabled:
+            if policy.pii_ruleset_revision_id is None:
+                projected = {"omitted": CUSTOM_PII_RULESET_UNAVAILABLE}
+            else:
+                redaction = redact_pii_value_for_ruleset_revision(
+                    value,
+                    policy.pii_ruleset_revision_id,
+                )
+                projected = (
+                    redaction.value
+                    if redaction.available
+                    else {
+                        "omitted": redaction.omission_reason_code
+                        or CUSTOM_PII_RULESET_UNAVAILABLE
+                    }
+                )
         body = _artifact_bytes(projected)
         artifact = self.repository.store_sanitized_artifact(
             cursor,
@@ -3889,21 +3910,20 @@ class ConsoleTraceService:
             media_type=TRACE_VALUE_MEDIA_TYPE,
             normalization_version=TRACE_VALUE_NORMALIZATION_VERSION,
         )
-        if policy is not None and policy.pii_redaction_enabled:
-            redaction = redact_pii_value(value)
-            if redaction.available:
-                by_path: dict[str, list[PIIRedactionSpan]] = {}
-                for item in redaction.field_redactions:
-                    by_path.setdefault(item.field_path, []).append(item.span)
-                for field_path, spans in sorted(by_path.items()):
-                    self.repository.ensure_redaction_spans(
-                        cursor,
-                        policy_id=policy.policy_id,
-                        semantic_revision_id=None,
-                        artifact_id=artifact.artifact_id,
-                        field_path=field_path,
-                        spans=spans,
-                    )
+        if redaction is not None and redaction.available:
+            assert policy is not None
+            by_path: dict[str, list[PIIRedactionSpan]] = {}
+            for item in redaction.field_redactions:
+                by_path.setdefault(item.field_path, []).append(item.span)
+            for field_path, spans in sorted(by_path.items()):
+                self.repository.ensure_redaction_spans(
+                    cursor,
+                    policy_id=policy.policy_id,
+                    semantic_revision_id=None,
+                    artifact_id=artifact.artifact_id,
+                    field_path=field_path,
+                    spans=spans,
+                )
         return TraceContentRef(artifact.artifact_id, "trace_artifact")
 
     @staticmethod
@@ -3914,9 +3934,16 @@ class ConsoleTraceService:
     ) -> object:
         if policy is None or not policy.pii_redaction_enabled:
             return value
-        result = redact_pii_value(value)
+        if policy.pii_ruleset_revision_id is None:
+            return {"omitted": CUSTOM_PII_RULESET_UNAVAILABLE}
+        result = redact_pii_value_for_ruleset_revision(
+            value,
+            policy.pii_ruleset_revision_id,
+        )
         if not result.available:
-            return {"omitted": PII_DETECTOR_UNAVAILABLE}
+            return {
+                "omitted": result.omission_reason_code or CUSTOM_PII_RULESET_UNAVAILABLE
+            }
         return result.value
 
     def _append_omission(
@@ -4476,7 +4503,12 @@ def _saved_reference_key(
     if type(descriptor) is not DerivedTraceProvenance:
         return None
     derived = cast(DerivedTraceProvenance, descriptor)
-    if derived.artifact is not None:
+    # A saved continuation is persisted as a policy-owned artifact, but its
+    # provider value must still match the immutable revision that supplied it.
+    if (
+        derived.artifact is not None
+        and derived.transform is not TraceTransformKind.CONTINUATION_ATTACHMENT
+    ):
         return None
     saved = _saved_inputs(derived)
     if len(saved) != 1:

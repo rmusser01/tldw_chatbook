@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-01 15:07'
-updated_date: '2026-09-01 17:27'
+updated_date: '2026-09-02 07:29'
 labels: []
 dependencies: []
 references:
@@ -16,32 +16,30 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Publish the reviewed Personal Context documentation design on Chatbook dev so both repositories can use a stable implementation reference.
+Publish and maintain an accurate Personal Context documentation design on Chatbook `dev` so both repositories can use one stable implementation reference. Correct the merged reference when implementation audit evidence shows that it overstates shipped behavior.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 The spec-only branch contains the approved design specification and shipped-behavior corrections without implementation changes.
-- [x] #2 Diff, scope, duplicate-ID, and reference verification passes, and the PR includes this Backlog task record.
-- [x] #3 The task records ADR disposition, exact verification evidence, implementation notes, and final status before the PR is opened.
+- [x] #1 The specification distinguishes reviewed first-link publication from the absent ongoing Personal Context sync caller and labels protocol or future behavior accordingly.
+- [x] #2 The specification accurately documents adaptive-interview egress and disclosure timing, fixed-mode no-provider-call behavior, interview-to-record materialization, transport/TLS behavior, pre-approval remote-snapshot download and content-free review surfaces, canonical-repository removal versus residual Sync state, recovery limits, conflict surfaces, and incomplete purge distribution.
+- [x] #3 Both products can reuse one exact four-bullet shared contract that states convergence on the eligible snapshot resulting from the user-approved content-free reconciliation plan, queued later mutations, peer-local state, and the separate Shared Core/Sync V2 boundaries without implying ongoing convergence or profile-value review.
+- [x] #4 Diff, scope, semantic, link, and duplicate-ID verification passes for the specification and this task record without application changes.
+- [x] #5 The task records the existing-ADR disposition, exact verification evidence, implementation notes, and In Progress review handoff before a PR is opened.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Verify the approved specification commits and ADR-102 disposition.
-2. Create a spec-only worktree from current origin/dev and cherry-pick the three reviewed specification commits plus this task record.
-3. Run diff, scope, duplicate-ID, and stable-reference checks.
-4. Record exact evidence, close the task, open the spec-only PR, and merge only after required checks/review.
+1. Re-read the merged documentation design, ADR-102, and verified shipped Personal Context behavior.
+2. Correct the specification so every lifecycle, interview, transport, deletion, recovery, conflict, and purge claim distinguishes shipped behavior from protocol capability or future intent.
+3. Replace the exact shared four-bullet contract with first-link-only and current-limitation wording suitable for verbatim reuse in both products.
+4. Run fail-closed diff, semantic, link, scope, and task-ID checks; record exact evidence and implementation notes.
+5. Keep TASK-27016 In Progress until independent review and eventual PR closeout.
 
-ADR required: no new ADR required; existing ADR applies
-ADR path: `backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md`
-Reason: this PR publishes reviewed documentation only; ADR-102 already governs the implemented architecture.
-
-Follow-up correction plan:
-5. Replace the stale pre-merge wording with the completed final checks for 145ac07d527aab6a75e6ffdb406d42b06a7c12f4.
-6. Cite backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md wherever the ADR disposition appears in the spec and task.
-7. Verify exact two-file scope, Markdown and diff hygiene, ADR-path existence, and TASK-27016 uniqueness before closing the task and merging the follow-up PR.
+ADR required: no new ADR required; existing ADR applies.
+ADR path: backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md
+Reason: this correction changes documentation claims only; it does not change the architecture governed by ADR-102.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -75,6 +73,54 @@ Follow-up verification before closeout on origin/dev `0b17f7f73cad28cdb5089aa5ff
 - The repository Python 3.12 environment passed all 3 targeted backlog task-ID uniqueness tests.
 - The all-ref and all-worktree sweeps found only the same TASK-27016 filename and identity.
 - No application test sweep was run because this follow-up is documentation-only.
+
+Shipped-behavior truth correction prepared from current `origin/dev` `e167d0be2ec254595ecaa100c550d30930e645e7`. The specification now separates ADR-102's intended ongoing-sync architecture from the shipped first-link-only lifecycle. It records the absent ongoing Personal Context caller; Notes/Chat-only Manual Sync; adaptive-interview request contents and delayed provider/model disclosure; fixed-mode no-provider-call behavior; HTTP/TLS and Test Connection behavior; pre-approval bootstrap metadata and transient remote-content download; the content-free durable/review surfaces; canonical-repository removal versus residual Sync state; recovery-import and key-cleanup limits; absent status/conflict UI; and incomplete purge distribution. It also supplies the exact four-bullet statement that both products must reuse.
+
+ADR required: no new ADR required; existing ADR applies.
+ADR path: `backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md`.
+Reason: this correction changes documentation claims only and records verified implementation gaps; it introduces no storage, authority, synchronization, security, or runtime decision beyond ADR-102.
+
+Verification evidence before independent review:
+- A fail-closed semantic contract check passed all 19 required shipped-boundary claims, confirmed exactly four shared-contract bullets, resolved the three local reference paths, and rejected stale ongoing-sync wording.
+- `git diff --check` exited 0, and the exact-scope assertion found only the specification and TASK-27016 record.
+- `python -m pytest Tests/CI/test_backlog_task_id_uniqueness.py -q` passed all 3 tests under the repository Python 3.12 environment; pytest emitted sandbox cleanup warnings after the successful run.
+- The all-ref and all-worktree sweeps found TASK-27016 only at the same canonical task filename and identity; no distinct claimant path exists.
+- No application test sweep was run because the correction changes documentation and task metadata only.
+- TASK-27016 remains In Progress for independent specification and quality review. No PR was opened.
+
+Critical spec-review correction: the earlier publication matrix conflated peer-local interview draft/transcript objects with answer content later materialized into canonical profile records. `ProfileInterviewCoordinator._change_for_answer()` places the answer in an ordinary payload and defaults the proposed controls to `syncable` and `agent_visible`; saving reviewed changes commits those records through the normal Personal Context service. The specification now states that draft/transcript objects are not Sync payloads as such, while approved answer content follows normal record visibility and syncability: eligible content can publish in the snapshot resulting from the user-approved content-free reconciliation plan, queue in the encrypted outbox after linking, or remain local when device-only.
+
+Review-fix evidence:
+- Before the wording change, the negative semantic control failed on the matrix's blanket exclusion of both draft objects and raw answer text from profile Sync.
+- After the change, the same control rejects the former blanket draft/answer and whole-mode-local claims while requiring the draft/transcript object boundary, record materialization, first-link publication, later outbox, and device-only outcomes.
+- TASK-27016 remains In Progress for re-review. No PR was opened.
+
+Focused source-trace correction: first-link preparation downloads the server's current Sync-eligible canonical record/proposal snapshot into transient memory before approval, while the persisted pre-approval state and visible reconciliation plan remain content-free and no local profile content is uploaded. The review surface exposes identifiers, versions, counts, outcomes, and local/server choices rather than profile values. **Remove local profile** clears canonical `PersonalContextRepository` content, including its own canonical outbox and quarantine, but does not clear the separate `SyncStateRepository` rows or dataset staging keys and therefore is not a complete device-local purge. **Finish secure removal** retries canonical profile-key cleanup only.
+
+Focused correction evidence:
+- The fail-closed semantic contract check passed with exactly four reusable bullets, 19 required boundary claims, seven stale claims absent, three local references resolved, and five checked acceptance criteria.
+- Four negative controls each failed when reintroducing a former false claim about approval, content review, or complete local removal.
+- `git diff --check` passed, and exact-scope checks found only the specification and this task record across the branch and working tree.
+- `python -m pytest Tests/CI/test_backlog_task_id_uniqueness.py -q --disable-warnings` passed all 3 targeted tests under the repository Python 3.12 environment; pytest reported one sandbox cleanup warning after the successful run.
+- The exact reusable four-bullet block describes the eligible snapshot as resulting from the user-approved content-free reconciliation plan.
+- TASK-27016 remains In Progress for re-review. No PR was opened.
+
+Independent specification review and the subsequent quality review approved the source-traced canonical correction after the Critical findings above were resolved. The approved specification wording was then prepared for PR without closing this review task.
+
+Post-rebase evidence on `origin/dev` `a1391b0baf81bb671097d1c225780d58b094ee7f`:
+- All three correction commits rebased without conflict, and a direct file comparison with pre-rebase correction commit `cb3a36dcf4ee2b8f72e31f99d2dc5e1ba9fe2bd9` confirmed that the approved specification wording was unchanged.
+- The fail-closed semantic, exact shared-block, local-link, and task-state check passed with four exact bullets, 19 required claims, seven stale claims absent, three links resolved, and five checked acceptance criteria; four negative controls still caught the former false claims.
+- `git diff --check origin/dev...HEAD` passed, and the rebased exact-scope check found only the specification and this task record.
+- `python -m pytest Tests/CI/test_backlog_task_id_uniqueness.py -q --disable-warnings` passed all 3 targeted tests under the repository Python 3.12 environment; pytest reported one sandbox cleanup warning after the successful run.
+- The all-ref and all-worktree collision sweeps each found only `backlog/tasks/task-27016 - Publish-approved-Personal-Context-documentation-design.md` as the TASK-27016 claimant path.
+- TASK-27016 remains In Progress for PR review and closeout. No PR was opened or merged by this preparation step.
+
+PR closeout evidence for reviewed head `4e97a8a9dacfded8c254591852c120a9cd5d81d0` on [PR #2310](https://github.com/rmusser01/tldw_chatbook/pull/2310):
+- GitHub reported **No duplicate backlog task IDs** (`Backlog Guard`) successful at `2026-09-02T07:14:45Z`, **PR Fast Lane** successful at `2026-09-02T07:21:18Z`, and **Derived artifacts reproduce from their sources** successful at `2026-09-02T07:26:58Z`.
+- The CodeRabbit status context returned `SUCCESS`; under repository policy, no CodeRabbit review was required.
+- Qodo's completed review reported zero bugs, zero rule violations, zero requirement gaps, and no material findings at `2026-09-02T07:19:15Z`.
+- GitHub GraphQL returned `reviewThreads.totalCount: 0`; there were no review threads to resolve.
+- GitHub reported the PR open against `dev` at base `a1391b0baf81bb671097d1c225780d58b094ee7f`; this closeout does not merge it.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
