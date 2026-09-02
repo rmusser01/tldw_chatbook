@@ -57,6 +57,7 @@ The Chatbook approved specification and publication history are already on `dev`
 Run:
 
 ```bash
+set -e -o pipefail
 git fetch origin dev
 git rebase origin/dev
 ```
@@ -68,6 +69,7 @@ Expected: the branch rebases cleanly without unrelated working-tree changes.
 Run:
 
 ```bash
+set -e -o pipefail
 backlog task 27019 --plain
 rg -n "TASK-27019|Document Personal Context Profile for Chatbook" \
   "backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md"
@@ -125,6 +127,7 @@ Expected: the only unique matching task filename by either ID or title is the in
 Run:
 
 ```bash
+set -e -o pipefail
 rg -Fq 'Remove local profile' tldw_chatbook/Widgets/Settings_Widgets/personal_context_panel.py
 rg -Fq 'Run interview again' tldw_chatbook/Widgets/Settings_Widgets/personal_context_panel.py
 rg -Fq 'Get to know you' tldw_chatbook/UI/Screens/profile_interview_screen.py
@@ -175,6 +178,7 @@ Expected: removal, interview, and service surfaces exist; no shipped Chatbook **
 Run:
 
 ```bash
+set -e -o pipefail
 for profile_domain in \
   personal_context.manifest \
   personal_context.scope \
@@ -189,11 +193,100 @@ rg -Fq 'class PersonalContextOutboxDispatcher' \
   tldw_chatbook/Sync_Interop/personal_context_dispatcher.py
 rg -Fq 'async def bootstrap_sync_v2_personal_context' tldw_chatbook/tldw_api/client.py
 rg -Fq 'async def complete_sync_v2_personal_context_link' tldw_chatbook/tldw_api/client.py
-if rg -n -U -P '_insert_outbox\(\s*\n\s*connection,\s*\n\s*object_type="purge"' \
-  tldw_chatbook/Personal_Context/repository.py; then
-  echo 'Unexpected Chatbook Personal Context purge producer'
-  exit 1
+profile_python=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python
+if [ ! -x "$profile_python" ]; then
+  profile_python=.venv/bin/python
 fi
+test -x "$profile_python"
+test "$("$profile_python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" = '3.12'
+"$profile_python" - <<'PY'
+import ast
+from pathlib import Path
+
+ROOTS = (Path("tldw_chatbook/Personal_Context"), Path("tldw_chatbook/Sync_Interop"))
+EXPECTED = {"manifest", "scope", "record", "proposal"}
+PRODUCERS = {"_insert_outbox", "commit_outbox_body"}
+
+
+def name(call: ast.Call) -> str:
+    return call.func.attr if isinstance(call.func, ast.Attribute) else (
+        call.func.id if isinstance(call.func, ast.Name) else ""
+    )
+
+
+def literal_types(call: ast.Call) -> set[str]:
+    values = [*call.args, *(kw.value for kw in call.keywords if kw.arg == "object_type")]
+    return {
+        value.value
+        for value in values
+        if isinstance(value, ast.Constant) and isinstance(value.value, str)
+    }
+
+
+def purge_calls(source: str) -> list[int]:
+    return [
+        node.lineno
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and name(node) in PRODUCERS
+        and "purge" in literal_types(node)
+    ]
+
+
+assert purge_calls("repo._insert_outbox(c, object_type='purge')")
+assert purge_calls("repo.commit_outbox_body(object_type='purge')")
+violations: list[str] = []
+literal_producers: set[str] = set()
+dynamic_insertions: set[tuple[str, str]] = set()
+direct_commit_calls: list[str] = []
+for path in (path for root in ROOTS for path in root.rglob("*.py")):
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+        producer = name(call)
+        if producer not in PRODUCERS:
+            continue
+        types = literal_types(call)
+        literal_producers.update(types & (EXPECTED | {"purge"}))
+        if "purge" in types:
+            violations.append(f"{path}:{call.lineno}: literal purge producer")
+        owner = call
+        while owner in parents and not isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            owner = parents[owner]
+        owner_name = owner.name if isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)) else "<module>"
+        object_kw = next((kw.value for kw in call.keywords if kw.arg == "object_type"), None)
+        if producer == "_insert_outbox" and object_kw is not None and not isinstance(object_kw, ast.Constant):
+            dynamic_insertions.add((owner_name, ast.unparse(object_kw)))
+        if producer == "commit_outbox_body":
+            direct_commit_calls.append(f"{path}:{call.lineno}")
+
+if literal_producers != EXPECTED:
+    violations.append(f"literal producer domains changed: {sorted(literal_producers)}")
+if dynamic_insertions != {("apply_reviewed_link", "object_type"), ("commit_outbox_body", "object_type")}:
+    violations.append(f"dynamic producer seams changed: {sorted(dynamic_insertions)}")
+if direct_commit_calls:
+    violations.append(f"commit_outbox_body gained callers: {direct_commit_calls}")
+
+adapter = ast.parse(
+    Path("tldw_chatbook/Sync_Interop/personal_context_adapter.py").read_text(encoding="utf-8")
+)
+model_keys = next(
+    {
+        key.value
+        for key in node.value.keys
+        if isinstance(key, ast.Constant) and isinstance(key.value, str)
+    }
+    for node in ast.walk(adapter)
+    if isinstance(node, ast.Assign)
+    and any(isinstance(target, ast.Name) and target.id == "_MODELS" for target in node.targets)
+    and isinstance(node.value, ast.Dict)
+)
+if model_keys != EXPECTED:
+    violations.append(f"adapter publishable model map changed: {sorted(model_keys)}")
+if violations:
+    raise SystemExit("\n".join(violations))
+print("No reachable Chatbook purge producer; producer seams remain the reviewed four domains.")
+PY
 if rg -n -i -e 'personal.context.*post.?link.*resolve' \
   -e 'post.?link.*personal.context.*resolve' \
   tldw_chatbook/Widgets/Settings_Widgets tldw_chatbook/UI/Screens/profile_interview_screen.py; then
@@ -221,6 +314,7 @@ Expected: task remains **In Progress** with an implementation plan and ADR check
 Run:
 
 ```bash
+set -e -o pipefail
 git add \
   Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md \
   "backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md"
@@ -310,6 +404,7 @@ Link to:
 Run:
 
 ```bash
+set -e -o pipefail
 rg -n "does not currently expose|not currently published|not wired end to end|no dedicated Personal Context" \
   Docs/User_Guide/settings/personal-context-profile.md
 git diff --check -- Docs/User_Guide/settings/personal-context-profile.md
@@ -318,12 +413,18 @@ git diff -- Docs/User_Guide/settings/personal-context-profile.md
 
 Expected: current limitations are explicit and the existing reference is refined rather than duplicated.
 
-- [ ] **Step 8: Commit the user guide**
+- [ ] **Step 8: Record Task 2 execution and commit the user guide**
+
+After Steps 1-7 have run successfully, mark every Task 2 step through this commit step `[x]`. Commit that execution record with the guide.
 
 Run:
 
 ```bash
-git add Docs/User_Guide/settings/personal-context-profile.md
+set -e -o pipefail
+git add \
+  Docs/User_Guide/settings/personal-context-profile.md \
+  Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md
+git diff --check --cached
 git commit -m "docs: clarify Chatbook Personal Context workflows"
 ```
 
@@ -340,6 +441,17 @@ Cover Shared Core `0.1.0`, separate Sync-v2 envelopes, post-link identity conver
 - `../superpowers/specs/2026-08-28-unified-personal-context-profile-design.md`
 - `../../backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md`
 - `Sync-v2-client.md`
+
+Include this exact four-bullet block, including both markers and every bullet; marker presence alone is insufficient:
+
+```markdown
+<!-- shared-personal-context-contract:start -->
+- `tldw_profile_core` defines the versioned canonical profile object models, exact canonical bytes, interview/tool contracts, serialization, and validation used by both peers. Sync-v2 transport envelopes are a separate contract.
+- After a successful reviewed link, Chatbook and tldw_server converge on the same canonical manifest, scope, record, proposal, and version identities and bytes for eligible shared objects.
+- Sync V2 defines the `personal_context.manifest`, `personal_context.scope`, `personal_context.record`, `personal_context.proposal`, and content-free `personal_context.purge` domains. The current linked flow publishes eligible Chatbook-originated manifest, scope, record, and proposal changes; purge production and distribution are not wired end to end.
+- Each peer retains its own at-rest ciphertext and keys, local database rows, runtime permissions, conflict-review metadata, acknowledgement tracking, and other operational state.
+<!-- shared-personal-context-contract:end -->
+```
 
 - [ ] **Step 2: Add the component map**
 
@@ -424,6 +536,7 @@ Map:
 Run:
 
 ```bash
+set -e -o pipefail
 test -f Docs/Development/Sync-v2-client.md
 test -f Docs/superpowers/specs/2026-08-28-unified-personal-context-profile-design.md
 test -f backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md
@@ -436,12 +549,18 @@ test -f tldw_chatbook/Agents/profile_tool_provider.py
 git diff --check -- Docs/Development/personal-context-profile.md
 ```
 
-- [ ] **Step 6: Commit the developer guide**
+- [ ] **Step 6: Record Task 3 execution and commit the developer guide**
+
+After Steps 1-5 have run successfully, mark every Task 3 step through this commit step `[x]`. Commit that execution record with the guide.
 
 Run:
 
 ```bash
-git add Docs/Development/personal-context-profile.md
+set -e -o pipefail
+git add \
+  Docs/Development/personal-context-profile.md \
+  Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md
+git diff --check --cached
 git commit -m "docs: add Chatbook Personal Context developer guide"
 ```
 
@@ -461,26 +580,48 @@ git commit -m "docs: add Chatbook Personal Context developer guide"
 
 - [ ] **Step 2: Add the focused developer pointer**
 
-Near the top of `Docs/Development/Developer_Guide.md`, link `personal-context-profile.md` as the canonical guide for Personal Context internals and extension work. Do not add a second architecture summary.
+Near the top of `Docs/Development/Developer_Guide.md`, add this exact pointer and do not add a second architecture summary:
+
+```markdown
+For Personal Context internals and extension work, see [Personal Context Profile](personal-context-profile.md).
+```
 
 - [ ] **Step 3: Confirm Settings already links the page**
 
 Run:
 
 ```bash
-rg -n "My Profile.*personal-context-profile\.md" Docs/User_Guide/settings.md
+set -e -o pipefail
+rg -Fq '| **Applies immediately** | Each action takes effect at once; no draft to save or revert. | Workspaces, [My Profile](settings/personal-context-profile.md) |' \
+  Docs/User_Guide/settings.md
+rg -Fq '| Data & Privacy | **My Profile** → [own page](settings/personal-context-profile.md) | Personal and workspace context, interviews, agent proposals, authority, export, and removal. | Applies immediately |' \
+  Docs/User_Guide/settings.md
 ```
 
-Expected: existing links are present; leave `settings.md` unchanged.
+Expected: both existing Settings links are present independently; leave `settings.md` unchanged.
 
-- [ ] **Step 4: Validate and commit discovery links**
+- [ ] **Step 4: Validate discovery links, record Task 4 execution, and commit**
+
+After Steps 1-3 have run successfully, mark every Task 4 step through this commit step `[x]`. Commit that execution record with the discovery indexes.
 
 Run:
 
 ```bash
-rg -n "personal-context-profile\.md" Docs/User_Guide/index.md Docs/User_Guide/settings.md Docs/Development/Developer_Guide.md
+set -e -o pipefail
+rg -Fq '| [Set up and manage your Personal Context Profile](settings/personal-context-profile.md) | Optional interviews, global/workspace context, agent proposals, synchronization boundaries, export, and removal. |' \
+  Docs/User_Guide/index.md
+rg -Fq 'For Personal Context internals and extension work, see [Personal Context Profile](personal-context-profile.md).' \
+  Docs/Development/Developer_Guide.md
+rg -Fq '| **Applies immediately** | Each action takes effect at once; no draft to save or revert. | Workspaces, [My Profile](settings/personal-context-profile.md) |' \
+  Docs/User_Guide/settings.md
+rg -Fq '| Data & Privacy | **My Profile** → [own page](settings/personal-context-profile.md) | Personal and workspace context, interviews, agent proposals, authority, export, and removal. | Applies immediately |' \
+  Docs/User_Guide/settings.md
 git diff --check -- Docs/User_Guide/index.md Docs/Development/Developer_Guide.md
-git add Docs/User_Guide/index.md Docs/Development/Developer_Guide.md
+git add \
+  Docs/User_Guide/index.md \
+  Docs/Development/Developer_Guide.md \
+  Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md
+git diff --check --cached
 git commit -m "docs: link Personal Context guides"
 ```
 
@@ -581,11 +722,100 @@ rg -Fq 'class PersonalContextOutboxDispatcher' \
   tldw_chatbook/Sync_Interop/personal_context_dispatcher.py
 rg -Fq 'async def bootstrap_sync_v2_personal_context' tldw_chatbook/tldw_api/client.py
 rg -Fq 'async def complete_sync_v2_personal_context_link' tldw_chatbook/tldw_api/client.py
-if rg -n -U -P '_insert_outbox\(\s*\n\s*connection,\s*\n\s*object_type="purge"' \
-  tldw_chatbook/Personal_Context/repository.py; then
-  echo 'Unexpected Chatbook Personal Context purge producer'
-  exit 1
+profile_python=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python
+if [ ! -x "$profile_python" ]; then
+  profile_python=.venv/bin/python
 fi
+test -x "$profile_python"
+test "$("$profile_python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" = '3.12'
+"$profile_python" - <<'PY'
+import ast
+from pathlib import Path
+
+ROOTS = (Path("tldw_chatbook/Personal_Context"), Path("tldw_chatbook/Sync_Interop"))
+EXPECTED = {"manifest", "scope", "record", "proposal"}
+PRODUCERS = {"_insert_outbox", "commit_outbox_body"}
+
+
+def name(call: ast.Call) -> str:
+    return call.func.attr if isinstance(call.func, ast.Attribute) else (
+        call.func.id if isinstance(call.func, ast.Name) else ""
+    )
+
+
+def literal_types(call: ast.Call) -> set[str]:
+    values = [*call.args, *(kw.value for kw in call.keywords if kw.arg == "object_type")]
+    return {
+        value.value
+        for value in values
+        if isinstance(value, ast.Constant) and isinstance(value.value, str)
+    }
+
+
+def purge_calls(source: str) -> list[int]:
+    return [
+        node.lineno
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and name(node) in PRODUCERS
+        and "purge" in literal_types(node)
+    ]
+
+
+assert purge_calls("repo._insert_outbox(c, object_type='purge')")
+assert purge_calls("repo.commit_outbox_body(object_type='purge')")
+violations: list[str] = []
+literal_producers: set[str] = set()
+dynamic_insertions: set[tuple[str, str]] = set()
+direct_commit_calls: list[str] = []
+for path in (path for root in ROOTS for path in root.rglob("*.py")):
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+        producer = name(call)
+        if producer not in PRODUCERS:
+            continue
+        types = literal_types(call)
+        literal_producers.update(types & (EXPECTED | {"purge"}))
+        if "purge" in types:
+            violations.append(f"{path}:{call.lineno}: literal purge producer")
+        owner = call
+        while owner in parents and not isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            owner = parents[owner]
+        owner_name = owner.name if isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)) else "<module>"
+        object_kw = next((kw.value for kw in call.keywords if kw.arg == "object_type"), None)
+        if producer == "_insert_outbox" and object_kw is not None and not isinstance(object_kw, ast.Constant):
+            dynamic_insertions.add((owner_name, ast.unparse(object_kw)))
+        if producer == "commit_outbox_body":
+            direct_commit_calls.append(f"{path}:{call.lineno}")
+
+if literal_producers != EXPECTED:
+    violations.append(f"literal producer domains changed: {sorted(literal_producers)}")
+if dynamic_insertions != {("apply_reviewed_link", "object_type"), ("commit_outbox_body", "object_type")}:
+    violations.append(f"dynamic producer seams changed: {sorted(dynamic_insertions)}")
+if direct_commit_calls:
+    violations.append(f"commit_outbox_body gained callers: {direct_commit_calls}")
+
+adapter = ast.parse(
+    Path("tldw_chatbook/Sync_Interop/personal_context_adapter.py").read_text(encoding="utf-8")
+)
+model_keys = next(
+    {
+        key.value
+        for key in node.value.keys
+        if isinstance(key, ast.Constant) and isinstance(key.value, str)
+    }
+    for node in ast.walk(adapter)
+    if isinstance(node, ast.Assign)
+    and any(isinstance(target, ast.Name) and target.id == "_MODELS" for target in node.targets)
+    and isinstance(node.value, ast.Dict)
+)
+if model_keys != EXPECTED:
+    violations.append(f"adapter publishable model map changed: {sorted(model_keys)}")
+if violations:
+    raise SystemExit("\n".join(violations))
+print("No reachable Chatbook purge producer; producer seams remain the reviewed four domains.")
+PY
 if rg -n -i -e 'personal.context.*post.?link.*resolve' \
   -e 'post.?link.*personal.context.*resolve' \
   tldw_chatbook/Widgets/Settings_Widgets tldw_chatbook/UI/Screens/profile_interview_screen.py; then
@@ -601,6 +831,7 @@ Expected: the branch is based on current `origin/dev`; TASK-27019 resolves uniqu
 Run:
 
 ```bash
+set -e -o pipefail
 for server_doc in \
   Docs/User_Guides/Server/Personal_Context_Profile.md \
   Docs/Code_Documentation/Personal_Context_Developer_Guide.md \
@@ -618,25 +849,58 @@ Expected: each command returns file metadata, and PR #2858 remains merged into `
 
 - [ ] **Step 3: Compare the shared contract block with server `dev`**
 
-Run in `zsh`:
+Run:
 
 ```bash
-diff -u \
-  <(sed -n '/<!-- shared-personal-context-contract:start -->/,/<!-- shared-personal-context-contract:end -->/p' \
-    Docs/User_Guide/settings/personal-context-profile.md | tr -s '[:space:]' ' ') \
-  <(gh api -X GET repos/rmusser01/tldw_server/contents/Docs/User_Guides/Server/Personal_Context_Profile.md \
-    -f ref=dev --jq .content | tr -d '\n' | base64 -D | \
-    sed -n '/<!-- shared-personal-context-contract:start -->/,/<!-- shared-personal-context-contract:end -->/p' | \
-    tr -s '[:space:]' ' ')
+set -e -o pipefail
+profile_python=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python
+if [ ! -x "$profile_python" ]; then
+  profile_python=.venv/bin/python
+fi
+test -x "$profile_python"
+profile_parity_dir=$(mktemp -d)
+trap 'rm -r "$profile_parity_dir"' EXIT
+gh api -X GET repos/rmusser01/tldw_server/contents/Docs/User_Guides/Server/Personal_Context_Profile.md \
+  -f ref=dev --jq .content | tr -d '\n' | base64 -D > "$profile_parity_dir/server.md"
+"$profile_python" - \
+  Docs/User_Guide/settings/personal-context-profile.md \
+  Docs/Development/personal-context-profile.md \
+  "$profile_parity_dir/server.md" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+START = "<!-- shared-personal-context-contract:start -->"
+END = "<!-- shared-personal-context-contract:end -->"
+normalized: list[tuple[str, str]] = []
+for raw_path in sys.argv[1:]:
+    path = Path(raw_path)
+    text = path.read_text(encoding="utf-8")
+    match = re.search(re.escape(START) + r"(.*?)" + re.escape(END), text, re.DOTALL)
+    if match is None:
+        raise SystemExit(f"missing shared-contract block: {path}")
+    bullets = [line for line in match.group(1).splitlines() if line.startswith("- ")]
+    if len(bullets) != 4:
+        raise SystemExit(f"expected four shared-contract bullets in {path}, found {len(bullets)}")
+    normalized.append((str(path), " ".join(match.group(0).split())))
+baseline_path, baseline = normalized[0]
+if not baseline:
+    raise SystemExit(f"empty shared-contract block: {baseline_path}")
+for path, block in normalized[1:]:
+    if not block or block != baseline:
+        raise SystemExit(f"shared-contract block diverges: {baseline_path} != {path}")
+print("Shared-contract four-bullet block matches across both Chatbook guides and server dev.")
+PY
 ```
 
-Expected: no diff. This is the automated normalized-text parity check for the four shared-contract bullets.
+Expected: every marked block is non-empty, contains exactly four bullets, and normalizes identically across the Chatbook user guide, Chatbook developer guide, and server `dev` operator guide.
 
 - [ ] **Step 4: Run targeted contract, Settings, Console, linking, dispatcher, and client checks**
 
 Run:
 
 ```bash
+set -e -o pipefail
 profile_python=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python
 if [ ! -x "$profile_python" ]; then
   profile_python=.venv/bin/python
@@ -667,7 +931,7 @@ Expected: the selected tests pass under the checked Chatbook Python 3.12 environ
 Run:
 
 ```bash
-set -e
+set -e -o pipefail
 profile_user_guide=Docs/User_Guide/settings/personal-context-profile.md
 profile_developer_guide=Docs/Development/personal-context-profile.md
 profile_plan=Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md
@@ -716,20 +980,21 @@ rg -Fq 'https://github.com/rmusser01/tldw_server/blob/dev/Docs/User_Guides/Serve
   "$profile_user_guide"
 rg -Fq 'https://github.com/rmusser01/tldw_server/blob/dev/Docs/API-related/Personal_Context_API.md' \
   "$profile_user_guide"
-
-if profile_pending_steps=$(sed -n '/^### Task 1:/,/^### Task 6:/p' "$profile_plan" | rg -n '^- \[ \]'); then
-  printf 'Unexecuted Task 1-5 plan steps:\n%s\n' "$profile_pending_steps"
-  exit 1
-else
-  profile_pending_status=$?
-  test "$profile_pending_status" -eq 1 || exit "$profile_pending_status"
-fi
+rg -Fq '| [Set up and manage your Personal Context Profile](settings/personal-context-profile.md) | Optional interviews, global/workspace context, agent proposals, synchronization boundaries, export, and removal. |' \
+  Docs/User_Guide/index.md
+rg -Fq 'For Personal Context internals and extension work, see [Personal Context Profile](personal-context-profile.md).' \
+  Docs/Development/Developer_Guide.md
+rg -Fq '| **Applies immediately** | Each action takes effect at once; no draft to save or revert. | Workspaces, [My Profile](settings/personal-context-profile.md) |' \
+  Docs/User_Guide/settings.md
+rg -Fq '| Data & Privacy | **My Profile** → [own page](settings/personal-context-profile.md) | Personal and workspace context, interviews, agent proposals, authority, export, and removal. | Applies immediately |' \
+  Docs/User_Guide/settings.md
 
 profile_changed_paths=$(
   {
     git diff --name-only origin/dev...HEAD
     git diff --name-only
     git diff --cached --name-only
+    git ls-files --others --exclude-standard
   } | sed '/^$/d' | sort -u
 )
 profile_unexpected_paths=$(
@@ -755,36 +1020,66 @@ git diff --stat origin/dev...HEAD
 git diff --stat --cached
 ```
 
-Expected: each guide independently proves its required shared-contract and current-limit claims; all seven user failure-state labels are explicit; every internal and server link target is checked; Tasks 1-5 have no unexecuted checkbox; and the allowed-path assertion accepts only the two guides, two discovery indexes, plan, and TASK-27019.
+Expected: each guide independently proves its required shared-contract and current-limit claims; all seven user failure-state labels are explicit; every new discovery link and every internal/server target is checked independently; and the allowed-path assertion accepts only the two guides, two discovery indexes, plan, and TASK-27019 across committed, staged, unstaged, and untracked paths.
+
+- [ ] **Step 6: Commit the completed Task 5 execution record**
+
+After Steps 1-5 have run successfully, mark every Task 5 step through this commit step `[x]`. Before Task 6 begins, fail if any Task 1-5 checkbox remains open, then commit the plan so the final rebase and all verification evidence are recorded in a clean worktree.
+
+Run:
+
+```bash
+set -e -o pipefail
+profile_plan=Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md
+if profile_pending_steps=$(sed -n '/^### Task 1:/,/^### Task 6:/p' "$profile_plan" | rg -n '^- \[ \]'); then
+  printf 'Unexecuted Task 1-5 plan steps:\n%s\n' "$profile_pending_steps"
+  exit 1
+else
+  profile_pending_status=$?
+  test "$profile_pending_status" -eq 1 || exit "$profile_pending_status"
+fi
+git add "$profile_plan"
+git diff --check --cached
+git commit -m "docs: record Chatbook Personal Context verification"
+git diff --check origin/dev...HEAD
+test -z "$(git status --short)"
+```
+
+Expected: Tasks 1-5 are checked and committed, and Task 6 starts with no uncommitted plan changes.
 
 ### Task 6: Close TASK-27019 and open the Chatbook PR
 
 **Files:**
 
+- Modify: `Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md`
 - Modify: `backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md`
 
 - [ ] **Step 1: Complete every acceptance criterion, record evidence, and mark Done as the final repository mutation**
 
-Run, replacing the bracketed evidence with the exact commands and results from Task 5:
+After all Task 5 evidence is recorded, mark Task 6 Step 1 `[x]`. Then run the following as the final repository mutation, replacing the bracketed evidence with the exact commands and results from Task 5:
 
 ```bash
+set -e -o pipefail
 backlog task edit 27019 \
   --check-ac 1 --check-ac 2 --check-ac 3 --check-ac 4 --check-ac 5 \
   --notes "Implemented the Chatbook Personal Context user and developer guides, discovery links, exact shared-contract parity block, current sync/non-sync matrix, seven failure states, and ten-item extension checklist. Verification: [exact Task 5 results]. ADR required: no new ADR required; existing ADR applies. ADR path: backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md. Reason: documentation only; the existing Personal Context authority, Sync, and encryption ADR applies. Lessons learned: [record a genuine lesson with its incident, or state none]." \
   -s Done
 backlog task 27019 --plain
-git add "backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md"
+git add \
+  Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md \
+  "backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md"
 git diff --check --cached
 git commit -m "docs: close Chatbook Personal Context documentation task"
 ```
 
-Expected: all ACs are checked, Implementation Notes/evidence are present, and TASK-27019 is Done. Do not rebase or modify repository files after this commit.
+Expected: all ACs and Task 6 Step 1 are checked, Implementation Notes/evidence are present, and TASK-27019 is Done. The plan and task are staged together as the final repository mutation. Do not rebase or modify repository files after this commit.
 
 - [ ] **Step 2: Push and open the PR against `dev`**
 
 Prepare `/tmp/personal-context-chatbook-pr.md` with summary, current limitations, and exact evidence, then run:
 
 ```bash
+set -e -o pipefail
 git push -u origin codex/personal-context-docs
 gh pr create --base dev --head codex/personal-context-docs --title "docs: add Personal Context user and developer guides" --body-file /tmp/personal-context-chatbook-pr.md
 ```
