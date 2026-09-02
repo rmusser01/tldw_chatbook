@@ -315,6 +315,31 @@ rediscover the same red from scratch.
   unrelated `chat_screen.py` growth from other work on `dev`; reconfirmed
   pre-existing by every task in this series via the same `git stash -u`
   method.
+- Wave-2 Task 2 (export state PR) found 14 more, all reconfirmed identical
+  (same 14, no more/fewer) on a `git stash -u` baseline of the pre-task
+  tree via a direct node-id rerun (not the xdist sweep):
+  `Tests/UI/test_library_export_cancel.py::
+  test_cancel_apply_current_run_sets_cancelled_status` (an unbound-fake
+  `SimpleNamespace` call into `_apply_library_export_cancelled` hits
+  `AttributeError: 'types.SimpleNamespace' object has no attribute
+  '_sync_library_emergency_guard_presentation'` — that call was added to
+  the method by other work after this fake's flat attribute list was last
+  updated); `Tests/UI/test_library_honesty_accessibility.py::
+  test_escape_works_on_export_and_staging_canvases`,
+  `test_rail_entry_to_export_after_media_origin_does_not_claim_media`;
+  `Tests/UI/test_library_per_click_recompose_t21116.py::
+  test_export_open_from_media_is_canvas_scoped`; six
+  `Tests/UI/test_library_shell.py` tests (the three
+  `test_library_shell_note_export_pushes_file_save_dialog` parametrizations,
+  `test_library_shell_note_write_export_file_writes_expected_content`,
+  `test_library_shell_note_write_export_file_rejects_invalid_path`,
+  `test_library_shell_notes_selected_export_opens_exact_selection_scope`)
+  and four `test_library_note_keyboard_capability_matrix` parametrizations
+  (`multi_select_export`, `export_markdown_text` × two terminal sizes) —
+  these all time out waiting for `#library-notes-row-0` (or a sibling
+  selector) to mount within its 30s budget, consistent with machine-load-
+  sensitive DOM-mount flakiness rather than a logic bug, but confirmed
+  100% reproducible (same set, both runs) rather than randomly flipping.
 
 ## 8. Subsystem order (spec, "Order of work")
 

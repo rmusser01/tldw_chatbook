@@ -582,6 +582,7 @@ from ..Library_Modules.library_conversations_controller import (
     LibraryConversationsController,
 )
 from ..Library_Modules.library_conversations_state import LibraryConversationsState
+from ..Library_Modules.library_export_state import LibraryExportState
 from ..Library_Modules.library_note_import_controller import (
     LibraryNoteImportController,
 )
@@ -980,12 +981,6 @@ class LibraryScreen(BaseAppScreen):
         # so ``show=False`` like the other contextual keys.
         Binding("r", "library_ingest_retry_last", "Retry this batch", show=False),
     ]
-
-    #: task-4023 AC#7: which canvas's "Export…" action opened the Export
-    #: canvas ("" = entered from the rail/deep link). Escape returns
-    #: there; a plain rail switch clears it. Class-level default for the
-    #: same restored-session reason as the other class-level route defaults.
-    _library_export_origin_row_id: str = ""
 
     #: Footer hint set while the Search/RAG canvas is active — mirrors the
     #: show=True bindings the retired Textual Footer used to render
@@ -3230,68 +3225,16 @@ class LibraryScreen(BaseAppScreen):
         # user confirms.
         self._parakeet_v2_pending_report: "PreflightReport | None" = None
         self._parakeet_v2_install_progress = None
-        # Export canvas state (F4 Task 2). ``_library_export_counts`` is
-        # ``None`` until the counts worker lands a result for the current
-        # scope (drives ``LibraryExportFormState.counts_loading`` --
-        # deliberately not a separate boolean flag, so "loading" and "no
-        # result yet" can never drift apart). ``_library_export_form`` is
-        # a plain dict (not a dataclass, unlike the ingest form echo)
-        # since Task 3 reads specific keys off it directly per the F4
-        # plan's screen-attrs contract.
-        self._library_export_scope: ExportScope = ExportScope(kind="everything")
-        self._library_export_counts: dict[str, int] | None = None
-        # Monotonic ownership for the counts request, separate from the export
-        # execution token below.  Scope/route/generation can all repeat after a
-        # leave -> return ABA visit, so none of them can identify the newest
-        # counts worker on its own.
-        self._library_export_counts_request_id: int = 0
-        self._library_export_form: dict[str, Any] = self._default_library_export_form()
-        # task-14902: True while the export quality chooser's direct-pick
-        # strip renders below its (still-visible) opener button.
-        self._library_export_quality_choices_visible: bool = False
-        self._library_export_running: bool = False
-        self._library_export_error: str = ""
-        # Task 3: the running export's quiet status line ("Exporting…
-        # (N items)"); no backing field existed after Task 2 (its report
-        # flagged this as the natural next attr). Cleared alongside
-        # ``_library_export_error`` on every canvas reset and on run
-        # completion.
-        self._library_export_status: str = ""
-        # Task 3 review fix: a monotonic token identifying the CURRENT
-        # export attempt. Bumped both when a new export starts
-        # (``handle_library_export_submit``) and whenever the export
-        # canvas's transient state is reset out from under an in-flight
-        # run (``_reset_library_export_transient_state`` -- reachable via
-        # any rail-row switch or "Export…" section action while a worker
-        # is still executing on its own OS thread, which cannot be
-        # preempted mid-``asyncio.run`` by ``Worker.cancel()``). The
-        # worker captures the token at dispatch time and the completion
-        # handlers compare it back against the live value before mutating
-        # ``_library_export_running``/``_library_export_error``/
-        # ``_library_export_status`` or touching the DOM -- an orphaned
-        # run's late completion still notifies (the export genuinely
-        # happened) but can never stomp whatever the user is now looking
-        # at, mirroring ``_apply_library_export_counts``'s scope-mismatch
-        # staleness guard for the sibling counts worker.
-        self._library_export_run_id: int = 0
-        # Task 4: the current run's cancellation signal. Created fresh at
-        # every submit (``handle_library_export_submit``); the worker reads
-        # ``event.is_set`` as the service's ``cancel_check``. Nothing sets
-        # it yet in this task -- the Cancel button and navigate-away wiring
-        # land in Task 5.
-        self._library_export_cancel_event: threading.Event | None = None
-        # task-2858 AC#3 (LIB-12): the last successful export's destination
-        # + completion timestamp, for the durable "Last export: ..."
-        # receipt. Deliberately NOT touched by
-        # ``_reset_library_export_transient_state`` -- every OTHER export
-        # field resets on every canvas entry (a fresh form each visit is
-        # correct), but the receipt must survive leaving and re-entering
-        # the canvas within the session. Also round-tripped through
-        # ``save_state``/``restore_state`` so it survives a full navigate-
-        # away-and-back to Library too (the "persist further" half of the
-        # AC, via that already-existing seam).
-        self._library_export_last_path: str = ""
-        self._library_export_last_at: float | None = None
+        # Export canvas state (F4 Task 2); see LibraryExportState's own
+        # module docstring/field comments for the per-field detail that
+        # used to live here. ``form`` has a genuinely computed default
+        # (``self._default_library_export_form()``) so it is passed as a
+        # constructor argument here rather than folded into the
+        # dataclass's own default, preserving the original __init__
+        # evaluation order.
+        self._export_state = LibraryExportState(
+            form=self._default_library_export_form()
+        )
         # task-2856: armed by every "enter/return to a list canvas" seam
         # (``_arm_library_list_entry_focus``) right before it schedules its
         # OWN ``call_after_refresh(self._focus_library_list_entry)``. That
@@ -43963,3 +43906,25 @@ class LibraryScreen(BaseAppScreen):
 # production code always imports `library_screen` before any instance of
 # this controller can exist.
 LibraryConversationsController._safe_text = staticmethod(LibraryScreen._safe_text)
+
+# --- BEGIN generated export-state shims (delete wholesale at cleanup) ---
+# wave-2 task 2: keeps every original `_library_export_<field>` name
+# working as a property over `self._export_state`; attached programmatically
+# so the class body gains no FunctionDefs (the size ratchet counts those).
+# Every export field uses the same `_library_export_` prefix -- the
+# ownership analysis found no field needing a plural variant (see
+# LibraryConversationsState's own shim block for that pattern, and the
+# task-2 report's ownership table for why export never needed it).
+for _es_field in dataclasses.fields(LibraryExportState):
+    setattr(
+        LibraryScreen,
+        "_library_export_" + _es_field.name,
+        property(
+            lambda self, _n=_es_field.name: getattr(self._export_state, _n),
+            lambda self, value, _n=_es_field.name: setattr(
+                self._export_state, _n, value
+            ),
+        ),
+    )
+del _es_field
+# --- END generated export-state shims ---

@@ -148,7 +148,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # import line only), not pinned by
     # `test_screen_still_re_exports_every_moved_name`, and not imported by
     # anything outside this module. Method count unchanged (imports only).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43965, 1282),
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43930, 1282),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide
