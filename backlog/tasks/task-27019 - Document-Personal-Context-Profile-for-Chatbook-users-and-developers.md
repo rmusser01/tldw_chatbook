@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-01 14:45'
-updated_date: '2026-09-02 12:05'
+updated_date: '2026-09-02 13:15'
 labels: []
 dependencies: []
 references:
@@ -50,14 +50,16 @@ Reason: Documentation only; the existing Personal Context authority, Sync, and e
 PR #2310 corrected the approved specification after the first documentation pass. The guides and their verification must now enforce these boundaries:
 
 - A successful reviewed first link publishes the eligible snapshot produced by the approved content-free reconciliation plan. Later syncable Chatbook changes create encrypted Personal Context outbox entries, but no shipped ongoing Personal Context caller drains them; **Manual Sync** covers Notes and Chat only. Ordinary server REST changes are not published to Chatbook.
-- Setup completes before the optional chained interview. Leaving **Get to know you after setup** unchecked is the setup opt-out and stores no interview answers. Within an interview, **Skip** skips only the current question and **Cancel** exits.
+- Setup completes before the optional chained interview. Leaving **Get to know you after setup** unchecked is the setup-only opt-out and stores no interview answers. Within an interview, **Skip** skips only the current question. **Cancel** opens **Leave interview**, where **Keep draft**, **Discard draft**, and **Continue interview** determine exit and draft retention.
 - The fixed interview is local. The adaptive interview uses the default Console provider and model with tools disabled. Its requests include the audience, coverage topics, attempt number, eligible records for the selected scope, and—after the first answer—all prior answered turns with raw answer text. The UI can show the actual provider/model only after the first provider response, before answer input.
 - Interview draft and transcript objects are not Sync payloads. Approved answer text can become an ordinary canonical record and is then governed by that record's controls.
-- Chatbook accepts HTTP and HTTPS server URLs. Runtime calls honor default verification, a custom CA bundle, or verification off; **Test Connection** uses the HTTP client's default certificate verification.
+- Chatbook accepts HTTP and HTTPS server URLs. HTTP is unencrypted. HTTPS protects transport privacy when a valid server certificate is verified through default trust or a correctly configured custom CA. Disabling verification removes server authentication and permits interception. Runtime calls honor default verification, a custom CA bundle, or verification off; **Test Connection** uses the HTTP client's default certificate verification.
 - Before link approval, bootstrap exchanges metadata and downloads eligible server records and proposals into transient memory. Review and durable state stay content-free, and no local profile content uploads before approval.
 - **Remove local profile** deletes the canonical Personal Context repository and its canonical outbox, but separate Sync state, staged encrypted envelopes, and staging keys can remain. It does not delete the server copy or unregister the device; failed key cleanup requires **Finish secure removal**. Recovery export has no shipped import or restore flow.
 - Chatbook has no **Delete everywhere**. Server purge remains a server-local fence in `purge_pending`; Sync distribution and acknowledgement completion are not wired end to end.
-- First-link semantic collisions are reviewed. Later transport conflict metadata may remain, but there is no shipped ongoing Personal Context sync cycle, status surface, or dedicated Personal Context conflict resolver.
+- First-link version conflicts and semantic collisions use content-free **Keep this device** or **Keep server** lineage choices. Later version or semantic conflict metadata may remain, but there is no shipped ongoing Personal Context sync cycle, status surface, or dedicated Personal Context conflict resolver.
+- The current Console preview route is **Ctrl+Shift+P** (**View context**) > **Conversation Inspector** > outer **Next Send** > inner **Next Send** payload tab.
+- The five-step quick start separates manual **Add**/**Edit** > **Save** from interview review > **Save only**/**Save and use with agents**, and the workflow and boundary tables keep complete claims in compact user-facing form.
 
 The stable server guide URLs temporarily retain the older continuous-sync wording. Final cross-repository parity verification depends on merging the already-approved server documentation correction; Chatbook uses the corrected PR #2310 specification now. TASK-27019 remains **In Progress** through that ordered merge and final verification.
 

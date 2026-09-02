@@ -18,21 +18,22 @@ Open **Settings** with **F9**, then choose **Data & Privacy > My Profile**. You
 can also press **/** in Settings and search for `profile`, `personal context`,
 or `interview`.
 
+During initial setup only, leave **Get to know you after setup** unchecked to
+opt out. Setup finishes before an interview selected there opens.
+
 <!-- personal-context-quick-start:start -->
 ## In five minutes
 
 1. Open **F9 > Data & Privacy > My Profile**.
-2. Choose manual entry or the optional interview. During setup, leave **Get to know you after setup** unchecked to opt out and store no interview answers. **Fixed local questions** stay on this device; **Adaptive provider questions** use your default Console provider.
-3. Review every proposed value and its visibility and syncability controls.
-4. Choose **Save only** or **Save and use with agents**, then inspect **Context > Next Send** in Console.
+2. **Manual:** if needed, choose **Create profile**. Use **Add** for a new record or **Edit** for an existing one, review its scope, visibility, and syncability, then choose **Save**.
+3. **Interview:** select a scope with **Show**, choose a **Question style**, and select **Run interview again**. Review every proposed row and its controls, then choose **Save only** or **Save and use with agents**.
+4. After either path, agent use is optional. In Console, press **Ctrl+Shift+P** (**View context**) to open **Conversation Inspector**; select the outer **Next Send** tab, then the inner **Next Send** payload tab before sending.
 5. Activate and authenticate a supported home server under **Overview > Advanced / Diagnostics > Switch Source / Server**, then use **Server sync > Link to home server** only if you want to share.
 <!-- personal-context-quick-start:end -->
 
-## Everyday tasks
+## Common workflows
 
-### Common workflows
-
-#### Edit manually
+### Edit manually
 
 Under **Profile records**, choose **Add**, select **Scope** inside the editor,
 enter the value, review **Syncability** and **Visibility**, then choose **Save**.
@@ -41,7 +42,7 @@ workspace for its goals, conventions, and working context. **Show** only filters
 the list; it does not choose the scope for a new record. An existing record's
 scope cannot be changed with **Edit**.
 
-#### Run or rerun an interview
+### Run or rerun an interview
 
 Setup can optionally run **Get to know you** with fixed local questions. To run
 an interview later, select Global or a linked workspace with **Show**, choose
@@ -49,14 +50,14 @@ an interview later, select Global or a linked workspace with **Show**, choose
 interview again**. Review each proposed row before choosing **Save only** or
 **Save and use with agents**.
 
-#### Review agent proposals
+### Review agent proposals
 
 Open a row under **Proposed changes**, then choose **Accept**, **Accept
 edited**, or **Reject**. New inferred facts remain proposals. **Direct write**
 only updates an existing eligible record for an explicit correction evidenced
 by the current persisted user message.
 
-#### Export plaintext and recovery material
+### Export plaintext and recovery material
 
 Set **Show** to the scope you want, then use **Export plaintext: _scope_** for a
 readable copy. **Export recovery copy** creates a passphrase-encrypted snapshot
@@ -65,14 +66,14 @@ including device-only records. Protect plaintext exports and keep the recovery
 passphrase separately. Chatbook does not currently provide a recovery import or
 restore action.
 
-#### Remove the local copy
+### Remove the local copy
 
 Choose **Remove local profile** only when you intend to destroy the canonical
 profile on this device. Export anything you need first. This action also removes
 the canonical Personal Context outbox, so queued post-link changes are discarded;
 **Manual Sync** cannot send them.
 
-#### Link a home server
+### Link a home server
 
 First activate and authenticate the server at **Settings > Overview > Advanced /
 Diagnostics > Switch Source / Server**. Return to **Data & Privacy > My Profile >
@@ -106,13 +107,15 @@ that first response completes and before you can enter an answer. Review this
 disclosure before continuing; use **Fixed local questions** if you do not want
 the adaptive request to leave the device.
 
-Within an interview, **Skip** skips only the current question and **Cancel**
-exits the interview. You may also finish early or keep an encrypted draft when
-protected storage is available. The draft and transcript objects are local and
-are not Personal Context Sync payloads. Adaptive requests still send the
-material described above to the configured provider. Drafts expire after 30
-days and are destroyed after a successful final review. If protected storage
-is unavailable, the draft is memory-only and cannot be resumed.
+Within an interview, **Skip** skips only the current question. **Cancel** opens
+**Leave interview**: choose **Continue interview** to return, **Keep draft** to
+exit and retain the encrypted draft, or **Discard draft** to exit and destroy
+its draft key. A memory-only interview cannot be kept, so it offers only
+continue or discard. You may also finish early. The draft and transcript objects
+are local and are not Personal Context Sync payloads. Adaptive requests still
+send the material described above to the configured provider. Drafts expire
+after 30 days and are destroyed after a successful final review. If protected
+storage is unavailable, the draft is memory-only and cannot be resumed.
 
 Finishing the questions opens a structured review. Only checked rows are saved.
 You can edit each proposed value and choose its syncability and agent visibility
@@ -223,14 +226,14 @@ Personal Context sync cycle.
 <!-- shared-personal-context-contract:end -->
 
 <!-- personal-context-boundary-matrix:start -->
-| Published during successful reviewed first linking when eligible | Not published by the shipped ongoing application lifecycle |
+| Published at reviewed first link when eligible | Not published afterward or peer-local |
 | --- | --- |
-| Canonical manifest in the snapshot resulting from the user-approved content-free reconciliation plan | Later syncable Chatbook mutations: encrypted outbox entries are created but no shipped ongoing Personal Context caller sends them |
-| Required global and linked-workspace scopes in that snapshot | Ordinary server REST mutations: the server copy changes but no Personal Context Sync entry publishes them to Chatbook |
-| Eligible record heads, tombstones, and proposal review state selected by reconciliation, including approved interview answer content after it becomes a canonical record payload | Device-only or non-syncable records |
-| Exact canonical object identities, versions, and bytes for those eligible objects | Runtime agent authority grants, tool availability, local workspace mappings, and enablement |
-| — | Peer-local at-rest encryption/recovery keys, local undo data, caches, ciphertext, database row identities, conflict-review metadata, acknowledgement tracking, and other operational state |
-| — | Encrypted interview draft and transcript objects are not Sync payloads as such; adaptive interview requests still send prior raw answers to the configured provider, while approved answer content may become a syncable canonical record as described at left |
+| Approved eligible canonical manifest | Later syncable Chatbook mutations, which remain queued locally |
+| Required global and linked-workspace scopes | Ordinary server REST mutations |
+| Controls-eligible record heads and tombstones; eligible proposals and canonical review state; approved interview answers after they are saved as records | Device-only or non-syncable records |
+| Exact canonical IDs, versions, and bytes | Runtime agent authority, tool availability, workspace mappings, and enablement |
+| — | At-rest and recovery keys; local undo, caches, ciphertext, database row IDs, conflict-review objects, acknowledgement tracking, and operational metadata |
+| — | Interview draft and transcript objects; adaptive requests still send prior raw answers to the provider |
 <!-- personal-context-boundary-matrix:end -->
 
 After first linking, a syncable Chatbook edit creates an encrypted local outbox
@@ -244,13 +247,16 @@ producer and the server endpoint does not distribute it through Sync V2.
 
 Sharing uses `server_trusted_v1`: the authenticated home server can read
 syncable canonical content, then encrypt it with its own at-rest keys. Chatbook
-accepts both HTTP and HTTPS server URLs; HTTPS is not enforced. Use HTTPS with
-**Verify certificates (default)** for any non-loopback server. Runtime calls
-honor **Settings > Data & Privacy > Network** choices for default verification,
-a **Custom CA bundle**, or **Disable verification**. **Test Connection** always
-uses the HTTP client's default certificate verification, so it does not test a
-saved custom-CA or verification-off policy. For server key custody and TLS
-deployment guidance, see the [server operator guide](https://github.com/rmusser01/tldw_server/blob/dev/Docs/User_Guides/Server/Personal_Context_Profile.md).
+accepts both HTTP and HTTPS server URLs; HTTPS is not enforced. HTTP is
+unencrypted. HTTPS protects transport privacy only when Chatbook verifies a
+valid server certificate through **Verify certificates (default)** or a
+correctly configured **Custom CA bundle**. With **Disable verification**,
+Chatbook does not authenticate the server and an on-path attacker can intercept
+the connection. Runtime calls honor the saved choice under **Settings > Data &
+Privacy > Network**. **Test Connection** always uses the HTTP client's default
+certificate verification, so it does not test a saved custom-CA or
+verification-off policy. For server key custody and TLS deployment guidance,
+see the [server operator guide](https://github.com/rmusser01/tldw_server/blob/dev/Docs/User_Guides/Server/Personal_Context_Profile.md).
 
 Chatbook remains usable without a server. Linking requires the server to
 negotiate the required Personal Context capability, domains, schema, and quotas.
@@ -261,11 +267,17 @@ versions, counts, and outcomes, not profile values. No local profile content
 uploads before approval. Device-only records never enter the first-link snapshot,
 and runtime agent authority remains local.
 
-First-link semantic collisions are resolved in this reviewed plan. Generic Sync
-metadata may retain a version or semantic conflict encountered by transport,
-but Chatbook has no ongoing Personal Context cycle or dedicated Personal Context
-status screen. Post-link conflicts retain generic Sync metadata, but there is no
-dedicated Personal Context resolution screen.
+**First-link conflicts.** A version conflict means the device and server object
+versions follow different canonical lineages. The content-free review shows the
+canonical ID and versions; choose **Keep this device** or **Keep server**.
+First-link semantic collisions use the same choices for different record IDs
+with one semantic key. The review shows IDs, versions, counts, and outcomes—not
+profile values.
+
+**Post-link conflicts.** Generic Sync metadata may retain later version or
+semantic conflicts, but the shipped app has no ongoing Personal Context cycle,
+status screen, or dedicated resolver. The first-link lineage choices are not a
+post-link resolution tool.
 
 ## Export, removal, and deletion
 
@@ -303,17 +315,17 @@ before considering this currently incomplete server operation.
 <!-- personal-context-troubleshooting:start -->
 | State | Cause | Safe next action | Current limit |
 | --- | --- | --- | --- |
-| **Profile locked** | Protected key material is unavailable or Chatbook cannot decrypt the existing profile. | Preserve the encrypted data, unlock the configured key protector, and choose **Try again**. | There is no bypass, automatic key recreation, or shipped recovery-import path for existing ciphertext. |
-| **Adaptive interview privacy or provider failure** | Adaptive mode sends bounded interview context to the default Console provider, or that provider did not return a usable question. | Use **Fixed local questions** when no model egress is acceptable. After a failure, continue without the interview, retry later, or use the fixed fallback. | The first provider request finishes before Chatbook displays the actual provider/model; do not assume a failed request stayed local. |
-| **HTTP or altered TLS verification** | The server URL uses HTTP, or runtime verification uses a custom CA or is disabled. | Prefer HTTPS with **Verify certificates (default)**; review **Data & Privacy > Network** before connecting. | HTTP is accepted, and **Test Connection** always uses default certificate verification rather than the saved custom-CA or verification-off runtime policy. |
-| **Post-link change queued** | A syncable local mutation created an encrypted outbox entry after first linking. | Preserve the local profile and export a copy if needed. Treat the server as unchanged. | No shipped Settings action drains this queue; **Manual Sync** covers Notes and Chat only, and there is no Personal Context status screen. |
-| **Capability not negotiated** | The peers do not share the required Personal Context domains, schema support, or quotas. | Upgrade or correctly configure the incompatible peer, then retry first linking. | Linking cannot bypass capability negotiation or publish the profile while it is incompatible. |
-| **First-link publication interrupted** | You approved reconciliation, but link completion did not finish. | Preserve both copies and retry the reviewed **Link to home server** flow. | Do not treat the copies as converged until completion succeeds. |
-| **Version conflict** | The transport encountered changes to the same canonical object from different base versions. | Preserve both peer copies and any generic Sync conflict metadata before making more edits. | No ongoing Personal Context cycle, dedicated status, or dedicated Personal Context resolver is shipped. |
-| **First-link semantic collision** | Different local and server record identities describe the same scope, kind, namespace, and subject during linking. | Use the presented content-free IDs, versions, outcomes, and local/server choices to select the lineage that remains active. | The review does not show profile values, and this resolution is available only during first linking. |
-| **Post-link semantic collision** | Different record identities describe the same semantic key after linking. | Preserve both peer copies and avoid creating another duplicate. | Post-link conflicts may retain generic Sync metadata, but there is no ongoing Personal Context cycle or dedicated Personal Context resolution screen. |
-| **Local removal incomplete or residual state** | Canonical rows were removed but canonical key deletion failed, or separate Sync state and staging keys remain. | Use **Finish secure removal** for canonical profile-key cleanup; preserve any needed evidence before other maintenance. | It does not clear separate Sync state, staging keys, the server copy, or device registration, and the recovery export cannot currently be restored in Chatbook. |
-| **Purge pending** | The server purge fence advanced and ordinary profile mutations are blocked. | Treat the server profile as non-writable and consult the server guides before invoking or investigating purge. | Distribution and acknowledgement completion are not wired end to end, and reconnecting devices does not clear `purge_pending`. |
+| **Profile locked** | The profile key is unavailable or cannot decrypt the data. | Unlock the key protector, preserve the data, and choose **Try again**. | No bypass, automatic key recreation, or recovery import is shipped. |
+| **Adaptive interview privacy or provider failure** | Adaptive mode contacted the default Console provider, or it returned no usable question. | Use **Fixed local questions**, continue without the interview, or retry later. | The first request finishes before provider/model disclosure; a failed request may have left the device. |
+| **HTTP or altered TLS verification** | The URL is HTTP, or custom/disabled verification is selected. | Use HTTPS with **Verify certificates (default)** or a correctly configured custom CA. | HTTP is unencrypted. Disabled verification does not authenticate the server and permits interception. **Test Connection** always uses default verification. |
+| **Post-link change queued** | A syncable local change created an encrypted outbox entry after linking. | Preserve the local profile and export it if needed; treat the server as unchanged. | No shipped action drains this queue; **Manual Sync** covers Notes and Chat only. |
+| **Capability not negotiated** | Required domains, schema support, or quotas do not match. | Upgrade or configure the incompatible peer, then retry first linking. | Linking cannot bypass negotiation or publish an incompatible profile. |
+| **First-link publication interrupted** | Approval occurred, but link completion failed. | Preserve both copies and retry the reviewed **Link to home server** flow. | The copies have not converged until completion succeeds. |
+| **Version conflict** | At first link, device and server versions follow different canonical lineages. | Review the content-free ID and versions; choose **Keep this device** or **Keep server**. | This lineage choice is first-link only; no profile values are shown. |
+| **First-link semantic collision** | Different record IDs have the same scope, kind, namespace, and subject. | Review the content-free IDs, versions, and outcomes; choose **Keep this device** or **Keep server**. | The choice exists only during first linking; no profile values are shown. |
+| **Post-link semantic collision** | Later records use the same semantic key, or later versions conflict. | Preserve both peer copies and avoid another duplicate. | Generic Sync metadata may remain, but no ongoing Personal Context cycle, status, or resolver is shipped. |
+| **Local removal incomplete or residual state** | Key deletion failed, or separate Sync artifacts remain. | Use **Finish secure removal** for profile-key cleanup; preserve needed evidence. | It does not clear separate Sync state, staging keys, server data, or device registration; recovery import is not shipped. |
+| **Purge pending** | The server purge fence blocks ordinary profile mutations. | Treat the server profile as non-writable and consult the server guides. | Distribution and acknowledgements are incomplete; reconnecting does not clear `purge_pending`. |
 <!-- personal-context-troubleshooting:end -->
 
 If an ordinary server REST edit does not appear in Chatbook, preserve the server
@@ -330,12 +342,16 @@ Personal Context merge or resolution action in Settings.
 - Encryption does not hide all metadata, such as object counts and update
   timing. Under `server_trusted_v1`, the authorized home server can decrypt
   syncable content and re-encrypt it with its own keys. HTTPS protects that
-  content in transit; an HTTP URL does not.
+  content in transit only when Chatbook verifies a valid server certificate;
+  HTTP is unencrypted, and disabled verification allows interception without
+  server authentication.
 - Adaptive interview requests send the bounded selected-scope context and prior
   raw answers described above to the configured provider. Fixed questions do
   not make that provider call.
-- **Context > Next Send** in Console is the only disposable preview of the
-  exact profile block planned for the next request.
+- In Console, press **Ctrl+Shift+P** (**View context**) to open **Conversation
+  Inspector**, then select the outer **Next Send** tab and the inner **Next
+  Send** payload tab. It is the only disposable preview of the exact profile
+  block planned for the next request.
 - Profile data is user-owned data, not instructions. It cannot override the
   current request, system instructions, safety rules, or tool permissions.
 

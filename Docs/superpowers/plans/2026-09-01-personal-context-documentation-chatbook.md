@@ -50,14 +50,15 @@ The Chatbook approved specification and publication history are already on `dev`
 This inventory supersedes the older continuous-sync assumptions in the first documentation pass and is the fail-closed source for Tasks 2-5:
 
 - Reviewed first linking is the only shipped Personal Context publication path. It publishes the eligible canonical snapshot resulting from the user's approved content-free reconciliation plan. Later syncable Chatbook changes create encrypted Personal Context outbox entries, but no shipped ongoing Personal Context caller drains them. **Manual Sync** covers Notes and Chat only. Ordinary server REST changes are not published to Chatbook.
-- Setup completes before the optional chained interview. Leaving **Get to know you after setup** unchecked is the setup opt-out and stores no interview answers. Within an interview, **Skip** skips only the current question and **Cancel** exits.
+- Setup completes before the optional chained interview. Leaving **Get to know you after setup** unchecked is the setup-only opt-out and stores no interview answers. Within an interview, **Skip** skips only the current question. **Cancel** opens **Leave interview**, where **Keep draft**, **Discard draft**, and **Continue interview** determine whether the encrypted draft is retained and whether the interview exits.
 - The fixed interview is local. The adaptive interview uses the default Console provider and model with tools disabled. Each request includes the audience, coverage topics, attempt number, and eligible records from the selected scope; after the first answer, it also includes every prior answered turn and raw answer text. The actual provider/model is shown only after the first provider response completes, before answer input.
 - Interview draft and transcript objects are not Sync payloads. Approved answer text may become an ordinary canonical record, after which the record's controls determine first-link eligibility.
-- Chatbook accepts HTTP and HTTPS home-server URLs. Runtime calls honor the saved default verification, custom CA bundle, or verification-off setting. **Test Connection** uses the HTTP client's default certificate verification rather than the saved custom/off setting.
+- Chatbook accepts HTTP and HTTPS home-server URLs. HTTP is unencrypted. HTTPS provides transport privacy when a valid certificate is verified through default trust or a correctly configured custom CA. Disabling verification removes server authentication and permits interception. Runtime calls honor the saved default verification, custom CA bundle, or verification-off setting. **Test Connection** uses the HTTP client's default certificate verification rather than the saved custom/off setting.
 - Before approval, first-link bootstrap exchanges metadata and downloads sync-eligible server records and proposals into transient memory. The review UI and durable review state are content-free, and no local profile content uploads before approval.
 - **Remove local profile** removes the canonical profile repository and canonical profile outbox. Separate Sync state, staged encrypted envelopes, and staging keys can remain; the action neither deletes the server copy nor unregisters the device. If key cleanup fails, use **Finish secure removal**. Recovery export has no shipped import/restore path.
 - Chatbook does not expose **Delete everywhere**. Authenticated server purge leaves a server-local fence in `purge_pending`; Sync distribution and acknowledgement completion are not wired end to end.
-- First-link semantic collisions are reviewed before publication. Later transport conflicts can retain generic metadata, but no shipped ongoing Personal Context cycle, status surface, or dedicated Personal Context resolver is available.
+- First-link version conflicts and semantic collisions are resolved in content-free review with **Keep this device** or **Keep server** lineage choices. Later version or semantic conflicts can retain generic Sync metadata, but no shipped ongoing Personal Context cycle, status surface, or dedicated Personal Context resolver is available; first-link choices are not a post-link resolver.
+- The only current Console preview route is **Ctrl+Shift+P** (**View context**) > **Conversation Inspector** > outer **Next Send** > inner **Next Send** payload tab.
 
 **Ordered-merge dependency:** the stable server guide URLs temporarily retain the older continuous-sync wording. Final cross-repository parity and link-content checks remain blocked until the already-approved server correction branch is merged; the Chatbook guide must use the corrected PR #2310 specification in the meantime.
 
@@ -590,22 +591,22 @@ git commit -m "docs: plan Chatbook Personal Context guides"
 
 Wrap the section in `<!-- personal-context-quick-start:start -->` and `<!-- personal-context-quick-start:end -->`. It must contain exactly five numbered steps covering:
 
-1. Open **F9 > Data & Privacy > My Profile**.
-2. Choose manual entry or the optional interview; leaving **Get to know you after setup** unchecked is the setup opt-out and stores no interview answers, while interview **Skip** skips only the current question and **Cancel** exits.
-3. Review every proposed value and its visibility/syncability controls.
-4. Choose **Save only** or **Save and use with agents**, and inspect **Context > Next Send** before sending.
+1. Open **F9 > Data & Privacy > My Profile**; separately note that leaving **Get to know you after setup** unchecked is available only during initial setup.
+2. For manual entry, use **Add** or **Edit**, review scope, visibility, and syncability, then choose **Save**.
+3. For an interview, select the scope and question style, run the interview, review every proposed row and its controls, then choose **Save only** or **Save and use with agents**.
+4. Keep agent use optional and inspect the planned payload through **Ctrl+Shift+P** (**View context**) > **Conversation Inspector** > outer **Next Send** > inner **Next Send** payload tab.
 5. Link a supported home server only when sharing is desired.
 
 - [x] **Step 2: Correct `Common workflows` and current controls**
 
-Under `### Common workflows`, use these exact subheadings so each workflow is independently verifiable:
+Under `## Common workflows`, use these exact subheadings so each workflow is independently verifiable without a redundant intermediate heading:
 
-- `#### Edit manually`
-- `#### Run or rerun an interview`
-- `#### Review agent proposals`
-- `#### Export plaintext and recovery material`
-- `#### Remove the local copy`
-- `#### Link a home server`
+- `### Edit manually`
+- `### Run or rerun an interview`
+- `### Review agent proposals`
+- `### Export plaintext and recovery material`
+- `### Remove the local copy`
+- `### Link a home server`
 
 Cover global preferences and workspace goals/conventions across those workflows. Use current control names. The manual editor chooses a workspace scope inside **Add record**, while the interview first chooses a linked scope and mode. State that new inferred facts remain proposals; direct write only updates an existing eligible record for an explicit correction evidenced by the current persisted user message.
 
@@ -622,16 +623,16 @@ Include this deliberately identical shared-contract block, with the markers reta
 <!-- shared-personal-context-contract:end -->
 ```
 
-Follow it with this full matrix, wrapped in `<!-- personal-context-boundary-matrix:start -->` and `<!-- personal-context-boundary-matrix:end -->`:
+Follow it with this full matrix, wrapped in `<!-- personal-context-boundary-matrix:start -->` and `<!-- personal-context-boundary-matrix:end -->`. Keep its cell wording compact while retaining every category:
 
-| Published during successful reviewed first linking when eligible | Not published by the shipped ongoing application lifecycle |
+| Published at reviewed first link when eligible | Not published afterward or peer-local |
 | --- | --- |
-| Canonical manifest in the snapshot resulting from the user-approved content-free reconciliation plan | Later syncable Chatbook mutations: encrypted outbox entries are created but no shipped ongoing Personal Context caller sends them |
-| Required global and linked-workspace scopes in that snapshot | Ordinary server REST mutations: the server copy changes but no Personal Context Sync entry publishes them to Chatbook |
-| Eligible record heads, tombstones, and proposal review state selected by reconciliation, including approved interview answer content after it becomes a canonical record payload | Device-only or non-syncable records |
-| Exact canonical object identities, versions, and bytes for those eligible objects | Runtime agent authority grants, tool availability, local workspace mappings, and enablement |
-| — | Peer-local at-rest encryption/recovery keys, local undo data, caches, ciphertext, database row identities, conflict-review metadata, acknowledgement tracking, and other operational state |
-| — | Encrypted interview draft and transcript objects are not Sync payloads as such; adaptive interview requests still send prior raw answers to the configured provider, while approved answer content may become a syncable canonical record as described at left |
+| Approved eligible canonical manifest | Later syncable Chatbook mutations, which remain queued locally |
+| Required global and linked-workspace scopes | Ordinary server REST mutations |
+| Controls-eligible record heads and tombstones; eligible proposals and canonical review state; approved interview answers after they are saved as records | Device-only or non-syncable records |
+| Exact canonical IDs, versions, and bytes | Runtime agent authority, tool availability, workspace mappings, and enablement |
+| — | At-rest and recovery keys; local undo, caches, ciphertext, database row IDs, conflict-review objects, acknowledgement tracking, and operational metadata |
+| — | Interview draft and transcript objects; adaptive requests still send prior raw answers to the provider |
 
 Required notes:
 
@@ -643,8 +644,9 @@ Required notes:
 
 Document these shipped boundaries in user language:
 
-- Fixed interviews stay local. Adaptive interviews use the default Console provider/model with tools off and send the audience, topics, attempt, eligible selected-scope records, and, after the first answer, all prior answered turns including raw answer text. The UI shows the actual provider/model only after the first response and before answer input.
-- Link from **Settings > Overview > Advanced / Diagnostics > Switch Source / Server**, then return to **Data & Privacy > My Profile > Link to home server**. HTTP and HTTPS are accepted. Runtime calls honor default verification, custom CA, or verification off; **Test Connection** always uses default certificate verification.
+- Fixed interviews stay local. Adaptive interviews use the default Console provider/model with tools off and send the audience, topics, attempt, eligible selected-scope records, and, after the first answer, all prior answered turns including raw answer text. The UI shows the actual provider/model only after the first response and before answer input. **Cancel** opens **Leave interview**, where **Continue interview**, **Keep draft**, and **Discard draft** control exit and retention; memory-only drafts cannot be kept.
+- Link from **Settings > Overview > Advanced / Diagnostics > Switch Source / Server**, then return to **Data & Privacy > My Profile > Server sync > Link to home server**. HTTP and HTTPS are accepted, but HTTP is unencrypted. HTTPS protects transport privacy only with valid certificate verification; **Disable verification** removes server authentication and permits interception. Runtime calls honor default verification, custom CA, or verification off; **Test Connection** always uses default certificate verification.
+- The current payload-preview route is **Ctrl+Shift+P** (**View context**) > **Conversation Inspector** > outer **Next Send** > inner **Next Send** payload tab.
 - Before approval, bootstrap exchanges metadata and downloads eligible server records/proposals into memory. The durable review and screen remain content-free, and no local profile content uploads before approval.
 - Plaintext export and recovery export are separate. Recovery export includes canonical local heads, including device-only records, but Chatbook has no shipped recovery import/restore flow.
 - **Remove local profile** removes canonical profile rows and the canonical profile outbox. It can leave separate Sync state, staged encrypted envelopes, and staging keys; it does not delete the server copy or unregister the device. If key cleanup fails, use **Finish secure removal**.
@@ -671,7 +673,7 @@ Under `### Troubleshooting`, add a table wrapped in `<!-- personal-context-troub
 10. **Local removal incomplete or residual state**
 11. **Purge pending**
 
-Do not recommend **Manual Sync** or a Personal Context status screen. Explain that later local edits and ordinary server REST edits are not published by the shipped ongoing lifecycle. Post-link conflicts retain generic Sync metadata but have no dedicated Personal Context resolution screen.
+Do not recommend **Manual Sync** or a Personal Context status screen. Explain that later local edits and ordinary server REST edits are not published by the shipped ongoing lifecycle. Treat **Version conflict** as a first-link content-free lineage choice using **Keep this device** or **Keep server**. Separate that from post-link version and semantic conflicts, which can retain generic Sync metadata but have no ongoing Personal Context cycle, status screen, or dedicated resolver.
 
 - [x] **Step 6: Keep stable server links and concise operator guidance**
 
@@ -689,7 +691,7 @@ set -e -o pipefail
 profile_user_guide=Docs/User_Guide/settings/personal-context-profile.md
 rg -n "does not currently expose|no shipped ongoing Personal Context|Manual Sync.*Notes and Chat|not published|not wired end to end|no dedicated Personal Context" \
   "$profile_user_guide"
-rg -n "Fixed local questions|default Console provider|Test Connection|custom CA|Finish secure removal|no recovery import|content-free" \
+rg -n "Fixed local questions|default Console provider|Test Connection|custom CA|Finish secure removal|no recovery import|content-free|Keep this device|Keep server|View context|Conversation Inspector" \
   "$profile_user_guide"
 if rg -n -i \
   -e 'retry (manual )?sync' \
@@ -1183,8 +1185,8 @@ def require_each(text: str, values: list[str], document: Path, claim: str) -> No
 
 expected_shared_bullets = [
     "- `tldw_profile_core` defines the versioned canonical profile object models, exact canonical bytes, interview/tool contracts, serialization, and validation used by both peers. Sync-v2 transport envelopes are a separate contract.",
-    "- After a successful reviewed link, Chatbook and tldw_server converge on the same canonical manifest, scope, record, proposal, and version identities and bytes for eligible shared objects.",
-    "- Sync V2 defines the `personal_context.manifest`, `personal_context.scope`, `personal_context.record`, `personal_context.proposal`, and content-free `personal_context.purge` domains. The current linked flow publishes eligible Chatbook-originated manifest, scope, record, and proposal changes; purge production and distribution are not wired end to end.",
+    "- After successful reviewed first linking, Chatbook and tldw_server converge on the same canonical manifest, scope, record, proposal, and version identities and bytes for the eligible snapshot resulting from the user-approved content-free reconciliation plan.",
+    "- Sync V2 defines the `personal_context.manifest`, `personal_context.scope`, `personal_context.record`, `personal_context.proposal`, and content-free `personal_context.purge` domains. Reviewed first linking publishes the eligible snapshot resulting from the user-approved content-free reconciliation plan. Later syncable Chatbook mutations create encrypted local outbox entries, but the current shipped app does not run an ongoing Personal Context sync cycle, so those post-link changes remain queued locally. Purge production and distribution are not wired end to end.",
     "- Each peer retains its own at-rest ciphertext and keys, local database rows, runtime permissions, conflict-review metadata, acknowledgement tracking, and other operational state.",
 ]
 
@@ -1197,17 +1199,17 @@ def shared_contract(text: str, document: Path) -> None:
 
 
 matrix_categories = [
-    "Canonical manifest after successful reviewed linking",
-    "Required global and linked-workspace scope objects",
-    "Records and tombstones whose controls permit synchronization",
-    "Eligible proposals and their canonical review state",
-    "Exact canonical object identities, versions, and bytes for eligible shared objects",
-    "Peer-local at-rest encryption and recovery keys",
-    "Raw interview answers and unfinished drafts",
-    "Runtime agent authority grants and tool availability",
-    "Device-only records or records marked non-syncable",
-    "Local undo history, caches, ciphertext, database row identities, and other operational metadata",
-    "Conflict-review objects and acknowledgement tracking",
+    "canonical manifest",
+    "global and linked-workspace scopes",
+    "record heads and tombstones",
+    "eligible proposals and canonical review state",
+    "canonical IDs, versions, and bytes",
+    "At-rest and recovery keys",
+    "Interview draft and transcript objects",
+    "Runtime agent authority",
+    "Device-only or non-syncable records",
+    "local undo, caches, ciphertext, database row IDs",
+    "conflict-review objects, acknowledgement tracking",
 ]
 for text, document in ((user, user_path), (developer, developer_path)):
     shared_contract(text, document)
@@ -1230,10 +1232,18 @@ require_each(
     [
         "Data & Privacy",
         "My Profile",
-        "Get to know you",
-        "stores no answers",
+        "Manual:",
+        "Add",
+        "Edit",
+        "Save",
+        "Interview:",
+        "Question style",
+        "Save only",
+        "Save and use with agents",
         "visibility",
         "syncability",
+        "View context",
+        "Conversation Inspector",
         "Next Send",
         "home server",
     ],
@@ -1243,13 +1253,13 @@ require_each(
 require_each(
     user,
     [
-        "### Common workflows",
-        "#### Edit manually",
-        "#### Run or rerun an interview",
-        "#### Review agent proposals",
-        "#### Export plaintext and recovery material",
-        "#### Remove the local copy",
-        "#### Link a home server",
+        "## Common workflows",
+        "### Edit manually",
+        "### Run or rerun an interview",
+        "### Review agent proposals",
+        "### Export plaintext and recovery material",
+        "### Remove the local copy",
+        "### Link a home server",
     ],
     user_path,
     "workflow heading",
@@ -1268,24 +1278,30 @@ for line in troubleshooting.splitlines():
     troubleshooting_rows.append((cells[0].strip("*"), cells[1:]))
 expected_states = [
     "Profile locked",
-    "Offline or queued",
+    "Adaptive interview privacy or provider failure",
+    "HTTP or altered TLS verification",
+    "Post-link change queued",
     "Capability not negotiated",
+    "First-link publication interrupted",
     "Version conflict",
     "First-link semantic collision",
     "Post-link semantic collision",
+    "Local removal incomplete or residual state",
     "Purge pending",
 ]
 if [label for label, _fields in troubleshooting_rows] != expected_states:
-    raise SystemExit(f"{user_path}: troubleshooting states must be the exact seven labels")
+    raise SystemExit(f"{user_path}: troubleshooting states must be the exact eleven labels")
 for label, fields in troubleshooting_rows:
     if any(len(field) < 3 or field in {"---", "TBD", "—"} for field in fields):
         raise SystemExit(f"{user_path}: {label} needs cause, safe action, and current limit")
 
 user_limits = [
     "Chatbook does not currently expose **Delete everywhere**.",
-    "Ordinary server REST edits are not currently published to linked Chatbook clients.",
+    "Ordinary server REST edits are not published to linked Chatbook",
     "Chatbook has no producer",
-    "no dedicated Personal Context resolution screen",
+    "no ongoing Personal Context cycle",
+    "no shipped recovery import or restore action",
+    "does not authenticate the server",
 ]
 developer_limits = [
     "Ordinary server REST edits are not currently published to linked Chatbook clients.",
