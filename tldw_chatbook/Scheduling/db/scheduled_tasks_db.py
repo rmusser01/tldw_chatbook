@@ -21,8 +21,9 @@ from loguru import logger
 
 from tldw_chatbook.DB.base_db import BaseDB
 from tldw_chatbook.DB.sql_validation import validate_identifier
-from tldw_chatbook.Scheduling.schedule_compute import compute_next_run_at
-from tldw_chatbook.Scheduling.schedule_vocabulary import to_local_schedule
+# ADR-097: schedule_compute / schedule_vocabulary are imported function-level
+# in create_local_copy_from_mirror -- this module is boot-resident and the
+# eager imports tipped the CI ui-ready census (974 > 972; dev sits at 972).
 
 #: ``transfer_state`` values that make a row dormant: excluded from every
 #: armable filter (DB-query and ``PriorityQueue.load`` layers, both
@@ -1666,6 +1667,9 @@ class ScheduledTasksDB(BaseDB):
                 raise ValueError(
                     f"No automation_definition mirror row at id {mirror_id!r}"
                 )
+
+            from tldw_chatbook.Scheduling.schedule_compute import compute_next_run_at
+            from tldw_chatbook.Scheduling.schedule_vocabulary import to_local_schedule
 
             local_schedule = to_local_schedule(mirror.get("schedule") or {})
             definition_id = str(uuid.uuid4())

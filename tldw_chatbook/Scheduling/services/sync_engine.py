@@ -9,7 +9,8 @@ from typing import Any
 from loguru import logger
 
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
-from tldw_chatbook.Scheduling.schedule_vocabulary import to_server_schedule
+# ADR-097: schedule_vocabulary is imported function-level in
+# _server_vocab_definition_payload (boot-resident module; census).
 from tldw_chatbook.Scheduling.services.server_client import (
     SchedulingServerClient,
     ServerClientError,
@@ -641,6 +642,8 @@ class SyncEngine:
         request = dict(definition_payload)
         schedule = request.get("schedule")
         if isinstance(schedule, dict):
+            from tldw_chatbook.Scheduling.schedule_vocabulary import to_server_schedule
+
             request["schedule"] = to_server_schedule(schedule)
         return request
 
