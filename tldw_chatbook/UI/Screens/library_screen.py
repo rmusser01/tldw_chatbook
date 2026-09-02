@@ -3999,8 +3999,11 @@ class LibraryScreen(BaseAppScreen):
         # ever replaced wholesale (a fetch settles) or cleared to None,
         # never mutated in place, so its identity is a sound document
         # marker; the None sentinel guarantees the first lookup misses.
+        # task-28026: keyed by (detail, query, MODE) -- the Read and Analysis
+        # tabs search different corpora of the same detail, so the mode is
+        # part of the key or a tab switch would serve the other tab's matches.
         self._library_media_content_match_memo: (
-            tuple[Any, str, tuple[int, ...]] | None
+            tuple[Any, str, tuple[int, ...], str] | None
         ) = None
         # LIB-13: "rendered" (Markdown, via the same render path Notes
         # Preview uses) or "raw" (plain/highlighted text). Reseeded per
@@ -42825,6 +42828,13 @@ class LibraryScreen(BaseAppScreen):
         self._capture_library_media_loaded_progress()
         if mode == "read":
             self._library_media_progress_restored_id = None
+        # task-28026: each tab searches its own corpus, so a tab switch drops
+        # the active query rather than carrying its highlights (and a stale
+        # match index) onto the other tab's text.
+        if mode != self._library_media_reader_session.mode:
+            self._library_media_content_query = ""
+            self._library_media_content_match_index = 0
+            self._library_media_content_match_memo = None
         self._library_media_reader_session = set_mode(
             self._library_media_reader_session,
             mode,  # type: ignore[arg-type]
@@ -43175,17 +43185,24 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_content_match_memo = None
             return ()
         query = self._library_media_content_query
+        # task-28026: the Analysis tab searches the analysis text; every other
+        # mode searches the transcript. Mode is part of the memo key.
+        mode = self._library_media_reader_session.mode
         memo = self._library_media_content_match_memo
-        if memo is not None and memo[0] is detail and memo[1] == query:
+        if (
+            memo is not None
+            and memo[0] is detail
+            and memo[1] == query
+            and memo[3] == mode
+        ):
             return memo[2]
-        matches = find_content_matches(
-            # task-22208 memoizes the viewer state per detail arrival; going
-            # through it keeps this memo's miss path from re-copying the whole
-            # document that 22208 already built for this same arrival.
-            self._library_media_viewer_state_cached(detail).content,
-            query,
-        )
-        self._library_media_content_match_memo = (detail, query, matches)
+        # task-22208 memoizes the viewer state per detail arrival; going
+        # through it keeps this memo's miss path from re-copying the whole
+        # document that 22208 already built for this same arrival.
+        viewer_state = self._library_media_viewer_state_cached(detail)
+        corpus = viewer_state.analysis if mode == "analysis" else viewer_state.content
+        matches = find_content_matches(corpus, query)
+        self._library_media_content_match_memo = (detail, query, matches, mode)
         return matches
 
     def _advance_library_media_content_match(self, step: int) -> None:
