@@ -860,6 +860,7 @@ async def test_reading_save_route_wires_url_save_payload(monkeypatch):
             "status": "saved",
             "favorite": True,
             "tags": ["ai", "reading"],
+            "revision": 7,
         }
     )
     monkeypatch.setattr(client, "_request", mocked)
@@ -893,6 +894,7 @@ async def test_reading_save_route_wires_url_save_payload(monkeypatch):
     assert isinstance(result, api.ReadingItem)
     assert result.id == 77
     assert result.tags == ["ai", "reading"]
+    assert result.revision == 7
 
 
 @pytest.mark.asyncio
@@ -2561,7 +2563,13 @@ async def test_reading_item_and_progress_routes_wire_delete_paths(monkeypatch):
     )
     await client.get_reading_item(31)
     await client.update_reading_item(
-        31, ReadingUpdateRequest(status="read", favorite=True, tags=[" ai "])
+        31,
+        ReadingUpdateRequest(
+            expected_revision=4,
+            status="read",
+            favorite=True,
+            tags=[" ai "],
+        ),
     )
     await client.delete_reading_item(31, hard=True)
     await client.get_reading_progress(42)
@@ -2573,6 +2581,7 @@ async def test_reading_item_and_progress_routes_wire_delete_paths(monkeypatch):
     assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/reading/items")
     assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/reading/items/31")
     assert mocked.await_args_list[2].args[:2] == ("PATCH", "/api/v1/reading/items/31")
+    assert mocked.await_args_list[2].kwargs["json_data"]["expected_revision"] == 4
     assert mocked.await_args_list[3].args[:2] == ("DELETE", "/api/v1/reading/items/31")
     assert mocked.await_args_list[3].kwargs["params"] == {"hard": "true"}
     assert mocked.await_args_list[4].args[:2] == ("GET", "/api/v1/media/42/progress")

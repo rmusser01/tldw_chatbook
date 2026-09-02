@@ -507,7 +507,6 @@ def _service(stub, **overrides):
         "prompt_service": stub,
         "skills_service": stub,
         "conversation_service": stub,
-        "collections_service": stub,
     }
     backends.update(overrides)
     return LocalLibraryToolService(**backends)
@@ -576,7 +575,7 @@ def test_schema_parity_console_manifest_descriptor(tool_name):
 
 
 # --------------------------------------------------------------------------
-# Success parity: list / search / get across all six Library types
+# Success parity: list / search / get across all current Library types
 # --------------------------------------------------------------------------
 
 LIST_TOOLS = [
@@ -585,7 +584,6 @@ LIST_TOOLS = [
     ("library_list_prompts", "prompt"),
     ("library_list_skills", "skill"),
     ("library_list_conversations", "conversation"),
-    ("library_list_collections", "collection"),
 ]
 
 SEARCH_TOOLS = [
@@ -594,7 +592,6 @@ SEARCH_TOOLS = [
     ("library_search_prompts", "prompt"),
     ("library_search_skills", "skill"),
     ("library_search_conversations", "conversation"),
-    ("library_search_collections", "collection"),
 ]
 
 
@@ -737,11 +734,6 @@ GET_CASES = [
         "library_get_conversation",
         {"id": make_public_id("conversation", CONVERSATION_ID)},
         "conversation",
-    ),
-    (
-        "library_get_collection",
-        {"id": make_public_id("collection", COLLECTION_ID)},
-        "collection",
     ),
 ]
 

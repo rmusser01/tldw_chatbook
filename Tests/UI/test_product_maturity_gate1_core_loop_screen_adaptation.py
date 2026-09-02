@@ -284,14 +284,14 @@ async def test_library_core_loop_modes_are_actionable_without_leaving_library():
         await _wait_for_library_snapshot(screen, pilot)
 
         screen.query_one("#library-row-browse-collections", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-collections-panel")
+        await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
 
         # Same screen instance, same rail + canvas shell -- the mode row
         # recomposed the canvas body in place rather than pushing a screen.
         assert _active_destination_screen(host) is screen
         assert (
             screen.query_one("#library-canvas")
-            in screen.query_one("#library-collections-panel").ancestors
+            in screen.query_one("#library-collections-reader-shell").ancestors
         )
         assert screen._library_selected_row_id == "browse-collections"
         assert screen.query_one("#library-row-browse-collections").has_class(

@@ -497,7 +497,7 @@ def library_rag_scope_toggle_children(state: LibraryRagPanelState) -> list[Widge
 
     Returns:
         One toggle `Button` per real source type, disabled when that
-        source's count is 0.
+    source's count is 0. Capture search remains inside Collections.
     """
     return [
         Button(

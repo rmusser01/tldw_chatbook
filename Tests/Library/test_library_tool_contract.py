@@ -1,4 +1,4 @@
-"""Contract tests for the 18 direct Library tools (task-1337, plan Task 1).
+"""Contract tests for the current direct Library tools.
 
 Covers the descriptor table, stable-ID codec, continuation-cursor codec,
 structured errors, argument validation, display normalization, and the
@@ -47,7 +47,6 @@ EXPECTED_LIBRARY_TOOLS = {
     "library_list_prompts", "library_get_prompt", "library_search_prompts",
     "library_list_skills", "library_get_skill", "library_search_skills",
     "library_list_conversations", "library_get_conversation", "library_search_conversations",
-    "library_list_collections", "library_get_collection", "library_search_collections",
     # chunking-agent-tools siblings (spec §4; re-chunk landed with Task 5)
     "library_get_media_structure", "library_get_media_chunk",
     "library_list_chunk_specs", "library_save_chunk_spec",
@@ -62,7 +61,7 @@ EXPECTED_LIBRARY_TOOLS = {
 
 def test_descriptor_table_has_exact_canonical_surface():
     assert set(LIBRARY_TOOL_DESCRIPTORS) == EXPECTED_LIBRARY_TOOLS
-    assert len({d.route for d in LIBRARY_TOOL_DESCRIPTORS.values()}) == 24
+    assert len({d.route for d in LIBRARY_TOOL_DESCRIPTORS.values()}) == 21
     for descriptor in LIBRARY_TOOL_DESCRIPTORS.values():
         assert descriptor.item_type in LIBRARY_ITEM_TYPES
         assert descriptor.operation in {
@@ -72,6 +71,21 @@ def test_descriptor_table_has_exact_canonical_surface():
         }
         assert descriptor.description
         assert descriptor.input_schema
+
+
+def test_generic_collection_container_tools_are_not_current_library_tools():
+    assert LIBRARY_ITEM_TYPES == (
+        "media",
+        "note",
+        "prompt",
+        "skill",
+        "conversation",
+    )
+    assert {
+        "library_list_collections",
+        "library_get_collection",
+        "library_search_collections",
+    }.isdisjoint(LIBRARY_TOOL_DESCRIPTORS)
 
 
 def test_list_and_search_schemas_bound_pagination():

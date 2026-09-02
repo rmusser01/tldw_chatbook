@@ -3,7 +3,7 @@
 Spec §6 picked a DEDICATED verb deliberately: ``library_rechunk_media``
 maps to the new ``library.media`` resource with a ``rechunk`` action --
 the local Library agent-tools policy home (the same ``library_collections``
-capability that owns ``library.collections.*`` and ``library.templates``),
+capability that also owns ``library.templates``),
 NOT the RAG-admin surface's ``rag.admin.launch`` (that verb belongs to the
 RAG-admin bulk action per ADR-003's verb-ownership precedent; this is a
 Library-media item action, the #3 Task-13 semantic-owner precedent).

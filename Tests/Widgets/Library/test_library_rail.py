@@ -360,7 +360,7 @@ _REAL_RAIL_ROW_WIDTH = 17
 
 
 async def test_count_pending_reserve_stabilizes_gloss_across_arrival():
-    """LIB-15: reproduces the live "Collections — item sets" -> "Collections
+    """LIB-15: reproduces the live "Collections — saved captures" -> "Collections
     (0)" flip and pins the fix. Two different (title, gloss) pairs are
     covered so the rule is proven general, not special-cased to one row.
 
@@ -379,7 +379,7 @@ async def test_count_pending_reserve_stabilizes_gloss_across_arrival():
     """
     cases = (
         # (title, gloss, width chosen inside THIS pair's own bug zone)
-        ("Collections", "item sets", 27),
+        ("Collections", "saved captures", 33),
         ("Watchers", "tracked pages", 28),
     )
     for title, gloss, width in cases:
@@ -478,12 +478,12 @@ async def test_gloss_genuinely_drops_when_the_known_count_grows_too_wide():
         target_id="x",
         count=123,
         count_known=True,
-        subtitle="item sets",
+        subtitle="saved captures",
         count_pending=True,
-        short_title="Sets",
+        short_title="Captures",
     )
     label = LibraryRail._row_label(row, selected=False, width=_REAL_RAIL_ROW_WIDTH)
-    assert "item sets" not in label
+    assert "saved captures" not in label
 
 
 # -- LIB-18: no rail row label truncates mid-word at 120/100/80 columns ----
@@ -552,12 +552,12 @@ async def test_collections_row_falls_back_to_short_title_once_double_digit():
         target_id="collections",
         count=23,
         count_known=True,
-        subtitle="item sets",
+        subtitle="saved captures",
         count_pending=True,
-        short_title="Sets",
+        short_title="Captures",
     )
     label = LibraryRail._row_label(row, selected=False, width=_REAL_RAIL_ROW_WIDTH)
-    assert label == "  Sets (23)"
+    assert label == "  Captures (23)"
     assert "Collect" not in label
 
 

@@ -3080,7 +3080,7 @@ class LLMScreen(LabScreen):
                     classes=LAB_RAIL_ROW_CLASS,
                 )
                 # Carried as an attribute rather than parsed back out of the
-                # id, mirroring library_collections_panel's collection_id.
+                # id, mirroring other opaque Library row identities.
                 row.lab_view_key = view_key
                 yield row
 

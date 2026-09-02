@@ -11,10 +11,8 @@ import pytest
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
 from tldw_chatbook.Library.library_collections_service import (
-    DuplicateLibraryCollectionItem,
-    DuplicateLibraryCollectionName,
-    InvalidLibraryCollectionDescription,
-    InvalidLibraryCollectionName,
+    LegacyCollectionsReadOnlyError,
+    LibraryCollectionRecord,
     LibraryCollectionsServiceError,
     LocalLibraryCollectionsService,
 )
@@ -55,65 +53,122 @@ def _seed_equal_timestamp_collections(service: LocalLibraryCollectionsService) -
         )
 
 
+def _seed_collection(
+    service: LocalLibraryCollectionsService,
+    name: str,
+    *,
+    description: str = "",
+) -> LibraryCollectionRecord:
+    collection_id = service._id_factory()
+    now = service._now_factory()
+    with service.db.transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO library_collections (
+                collection_id,
+                name,
+                description,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (collection_id, name, description, now, now),
+        )
+    collection = service.get_collection(collection_id)
+    assert collection is not None
+    return collection
+
+
+def _seed_membership(
+    service: LocalLibraryCollectionsService,
+    collection_id: str,
+    *,
+    source_type: str,
+    source_id: str,
+    title: str = "",
+) -> str:
+    membership_id = service._id_factory()
+    with service.db.transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO library_collection_items (
+                membership_id,
+                collection_id,
+                source_type,
+                source_id,
+                title,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                membership_id,
+                collection_id,
+                source_type.strip().lower(),
+                source_id,
+                title,
+                service._now_factory(),
+            ),
+        )
+    return membership_id
+
+
+def _seed_delete(
+    service: LocalLibraryCollectionsService,
+    collection_id: str,
+) -> bool:
+    now = service._now_factory()
+    with service.db.transaction() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE library_collections
+            SET deleted_at = ?, updated_at = ?
+            WHERE collection_id = ? AND deleted_at IS NULL
+            """,
+            (now, now, collection_id),
+        )
+    return cursor.rowcount > 0
+
+
 def test_list_collections_returns_empty_list_initially(tmp_path: Path) -> None:
     service = _service(tmp_path)
 
     assert service.list_collections() == ()
 
 
-def test_create_collection_persists_local_only_record(tmp_path: Path) -> None:
-    service = _service(tmp_path)
-
-    collection = service.create_collection(" Research ", description="Policy sources")
-
-    assert collection.collection_id == "collection-1"
-    assert collection.name == "Research"
-    assert collection.description == "Policy sources"
-    assert collection.item_count == 0
-    assert collection.source_authority == "local"
-    assert collection.sync_status == "local-only"
-    assert collection.created_at == "2026-05-08T04:00:00Z"
-    assert collection.updated_at == "2026-05-08T04:00:00Z"
-    assert service.list_collections() == (collection,)
-    assert service.get_collection("collection-1") == collection
-
-
-def test_duplicate_normalized_names_are_rejected(tmp_path: Path) -> None:
-    service = _service(tmp_path)
-    service.create_collection("Research")
-
-    with pytest.raises(DuplicateLibraryCollectionName):
-        service.create_collection(" research ")
-
-
-def test_rename_collection_updates_name_description_and_updated_at(
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda service: service.create_collection("New"),
+        lambda service: service.rename_collection("legacy-1", "Renamed"),
+        lambda service: service.delete_collection("legacy-1"),
+        lambda service: service.restore_collection("legacy-1"),
+        lambda service: service.add_item_to_collection(
+            "legacy-1",
+            source_type="note",
+            source_id="note-1",
+        ),
+    ],
+)
+def test_legacy_mutations_fail_before_any_database_access(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutate,
 ) -> None:
     service = _service(tmp_path)
-    collection = service.create_collection("Research", description="Initial")
 
-    renamed = service.rename_collection(
-        collection.collection_id,
-        "Briefing Queue",
-        description="Updated",
-    )
+    def forbidden_database_access():
+        raise AssertionError("legacy mutation reached the database")
 
-    assert renamed.collection_id == collection.collection_id
-    assert renamed.name == "Briefing Queue"
-    assert renamed.description == "Updated"
-    assert renamed.created_at == "2026-05-08T04:00:00Z"
-    assert renamed.updated_at == "2026-05-08T04:01:00Z"
-    assert service.get_collection(collection.collection_id) == renamed
+    monkeypatch.setattr(service.db, "connection", forbidden_database_access)
+    monkeypatch.setattr(service.db, "transaction", forbidden_database_access)
 
+    with pytest.raises(LegacyCollectionsReadOnlyError) as caught:
+        mutate(service)
 
-def test_delete_collection_hides_record_from_list_and_get(tmp_path: Path) -> None:
-    service = _service(tmp_path)
-    collection = service.create_collection("Research")
-
-    assert service.delete_collection(collection.collection_id) is True
-
-    assert service.list_collections() == ()
-    assert service.get_collection(collection.collection_id) is None
+    assert caught.value.reason == "legacy_read_only"
+    assert str(caught.value) == "legacy_read_only"
 
 
 def test_collections_user_content_evidence_counts_only_active_local_collections(
@@ -122,38 +177,19 @@ def test_collections_user_content_evidence_counts_only_active_local_collections(
     service = _service(tmp_path)
     assert service.get_library_user_content_evidence() is LibraryContentEvidence.EMPTY
 
-    collection = service.create_collection("Private collection")
+    collection = _seed_collection(service, "Private collection")
     evidence = service.get_library_user_content_evidence()
     assert type(evidence) is LibraryContentEvidence
     assert evidence is LibraryContentEvidence.HAS_USER_CONTENT
 
-    assert service.delete_collection(collection.collection_id)
+    assert _seed_delete(service, collection.collection_id)
     assert service.get_library_user_content_evidence() is LibraryContentEvidence.EMPTY
-
-
-def test_restore_collection_revives_record_with_membership(tmp_path: Path) -> None:
-    service = _service(tmp_path)
-    collection = service.create_collection("Research")
-    service.add_item_to_collection(
-        collection.collection_id,
-        source_type="note",
-        source_id="note-1",
-        title="Evidence",
-    )
-    assert service.delete_collection(collection.collection_id) is True
-
-    restored = service.restore_collection(collection.collection_id)
-
-    assert restored.collection_id == collection.collection_id
-    assert restored.name == "Research"
-    assert restored.item_count == 1
-    assert service.list_collections() == (restored,)
 
 
 def test_schema_version_and_foreign_keys_are_initialized(tmp_path: Path) -> None:
     db = LibraryCollectionsDB(":memory:")
 
-    assert db.get_schema_version() == 1
+    assert db.get_schema_version() == 3
     with db.connection() as conn:
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
@@ -190,72 +226,12 @@ def test_transaction_rolls_back_failed_collection_write(tmp_path: Path) -> None:
         )
 
 
-def test_item_membership_allows_same_source_across_collections_only(
-    tmp_path: Path,
-) -> None:
-    service = _service(tmp_path)
-    first = service.create_collection("Research")
-    second = service.create_collection("Briefing")
-
-    first_membership = service.add_item_to_collection(
-        first.collection_id,
-        source_type="media",
-        source_id="item-1",
-        title="Saved article",
-    )
-    second_membership = service.add_item_to_collection(
-        second.collection_id,
-        source_type="media",
-        source_id="item-1",
-        title="Saved article",
-    )
-
-    assert first_membership != second_membership
-    assert service.get_collection(first.collection_id).item_count == 1
-    assert service.get_collection(second.collection_id).item_count == 1
-    with pytest.raises(DuplicateLibraryCollectionItem):
-        service.add_item_to_collection(
-            first.collection_id,
-            source_type="media",
-            source_id="item-1",
-            title="Saved article",
-        )
-
-
-def test_invalid_names_are_rejected_before_sql(tmp_path: Path) -> None:
-    service = _service(tmp_path)
-
-    with pytest.raises(InvalidLibraryCollectionName):
-        service.create_collection(" ")
-    with pytest.raises(InvalidLibraryCollectionName):
-        service.create_collection("<script>alert(1)</script>")
-    with pytest.raises(InvalidLibraryCollectionName):
-        service.create_collection("x" * 121)
-
-    with service.db.connection() as conn:
-        assert (
-            conn.execute("SELECT COUNT(*) FROM library_collections").fetchone()[0] == 0
-        )
-
-
-def test_descriptions_reject_unsafe_html_before_persistence(tmp_path: Path) -> None:
-    service = _service(tmp_path)
-
-    with pytest.raises(InvalidLibraryCollectionDescription):
-        service.create_collection("Research", description="<script>alert(1)</script>")
-
-    with service.db.connection() as conn:
-        assert (
-            conn.execute("SELECT COUNT(*) FROM library_collections").fetchone()[0] == 0
-        )
-
-
 def test_list_collections_uses_default_limit_and_accepts_explicit_limit(
     tmp_path: Path,
 ) -> None:
     service = _service(tmp_path)
     for index in range(EXPECTED_DEFAULT_COLLECTION_LIST_LIMIT + 2):
-        service.create_collection(f"Collection {index:03d}")
+        _seed_collection(service, f"Collection {index:03d}")
 
     default_records = service.list_collections()
     explicit_records = service.list_collections(limit=3)
@@ -267,17 +243,6 @@ def test_list_collections_uses_default_limit_and_accepts_explicit_limit(
         "Collection 001",
         "Collection 002",
     ]
-
-
-def test_deleted_collection_name_fails_before_late_sql_integrity_error(
-    tmp_path: Path,
-) -> None:
-    service = _service(tmp_path)
-    collection = service.create_collection("Research")
-    assert service.delete_collection(collection.collection_id) is True
-
-    with pytest.raises(DuplicateLibraryCollectionName, match="deleted Collection"):
-        service.create_collection("research")
 
 
 def test_sqlite_errors_are_normalized_to_service_errors(tmp_path: Path) -> None:
@@ -313,9 +278,9 @@ SUPPORTED_MEMBER_SOURCE_TYPES = (
 
 def test_list_library_collections_exact_total_and_stable_page(tmp_path: Path) -> None:
     service = _service(tmp_path)
-    first = service.create_collection("Alpha")
-    second = service.create_collection("Beta")
-    third = service.create_collection("Gamma")
+    first = _seed_collection(service, "Alpha")
+    second = _seed_collection(service, "Beta")
+    third = _seed_collection(service, "Gamma")
 
     page = service.list_library_collections(limit=2, offset=0)
 
@@ -415,9 +380,9 @@ def test_locate_library_collection_page_returns_none_for_missing_or_deleted_id(
     tmp_path: Path,
 ) -> None:
     service = _service(tmp_path)
-    keep = service.create_collection("Keep")
-    deleted = service.create_collection("Deleted")
-    assert service.delete_collection(deleted.collection_id)
+    keep = _seed_collection(service, "Keep")
+    deleted = _seed_collection(service, "Deleted")
+    assert _seed_delete(service, deleted.collection_id)
 
     assert service.locate_library_collection_page("collection-missing") is None
     assert service.locate_library_collection_page(deleted.collection_id) is None
@@ -458,12 +423,20 @@ def test_collection_locator_rejects_invalid_stable_ids(
 
 def test_list_library_collections_reports_item_counts(tmp_path: Path) -> None:
     service = _service(tmp_path)
-    collection = service.create_collection("Counted", description="with members")
-    service.add_item_to_collection(
-        collection.collection_id, source_type="media", source_id="m-1", title="One"
+    collection = _seed_collection(service, "Counted", description="with members")
+    _seed_membership(
+        service,
+        collection.collection_id,
+        source_type="media",
+        source_id="m-1",
+        title="One",
     )
-    service.add_item_to_collection(
-        collection.collection_id, source_type="note", source_id="n-1", title="Two"
+    _seed_membership(
+        service,
+        collection.collection_id,
+        source_type="note",
+        source_id="n-1",
+        title="Two",
     )
 
     page = service.list_library_collections()
@@ -483,9 +456,9 @@ def test_list_library_collections_reports_item_counts(tmp_path: Path) -> None:
 
 def test_list_library_collections_excludes_deleted(tmp_path: Path) -> None:
     service = _service(tmp_path)
-    keep = service.create_collection("Keep")
-    drop = service.create_collection("Drop")
-    assert service.delete_collection(drop.collection_id) is True
+    keep = _seed_collection(service, "Keep")
+    drop = _seed_collection(service, "Drop")
+    assert _seed_delete(service, drop.collection_id) is True
 
     page = service.list_library_collections()
 
@@ -495,12 +468,13 @@ def test_list_library_collections_excludes_deleted(tmp_path: Path) -> None:
 
 def test_search_library_collections_match_branches(tmp_path: Path) -> None:
     service = _service(tmp_path)
-    by_name = service.create_collection("Research shelf")
-    by_description = service.create_collection(
-        "Shelf two", description="research backlog"
+    by_name = _seed_collection(service, "Research shelf")
+    by_description = _seed_collection(
+        service, "Shelf two", description="research backlog"
     )
-    by_member = service.create_collection("Shelf three")
-    service.add_item_to_collection(
+    by_member = _seed_collection(service, "Shelf three")
+    _seed_membership(
+        service,
         by_member.collection_id,
         source_type="media",
         source_id="m-1",
@@ -520,14 +494,16 @@ def test_search_library_collections_counts_multi_member_match_once(
     tmp_path: Path,
 ) -> None:
     service = _service(tmp_path)
-    collection = service.create_collection("Dedup")
-    service.add_item_to_collection(
+    collection = _seed_collection(service, "Dedup")
+    _seed_membership(
+        service,
         collection.collection_id,
         source_type="media",
         source_id="m-1",
         title="needle one",
     )
-    service.add_item_to_collection(
+    _seed_membership(
+        service,
         collection.collection_id,
         source_type="media",
         source_id="m-2",
@@ -547,8 +523,9 @@ def test_search_library_collections_does_not_inspect_member_content(
     """Only the stored member *title* participates; the backing source
     identity (and never the member's content) must not be searchable."""
     service = _service(tmp_path)
-    collection = service.create_collection("Opaque")
-    service.add_item_to_collection(
+    collection = _seed_collection(service, "Opaque")
+    _seed_membership(
+        service,
         collection.collection_id,
         source_type="media",
         source_id="needle-raw-identity",
@@ -562,8 +539,8 @@ def test_search_library_collections_does_not_inspect_member_content(
 
 def test_search_library_collections_exact_name_ranks_first(tmp_path: Path) -> None:
     service = _service(tmp_path)
-    partial = service.create_collection("needle extras")
-    exact = service.create_collection("needle")
+    partial = _seed_collection(service, "needle extras")
+    exact = _seed_collection(service, "needle")
 
     page = service.search_library_collections(query="needle")
 
@@ -577,8 +554,8 @@ def test_search_library_collections_like_wildcards_match_literally(
     tmp_path: Path,
 ) -> None:
     service = _service(tmp_path)
-    percent = service.create_collection("100% coverage")
-    service.create_collection("1000 coverage")
+    percent = _seed_collection(service, "100% coverage")
+    _seed_collection(service, "1000 coverage")
 
     page = service.search_library_collections(query="100%")
 
@@ -587,9 +564,9 @@ def test_search_library_collections_like_wildcards_match_literally(
 
 def test_search_library_collections_excludes_deleted(tmp_path: Path) -> None:
     service = _service(tmp_path)
-    service.create_collection("needle keep")
-    drop = service.create_collection("needle drop")
-    assert service.delete_collection(drop.collection_id) is True
+    _seed_collection(service, "needle keep")
+    drop = _seed_collection(service, "needle drop")
+    assert _seed_delete(service, drop.collection_id) is True
 
     page = service.search_library_collections(query="needle")
 
@@ -606,9 +583,10 @@ def test_get_library_collection_pages_members_with_exact_total(
     tmp_path: Path,
 ) -> None:
     service = _service(tmp_path)
-    collection = service.create_collection("Members", description="d")
+    collection = _seed_collection(service, "Members", description="d")
     membership_ids = [
-        service.add_item_to_collection(
+        _seed_membership(
+            service,
             collection.collection_id,
             source_type="media",
             source_id=f"m-{index}",
@@ -644,9 +622,10 @@ def test_get_library_collection_supported_types_round_trip_public_ids(
     from tldw_chatbook.Library.library_tool_contract import parse_public_id
 
     service = _service(tmp_path)
-    collection = service.create_collection("Typed")
+    collection = _seed_collection(service, "Typed")
     for source_type in SUPPORTED_MEMBER_SOURCE_TYPES:
-        service.add_item_to_collection(
+        _seed_membership(
+            service,
             collection.collection_id,
             source_type=source_type,
             source_id=f"{source_type}-id-1",
@@ -668,9 +647,13 @@ def test_get_library_collection_supported_types_round_trip_public_ids(
 
 def test_get_library_collection_normalizes_source_type_case(tmp_path: Path) -> None:
     service = _service(tmp_path)
-    collection = service.create_collection("Case")
-    service.add_item_to_collection(
-        collection.collection_id, source_type="Media", source_id="m-1", title="t"
+    collection = _seed_collection(service, "Case")
+    _seed_membership(
+        service,
+        collection.collection_id,
+        source_type="Media",
+        source_id="m-1",
+        title="t",
     )
 
     member = service.get_library_collection(collection.collection_id)["members"][0]
@@ -682,8 +665,9 @@ def test_get_library_collection_unsupported_type_gets_opaque_ref(
     tmp_path: Path,
 ) -> None:
     service = _service(tmp_path)
-    collection = service.create_collection("Refs")
-    service.add_item_to_collection(
+    collection = _seed_collection(service, "Refs")
+    _seed_membership(
+        service,
         collection.collection_id,
         source_type="server-doc",
         source_id="doc-9",
@@ -701,9 +685,13 @@ def test_get_library_collection_unsupported_type_gets_opaque_ref(
 
 def test_get_library_collection_bounds_member_titles(tmp_path: Path) -> None:
     service = _service(tmp_path)
-    collection = service.create_collection("Titles")
-    service.add_item_to_collection(
-        collection.collection_id, source_type="media", source_id="m-1", title="t" * 300
+    collection = _seed_collection(service, "Titles")
+    _seed_membership(
+        service,
+        collection.collection_id,
+        source_type="media",
+        source_id="m-1",
+        title="t" * 300,
     )
 
     member = service.get_library_collection(collection.collection_id)["members"][0]
@@ -716,9 +704,13 @@ def test_get_library_collection_members_expose_no_content_fields(
     tmp_path: Path,
 ) -> None:
     service = _service(tmp_path)
-    collection = service.create_collection("Lean")
-    service.add_item_to_collection(
-        collection.collection_id, source_type="note", source_id="n-1", title="t"
+    collection = _seed_collection(service, "Lean")
+    _seed_membership(
+        service,
+        collection.collection_id,
+        source_type="note",
+        source_id="n-1",
+        title="t",
     )
 
     member = service.get_library_collection(collection.collection_id)["members"][0]

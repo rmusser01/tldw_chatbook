@@ -15,7 +15,7 @@ direct runtime delegate:
   ``asyncio.to_thread``, returns the service payload unchanged, keeps the
   existing ``KeyError`` for unknown names, and reports descriptor tools as
   ``implemented`` (not ``missing``) in protocol diagnostics;
-- bootstrap: ``build_local_library_tool_service`` composes all six local
+- bootstrap: ``build_local_library_tool_service`` composes all five current local
   backends with their real constructor signatures into one shared service,
   degrading any failing backend to ``feature_unavailable``, threads the
   runtime-policy enforcer into the chunk tool service (chunking-agent-tools
@@ -68,7 +68,7 @@ class FakeLibraryToolService:
 # -- Manifest -----------------------------------------------------------------
 
 
-def test_manifest_keeps_legacy_tools_then_appends_the_24_descriptor_tools():
+def test_manifest_keeps_legacy_tools_then_appends_the_21_descriptor_tools():
     manifest = describe_local_mcp_capabilities()
     tools = manifest["tools"]
     names = [entry["name"] for entry in tools]
@@ -76,7 +76,17 @@ def test_manifest_keeps_legacy_tools_then_appends_the_24_descriptor_tools():
     assert names[: len(LEGACY_TOOL_NAMES)] == LEGACY_TOOL_NAMES
     library_entries = tools[len(LEGACY_TOOL_NAMES) :]
     assert [entry["name"] for entry in library_entries] == LIBRARY_TOOL_NAMES
-    assert len(tools) == len(LEGACY_TOOL_NAMES) + 24
+    assert len(tools) == len(LEGACY_TOOL_NAMES) + 21
+
+
+def test_manifest_does_not_advertise_generic_collection_container_tools():
+    names = {entry["name"] for entry in describe_local_mcp_capabilities()["tools"]}
+
+    assert {
+        "library_list_collections",
+        "library_get_collection",
+        "library_search_collections",
+    }.isdisjoint(names)
 
 
 def test_manifest_does_not_advertise_unimplemented_ingest_media():
@@ -307,8 +317,6 @@ def _patch_factory_backends(monkeypatch, tmp_path, *, raising: set[str] | None =
     """
     from tldw_chatbook import config as config_module
     import tldw_chatbook.Chat.chat_conversation_service as conversation_module
-    import tldw_chatbook.DB.Library_Collections_DB as collections_db_module
-    import tldw_chatbook.Library.library_collections_service as collections_module
     import tldw_chatbook.Media.local_media_reading_service as media_module
     import tldw_chatbook.Notes.Notes_Library as notes_module
     import tldw_chatbook.Prompt_Management.local_prompt_service as prompt_module
@@ -321,17 +329,10 @@ def _patch_factory_backends(monkeypatch, tmp_path, *, raising: set[str] | None =
         prompt=[],
         skills=[],
         conversation=[],
-        collections_db=[],
-        collections=[],
     )
 
     monkeypatch.setattr(
         config_module, "get_chachanotes_db_path", lambda: tmp_path / "chacha.db"
-    )
-    monkeypatch.setattr(
-        config_module,
-        "get_library_collections_db_path",
-        lambda: tmp_path / "collections.db",
     )
     monkeypatch.setattr(config_module, "get_user_data_dir", lambda: tmp_path)
 
@@ -352,12 +353,10 @@ def _patch_factory_backends(monkeypatch, tmp_path, *, raising: set[str] | None =
     _site("prompt", prompt_module, "LocalPromptService")
     _site("skills", skills_module, "LocalSkillsService")
     _site("conversation", conversation_module, "ChatConversationService")
-    _site("collections_db", collections_db_module, "LibraryCollectionsDB")
-    _site("collections", collections_module, "LocalLibraryCollectionsService")
     return records
 
 
-def test_factory_builds_six_backends_with_real_signatures(monkeypatch, tmp_path):
+def test_factory_builds_five_backends_with_real_signatures(monkeypatch, tmp_path):
     import tldw_chatbook.MCP.server as server_module
     from tldw_chatbook.config import CLI_APP_CLIENT_ID
     import tldw_chatbook.Skills_Interop.local_skills_service as skills_module
@@ -381,18 +380,12 @@ def test_factory_builds_six_backends_with_real_signatures(monkeypatch, tmp_path)
         "store_dir": skills_module.default_local_skills_store_dir(tmp_path)
     }
     assert records.conversation[0].ctor_args == (chachanotes_db,)
-    assert records.collections_db[0].ctor_args == (
-        tmp_path / "collections.db",
-        CLI_APP_CLIENT_ID,
-    )
-    assert records.collections[0].ctor_args == (records.collections_db[0],)
 
     assert service._media is records.media[0]
     assert service._notes is notes
     assert service._prompts is records.prompt[0]
     assert service._skills is records.skills[0]
     assert service._conversations is records.conversation[0]
-    assert service._collections is records.collections[0]
 
 
 def test_factory_degrades_a_failing_backend_to_feature_unavailable(

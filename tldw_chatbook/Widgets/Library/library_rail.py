@@ -325,6 +325,9 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         search_placeholder: str = "Search conversations…",
         workspaces_body_factory: Callable[[], Iterable[Widget]] | None = None,
         top_action_factory: Callable[[], Iterable[Widget]] | None = None,
+        row_context_factory: (
+            Callable[[LibraryRailRow], Iterable[Widget]] | None
+        ) = None,
         lifecycle: LibraryLifecycle = LibraryLifecycle.EXPANDED,
         onboarding_all_empty: bool = False,
         **kwargs: Any,
@@ -336,6 +339,7 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         self.search_placeholder = search_placeholder
         self.workspaces_body_factory = workspaces_body_factory
         self.top_action_factory = top_action_factory
+        self.row_context_factory = row_context_factory
         self.lifecycle = lifecycle
         self.onboarding_all_empty = onboarding_all_empty
         self._last_ordinary_width_contract: OrdinaryRailStyleContract | None = None
@@ -879,3 +883,5 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         with body:
             for row in section.rows:
                 yield self._compose_row_button(row)
+                if self.row_context_factory is not None:
+                    yield from self.row_context_factory(row)

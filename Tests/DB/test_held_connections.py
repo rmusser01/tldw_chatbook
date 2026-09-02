@@ -83,6 +83,46 @@ def _begins(statements: list[str]) -> list[str]:
     ]
 
 
+def _seed_legacy_collection(
+    db: LibraryCollectionsDB,
+    collection_id: str,
+    name: str,
+    *,
+    description: str = "",
+) -> None:
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO library_collections (
+                collection_id, name, description, created_at, updated_at
+            )
+            VALUES (?, ?, ?, '2026-01-01', '2026-01-01')
+            """,
+            (collection_id, name, description),
+        )
+
+
+def _seed_legacy_membership(
+    db: LibraryCollectionsDB,
+    membership_id: str,
+    collection_id: str,
+    *,
+    source_type: str,
+    source_id: str,
+    title: str,
+) -> None:
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO library_collection_items (
+                membership_id, collection_id, source_type, source_id, title, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, '2026-01-01')
+            """,
+            (membership_id, collection_id, source_type, source_id, title),
+        )
+
+
 # === 1. One connection per thread, not per operation ===
 
 
@@ -93,8 +133,8 @@ class TestConnectionsAreHeldPerThread:
         service = LocalLibraryCollectionsService(db)
         opened = _count_opens(db)
 
-        service.create_collection("alpha")
-        service.create_collection("beta")
+        _seed_legacy_collection(db, "legacy-alpha", "alpha")
+        _seed_legacy_collection(db, "legacy-beta", "beta")
         for _ in range(10):
             service.list_collections()
             service.list_library_collections()
@@ -278,9 +318,16 @@ class TestPureReadsDoNotTakeWriteTransactions:
     def _service(self, tmp_path):
         db = LibraryCollectionsDB(tmp_path / "collections.db")
         service = LocalLibraryCollectionsService(db)
-        service.create_collection("alpha", description="first")
-        service.add_item_to_collection(
-            service.list_collections()[0].collection_id,
+        _seed_legacy_collection(
+            db,
+            "legacy-alpha",
+            "alpha",
+            description="first",
+        )
+        _seed_legacy_membership(
+            db,
+            "membership-alpha",
+            "legacy-alpha",
             source_type="media",
             source_id="7",
             title="doc",
@@ -315,11 +362,11 @@ class TestPureReadsDoNotTakeWriteTransactions:
         assert begins.count("ROLLBACK") == 1, begins
         db.close()
 
-    def test_writes_still_take_an_immediate_write_transaction(self, tmp_path):
+    def test_database_writes_still_take_an_immediate_transaction(self, tmp_path):
         db, service = self._service(tmp_path)
         statements = _trace(db._held_connection())
 
-        service.create_collection("beta")
+        _seed_legacy_collection(db, "legacy-beta", "beta")
 
         begins = _begins(statements)
         assert begins.count("BEGIN IMMEDIATE") == 1, begins
@@ -352,7 +399,11 @@ class TestPureReadsDoNotTakeWriteTransactions:
         assert {record.name for record in service.list_collections()} == before
         assert db._held_connection().in_transaction is False
         # The connection is still usable: the guard rolled back before it raised.
-        service.create_collection("after-the-guard")
+        _seed_legacy_collection(
+            db,
+            "legacy-after-the-guard",
+            "after-the-guard",
+        )
         assert "after-the-guard" in {
             record.name for record in service.list_collections()
         }
@@ -398,16 +449,17 @@ class TestPureReadsDoNotTakeWriteTransactions:
         db.close()
 
     def test_a_failed_write_rolls_back_and_leaves_no_open_transaction(self, tmp_path):
-        from tldw_chatbook.Library.library_collections_service import (
-            DuplicateLibraryCollectionItem,
-        )
-
         db, service = self._service(tmp_path)
         collection_id = service.list_collections()[0].collection_id
 
-        with pytest.raises(DuplicateLibraryCollectionItem):
-            service.add_item_to_collection(
-                collection_id, source_type="media", source_id="7", title="dup"
+        with pytest.raises(sqlite3.IntegrityError):
+            _seed_legacy_membership(
+                db,
+                "membership-duplicate",
+                collection_id,
+                source_type="media",
+                source_id="7",
+                title="dup",
             )
 
         # The held connection is reusable straight afterwards -- an

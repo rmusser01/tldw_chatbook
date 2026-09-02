@@ -575,8 +575,12 @@ def test_document_version_request_and_response_match_server_contract():
 
 def test_reading_update_request_strips_tag_whitespace():
     payload = ReadingUpdateRequest(
-        status="read", favorite=True, tags=[" ai ", "priority "]
+        expected_revision=7,
+        status="read",
+        favorite=True,
+        tags=[" ai ", "priority "],
     )
+    assert payload.expected_revision == 7
     assert payload.status == "read"
     assert payload.favorite is True
     assert payload.tags == ["ai", "priority"]
