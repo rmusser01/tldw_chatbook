@@ -382,10 +382,7 @@ from ...Chat.console_command_suggestions import (
     suggestions_for_draft,
     _COMMAND_DESCRIPTIONS,
 )
-from ...Chat.console_help import (
-    build_command_detail,
-    build_help_listing,
-)
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (console_help imports inside _console_command_help.)
 from ...Chat.console_image_view import (
     ConsoleImageRenderCache,
     ConsoleImageViewState,
@@ -627,9 +624,7 @@ from ...Widgets.Console.console_rewind_modal import (
     KIND_SUMMARIZE_UP_TO,
     RewindPromptRow,
 )
-from tldw_chatbook.Widgets.Console.console_summarize_preview_modal import (
-    ConsoleSummarizePreviewModal,
-)
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (the summarize-preview modal imports where it is pushed.)
 from ...Widgets.Console.console_workbench_state import build_console_workbench_state
 from ...Workspaces.display_state import (
     ConsoleWorkspaceConversationRow,
@@ -15851,6 +15846,11 @@ class ChatScreen(BaseAppScreen):
                 return None
             return blocked_reason(handler, ephemeral=ephemeral)
 
+        from ...Chat.console_help import (  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+            build_command_detail,
+            build_help_listing,
+        )
+
         commands = self._console_command_registry.commands()
         query = (parse.args or "").strip()
         if query:
@@ -17500,7 +17500,7 @@ class ChatScreen(BaseAppScreen):
                 # on screen (Esc still dismisses it). Rare enough to note
                 # rather than serialize the whole group on a modal.
                 modal_result = await self.app_instance.push_screen_wait(
-                    ConsoleSummarizePreviewModal(preview)
+                    _lazy_summarize_preview_modal()(preview)
                 )
                 if modal_result is None:
                     return
@@ -20414,3 +20414,12 @@ class ChatScreen(BaseAppScreen):
             self.notify("Settings reset to defaults", severity="success")
         except Exception as e:
             logger.error(f"Error resetting settings: {e}")
+
+
+def _lazy_summarize_preview_modal():
+    """ADR-097 boot ratchet: deferred off the boot path (loads on first use)."""
+    from tldw_chatbook.Widgets.Console.console_summarize_preview_modal import (
+        ConsoleSummarizePreviewModal,
+    )
+
+    return ConsoleSummarizePreviewModal

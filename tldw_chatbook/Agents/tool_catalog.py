@@ -63,7 +63,7 @@ from .agent_models import (
     WAIT_AGENTS_TOOL_NAME,
 )
 from .run_context import current_run_id
-from .tool_arg_coercion import coerce_tool_args
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (tool_arg_coercion imports at the dispatch site.)
 from .run_log_search import (
     MAX_CROSS_RUN_RUNS,
     MAX_SLICE_RECORDS,
@@ -1624,6 +1624,8 @@ class ToolCatalogRegistry:
         """
         try:
             schema = provider.load_schema(tool_id)
+            from .tool_arg_coercion import coerce_tool_args  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+
             repaired, coerced = coerce_tool_args(args, getattr(schema, "parameters", None))
         except Exception:  # noqa: BLE001 -- repair is best-effort by design
             return args

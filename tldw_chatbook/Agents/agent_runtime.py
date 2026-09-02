@@ -29,13 +29,10 @@ from tldw_chatbook.model_capabilities import (
     moonshot_model_returns_reasoning_content,
 )
 
-from .fallback_chain import FallbackRuntime, is_credit_terminal
-from .history_projection import ProjectionError, project_history_for_protocol
-from .model_retry import (
-    RetryPolicy,
-    is_transient_model_error,
-    retry_delay_seconds,
-)
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). The
+# retry/fallback/projection helpers are loop-only dependencies, imported
+# at the top of `run_agent_loop`; `FallbackRuntime` appears here only as
+# a string annotation on `LoopDeps.fallback`.
 from .agent_models import (
     CHECK_AGENTS_TOOL_NAME,
     FENCE_TOOL_RESULT_PREFIX,
@@ -967,8 +964,6 @@ BUDGET_WRAPUP_INSTRUCTION = (
 #: is per-run config (`RunBudget.max_model_retries`); this is only the delay
 #: curve.
 
-_MODEL_RETRY_POLICY = RetryPolicy(max_attempts=0, base_delay=1.0, max_delay=30.0)
-
 
 def run_agent_loop(
     config: AgentConfig,
@@ -1011,6 +1006,18 @@ def run_agent_loop(
         (task-326) ``total_tokens`` — the measured cumulative prompt+
         completion token spend checked against ``max_total_tokens``.
     """
+    # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+    from .fallback_chain import is_credit_terminal
+    from .history_projection import ProjectionError, project_history_for_protocol
+    from .model_retry import (
+        RetryPolicy,
+        is_transient_model_error,
+        retry_delay_seconds,
+    )
+
+    # Backoff shape for transient model failures (TASK-25901); the attempt
+    # COUNT is per-run config, this is only the delay curve.
+    _MODEL_RETRY_POLICY = RetryPolicy(max_attempts=0, base_delay=1.0, max_delay=30.0)
     budget = config.budget
     steps: list[AgentStep] = []
     messages = list(initial_messages)

@@ -116,7 +116,7 @@ from .agent_runtime import (
     run_agent_loop,
     safe_utc_timestamp,
 )
-from .fallback_chain import FallbackRuntime, resolve_fallback_chain
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (fallback_chain imports at the resolve site.)
 from .fleet_coordinator import (
     DEFAULT_RETAINED_TRANSCRIPT_MAX_CHARS,
     DEFAULT_RETAINED_TRANSCRIPTS,
@@ -6368,6 +6368,8 @@ class AgentService:
                 return None
 
         fallback_runtime = None
+        from .fallback_chain import FallbackRuntime, resolve_fallback_chain  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+
         resolved_chain = resolve_fallback_chain(
             getattr(config, "fallback_providers", None),
             api_endpoint,

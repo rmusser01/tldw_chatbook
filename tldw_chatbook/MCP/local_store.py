@@ -4,7 +4,7 @@ import json
 import re
 from dataclasses import dataclass, field
 
-from tldw_chatbook.MCP.spawn_guard import screen_spawn_command
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (spawn_guard imports at the save-time check.)
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -779,6 +779,8 @@ class LocalMCPStore:
         )
         # TASK-26013: refuse a dangerous command shape at save time, naming the
         # matched rule and leaving the stored list untouched.
+        from tldw_chatbook.MCP.spawn_guard import screen_spawn_command  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+
         _spawn_verdict = screen_spawn_command(command, canonical_profile.args)
         if _spawn_verdict is not None:
             raise ValueError(

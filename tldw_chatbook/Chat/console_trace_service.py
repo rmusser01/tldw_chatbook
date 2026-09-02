@@ -158,23 +158,14 @@ class TraceCallIdentity:
     policy_id: str
 
 
-TraceCallReservationStatus: TypeAlias = Literal[
-    "not_established", "established", "unknown"
-]
-
-
-class TraceCallPersistenceError(RuntimeError):
-    """A content-free pre-dispatch trace write failure."""
-
-    def __init__(
-        self,
-        *,
-        boundary: object | None = None,
-        reservation_status: TraceCallReservationStatus | None = None,
-    ) -> None:
-        super().__init__("Provider call trace persistence failed.")
-        self.boundary = boundary
-        self.reservation_status = reservation_status
+# ADR-097 boot ratchet: the exception contract lives in the dependency-free
+# leaf `console_trace_errors` so boot-resident callers that need ONLY the
+# exception do not pull this module's whole trace stack onto the boot path.
+# Re-exported here so existing importers keep the SAME class object.
+from tldw_chatbook.Chat.console_trace_errors import (  # noqa: F401
+    TraceCallPersistenceError,
+    TraceCallReservationStatus,
+)
 
 
 @dataclass(slots=True)

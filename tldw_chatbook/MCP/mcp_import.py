@@ -48,9 +48,6 @@ def _literal_is_storable(profile_id: str, command: str, key: str, value: str) ->
     return True
 
 
-from tldw_chatbook.MCP.spawn_guard import screen_spawn_command
-
-
 def parse_mcp_servers_json(
     text: str, *, existing_ids: set[str] = frozenset()
 ) -> list[ImportCandidate]:
@@ -86,6 +83,8 @@ def parse_mcp_servers_json(
         )
         # TASK-26013: imported configs pass through the identical spawn guard as
         # hand-entered ones -- this is the untrusted-input path.
+        from tldw_chatbook.MCP.spawn_guard import screen_spawn_command  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+
         _spawn_verdict = screen_spawn_command(candidate.command, candidate.args)
         if _spawn_verdict is not None:
             raise ValueError(

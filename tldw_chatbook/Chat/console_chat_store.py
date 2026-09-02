@@ -155,10 +155,6 @@ from tldw_chatbook.Chat.library_activity import (
     project_library_activity,
 )
 from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail, capture_to_blob
-from tldw_chatbook.Chat.console_trace_projection import (
-    ConsoleTraceProjection,
-    ProjectedTraceCall,
-)
 from tldw_chatbook.Chat.console_trace_provenance import ConsoleTraceCaptureMode
 from tldw_chatbook.Chat.console_capture_policy_repository import (
     CapturePolicyReadResult,
@@ -358,6 +354,11 @@ def _validate_raw_cli_marker_text(field_name: str, value: object) -> None:
 
 
 if TYPE_CHECKING:
+    # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (annotation-only in this module)
+    from tldw_chatbook.Chat.console_trace_projection import (
+        ConsoleTraceProjection,
+        ProjectedTraceCall,
+    )
     # Annotation-only: ``from __future__ import annotations`` (top of file)
     # defers evaluation of every type hint below, so this class never needs
     # to exist at runtime here -- only ``capture_to_blob`` (imported above)

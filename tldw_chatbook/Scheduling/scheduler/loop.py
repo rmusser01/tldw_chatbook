@@ -14,15 +14,8 @@ from loguru import logger
 
 from tldw_chatbook.Metrics.metrics_logger import log_counter
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
-from tldw_chatbook.emergency_stop import (
-    default_emergency_stop_path,
-    is_emergency_stopped,
-)
-from tldw_chatbook.Scheduling.scheduler_heartbeat import (
-    SchedulerHeartbeat,
-    default_heartbeat_path,
-    write_heartbeat,
-)
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (emergency_stop imports at its read site.)
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (scheduler_heartbeat imports at its write site.)
 from tldw_chatbook.Scheduling.constants import (
     HANDLER_TIMEOUT_SECONDS,
     MISSED_FIRE_GRACE_SECONDS,
@@ -393,6 +386,12 @@ class SchedulerLoop:
         else:
             self._last_error = error
         try:
+            from tldw_chatbook.Scheduling.scheduler_heartbeat import (  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+                SchedulerHeartbeat,
+                default_heartbeat_path,
+                write_heartbeat,
+            )
+
             path = self._heartbeat_path or default_heartbeat_path()
         except Exception:  # noqa: BLE001 -- resolution must not mask a tick error
             return
@@ -409,6 +408,12 @@ class SchedulerLoop:
 
     def _emergency_stopped(self) -> bool:
         """Whether the global emergency stop holds new dispatches (26004)."""
+        # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+        from tldw_chatbook.emergency_stop import (
+            default_emergency_stop_path,
+            is_emergency_stopped,
+        )
+
         path = getattr(self, "_emergency_stop_path", None) or (
             default_emergency_stop_path()
         )

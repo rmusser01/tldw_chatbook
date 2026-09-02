@@ -220,7 +220,7 @@ from tldw_chatbook.Chat.console_settings_defaults import ConsoleDefaultDurabilit
 from tldw_chatbook.Chat.server_chat_conversation_service import (
     ServerChatConversationService,
 )
-from tldw_chatbook.Terminal.session_manager import TerminalSessionManager  # noqa: E402
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (TerminalSessionManager imports at its construction site.)
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import (
     DatabaseError as MediaDatabaseError,
@@ -7456,6 +7456,10 @@ class TldwCli(
         self.app_config = load_settings()
         self.raw_cli_runtime = RawCliRuntime(lambda: _read_app_raw_cli_permitted(self))
         self._raw_cli_runtime_shutdown_task: asyncio.Task[Any] | None = None
+        from tldw_chatbook.Terminal.session_manager import (  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+            TerminalSessionManager,
+        )
+
         self.terminal_session_manager = TerminalSessionManager(
             lambda: _read_app_raw_cli_permitted(self),
             _build_terminal_backend,

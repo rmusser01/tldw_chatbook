@@ -23,7 +23,7 @@ from urllib.parse import urlsplit
 
 from loguru import logger
 
-from tldw_chatbook.MCP.spawn_guard import screen_spawn_command
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (spawn_guard imports at the spawn-time check.)
 
 _MCP_PROTOCOL_VERSION = "2025-03-26"
 _REQUEST_TIMEOUT_SECONDS = 10.0
@@ -926,6 +926,8 @@ class MCPClient:
         """
         # TASK-26013: the guard runs at SPAWN time too, so a config edited on
         # disk to a dangerous shape cannot bypass the save-time check.
+        from tldw_chatbook.MCP.spawn_guard import screen_spawn_command  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+
         spawn_verdict = screen_spawn_command(command, args)
         if spawn_verdict is not None:
             logger.error(

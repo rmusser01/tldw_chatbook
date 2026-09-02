@@ -128,10 +128,7 @@ from tldw_chatbook.Chat.console_history_budget import (
     count_console_messages_tokens,
     provider_continuation_owner_groups,
 )
-from tldw_chatbook.Chat.console_auxiliary_routing import (
-    auxiliary_selection_from_config,
-    select_auxiliary_or_main,
-)
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (console_auxiliary_routing imports at its one call site.)
 from tldw_chatbook.Agents.agent_service import append_personal_context
 from tldw_chatbook.Chat.console_context_compaction import (
     NO_LEGACY_MEMORY,
@@ -298,7 +295,9 @@ from tldw_chatbook.Chat.console_turn_preparation import (
     build_console_request_for_preparation,
     pause_for_trace_call_failure,
 )
-from tldw_chatbook.Chat.console_trace_service import TraceCallPersistenceError
+from tldw_chatbook.Chat.console_trace_errors import (  # ADR-097 boot ratchet
+    TraceCallPersistenceError,
+)
 from tldw_chatbook.Chat.library_preparation import (
     LibraryPreparationContribution,
     library_preparation_event_for_outcome,
@@ -2852,6 +2851,11 @@ class ConsoleChatController:
             aux_model = get_cli_setting("chat_defaults", "auxiliary_model", None)
         except Exception:
             return main_resolution
+        from tldw_chatbook.Chat.console_auxiliary_routing import (  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+            auxiliary_selection_from_config,
+            select_auxiliary_or_main,
+        )
+
         aux_selection = auxiliary_selection_from_config(
             main_selection, provider=aux_provider, model=aux_model
         )

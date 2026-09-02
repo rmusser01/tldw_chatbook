@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 from croniter import croniter
 from loguru import logger
 
-from tldw_chatbook.Scheduling.automation_health import compute_local_health
+# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (automation_health imports at its read site.)
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.models import (
     ReminderTask,
@@ -486,6 +486,10 @@ class SchedulingService:
             return None
 
         app = self.app_getter() if self.app_getter is not None else None
+        from tldw_chatbook.Scheduling.automation_health import (  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+            compute_local_health,
+        )
+
         health, reason = compute_local_health(app, row)
         if health != "ready":
             logger.warning(
