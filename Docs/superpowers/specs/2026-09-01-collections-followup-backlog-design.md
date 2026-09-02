@@ -25,9 +25,9 @@ compatibility consequences.
 
 ### Selected: atomic cross-repository tasks
 
-Create five Server capability tasks, five corresponding Chatbook workflow integrations, one
-Chatbook tracking parent, and one Chatbook ADR decision task. This produces twelve records whose
-ownership and completion evidence are unambiguous. Three Server tasks harden only the concrete
+Create six Server capability tasks, five corresponding Chatbook workflow integrations, one
+Chatbook tracking parent, and one Chatbook ADR decision task. This produces thirteen records whose
+ownership and completion evidence are unambiguous. Four Server tasks harden only the concrete
 gaps found in otherwise-shipped template, digest, and import/export contracts; they do not redesign
 those products.
 
@@ -66,9 +66,10 @@ diagnostic-privacy behavior are covered.
 #### S2. Add coherent scoped tag and domain aggregates for Reading items
 
 Expose bounded, deterministic, fully pageable tag and domain aggregate results for an explicitly
-documented Reading scope. The endpoint accepts a facet-value `q` search so searching never means
-filtering only already-loaded pages. Aggregate rows and exact aggregate totals are evaluated in one
-snapshot with the accepted capture search/status/favorite/date/tag/domain filters. The contract
+documented Reading scope. It uses distinct `capture_q` and `facet_q` parameters so facet-value
+search never means filtering only already-loaded pages and cannot be confused with capture search.
+Aggregate rows and exact aggregate totals are evaluated in one snapshot with the accepted capture
+search/status/favorite/date/tag/domain filters. The contract
 uses self-excluding semantics: the requested facet ignores that facet's active filter while retaining
 all other scope filters, allowing the user to change it without losing alternatives. Normalized
 value plus stable tie-break ordering makes every matching value reachable. Results are user-scoped
@@ -88,23 +89,42 @@ deletion, and the documented ownership set are active. Existing template renderi
 
 #### S4. Attest bounded Reading digest schedule and output management
 
-Retain the existing digest routes while returning exact bounded page envelopes for schedules and
-outputs, with deterministic ordering and user scoping. Preserve schedule `last_status`,
+Keep all existing digest routes and response shapes unchanged. Add an exact bounded schedule-page
+route beside the current bare-list route; the existing output-page route retains its envelope. Both
+use deterministic ordering and user scoping. Schedule creation accepts a caller-generated,
+user-scoped `client_request_id`: repeating the same key and normalized payload returns the original
+schedule, while reusing it with a different payload fails with a bounded conflict. Exact lookup by
+that key lets a client reconcile a lost create response. Preserve schedule `last_status`,
 `last_run_at`, `next_run_at`, and output history as the only run evidence; do not invent a distinct
-run-history API. Create/update/delete responses and errors are documented sufficiently for a client
-to reconcile after transport uncertainty, but no speculative optimistic revision contract is added.
-Docs-info advertises exact `hasReadingDigestManagementV1=true` only when those guarantees are
-active and the configured scheduler/worker availability is reported separately.
+run-history API. Update/delete responses remain non-optimistic and are documented for refresh-based
+reconciliation after transport uncertainty. Docs-info advertises exact
+`hasReadingDigestManagementV1=true` only when these additive guarantees are active and configured
+scheduler/worker availability is reported separately.
 
-#### S5. Add complete restart-safe Reading export and native re-import
+#### S5a. Add complete restart-safe Reading export jobs
 
-Retain Pocket JSON and Instapaper CSV admission, then add Server-native JSONL/ZIP re-import for the
-Server's own export schema. Replace page-capped pseudo-export with an asynchronous, user-scoped
-export job that evaluates one explicit filter scope coherently, writes every matching item exactly
-once to a private managed artifact, exposes bounded job status, and supports authorized download
-and cleanup. Interruption is restart-safe and never publishes a partial artifact as complete.
-Docs-info advertises exact `hasReadingImportExportManagementV1=true` only when native round-trip,
-complete-scope export, job lifecycle, and artifact retention guarantees are active.
+Keep the current page-scoped streaming `/reading/export` route and response unchanged for existing
+clients. Add asynchronous, user-scoped export-job routes that evaluate one explicit filter scope
+coherently, write every matching item exactly once to a private managed artifact, expose bounded job
+history/detail, and support authorized download and confirmed cleanup. Interruption is restart-safe
+and never publishes a partial artifact as complete. A caller-generated export request key prevents
+duplicate artifacts after a lost create response. Docs-info advertises exact
+`hasReadingExportJobsV1=true` only when complete-scope export, job lifecycle, artifact retention,
+and cleanup guarantees are active.
+
+#### S5b. Add Server-native Reading export re-import
+
+Retain Pocket JSON and Instapaper CSV import, then add Server-native JSONL/ZIP admission for
+artifacts produced by S5a. The portable schema includes submitted URL, title, summary, freeform
+note, status, favorite, tags, published/read timestamps, optional sanitized text/clean HTML, and
+capture-owned highlights. It excludes database/user IDs, authoritative created/updated timestamps,
+Media and linked-Note identities, generated audio, offline/archive files, and internal metadata.
+Import allocates new identities, recomputes canonical URLs, and records source timestamps only as
+bounded import provenance. On a canonical-URL collision it preserves existing scalar/state/content
+fields, unions tags, and adds only nonduplicate capture-owned highlights using a documented stable
+fingerprint. Importing into an empty authority reproduces every portable field; repeated import is
+idempotent and never creates another capture or highlight. Docs-info advertises exact
+`hasReadingNativeImportV1=true` only when this versioned field and collision contract is active.
 
 ### `tldw_chatbook` capability integrations
 
@@ -155,23 +175,28 @@ Reference S4 by full repository-qualified URL and require exact
 `hasReadingDigestManagementV1=true`. Add exact bounded schedule browse/detail/create/edit,
 enable-disable/delete, and output history using existing Reading digest contracts. Present only
 `last_status`, `last_run_at`, `next_run_at`, and output history; do not label these as a complete run
-ledger. Timezone and recurrence values are presented in human terms. Delete is permanent and
-confirmed. Ambiguous create/update/delete outcomes never auto-retry and instead retain input plus
-offer Refresh/reconciliation; only explicit Server conflicts are called conflicts. Scheduler/worker
+ledger. Every create submission carries one stable request key; after an unknown response, Check
+Status performs exact lookup and an explicit retry reuses that key, so it cannot duplicate the
+schedule. Timezone and recurrence values are presented in human terms. Delete is permanent and
+confirmed. Ambiguous update/delete outcomes never auto-retry and instead retain input plus offer
+Refresh/reconciliation; only explicit Server conflicts are called conflicts. Scheduler/worker
 unavailability remains distinct from CRUD capability. Local mode remains unsupported unless a
 separate Local design is approved.
 
 #### C3c. Manage full Server Reading import and export workflows
 
-Reference S5 by full repository-qualified URL and require exact
-`hasReadingImportExportManagementV1=true`. Add bounded Pocket/Instapaper and Server-native import
-admission, import/export job history and detail, explicit export scope/format/content controls,
-authorized artifact download, and retention/cleanup presentation. The UI distinguishes accepted,
-running, partially successful, completed, failed, cancelled, interrupted, and unknown outcomes; it
-does not load unbounded files, retain private paths, or present a partial artifact as complete.
-Round-trip means Server-native export followed by Server-native import; Pocket/Instapaper are
-import-only compatibility formats. Production-shaped tests use more than one API page. Local
-capture import/export is not inferred from the Server contract.
+Reference S5a and S5b by full repository-qualified URLs and require both exact
+`hasReadingExportJobsV1=true` and `hasReadingNativeImportV1=true`. Add bounded
+Pocket/Instapaper/Server-native import admission, import/export job history and detail, explicit
+export scope/format/content controls, authorized artifact download, and retention/cleanup
+presentation. Artifact cleanup is permanent and requires export-title/date confirmation; an unknown
+cleanup response preserves the row as stale until Refresh proves whether the artifact remains. The
+UI distinguishes accepted, running, partially successful, completed, failed, cancelled,
+interrupted, and unknown outcomes; it does not load unbounded files, retain private paths, or present
+a partial artifact as complete. Round-trip means the exact S5b portable field set through a
+Server-native export and import; Pocket/Instapaper are import-only compatibility formats.
+Production-shaped tests use more than one API page and verify collision idempotency. Local capture
+import/export is not inferred from the Server contract.
 
 ### `tldw_chatbook` legacy lifecycle decision
 
@@ -190,11 +215,12 @@ implementation tasks are created only after the ADR selects an outcome.
 
 ## Ordering and references
 
-- S1 through S5 are independent Server tasks.
+- S1 through S4, S5a, and S5b are Server tasks; S5b depends on S5a's versioned portable export
+  schema, while the others are independent.
 - C1 references S1 and remains blocked on its attested capability.
 - C2 references S2 and remains blocked on its attested capability.
 - C3a, C3b, and C3c are independent children of C3, depend on completed TASK-18919 behavior, and
-  reference S3, S4, and S5 respectively.
+  reference S3, S4, and both S5 tasks respectively.
 - C4 depends on TASK-18919 and references ADR-107; it requires a new ADR but no code change.
 - Chatbook tasks reference the eventual Server task file or repository URL rather than declaring a
   same-repository dependency on a potentially colliding numeric task ID.
@@ -219,8 +245,10 @@ implementation tasks are created only after the ADR selects an outcome.
   reference-safe deletion.
 - S4: no new Server ADR is expected because it hardens the existing digest contract's paging and
   attestation; planning must record the check.
-- S5: a Server ADR is required because it adds managed export-job artifacts, retention, restart,
-  and native round-trip ownership.
+- S5a: a Server ADR is required because it adds managed export-job artifacts, retention, restart,
+  and cleanup ownership.
+- S5b: the S5a ADR must govern the portable artifact; planning must amend it or create a linked ADR
+  if native re-import adds a materially different data-ownership or collision decision.
 - C1 and C2: no new Chatbook ADR is expected because they implement ADR-107's existing fail-closed
   capability boundary; planning must still record the check.
 - C3a, C3b, and C3c: planning must assess whether existing Server ownership contracts fully govern
