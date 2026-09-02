@@ -44,21 +44,31 @@ from textual.widgets import Button, Select, Static, TextArea
 from tldw_chatbook.MCP.redaction import redact_mapping
 from tldw_chatbook.Tools.raw_cli_executor import MAX_RAW_COMMAND_BYTES
 
+_APPROVE_ONCE_LABEL = "Approve once"
+_DENY_LABEL = "Deny"
+_RAW_APPROVE_ONCE_LABEL = "Run once"
+_FAST_APPROVE_CLASS = "approval-row-fast-approve"
+_FAST_DENY_CLASS = "approval-row-fast-deny"
+_FAST_APPROVE_TOOLTIP = (
+    "Approve once and resume immediately (skips Select + Submit)."
+)
+_FAST_DENY_TOOLTIP = "Deny and resume immediately (skips Select + Submit)."
+
 #: Per-row decision options, in display order. Values are the exact
 #: decision strings `MCPToolProvider._apply_verdict` consumes.
 _DECISION_OPTIONS: list[tuple[str, str]] = [
-    ("Approve once", "approve_once"),
+    (_APPROVE_ONCE_LABEL, "approve_once"),
     ("Approve for session", "approve_session"),
     ("Always allow", "always_allow"),
-    ("Deny", "deny"),
+    (_DENY_LABEL, "deny"),
 ]
 _DEFAULT_DECISION = "approve_once"
 _RAW_SHELL_SERVER_KEY = "local:__local__"
 _RAW_SHELL_TOOL_NAME = "shell_exec"
 _RAW_SHELL_DECISION_OPTIONS: list[tuple[str, str]] = [
-    ("Run once", "approve_once"),
+    (_RAW_APPROVE_ONCE_LABEL, "approve_once"),
     ("Allow all raw shell commands for this Console session", "approve_session"),
-    ("Deny", "deny"),
+    (_DENY_LABEL, "deny"),
 ]
 _RAW_SHELL_COPY_LIMIT = 2048
 
@@ -927,22 +937,24 @@ class ChatApprovalCard(Container):
                 )
             if single_row:
                 fast_approve = Button(
-                    "Run once" if _is_raw_shell_row(entry) else "Approve once",
+                    (
+                        _RAW_APPROVE_ONCE_LABEL
+                        if _is_raw_shell_row(entry)
+                        else _APPROVE_ONCE_LABEL
+                    ),
                     id=f"approval-fast-approve-{generation}-{index}",
                     variant="success",
                     compact=True,
-                    classes="approval-row-fast-approve",
-                    tooltip=(
-                        "Approve once and resume immediately (skips Select + Submit)."
-                    ),
+                    classes=_FAST_APPROVE_CLASS,
+                    tooltip=_FAST_APPROVE_TOOLTIP,
                 )
                 fast_deny = Button(
-                    "Deny",
+                    _DENY_LABEL,
                     id=f"approval-fast-deny-{generation}-{index}",
                     variant="error",
                     compact=True,
-                    classes="approval-row-fast-deny",
-                    tooltip=("Deny and resume immediately (skips Select + Submit)."),
+                    classes=_FAST_DENY_CLASS,
+                    tooltip=_FAST_DENY_TOOLTIP,
                 )
                 fast_buttons.extend((fast_approve, fast_deny))
                 fast_approve.disabled = finishing
@@ -1041,20 +1053,20 @@ class ChatApprovalCard(Container):
         row.remove_class("needs-decision")
 
         fast_approve = Button(
-            "Approve once",
+            _APPROVE_ONCE_LABEL,
             id=f"approval-fast-approve-{generation}-0",
             variant="success",
             compact=True,
-            classes="approval-row-fast-approve",
-            tooltip="Approve once and resume immediately (skips Select + Submit).",
+            classes=_FAST_APPROVE_CLASS,
+            tooltip=_FAST_APPROVE_TOOLTIP,
         )
         fast_deny = Button(
-            "Deny",
+            _DENY_LABEL,
             id=f"approval-fast-deny-{generation}-0",
             variant="error",
             compact=True,
-            classes="approval-row-fast-deny",
-            tooltip="Deny and resume immediately (skips Select + Submit).",
+            classes=_FAST_DENY_CLASS,
+            tooltip=_FAST_DENY_TOOLTIP,
         )
         fast_approve.disabled = finishing
         fast_deny.disabled = finishing

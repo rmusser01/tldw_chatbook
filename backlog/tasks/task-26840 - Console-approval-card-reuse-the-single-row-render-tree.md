@@ -4,7 +4,7 @@ title: Console approval card - reuse the single-row render tree
 status: Done
 assignee: []
 created_date: '2026-09-01 14:57'
-updated_date: '2026-09-01 17:06'
+updated_date: '2026-09-01 20:53'
 labels:
   - console
   - agents
@@ -56,7 +56,9 @@ Verification: scoped Ruff passed, git diff --check passed, and independent corre
 
 Pre-PR UAT: a Textual-web/CDP run drove the production `ChatApprovalCard` with two native calculator calls from a live local llama.cpp provider. Round 1 recorded `approve_once`; round 2 rendered the changed expression while reporting `row_reused=True`, `fresh_controls=True`, and a 9.37 ms synchronous `set_batch`; Deny then resolved only the second live call. Screenshots and the honest boundary between this passing scoped flow and unrelated full-Console project-inspector/provider-preflight blockers are recorded in `Docs/superpowers/qa/console-uat-parallelization/task-26840-approval-reuse-cdp-2026-09-01.md`. The isolated run left the real config and data fingerprints unchanged.
 
-Modified files: chat_approval_card.py, test_console_mcp_approval.py, lessons-testing-evidence.md, this task record, the UAT evidence note, and two UAT PNGs.
+PR review follow-up after rebasing onto dev `64f7a54ca`: Qodo's duplicated-control-literal finding was valid, so the shared labels, CSS classes, and tooltips now have one named module source used by both construction paths. Cubic's private-`SelectOverlay` concern was also avoidable: the stale-event regression now uses public `Select.value`, whose change posts `Select.Changed` asynchronously. Mutation verification removed the existing membership guard and reproduced the intended failure (`ValueError` for the stale Select), proving the public path still exercises the race. Final focused verification: 123 passed; scoped Ruff, duplicate-task guard across 2,922 files, and `git diff --check` passed. The existing three dependency/thread warnings are unchanged.
+
+Modified files: chat_approval_card.py, test_chat_approval_card.py, test_console_mcp_approval.py, lessons-testing-evidence.md, this task record, the UAT evidence note, and two UAT PNGs.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

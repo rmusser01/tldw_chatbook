@@ -27,7 +27,6 @@ from textual import on
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import ComposeResult
 from textual.widgets import Button, Select, Static, TextArea
-from textual.widgets._select import SelectOverlay
 
 import tldw_chatbook
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
@@ -838,7 +837,7 @@ async def test_changed_ordinary_one_row_reuses_only_noncommitting_widgets():
 
 @pytest.mark.asyncio
 async def test_queued_old_select_event_cannot_change_the_new_round():
-    """An old overlay message must remain bound to its old decision control."""
+    """A queued public Select change must remain bound to its old control."""
     app = _CardHarnessApp()
     async with app.run_test() as pilot:
         card = app.query_one(ChatApprovalCard)
@@ -847,9 +846,10 @@ async def test_queued_old_select_event_cannot_change_the_new_round():
 
         old_select = app.query_one(".approval-row-decision", Select)
         old_select.expanded = True
-        old_select.query_one(SelectOverlay).post_message(
-            SelectOverlay.UpdateSelection(1)
-        )
+        # Public value assignment posts Select.Changed asynchronously. Replace
+        # the round before the queued message drains to reproduce the stale-
+        # generation delivery without importing Textual's private overlay.
+        old_select.value = "always_allow"
         card.set_batch([], timeout_seconds=0, round_id=None)
         card.set_batch(
             [
