@@ -59,16 +59,44 @@ def test_weekly_schedule_renames_time_of_day_and_passes_weekday_through():
     assert to_local_schedule(server) == client
 
 
-def test_weekly_schedule_accepts_server_weekday_name_string_untouched():
-    # Server accepts a weekday NAME too (build_trigger passes it straight
-    # to APScheduler's day_of_week); no client equivalent exists, so it
-    # must pass through as an ordinary value, not be coerced.
+def test_weekly_schedule_normalizes_server_weekday_name_string_to_int():
+    # Fix-round 1, finding 1 (task-3-review.md): this test previously
+    # pinned the WRONG behavior -- it asserted the day-name string passed
+    # through UNNORMALIZED, which is exactly the bug. The server accepts
+    # a weekday NAME (build_trigger passes it straight to APScheduler's
+    # `CronTrigger(day_of_week=str(weekday), ...)`), but the client's
+    # `schedule_compute._compute_weekly` requires a plain int and treats
+    # anything else as invalid (returns None, never fires) -- so
+    # `to_local_schedule` must normalize it, not pass it through.
     server = {"kind": "weekly", "at": "09:00", "weekday": "mon"}
     assert to_local_schedule(server) == {
         "kind": "weekly",
         "time_of_day": "09:00",
-        "weekday": "mon",
+        "weekday": 0,
     }
+
+
+def test_weekly_schedule_normalizes_server_weekday_name_case_insensitively():
+    server = {"kind": "weekly", "at": "09:00", "weekday": "FRI"}
+    assert to_local_schedule(server)["weekday"] == 4
+
+
+def test_weekly_schedule_normalizes_server_weekday_digit_string_to_int():
+    server = {"kind": "weekly", "at": "09:00", "weekday": "5"}
+    assert to_local_schedule(server)["weekday"] == 5
+
+
+def test_weekly_schedule_leaves_unrecognized_weekday_value_untouched():
+    # A range like "mon-fri" has no single-day local equivalent -- leave
+    # it as-is and let `_compute_weekly` correctly reject it as invalid,
+    # rather than silently guessing.
+    server = {"kind": "weekly", "at": "09:00", "weekday": "mon-fri"}
+    assert to_local_schedule(server)["weekday"] == "mon-fri"
+
+
+def test_weekly_schedule_weekday_already_int_is_untouched():
+    server = {"kind": "weekly", "at": "09:00", "weekday": 3}
+    assert to_local_schedule(server)["weekday"] == 3
 
 
 def test_cron_schedule_is_unchanged_both_directions():

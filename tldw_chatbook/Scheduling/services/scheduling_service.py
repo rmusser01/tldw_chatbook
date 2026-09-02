@@ -855,6 +855,7 @@ class SchedulingService:
         """
         from tldw_chatbook.Scheduling.automation_preview import preview_automation_definition
         from tldw_chatbook.Scheduling.automation_validation import field_error
+        from tldw_chatbook.Scheduling.schedule_vocabulary import to_server_schedule
 
         guard = self._reject_unsupported_family(payload)
         if guard is not None:
@@ -916,8 +917,22 @@ class SchedulingService:
         )
 
         assert self.server_client is not None
+        # `request` is in CLIENT schedule vocabulary (schedule_compute.py)
+        # and must stay that way -- it is also handed to
+        # `_save_definition_offline` below on a seam failure, which feeds
+        # it to the LOCAL pure preview and queues it verbatim as the
+        # pending mutation's `definition_payload` (SyncEngine's push
+        # translates THAT at replay time). Only the network-bound copy
+        # gets translated, so the server's preview doesn't pass an
+        # untranslated schedule that later fails to arm (task 3 review,
+        # finding 2).
+        network_request = dict(request)
+        if isinstance(network_request.get("schedule"), dict):
+            network_request["schedule"] = to_server_schedule(network_request["schedule"])
         try:
-            response = await self.server_client.preview_automation_definition(request)
+            response = await self.server_client.preview_automation_definition(
+                network_request
+            )
         except ServerClientValidationError as exc:
             return _server_refused_outcome(exc, definition_id)
         except ServerClientError as exc:

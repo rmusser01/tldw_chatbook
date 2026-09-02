@@ -1127,6 +1127,56 @@ async def test_save_definition_server_owner_online_create_mirrors_new_row(db):
 
 
 @pytest.mark.asyncio
+async def test_save_definition_server_owner_online_sends_server_vocab_schedule(db):
+    """Fix-round 1, finding 2 (task-3-review.md): the online server-owner
+    branch was sending the CLIENT-vocab schedule straight to the server's
+    preview, which passes `_validate_schedule` (kind-only) and then never
+    arms server-side. Only the network-bound copy must be translated."""
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.create_automation_definition.return_value = _server_definition_echo()
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    await svc.save_definition(_definition_payload(), "server:1")
+
+    request = server_client.preview_automation_definition.await_args.args[0]
+    assert request["schedule"] == {"kind": "interval", "seconds": 3600}
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_offline_fallback_keeps_client_vocab_schedule(
+    db,
+):
+    """The offline-fallback leg (same payload as the test above) must NOT
+    translate: `request` also feeds the local pure preview and is queued
+    verbatim as the pending mutation's `definition_payload`, which
+    `SyncEngine` translates at push time (task 3) -- translating it here
+    too would make the queued payload lie about its own vocabulary."""
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(_definition_payload(), "server:1")
+
+    assert outcome.status == "queued"
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert pending[0]["payload"]["definition_payload"]["schedule"] == {
+        "kind": "interval",
+        "every_seconds": 3600,
+    }
+
+
+@pytest.mark.asyncio
 async def test_save_definition_server_owner_online_edit_adopts_existing_row(db):
     """An edit of an already-synced row must adopt onto the SAME local
     row, never insert a second mirror for the same definition."""

@@ -27,9 +27,23 @@ Rename table (client -> server), derived by reading both sides directly:
 | interval     | ``every_seconds``     | ``seconds``                      | renamed           |
 | interval     | (no client field)     | ``start_at`` (optional ISO)      | server-only, passes through untouched |
 | daily/weekly | ``time_of_day``       | ``at``                           | renamed           |
-| weekly       | ``weekday`` (int 0-6) | ``weekday`` (int 0-6 or day name)| same field name, passthrough |
+| weekly       | ``weekday`` (int 0-6) | ``weekday`` (int 0-6, digit string, or a case-insensitive 3-letter day abbreviation) | same field name, ``to_local_schedule`` normalizes to int |
 | cron         | ``cron``              | ``cron``                         | same, no rename   |
 | all kinds    | ``timezone``          | ``timezone``                     | same, no rename   |
+
+``weekday`` is the one field whose VALUE space, not just its name, differs:
+the server passes it straight to APScheduler's
+``CronTrigger(day_of_week=str(weekday), ...)``
+(``apscheduler.triggers.cron.expressions.WeekdayRangeExpression``), which
+accepts an int 0-6, a digit string, or an exact case-insensitive 3-letter
+abbreviation from ``["mon", "tue", "wed", "thu", "fri", "sat", "sun"]``
+(matched via a plain ``.index()`` lookup -- a full name like ``"monday"``
+is NOT actually accepted server-side either, so it is not treated as a
+recognized weekday here). ``schedule_compute._compute_weekly`` requires a
+plain ``int``, so ``to_local_schedule`` normalizes a day-name/digit string
+to that int; anything it can't confidently map (a range like
+``"mon-fri"``, which has no single-day local equivalent) is left
+untouched, and the client's own compute correctly rejects it as invalid.
 
 Both ``to_server_schedule`` and ``to_local_schedule`` are pure and
 non-mutating (always return a new dict), pass unknown keys through
@@ -57,6 +71,32 @@ _SERVER_TO_CLIENT_FIELD_RENAMES: dict[str, dict[str, str]] = {
     for kind, renames in _CLIENT_TO_SERVER_FIELD_RENAMES.items()
 }
 
+#: Exact accepted-weekday-name set, per
+#: ``apscheduler.triggers.cron.expressions.WEEKDAYS`` -- index is the int
+#: `schedule_compute._compute_weekly` requires (0=Monday).
+_WEEKDAY_ABBREVIATIONS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def _normalize_weekday(value: Any) -> Any:
+    """Normalize a server-vocab ``weekday`` to the int local compute needs.
+
+    ``bool`` is deliberately left untouched (``isinstance(True, int)`` is
+    ``True`` in Python, but a bool was never a valid weekday on either
+    side) and so is anything already an ``int`` -- only a ``str`` needs
+    normalizing, and only if it maps cleanly.
+    """
+    if isinstance(value, bool) or not isinstance(value, str):
+        return value
+    text = value.strip()
+    if text.isdigit():
+        return int(text)
+    try:
+        return _WEEKDAY_ABBREVIATIONS.index(text.lower())
+    except ValueError:
+        # Not a recognized single-day form (e.g. a range like "mon-fri"):
+        # leave it as-is. `_compute_weekly` correctly rejects it.
+        return value
+
 
 def _translate(schedule: dict[str, Any], rename_tables: dict[str, dict[str, str]]) -> dict[str, Any]:
     """Rename ``schedule``'s per-kind fields per ``rename_tables``.
@@ -79,5 +119,13 @@ def to_server_schedule(schedule: dict[str, Any]) -> dict[str, Any]:
 
 
 def to_local_schedule(schedule: dict[str, Any]) -> dict[str, Any]:
-    """Translate a ``schedule`` dict from server vocabulary to client vocabulary."""
-    return _translate(schedule, _SERVER_TO_CLIENT_FIELD_RENAMES)
+    """Translate a ``schedule`` dict from server vocabulary to client vocabulary.
+
+    Also normalizes a ``weekly`` schedule's ``weekday`` from the server's
+    wider value space (int, digit string, or day-name string) to the
+    plain int ``schedule_compute._compute_weekly`` requires.
+    """
+    result = _translate(schedule, _SERVER_TO_CLIENT_FIELD_RENAMES)
+    if isinstance(result, dict) and result.get("kind") == "weekly" and "weekday" in result:
+        result["weekday"] = _normalize_weekday(result["weekday"])
+    return result
