@@ -567,6 +567,13 @@ def _classify(
             raise ToolPackError("import", "identity_duplicate")
         fallback_resulting.add(identity)
         fallback_folded.add(folded_identity)
+        required = identity in {("mcp", "*"), ("builtin", "agent:builtin")}
+        if (
+            fallback.state == "ask"
+            and not required
+            and identity not in destination_servers
+        ):
+            continue
         mapped_fallbacks.append(
             fallback
             if server_key == fallback.server_key

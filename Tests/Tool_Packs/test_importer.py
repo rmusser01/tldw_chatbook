@@ -113,16 +113,21 @@ def _archive(
     path: Path,
     *,
     rules: tuple[PortableToolRule, ...],
+    fallback_states: dict[tuple[str, str], str] | None = None,
 ) -> Path:
+    states = {
+        ("mcp", "*"): "ask",
+        ("builtin", "agent:builtin"): "ask",
+        **(fallback_states or {}),
+    }
     fallbacks = {
-        ("mcp", "*"),
-        ("builtin", "agent:builtin"),
+        *states,
         *((rule.authority, rule.server_key) for rule in rules),
     }
     payload = ToolProfilePayload(
         TOOL_PROFILE_SCHEMA,
         tuple(
-            PortableFallback(authority, server_key, "ask")
+            PortableFallback(authority, server_key, states.get((authority, server_key), "ask"))
             for authority, server_key in sorted(fallbacks)
         ),
         tuple(
@@ -362,6 +367,71 @@ def test_rejects_reserved_or_invalid_destination_ids(
         ).inspect_archive(archive, destination_id=destination_id)
 
     assert raised.value.category == "mapping_invalid"
+
+
+def test_missing_server_ask_fallback_is_omitted_but_deny_is_retained(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fixed_now: datetime,
+) -> None:
+    inventory = _inventory()
+    monkeypatch.setattr(
+        importer_module, "capture_v1_inventory", lambda _registry: inventory
+    )
+    review = ToolPackImportService(
+        _Store(), inventory, lambda _profile_id: False, now=lambda: fixed_now
+    ).inspect_archive(
+        _archive(
+            tmp_path / "fallbacks.tldw-tool-pack",
+            rules=(),
+            fallback_states={
+                ("mcp", "source:ask"): "ask",
+                ("mcp", "source:deny"): "deny",
+            },
+        ),
+        destination_id="research",
+    )
+
+    assert review.fallbacks == (
+        PortableFallback("builtin", "agent:builtin", "ask"),
+        PortableFallback("mcp", "*", "ask"),
+        PortableFallback("mcp", "source:deny", "deny"),
+    )
+
+
+def test_exact_and_mapped_destination_server_ask_fallbacks_are_retained(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fixed_now: datetime,
+) -> None:
+    inventory = _inventory(
+        _tool(server_key="local:exact"),
+        _tool(server_key="local:mapped"),
+    )
+    monkeypatch.setattr(
+        importer_module, "capture_v1_inventory", lambda _registry: inventory
+    )
+    review = ToolPackImportService(
+        _Store(), inventory, lambda _profile_id: False, now=lambda: fixed_now
+    ).inspect_archive(
+        _archive(
+            tmp_path / "retained-fallbacks.tldw-tool-pack",
+            rules=(),
+            fallback_states={
+                ("mcp", "local:exact"): "ask",
+                ("mcp", "source:mapped"): "ask",
+            },
+        ),
+        destination_id="research",
+        mappings=(ServerMapping("source:mapped", "local:mapped"),),
+    )
+
+    assert review.fallbacks == (
+        PortableFallback("builtin", "agent:builtin", "ask"),
+        PortableFallback("mcp", "*", "ask"),
+        PortableFallback("mcp", "local:exact", "ask"),
+        PortableFallback("mcp", "local:mapped", "ask"),
+    )
 
 
 @pytest.mark.parametrize("existing", ["research", "RESEARCH"])
