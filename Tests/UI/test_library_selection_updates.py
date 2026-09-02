@@ -288,7 +288,7 @@ async def test_tier1_toggle_falls_back_to_recompose_on_query_one_failure(monkeyp
 
         assert len(recompose_calls) == 1  # fell back to a full recompose
         # Rows sort newest-first: chat-2 (06-02) is row 0.
-        assert screen._library_conversations_row_selection.is_selected("chat-2")
+        assert screen._conversations_state.row_selection.is_selected("chat-2")
 
 
 @pytest.mark.asyncio
@@ -312,8 +312,11 @@ async def test_toggle_preserves_markup_escaped_titles():
         def update(_text):
             return None
 
+    class _ConversationsState:
+        row_selection = _Selection()
+
     class _Screen:
-        _library_conversations_row_selection = _Selection()
+        _conversations_state = _ConversationsState()
 
         @staticmethod
         def query_one(selector, _cls=None):

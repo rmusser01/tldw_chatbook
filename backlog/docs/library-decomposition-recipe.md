@@ -168,6 +168,17 @@ reads from module globals. A hit on either means: keep the whole
 call-graph on its current module until that surface's cleanup PR proves the
 patches have been retargeted.
 
+**Three more bypass shapes, found by the conversations exemplar (§11 has
+the full incident write-ups): unbound fake-`self` calls, an instance-
+attribute monkeypatch on a real object, and — the one that isn't a test at
+all — a shared helper resolving a subsystem's attribute name at RUNTIME
+via `getattr(screen, f"...")`/a dict-of-name-strings. None of these are
+"monkeypatching a name" in the literal sense this section's `grep`
+recommends, so that grep alone will not find them. §11's per-shape fix
+recipe (leave the method real, retarget the fixture to match, or route the
+dynamic lookup through `operator.attrgetter`) is the accommodation for
+each.**
+
 ## 4. The transform whitelist
 
 An extraction PR may contain **only**:
@@ -282,7 +293,7 @@ days whose subjects name the subsystem (measured 2026-09-01):
 
 | Order | Subsystem | Churn | Notes |
 |---|---|---|---|
-| 1 | **conversations** (exemplar) | 10 | 68 methods, 19 fields; lowest cross-coupling (3 notes refs plus shared fields handled by §2's rule) |
+| 1 | **conversations** (exemplar) — **complete** (Tasks 6–9) | 10 | 68 methods, 19 fields (2026-09-01 estimate); see §11 for the series' actual, as-landed numbers |
 | 2 | export | 3 | recipe rehearsal |
 | 2 | collections | 6 | recipe rehearsal |
 | 2 | search | 6 | recipe rehearsal |
@@ -348,3 +359,153 @@ repo) — every clone/worktree that wants blame-through-moves needs to run it
 once. `git blame` and `git blame --ignore-revs-file` both work without it,
 but plain `git blame`/most editor blame integrations only honor the
 ignore-file automatically once this config is set.
+
+## 11. The conversations exemplar, as landed — actual numbers and lessons
+
+The exemplar series (Tasks 6–9: state PR, two controller PRs, cleanup PR)
+is complete. This section replaces the plan's 2026-09-01 estimates with
+what actually landed, and records what the rehearsal taught the recipe
+above — read this before running the next subsystem (export, churn 3, per
+§8).
+
+### Methods/fields moved, per task
+
+| Task | PR | What moved | Screen delta |
+|---|---|---|---|
+| 6 | State | 28 fields → `LibraryConversationsState` (0 methods; a programmatic property-shim block, not per-field getters, to fit the line ratchet — see the shim's own sentinel-comment history for why) | 45134 → 45134 lines (net zero; shim added what `__init__` lost), 1300 methods (unchanged) |
+| 7 | Controller 1 | 21 methods → `LibraryConversationReaderController` (5 `@on` handlers + 16 plain) | 45134 → 44715 lines, 1300 methods (pure move: 21 bodies out, 21 one-line delegators in) |
+| 8 | Controller 2 | 40 methods → `LibraryConversationsController` (10 `@on` handlers + 30 plain), 7 more excluded (see below) | 44715 → 44060 → 44084 lines (a review-fix round added +24 lines of documentation, no logic change), 1300 methods (unchanged: pure move) |
+| 9 | Cleanup | Shim block deleted; every remaining screen-side field reference retargeted to `self._conversations_state.<field>` (90+12 occurrences via one mechanical AST-driven pass, plus 4 methods excluded from Task 8 that had to be retargeted and then had their TEST fakes retargeted to match, per §3's monkeypatch-routing doctrine); 18 of the 61 screen delegators deleted (repo-wide census: zero references anywhere outside their own one-line body); 11 of the ledger's 12 dead imports removed + 1 dead controller import removed (the ledger's 12th, `LIBRARY_CONVERSATION_READER_MAX_CHARS`, turned out to be pinned by PR 0a's re-export contract — see the lesson below — and was restored) | 44084 → **43974 lines, 1282 methods** (18 fewer `FunctionDef`s — exactly the 18 pruned delegators) |
+
+**Pin trajectory** (`_BUDGETS["tldw_chatbook/UI/Screens/library_screen.py"]`
+in `Tests/Architecture/test_screen_size_ratchet.py`):
+`45134/1300 → 44715/1300 → 44060/1300 → 44084/1300 → 43974/1282` (final).
+
+**61 screen delegators, not 68 methods**: the 68-method 2026-09-01 estimate
+included the 7 methods Task 8 found could never move (shell-owned, or
+reached by a test through a bypass shape a pure move can't survive — see
+below); 21 (reader) + 40 (browse) = 61 delegators actually landed, of
+which 15 are `@on` handlers, 6 are cross-controller wiring-lambda targets,
+22 more have a genuine external reference (another screen method, a test,
+or a production caller), and **18 had none** and were deleted in the
+cleanup PR.
+
+### Lessons
+
+**Lower the ratchet in the SAME PR that moves the code, never deferred.**
+Task 7's own execution first followed the plan's (wrong) instruction to
+defer lowering to the cleanup task, producing a real gate slip
+(`test_budget_is_not_left_slack_after_a_wave` red between Task 7 and Task
+9) before a mid-series correction reversed it. Every move task in this
+series ended up lowering its own pin in its own scope; Task 9's lowering
+is the *last* one, not the only one.
+
+**The `startswith` enumeration trap.** A discovery script that filters
+"already-handled" names with `name.startswith(("_library_conversation",
+"_conversation"))` silently swallows any OTHER name that happens to share
+that prefix but isn't actually a cluster method or a state field —
+Task 7's `_conversation_records`/`_conversation_record_id` (general
+browse-cluster helpers) were missed this way and only caught by
+re-deriving the bind list without the shortcut. Any enumeration script for
+a future subsystem should cross-check its "internal, already covered"
+filter against the actual state-field list and the actual cluster list,
+not a prefix guess.
+
+**Three, now four, distinct test-bypass shapes a pure move can silently
+break** — the recipe's §3 documented the first (class-level
+`monkeypatch.setattr`); this series found three more, each requiring a
+different accommodation:
+
+1. **Unbound fake-`self` calls** (Task 8, exclusions #2–6): a test builds a
+   bare `SimpleNamespace`/hand-built fake with only the flat attribute
+   names the ORIGINAL method body needed, then calls
+   `LibraryScreen.<method>(fake, event)` unbound. A moved body would reach
+   for a `_conversations_controller` the fake doesn't have. Fixed by
+   leaving the method real and full-bodied on the screen (not moved) — and
+   in Task 9, when the field-retargeting pass touched these same methods'
+   *field* references (a cleanup-PR-legal edit the move PR couldn't make),
+   the fakes needed a matching retarget: flat kwargs became a nested
+   `_conversations_state=SimpleNamespace(...)` constructor argument. This
+   is squarely inside the cleanup PR's "retarget test attribute pokes"
+   mandate — not a new exception, just the mandate reaching a fixture
+   builder instead of a bare attribute assignment.
+2. **Instance-attribute monkeypatch** (Task 8, exclusion #7): a test does
+   `screen.<method> = lambda: payload` on one REAL, fully-constructed
+   instance, expecting an internal sibling call to observe the patch. Once
+   both methods live on the controller, the sibling's `self.<method>()`
+   resolves against the CONTROLLER instance, which never saw the patch
+   applied to the SCREEN instance. Only the full paired-baseline xdist
+   sweep (§7) caught this — narrower suites never touched the failing
+   test file.
+3. **Dynamic `getattr`/dict-string dispatch** (Task 9, new this task): a
+   shared, multi-subsystem helper builds an attribute NAME as a runtime
+   string (an f-string like `f"_library_{kind}_row_selection"`, or a
+   `{destination: "_library_<x>_reader_preferences"}` lookup dict) and
+   resolves it with plain `getattr`/`setattr`. Neither the byte-for-byte
+   body diff nor an AST literal-attribute-reference retarget script can
+   find this shape — the attribute name never appears as a literal
+   `self.<name>` expression anywhere. Two independent instances surfaced
+   in this one cleanup task: `canvas_sync.py`'s `_apply_library_row_toggle`
+   (whose `AttributeError` was silently swallowed into a
+   `logger.debug` + `screen.refresh(recompose=True)` fallback — a full
+   recompose masquerading as normal operation, caught only by a stale
+   captured-widget-reference check, not an exception) and
+   `library_screen.py`'s own `_replace_library_reader_preference`/
+   `_persist_library_reader_preference` (a 7-destination dict of
+   attribute-name strings). Both were fixed the same way:
+   `operator.attrgetter("_conversations_state.<field>")(screen)` for
+   reads (it resolves a dotted path and a flat name identically, so it's
+   a transparent passthrough for the other, not-yet-extracted,
+   destinations) and a small `_assign_...attribute(owner, path, value)`
+   helper for writes. **Any future subsystem's cleanup PR should grep for
+   `getattr(screen,` / `getattr(self,` (and their `setattr` siblings) with
+   an f-string or dict-literal argument before deleting that subsystem's
+   shim** — a plain "does this literal name still resolve" check is not
+   enough.
+
+**"Dead within this file" is not the same question as "dead."** Task 7's
+report listed `LIBRARY_CONVERSATION_READER_MAX_CHARS` among nine names it
+called dead imports — true in the narrow sense that nothing in
+`library_screen.py`'s own logic reads it — but PR 0a's own
+`test_screen_still_re_exports_every_moved_name` (§10's sibling contract
+test, `Tests/Architecture/test_library_support_layer_surface.py`) pins
+`library_screen.py` to keep re-exporting every name Task 1 moved to
+`Library_Modules/`, specifically so other modules can keep importing
+support names FROM the screen rather than needing to know they moved.
+Deleting that one import broke the contract test; it had to be restored.
+**Before deleting an import a prior task's report calls "dead," check
+whether the name is a member of any `_SURFACE`-shaped re-export contract
+first** — a single-occurrence `grep` (the import line and nothing else)
+proves the name is unused HERE, not that nothing depends on it being
+importable FROM here.
+
+**The static-method delegator pattern.** A moved cluster method that was a
+bare `@staticmethod`/`@classmethod` on the screen (no `self` in its own
+signature) can't dispatch through `self._controller.<name>(...)` the way
+an instance method does — Task 7's first pass on
+`_conversation_reader_record_version` dropped the decorator to gain a
+`self` to reach the controller through (harmless there — no external
+caller used it as a static method — but a latent risk). Task 8 established
+the corrected shape instead: keep the decorator, and forward straight to
+the CONTROLLER CLASS object (`return LibraryConversationsController.<name>(...)`),
+which needs no instance at all. Task 9's strengthened wiring-test regex
+(`test_screen_delegates_*_handlers`) accepts either forwarding spelling
+(`self._controller.<name>(` or `ControllerClass.<name>(`) for exactly this
+reason.
+
+**The `_safe_text` class-binding pattern.** A moved `@classmethod` body
+that calls `cls._safe_text(...)` needs `_safe_text` to exist on the
+CONTROLLER class, but `_safe_text` is a general, non-Conversations-owned
+`@staticmethod` that stays on the screen. Task 8's fix: one module-level
+class-attribute assignment, `LibraryConversationsController._safe_text =
+staticmethod(LibraryScreen._safe_text)`, executed from `library_screen.py`
+(not the controller module, to avoid a circular import) after both
+classes are defined. The gotcha a review caught: a plain class-attribute
+assignment always REPLACES whatever was previously on the class under
+that name — an earlier draft that also defined a `_safe_text` `@property`
+on the controller (backed by an injected constructor parameter) had that
+property silently and permanently overwritten the instant this module
+loaded, making the property, its parameter, and its backing attribute
+dead code with a misleading docstring. The corrected version carries only
+the one class-level binding, documented in-place with this exact
+incident.

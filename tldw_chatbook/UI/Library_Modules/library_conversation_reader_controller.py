@@ -16,6 +16,15 @@ delegators under every one of those original names, since each is reached
 from outside this cluster (``@on`` dispatch, or another conversations
 method not part of this move).
 
+Note: the ``@on(...)`` decorators kept on this controller's own five copies
+are inert here -- Textual dispatches ``@on`` handlers against the mounted
+widget/screen that receives the message, and this controller is neither.
+Real dispatch happens on ``LibraryScreen``'s own ``@on``-decorated
+delegator (the copy that actually receives the message), which then calls
+this controller's method directly by name. The decorator survives the move
+only because the byte-for-byte canon (recipe §1) forbids editing a moved
+body, decorator line included.
+
 Three names from the 2026-09-01 brief snapshot are deliberately EXCLUDED
 from this cluster: ``_conversation_message_count_label``,
 ``_conversation_workspace_label``, ``_conversation_updated_label``. The

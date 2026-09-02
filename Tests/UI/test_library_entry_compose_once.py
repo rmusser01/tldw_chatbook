@@ -2007,7 +2007,7 @@ async def test_pending_conversation_open_cannot_overwrite_same_route_user_select
         await _wait_for_condition(
             pilot,
             lambda: (
-                not screen._library_conversation_loading
+                not screen._conversations_state.loading
                 and "chat-1"
                 in {
                     screen._conversation_record_id(record, index)
@@ -2016,8 +2016,8 @@ async def test_pending_conversation_open_cannot_overwrite_same_route_user_select
             ),
             message=lambda: (
                 "Conversation page did not settle before the locator race: "
-                f"loading={screen._library_conversation_loading!r}, "
-                f"error={screen._library_conversation_error!r}, "
+                f"loading={screen._conversations_state.loading!r}, "
+                f"error={screen._conversations_state.error!r}, "
                 f"records={screen._conversation_records()!r}, "
                 f"calls={service.calls!r}."
             ),

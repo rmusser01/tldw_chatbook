@@ -488,7 +488,7 @@ async def test_shared_library_pane_choice_round_trips_between_media_and_conversa
             lambda: len(writes) == 1,
             message="Conversations Library-pane choice was not persisted.",
         )
-        assert not screen._library_conversation_reader_preferences.library_open
+        assert not screen._conversations_state.reader_preferences.library_open
         assert not screen._library_media_reader_preferences.library_open
 
         screen.query_one("#library-row-browse-media", Button).press()
@@ -504,7 +504,7 @@ async def test_shared_library_pane_choice_round_trips_between_media_and_conversa
             message="Media Library-pane choice was not persisted.",
         )
         assert screen._library_media_reader_preferences.library_open
-        assert screen._library_conversation_reader_preferences.library_open
+        assert screen._conversations_state.reader_preferences.library_open
 
         screen.query_one("#library-row-browse-conversations", Button).press()
         conversation_shell = await _wait_for_selector(
@@ -549,7 +549,7 @@ async def test_failed_conversations_library_pane_write_restores_shared_choice_an
         await asyncio.to_thread(write_started.wait, 10)
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_conversation_reader_preferences.library_open,
+            lambda: screen._conversations_state.reader_preferences.library_open,
             message="Failed Conversations pane write did not roll back.",
         )
 
@@ -757,7 +757,7 @@ async def test_shared_library_pane_double_failure_restores_durable_choice(
             ("library.reader", "library_open", True),
         ]
         assert screen._library_media_reader_preferences.library_open
-        assert screen._library_conversation_reader_preferences.library_open
+        assert screen._conversations_state.reader_preferences.library_open
         assert app.app_config["library"]["reader"]["library_open"] is True
         assert media.effective_layout.library_open
 
@@ -844,7 +844,7 @@ async def test_settings_refresh_repairs_started_stale_pane_write(
             intent_generation
         )
         preferences = (
-            screen._library_conversation_reader_preferences
+            screen._conversations_state.reader_preferences
             if destination == "conversations"
             else screen._library_media_reader_preferences
         )
@@ -913,7 +913,7 @@ async def test_failed_settings_repair_rolls_back_to_physical_durable_value(
         ]
         assert disk["library_open"] is False
         assert not screen._library_media_reader_preferences.library_open
-        assert not screen._library_conversation_reader_preferences.library_open
+        assert not screen._conversations_state.reader_preferences.library_open
         assert app.app_config["library"]["reader"]["library_open"] is False
         assert not shell.effective_layout.library_open
         assert notices and notices[-1][1]["severity"] == "warning"
@@ -976,7 +976,7 @@ async def test_settings_repair_coalesces_newer_grip_intent(monkeypatch):
         ]
         assert disk["library_open"] is False
         assert not screen._library_media_reader_preferences.library_open
-        assert not screen._library_conversation_reader_preferences.library_open
+        assert not screen._conversations_state.reader_preferences.library_open
         assert app.app_config["library"]["reader"]["library_open"] is False
         assert not shell.effective_layout.library_open
 
@@ -1029,7 +1029,7 @@ async def test_delayed_settings_refresh_repairs_exited_stale_grip_write(monkeypa
         assert disk["library_open"] is True
         assert screen._library_reader_durable_preferences["library"] is True
         assert screen._library_media_reader_preferences.library_open
-        assert screen._library_conversation_reader_preferences.library_open
+        assert screen._conversations_state.reader_preferences.library_open
         assert app.app_config["library"]["reader"]["library_open"] is True
         assert shell.effective_layout.library_open
 
@@ -1077,7 +1077,7 @@ async def test_clean_first_mounted_settings_refresh_starts_no_repair(monkeypatch
         assert disk["library_open"] is True
         assert screen._library_reader_durable_preferences["library"] is True
         assert screen._library_media_reader_preferences.library_open
-        assert screen._library_conversation_reader_preferences.library_open
+        assert screen._conversations_state.reader_preferences.library_open
         assert app.app_config["library"]["reader"]["library_open"] is True
         assert shell.effective_layout.library_open
 
@@ -1218,7 +1218,7 @@ async def test_failed_settings_reconciliation_does_not_project_cached_guess(
         assert "library" in screen._library_reader_dirty_persistence_authorities
         assert screen._library_reader_durable_preferences["library"] is True
         assert screen._library_media_reader_preferences.library_open
-        assert screen._library_conversation_reader_preferences.library_open
+        assert screen._conversations_state.reader_preferences.library_open
         assert app.app_config["library"]["reader"]["library_open"] is True
         assert shell.effective_layout.library_open
 
@@ -1315,7 +1315,7 @@ async def test_failed_delayed_settings_repair_projects_stale_disk_truth(monkeypa
         assert disk["library_open"] is False
         assert screen._library_reader_durable_preferences["library"] is False
         assert not screen._library_media_reader_preferences.library_open
-        assert not screen._library_conversation_reader_preferences.library_open
+        assert not screen._conversations_state.reader_preferences.library_open
         assert app.app_config["library"]["reader"]["library_open"] is False
         assert not shell.effective_layout.library_open
         assert notices and notices[-1][1]["severity"] == "warning"

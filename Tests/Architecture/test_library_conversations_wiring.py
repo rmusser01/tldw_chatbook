@@ -48,21 +48,28 @@ _READER_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "_finish_library_conversation_find_focus",
 )
 
-
-@pytest.mark.unit
-def test_state_object_fields_match_the_shim_surface() -> None:
-    import dataclasses
-
-    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
-
-    field_names = {f.name for f in dataclasses.fields(LibraryConversationsState)}
-    assert field_names, "state object is empty"
-    for name in field_names:
-        for prefix in ("_library_conversation_", "_library_conversations_"):
-            if isinstance(getattr(LibraryScreen, prefix + name, None), property):
-                break
-        else:
-            pytest.fail(f"no screen shim property found for state field {name!r}")
+#: Task 9 cleanup: the 9 reader-cluster names below have ZERO references
+#: anywhere except their own one-line screen delegator (checked via a
+#: repo-wide census across `tldw_chatbook/` and `Tests/`, plus the `__init__`
+#: wiring-lambda block) -- nothing outside `LibraryConversationReaderController`
+#: itself ever called `screen.<name>(...)`; every internal cluster call
+#: already goes controller-to-controller via `self.<name>`. Their screen
+#: delegators were deleted wholesale as dead weight; they remain in
+#: `_READER_CLUSTER_METHOD_NAMES` above (the controller still legitimately
+#: owns and uses them) but are excluded from the delegation check below.
+_READER_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
+    {
+        "_bootstrap_library_conversation_reader",
+        "_conversation_reader_bootstrap_is_current",
+        "_conversation_reader_record",
+        "_conversation_reader_record_version",
+        "_conversation_reader_request_is_current",
+        "_conversation_reader_service",
+        "_load_library_conversation_reader",
+        "_retry_library_conversation_reader",
+        "_finish_library_conversation_find_focus",
+    }
+)
 
 
 @pytest.mark.unit
@@ -91,27 +98,47 @@ def test_reader_controller_owns_its_cluster() -> None:
 
 @pytest.mark.unit
 def test_screen_delegates_reader_handlers() -> None:
-    """Every one of the 21 moved names is a one-line screen delegator.
+    """Every one of the 21 moved names is a one-line screen delegator that
+    forwards to the SAME-NAMED controller method.
 
-    Source-substring check (not behavioral -- a delegator could still call
-    the controller with the wrong arguments and this would not catch it),
-    but it catches the concrete regression this test guards against: a
-    cleanup pass that re-inlines a body onto the screen, or a new method
-    added under one of these names that never gets wired to the controller
-    at all.
+    Task 9 strengthened this from a loose "the controller is referenced
+    somewhere in the source" substring check to a same-name forwarding
+    check (a recorded review gap from task-7-report.md's fix round): the
+    old check would have passed a delegator that called the controller for
+    something unrelated to `name`. Still source-level, not behavioral -- a
+    delegator could still forward the wrong arguments and this would not
+    catch it -- but it catches the concrete regressions this test guards
+    against: a cleanup pass that re-inlines a body onto the screen, a new
+    method added under one of these names that never gets wired to the
+    controller, or a delegator that silently calls a DIFFERENT controller
+    method than its own name.
+
+    Skips `_READER_CLUSTER_SCREEN_DELEGATOR_PRUNED` (task 9 deleted those
+    9 screen delegators as dead weight -- zero external references) and
+    instead asserts those names are genuinely ABSENT from `LibraryScreen`,
+    so a future accidental re-add would fail loudly here rather than
+    silently reintroducing dead code.
     """
     import inspect
+    import re
 
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
     not_delegators = []
     for name in _READER_CLUSTER_METHOD_NAMES:
+        if name in _READER_CLUSTER_SCREEN_DELEGATOR_PRUNED:
+            assert getattr(LibraryScreen, name, None) is None, (
+                f"{name!r} was pruned from the screen (task 9) but is back -- "
+                "either wire it as a delegator again or drop it from "
+                "_READER_CLUSTER_SCREEN_DELEGATOR_PRUNED"
+            )
+            continue
         method = getattr(LibraryScreen, name, None)
         if method is None:
             not_delegators.append(f"{name!r} (missing entirely)")
             continue
         src = inspect.getsource(method)
-        if "_conversation_reader_controller" not in src:
+        if not re.search(rf"_conversation_reader_controller\.{re.escape(name)}\(", src):
             not_delegators.append(name)
     assert not not_delegators, (
         f"not delegators yet: {not_delegators!r}"
@@ -197,6 +224,26 @@ _BROWSE_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "use_selected_conversation_as_source",
 )
 
+#: Task 9 cleanup: same shape as `_READER_CLUSTER_SCREEN_DELEGATOR_PRUNED`
+#: above -- these 9 browse-cluster names have ZERO references anywhere
+#: except their own one-line screen delegator (repo-wide census). Their
+#: screen delegators were deleted; they remain in
+#: `_BROWSE_CLUSTER_METHOD_NAMES` (still genuinely owned by the controller)
+#: but are excluded from the delegation check below.
+_BROWSE_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
+    {
+        "_ensure_selected_conversation_id",
+        "_finish_library_conversation_request_focus",
+        "_finish_library_conversation_page_apply",
+        "_conversation_out_of_range_total",
+        "_library_conversation_absence_fence_is_current",
+        "_confirm_library_conversation_page_absence",
+        "_retry_pending_library_conversation_open",
+        "_focus_library_conversations_filter",
+        "_refocus_library_conversations_filter_after_sync",
+    }
+)
+
 
 @pytest.mark.unit
 def test_browse_controller_owns_its_cluster() -> None:
@@ -222,32 +269,48 @@ def test_browse_controller_owns_its_cluster() -> None:
 
 @pytest.mark.unit
 def test_screen_delegates_browse_handlers() -> None:
-    """Every one of the 40 browse-cluster names is a one-line screen delegator.
+    """Every one of the 40 browse-cluster names is a one-line screen delegator
+    that forwards to the SAME-NAMED controller method.
 
-    Mirrors `test_screen_delegates_reader_handlers` above. Two of the 46
-    names are `@staticmethod`/`@classmethod` on `LibraryScreen`
+    Mirrors `test_screen_delegates_reader_handlers` above (61 delegators
+    total across both clusters in this series: 21 reader + 40 browse). Five
+    of the 40 names are `@staticmethod`/`@classmethod` on `LibraryScreen`
     (`_normalize_library_conversation_page`,
-    `_validate_library_conversation_locator`) plus three `@classmethod`
-    label helpers (`_conversation_message_count_label`,
+    `_validate_library_conversation_locator`, plus the three `@classmethod`
+    label helpers `_conversation_message_count_label`,
     `_conversation_workspace_label`, `_conversation_updated_label`) -- per
     task-8-report.md's correction to a task-7 minor, those five delegators
     forward straight to the module-level `LibraryConversationsController`
     class (not through the `self._conversations_controller` instance
-    attribute), so the source-substring check accepts either spelling.
+    attribute), so the same-name forwarding check (task 9 strengthening,
+    see `test_screen_delegates_reader_handlers`) accepts either spelling.
+
+    Skips `_BROWSE_CLUSTER_SCREEN_DELEGATOR_PRUNED` (task 9 deleted those
+    9 screen delegators as dead weight -- zero external references) and
+    instead asserts those names are genuinely ABSENT from `LibraryScreen`.
     """
     import inspect
+    import re
 
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
     not_delegators = []
     for name in _BROWSE_CLUSTER_METHOD_NAMES:
+        if name in _BROWSE_CLUSTER_SCREEN_DELEGATOR_PRUNED:
+            assert getattr(LibraryScreen, name, None) is None, (
+                f"{name!r} was pruned from the screen (task 9) but is back -- "
+                "either wire it as a delegator again or drop it from "
+                "_BROWSE_CLUSTER_SCREEN_DELEGATOR_PRUNED"
+            )
+            continue
         method = getattr(LibraryScreen, name, None)
         if method is None:
             not_delegators.append(f"{name!r} (missing entirely)")
             continue
         src = inspect.getsource(method)
-        if "_conversations_controller" not in src and (
-            "LibraryConversationsController." not in src
+        escaped = re.escape(name)
+        if not re.search(rf"_conversations_controller\.{escaped}\(", src) and not (
+            re.search(rf"LibraryConversationsController\.{escaped}\(", src)
         ):
             not_delegators.append(name)
     assert not not_delegators, (
@@ -296,18 +359,23 @@ def test_browse_controller_exposes_every_state_field() -> None:
 def test_reader_controller_exposes_every_state_field() -> None:
     """The controller's generated shim loop covers every state field.
 
-    Mirrors `test_state_object_fields_match_the_shim_surface` above, but
-    against `LibraryConversationReaderController` instead of `LibraryScreen`.
-    Guards the concrete drift risk the review flagged: the controller module
-    keeps its own `_READER_PLURAL_STATE_FIELDS` set (which field names use
-    the `_library_conversations_` plural prefix vs. the singular
-    `_library_conversation_` prefix), duplicated from the screen's
-    `_CONVERSATIONS_PLURAL_STATE_FIELDS` (Task 6). A future task that adds a
-    field to one set and not the other -- or that otherwise breaks the
-    controller's shim-generation loop for one field -- would leave that
-    field's name resolving under neither prefix on the controller; this
-    test fails on that field by name rather than waiting for whichever
-    moved body first reaches for it to raise an `AttributeError`.
+    Mirrors `test_browse_controller_exposes_every_state_field` above, against
+    `LibraryConversationReaderController` (task 7) instead of
+    `LibraryConversationsController` (task 8). Guards the drift risk task
+    7's review originally flagged: the controller module used to keep its
+    own `_READER_PLURAL_STATE_FIELDS` set (which field names use the
+    `_library_conversations_` plural prefix vs. the singular
+    `_library_conversation_` prefix), independently duplicated from a copy
+    that used to live on the screen. Task 8 closed that specific drift by
+    promoting both copies to the one shared `CONVERSATIONS_PLURAL_STATE_FIELDS`
+    constant in `library_conversations_state.py`, which every controller's
+    shim generator now imports (the screen's own shim block -- and its
+    field-name literal -- is gone entirely as of task 9's cleanup: `_conversations_state`
+    is a real dataclass instance, not a shimmed screen attribute). This test
+    still exercises the controller's actual generated properties rather than
+    asserting the shared constant directly, so it still catches a broken
+    shim-generation loop for any one field -- on this controller specifically,
+    since task 9 deleted the screen-side test with the equivalent job.
     """
     import dataclasses
 

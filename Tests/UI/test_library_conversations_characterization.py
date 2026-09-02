@@ -86,21 +86,21 @@ async def test_reader_read_button_returns_to_read_mode_after_info() -> None:
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._library_conversation_reader_state.loaded_id == "chat-1"
-                and screen._library_conversation_reader_state.complete
+                screen._conversations_state.reader_state.loaded_id == "chat-1"
+                and screen._conversations_state.reader_state.complete
             ),
             message="Conversation reader never finished loading chat-1.",
         )
-        assert screen._library_conversation_reader_state.mode == "read"
+        assert screen._conversations_state.reader_state.mode == "read"
 
         screen.query_one("#library-conversation-reader-info", Button).press()
         await pilot.pause()
-        assert screen._library_conversation_reader_state.mode == "info"
+        assert screen._conversations_state.reader_state.mode == "info"
 
         screen.query_one("#library-conversation-reader-read", Button).press()
         await pilot.pause()
 
-        assert screen._library_conversation_reader_state.mode == "read"
+        assert screen._conversations_state.reader_state.mode == "read"
         messages = screen.query_one(
             "#library-conversation-reader-messages", VerticalScroll
         )
@@ -134,16 +134,16 @@ async def test_select_all_press_selects_every_rendered_row() -> None:
 
         screen.query_one("#library-conversations-select-toggle", Button).press()
         await pilot.pause()
-        assert screen._library_conversations_select_mode is True
-        assert screen._library_conversations_row_selection.count == 0
+        assert screen._conversations_state.select_mode is True
+        assert screen._conversations_state.row_selection.count == 0
 
         screen.query_one("#library-conversations-select-all", Button).press()
         await pilot.pause()
 
-        assert screen._library_conversations_row_selection.count == 2
-        assert screen._library_conversations_row_selection.is_selected("chat-1")
-        assert screen._library_conversations_row_selection.is_selected("chat-2")
-        assert screen._library_conversation_reader_state.bulk_selected_count == 2
+        assert screen._conversations_state.row_selection.count == 2
+        assert screen._conversations_state.row_selection.is_selected("chat-1")
+        assert screen._conversations_state.row_selection.is_selected("chat-2")
+        assert screen._conversations_state.reader_state.bulk_selected_count == 2
 
 
 @pytest.mark.asyncio
@@ -165,7 +165,7 @@ async def test_previous_page_press_retreats_the_conversation_page() -> None:
         await _wait_for_selector(
             screen, pilot, f"#library-conversation-row-{page_size - 1}"
         )
-        assert screen._library_conversation_page == 1
+        assert screen._conversations_state.page == 1
         first_row_page_one = screen.query_one(
             "#library-conversation-row-0"
         ).conversation_id
@@ -173,7 +173,7 @@ async def test_previous_page_press_retreats_the_conversation_page() -> None:
         screen.query_one("#library-conversations-next", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_conversation_page == 2,
+            lambda: screen._conversations_state.page == 2,
             message="Conversation page never advanced to 2.",
         )
         await pilot.pause()
@@ -185,7 +185,7 @@ async def test_previous_page_press_retreats_the_conversation_page() -> None:
         screen.query_one("#library-conversations-previous", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_conversation_page == 1,
+            lambda: screen._conversations_state.page == 1,
             message="Conversation page never retreated to 1.",
         )
         await pilot.pause()
@@ -230,7 +230,7 @@ async def test_use_as_source_delegates_identically_to_open_in_console() -> None:
         await _wait_for_selector(screen, pilot, "#library-conversation-open-console")
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_conversation_reader_state.loaded_actions_eligible,
+            lambda: screen._conversations_state.reader_state.loaded_actions_eligible,
             message="Selected conversation never became handoff-eligible.",
         )
 

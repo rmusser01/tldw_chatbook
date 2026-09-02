@@ -107,7 +107,28 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # module and added an explanatory comment at the rebinding site plus
     # one net wiring-call line removed here -- net +24 lines of
     # documentation, no logic change, method count unchanged.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 44084, 1300),
+    # Lowered at the cleanup PR (exemplar 4/4, task 9): 44084/1300 ->
+    # 43974/1282 -- the conversations state shim block (28 generated
+    # properties) is deleted wholesale, every remaining screen-side
+    # `_library_conversation*` reference is retargeted to
+    # `self._conversations_state.<field>`, and 18 of the 61 screen
+    # delegators (9 reader-cluster, 9 browse-cluster) were pruned after a
+    # repo-wide census proved zero references anywhere outside their own
+    # one-line body -- exactly 18 fewer `FunctionDef`s, matching the
+    # method-count drop 1-for-1 (a pure deletion, not a move: nothing
+    # replaces them). 11 of the ledger's stated 12 dead imports were
+    # genuinely removable; the 12th, `LIBRARY_CONVERSATION_READER_MAX_CHARS`,
+    # had to be added back -- it is pinned by PR 0a's OWN re-export
+    # contract (`test_screen_still_re_exports_every_moved_name` in
+    # `Tests/Architecture/test_library_support_layer_surface.py`), which
+    # requires `library_screen.py` to keep re-exporting every name Task 1
+    # moved to `Library_Modules/`, whether or not the screen's own logic
+    # still reads it. This is the series' FINAL measurement; the
+    # conversations exemplar (state PR, 2 controller PRs, cleanup PR) is
+    # now complete -- see backlog/docs/library-decomposition-recipe.md's
+    # updated §11 for the full pin trajectory
+    # (45134 -> 44715 -> 44060 -> 44084 -> 43974/1300 -> 1282).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43974, 1282),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

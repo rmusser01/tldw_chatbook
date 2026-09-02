@@ -350,7 +350,7 @@ async def test_reader_info_is_explicit_and_truthful() -> None:
     app = _build_test_app()
     _seed_conversations(app, _conversation_records())
     screen = _active_conversations_screen(app)
-    screen._library_conversation_reader_state = ConversationReaderState(
+    screen._conversations_state.reader_state = ConversationReaderState(
         selected_id="chat-a",
         selected_version=4,
         loaded_id="chat-a",
@@ -370,8 +370,8 @@ async def test_reader_info_is_explicit_and_truthful() -> None:
         message_total=1,
         complete=True,
     )
-    screen._library_conversation_reader_loaded_metadata = _conversation_records()[0]
-    screen._library_conversation_reader_selected_metadata = _conversation_records()[0]
+    screen._conversations_state.reader_loaded_metadata = _conversation_records()[0]
+    screen._conversations_state.reader_selected_metadata = _conversation_records()[0]
     host = LibraryHarness(app, screen=screen)
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
@@ -786,7 +786,7 @@ async def test_missing_version_bootstrap_distinguishes_error_from_unavailable(
         await _wait_for_library_shell(screen, pilot)
         await asyncio.to_thread(service.started.wait, 10)
         try:
-            state = screen._library_conversation_reader_state
+            state = screen._conversations_state.reader_state
             assert state.selected_version is None and state.loading
         finally:
             service.release.set()
@@ -794,7 +794,7 @@ async def test_missing_version_bootstrap_distinguishes_error_from_unavailable(
             await screen.workers.wait_for_complete()
         except WorkerCancelled:
             pass
-        state = screen._library_conversation_reader_state
+        state = screen._conversations_state.reader_state
         assert state.unavailable is unavailable
         assert state.error and copy in state.error.casefold()
         assert state.selected_version is None and not state.loading
@@ -812,11 +812,11 @@ async def test_missing_version_bootstrap_loses_authority_on_leave_return() -> No
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await asyncio.to_thread(service.started.wait, 10)
-        bootstrap_generation = screen._library_conversation_reader_state.generation
+        bootstrap_generation = screen._conversations_state.reader_state.generation
         try:
             await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
             await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_CONVERSATIONS)
-            assert screen._library_conversation_reader_state.generation > (
+            assert screen._conversations_state.reader_state.generation > (
                 bootstrap_generation
             )
         finally:
@@ -825,7 +825,7 @@ async def test_missing_version_bootstrap_loses_authority_on_leave_return() -> No
             await screen.workers.wait_for_complete()
         except WorkerCancelled:
             pass
-        state = screen._library_conversation_reader_state
+        state = screen._conversations_state.reader_state
         assert state.loaded_generation != bootstrap_generation
 
 
@@ -842,16 +842,16 @@ async def test_missing_version_bootstrap_loses_authority_on_real_unmount() -> No
         active = _active_library_screen(host)
         await _wait_for_library_shell(active, pilot)
         await asyncio.to_thread(service.started.wait, 10)
-        bootstrap_generation = active._library_conversation_reader_state.generation
+        bootstrap_generation = active._conversations_state.reader_state.generation
         try:
             pop_task = asyncio.ensure_future(host.pop_screen())
-            while active._library_conversation_reader_mounted_authority:
+            while active._conversations_state.reader_mounted_authority:
                 await asyncio.sleep(0)
         finally:
             service.release.set()
         await pop_task
         await active.workers.wait_for_complete()
-        state = active._library_conversation_reader_state
+        state = active._conversations_state.reader_state
         assert state.generation > bootstrap_generation
         assert state.selected_version is None and state.loaded_id is None
 
@@ -868,18 +868,18 @@ async def test_rejected_later_page_cannot_promote_hostile_metadata() -> None:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await screen.workers.wait_for_complete()
-        state = screen._library_conversation_reader_state
+        state = screen._conversations_state.reader_state
         assert state.error and "progress" in state.error.casefold()
         assert not state.complete and len(state.messages) == 20
-        assert screen._library_conversation_reader_loaded_metadata["title"] == (
+        assert screen._conversations_state.reader_loaded_metadata["title"] == (
             "Accepted title"
         )
-        assert screen._library_conversation_reader_loaded_metadata["version"] == 4
-        assert screen._library_conversation_reader_loaded_metadata["keywords"] == [
+        assert screen._conversations_state.reader_loaded_metadata["version"] == 4
+        assert screen._conversations_state.reader_loaded_metadata["keywords"] == [
             "alpha",
             "planning",
         ]
-        assert screen._library_conversation_reader_selected_metadata == record
+        assert screen._conversations_state.reader_selected_metadata == record
 
 
 @pytest.mark.parametrize("steal_focus", (False, True))
@@ -898,7 +898,7 @@ async def test_find_retry_reveals_match_only_for_current_focus_intent(
         await screen.workers.wait_for_complete()
         service = _GatedFindRetryConversationService()
         app.local_chat_conversation_service = service
-        screen._library_conversation_reader_state = replace(
+        screen._conversations_state.reader_state = replace(
             _loaded_reader_state(),
             complete=False,
             error="later page failed",
@@ -924,7 +924,7 @@ async def test_find_retry_reveals_match_only_for_current_focus_intent(
             service.release.set()
         await screen.workers.wait_for_complete()
         await pilot.pause()
-        state = screen._library_conversation_reader_state
+        state = screen._conversations_state.reader_state
         match = next(
             row
             for row in reader.query(".library-conversation-reader-message")
@@ -977,8 +977,8 @@ async def test_messages_synced_revalidates_find_focus_before_deferred_reveal(
             find_matches=(ConversationFindMatch("message-deferred", 0, 9, 9, 6),),
             find_complete=True,
         )
-        screen._library_conversation_reader_state = state
-        screen._library_conversation_find_focus_intent = (
+        screen._conversations_state.reader_state = state
+        screen._conversations_state.find_focus_intent = (
             state.generation,
             screen._library_notes_focus_intent_generation,
             state.find_query,
@@ -1041,7 +1041,7 @@ async def test_messages_synced_revalidates_find_focus_before_deferred_reveal(
             ]
             if rows and (
                 len(focus_calls) == 2
-                or screen._library_conversation_find_focus_intent is None
+                or screen._conversations_state.find_focus_intent is None
             ):
                 break
             await asyncio.sleep(0)
@@ -1055,7 +1055,7 @@ async def test_messages_synced_revalidates_find_focus_before_deferred_reveal(
                 if row.has_focus:
                     break
                 await asyncio.sleep(0)
-        assert screen._library_conversation_find_focus_intent is None
+        assert screen._conversations_state.find_focus_intent is None
         if steal_focus:
             assert screen.focused is replacement_focus
             assert focus_calls == ["message-deferred"]
@@ -1091,8 +1091,8 @@ async def test_progressive_reader_paints_first_page_then_completes_find_off_loop
         await asyncio.to_thread(service.second_started.wait, 10)
         try:
             await pilot.pause()
-            assert len(active._library_conversation_reader_state.messages) == 20
-            assert active._library_conversation_reader_state.complete is False
+            assert len(active._conversations_state.reader_state.messages) == 20
+            assert active._conversations_state.reader_state.complete is False
             assert len(reader.query(".library-conversation-reader-message")) == 20
 
             find = reader.query_one("#library-conversation-reader-find", Input)
@@ -1100,13 +1100,13 @@ async def test_progressive_reader_paints_first_page_then_completes_find_off_loop
             find.focus()
             await pilot.press("enter")
             await pilot.pause()
-            assert active._library_conversation_reader_state.find_complete is False
-            assert active._library_conversation_reader_state.find_matches == ()
+            assert active._conversations_state.reader_state.find_complete is False
+            assert active._conversations_state.reader_state.find_matches == ()
         finally:
             service.release_second.set()
         await active.workers.wait_for_complete()
         await pilot.pause()
-        state = active._library_conversation_reader_state
+        state = active._conversations_state.reader_state
         assert state.complete and state.find_complete
         assert len(state.messages) == state.message_total == 21
         assert state.find_matches[0].message_id == "message-20"
@@ -1137,19 +1137,19 @@ async def test_exiting_select_mode_restarts_invalidated_progressive_reader() -> 
         await _wait_for_library_shell(screen, pilot)
         await asyncio.to_thread(service.second_started.wait, 10)
         try:
-            partial = screen._library_conversation_reader_state
+            partial = screen._conversations_state.reader_state
             assert partial.loading and not partial.complete
 
             screen.query_one("#library-conversations-select-toggle", Button).press()
             await pilot.pause()
-            assert screen._library_conversation_reader_state.bulk_active
+            assert screen._conversations_state.reader_state.bulk_active
             invalidated_generation = (
-                screen._library_conversation_reader_state.generation
+                screen._conversations_state.reader_state.generation
             )
 
             screen.query_one("#library-conversations-select-toggle", Button).press()
             await pilot.pause()
-            restarting = screen._library_conversation_reader_state
+            restarting = screen._conversations_state.reader_state
             assert not restarting.bulk_active
             assert restarting.loading
             assert restarting.generation > invalidated_generation
@@ -1157,7 +1157,7 @@ async def test_exiting_select_mode_restarts_invalidated_progressive_reader() -> 
             service.release_second.set()
 
         await screen.workers.wait_for_complete()
-        settled = screen._library_conversation_reader_state
+        settled = screen._conversations_state.reader_state
         assert settled.complete and settled.loaded_actions_eligible
         assert [call["message_offset"] for call in service.calls].count(0) == 2
 
@@ -1193,8 +1193,8 @@ async def test_select_mode_keeps_partial_reader_bulk_fence_during_recovery(
                 )
             await pilot.pause()
 
-            state = screen._library_conversation_reader_state
-            assert screen._library_conversations_select_mode
+            state = screen._conversations_state.reader_state
+            assert screen._conversations_state.select_mode
             assert state.bulk_active
             assert not state.loading
             assert not state.loaded_actions_eligible
@@ -1203,7 +1203,7 @@ async def test_select_mode_keeps_partial_reader_bulk_fence_during_recovery(
             service.release_second.set()
 
         await screen.workers.wait_for_complete()
-        assert screen._library_conversation_reader_state.bulk_active
+        assert screen._conversations_state.reader_state.bulk_active
 
 
 @pytest.mark.asyncio
@@ -1230,7 +1230,7 @@ async def test_late_previous_selection_cannot_overwrite_current_reader() -> None
             target_row.press()
             await _wait_for_selector(screen, pilot, "#library-conversation-reader")
             for _ in range(100):
-                state = screen._library_conversation_reader_state
+                state = screen._conversations_state.reader_state
                 if state.loaded_id == target_id and state.complete:
                     break
                 await pilot.pause()
@@ -1240,7 +1240,7 @@ async def test_late_previous_selection_cannot_overwrite_current_reader() -> None
             service.release_first.set()
         await screen.workers.wait_for_complete()
         await pilot.pause()
-        state = screen._library_conversation_reader_state
+        state = screen._conversations_state.reader_state
         assert state.selected_id == state.loaded_id == target_id
         assert state.messages[0].text == f"transcript for {target_id}"
 
@@ -1289,7 +1289,7 @@ async def test_long_continuation_find_reveals_only_current_focus_intent(
             for row in reader.query(".library-conversation-reader-message")
             if getattr(row, "message_id", None) == "message-long"
         )
-        assert screen._library_conversation_reader_state.find_complete
+        assert screen._conversations_state.reader_state.find_complete
         assert match_row.has_focus is (not steal_focus)
         if steal_focus:
             assert replacement_focus.has_focus
@@ -1320,7 +1320,7 @@ async def test_reader_request_loses_page_and_continuation_authority_on_route_lea
         )
         await asyncio.to_thread(started.wait, 10)
         try:
-            partial = screen._library_conversation_reader_state
+            partial = screen._conversations_state.reader_state
             assert partial.loading and not partial.complete
             await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
             await pilot.pause()
@@ -1330,7 +1330,7 @@ async def test_reader_request_loses_page_and_continuation_authority_on_route_lea
             else:
                 service.release_continuation.set()
         await screen.workers.wait_for_complete()
-        settled = screen._library_conversation_reader_state
+        settled = screen._conversations_state.reader_state
         assert settled.generation > partial.generation
         assert settled.messages == partial.messages
         assert not settled.complete
@@ -1360,9 +1360,9 @@ async def test_reader_request_loses_authority_when_screen_unmounts(phase: str) -
         )
         await asyncio.to_thread(started.wait, 10)
         try:
-            partial = screen._library_conversation_reader_state
+            partial = screen._conversations_state.reader_state
             pop_task = asyncio.ensure_future(host.pop_screen())
-            while screen._library_conversation_reader_mounted_authority:
+            while screen._conversations_state.reader_mounted_authority:
                 await asyncio.sleep(0)
         finally:
             if isinstance(service, _ProgressiveConversationService):
@@ -1371,7 +1371,7 @@ async def test_reader_request_loses_authority_when_screen_unmounts(phase: str) -
                 service.release_continuation.set()
         await pop_task
         await screen.workers.wait_for_complete()
-        settled = screen._library_conversation_reader_state
+        settled = screen._conversations_state.reader_state
         assert settled.generation > partial.generation
         assert settled.messages == partial.messages
         assert not settled.complete
@@ -1409,7 +1409,7 @@ async def test_reader_request_cannot_resurrect_after_bypass_leave_and_return(
             else service.release_continuation
         )
         await asyncio.to_thread(started.wait, 10)
-        partial = screen._library_conversation_reader_state
+        partial = screen._conversations_state.reader_state
         try:
             if leave_path == "navigation-context":
                 screen.apply_navigation_context({"mode": "notes"})
@@ -1431,7 +1431,7 @@ async def test_reader_request_cannot_resurrect_after_bypass_leave_and_return(
                 )
                 await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_CONVERSATIONS)
             assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
-            assert screen._library_conversation_reader_state.generation > (
+            assert screen._conversations_state.reader_state.generation > (
                 partial.generation
             )
         finally:
@@ -1443,7 +1443,7 @@ async def test_reader_request_cannot_resurrect_after_bypass_leave_and_return(
             # fence below remains the authority under test.
             pass
         await pilot.pause()
-        settled = screen._library_conversation_reader_state
+        settled = screen._conversations_state.reader_state
         assert settled.generation > partial.generation
         assert (
             settled.messages == partial.messages
@@ -1465,10 +1465,10 @@ async def test_same_identity_version_refresh_fences_old_loaded_revision() -> Non
         await _wait_for_library_shell(active, pilot)
         await active.workers.wait_for_complete()
         app.local_chat_conversation_service = service
-        active._library_conversation_reader_state = _loaded_reader_state()
-        active._library_conversation_reader_loaded_metadata = records[0]
-        active._library_conversation_reader_selected_metadata = records[0]
-        active._library_conversation_page_records = (
+        active._conversations_state.reader_state = _loaded_reader_state()
+        active._conversations_state.reader_loaded_metadata = records[0]
+        active._conversations_state.reader_selected_metadata = records[0]
+        active._conversations_state.page_records = (
             {
                 **records[0],
                 "version": 5,
@@ -1480,7 +1480,7 @@ async def test_same_identity_version_refresh_fences_old_loaded_revision() -> Non
         await asyncio.to_thread(service.started.wait, 10)
         try:
             action = active.query_one("#library-conversation-open-console", Button)
-            state = active._library_conversation_reader_state
+            state = active._conversations_state.reader_state
             assert state.selected_version == 5
             assert state.loaded_version == 4
             assert not state.loaded_actions_eligible and action.disabled
@@ -1488,7 +1488,7 @@ async def test_same_identity_version_refresh_fences_old_loaded_revision() -> Non
             service.release.set()
         await active.workers.wait_for_complete()
         await pilot.pause()
-        state = active._library_conversation_reader_state
+        state = active._conversations_state.reader_state
         assert state.loaded_version == 5 and state.loaded_actions_eligible
         assert not action.disabled
         active.query_one("#library-conversation-reader-info", Button).press()
@@ -1519,17 +1519,17 @@ async def test_mounted_failed_b_selection_never_relabels_retained_a_metadata(
         await active.workers.wait_for_complete()
         service = _GatedFailureConversationService(outcome)
         app.local_chat_conversation_service = service
-        active._library_conversation_reader_state = _loaded_reader_state()
-        active._library_conversation_reader_loaded_metadata = records[0]
-        active._library_conversation_reader_selected_metadata = records[0]
+        active._conversations_state.reader_state = _loaded_reader_state()
+        active._conversations_state.reader_loaded_metadata = records[0]
+        active._conversations_state.reader_selected_metadata = records[0]
         active._selected_conversation_id = "chat-a"
 
         active._start_library_conversation_reader_selection("chat-b")
         await asyncio.to_thread(service.started.wait, 10)
         try:
-            pending = active._library_conversation_reader_state
+            pending = active._conversations_state.reader_state
             assert pending.selected_id == "chat-b" and pending.loaded_id == "chat-a"
-            assert active._library_conversation_reader_loaded_metadata["title"] == (
+            assert active._conversations_state.reader_loaded_metadata["title"] == (
                 "Alpha planning"
             )
         finally:
@@ -1537,10 +1537,10 @@ async def test_mounted_failed_b_selection_never_relabels_retained_a_metadata(
         await active.workers.wait_for_complete()
         await pilot.pause()
 
-        state = active._library_conversation_reader_state
+        state = active._conversations_state.reader_state
         assert state.selected_id == "chat-b" and state.loaded_id == "chat-a"
         assert state.error and not state.loaded_actions_eligible
-        assert active._library_conversation_reader_loaded_metadata["title"] == (
+        assert active._conversations_state.reader_loaded_metadata["title"] == (
             "Alpha planning"
         )
         status = str(
@@ -1558,9 +1558,9 @@ async def test_authoritative_refresh_marks_selected_conversation_deleted_without
     records = _conversation_records()
     _seed_conversations(app, records)
     screen = _active_conversations_screen(app)
-    screen._library_conversation_reader_state = _loaded_reader_state()
-    screen._library_conversation_reader_loaded_metadata = records[0]
-    screen._library_conversation_reader_selected_metadata = records[0]
+    screen._conversations_state.reader_state = _loaded_reader_state()
+    screen._conversations_state.reader_loaded_metadata = records[0]
+    screen._conversations_state.reader_selected_metadata = records[0]
     screen._selected_conversation_id = "chat-a"
     host = LibraryHarness(app, screen=screen)
 
@@ -1568,9 +1568,9 @@ async def test_authoritative_refresh_marks_selected_conversation_deleted_without
         active = _active_library_screen(host)
         await _wait_for_library_shell(active, pilot)
         await active.workers.wait_for_complete()
-        active._library_conversation_reader_state = _loaded_reader_state()
-        active._library_conversation_reader_loaded_metadata = records[0]
-        active._library_conversation_reader_selected_metadata = records[0]
+        active._conversations_state.reader_state = _loaded_reader_state()
+        active._conversations_state.reader_loaded_metadata = records[0]
+        active._conversations_state.reader_selected_metadata = records[0]
         active._selected_conversation_id = "chat-a"
 
         def remaining_page(**_kwargs):
@@ -1604,7 +1604,7 @@ async def test_authoritative_refresh_marks_selected_conversation_deleted_without
         await active._load_library_conversation_page(1, "", generation)
         await pilot.pause()
 
-        state = active._library_conversation_reader_state
+        state = active._conversations_state.reader_state
         assert state.unavailable and state.error == "Conversation deleted."
         assert locator_calls == ["chat-a"]
         assert state.loaded_id is None and state.selected_id == "chat-a"
@@ -1638,14 +1638,14 @@ async def test_page_drift_confirms_exact_identity_before_declaring_deletion(
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await screen.workers.wait_for_complete()
-        screen._library_conversation_reader_state = _loaded_reader_state()
-        screen._library_conversation_reader_loaded_metadata = records[0]
-        screen._library_conversation_reader_selected_metadata = records[0]
+        screen._conversations_state.reader_state = _loaded_reader_state()
+        screen._conversations_state.reader_loaded_metadata = records[0]
+        screen._conversations_state.reader_selected_metadata = records[0]
         screen._selected_conversation_id = "chat-a"
-        screen._library_conversation_page_records = tuple(records[:20])
-        screen._library_conversation_page = 1
-        screen._library_conversation_page_loaded = True
-        screen._library_conversation_query = ""
+        screen._conversations_state.page_records = tuple(records[:20])
+        screen._conversations_state.page = 1
+        screen._conversations_state.page_loaded = True
+        screen._conversations_state.query = ""
 
         shifted_page = records[1:21]
 
@@ -1688,7 +1688,7 @@ async def test_page_drift_confirms_exact_identity_before_declaring_deletion(
         await screen._load_library_conversation_page(1, "", generation)
         await pilot.pause()
 
-        state = screen._library_conversation_reader_state
+        state = screen._conversations_state.reader_state
         assert not state.unavailable and state.error is None
         assert state.selected_id == state.loaded_id == "chat-a"
         assert state.messages == _loaded_reader_state().messages
@@ -1712,14 +1712,14 @@ async def test_unconfirmed_page_absence_is_stale_not_deleted_or_reselected(
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await screen.workers.wait_for_complete()
-        screen._library_conversation_reader_state = _loaded_reader_state()
-        screen._library_conversation_reader_loaded_metadata = records[0]
-        screen._library_conversation_reader_selected_metadata = records[0]
+        screen._conversations_state.reader_state = _loaded_reader_state()
+        screen._conversations_state.reader_loaded_metadata = records[0]
+        screen._conversations_state.reader_selected_metadata = records[0]
         screen._selected_conversation_id = "chat-a"
-        screen._library_conversation_page_records = tuple(records)
-        screen._library_conversation_page = 1
-        screen._library_conversation_page_loaded = True
-        screen._library_conversation_query = ""
+        screen._conversations_state.page_records = tuple(records)
+        screen._conversations_state.page = 1
+        screen._conversations_state.page_loaded = True
+        screen._conversations_state.query = ""
 
         async def remaining_page(**_kwargs):
             return {
@@ -1751,12 +1751,12 @@ async def test_unconfirmed_page_absence_is_stale_not_deleted_or_reselected(
         await screen._load_library_conversation_page(1, "", generation)
         await pilot.pause()
 
-        state = screen._library_conversation_reader_state
+        state = screen._conversations_state.reader_state
         assert not state.unavailable and state.error is None
         assert state.selected_id == state.loaded_id == "chat-a"
         assert screen._selected_conversation_id == "chat-a"
-        assert screen._library_conversation_freshness == "stale"
-        assert "confirm" in screen._library_conversation_stale_copy.casefold()
+        assert screen._conversations_state.freshness == "stale"
+        assert "confirm" in screen._conversations_state.stale_copy.casefold()
         rows = list(screen.query(".library-conversation-row"))
         assert rows and not any(getattr(row, "selected", False) for row in rows)
 
@@ -1781,12 +1781,12 @@ async def test_missing_version_pending_selection_can_be_confirmed_deleted(
             generation=9,
             loading=True,
         )
-        screen._library_conversation_reader_state = pending
+        screen._conversations_state.reader_state = pending
         screen._selected_conversation_id = "chat-a"
-        screen._library_conversation_page_records = tuple(records)
-        screen._library_conversation_page = 1
-        screen._library_conversation_page_loaded = True
-        screen._library_conversation_query = ""
+        screen._conversations_state.page_records = tuple(records)
+        screen._conversations_state.page = 1
+        screen._conversations_state.page_loaded = True
+        screen._conversations_state.query = ""
 
         async def remaining_page(**_kwargs):
             return {
@@ -1816,7 +1816,7 @@ async def test_missing_version_pending_selection_can_be_confirmed_deleted(
         await screen._load_library_conversation_page(1, "", generation)
         await pilot.pause()
 
-        state = screen._library_conversation_reader_state
+        state = screen._conversations_state.reader_state
         assert state.unavailable and state.error == "Conversation deleted."
         assert state.selected_id == "chat-a" and state.selected_version is None
         assert screen._selected_conversation_id == ""

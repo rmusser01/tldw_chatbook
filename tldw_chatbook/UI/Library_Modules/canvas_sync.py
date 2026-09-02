@@ -9,6 +9,7 @@ unchanged; later decomposition tasks import directly from this module.
 """
 from __future__ import annotations
 
+import operator
 from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING, Any
@@ -178,7 +179,23 @@ def _apply_library_row_toggle(
         None.
     """
     try:
-        selection = getattr(screen, f"_library_{kind}_row_selection")
+        # task 9 (Conversations cleanup): every kind except conversations
+        # still keeps its row-selection object as a flat screen attribute,
+        # so the plain formatted name has always resolved via `getattr`.
+        # Conversations' own `row_selection` field moved to
+        # `screen._conversations_state.row_selection` (Task 6/9) -- one
+        # extra hop a bare `getattr(screen, name)` cannot express.
+        # `operator.attrgetter` resolves both a flat name and a dotted
+        # path identically, so this is a passthrough for every other,
+        # not-yet-extracted, kind. Future subsystem extractions hit this
+        # exact same shape (see `_assign_library_reader_preferences_attribute`
+        # in `library_screen.py` for the read+write sibling of this fix).
+        row_selection_attribute = (
+            "_conversations_state.row_selection"
+            if kind == "conversations"
+            else f"_library_{kind}_row_selection"
+        )
+        selection = operator.attrgetter(row_selection_attribute)(screen)
         count_static = screen.query_one(f"#library-{kind}-selected-count", Static)
         export_button = screen.query_one(f"#library-{kind}-export-selected", Button)
         checked = selection.is_selected(row_id)

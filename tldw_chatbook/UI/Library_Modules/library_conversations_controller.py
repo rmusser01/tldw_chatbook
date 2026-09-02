@@ -231,7 +231,7 @@ from ...Library.library_export_scope import ExportScope
 from ...Library.library_shell_state import LIBRARY_ROW_BROWSE_CONVERSATIONS
 from ...Widgets.Library import LibraryAdaptiveReaderShell, LibraryConversationsCanvas
 from ...Workspaces import library_item_context_handoff
-from .canvas_sync import _apply_library_row_toggle, _sync_library_canvas
+from .canvas_sync import _sync_library_canvas
 from .library_conversations_state import (
     CONVERSATIONS_PLURAL_STATE_FIELDS,
     LibraryConversationsState,
