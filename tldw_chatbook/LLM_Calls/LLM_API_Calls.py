@@ -1762,13 +1762,22 @@ def chat_with_anthropic(
                     labels={"model": current_model},
                 )
                 # Review minor 2: the retry drops cache_control from the
-                # body, so the extended-ttl beta header is no longer needed
-                # -- strip it too rather than resend an unused flag.
-                retry_headers = {
-                    key: value
-                    for key, value in headers.items()
-                    if key != "anthropic-beta"
-                }
+                # body, so the extended-ttl beta flag is no longer needed.
+                # TASK-26022 M4: strip ONLY that flag from anthropic-beta, not
+                # the whole header -- the subscription path's oauth flag rides
+                # here too and is required for the bearer to be accepted.
+                retry_headers = dict(headers)
+                _beta = retry_headers.get("anthropic-beta")
+                if _beta is not None:
+                    _kept = [
+                        flag.strip()
+                        for flag in _beta.split(",")
+                        if flag.strip() and flag.strip() != _EXTENDED_CACHE_TTL_BETA
+                    ]
+                    if _kept:
+                        retry_headers["anthropic-beta"] = ",".join(_kept)
+                    else:
+                        retry_headers.pop("anthropic-beta", None)
                 response = session.post(
                     api_url,
                     headers=retry_headers,

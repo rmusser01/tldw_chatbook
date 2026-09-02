@@ -41,6 +41,13 @@ OAUTH_BETA = "oauth-2025-04-20"
 #: credential lives here, NOT in the file (found by AC#7 live verify 2026-09-02).
 KEYCHAIN_SERVICE = "Claude Code-credentials"
 
+#: Short TTL for the Keychain read memo. Readiness runs on UI redraw paths and
+#: would otherwise spawn `security` on every evaluation (and stall up to the
+#: subprocess timeout if the Keychain is locked). The memo caches success AND a
+#: None result so a locked/denied Keychain stalls at most once per window.
+_KEYCHAIN_TTL_S = 5.0
+_KEYCHAIN_CACHE: Optional[tuple[float, Optional[str]]] = None
+
 #: The subscription OAuth token is gated to the Claude Code identity: Anthropic
 #: rejects (as a misleading 429) any request whose ``system`` does not lead with
 #: this line. Verified against a real Max account 2026-09-02. Borrowing the
@@ -59,8 +66,10 @@ STALE_CREDENTIAL_MESSAGE = (
 )
 MISSING_CREDENTIAL_MESSAGE = (
     "auth_source is \"claude_subscription\" but no Claude Code credential was "
-    "found at ~/.claude/.credentials.json. Log in with Claude Code first, or "
-    "set [api_settings.anthropic] auth_source back to \"api_key\"."
+    "found (checked ~/.claude/.credentials.json and, on macOS, the login "
+    "Keychain item \"Claude Code-credentials\"). Log in with Claude Code first "
+    "(and unlock your Keychain if prompted), or set [api_settings.anthropic] "
+    "auth_source back to \"api_key\"."
 )
 
 
@@ -106,15 +115,24 @@ def read_claude_code_credential(
         returned with ``expired=True`` so the caller can show the AC#2
         refresh message instead of a generic missing-credential one.
     """
-    target = Path(path) if path is not None else DEFAULT_CREDENTIALS_PATH
+    explicit = path is not None
+    target = Path(path) if explicit else DEFAULT_CREDENTIALS_PATH
     try:
         file_text = target.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
+        # I1: a non-UTF-8 file must fall through, never raise into callers
+        # (readiness runs on UI paths). UnicodeDecodeError is a ValueError,
+        # not an OSError, so it must be caught explicitly.
         file_text = None
     if file_text is not None:
         cred = _parse_oauth_json(file_text, source_label=str(target))
         if cred is not None:
             return cred
+    # An EXPLICIT path means "read that file, period" -- never reach for the
+    # Keychain (I2: keeps callers that pass a path hermetic). The Keychain
+    # fallback is only for the default-location read the real callers use.
+    if explicit:
+        return None
     # Fallback: on macOS Claude Code stores the credential in the Keychain, not
     # the file (AC#7 live verify). Read-only, like the file path.
     keychain_text = _keychain_credential_raw()
@@ -171,22 +189,35 @@ def _keychain_credential_raw() -> Optional[str]:
     Returns:
         The raw JSON string stored under ``KEYCHAIN_SERVICE``, or ``None``.
     """
+    global _KEYCHAIN_CACHE
     if sys.platform != "darwin":
         return None
+    now = time.time()
+    cached = _KEYCHAIN_CACHE
+    if cached is not None and now - cached[0] < _KEYCHAIN_TTL_S:
+        return cached[1]
+    result: Optional[str] = None
     try:
         proc = subprocess.run(  # noqa: S603 - fixed constant command, no user input
-            ["/usr/bin/security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
+            [
+                "/usr/bin/security",
+                "find-generic-password",
+                "-s",
+                KEYCHAIN_SERVICE,
+                "-w",
+            ],
             capture_output=True,
             text=True,
             timeout=5,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if proc.returncode != 0:
-        return None
-    out = (proc.stdout or "").strip()
-    return out or None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        # ValueError covers a non-decodable stdout under text=True.
+        proc = None
+    if proc is not None and proc.returncode == 0:
+        result = (proc.stdout or "").strip() or None
+    _KEYCHAIN_CACHE = (now, result)
+    return result
 
 
 def anthropic_auth_source(anthropic_config: Mapping[str, Any] | None) -> str:
@@ -258,6 +289,8 @@ def with_claude_code_identity(system: Any) -> list[dict[str, Any]]:
     if system is None or (isinstance(system, str) and not system.strip()):
         return [identity]
     if isinstance(system, str):
+        if system.startswith(CLAUDE_CODE_IDENTITY):  # M1: don't double-prepend
+            return [{"type": "text", "text": system}]
         return [identity, {"type": "text", "text": system}]
     if isinstance(system, list):
         blocks = list(system)
@@ -268,4 +301,5 @@ def with_claude_code_identity(system: Any) -> list[dict[str, Any]]:
         ):
             return blocks
         return [identity, *blocks]
-    return [identity]
+    # M2: an unexpected shape is preserved as text, never silently dropped.
+    return [identity, {"type": "text", "text": str(system)}]
