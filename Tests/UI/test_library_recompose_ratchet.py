@@ -56,6 +56,40 @@ from pathlib import Path
 #: design.md`` ("PR 0b").
 LIBRARY_WHOLE_SCREEN_RECOMPOSE_MAX = 63
 
+#: TASK-27019: how far the pin may sit above the measured count before the
+#: anti-slack guard (``test_census_pin_is_not_left_slack`` below) fires.
+#: Mirrors ``Tests/Architecture/test_screen_size_ratchet.py``'s
+#: ``test_budget_is_not_left_slack_after_a_wave`` -- a ceiling-only ratchet
+#: lets a wave's gain silently buy the next feature headroom the wave never
+#: earned it, which is exactly what happened to THIS pin twice: 107 -> 80
+#: (drifted 23 sites before TASK-22228 caught it) and 74 -> 63 (drifted 11
+#: sites before TASK-3's surface-widening audit caught it).
+#:
+#: The size ratchet's own tolerance (200 lines / 10 methods on a ~44,000
+#: line / ~1,300 method budget) does NOT transfer here by scaling -- applied
+#: proportionally to a census of 63 it rounds to noise (<1). That ratio was
+#: never the point: the size ratchet's 200/10 is sized to absorb *ordinary,
+#: unrelated in-file edits* that grow or shrink a screen's line/method count
+#: for reasons that have nothing to do with a decomposition wave. This
+#: census has no equivalent noise floor -- a `self.refresh(recompose=True)`
+#: / `self.recompose()` statement is never an incidental byproduct of an
+#: unrelated edit, so the count essentially only moves when someone
+#: deliberately adds, removes, or relocates a whole-screen recompose site
+#: (via a targeted-seam conversion, exactly the change this ratchet exists
+#: to police).
+#:
+#: The number is instead sized against this census's OWN documented drift
+#: history: the smallest single silent step on record is the 6-site drop
+#: from "routing the six Reader sub-state presses through
+#: `_sync_library_media_viewer_or_recompose`" (80 -> 74, comment above).
+#: A tolerance of 5 sits strictly below that smallest observed step, so the
+#: guard would have fired on every drift increment ever recorded against
+#: this pin, including its smallest one, while still forgiving a couple of
+#: sites of legitimate same-PR churn (e.g. sites shuffling across files
+#: during the widened multi-file scan without a net change) that isn't
+#: itself an unlowered wave.
+_CENSUS_SLACK_TOLERANCE = 5
+
 _LIBRARY_SCREEN_PATH = (
     Path(__file__).resolve().parents[2]
     / "tldw_chatbook"
@@ -319,6 +353,34 @@ def test_library_screen_whole_screen_recompose_count_is_ratcheted() -> None:
                 inventory=inventory,
             )
         )
+
+
+def test_census_pin_is_not_left_slack() -> None:
+    """TASK-27019: the recorded pin should track reality, not drift above it.
+
+    A ceiling-only ratchet lets a wave that lowers the real count without
+    also lowering the pin quietly buy the next feature headroom it was
+    never meant to have -- this happened to this exact pin twice (107 -> 80,
+    then 74 -> 63; see the drift history in ``LIBRARY_WHOLE_SCREEN_RECOMPOSE_
+    MAX``'s docstring). Mirrors ``Tests/Architecture/test_screen_size_
+    ratchet.py``'s ``test_budget_is_not_left_slack_after_a_wave``, with the
+    tolerance re-derived for this census rather than copied -- see
+    ``_CENSUS_SLACK_TOLERANCE`` for why the size ratchet's absolute number
+    does not transfer and how this one was chosen instead.
+    """
+    count = len(_widened_library_surface_sites())
+    slack = LIBRARY_WHOLE_SCREEN_RECOMPOSE_MAX - count
+
+    assert slack <= _CENSUS_SLACK_TOLERANCE, (
+        f"The Library recompose census pin is {slack} sites above the "
+        f"measured count ({count} vs pin {LIBRARY_WHOLE_SCREEN_RECOMPOSE_MAX}), "
+        f"more than the {_CENSUS_SLACK_TOLERANCE}-site tolerance "
+        f"(Tests/UI/test_library_recompose_ratchet.py, "
+        f"_CENSUS_SLACK_TOLERANCE). A wave landed without lowering the "
+        f"ratchet -- set LIBRARY_WHOLE_SCREEN_RECOMPOSE_MAX to {count} in "
+        f"the same PR so the gain is locked in, per this file's module "
+        f"docstring and TASK-27019."
+    )
 
 
 def test_ratchet_counter_measures_its_subject() -> None:
