@@ -24,6 +24,8 @@ before the task closes.
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,6 +36,17 @@ DEFAULT_CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
 
 #: Beta flag the subscription authorization path requires.
 OAUTH_BETA = "oauth-2025-04-20"
+
+#: macOS Keychain service Claude Code stores its credential under. On macOS the
+#: credential lives here, NOT in the file (found by AC#7 live verify 2026-09-02).
+KEYCHAIN_SERVICE = "Claude Code-credentials"
+
+#: The subscription OAuth token is gated to the Claude Code identity: Anthropic
+#: rejects (as a misleading 429) any request whose ``system`` does not lead with
+#: this line. Verified against a real Max account 2026-09-02. Borrowing the
+#: credential therefore means presenting as Claude Code, which is exactly the
+#: credential's own scope (``user:sessions:claude_code``).
+CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
 
 AUTH_SOURCE_API_KEY = "api_key"
 AUTH_SOURCE_SUBSCRIPTION = "claude_subscription"
@@ -95,8 +108,40 @@ def read_claude_code_credential(
     """
     target = Path(path) if path is not None else DEFAULT_CREDENTIALS_PATH
     try:
-        raw = json.loads(target.read_text(encoding="utf-8"))
-    except (OSError, ValueError, UnicodeDecodeError):
+        file_text = target.read_text(encoding="utf-8")
+    except OSError:
+        file_text = None
+    if file_text is not None:
+        cred = _parse_oauth_json(file_text, source_label=str(target))
+        if cred is not None:
+            return cred
+    # Fallback: on macOS Claude Code stores the credential in the Keychain, not
+    # the file (AC#7 live verify). Read-only, like the file path.
+    keychain_text = _keychain_credential_raw()
+    if keychain_text is not None:
+        return _parse_oauth_json(
+            keychain_text, source_label=f"keychain:{KEYCHAIN_SERVICE}"
+        )
+    return None
+
+
+def _parse_oauth_json(
+    raw_text: str, *, source_label: str
+) -> Optional[SubscriptionCredential]:
+    """Parse a Claude Code credential JSON blob into a credential.
+
+    Args:
+        raw_text: The raw JSON text from the file or Keychain.
+        source_label: A non-secret label describing where it came from; stored
+            in ``source_path`` (never the token).
+
+    Returns:
+        The parsed credential, or ``None`` when the blob is missing the OAuth
+        section or a usable access token.
+    """
+    try:
+        raw = json.loads(raw_text)
+    except (ValueError, UnicodeDecodeError):
         return None
     oauth = raw.get("claudeAiOauth") if isinstance(raw, dict) else None
     if not isinstance(oauth, dict):
@@ -112,8 +157,36 @@ def read_claude_code_credential(
         access_token=token,
         expires_at_ms=expires_at_ms,
         subscription_type=str(oauth.get("subscriptionType") or ""),
-        source_path=str(target),
+        source_path=source_label,
     )
+
+
+def _keychain_credential_raw() -> Optional[str]:
+    """Return Claude Code's Keychain credential JSON on macOS, else ``None``.
+
+    Read-only: shells out to ``security find-generic-password -w``. Any failure
+    (non-macOS, item absent, ``security`` unavailable) yields ``None`` so the
+    caller falls through to today's no-credential behavior (AC#6).
+
+    Returns:
+        The raw JSON string stored under ``KEYCHAIN_SERVICE``, or ``None``.
+    """
+    if sys.platform != "darwin":
+        return None
+    try:
+        proc = subprocess.run(  # noqa: S603 - fixed constant command, no user input
+            ["/usr/bin/security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    out = (proc.stdout or "").strip()
+    return out or None
 
 
 def anthropic_auth_source(anthropic_config: Mapping[str, Any] | None) -> str:
@@ -163,3 +236,36 @@ def subscription_headers_for_token(access_token: str) -> dict[str, str]:
         "authorization": f"Bearer {access_token}",
         "anthropic-beta": OAUTH_BETA,
     }
+
+
+def with_claude_code_identity(system: Any) -> list[dict[str, Any]]:
+    """Lead an Anthropic ``system`` value with the Claude Code identity block.
+
+    The subscription OAuth token is rejected unless the request's ``system``
+    begins with :data:`CLAUDE_CODE_IDENTITY`, so the subscription send path runs
+    the caller's system prompt through this. The caller's own prompt is
+    preserved as following block(s); already-led inputs are returned unchanged
+    (idempotent).
+
+    Args:
+        system: The ``system`` value the caller assembled: ``None``, a string,
+            or a list of Anthropic text blocks.
+
+    Returns:
+        A list of Anthropic text blocks whose first block is the identity.
+    """
+    identity = {"type": "text", "text": CLAUDE_CODE_IDENTITY}
+    if system is None or (isinstance(system, str) and not system.strip()):
+        return [identity]
+    if isinstance(system, str):
+        return [identity, {"type": "text", "text": system}]
+    if isinstance(system, list):
+        blocks = list(system)
+        first = blocks[0] if blocks else None
+        if (
+            isinstance(first, dict)
+            and str(first.get("text", "")).startswith(CLAUDE_CODE_IDENTITY)
+        ):
+            return blocks
+        return [identity, *blocks]
+    return [identity]

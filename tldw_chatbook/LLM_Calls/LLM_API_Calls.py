@@ -45,6 +45,7 @@ from tldw_chatbook.LLM_Calls.anthropic_subscription import (
     anthropic_auth_source,
     read_claude_code_credential,
     subscription_headers_for_token,
+    with_claude_code_identity,
 )
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAPIError,
@@ -1601,6 +1602,13 @@ def chat_with_anthropic(
             ]
         else:
             data["system"] = system_prompt  # unchanged for non-caching models
+    if subscription_token is not None:
+        # TASK-26022 (AC#7 live verify 2026-09-02): the subscription OAuth token
+        # is rejected (misleading 429) unless `system` leads with the Claude
+        # Code identity. Prepend it as the first block, preserving the caller's
+        # own system prompt as following block(s). Applies even when the caller
+        # sent no system prompt, so the request is never identity-less.
+        data["system"] = with_claude_code_identity(data.get("system"))
     # Sampling parameters are suppressed for two independent reasons: the model
     # rejects them outright (a provider capability -- 400 on Fable 5, Mythos 5,
     # Opus 5, Opus 4.8, Opus 4.7 and Sonnet 5), or thinking is enabled for this

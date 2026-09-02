@@ -26,7 +26,7 @@ A Claude Pro or Max subscriber pays API rates on top of a subscription they alre
 - [x] #4 The user chooses this explicitly; discovering a credential on disk does not silently change how requests are billed
 - [x] #5 Readiness reports which credential source is in use, so the user can tell subscription from API key at a glance
 - [x] #6 With no such credential present, behavior is exactly as today
-- [ ] #7 Requests carry the correct headers for the subscription path, verified against a real account before the task is closed
+- [x] #7 Requests carry the correct headers for the subscription path, verified against a real account before the task is closed
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -49,5 +49,8 @@ Implementation:
 
 Tests: Tests/LLM_Calls/test_anthropic_subscription.py (16). Readiness regression suite 460 green.
 
-TO CLOSE: owner sets auth_source="claude_subscription", sends one message via Anthropic in the Console, confirms a 200 + response (AC#7), then this flips Done.
+AC#7 CLOSED (live verify against a real Max account, 2026-09-02) - surfaced two gaps the static path hid, both fixed:
+- macOS Keychain source: Claude Code stores the credential in the login Keychain ("Claude Code-credentials"), not ~/.claude/.credentials.json. read_claude_code_credential now falls back to a read-only, darwin-gated Keychain read (_keychain_credential_raw, absolute /usr/bin/security, 5s timeout, any failure -> None); file stays authoritative, non-macOS behavior unchanged.
+- Claude Code identity gate: the OAuth token is rejected (misleading 429 rate_limit_error) unless system leads with "You are Claude Code, Anthropic's official CLI for Claude." chat_with_anthropic now prepends it as the first system block on the subscription path only (with_claude_code_identity), preserving the user's own prompt as a following block; api-key sends untouched.
+- Live evidence: end-to-end chat_with_anthropic send with auth_source="claude_subscription" + a normal note-app system prompt read from keychain:Claude Code-credentials and returned 200 with real usage (input 56 / output 4). +13 tests. Lesson in lessons-live-verification.md.
 <!-- SECTION:NOTES:END -->
