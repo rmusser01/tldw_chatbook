@@ -2853,7 +2853,7 @@ class ScheduledTasksDB(BaseDB):
                 """
                 SELECT * FROM pending_mutations
                 WHERE local_id = ? AND primitive = ?
-                ORDER BY created_at
+                ORDER BY created_at DESC, id DESC
                 LIMIT 1
                 """,
                 (local_id, primitive),

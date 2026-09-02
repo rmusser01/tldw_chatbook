@@ -2146,3 +2146,16 @@ def test_upsert_results_skips_item_missing_id(tmp_path):
     counts = db.upsert_automation_results_from_server("server:42", [item])
     assert counts == {"inserted": 0, "updated": 0, "skipped_dedupe": 0}
     assert db.list_automation_results("server:42") == []
+
+
+def test_get_pending_mutation_for_local_id_returns_newest_across_owners(tmp_path):
+    """A row that failed-and-retried under two different server scopes must
+    surface the NEWEST mutation's error, not a stale one (re-review residual:
+    ascending ORDER BY returned the oldest)."""
+    db = ScheduledTasksDB(tmp_path / "t.db")
+    rid = "row-1"
+    db.record_pending_mutation(rid, "automation_definition", "server:a", {"transfer_errors": ["old"]})
+    db.record_pending_mutation(rid, "automation_definition", "server:b", {"transfer_errors": ["new"]})
+    row = db.get_pending_mutation_for_local_id(rid, "automation_definition")
+    assert row is not None
+    assert row["owner_id"] == "server:b"
