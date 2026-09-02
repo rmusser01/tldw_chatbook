@@ -33,7 +33,10 @@ def compute_local_health(app, row):
 # imported function-level in the authoring facade below -- this module is
 # boot-resident and eager imports of the authoring stack breached the
 # ui-ready census (975 > 972).
-from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+from tldw_chatbook.Scheduling.db.scheduled_tasks_db import (
+    DORMANT_TRANSFER_STATES,
+    ScheduledTasksDB,
+)
 from tldw_chatbook.Scheduling.models import (
     AutomationFamily,
     AutomationPreview,
@@ -562,6 +565,17 @@ class SchedulingService:
             )
             return None
 
+        # spec §6.1 ruling 2: a row that has actually been sent to the
+        # server (or is a dormant server-release copy) is not this side's
+        # to run manually -- mirrors run_automation_now's same refusal.
+        if row.get("transfer_state") in DORMANT_TRANSFER_STATES:
+            logger.warning(
+                "Manual reminder run refused for task {task_id}: "
+                "a transfer is in progress",
+                task_id=task_id,
+            )
+            return None
+
         succeeded = await loop.run_reminder_now(task_id)
         self._notify_queue_changed()
 
@@ -587,9 +601,11 @@ class SchedulingService:
         ``run_reminder_now``'s honest refusal when no loop is available),
         a server-scoped owner (ADR-077 decision 1: the server executes
         those), a ``lifecycle`` outside ``{configured, paused}``, a
-        pending transfer (``transfer_state`` not ``NULL``), or a
-        read-time health other than ``"ready"`` (``compute_local_health``
-        -- never the possibly-stale ``health`` column).
+        dormant transfer (``transfer_state`` in `DORMANT_TRANSFER_STATES`
+        -- spec §6.1 ruling 2; a merely-queued or failed transfer keeps
+        arming and does NOT refuse here), or a read-time health other than
+        ``"ready"`` (``compute_local_health`` -- never the possibly-stale
+        ``health`` column).
 
         Args:
             definition_id: The definition's local id.
@@ -635,7 +651,7 @@ class SchedulingService:
             )
             return None
 
-        if row.get("transfer_state") is not None:
+        if row.get("transfer_state") in DORMANT_TRANSFER_STATES:
             logger.warning(
                 "Manual automation run refused for definition {definition_id}: "
                 "a transfer is in progress",

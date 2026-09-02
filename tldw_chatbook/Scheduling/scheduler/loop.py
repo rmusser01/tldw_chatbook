@@ -22,6 +22,7 @@ from tldw_chatbook.Scheduling.constants import (
     SCHEDULER_POLL_INTERVAL_SECONDS,
     coerce_positive_float,
 )
+from tldw_chatbook.Scheduling.db.scheduled_tasks_db import DORMANT_TRANSFER_STATES
 from tldw_chatbook.Scheduling.scheduler.queue import (
     PriorityQueue,
     is_server_scoped_owner,
@@ -824,6 +825,19 @@ class SchedulerLoop:
             logger.warning(
                 "Manual reminder run refused for task {task_id}: "
                 "server-scoped rows are executed by the server (ADR-077)",
+                task_id=task_id,
+            )
+            return False
+
+        # spec §6.1 ruling 2: a row actually sent to the server (or a
+        # dormant server-release copy) is not this side's to run. Same
+        # guard `SchedulingService.run_reminder_now` applies -- defense in
+        # depth, since this loop method is itself a public entry point,
+        # not exclusively reached through the service.
+        if row.get("transfer_state") in DORMANT_TRANSFER_STATES:
+            logger.warning(
+                "Manual reminder run refused for task {task_id}: "
+                "a transfer is in progress",
                 task_id=task_id,
             )
             return False

@@ -7,7 +7,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+from tldw_chatbook.Scheduling.db.scheduled_tasks_db import (
+    DORMANT_TRANSFER_STATES,
+    ScheduledTasksDB,
+)
 from tldw_chatbook.Scheduling.models import ScheduledTask, TaskStatus
 from tldw_chatbook.Scheduling.scheduler.loop import SchedulerLoop
 from tldw_chatbook.Scheduling.scheduler.queue import PriorityQueue
@@ -369,19 +372,43 @@ def test_queue_arms_a_qualifying_automation_definition(db):
     assert first["type"] == "automation_definition"
 
 
-def test_queue_never_arms_a_transfer_pending_automation_definition(db):
+@pytest.mark.parametrize("dormant_state", list(DORMANT_TRANSFER_STATES))
+def test_queue_never_arms_a_dormant_transfer_automation_definition(db, dormant_state):
+    """spec §6.1 ruling 2: only DORMANT_TRANSFER_STATES sit out (was "any
+    non-NULL transfer_state" pre-PR-5; this test used the "to_server_sent"
+    dormant state both before and after the correction, so its assertion
+    is unchanged -- see the sibling arms_ test below for the corrected
+    two-state exclusion's new coverage)."""
     def_id = db.create_automation_definition(
         owner_id="local",
         family="recurring_question",
         name="Mid-handoff",
         next_run_at="2026-01-01T00:00:01+00:00",
     )
-    db.update_automation_definition(def_id, transfer_state="to_server_sent")
+    db.update_automation_definition(def_id, transfer_state=dormant_state)
 
     queue = PriorityQueue(db)
     queue.load()
 
     assert len(queue) == 0
+
+
+@pytest.mark.parametrize("armed_state", ["to_server_pending", "to_server_failed"])
+def test_queue_arms_a_non_dormant_transfer_automation_definition(db, armed_state):
+    """Corrects the pre-PR-5 any-non-NULL exclusion (spec §6.1 ruling 2): a
+    merely-queued or failed transfer keeps arming at the queue layer too."""
+    def_id = db.create_automation_definition(
+        owner_id="local",
+        family="recurring_question",
+        name="Queued or failed handoff",
+        next_run_at="2026-01-01T00:00:01+00:00",
+    )
+    db.update_automation_definition(def_id, transfer_state=armed_state)
+
+    queue = PriorityQueue(db)
+    queue.load()
+
+    assert [item["id"] for item in queue._items] == [def_id]
 
 
 def test_queue_never_arms_a_server_scoped_automation_definition(db):
@@ -399,6 +426,39 @@ def test_queue_never_arms_a_server_scoped_automation_definition(db):
     queue.load()
 
     assert len(queue) == 0
+
+
+@pytest.mark.parametrize("dormant_state", list(DORMANT_TRANSFER_STATES))
+def test_queue_never_arms_a_dormant_transfer_reminder_default_path(db, dormant_state):
+    """Reminder-side parity with the definitions guard above, default
+    (no `now=`) load path -- spec §6.1 ruling 2."""
+    armed_id = _create_reminder(db, "Armed", "2026-01-01T00:00:01+00:00")
+    dormant_id = _create_reminder(db, "Dormant", "2026-01-01T00:00:02+00:00")
+    db.update_reminder_task(dormant_id, transfer_state=dormant_state)
+
+    queue = PriorityQueue(db)
+    queue.load()
+
+    ids = {item["id"] for item in queue._items}
+    assert armed_id in ids
+    assert dormant_id not in ids
+
+
+@pytest.mark.parametrize("dormant_state", list(DORMANT_TRANSFER_STATES))
+def test_queue_never_arms_a_dormant_transfer_reminder_due_before_path(db, dormant_state):
+    """Same guard, the back-compat `now=`-provided load path
+    (`reminders_due_before`)."""
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    armed_id = _create_reminder(db, "Armed", now.isoformat())
+    dormant_id = _create_reminder(db, "Dormant", now.isoformat())
+    db.update_reminder_task(dormant_id, transfer_state=dormant_state)
+
+    queue = PriorityQueue(db)
+    queue.load(now=now)
+
+    ids = {item["id"] for item in queue._items}
+    assert armed_id in ids
+    assert dormant_id not in ids
 
 
 class _FakeWatchlistProjection(WatchlistProjection):

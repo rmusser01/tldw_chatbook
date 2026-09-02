@@ -22,6 +22,18 @@ from loguru import logger
 from tldw_chatbook.DB.base_db import BaseDB
 from tldw_chatbook.DB.sql_validation import validate_identifier
 
+#: ``transfer_state`` values that make a row dormant: excluded from every
+#: armable filter (DB-query and ``PriorityQueue.load`` layers, both
+#: primitives) and refused by every run-now seam. Per
+#: spec-2026-08-31-schedules-handoff-parity.md §6.1 ruling 2, a row only
+#: goes dark once a push attempt actually starts (``to_server_sent``) or a
+#: server-owned mirror's local release copy is queued
+#: (``from_server_pending``) -- ``NULL``, ``to_server_pending`` (merely
+#: queued, not yet attempted), and ``to_server_failed`` (send failed, the
+#: row re-arms) all keep executing locally. This corrects the pre-PR-5 code,
+#: which excluded ANY non-NULL ``transfer_state`` on the definitions side.
+DORMANT_TRANSFER_STATES = ("to_server_sent", "from_server_pending")
+
 
 class ScheduledTasksDB(BaseDB):
     """Database operations for scheduled tasks and reminders."""
@@ -594,6 +606,11 @@ class ScheduledTasksDB(BaseDB):
                 for key in self._REMINDER_TASK_COLUMNS
                 if key in item and key not in {"id", "server_id", "owner_id"}
             }
+            # §6.1 ruling 2, same as upsert_automation_definitions_from_
+            # server's existing pop: transfer_state is a local-only marker
+            # a server pull must never overwrite (a real server payload
+            # never carries one, but nothing guarantees that forever).
+            fields.pop("transfer_state", None)
             fields.setdefault("title", "Untitled reminder")
             if "schedule_kind" not in fields:
                 fields["schedule_kind"] = "one_time"
@@ -804,8 +821,18 @@ class ScheduledTasksDB(BaseDB):
         owner_id: Optional[str] = None,
         enabled: Optional[bool] = None,
         status: Optional[str] = None,
+        *,
+        armable_only: bool = False,
     ) -> list[dict[str, Any]]:
-        """List reminder tasks with optional filters."""
+        """List reminder tasks with optional filters.
+
+        ``armable_only=True`` adds the same dormant-transfer-state
+        exclusion `list_armable_automation_definitions` applies (spec §6.1
+        ruling 2: `DORMANT_TRANSFER_STATES` rows sit out): the DB-query
+        half of `PriorityQueue.load`'s defense-in-depth pair. Callers that
+        want every row for display (e.g. the workbench, which shows a
+        dormant row's "waiting for server" state) leave it ``False``.
+        """
         conditions: list[str] = []
         params: list[Any] = []
 
@@ -818,6 +845,12 @@ class ScheduledTasksDB(BaseDB):
         if status is not None:
             conditions.append("last_status = ?")
             params.append(status)
+        if armable_only:
+            placeholders = ", ".join("?" for _ in DORMANT_TRANSFER_STATES)
+            conditions.append(
+                f"(transfer_state IS NULL OR transfer_state NOT IN ({placeholders}))"
+            )
+            params.extend(DORMANT_TRANSFER_STATES)
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
@@ -841,18 +874,28 @@ class ScheduledTasksDB(BaseDB):
             return self._delete_reminder_task_conn(conn, task_id)
 
     def reminders_due_before(self, now: datetime) -> list[dict[str, Any]]:
-        """Return enabled reminders whose next_run_at is at or before ``now``."""
+        """Return enabled reminders whose next_run_at is at or before ``now``.
+
+        Excludes `DORMANT_TRANSFER_STATES` rows unconditionally (spec §6.1
+        ruling 2) -- this is the back-compat ``now=``-provided load path
+        `PriorityQueue.load` uses, i.e. armable-only by construction; its
+        sole caller is the queue, unlike `list_reminder_tasks` which also
+        serves display listings that must keep dormant rows visible.
+        """
         now_iso = self._to_utc_iso(now)
+        dormant_placeholders = ", ".join("?" for _ in DORMANT_TRANSFER_STATES)
         with closing(self._get_connection()) as conn:
             cursor = conn.execute(
-                """
+                f"""
                 SELECT * FROM reminder_tasks
                 WHERE enabled = 1
                   AND next_run_at IS NOT NULL
                   AND next_run_at <= ?
+                  AND (transfer_state IS NULL
+                       OR transfer_state NOT IN ({dormant_placeholders}))
                 ORDER BY next_run_at
                 """,
-                (now_iso,),
+                (now_iso, *DORMANT_TRANSFER_STATES),
             )
             return self._rows_to_dicts(
                 cursor.fetchall(), json_fields=self._REMINDER_JSON_FIELDS
@@ -1205,6 +1248,88 @@ class ScheduledTasksDB(BaseDB):
         return cls._MISSED_COUNT_OVERFLOW
 
     # ------------------------------------------------------------------
+    # Transfer state (spec §6) -- shared by both primitives
+    # ------------------------------------------------------------------
+
+    #: ``table_kind`` -> table name, for `set_transfer_state`/
+    #: `clear_transfer_state`. Keys match the ``primitive`` string
+    #: convention used across this module and `SyncEngine`/
+    #: `SchedulingService` (``_REMINDER_PRIMITIVE``/``_DEFINITION_
+    #: PRIMITIVE``) -- not user input, so building the ``UPDATE``'s table
+    #: name from this dict carries no injection risk.
+    _TRANSFER_STATE_TABLES = {
+        "reminder_task": "reminder_tasks",
+        "automation_definition": "automation_definitions",
+    }
+
+    def set_transfer_state(
+        self,
+        table_kind: str,
+        row_id: str,
+        state: Optional[str],
+        *,
+        expected: tuple[Optional[str], ...],
+    ) -> bool:
+        """Compare-and-set ``transfer_state`` on a reminder or definition row.
+
+        The transfer machine's transitions (§6.1/§6.2) must be race-safe
+        against a concurrent sync push and a concurrent UI cancel/retry
+        both touching the same row's ``transfer_state`` -- so the current
+        value is read and the new value written inside ONE transaction
+        (SQLite's transaction isolation serializes the read-then-write;
+        two racing callers can't both observe the pre-transition state and
+        both "succeed").
+
+        Deliberately does NOT bump `automation_definitions.version` --
+        same ``bump_version=False`` precedent `update_automation_
+        definition` documents for machinery-driven updates (e.g. the
+        scheduler's ``next_run_at`` advance): a transfer transition is not
+        a user content edit, and bumping it on every transition would
+        pollute optimistic-lock conflict detection the same way.
+
+        Args:
+            table_kind: ``"reminder_task"`` or ``"automation_definition"``.
+            row_id: The row's local id.
+            state: The new ``transfer_state`` value (``None`` clears it).
+            expected: Current-state values that permit the transition.
+                Refused (returns ``False``, no write) when the row's live
+                ``transfer_state`` is not one of these -- including when
+                the row does not exist at all.
+
+        Returns:
+            ``True`` if the row existed, its current state was in
+            ``expected``, and the write happened; ``False`` otherwise.
+
+        Raises:
+            ValueError: ``table_kind`` is not a known primitive.
+        """
+        table = self._TRANSFER_STATE_TABLES.get(table_kind)
+        if table is None:
+            raise ValueError(f"Unknown table_kind for transfer_state: {table_kind!r}")
+
+        with self.transaction() as conn:
+            row = conn.execute(
+                f"SELECT transfer_state FROM {table} WHERE id = ?", (row_id,)
+            ).fetchone()
+            if row is None or row["transfer_state"] not in expected:
+                return False
+            cursor = conn.execute(
+                f"UPDATE {table} SET transfer_state = ?, updated_at = ? WHERE id = ?",
+                (state, self._to_utc_iso(datetime.now(timezone.utc)), row_id),
+            )
+            return cursor.rowcount > 0
+
+    def clear_transfer_state(
+        self,
+        table_kind: str,
+        row_id: str,
+        *,
+        expected: tuple[Optional[str], ...],
+    ) -> bool:
+        """Sugar for ``set_transfer_state(table_kind, row_id, None, ...)``."""
+        return self.set_transfer_state(table_kind, row_id, None, expected=expected)
+
+    # ------------------------------------------------------------------
     # Automation definitions
     # ------------------------------------------------------------------
 
@@ -1355,13 +1480,15 @@ class ScheduledTasksDB(BaseDB):
 
         A row arms only when all four hold: ``family='recurring_question'``
         (v1 -- the only executor registered), ``lifecycle='configured'``,
-        a real ``next_run_at``, and no transfer in flight
-        (``transfer_state IS NULL`` -- a definition mid-handoff to the
-        server is not this side's to run, spec §6). ``owner_id`` defaults
-        to ``"local"``: this is the accessor half of the defense-in-depth
-        pairing with `PriorityQueue`'s own `is_server_scoped_owner` guard
-        (slice 1) -- neither alone is trusted to keep a server-scoped
-        definition from arming locally.
+        a real ``next_run_at``, and ``transfer_state`` not in
+        `DORMANT_TRANSFER_STATES` -- a definition that has actually been
+        sent to the server (or is a dormant server-release copy) is not
+        this side's to run; a merely-queued or failed transfer keeps
+        arming (spec §6.1 ruling 2). ``owner_id`` defaults to ``"local"``:
+        this is the accessor half of the defense-in-depth pairing with
+        `PriorityQueue`'s own `is_server_scoped_owner` guard (slice 1) --
+        neither alone is trusted to keep a server-scoped definition from
+        arming locally.
 
         The result is bounded to `_ARMABLE_DEFINITIONS_CAP` rows, ordered by
         `next_run_at` ascending, so the soonest-due definitions are kept and
@@ -1376,19 +1503,21 @@ class ScheduledTasksDB(BaseDB):
             Armable definition rows (as dicts), ordered by ``next_run_at``
             ascending, capped at `_ARMABLE_DEFINITIONS_CAP` rows.
         """
+        dormant_placeholders = ", ".join("?" for _ in DORMANT_TRANSFER_STATES)
         with closing(self._get_connection()) as conn:
             cursor = conn.execute(
-                """
+                f"""
                 SELECT * FROM automation_definitions
                 WHERE family = 'recurring_question'
                   AND lifecycle = 'configured'
                   AND next_run_at IS NOT NULL
-                  AND transfer_state IS NULL
+                  AND (transfer_state IS NULL
+                       OR transfer_state NOT IN ({dormant_placeholders}))
                   AND owner_id = ?
                 ORDER BY next_run_at
                 LIMIT ?
                 """,
-                (owner_id, self._ARMABLE_DEFINITIONS_CAP),
+                (*DORMANT_TRANSFER_STATES, owner_id, self._ARMABLE_DEFINITIONS_CAP),
             )
             rows = cursor.fetchall()
             if len(rows) == self._ARMABLE_DEFINITIONS_CAP:
