@@ -63,11 +63,14 @@ PR #2310 corrected the approved specification after the first documentation pass
 - Extension guidance distinguishes a full local-first Sync peer—which separates device wrapping/unwrap custody, staged-integrity and dataset-staging custody, and active `ProfileKeyMaterial` custody—from an API-only client, which uses authenticated server APIs and does not need to implement Chatbook's local profile, interview, injection, or tool stack.
 - The five-step quick start separates manual **Add**/**Edit** > **Save** from interview review > **Save only**/**Save and use with agents**, and the workflow and boundary tables keep complete claims in compact user-facing form.
 
-The stable server guide URLs temporarily retain the older continuous-sync wording. Final cross-repository parity verification depends on merging the already-approved server documentation correction; Chatbook uses the corrected PR #2310 specification now. TASK-27019 remains **In Progress** through that ordered merge and final verification.
+Server PR #2860 merged the shipped-behavior correction to `dev` as `afe2290aa4bc7f4c76c90fb93cf67e83e4b370e7`. The stable server guide URLs now match the corrected PR #2310 contract and are available for final cross-repository parity verification. TASK-27019 remains **In Progress** through that verification and PR review.
 
 ## Execution Evidence
 
 - Task 4: added one user how-to entry and one developer-guide pointer, confirmed the existing Settings links, resolved both relative targets, and verified the linked Personal Context guides retain stable server `dev` URLs and the corrected first-link-only shared contract.
+- Final-rebase review found that an all-ref/all-worktree task-ID gate cannot pass before merge because `origin/dev` and historical worktrees necessarily retain the unrelated MCP task's pre-rename TASK-27019 snapshot. Final verification now checks the actual merge candidate: this documentation task is the sole TASK-27019 record, the old MCP path is absent, and that task is present as TASK-28228.
+- Task 5: rebased onto current Chatbook `dev`; confirmed the merged UI/service and five-domain Sync inventory with negative purge/resolver controls; verified server PRs #2858 and #2860 and all stable server guide paths on `dev`; matched the exact four-bullet contract across both Chatbook guides and the server operator guide; passed 218 focused tests under Python 3.12.11; and passed the semantic, privacy, discovery-link, allowed-path, and diff guards.
+- Task 5 verifier review made two evidence-strengthening corrections: whitespace-normalized prose assertions now tolerate ordinary Markdown wrapping, and merge-candidate task uniqueness replaces an impossible all-history gate while explicitly proving the MCP task's TASK-28228 rename.
 
 ## Review correction scope and evidence
 

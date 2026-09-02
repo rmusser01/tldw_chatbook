@@ -46,6 +46,8 @@ Completed before Chatbook execution. The server documentation landed through PR 
 
 The Chatbook approved specification and publication history are already on `dev`: PR #2292 published the design under authoritative TASK-27016, and PR #2294 corrected its final evidence. The stale younger TASK-26836 publication record from this branch was dropped during rebase; the older TASK-26836 Console tray record and authoritative TASK-27016 remain unchanged.
 
+The shipped-behavior correction landed through server PR [#2860](https://github.com/rmusser01/tldw_server/pull/2860), merged to server `dev` as `afe2290aa4bc7f4c76c90fb93cf67e83e4b370e7` on 2026-09-02. That correction makes the stable operator, developer, and API guides match the reviewed Chatbook contract and current first-link-only product lifecycle.
+
 ## Corrected shipped-behavior claim inventory (PR #2310)
 
 This inventory supersedes the older continuous-sync assumptions in the first documentation pass and is the fail-closed source for Tasks 2-5:
@@ -61,7 +63,7 @@ This inventory supersedes the older continuous-sync assumptions in the first doc
 - First-link version conflicts and semantic collisions are resolved in content-free review with **Keep this device** or **Keep server** lineage choices. Later version or semantic conflicts can retain generic Sync metadata, but no shipped ongoing Personal Context cycle, status surface, or dedicated Personal Context resolver is available; first-link choices are not a post-link resolver.
 - The only current Console preview route is **Ctrl+Shift+P** (**View context**) > **Conversation Inspector** > outer **Next Send** > inner **Next Send** payload tab.
 
-**Ordered-merge dependency:** the stable server guide URLs temporarily retain the older continuous-sync wording. Final cross-repository parity and link-content checks remain blocked until the already-approved server correction branch is merged; the Chatbook guide must use the corrected PR #2310 specification in the meantime.
+**Ordered-merge dependency satisfied:** server PR #2860 merged before final Chatbook verification, so the stable server guide URLs now use the corrected PR #2310 contract and can participate in the final parity and link-content checks.
 
 ### Task 1: Rebase and establish the shipped-behavior claim inventory
 
@@ -97,48 +99,31 @@ sed -n '1,220p' backlog/docs/lessons-backlog-hygiene.md
 
 Expected: the task resolves to this documentation file, is assigned to `@codex`, and no duplicate ID or title appears. TASK-27019 replaces this task's younger TASK-26835 claim; current `dev` retains the older 2026-09-01 14:27 TASK-26835 Console evidence task. Repeat the task-resolution check after every rebase.
 
-Run this all-ref/all-worktree collision sweep now and after the final rebase:
+Run this merge-candidate collision sweep now and after the final rebase:
 
 ```bash
 set -e -o pipefail
 profile_task_matches=$(
-  {
-    git for-each-ref --format='%(refname)' refs/heads refs/remotes |
-      while IFS= read -r profile_ref; do
-        if profile_ref_match=$(git grep -l -E \
-          '^id: TASK-27019$|^title: Document Personal Context Profile for Chatbook users and developers$' \
-          "$profile_ref" -- 'backlog/tasks/*.md' 2>/dev/null); then
-          printf '%s\n' "$profile_ref_match"
-        else
-          profile_ref_status=$?
-          test "$profile_ref_status" -eq 1 || exit "$profile_ref_status"
-        fi
-      done | sed 's/^[^:]*://'
-    git worktree list --porcelain |
-      awk '$1 == "worktree" { sub(/^worktree /, ""); print }' |
-      while IFS= read -r profile_worktree; do
-        if [ ! -d "$profile_worktree/backlog/tasks" ]; then
-          continue
-        fi
-        if profile_worktree_match=$(rg -l -g '*.md' \
-          '^id: TASK-27019$|^title: Document Personal Context Profile for Chatbook users and developers$' \
-          "$profile_worktree/backlog/tasks" 2>/dev/null); then
-          printf '%s\n' "$profile_worktree_match"
-        else
-          profile_worktree_status=$?
-          test "$profile_worktree_status" -eq 1 || exit "$profile_worktree_status"
-        fi
-      done
-  } | awk -F/ '{ print $NF }' | sort -u
-) || {
-  echo "TASK-27019 collision sweep failed"
-  exit 1
-}
+  rg -l -g '*.md' \
+    '^id: TASK-27019$|^title: Document Personal Context Profile for Chatbook users and developers$' \
+    backlog/tasks | awk -F/ '{ print $NF }' | sort -u
+)
 printf '%s\n' "$profile_task_matches"
 test "$profile_task_matches" = "task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md"
+
+# The merge candidate renames the unrelated MCP task that still uses TASK-27019
+# on origin/dev. Historical refs and other worktrees are immutable snapshots and
+# are not valid merge-candidate uniqueness gates.
+profile_old_mcp_task='backlog/tasks/task-27019 - MCP-wire-server-initiated-sampling-elicitation-to-the-live-chat-provider-and-approval-surface.md'
+profile_new_mcp_task='backlog/tasks/task-28228 - MCP-wire-server-initiated-sampling-elicitation-to-the-live-chat-provider-and-approval-surface.md'
+test ! -e "$profile_old_mcp_task"
+test -f "$profile_new_mcp_task"
+rg -Fqx 'id: TASK-28228' "$profile_new_mcp_task"
+backlog task 28228 --plain | rg -Fq \
+  'Task TASK-28228 - MCP: wire server-initiated sampling/elicitation to the live chat provider and approval surface'
 ```
 
-Expected: the only unique matching task filename by either ID or title is the intended TASK-27019 record. Any scanner error fails the command instead of being converted into a no-match result.
+Expected: in the merge candidate, the only matching documentation task filename by either ID or title is the intended TASK-27019 record, and the unrelated MCP task has moved from TASK-27019 to TASK-28228. Historical refs and other worktrees may retain the pre-rename snapshot; they are not part of the candidate tree that will merge.
 
 - [x] **Step 3: Confirm merged UI and service boundaries**
 
@@ -951,7 +936,7 @@ git commit -m "docs: link Personal Context guides"
 
 - Verify: all changed documentation
 
-- [ ] **Step 1: Perform the final rebase before closing the task**
+- [x] **Step 1: Perform the final rebase before closing the task**
 
 Run:
 
@@ -964,40 +949,20 @@ backlog task 27019 --plain
 rg -n "TASK-27019|Document Personal Context Profile for Chatbook" \
   "backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md"
 profile_task_matches=$(
-  {
-    git for-each-ref --format='%(refname)' refs/heads refs/remotes |
-      while IFS= read -r profile_ref; do
-        if profile_ref_match=$(git grep -l -E \
-          '^id: TASK-27019$|^title: Document Personal Context Profile for Chatbook users and developers$' \
-          "$profile_ref" -- 'backlog/tasks/*.md' 2>/dev/null); then
-          printf '%s\n' "$profile_ref_match"
-        else
-          profile_ref_status=$?
-          test "$profile_ref_status" -eq 1 || exit "$profile_ref_status"
-        fi
-      done | sed 's/^[^:]*://'
-    git worktree list --porcelain |
-      awk '$1 == "worktree" { sub(/^worktree /, ""); print }' |
-      while IFS= read -r profile_worktree; do
-        if [ ! -d "$profile_worktree/backlog/tasks" ]; then
-          continue
-        fi
-        if profile_worktree_match=$(rg -l -g '*.md' \
-          '^id: TASK-27019$|^title: Document Personal Context Profile for Chatbook users and developers$' \
-          "$profile_worktree/backlog/tasks" 2>/dev/null); then
-          printf '%s\n' "$profile_worktree_match"
-        else
-          profile_worktree_status=$?
-          test "$profile_worktree_status" -eq 1 || exit "$profile_worktree_status"
-        fi
-      done
-  } | awk -F/ '{ print $NF }' | sort -u
-) || {
-  echo "TASK-27019 collision sweep failed"
-  exit 1
-}
+  rg -l -g '*.md' \
+    '^id: TASK-27019$|^title: Document Personal Context Profile for Chatbook users and developers$' \
+    backlog/tasks | awk -F/ '{ print $NF }' | sort -u
+)
 printf '%s\n' "$profile_task_matches"
 test "$profile_task_matches" = "task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md"
+
+profile_old_mcp_task='backlog/tasks/task-27019 - MCP-wire-server-initiated-sampling-elicitation-to-the-live-chat-provider-and-approval-surface.md'
+profile_new_mcp_task='backlog/tasks/task-28228 - MCP-wire-server-initiated-sampling-elicitation-to-the-live-chat-provider-and-approval-surface.md'
+test ! -e "$profile_old_mcp_task"
+test -f "$profile_new_mcp_task"
+rg -Fqx 'id: TASK-28228' "$profile_new_mcp_task"
+backlog task 28228 --plain | rg -Fq \
+  'Task TASK-28228 - MCP: wire server-initiated sampling/elicitation to the live chat provider and approval surface'
 
 # The exact UI/component and Sync/purge inventories are canonical in Task 1.
 backlog task 27019 --plain | rg -q 'Status:.*In Progress'
@@ -1005,9 +970,9 @@ backlog task 27019 --plain | rg -q 'Status:.*In Progress'
 
 Immediately after this rebase/collision block, rerun the exact Task 1 Step 3 command block and then the exact Task 1 Step 4 command block, unchanged. Those two canonical blocks are the required post-rebase UI/control, per-file symbol, Sync-domain, purge-producer, dynamic-materialization, and resolver inventory; do not substitute an abbreviated copy.
 
-Expected: the branch is based on current `origin/dev`; TASK-27019 resolves uniquely; the current controls, components, five domains, reviewed first-link, exact `scope`, `record`, `record`, `proposal` materialization sequence, outbox/dispatcher/client boundaries, and negative purge/resolver claims still match the guides. Any production-tree scanner failure or newly shipped seam stops execution for re-inventory. There must be no later rebase after the task is marked Done.
+Expected: the branch is based on current `origin/dev`; TASK-27019 resolves uniquely in the merge candidate; the unrelated upstream MCP task is explicitly renamed to TASK-28228; and the current controls, components, five domains, reviewed first-link, exact `scope`, `record`, `record`, `proposal` materialization sequence, outbox/dispatcher/client boundaries, and negative purge/resolver claims still match the guides. Historical refs and other worktrees may retain the pre-rename MCP snapshot and are not merge-candidate uniqueness failures. Any production-tree scanner failure or newly shipped seam stops execution for re-inventory. There must be no later rebase after the task is marked Done.
 
-- [ ] **Step 2: Verify server docs have landed on `dev`**
+- [x] **Step 2: Verify server docs have landed on `dev`**
 
 Run:
 
@@ -1024,11 +989,15 @@ test "$(gh api -X GET repos/rmusser01/tldw_server/pulls/2858 --jq .merge_commit_
   'c85fb8db6b6efc338162276a52a193fc5d2d0ce5'
 test "$(gh api -X GET repos/rmusser01/tldw_server/pulls/2858 --jq .base.ref)" = 'dev'
 test -n "$(gh api -X GET repos/rmusser01/tldw_server/pulls/2858 --jq .merged_at)"
+test "$(gh api -X GET repos/rmusser01/tldw_server/pulls/2860 --jq .merge_commit_sha)" = \
+  'afe2290aa4bc7f4c76c90fb93cf67e83e4b370e7'
+test "$(gh api -X GET repos/rmusser01/tldw_server/pulls/2860 --jq .base.ref)" = 'dev'
+test -n "$(gh api -X GET repos/rmusser01/tldw_server/pulls/2860 --jq .merged_at)"
 ```
 
-Expected: each command returns file metadata, and PR #2858 remains merged into `dev` at `c85fb8db6b6efc338162276a52a193fc5d2d0ce5`.
+Expected: each command returns file metadata; PR #2858 remains merged into `dev` at `c85fb8db6b6efc338162276a52a193fc5d2d0ce5`; and shipped-behavior correction PR #2860 remains merged into `dev` at `afe2290aa4bc7f4c76c90fb93cf67e83e4b370e7`.
 
-- [ ] **Step 3: Compare the shared contract block with server `dev`**
+- [x] **Step 3: Compare the shared contract block with server `dev`**
 
 Run:
 
@@ -1100,7 +1069,7 @@ PY
 
 Expected: every marked block is non-empty, contains exactly four bullets, and normalizes identically across the Chatbook user guide, Chatbook developer guide, and server `dev` operator guide.
 
-- [ ] **Step 4: Run targeted contract, Settings, Console, linking, dispatcher, and client checks**
+- [x] **Step 4: Run targeted contract, Settings, Console, linking, dispatcher, and client checks**
 
 Run:
 
@@ -1141,7 +1110,7 @@ PY
 
 Expected: the selected tests pass under a checked shared or active Chatbook project environment using supported Python `>=3.11,<4`. Results from an unsupported or unrelated interpreter are not completion evidence.
 
-- [ ] **Step 5: Run claim, path, and diff guards**
+- [x] **Step 5: Run claim, path, and diff guards**
 
 Run:
 
@@ -1179,6 +1148,8 @@ from pathlib import Path
 user_path, developer_path = map(Path, sys.argv[1:])
 user = user_path.read_text(encoding="utf-8")
 developer = developer_path.read_text(encoding="utf-8")
+user_flat = " ".join(user.split())
+developer_flat = " ".join(developer.split())
 
 
 def marked(text: str, name: str, document: Path) -> str:
@@ -1323,8 +1294,8 @@ developer_limits = [
     "The Personal Context purge domain is protocol-only in the current linked flow: Chatbook has no producer, and end-to-end distribution and acknowledgement are not wired.",
     "Post-link conflicts retain generic Sync metadata but have no dedicated Personal Context resolution screen.",
 ]
-require_each(user, user_limits, user_path, "current limitation")
-require_each(developer, developer_limits, developer_path, "current limitation")
+require_each(user_flat, user_limits, user_path, "current limitation")
+require_each(developer_flat, developer_limits, developer_path, "current limitation")
 
 contradictions = [
     r"Chatbook\s+(?:currently\s+)?(?:exposes|offers|provides|supports)\s+\*{0,2}Delete everywhere",
@@ -1346,7 +1317,7 @@ extension_numbers = [
 if extension_numbers != list(range(1, 11)):
     raise SystemExit(f"{developer_path}: extension checklist must be exactly 1-10")
 require_each(
-    extension,
+    " ".join(extension.split()),
     [
         "full local-first Sync peer or a server/API-only client",
         "`tldw_profile_core` first",
@@ -1397,7 +1368,7 @@ for component_path, symbol in component_owners:
         raise SystemExit(f"{developer_path}: missing owner pair {component_path} / {symbol}")
 
 require_each(
-    developer,
+    developer_flat,
     [
         "### Manual edits and reviewed interviews",
         "### Proposals and direct writes",
@@ -1419,7 +1390,7 @@ require_each(
     "lifecycle/privacy claim",
 )
 require_each(
-    developer,
+    developer_flat,
     [
         "Tests/Packaging/test_profile_core_packaging.py",
         "Tests/Personal_Context/",
@@ -1490,6 +1461,9 @@ profile_unexpected_paths=$(
     $0 == "Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md" { next }
     $0 == "Docs/superpowers/specs/2026-08-31-personal-context-documentation-design.md" { next }
     $0 == "backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md" { next }
+    $0 == "backlog/tasks/task-27019 - MCP-wire-server-initiated-sampling-elicitation-to-the-live-chat-provider-and-approval-surface.md" { next }
+    $0 == "backlog/tasks/task-28228 - MCP-wire-server-initiated-sampling-elicitation-to-the-live-chat-provider-and-approval-surface.md" { next }
+    $0 == "backlog/tasks/task-26029 - MCP-client-sampling-and-elicitation-handlers.md" { next }
     NF { print }
   '
 )
@@ -1505,9 +1479,9 @@ git diff --stat origin/dev...HEAD
 git diff --stat --cached
 ```
 
-Expected: each guide independently proves its required shared-contract and current-limit claims; all seven user failure-state labels are explicit; every new discovery link and every internal/server target is checked independently; and the allowed-path assertion accepts only the two guides, two discovery indexes, plan, and TASK-27019 across committed, staged, unstaged, and untracked paths.
+Expected: each guide independently proves its required shared-contract and current-limit claims; all eleven user failure-state labels are explicit; every new discovery link and every internal/server target is checked independently; and the allowed-path assertion accepts only the two guides, two discovery indexes, specification metadata, plan, TASK-27019, and the reviewed MCP task-ID rename across committed, staged, unstaged, and untracked paths.
 
-- [ ] **Step 6: Commit the completed Task 5 execution record**
+- [x] **Step 6: Commit the completed Task 5 execution record**
 
 After Steps 1-5 have run successfully, mark every Task 5 step through this commit step `[x]`. Before Task 6 begins, fail if any Task 1-5 checkbox remains open, then commit the plan so the final rebase and all verification evidence are recorded in a clean worktree.
 
@@ -1516,6 +1490,7 @@ Run:
 ```bash
 set -e -o pipefail
 profile_plan=Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md
+profile_task='backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md'
 backlog task 27019 --plain | rg -q 'Status:.*In Progress'
 if profile_pending_steps=$(sed -n '/^### Task 1:/,/^### Task 6:/p' "$profile_plan" | rg -n '^- \[ \]'); then
   printf 'Unexecuted Task 1-5 plan steps:\n%s\n' "$profile_pending_steps"
@@ -1524,7 +1499,7 @@ else
   profile_pending_status=$?
   test "$profile_pending_status" -eq 1 || exit "$profile_pending_status"
 fi
-git add "$profile_plan"
+git add "$profile_plan" "$profile_task"
 git diff --check --cached
 git commit -m "docs: record Chatbook Personal Context verification"
 git diff --check origin/dev...HEAD
@@ -1532,7 +1507,7 @@ test -z "$(git status --short)"
 backlog task 27019 --plain | rg -q 'Status:.*In Progress'
 ```
 
-Expected: all guide/index content and Tasks 1-5 execution checkboxes are committed, TASK-27019 remains **In Progress**, and Task 6 starts with no uncommitted plan changes.
+Expected: all guide/index content, Tasks 1-5 execution checkboxes, final verification evidence, and verifier corrections are committed; TASK-27019 remains **In Progress**; and Task 6 starts with no uncommitted changes.
 
 ### Task 6: Open, review, and close the Chatbook documentation PR
 
