@@ -22,7 +22,7 @@ or `interview`.
 ## In five minutes
 
 1. Open **F9 > Data & Privacy > My Profile**.
-2. Choose manual entry or the optional **Get to know you** interview. **Fixed local questions** stay on this device; **Adaptive provider questions** use your default Console provider. Skipping is supported and stores no answers.
+2. Choose manual entry or the optional interview. During setup, leave **Get to know you after setup** unchecked to opt out and store no interview answers. **Fixed local questions** stay on this device; **Adaptive provider questions** use your default Console provider.
 3. Review every proposed value and its visibility and syncability controls.
 4. Choose **Save only** or **Save and use with agents**, then inspect **Context > Next Send** in Console.
 5. Activate and authenticate a supported home server under **Overview > Advanced / Diagnostics > Switch Source / Server**, then use **Server sync > Link to home server** only if you want to share.
@@ -83,11 +83,11 @@ profile values. No local profile content uploads before **Approve and link**.
 
 ## Create or interview
 
-On a new installation, ordinary application setup finishes first. The setup
-summary can offer **Get to know you after setup**, an optional fixed local
-interview of at most 20 questions. Choosing **Skip** completes setup without
-storing answers or enabling agent use. The setup path does not offer adaptive
-questions; that choice is available later in **My Profile**.
+On a new installation, the setup summary can offer **Get to know you after
+setup**. Leave it unchecked to opt out without storing interview answers or
+enabling agent use. Setup completes before the selected interview opens. The
+chained interview uses at most 20 fixed local questions; adaptive questions are
+available later in **My Profile**.
 
 The interview offers two question styles:
 
@@ -106,13 +106,13 @@ that first response completes and before you can enter an answer. Review this
 disclosure before continuing; use **Fixed local questions** if you do not want
 the adaptive request to leave the device.
 
-You may skip a question, finish early, keep an encrypted draft when protected
-storage is available, or discard the interview. The draft and transcript
-objects are local and are not Personal Context Sync payloads. Adaptive requests
-still send the material described above to the configured provider. Drafts
-expire after 30 days and are destroyed after a successful final review. If
-protected storage is unavailable, the draft is memory-only and cannot be
-resumed.
+Within an interview, **Skip** skips only the current question and **Cancel**
+exits the interview. You may also finish early or keep an encrypted draft when
+protected storage is available. The draft and transcript objects are local and
+are not Personal Context Sync payloads. Adaptive requests still send the
+material described above to the configured provider. Drafts expire after 30
+days and are destroyed after a successful final review. If protected storage
+is unavailable, the draft is memory-only and cannot be resumed.
 
 Finishing the questions opens a structured review. Only checked rows are saved.
 You can edit each proposed value and choose its syncability and agent visibility

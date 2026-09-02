@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-01 14:45'
-updated_date: '2026-09-02 11:20'
+updated_date: '2026-09-02 12:05'
 labels: []
 dependencies: []
 references:
@@ -50,6 +50,7 @@ Reason: Documentation only; the existing Personal Context authority, Sync, and e
 PR #2310 corrected the approved specification after the first documentation pass. The guides and their verification must now enforce these boundaries:
 
 - A successful reviewed first link publishes the eligible snapshot produced by the approved content-free reconciliation plan. Later syncable Chatbook changes create encrypted Personal Context outbox entries, but no shipped ongoing Personal Context caller drains them; **Manual Sync** covers Notes and Chat only. Ordinary server REST changes are not published to Chatbook.
+- Setup completes before the optional chained interview. Leaving **Get to know you after setup** unchecked is the setup opt-out and stores no interview answers. Within an interview, **Skip** skips only the current question and **Cancel** exits.
 - The fixed interview is local. The adaptive interview uses the default Console provider and model with tools disabled. Its requests include the audience, coverage topics, attempt number, eligible records for the selected scope, and—after the first answer—all prior answered turns with raw answer text. The UI can show the actual provider/model only after the first provider response, before answer input.
 - Interview draft and transcript objects are not Sync payloads. Approved answer text can become an ordinary canonical record and is then governed by that record's controls.
 - Chatbook accepts HTTP and HTTPS server URLs. Runtime calls honor default verification, a custom CA bundle, or verification off; **Test Connection** uses the HTTP client's default certificate verification.

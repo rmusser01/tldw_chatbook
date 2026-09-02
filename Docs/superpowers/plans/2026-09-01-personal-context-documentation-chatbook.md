@@ -50,6 +50,7 @@ The Chatbook approved specification and publication history are already on `dev`
 This inventory supersedes the older continuous-sync assumptions in the first documentation pass and is the fail-closed source for Tasks 2-5:
 
 - Reviewed first linking is the only shipped Personal Context publication path. It publishes the eligible canonical snapshot resulting from the user's approved content-free reconciliation plan. Later syncable Chatbook changes create encrypted Personal Context outbox entries, but no shipped ongoing Personal Context caller drains them. **Manual Sync** covers Notes and Chat only. Ordinary server REST changes are not published to Chatbook.
+- Setup completes before the optional chained interview. Leaving **Get to know you after setup** unchecked is the setup opt-out and stores no interview answers. Within an interview, **Skip** skips only the current question and **Cancel** exits.
 - The fixed interview is local. The adaptive interview uses the default Console provider and model with tools disabled. Each request includes the audience, coverage topics, attempt number, and eligible records from the selected scope; after the first answer, it also includes every prior answered turn and raw answer text. The actual provider/model is shown only after the first provider response completes, before answer input.
 - Interview draft and transcript objects are not Sync payloads. Approved answer text may become an ordinary canonical record, after which the record's controls determine first-link eligibility.
 - Chatbook accepts HTTP and HTTPS home-server URLs. Runtime calls honor the saved default verification, custom CA bundle, or verification-off setting. **Test Connection** uses the HTTP client's default certificate verification rather than the saved custom/off setting.
@@ -590,7 +591,7 @@ git commit -m "docs: plan Chatbook Personal Context guides"
 Wrap the section in `<!-- personal-context-quick-start:start -->` and `<!-- personal-context-quick-start:end -->`. It must contain exactly five numbered steps covering:
 
 1. Open **F9 > Data & Privacy > My Profile**.
-2. Choose manual entry or optional **Get to know you**; fixed questions stay local, adaptive questions use the default Console provider, and skipping stores no answer.
+2. Choose manual entry or the optional interview; leaving **Get to know you after setup** unchecked is the setup opt-out and stores no interview answers, while interview **Skip** skips only the current question and **Cancel** exits.
 3. Review every proposed value and its visibility/syncability controls.
 4. Choose **Save only** or **Save and use with agents**, and inspect **Context > Next Send** before sending.
 5. Link a supported home server only when sharing is desired.
