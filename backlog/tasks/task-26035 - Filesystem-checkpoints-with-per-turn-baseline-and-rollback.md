@@ -1,10 +1,10 @@
 ---
 id: TASK-26035
 title: Filesystem checkpoints with per-turn baseline and rollback
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-31 15:47'
-updated_date: '2026-09-02 00:41'
+updated_date: '2026-09-02 06:20'
 labels:
   - agents
   - workspaces
@@ -44,3 +44,9 @@ Build on the existing shadow-repo (Workspaces/change_tracking.ShadowRepo): snaps
 7. AC#7 roots-only: ShadowRepo already scopes to allowed roots -- verify + assert.
 Testable now (pure): restore-plan builder, dirty-tree refusal decision, retention/prune policy. Impure/live: the actual snapshot/restore + the change-review UI surface. DEFERRED to a live session for safe verification of the restore path.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+REJECTED by owner (2026-09-02): covered enough by existing surfaces — /rewind rolls the conversation back, and Change Review already offers per-file revert + undo-all over per-turn snapshots (change_turn_tracker B/E shadow-repo snapshots). The residual (one-shot tree restore to N turns ago + retention) is a nice-to-have with a destructive-restore risk profile that outweighs it. The shadow-repo seam analysis in this file stands if ever revisited.
+<!-- SECTION:NOTES:END -->

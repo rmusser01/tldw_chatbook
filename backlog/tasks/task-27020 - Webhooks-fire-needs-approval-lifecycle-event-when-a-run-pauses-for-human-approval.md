@@ -3,9 +3,10 @@ id: TASK-27020
 title: >-
   Webhooks: fire needs-approval lifecycle event when a run pauses for human
   approval
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-01 23:47'
+updated_date: '2026-09-02 06:20'
 labels:
   - interop
   - ops
@@ -27,14 +28,8 @@ TASK-26031 shipped signed run-lifecycle webhooks and wired completed+failed at t
 - [ ] #3 Reuses run_webhooks.schedule_run_webhook and the [webhooks] config gate
 <!-- AC:END -->
 
-## Renumbering provenance
+## Implementation Notes
 
-This task previously held id TASK-26043, colliding with the
-"Console-Workspace-Files-secure-editing-and-publication" task that arrived on origin/dev first (dev max was 27018 at
-renumber time, 2026-09-02; range swept across all remote branches and local
-worktrees). Per the owner rule decided 2026-08-21 in TASK-19601 (**older id
-keeps it; the younger task renumbers with a provenance note, regardless of
-status**), it renumbered to TASK-27020. Citations to TASK-26043 in this
-branch's commit messages or implementation notes written before 2026-09-02
-refer to THIS task; the dev-resident TASK-26043 holder is the Workspace
-Files task.
+<!-- SECTION:NOTES:BEGIN -->
+REJECTED by owner (2026-09-02): 'why do I need a webhook' — no external dashboard/automation consumes run-lifecycle pings, so the needs-approval event adds no value. The shipped 26031 core stays dormant (off by default, zero requests unless [webhooks] is configured). Reopen if a real consumer appears.
+<!-- SECTION:NOTES:END -->
