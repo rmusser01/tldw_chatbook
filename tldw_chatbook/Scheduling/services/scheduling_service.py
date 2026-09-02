@@ -839,6 +839,17 @@ class SchedulingService:
         `begin_transfer_to_server` re-begins a failed transfer as a
         retry, spec obligation (f)); and lifecycle outside `{configured,
         paused}` (``archived``/``solved`` have nothing left to execute).
+
+        Args:
+            row: The reminder-task or automation-definition row to
+                transfer, as returned by the DB layer.
+            direction: ``"to_server"`` or ``"to_local"``. Any other value
+                skips the direction-specific checks and is evaluated on
+                the shared ones alone.
+
+        Returns:
+            The single highest-priority refusal reason as user-facing
+            copy, or ``None`` when the transfer is allowed.
         """
         if (
             self.server_client is None
@@ -889,6 +900,14 @@ class SchedulingService:
         A `to_server_failed` row is NOT locked: it re-armed locally,
         nothing is queued against it, and editing before a retry is
         exactly what should be possible.
+
+        Args:
+            row: The reminder-task or automation-definition row to test.
+
+        Returns:
+            The read-only reason as user-facing copy when ``row``'s
+            ``transfer_state`` is in `IN_FLIGHT_TRANSFER_STATES`, else
+            ``None``.
         """
         if row.get("transfer_state") in IN_FLIGHT_TRANSFER_STATES:
             return _TRANSFER_READ_ONLY_REASON
@@ -903,6 +922,18 @@ class SchedulingService:
         about `timeout_seconds`, a local-only field that never transfers
         (definitions have no equivalent: their local-only `next_run_at`
         is expected to recompute, not silently dropped data).
+
+        Args:
+            row: The row being transferred. A ``family`` key identifies
+                it as a definition; anything else is read as a reminder.
+            direction: The transfer direction. Accepted for call-site
+                symmetry with `transfer_refusal`; the warnings below
+                depend on the row's own shape, not on which way it moves.
+
+        Returns:
+            Zero or more user-facing warning strings. Empty means nothing
+            to confirm -- never a refusal, which is `transfer_refusal`'s
+            job alone.
         """
         warnings: list[str] = []
         is_definition = "family" in row
@@ -957,6 +988,15 @@ class SchedulingService:
         locally while merely queued (spec §6.1.1) -- `SyncEngine`'s push
         disarms it later, only once an actual send attempt starts.
 
+        The CAS and that mutation are ONE transaction (`set_transfer_
+        state`'s `pending_mutation` kwarg, Qodo review fix wave 2). Two
+        transactions left a crash window whose loser is silent and
+        permanent: the row sits `to_server_pending` -- read-only per §6.3,
+        excluded from the armable set -- with no outbox row for any
+        replay to find, so it neither runs locally nor ever reaches the
+        server. The mutation payload is therefore built BEFORE the CAS;
+        nothing else about the ordering changed.
+
         `to_server_failed` -> `to_server_pending` is the RETRY leg
         (obligation (f)): `transfer_refusal` deliberately lets a
         definitively-failed row reach here, and `record_pending_mutation`
@@ -983,17 +1023,6 @@ class SchedulingService:
                 status="refused", reason="No server identity is configured."
             )
 
-        armed = self.db.set_transfer_state(
-            table_kind,
-            row_id,
-            "to_server_pending",
-            expected=(None, "to_server_failed"),
-        )
-        if not armed:
-            return TransferOutcome(
-                status="refused", reason=_TRANSFER_IN_PROGRESS_REASON
-            )
-
         if table_kind == _DEFINITION_PRIMITIVE:
             mutation_payload = {
                 "action": "transfer_to_server",
@@ -1004,9 +1033,23 @@ class SchedulingService:
                 "action": "transfer_to_server",
                 "task_payload": self._server_create_payload(self._row_to_reminder(row)),
             }
-        self.db.record_pending_mutation(
-            row_id, table_kind, destination_owner_id, mutation_payload
+
+        armed = self.db.set_transfer_state(
+            table_kind,
+            row_id,
+            "to_server_pending",
+            expected=(None, "to_server_failed"),
+            pending_mutation={
+                "primitive": table_kind,
+                "owner_id": destination_owner_id,
+                "payload": mutation_payload,
+            },
         )
+        if not armed:
+            return TransferOutcome(
+                status="refused", reason=_TRANSFER_IN_PROGRESS_REASON
+            )
+
         self._notify_queue_changed()
         return TransferOutcome(status="pending")
 
@@ -1035,6 +1078,15 @@ class SchedulingService:
         REFUSAL: cancel stays state-keyed (Task 5 adjudication), so a
         definitively-failed release whose mutation is already cleared is
         still cancelable.
+
+        That refusal is checked TWICE (Qodo review, fix wave 2). The
+        check here is a cheap early exit; the authoritative one runs
+        inside `create_local_copy_from_mirror`'s own transaction, which
+        also writes the mutation. Splitting the copy and the mutation
+        across two transactions reopened I5's exact strand by a different
+        route -- a crash, or a second `begin` landing in the gap, left
+        the copy with no mutation naming it -- and no amount of
+        pre-checking outside the write closes that gap.
         """
         row = self._get_transfer_row(table_kind, row_id)
         if row is None:
@@ -1054,19 +1106,32 @@ class SchedulingService:
 
         owner_id = row["owner_id"]
         server_id = row["server_id"]
-        copy_id = self.db.create_local_copy_from_mirror(table_kind, row_id)
-
         server_field = (
             "server_definition_id"
             if table_kind == _DEFINITION_PRIMITIVE
             else "server_task_id"
         )
-        mutation_payload = {
-            "action": "release_from_server",
-            server_field: server_id,
-            "local_copy_id": copy_id,
-        }
-        self.db.record_pending_mutation(row_id, table_kind, owner_id, mutation_payload)
+        copy_id = self.db.create_local_copy_from_mirror(
+            table_kind,
+            row_id,
+            pending_mutation={
+                "local_id": row_id,
+                "primitive": table_kind,
+                "owner_id": owner_id,
+                # `local_copy_id` is filled in by the DB call itself --
+                # the copy's id does not exist until its INSERT runs.
+                "payload": {
+                    "action": "release_from_server",
+                    server_field: server_id,
+                },
+            },
+        )
+        if copy_id is None:
+            # The in-transaction re-check found a release already queued
+            # (a second `begin` that got past the pre-check above).
+            return TransferOutcome(
+                status="refused", reason=_TRANSFER_IN_PROGRESS_REASON
+            )
         self._notify_queue_changed()
         return TransferOutcome(status="pending", row_id=copy_id)
 
@@ -1330,15 +1395,31 @@ class SchedulingService:
         create is NOT idempotent) -- found means the transfer actually
         landed (convert to the mirror, clear the mutation); absent means
         CAS back to `to_server_pending` for a normal retry.
+
+        Every failure is logged with the row id, the owner scope the
+        recovery is acting under, and the primitive (Qodo review, fix
+        wave 2) -- never any payload content, which on this path carries
+        the user's own reminder/definition text. A pass-level log names
+        the primitive alone: no single row is implicated when the
+        listing itself is what failed. Guarding per row also stops one
+        bad row from cancelling recovery for every row behind it.
         """
         try:
             self._recover_stuck_definitions()
         except Exception:
-            logger.exception("Automation definition inflight-transfer recovery failed")
+            logger.exception(
+                "Inflight-transfer recovery pass failed for primitive "
+                "{primitive}",
+                primitive=_DEFINITION_PRIMITIVE,
+            )
         try:
             await self._recover_stuck_reminders()
         except Exception:
-            logger.exception("Reminder inflight-transfer recovery failed")
+            logger.exception(
+                "Inflight-transfer recovery pass failed for primitive "
+                "{primitive}",
+                primitive=_REMINDER_PRIMITIVE,
+            )
 
     def _recover_stuck_definitions(self) -> None:
         stuck = [
@@ -1347,14 +1428,49 @@ class SchedulingService:
             if row.get("transfer_state") == "to_server_sent"
         ]
         for row in stuck:
-            self.db.set_transfer_state(
-                _DEFINITION_PRIMITIVE,
-                row["id"],
-                "to_server_pending",
-                expected=("to_server_sent",),
-            )
+            try:
+                self.db.set_transfer_state(
+                    _DEFINITION_PRIMITIVE,
+                    row["id"],
+                    "to_server_pending",
+                    expected=("to_server_sent",),
+                )
+            except Exception:
+                logger.exception(
+                    "Inflight-transfer recovery failed for row {row_id} "
+                    "(owner {owner_id}, primitive {primitive})",
+                    row_id=row["id"],
+                    owner_id=row.get("owner_id"),
+                    primitive=_DEFINITION_PRIMITIVE,
+                )
 
     async def _recover_stuck_reminders(self) -> None:
+        """List-and-match recovery, scoped to rows this server actually owns.
+
+        The list-and-match is only meaningful against the server the
+        transfer was SENT to, and each stuck row records that server
+        itself -- its own mutation's `owner_id`, the same
+        `get_pending_mutation_for_local_id` answer `_delete_transfer_
+        mutation` and the Task 7 retry-error lookup already key off.
+        Reconciling every stuck row against "today's active server" was
+        wrong after a server switch (Qodo review, fix wave 2): an
+        ambiguously-successful send to server A is absent from server B's
+        listing, so it was CAS'd back to `to_server_pending` and replayed
+        -- creating a SECOND task on A once A reconnects, the duplicate
+        §6.1.3 exists to prevent.
+
+        A row recorded under another owner is therefore SKIPPED, not
+        guessed at: it stays `to_server_sent` with its mutation intact
+        until that server is the connected one, and says so in the log.
+        Deferring is honest; a wrong-server answer is not, and it is not
+        recoverable afterwards.
+
+        A stuck row with NO mutation has no recorded owner to defer to
+        (its mutation was cleared without the row's state following) and
+        is reconciled against the active server, exactly as before --
+        skipping it would leave it stuck with nothing left that could
+        ever un-stick it.
+        """
         stuck = [
             row
             for row in self.db.list_reminder_tasks()
@@ -1378,13 +1494,33 @@ class SchedulingService:
             )
             return
 
+        recoverable: list[dict[str, Any]] = []
+        for row in stuck:
+            mutation = self.db.get_pending_mutation_for_local_id(
+                row["id"], _REMINDER_PRIMITIVE
+            )
+            recorded_owner_id = (mutation or {}).get("owner_id") or destination_owner_id
+            if recorded_owner_id != destination_owner_id:
+                logger.info(
+                    "Deferring inflight-transfer recovery for row {row_id} "
+                    "(primitive {primitive}): sent under {owner_id}, waiting "
+                    "for that connection",
+                    row_id=row["id"],
+                    primitive=_REMINDER_PRIMITIVE,
+                    owner_id=recorded_owner_id,
+                )
+                continue
+            recoverable.append(row)
+        if not recoverable:
+            return
+
         try:
             response = await self.server_client.list_reminders()
         except Exception as exc:  # noqa: BLE001 - recovery must never crash startup
             logger.warning(
                 f"Reminder inflight-transfer recovery could not reach the "
-                f"server ({exc}); leaving {len(stuck)} row(s) for the next "
-                "startup"
+                f"server ({exc}); leaving {len(recoverable)} row(s) for the "
+                "next startup"
             )
             return
 
@@ -1395,28 +1531,37 @@ class SchedulingService:
             if item.get("link_type") == "chatbook_transfer" and item.get("link_id")
         }
 
-        for row in stuck:
+        for row in recoverable:
             local_id = row["id"]
-            matched = by_link_id.get(local_id)
-            if matched is not None:
-                # Delete the mutation regardless of outcome (matches
-                # `SyncEngine._push_reminder_transfer`'s own precedent for
-                # this same DB call) -- a "vanished" row (deleted between
-                # the scan above and this convert) has nothing left to
-                # replay for, so leaving the mutation queued would just
-                # strand it forever.
-                self.db.convert_row_to_server_mirror(
-                    _REMINDER_PRIMITIVE, local_id, matched, destination_owner_id
-                )
-                self.db.delete_pending_mutation_for_record(
-                    local_id, _REMINDER_PRIMITIVE, destination_owner_id
-                )
-            else:
-                self.db.set_transfer_state(
-                    _REMINDER_PRIMITIVE,
-                    local_id,
-                    "to_server_pending",
-                    expected=("to_server_sent",),
+            try:
+                matched = by_link_id.get(local_id)
+                if matched is not None:
+                    # Delete the mutation regardless of outcome (matches
+                    # `SyncEngine._push_reminder_transfer`'s own precedent
+                    # for this same DB call) -- a "vanished" row (deleted
+                    # between the scan above and this convert) has nothing
+                    # left to replay for, so leaving the mutation queued
+                    # would just strand it forever.
+                    self.db.convert_row_to_server_mirror(
+                        _REMINDER_PRIMITIVE, local_id, matched, destination_owner_id
+                    )
+                    self.db.delete_pending_mutation_for_record(
+                        local_id, _REMINDER_PRIMITIVE, destination_owner_id
+                    )
+                else:
+                    self.db.set_transfer_state(
+                        _REMINDER_PRIMITIVE,
+                        local_id,
+                        "to_server_pending",
+                        expected=("to_server_sent",),
+                    )
+            except Exception:
+                logger.exception(
+                    "Inflight-transfer recovery failed for row {row_id} "
+                    "(owner {owner_id}, primitive {primitive})",
+                    row_id=local_id,
+                    owner_id=destination_owner_id,
+                    primitive=_REMINDER_PRIMITIVE,
                 )
         self._notify_queue_changed()
 

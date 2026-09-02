@@ -500,6 +500,15 @@ class SchedulerLoop:
         Refuses ONLY on a positively-read disqualifying row. A missing row
         or a failed read falls through to dispatch, so this guard can
         never silently swallow firings it was not written to stop.
+
+        Deliberately NOT atomic with the dispatch that follows: a run
+        that starts before the disarming CAS completes is the case spec
+        §6.4 closes on -- "an in-flight local run at transfer time
+        completes and writes its result locally -- disarming stops *new*
+        dispatches only. Harmless and stated." This guard minimizes new
+        dispatches; making check+dispatch a single critical section would
+        buy nothing the spec asks for, at the cost of holding a lock
+        across a handler's whole runtime.
         """
         reader_name = self._ARMABILITY_READERS.get(task_type)
         task_id = task.get("id")

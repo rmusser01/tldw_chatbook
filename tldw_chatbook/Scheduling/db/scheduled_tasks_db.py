@@ -1282,6 +1282,7 @@ class ScheduledTasksDB(BaseDB):
         state: Optional[str],
         *,
         expected: tuple[Optional[str], ...],
+        pending_mutation: dict[str, Any] | None = None,
     ) -> bool:
         """Compare-and-set ``transfer_state`` on a reminder or definition row.
 
@@ -1320,6 +1321,16 @@ class ScheduledTasksDB(BaseDB):
                 Refused (returns ``False``, no write) when the row's live
                 ``transfer_state`` is not one of these -- including when
                 the row does not exist at all.
+            pending_mutation: Optional ``{"primitive", "owner_id",
+                "payload"}`` (plus an optional ``local_id``, defaulting
+                to ``row_id``) recorded in ``pending_mutations`` in the
+                SAME transaction as the CAS, and ONLY when the CAS
+                actually wrote -- ``update_automation_definition``'s
+                ``if changed and pending_mutation is not None`` precedent.
+                `begin_transfer_to_server` needs exactly that pairing: a
+                crash between arming ``to_server_pending`` and queueing
+                the transfer left a read-only row nothing would ever
+                replay (Qodo review, fix wave 2).
 
         Returns:
             ``True`` if the row existed, its current state was in
@@ -1338,7 +1349,8 @@ class ScheduledTasksDB(BaseDB):
         # the `IN (...)` branch for any non-NULL expected values.
         non_null_expected = [value for value in expected if value is not None]
         guard_clauses: list[str] = []
-        params: list[Any] = [state, self._to_utc_iso(datetime.now(timezone.utc)), row_id]
+        now_iso = self._to_utc_iso(datetime.now(timezone.utc))
+        params: list[Any] = [state, now_iso, row_id]
         if None in expected:
             guard_clauses.append("transfer_state IS NULL")
         if non_null_expected:
@@ -1356,7 +1368,18 @@ class ScheduledTasksDB(BaseDB):
                 f"WHERE id = ? AND ({' OR '.join(guard_clauses)})",
                 params,
             )
-            return cursor.rowcount > 0
+            if cursor.rowcount == 0:
+                return False
+            if pending_mutation is not None:
+                self._insert_pending_mutation_conn(
+                    conn,
+                    local_id=pending_mutation.get("local_id") or row_id,
+                    primitive=pending_mutation["primitive"],
+                    owner_id=pending_mutation["owner_id"],
+                    payload=pending_mutation["payload"],
+                    now_iso=now_iso,
+                )
+            return True
 
     def clear_transfer_state(
         self,
@@ -1365,7 +1388,23 @@ class ScheduledTasksDB(BaseDB):
         *,
         expected: tuple[Optional[str], ...],
     ) -> bool:
-        """Sugar for ``set_transfer_state(table_kind, row_id, None, ...)``."""
+        """Sugar for ``set_transfer_state(table_kind, row_id, None, ...)``.
+
+        Args:
+            table_kind: ``"reminder_task"`` or ``"automation_definition"``.
+            row_id: The row's local id.
+            expected: Current-state values that permit the clear. The
+                same guarded single-statement UPDATE `set_transfer_state`
+                documents, so a row whose live ``transfer_state`` is not
+                one of these is left untouched.
+
+        Returns:
+            ``True`` when the state was cleared, ``False`` when the guard
+            refused (including a row that does not exist).
+
+        Raises:
+            ValueError: ``table_kind`` is not a known primitive.
+        """
         return self.set_transfer_state(table_kind, row_id, None, expected=expected)
 
     def convert_row_to_server_mirror(
@@ -1476,7 +1515,13 @@ class ScheduledTasksDB(BaseDB):
                 )
             return "converted"
 
-    def create_local_copy_from_mirror(self, table_kind: str, mirror_id: str) -> str:
+    def create_local_copy_from_mirror(
+        self,
+        table_kind: str,
+        mirror_id: str,
+        *,
+        pending_mutation: dict[str, Any] | None = None,
+    ) -> Optional[str]:
         """Create a dormant local-owner copy of a server-owned mirror row (spec §6.2.1).
 
         Called when a `release_from_server` transfer starts on a mirror
@@ -1510,14 +1555,34 @@ class ScheduledTasksDB(BaseDB):
 
         ONE transaction: the mirror read and the copy's INSERT are atomic,
         so a concurrent mirror delete/pull-update can never leave the
-        copy built from half-updated data.
+        copy built from half-updated data. ``pending_mutation`` joins the
+        release mutation to that same transaction (Qodo review, fix wave
+        2): recording it separately meant a crash -- or a second `begin`
+        arriving between the two -- left a dormant copy that no mutation
+        named and no armable query could ever see. Both the
+        already-queued re-check and the mutation INSERT therefore happen
+        HERE, not in the caller: the caller's own pre-check is a cheap
+        early refusal, this one is the authoritative one.
 
         Args:
             table_kind: ``"reminder_task"`` or ``"automation_definition"``.
             mirror_id: The server-owned mirror row's local id.
+            pending_mutation: Optional ``{"local_id", "primitive",
+                "owner_id", "payload"}`` for the ``release_from_server``
+                mutation. ``local_id`` is the MIRROR's id (Task 5's
+                keying convention), and ``payload["local_copy_id"]`` is
+                filled in here with the id this call generates -- the
+                caller cannot know it ahead of time, the same reason
+                ``create_automation_definition`` keys its own mutation by
+                the id it returns. When given, an already-queued
+                ``release_from_server`` mutation for ``mirror_id``
+                refuses the whole call.
 
         Returns:
-            The new copy's local id.
+            The new copy's local id, or ``None`` when a release was
+            already queued for ``mirror_id`` (no copy created, the
+            existing mutation untouched). ``None`` is only ever returned
+            when ``pending_mutation`` is given.
 
         Raises:
             ValueError: unknown ``table_kind``, or no row exists at
@@ -1530,6 +1595,20 @@ class ScheduledTasksDB(BaseDB):
 
         now = datetime.now(timezone.utc)
         with self.transaction() as conn:
+            if pending_mutation is not None:
+                queued = self._row_to_dict(
+                    conn.execute(
+                        "SELECT payload FROM pending_mutations "
+                        "WHERE local_id = ? AND primitive = ?",
+                        (mirror_id, table_kind),
+                    ).fetchone(),
+                    json_fields={"payload"},
+                )
+                if queued is not None and (queued.get("payload") or {}).get(
+                    "action"
+                ) == "release_from_server":
+                    return None
+
             if table_kind == "reminder_task":
                 mirror = self._row_to_dict(
                     conn.execute(
@@ -1555,7 +1634,7 @@ class ScheduledTasksDB(BaseDB):
                 else:
                     next_run_at = None
 
-                return self._create_reminder_task_conn(
+                copy_id = self._create_reminder_task_conn(
                     conn,
                     "local",
                     mirror["title"],
@@ -1572,6 +1651,9 @@ class ScheduledTasksDB(BaseDB):
                     enabled=mirror.get("enabled", 1),
                     transfer_state="from_server_pending",
                     next_run_at=next_run_at,
+                )
+                return self._record_release_mutation_conn(
+                    conn, copy_id, pending_mutation, now
                 )
 
             mirror = self._row_to_dict(
@@ -1617,7 +1699,36 @@ class ScheduledTasksDB(BaseDB):
                 f"INSERT INTO automation_definitions ({columns}) VALUES ({placeholders})",
                 list(serialized.values()),
             )
-            return definition_id
+            return self._record_release_mutation_conn(
+                conn, definition_id, pending_mutation, now
+            )
+
+    def _record_release_mutation_conn(
+        self,
+        conn: sqlite3.Connection,
+        copy_id: str,
+        pending_mutation: dict[str, Any] | None,
+        now: datetime,
+    ) -> str:
+        """Record `create_local_copy_from_mirror`'s release mutation, if any.
+
+        Naming ``copy_id`` in the payload is the whole point: the
+        mutation is keyed by the MIRROR's id, so the dormant copy is
+        reachable only through ``payload["local_copy_id"]``, and that id
+        does not exist until the INSERT above ran.
+        """
+        if pending_mutation is not None:
+            payload = dict(pending_mutation["payload"])
+            payload["local_copy_id"] = copy_id
+            self._insert_pending_mutation_conn(
+                conn,
+                local_id=pending_mutation["local_id"],
+                primitive=pending_mutation["primitive"],
+                owner_id=pending_mutation["owner_id"],
+                payload=payload,
+                now_iso=self._to_utc_iso(now),
+            )
+        return copy_id
 
     # ------------------------------------------------------------------
     # Automation definitions

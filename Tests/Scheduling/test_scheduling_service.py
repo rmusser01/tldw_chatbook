@@ -2801,3 +2801,159 @@ async def test_set_definition_lifecycle_refused_while_transferring(db):
     outcome = await svc.set_definition_lifecycle(definition_id, "archive")
     assert outcome.status == "error"
     assert outcome.errors[0]["code"] == "transfer_in_progress"
+
+
+# ----------------------------------------------------------------------
+# Qodo review, fix wave 2: per-owner recovery + atomic begin legs
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_recover_inflight_transfers_skips_rows_sent_to_another_server(db):
+    """HIGH: recovery must reconcile each stuck row against the server it
+    was actually SENT to, not whichever one is connected now.
+
+    Server A's row is absent from server B's listing purely because it
+    was never sent to B. Matching it there marks a possibly-landed
+    transfer as absent, re-arms it, and duplicates the task on A at the
+    next reconnect."""
+    server_client = _connected_server_client()
+    server_client.list_reminders.return_value = {"items": []}
+    # Active connection is server:2; row A was sent under server:1.
+    svc = _transfer_service(db, server_client=server_client, active_server_id="2")
+
+    row_a = _make_reminder(db, title="Sent to A", transfer_state="to_server_sent")
+    db.record_pending_mutation(
+        row_a,
+        "reminder_task",
+        "server:1",
+        {"action": "transfer_to_server", "task_payload": {}},
+    )
+    row_b = _make_reminder(db, title="Sent to B", transfer_state="to_server_sent")
+    db.record_pending_mutation(
+        row_b,
+        "reminder_task",
+        "server:2",
+        {"action": "transfer_to_server", "task_payload": {}},
+    )
+
+    await svc.recover_inflight_transfers()
+
+    # A is deferred verbatim: state and mutation both intact.
+    assert db.get_reminder_task(row_a)["transfer_state"] == "to_server_sent"
+    assert len(db.get_pending_mutations("server:1", primitive="reminder_task")) == 1
+    # B is the only row reconciled against the connected server.
+    assert db.get_reminder_task(row_b)["transfer_state"] == "to_server_pending"
+
+
+@pytest.mark.asyncio
+async def test_recover_inflight_transfers_skips_the_server_listing_when_all_deferred(
+    db,
+):
+    """No row belongs to the connected server -- nothing is listed and
+    nothing is touched."""
+    server_client = _connected_server_client()
+    svc = _transfer_service(db, server_client=server_client, active_server_id="2")
+    row_id = _make_reminder(db, transfer_state="to_server_sent")
+    db.record_pending_mutation(
+        row_id,
+        "reminder_task",
+        "server:1",
+        {"action": "transfer_to_server", "task_payload": {}},
+    )
+
+    await svc.recover_inflight_transfers()
+
+    server_client.list_reminders.assert_not_awaited()
+    assert db.get_reminder_task(row_id)["transfer_state"] == "to_server_sent"
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_local_interleaved_double_begin_makes_one_copy(db):
+    """MEDIUM: the second `begin` is refused by the check inside the
+    copy's own transaction, not only by the caller's pre-check.
+
+    Neutering the pre-check simulates a second press arriving in the
+    window the pre-check cannot cover -- the exact window that made two
+    copies and one (replaced) mutation, stranding copy #1 forever."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    mirror_id = _make_reminder(db, owner_id="server:1", server_id="srv-1")
+    db.get_pending_mutation_for_local_id = lambda *args, **kwargs: None
+
+    first = await svc.begin_transfer_to_local("reminder_task", mirror_id)
+    second = await svc.begin_transfer_to_local("reminder_task", mirror_id)
+
+    assert first.status == "pending"
+    assert second.status == "refused"
+    copies = [
+        row
+        for row in db.list_reminder_tasks()
+        if row["transfer_state"] == "from_server_pending"
+    ]
+    assert len(copies) == 1
+    mutations = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(mutations) == 1
+    assert mutations[0]["payload"]["local_copy_id"] == copies[0]["id"]
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_local_copy_and_mutation_are_one_transaction(db):
+    """A failure recording the mutation rolls the copy back with it --
+    no dormant copy that nothing names."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    mirror_id = _make_reminder(db, owner_id="server:1", server_id="srv-1")
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("crash between the copy and its mutation")
+
+    db._insert_pending_mutation_conn = _boom
+
+    with pytest.raises(RuntimeError):
+        await svc.begin_transfer_to_local("reminder_task", mirror_id)
+
+    assert [
+        row
+        for row in db.list_reminder_tasks()
+        if row["transfer_state"] == "from_server_pending"
+    ] == []
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_server_state_and_mutation_are_one_transaction(db):
+    """MEDIUM: a crash between arming `to_server_pending` and queueing the
+    mutation left a read-only row that nothing would ever replay."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    reminder_id = _make_reminder(db)
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("crash between the CAS and its mutation")
+
+    db._insert_pending_mutation_conn = _boom
+
+    with pytest.raises(RuntimeError):
+        await svc.begin_transfer_to_server("reminder_task", reminder_id)
+
+    assert db.get_reminder_task(reminder_id)["transfer_state"] is None
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+
+
+def test_set_transfer_state_refused_cas_records_no_mutation(db):
+    """The mutation follows the CAS: a refused transition writes neither."""
+    reminder_id = _make_reminder(db, transfer_state="to_server_sent")
+
+    armed = db.set_transfer_state(
+        "reminder_task",
+        reminder_id,
+        "to_server_pending",
+        expected=(None,),
+        pending_mutation={
+            "primitive": "reminder_task",
+            "owner_id": "server:1",
+            "payload": {"action": "transfer_to_server"},
+        },
+    )
+
+    assert armed is False
+    assert db.get_reminder_task(reminder_id)["transfer_state"] == "to_server_sent"
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []

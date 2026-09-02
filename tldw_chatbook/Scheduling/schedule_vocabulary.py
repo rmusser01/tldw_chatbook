@@ -114,7 +114,19 @@ def _translate(schedule: dict[str, Any], rename_tables: dict[str, dict[str, str]
 
 
 def to_server_schedule(schedule: dict[str, Any]) -> dict[str, Any]:
-    """Translate a ``schedule`` dict from client vocabulary to server vocabulary."""
+    """Translate a ``schedule`` dict from client vocabulary to server vocabulary.
+
+    Args:
+        schedule: A client-vocabulary schedule dict. A non-dict value is
+            returned unchanged (the translation is a no-op rather than an
+            error, so callers need no type guard of their own).
+
+    Returns:
+        A NEW dict with this ``kind``'s fields renamed to their server
+        names; ``schedule`` itself is never mutated. Unrecognized kinds,
+        and kinds with no renames (``one_time``/``cron``), come back as an
+        unchanged copy.
+    """
     return _translate(schedule, _CLIENT_TO_SERVER_FIELD_RENAMES)
 
 
@@ -124,6 +136,15 @@ def to_local_schedule(schedule: dict[str, Any]) -> dict[str, Any]:
     Also normalizes a ``weekly`` schedule's ``weekday`` from the server's
     wider value space (int, digit string, or day-name string) to the
     plain int ``schedule_compute._compute_weekly`` requires.
+
+    Args:
+        schedule: A server-vocabulary schedule dict. A non-dict value is
+            returned unchanged, same as ``to_server_schedule``.
+
+    Returns:
+        A NEW dict with this ``kind``'s fields renamed to their client
+        names (``schedule`` itself is never mutated), and a ``weekly``
+        schedule's ``weekday`` normalized to an int.
     """
     result = _translate(schedule, _SERVER_TO_CLIENT_FIELD_RENAMES)
     if isinstance(result, dict) and result.get("kind") == "weekly" and "weekday" in result:
