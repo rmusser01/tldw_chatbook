@@ -284,6 +284,38 @@ list as the task's evidence; a CI run of the literal single-process command
 remains the authoritative confirmation once time permits, but is not
 required per-task.
 
+### Documented pre-existing failures (do not re-derive these)
+
+Tests confirmed, by at least one Library-decomposition task, to fail
+identically on a pristine baseline (`git stash -u` to the pre-task tree)
+and therefore not attributable to any extraction/cleanup PR. Check this
+list before spending time re-proving one of these is pre-existing; add to
+it (with the task that found it) rather than letting the next series
+rediscover the same red from scratch.
+
+- `Tests/UI/test_library_content_hub.py::test_library_conversations_empty_state_is_honest_and_blocks_actions`
+- `Tests/UI/test_library_shell.py::test_adaptive_routes_never_receive_ordinary_emergency_geometry[browse-conversations-#library-conversations-reader-shell]`
+- `Tests/UI/test_library_shell.py::test_library_conversations_reentry_preserves_applied_page_and_query`
+- `Tests/UI/test_library_shell.py::test_library_conversations_reentry_does_not_load_when_dirty_editor_vetoes`
+  (all four found by Task 7, reconfirmed by Tasks 8 and 9)
+- `Tests/UI/test_library_selection_updates.py::test_tier1_toggle_falls_back_to_recompose_on_query_one_failure`
+  (found by Task 9; confirmed identical on both HEAD and a pristine
+  baseline via `git stash -u` + rerun. **Not selectable by the
+  `-k "conversation and library"` filter** — its name contains neither
+  "conversation" nor "conversations" — and invisible to the full xdist
+  sweep's paired-baseline *diff* specifically because it fails on both
+  sides equally, so it's absorbed into the shared ~330+-failure backdrop
+  rather than surfaced as a unique-to-branch or unique-to-baseline name.
+  Only a direct per-file run surfaces it; run each retargeted test file
+  individually, not just the aggregate sweeps, and don't summarize that
+  check as "all green" without checking every file's own result.)
+- `Tests/Architecture/test_screen_size_ratchet.py`'s two `chat_screen.py`-scoped
+  rows (`test_screen_does_not_grow_past_its_budget[chat_screen.py]`,
+  `test_task_22507_4_does_not_worsen_chat_screen_base`) — concurrent,
+  unrelated `chat_screen.py` growth from other work on `dev`; reconfirmed
+  pre-existing by every task in this series via the same `git stash -u`
+  method.
+
 ## 8. Subsystem order (spec, "Order of work")
 
 Sequenced cold-to-hot so the conversations exemplar never fights rebases,
