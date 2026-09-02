@@ -44,6 +44,9 @@ ELICITATION_ACTION_NAME = "mcp.elicitation"
 _DEFAULT_RPM = 6
 _DEFAULT_TOKEN_CAP = 50_000
 _DEFAULT_POLL_SECONDS = 1.0
+#: Hard cap on total sampled-message characters entering the provider call
+#: (Qodo #2 hardening, PR #2313): a server cannot stuff an unbounded prompt.
+_MAX_SAMPLING_CHARS = 200_000
 
 
 def sampling_policy_for_server(server_id: str) -> SamplingPolicy:
@@ -51,6 +54,13 @@ def sampling_policy_for_server(server_id: str) -> SamplingPolicy:
 
     Default DENY: a server may sample only if listed in
     ``sampling_allowed_servers``.
+
+    Args:
+        server_id: The MCP server/profile id the policy applies to.
+
+    Returns:
+        A ``SamplingPolicy``: denied unless allow-listed; otherwise carrying
+        the configured per-minute and total-token caps.
     """
     raw_allowed = get_cli_setting("mcp", "sampling_allowed_servers", []) or []
     allowed_ids = {str(item).strip() for item in raw_allowed if str(item).strip()}
@@ -120,7 +130,17 @@ def _extract_text(response: Any) -> str:
 
 
 def build_live_complete_fn() -> Callable[..., Awaitable[str]]:
-    """The production ``complete_fn``: one bounded, non-streaming provider call."""
+    """Build the production ``complete_fn`` for the dispatcher.
+
+    Returns:
+        An async callable ``(messages, max_tokens, model_hint) -> str`` that
+        runs one bounded, non-streaming ``chat_api_call`` off the event loop
+        and returns the extracted text.
+
+    Raises:
+        ValueError: (from the returned callable) when the request has no text
+            content, exceeds the size cap, or the provider returns no text.
+    """
 
     async def complete(
         messages: List[Dict[str, Any]], max_tokens: int, model_hint: Optional[str]
@@ -137,6 +157,11 @@ def build_live_complete_fn() -> Callable[..., Awaitable[str]]:
         payload = _plain_chat_messages(messages)
         if not payload:
             raise ValueError("sampling request contained no text content")
+        total_chars = sum(len(m["content"]) for m in payload)
+        if total_chars > _MAX_SAMPLING_CHARS:
+            raise ValueError(
+                f"sampling request too large ({total_chars} chars > {_MAX_SAMPLING_CHARS})"
+            )
         response = await asyncio.to_thread(
             chat_api_call,
             api_endpoint=provider,
@@ -154,19 +179,23 @@ def build_live_complete_fn() -> Callable[..., Awaitable[str]]:
 
 
 def _schema_is_confirmation_only(schema: Mapping[str, Any]) -> bool:
-    """True when the elicitation needs only a yes/no, not field values."""
+    """True when approve/deny can satisfy the schema: it requests NO fields.
+
+    Qodo #8 (PR #2313): boolean-property schemas were previously accepted, but
+    approval returned ``content: {}`` -- violating the very schema the server
+    requested (e.g. ``required: ["confirm"]``). Only an EMPTY schema (no
+    ``properties``) is honestly representable as a confirmation.
+
+    Args:
+        schema: The elicitation's ``requestedSchema``.
+
+    Returns:
+        True when the schema requests no fields at all.
+    """
     if not schema:
         return True
     properties = schema.get("properties")
-    if not properties:
-        return True
-    if not isinstance(properties, Mapping):
-        return False
-    # boolean-only properties are representable as approve/deny
-    return all(
-        isinstance(spec, Mapping) and spec.get("type") == "boolean"
-        for spec in properties.values()
-    )
+    return not properties
 
 
 def build_live_elicit_fn(
@@ -175,12 +204,24 @@ def build_live_elicit_fn(
     poll_seconds: float = _DEFAULT_POLL_SECONDS,
     timeout_seconds: Optional[float] = None,
 ) -> Callable[[str, Dict[str, Any]], Awaitable[Optional[Dict[str, Any]]]]:
-    """The production ``elicit_fn``: a confirmation through the approval store.
+    """Build the production ``elicit_fn``: a confirmation via the approval store.
 
-    approve -> ``{"action": "accept", "content": {}}``; deny -> ``None``
-    (declined); no answer within the approval timeout -> ``TimeoutError`` and
-    the pending request is expired so it cannot be approved later into a
-    request nobody is waiting on.
+    Args:
+        store: The hub's local MCP store holding approval requests.
+        poll_seconds: How often the pending request is re-read.
+        timeout_seconds: Override for the approval timeout; ``None`` reads
+            ``[mcp] approval_timeout_seconds`` (default 120s).
+
+    Returns:
+        An async callable ``(message, schema) -> dict | None``: approve ->
+        ``{"action": "accept", "content": {}}``; deny/vanish -> ``None``.
+
+    Raises:
+        TimeoutError: (from the returned callable) when nobody answers in
+            time; the pending request is expired first so a late approval
+            cannot land on a request nobody is waiting on.
+        ValueError: (from the returned callable) for schemas requesting field
+            values -- only empty (confirmation) schemas are representable.
     """
 
     def _timeout() -> float:
@@ -265,6 +306,13 @@ def build_server_request_dispatcher_factory(
 
     Policies re-read config on every (re)connect; sampling BUDGETS persist per
     server for this service's lifetime so a reconnect cannot reset spend.
+
+    Args:
+        store: The hub's local MCP store (elicitation approvals live here).
+
+    Returns:
+        A callable ``(server_id) -> ServerRequestDispatcher`` bound to the
+        live complete/elicit callables with per-server policy and budget.
     """
     budgets: Dict[str, SamplingBudget] = {}
     complete = build_live_complete_fn()

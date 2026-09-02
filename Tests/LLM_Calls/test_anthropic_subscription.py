@@ -123,7 +123,13 @@ def _call_anthropic(monkeypatch, tmp_path, auth_source, cred_kwargs=None, api_ke
 
     monkeypatch.setattr(
         mod, "load_settings",
-        lambda *a, **k: {"anthropic_api": {"auth_source": auth_source, "model": "claude-sonnet-5"}},
+        # Qodo #5 (PR #2313): mirror the REAL load_settings shape -- auth_source
+        # lives in api_settings.anthropic; the legacy anthropic_api mapping
+        # never carries it.
+        lambda *a, **k: {
+            "anthropic_api": {"model": "claude-sonnet-5"},
+            "api_settings": {"anthropic": {"auth_source": auth_source}},
+        },
     )
 
     class _Session:

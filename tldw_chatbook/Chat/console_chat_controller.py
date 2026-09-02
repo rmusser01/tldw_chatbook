@@ -7153,7 +7153,15 @@ class ConsoleChatController:
         # are machine-composed and never expanded.
         executed_draft_text = clean_draft
         reference_records: tuple = ()
-        if origin is not ConsoleSubmissionOrigin.AGENT_WAKE:
+        # Qodo #6 (PR #2313): a RESUMED preparation re-enters this seam with
+        # the already-expanded executed_draft; expansion is not idempotent
+        # (each raw @token survives ahead of its inserted block), so re-running
+        # it would inject every referenced file a second time. Expand only on
+        # the first pass.
+        if (
+            origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+            and resumed_preparation is None
+        ):
             try:
                 from tldw_chatbook.Chat.console_references import (
                     build_console_reference_resolver,
@@ -7320,6 +7328,21 @@ class ConsoleChatController:
             if origin is not ConsoleSubmissionOrigin.AGENT_WAKE
             else None
         )
+        if reference_records:
+            # TASK-27021 / 26020 AC#6 (placement per Qodo #7, PR #2313): the
+            # audit row is written adjacent to the raw user echo and
+            # UNCONDITIONALLY -- a leading-@ draft with trace capture off
+            # skips ordinary preparation entirely, but its expansion still
+            # reaches the payload and must still be visible.
+            summary_lines = []
+            for record in reference_records:
+                mark = "included" if record.ok else "REFUSED"
+                summary_lines.append(f"{record.raw}: {mark} — {record.detail}")
+            self.store.append_message(
+                session.id,
+                role=ConsoleMessageRole.SYSTEM,
+                content="@-references:\n" + "\n".join(summary_lines),
+            )
 
         self._set_run_state(
             ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."),
@@ -7548,18 +7571,6 @@ class ConsoleChatController:
                 staged_evidence,
                 staged_evidence_release,
             ) = self._snapshot_staged_evidence()
-            if reference_records:
-                # TASK-27021 / 26020 AC#6: one compact row naming what was
-                # actually sent (or refused) -- adjacent to the raw user echo.
-                summary_lines = []
-                for record in reference_records:
-                    mark = "included" if record.ok else "REFUSED"
-                    summary_lines.append(f"{record.raw}: {mark} — {record.detail}")
-                self.store.append_message(
-                    session.id,
-                    role=ConsoleMessageRole.SYSTEM,
-                    content="@-references:\n" + "\n".join(summary_lines),
-                )
             preparation = ConsoleTurnPreparation(
                 preparation_id=str(uuid4()),
                 attempt_id=library_authority.attempt_id,

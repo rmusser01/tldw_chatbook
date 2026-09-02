@@ -1366,7 +1366,14 @@ def chat_with_anthropic(
     # Claude Code credential; a missing/expired credential FAILS with a clear
     # message rather than silently falling back to (and billing) an API key.
     subscription_token: Optional[str] = None
-    if anthropic_auth_source(anthropic_config) == "claude_subscription":
+    # Qodo #5 (PR #2313): auth_source lives in the MODERN [api_settings.anthropic]
+    # table (where it is documented and where readiness reads it) -- the legacy
+    # anthropic_api mapping never receives it. Read the modern table first.
+    _modern_anthropic = (
+        loaded_config_data.get("api_settings") or {}
+    ).get("anthropic") or {}
+    _auth_config = _modern_anthropic if "auth_source" in _modern_anthropic else anthropic_config
+    if anthropic_auth_source(_auth_config) == "claude_subscription":
         _sub_cred = read_claude_code_credential()
         if _sub_cred is None:
             raise ChatConfigurationError(

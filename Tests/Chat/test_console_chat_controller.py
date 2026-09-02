@@ -9005,3 +9005,28 @@ async def test_expansion_failure_sends_raw_draft(monkeypatch):
     assert result.accepted is True, "expansion failure must never block the send"
     sent_user = [m for m in (gateway.messages or []) if m.get("role") == "user"]
     assert sent_user[-1]["content"] == "see @a.py please"
+
+
+@pytest.mark.asyncio
+async def test_leading_reference_draft_still_gets_audit_row(monkeypatch):
+    """Qodo #7 (PR #2313): a draft STARTING with @ is excluded from ordinary
+    library preparation, but its expansion must still leave the audit row."""
+    from tldw_chatbook.Chat import console_references as refs
+
+    monkeypatch.setattr(
+        refs, "build_console_reference_resolver",
+        lambda: (lambda token: ("file", "LEADER-MARKER", None) if token == "a.py" else None),
+    )
+    monkeypatch.setattr(refs, "run_git_reference", lambda kind, **k: "")
+
+    store = ConsoleChatStore()
+    gateway = _PayloadCapturingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    result = await controller.submit_draft("@a.py explain this")
+    assert result.accepted is True
+    sent_user = [m for m in (gateway.messages or []) if m.get("role") == "user"]
+    assert "LEADER-MARKER" in sent_user[-1]["content"]
+    rows = store.messages_for_session(store.active_session_id)
+    system_rows = [m for m in rows if m.role.value == "system" and "@-references" in m.content]
+    assert system_rows, "leading-@ draft lost its audit row"

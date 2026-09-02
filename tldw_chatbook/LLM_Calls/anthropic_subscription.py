@@ -83,10 +83,15 @@ def read_claude_code_credential(
 ) -> Optional[SubscriptionCredential]:
     """Read Claude Code's credential file. Read-only; never raises outward.
 
-    Returns ``None`` when the file is missing or malformed (AC#6: absent
-    credential must leave behavior exactly as today). An EXPIRED credential is
-    returned with ``expired=True`` so the caller can show the AC#2 message
-    instead of a generic missing-credential one.
+    Args:
+        path: Credential file to read; ``None`` uses
+            ``DEFAULT_CREDENTIALS_PATH`` (``~/.claude/.credentials.json``).
+
+    Returns:
+        ``None`` when the file is missing or malformed (AC#6: an absent
+        credential leaves behavior exactly as today). An EXPIRED credential is
+        returned with ``expired=True`` so the caller can show the AC#2
+        refresh message instead of a generic missing-credential one.
     """
     target = Path(path) if path is not None else DEFAULT_CREDENTIALS_PATH
     try:
@@ -112,7 +117,16 @@ def read_claude_code_credential(
 
 
 def anthropic_auth_source(anthropic_config: Mapping[str, Any] | None) -> str:
-    """The configured auth source; anything unrecognized is the safe default."""
+    """The configured auth source; anything unrecognized is the safe default.
+
+    Args:
+        anthropic_config: The ``[api_settings.anthropic]`` mapping (or the
+            legacy mapping); may be ``None``.
+
+    Returns:
+        ``"claude_subscription"`` only for that exact configured value;
+        otherwise ``"api_key"``.
+    """
     raw = str((anthropic_config or {}).get("auth_source") or "").strip().lower()
     if raw == AUTH_SOURCE_SUBSCRIPTION:
         return AUTH_SOURCE_SUBSCRIPTION
@@ -123,6 +137,12 @@ def subscription_headers(credential: SubscriptionCredential) -> dict[str, str]:
     """The auth headers for the subscription path (AC#7's shape).
 
     Replaces ``x-api-key`` entirely — the caller must not send both.
+
+    Args:
+        credential: A parsed, non-expired subscription credential.
+
+    Returns:
+        The ``authorization`` bearer header plus the OAuth beta flag.
     """
     return {
         "authorization": f"Bearer {credential.access_token}",
@@ -131,7 +151,14 @@ def subscription_headers(credential: SubscriptionCredential) -> dict[str, str]:
 
 
 def subscription_headers_for_token(access_token: str) -> dict[str, str]:
-    """`subscription_headers` for an already-extracted token."""
+    """`subscription_headers` for an already-extracted token.
+
+    Args:
+        access_token: The credential's access token.
+
+    Returns:
+        The ``authorization`` bearer header plus the OAuth beta flag.
+    """
     return {
         "authorization": f"Bearer {access_token}",
         "anthropic-beta": OAUTH_BETA,

@@ -144,7 +144,7 @@ removed; no deferred row invalidated. Decisions:
   (`automation_audit_events`, `retention_policy`, run-history UI).
 
 **Promoted to filed tasks (ids swept to global max 28226 at filing):**
-C6→TASK-28227 (code execution/PTC) · C3+C7→TASK-28228 (worktree isolation +
+C6→TASK-28237 (code execution/PTC) · C3+C7→TASK-28238 (worktree isolation +
 stale-write guard; the fleet made these live) · C21→TASK-28229 (rate-limit
 headers) · C5→TASK-28230 (busy-input policy) · C36-slice→TASK-28231 (version
 check) · C39→TASK-28232 (Dockerfile) · C35→TASK-28233 (CJK alignment) ·

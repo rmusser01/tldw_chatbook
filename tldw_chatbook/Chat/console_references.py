@@ -240,19 +240,28 @@ def _expand_path(path: "Path", line_range, max_bytes: int):
     return ("file", data.decode("utf-8", errors="replace"), line_range)
 
 
-def _exists_under_roots(path_str: str, roots) -> bool:
-    p = Path(path_str).expanduser()
-    for root in roots:
-        candidate = p if p.is_absolute() else (Path(root) / path_str)
-        try:
-            if candidate.exists():
-                return True
-        except OSError:
-            continue
-    try:
-        return p.is_absolute() and p.exists()
-    except OSError:
-        return False
+def _lexically_pathlike(path_str: str) -> bool:
+    """Whether a validation-refused token was clearly MEANT as a path.
+
+    Qodo #1 (PR #2313): the previous existence probe called ``exists()`` on
+    raw user-controlled paths BEFORE validation -- probing the filesystem
+    outside the allowed roots. The refused-vs-literal split is now decided
+    lexically, with zero filesystem contact: absolute paths, ``..``
+    traversals, ``~`` expansions, and hidden dot-components are unmistakably
+    path attempts (a decorator like ``@property`` or an email handle is
+    none of these), so they earn an honest refusal; anything else stays a
+    literal token.
+
+    Args:
+        path_str: The reference token's path portion, unvalidated.
+
+    Returns:
+        True when the token should be refused rather than left literal.
+    """
+    if path_str.startswith(("/", "~")):
+        return True
+    parts = Path(path_str).parts
+    return any(part == ".." or part.startswith(".") for part in parts)
 
 
 def resolve_reference(
@@ -278,16 +287,20 @@ def resolve_reference(
     from ..Utils.sensitive_paths import is_sensitive_path
 
     if not roots:
-        return ("refused", "no allowed workspace roots are configured", None) if _exists_under_roots(token, roots) else None
+        return (
+            ("refused", "no allowed workspace roots are configured", None)
+            if _lexically_pathlike(token)
+            else None
+        )
 
     path_str, line_range = parse_token(token)
     try:
         validated = Path(validate_path_multi(path_str, list(roots)))
     except ValueError:
         # Disallowed by the file-tool gate (outside roots, traversal, or a
-        # hidden component). Refuse honestly if it actually exists; otherwise
-        # leave it literal (a decorator/typo, AC#7).
-        if _exists_under_roots(path_str, roots):
+        # hidden component). The refused-vs-literal split is lexical -- no
+        # filesystem probe of an unvalidated path (Qodo #1, PR #2313).
+        if _lexically_pathlike(path_str):
             return ("refused", "outside the allowed workspace roots, hidden, or a sensitive path", None)
         return None
 

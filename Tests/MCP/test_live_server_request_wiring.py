@@ -163,3 +163,38 @@ def test_get_client_sets_the_factory(tmp_path):
     assert client._server_request_dispatcher_factory is not None
     d = client._server_request_dispatcher_factory("some-server")
     assert d is not None and d.sampling_policy.allowed is False
+
+
+def test_qodo8_boolean_schema_now_refused(tmp_path):
+    """Qodo #8 (PR #2313): approve/deny cannot fabricate boolean field values;
+    only an empty schema is a representable confirmation."""
+    store = _store(tmp_path)
+    elicit = build_live_elicit_fn(store, poll_seconds=0.02, timeout_seconds=1.0)
+    with pytest.raises(ValueError):
+        _run(elicit("confirm?", {"properties": {"confirm": {"type": "boolean"}}, "required": ["confirm"]}))
+    assert store.list_approval_requests() == []
+
+
+def test_qodo9_expired_request_cannot_be_approved(tmp_path):
+    """Qodo #9 (PR #2313): expiry is terminal — a late approval must not
+    overwrite it."""
+    store = _store(tmp_path)
+    elicit = build_live_elicit_fn(store, poll_seconds=0.02, timeout_seconds=0.1)
+    with pytest.raises(TimeoutError):
+        _run(elicit("ok?", {}))
+    expired = [r for r in store.list_approval_requests() if r.status == "expired"]
+    assert len(expired) == 1
+    assert store.resolve_approval_request(expired[0].request_id, "approved") is None
+    still = [r for r in store.list_approval_requests() if r.request_id == expired[0].request_id]
+    assert still[0].status == "expired"
+
+
+def test_qodo2_oversized_sampling_request_refused(monkeypatch):
+    """Qodo #2 hardening (PR #2313): a server cannot stuff an unbounded prompt."""
+    from tldw_chatbook.MCP import live_server_request_wiring as w
+    monkeypatch.setattr(w, "get_cli_setting", lambda s, k, d=None: d)
+    monkeypatch.setattr(w, "chat_api_call", lambda **k: (_ for _ in ()).throw(AssertionError("must not reach provider")))
+    complete = build_live_complete_fn()
+    huge = [{"role": "user", "content": "x" * 250_000}]
+    with pytest.raises(ValueError):
+        _run(complete(huge, 10, None))
