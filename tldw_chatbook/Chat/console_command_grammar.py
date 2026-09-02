@@ -72,7 +72,7 @@ STEER_COMMAND_NAME = "steer"
 STEER_COMMAND_ARGUMENT_HINT = "<guidance for the running agent>"
 STEER_COMMAND_HANDLER_ID = "steer"
 
-#: TASK-26000: cut off the current model response and re-run the turn with
+#: TASK-28227: cut off the current model response and re-run the turn with
 #: the correction; completed tool results and the streamed partial survive.
 #: /steer lets the current response finish; /redirect is for when it is
 #: already wrong. Stop stays terminal and untouched.

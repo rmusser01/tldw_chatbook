@@ -1,6 +1,6 @@
 """Service-side redirect surface: mailbox + abort flag, one atomic unit.
 
-TASK-26000. `redirect_primary` posts a STEERING_SOURCE_REDIRECT entry into the
+TASK-28227. `redirect_primary` posts a STEERING_SOURCE_REDIRECT entry into the
 SAME mailbox steering uses and sets the run's abort flag under the same lock;
 the drain clears the flag when it consumes a redirect entry. The flag is what
 the bridge composes into its STREAM-cancel predicate (aborting only the

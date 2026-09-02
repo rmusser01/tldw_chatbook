@@ -348,3 +348,7 @@ historical `TASK-24653` citations retain their own local meaning.
   `c36d021037aad553df21ba3efee6fdd59159b718d862cfd4e6535e59bb1d0160`;
   the authenticated checker and renderer self-tests cover the exact criterion, and
   the superseded refresh entry point remained fail-closed.
+- Final integration rebase (2026-09-02): upstream added a younger `TASK-26000`
+  redirect task. `TASK-19601` preserved this task's older identity and moved the
+  redirect task to `TASK-28227`; code and test changes in the collision commit are
+  identifier-only comments and docstrings and do not change production behavior.

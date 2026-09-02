@@ -16,7 +16,7 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Most hosted MCP servers require OAuth, which chatbook cannot perform. Verified on origin/dev: a named grep for oauth across tldw_chatbook/MCP returns zero, and MCP/local_store.py:38 stores environment placeholders only. Hermes carries a full PKCE, dynamic-client-registration and token-storage stack with interactive login flows. Depends on task-26000 (HTTP and SSE transports) - authorization is meaningless until there is a remote server to authorize against.
+Most hosted MCP servers require OAuth, which chatbook cannot perform. Verified on origin/dev: a named grep for oauth across tldw_chatbook/MCP returns zero, and MCP/local_store.py:38 stores environment placeholders only. Hermes carries a full PKCE, dynamic-client-registration and token-storage stack with interactive login flows. Depends on task-25900 (HTTP and SSE transports) - authorization is meaningless until there is a remote server to authorize against.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

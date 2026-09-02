@@ -1,6 +1,6 @@
 """Redirect: cut off the current model response, keep everything else.
 
-TASK-26000. Stop was terminal -- correcting a running agent discarded every
+TASK-28227. Stop was terminal -- correcting a running agent discarded every
 tool result in the turn and the correction became a fresh turn that redid the
 work. Redirect aborts only the in-flight model request, keeps completed tool
 results, preserves the partial text the user watched stream, appends the

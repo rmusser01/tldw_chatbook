@@ -286,7 +286,7 @@ def split_visible_text_and_tool_call(text: str) -> tuple[str, ToolCall | None]:
 def strip_trailing_open_fence(text: str) -> str:
     """Drop a TRAILING unterminated tool-call fence from cut-off text.
 
-    TASK-26000 review F4: a stream aborted mid-fence leaves ``FENCE_OPEN``
+    TASK-28227 review F4: a stream aborted mid-fence leaves ``FENCE_OPEN``
     plus partial JSON with no closing fence. Shipping that as assistant
     context baits the model into resuming the call the user just cancelled.
     Only the dangling-open case is truncated: a look-alike tag
@@ -581,7 +581,7 @@ class LoopDeps:
     # builder. None (the default) means no chain is configured and no fallback
     # code runs at all.
     fallback: "FallbackRuntime | None" = None
-    # TASK-26000: probe -- does the mailbox hold a redirect entry? Read-only
+    # TASK-28227: probe -- does the mailbox hold a redirect entry? Read-only
     # (never consumes); the loop only drains when this answers True, so plain
     # steering keeps its pre-model-call delivery point. None = no redirect
     # surface wired (every legacy caller), byte-identical behaviour.
@@ -1410,7 +1410,7 @@ def run_agent_loop(
                         ]
                     )
                     for steer_source, steer_text, source_event_id in entries:
-                        # TASK-26000 AC#4: a redirect that missed its model
+                        # TASK-28227 AC#4: a redirect that missed its model
                         # call (tool was executing) degrades to this drain,
                         # but stays a PLAIN user reply -- it is a correction,
                         # not injected guidance.
@@ -1670,7 +1670,7 @@ def run_agent_loop(
             # inference servers) are exactly the flaky-empties population this
             # guard was written for (review I1, 2026-08-31).
             consecutive_empty_turns = 0
-        # TASK-26000: an active-turn redirect. The service aborted the
+        # TASK-28227: an active-turn redirect. The service aborted the
         # in-flight model request (the transport returns early with the
         # partial), so this turn is the CUT-OFF response: keep its visible
         # text as assistant context, drop its tool calls (the user just

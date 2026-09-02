@@ -16362,7 +16362,7 @@ class ChatScreen(BaseAppScreen):
         tool results and the streamed partial, re-run the turn with the
         correction as a plain user message.
 
-        TASK-26000. /steer lets the current response finish; this is for
+        TASK-28227. /steer lets the current response finish; this is for
         when it is already wrong. Stop is untouched and remains terminal.
         Refusals surface as a notify, never a silent drop.
         """
