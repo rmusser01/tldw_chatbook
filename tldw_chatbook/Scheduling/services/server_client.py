@@ -662,3 +662,86 @@ class SchedulingServerClient:
         return await self._call_with_retry(
             "archive_scheduled_automation_definition", definition_id
         )
+
+    async def mark_automation_definition_solved(
+        self, definition_id: str, *, result_id: str | None = None
+    ) -> dict[str, Any]:
+        """Mark a server-side definition solved, retried on failure.
+
+        Retryable for the same reason as ``pause_automation_definition``:
+        marking an already-solved definition solved again is a no-op
+        server-side (returns the current row, no audit event) rather than
+        an error, so a retry after an ambiguous transport failure just
+        re-confirms the same state.
+
+        Args:
+            definition_id: The server definition to mark solved.
+            result_id: The server result id that triggered the resolution,
+                if any.
+
+        Returns:
+            The updated definition row.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientNotFoundError: If the definition does not exist
+                server-side.
+            ServerClientValidationError: If the definition is archived or
+                disabled, the result id doesn't exist, or policy denies
+                the action.
+            ServerClientServerError: If the server returns a server error
+                after retries are exhausted.
+            ServerClientTimeoutError: If the request times out after
+                retries.
+        """
+        return await self._call_with_retry(
+            "mark_scheduled_automation_definition_solved",
+            definition_id,
+            result_id=result_id,
+        )
+
+    async def reopen_automation_definition(
+        self,
+        definition_id: str,
+        *,
+        target_lifecycle: str = "paused",
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Reopen a solved server-side definition. NOT retried on failure.
+
+        Unlike every other lifecycle seam above, reopening is NOT a no-op
+        when replayed: the server only accepts the transition FROM
+        ``resolution_state="solved"`` and refuses (``definition_
+        resolution_transition_invalid``) once the row is already
+        ``"open"``. A retry after an ambiguous transport failure whose
+        first attempt actually landed would hit that refusal and report
+        "the server rejected reopening" for an action that already
+        succeeded -- the same false-negative ``update_automation_
+        definition`` avoids by not retrying its non-idempotent PATCH.
+
+        Args:
+            definition_id: The server definition to reopen.
+            target_lifecycle: Lifecycle to restore -- ``"configured"`` or
+                ``"paused"`` (default).
+            reason: Optional free-text reason recorded on the audit event.
+
+        Returns:
+            The updated definition row.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientNotFoundError: If the definition does not exist
+                server-side.
+            ServerClientValidationError: If the definition isn't currently
+                solved, the transition is otherwise invalid, or policy
+                denies the action.
+            ServerClientServerError: If the server returns a server error.
+            ServerClientTimeoutError: If the request times out.
+        """
+        return await self._call_with_retry(
+            "reopen_scheduled_automation_definition",
+            definition_id,
+            retry=False,
+            target_lifecycle=target_lifecycle,
+            reason=reason,
+        )

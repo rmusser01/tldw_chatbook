@@ -1743,6 +1743,100 @@ def test_upsert_definitions_skips_item_missing_id(tmp_path):
     assert db.list_automation_definitions(owner_id="server:42") == []
 
 
+def test_upsert_definitions_carries_resolution_fields_through(tmp_path):
+    """PR-6 task 2: `resolution_state`/`resolved_at`/`resolved_by`/
+    `resolved_result_id` must flow through the server-wins mirror like any
+    other field -- these columns existed since v4 with zero code touching
+    them until this task; pin that the generic upsert already covers them
+    (via `_AUTOMATION_DEFINITION_COLUMNS`) on both insert and update."""
+    db = _mk_db(tmp_path)
+    item = _definition_item(
+        resolution_state="solved",
+        resolved_at="2026-09-01T12:00:00+00:00",
+        resolved_by="alice",
+        resolved_result_id="srv-res-1",
+    )
+    db.upsert_automation_definitions_from_server("server:42", [item])
+    row = db.list_automation_definitions(owner_id="server:42")[0]
+    assert row["resolution_state"] == "solved"
+    assert row["resolved_at"] == "2026-09-01T12:00:00+00:00"
+    assert row["resolved_by"] == "alice"
+    assert row["resolved_result_id"] == "srv-res-1"
+
+    # Server-wins on update too: a later reopen echo clears them back.
+    db.upsert_automation_definitions_from_server(
+        "server:42",
+        [
+            _definition_item(
+                resolution_state="open",
+                resolved_at=None,
+                resolved_by=None,
+                resolved_result_id=None,
+            )
+        ],
+    )
+    row = db.get_automation_definition(row["id"])
+    assert row["resolution_state"] == "open"
+    assert row["resolved_at"] is None
+    assert row["resolved_by"] is None
+    assert row["resolved_result_id"] is None
+
+
+# ----------------------------------------------------------------------
+# set_definition_resolution (schedules-handoff PR-6, task 2)
+# ----------------------------------------------------------------------
+
+
+def test_set_definition_resolution_marks_solved(tmp_path):
+    db = _mk_db(tmp_path)
+    definition_id = db.create_automation_definition(
+        owner_id="local", family="recurring_question", name="Daily Q"
+    )
+    result_id = db.create_automation_result(
+        "local", definition_id, "run-1", "finding", "Found it", "Summary", "dk-1"
+    )
+
+    updated = db.set_definition_resolution(
+        definition_id, state="solved", result_id=result_id, resolved_by="local"
+    )
+
+    assert updated is True
+    row = db.get_automation_definition(definition_id)
+    assert row["resolution_state"] == "solved"
+    assert row["resolved_at"] is not None
+    assert row["resolved_by"] == "local"
+    assert row["resolved_result_id"] == result_id
+
+
+def test_set_definition_resolution_reopen_clears_all_three_fields(tmp_path):
+    """Mirrors the server's own `_reopen_definition`: an unconditional
+    clear regardless of whatever `result_id`/`resolved_by` the caller
+    passes for the open state."""
+    db = _mk_db(tmp_path)
+    definition_id = db.create_automation_definition(
+        owner_id="local", family="recurring_question", name="Daily Q"
+    )
+    db.set_definition_resolution(
+        definition_id, state="solved", result_id="res-1", resolved_by="local"
+    )
+
+    updated = db.set_definition_resolution(
+        definition_id, state="open", result_id="ignored", resolved_by="ignored"
+    )
+
+    assert updated is True
+    row = db.get_automation_definition(definition_id)
+    assert row["resolution_state"] == "open"
+    assert row["resolved_at"] is None
+    assert row["resolved_by"] is None
+    assert row["resolved_result_id"] is None
+
+
+def test_set_definition_resolution_unknown_id_returns_false(tmp_path):
+    db = _mk_db(tmp_path)
+    assert db.set_definition_resolution("missing", state="solved") is False
+
+
 # ----------------------------------------------------------------------
 # adopt_server_definition_identity (schedules-handoff PR-4, task 3)
 # ----------------------------------------------------------------------

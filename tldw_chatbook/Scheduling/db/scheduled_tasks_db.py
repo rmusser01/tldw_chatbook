@@ -2014,6 +2014,71 @@ class ScheduledTasksDB(BaseDB):
                 )
             return changed
 
+    def set_definition_resolution(
+        self,
+        definition_id: str,
+        *,
+        state: str,
+        result_id: str | None = None,
+        resolved_by: str | None = None,
+    ) -> bool:
+        """Write a definition's four resolution columns in one transaction.
+
+        Schedules-handoff PR-6 Task 2: the first read/write path for the
+        ``resolution_state``/``resolved_at``/``resolved_by``/``resolved_
+        result_id`` columns added by the v3->v4 migration -- until this
+        method existed nothing in the codebase touched them.
+
+        ``state`` is ``"open"`` or ``"solved"`` (the server's own
+        ``ScheduledTaskDefinitionResolutionState`` literal -- validated by
+        the caller, not here, mirroring ``update_result_review``'s split
+        of validation into the facade and writes into the DB layer).
+        Reopening (``state="open"``) always clears ``resolved_at``/
+        ``resolved_by``/``resolved_result_id`` back to ``None``
+        regardless of what the caller passed for ``result_id``/
+        ``resolved_by`` -- the server's own ``_reopen_definition``
+        (tldw_Server_API/app/services/scheduled_task_automation_service.py,
+        origin/dev) does the same unconditional clear on its side, so a
+        local reopen and a server-mirrored one leave the row in the same
+        shape. Solving stamps ``resolved_at`` to now (UTC).
+
+        Does not bump ``version`` or notify the scheduler queue: this is
+        a side-channel resolution marker, not a content edit, and nothing
+        in ``list_armable_automation_definitions`` reads these columns.
+
+        Args:
+            definition_id: The definition's local id.
+            state: ``"open"`` or ``"solved"``.
+            result_id: The triggering result's id, recorded only when
+                ``state="solved"``.
+            resolved_by: The actor identity, recorded only when
+                ``state="solved"``.
+
+        Returns:
+            ``True`` if a row was found and updated, ``False`` for an
+            unknown ``definition_id`` (no write).
+        """
+        solved = state == "solved"
+        now_iso = self._to_utc_iso(datetime.now(timezone.utc))
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE automation_definitions
+                SET resolution_state = ?, resolved_at = ?, resolved_by = ?,
+                    resolved_result_id = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    state,
+                    now_iso if solved else None,
+                    resolved_by if solved else None,
+                    result_id if solved else None,
+                    now_iso,
+                    definition_id,
+                ),
+            )
+            return cursor.rowcount > 0
+
     def delete_automation_definition(self, definition_id: str) -> bool:
         """Delete an automation definition by local id."""
         with self.transaction() as conn:

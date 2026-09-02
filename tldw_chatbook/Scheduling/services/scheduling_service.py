@@ -180,6 +180,24 @@ class TransferOutcome:
     row_id: str | None = None
 
 
+@dataclass(slots=True)
+class ResolveOutcome:
+    """Result of `SchedulingService.resolve_definition` (schedules-handoff
+    PR-6 Task 2 -- definition-level mark-solved/reopen).
+
+    Attributes:
+        status: ``"saved"`` (written locally, or applied on the server and
+            mirrored back) or ``"error"`` (nothing was written -- an
+            unknown row, or -- plan ruling 2, a deliberate v1 gap -- a
+            server-owned row whose server connection is unreachable or
+            refused; there is no offline queue for this action yet).
+        reason: Human-readable failure text, populated for ``"error"``.
+    """
+
+    status: str
+    reason: str | None = None
+
+
 def _seam_failure_warning(exc: Exception) -> dict[str, str]:
     """Build the ``_owner`` warning `preview_definition` appends on a seam failure.
 
@@ -1377,6 +1395,118 @@ class SchedulingService:
         )
         self._notify_queue_changed()
         return SaveDefinitionOutcome(status="saved", definition_id=row_id)
+
+    async def resolve_definition(
+        self, definition_id: str, solved: bool, result_id: str | None = None
+    ) -> "ResolveOutcome":
+        """Mark a definition solved, or reopen a solved one (schedules-handoff
+        PR-6 Task 2, spec §4.3).
+
+        Resolution is DEFINITION-level (plan ruling 2), not per-result:
+        writes ``resolution_state``/``resolved_at``/``resolved_by``/
+        ``resolved_result_id`` on the definition row, recording the
+        triggering result id.
+
+        Local rows write directly via `ScheduledTasksDB.set_definition_
+        resolution` -- there is nothing to sync, same reasoning `set_
+        definition_lifecycle` uses for local rows. Server-owned rows call
+        the server's mark-solved/reopen endpoint IMMEDIATELY (unlike `set_
+        definition_lifecycle`'s optimistic-write-plus-queue pattern) and
+        mirror the echoed row back via `db.upsert_automation_definitions_
+        from_server` on success -- ``result_id`` is translated from this
+        row's LOCAL result id to the mirrored result's ``server_id``
+        first, since the server has never heard of a local UUID. When the
+        seam is unreachable or the server refuses, this returns an honest
+        ``status="error"`` rather than queuing a mutation (plan ruling 2,
+        a deliberate v1 gap): a solved/reopen mutation queued against a
+        row whose true resolution state may already have changed
+        server-side is a worse lie than an outright refusal, and there is
+        no offline primitive for this action yet.
+
+        Never notifies the queue: like `review_automation_result`,
+        nothing in `list_armable_automation_definitions` reads the
+        resolution columns, so a resolution change never changes what the
+        scheduler should dispatch.
+
+        Args:
+            definition_id: The definition's LOCAL row id.
+            solved: ``True`` to mark solved, ``False`` to reopen.
+            result_id: The LOCAL id of the result that triggered the
+                resolution (mark-solved only; ignored for reopen).
+
+        Returns:
+            `ResolveOutcome` -- ``"saved"`` on a successful local write or
+            server round trip, ``"error"`` (with ``reason``) for an
+            unknown ``definition_id`` or an unreachable/refused server
+            row.
+        """
+        row = await asyncio.to_thread(self.db.get_automation_definition, definition_id)
+        if row is None:
+            return ResolveOutcome(
+                status="error",
+                reason=f"Automation definition {definition_id} was not found.",
+            )
+
+        owner_id = str(row.get("owner_id") or "local")
+        action_desc = "mark this definition solved" if solved else "reopen this definition"
+
+        if not self._owner_uses_server(owner_id):
+            updated = await asyncio.to_thread(
+                self.db.set_definition_resolution,
+                definition_id,
+                state="solved" if solved else "open",
+                result_id=result_id,
+                resolved_by="local",
+            )
+            if not updated:
+                return ResolveOutcome(
+                    status="error",
+                    reason=f"Automation definition {definition_id} was not found.",
+                )
+            return ResolveOutcome(status="saved")
+
+        server_id = row.get("server_id")
+        if not server_id:
+            return ResolveOutcome(
+                status="error",
+                reason=f"Could not {action_desc}: this row has no server identity.",
+            )
+
+        assert self.server_client is not None
+        server_result_id = None
+        if solved and result_id:
+            result_row = await asyncio.to_thread(
+                self.db.get_automation_result, result_id
+            )
+            server_result_id = (result_row or {}).get("server_id") or result_id
+
+        try:
+            if solved:
+                response = await self.server_client.mark_automation_definition_solved(
+                    server_id, result_id=server_result_id
+                )
+            else:
+                response = await self.server_client.reopen_automation_definition(
+                    server_id
+                )
+        except ServerClientError as exc:
+            logger.warning(
+                "resolve_definition could not {action} for {definition_id} "
+                "(server row {server_id}): {exc}",
+                action=action_desc,
+                definition_id=definition_id,
+                server_id=server_id,
+                exc=exc,
+            )
+            return ResolveOutcome(
+                status="error",
+                reason=f"Could not {action_desc} -- this action requires a server connection.",
+            )
+
+        await asyncio.to_thread(
+            self.db.upsert_automation_definitions_from_server, owner_id, [response]
+        )
+        return ResolveOutcome(status="saved")
 
     async def recover_inflight_transfers(self) -> None:
         """Startup recovery for rows stuck `to_server_sent` (spec §6.1.3).
