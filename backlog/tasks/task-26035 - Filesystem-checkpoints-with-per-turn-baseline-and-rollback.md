@@ -4,6 +4,7 @@ title: Filesystem checkpoints with per-turn baseline and rollback
 status: To Do
 assignee: []
 created_date: '2026-08-31 15:47'
+updated_date: '2026-09-02 00:41'
 labels:
   - agents
   - workspaces
@@ -28,3 +29,18 @@ There is no way to undo a turn's file changes as a unit. Verified on origin/dev:
 - [ ] #6 Checkpoint storage stays out of the user's own git history - it never creates commits, branches or stashes in the project repo
 - [ ] #7 Files outside the allowed roots are never captured or restored
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+SEAM ANALYSIS (2026-09-01, for a live session -- this restores USER FILES, so it must be built + verified with the app running, not headless):
+Build on the existing shadow-repo (Workspaces/change_tracking.ShadowRepo): snapshot(message, force_paths)->sha, tip(), changed_files(base,end)->[ChangedFile], diff_text(base,end,path), file_bytes(commit,path), restore_paths(commit,paths). Per-turn baselines already captured by Workspaces/change_turn_tracker.ChangeTurnTracker (B/E snapshots; the B tip IS the pre-turn checkpoint) with rows in DB/AgentRuns_DB.py:321-348.
+1. AC#1 capture: reuse the existing B snapshot per turn before file-mutating tools (already happens); expose those sha+turn+time as 'checkpoints'.
+2. AC#2 list: enumerate checkpoints with turn/time/changed-file-count (changed_files against the prior tip).
+3. AC#3 restore PREVIEW+confirm: a PURE restore-plan builder (given target sha + current tree via changed_files) -> the set of files that would change + a diff preview; require explicit confirmation before calling restore_paths. This is the testable core.
+4. AC#4 refuse-on-dirty: before restore, detect uncommitted changes in the working tree that the restore would destroy; refuse unless an explicit override flag is passed.
+5. AC#5 retention: prune checkpoints by a documented count/size bound (pure policy fn, testable).
+6. AC#6 out-of-user-git: ShadowRepo already stores in a separate shadow store (never commits/branches/stashes in the project repo) -- verify + assert.
+7. AC#7 roots-only: ShadowRepo already scopes to allowed roots -- verify + assert.
+Testable now (pure): restore-plan builder, dirty-tree refusal decision, retention/prune policy. Impure/live: the actual snapshot/restore + the change-review UI surface. DEFERRED to a live session for safe verification of the restore path.
+<!-- SECTION:PLAN:END -->
