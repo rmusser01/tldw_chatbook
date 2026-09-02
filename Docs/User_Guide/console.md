@@ -9,7 +9,7 @@ those runs request. Advanced users can also run an explicitly armed, user-only
 raw host command or open a separately armed persistent Terminal without
 involving a model. Reach for Console to send a message, drive a live run, hand
 work off between your sources and a model, or use a real interactive shell.
-This page is the orientation tour; the details live on the child pages:
+This page is the orientation tour; the details live on the child pages below:
 
 - [Chat basics](console/chat-basics.md) — compose, send, stream, stop, act on messages.
 - [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md) — tab strip, "Switch Session", conversation browser, workspaces.
@@ -18,6 +18,7 @@ This page is the orientation tour; the details live on the child pages:
 - [Video generation, playback & streaming](console/video.md) — `/generate-video`, ephemeral videos & tombstones, in-app playback, `/stream-video`.
 - [Agent runs & tools](console/agent-runs-and-tools.md) — per-tab runs, fleet markers, approvals, skills, MCP tools.
 - [Context & RAG](console/context-and-rag.md) — "Chat Context" viewer, prompts, retrieval scope, staged sources, Library RAG.
+- [Semantic trace capture](console/semantic-trace-capture.md) — what Capture On saves, Safe/Full views, masking, forks, legacy traces, export, and purge.
 
 ## Getting there
 

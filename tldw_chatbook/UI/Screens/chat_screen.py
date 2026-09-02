@@ -225,7 +225,6 @@ from ...Chat.console_cost_tracker import (
 from ...Chat.console_exchange_capture import ExchangeCapture
 from ...Chat.console_trace_projection import ProjectedTraceCall
 from ...LLM_Calls.pricing_catalog import get_pricing_catalog
-from ...Terminal.contracts import TerminalLifecycle
 from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
     console_attachable_dictionaries,
     console_attached_dictionaries,
@@ -513,11 +512,10 @@ from ...Widgets.Console.console_speech_controls import (
 )
 from ...Widgets.Console.console_settings_modal import ConsoleSettingsResult
 from ...Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
-from ...Widgets.Console.console_terminal_workspace import (
+from ...Widgets.Console.console_terminal_messages import (
     ConsoleTerminalActionRequested,
     ConsoleTerminalInputRequested,
     ConsoleTerminalResizeRequested,
-    ConsoleTerminalWorkspace,
 )
 from ...Widgets.Console.console_context_controls import (
     ConsoleContextControlState,
@@ -2106,6 +2104,8 @@ class ChatScreen(BaseAppScreen):
 
     def action_open_console_terminal(self) -> None:
         """Open the user-only center after enforcing launch permission."""
+        from ...Terminal.contracts import TerminalLifecycle
+
         runtime = self.app_instance.terminal_session_manager
         permitted = getattr(runtime, "permitted", False) is True
         cleanup_visible = any(
@@ -2151,6 +2151,10 @@ class ChatScreen(BaseAppScreen):
 
     def _focus_open_console_terminal(self) -> None:
         """Focus the one useful Terminal control for its current authority state."""
+        from ...Widgets.Console.console_terminal_workspace import (
+            ConsoleTerminalWorkspace,
+        )
+
         try:
             workspace = self.query_one("#console-main-column", ConsoleTerminalWorkspace)
         except QueryError:
@@ -12889,7 +12893,10 @@ class ChatScreen(BaseAppScreen):
     def _build_console_center(self) -> Widget:
         """Build the current center without changing any surrounding shell chrome."""
         if self._console_terminal_open:
-            return self._console_terminal_workspace
+            workspace = self._console_terminal_workspace
+            if workspace is None:
+                raise RuntimeError("terminal workspace opened before resolution")
+            return workspace
         return ConsoleTranscriptRegion(
             session_surface_builder=lambda: self._ensure_console_session_surface(),
             recovery_message_builder=(

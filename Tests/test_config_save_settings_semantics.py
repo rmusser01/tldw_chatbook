@@ -6,8 +6,8 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 
 from tldw_chatbook import config as config_module
-from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
+from tldw_chatbook.config import ConfigMutationResult
 
 
 def test_config_import_isolated_from_eager_chat_package(tmp_path):
@@ -319,6 +319,133 @@ def test_legacy_full_capture_never_migrates_to_full_viewer(monkeypatch) -> None:
     assert policy.detail is CaptureDetail.FULL
     assert policy.viewer_profile == "safe"
     assert policy.pii_redaction_enabled is False
+
+
+def test_runtime_capture_policy_projects_independent_trace_rollout_gates(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 611)
+    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(
+        config_module,
+        "_published_runtime_config_snapshot",
+        lambda: config_module.RuntimeConfigSnapshot(
+            611,
+            {
+                "console": {
+                    "exchange_capture": True,
+                    "trace_normalized_writes": False,
+                    "trace_normalized_reads": True,
+                    "trace_legacy_writes": True,
+                }
+            },
+        ),
+    )
+
+    policy = config_module.runtime_capture_policy()
+
+    assert policy.normalized_writes_enabled is False
+    assert policy.normalized_reads_enabled is True
+    assert policy.legacy_writes_enabled is True
+
+
+def test_runtime_capture_policy_prefers_trace_rollout_environment_overrides(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 614)
+    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(
+        config_module,
+        "_published_runtime_config_snapshot",
+        lambda: config_module.RuntimeConfigSnapshot(
+            614,
+            {
+                "console": {
+                    "trace_normalized_writes": False,
+                    "trace_normalized_reads": True,
+                    "trace_legacy_writes": False,
+                }
+            },
+        ),
+    )
+    monkeypatch.setenv("TLDW_CONSOLE_TRACE_NORMALIZED_WRITES", "true")
+    monkeypatch.setenv("TLDW_CONSOLE_TRACE_NORMALIZED_READS", "false")
+    monkeypatch.setenv("TLDW_CONSOLE_TRACE_LEGACY_WRITES", "true")
+
+    policy = config_module.runtime_capture_policy()
+
+    assert policy.normalized_writes_enabled is True
+    assert policy.normalized_reads_enabled is False
+    assert policy.legacy_writes_enabled is True
+
+
+def test_trace_rollout_settings_use_typed_validation_and_field_defaults() -> None:
+    from pydantic import BaseModel
+
+    assert issubclass(config_module.TraceRolloutSettings, BaseModel)
+
+    settings = config_module.resolve_trace_rollout_settings(
+        {
+            "trace_normalized_writes": "invalid",
+            "trace_normalized_reads": "false",
+            "trace_legacy_writes": "invalid",
+        },
+        environ={},
+    )
+
+    assert settings.normalized_writes_enabled is True
+    assert settings.normalized_reads_enabled is False
+    assert settings.legacy_writes_enabled is False
+
+
+def test_runtime_capture_policy_coerces_string_true_capture_and_rollout_gates(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 613)
+    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(
+        config_module,
+        "_published_runtime_config_snapshot",
+        lambda: config_module.RuntimeConfigSnapshot(
+            613,
+            {
+                "console": {
+                    "exchange_capture": "true",
+                    "trace_normalized_writes": "true",
+                    "trace_normalized_reads": "true",
+                    "trace_legacy_writes": "true",
+                }
+            },
+        ),
+    )
+
+    policy = config_module.runtime_capture_policy()
+
+    assert policy.enabled is True
+    assert policy.normalized_writes_enabled is True
+    assert policy.normalized_reads_enabled is True
+    assert policy.legacy_writes_enabled is True
+
+
+def test_runtime_capture_policy_uses_shipping_trace_rollout_defaults(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 612)
+    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(
+        config_module,
+        "_published_runtime_config_snapshot",
+        lambda: config_module.RuntimeConfigSnapshot(
+            612,
+            {"console": {"exchange_capture": True}},
+        ),
+    )
+
+    policy = config_module.runtime_capture_policy()
+
+    assert policy.normalized_writes_enabled is True
+    assert policy.normalized_reads_enabled is True
+    assert policy.legacy_writes_enabled is False
 
 
 def test_versioned_viewer_and_pii_choices_restore_independently(monkeypatch) -> None:

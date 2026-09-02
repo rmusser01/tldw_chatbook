@@ -26,12 +26,12 @@ from tldw_chatbook.Terminal.session_manager import (
     TerminalViewState,
     TerminalViewToken,
 )
+from tldw_chatbook.Widgets.Console.console_terminal_messages import TerminalAction
 from tldw_chatbook.Widgets.Console.console_terminal_session_modal import (
     ConsoleTerminalSessionModal,
     TerminalSessionFormResult,
     build_default_terminal_name,
 )
-from tldw_chatbook.Widgets.Console.console_terminal_workspace import TerminalAction
 
 
 def _spawn_async(factory: Callable[[], Awaitable[Any]]) -> None:

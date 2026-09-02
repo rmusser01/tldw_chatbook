@@ -658,17 +658,20 @@ def test_raw_cli_runtime_is_app_owned_unarmed_and_reads_config_replacements():
 
 @pytest.mark.unit
 def test_terminal_manager_is_app_owned_unarmed_and_reads_config_replacements():
-    """The app owns one launch-local Terminal arm over its latest config."""
-    from tldw_chatbook.Terminal.session_manager import TerminalSessionManager
+    """The app lazily owns one launch-local Terminal arm over latest config."""
     from tldw_chatbook.app import TldwCli
 
     initializer = inspect.getsource(TldwCli.__init__)
     config_load = initializer.index("self.app_config = load_settings()")
-    terminal_manager = initializer.index("self.terminal_session_manager")
+    terminal_manager = initializer.index("self._terminal_session_manager")
     console_runtime = initializer.index("self.console_runtime")
     assert config_load < terminal_manager < console_runtime, initializer
 
     app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": True}})
+    assert app._terminal_session_manager is None
+
+    from tldw_chatbook.Terminal.session_manager import TerminalSessionManager
+
     manager = app.terminal_session_manager
     assert isinstance(manager, TerminalSessionManager)
     assert manager.permitted is True

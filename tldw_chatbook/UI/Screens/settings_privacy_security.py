@@ -11,7 +11,6 @@ from tldw_chatbook.Utils.sensitive_config_keys import (
     validate_trace_privacy_config,
 )
 
-
 SAFE_SKILL_TRUST_STATUSES = frozenset(
     {
         "trusted",
@@ -47,6 +46,12 @@ class SettingsPrivacyPosture:
         skill_trust_status: Redacted local skill trust aggregate status.
         skill_trust_keyring_convenience_enabled: Whether keyring convenience is enabled.
         skill_trust_reduced_rollback_protection: Whether rollback protection is reduced.
+        trace_capture_enabled: Whether future Console calls require durable capture.
+        trace_pii_masking_enabled: Whether configured trace PII masking is active.
+        trace_viewer_profile: Default redacted trace viewer profile.
+        trace_normalized_writes_enabled: Whether normalized trace writes are enabled.
+        trace_normalized_reads_enabled: Whether normalized trace reads are enabled.
+        trace_legacy_writes_enabled: Whether legacy compatibility writes are enabled.
     """
 
     encryption_enabled: bool
@@ -67,6 +72,9 @@ class SettingsPrivacyPosture:
     trace_capture_enabled: bool = True
     trace_pii_masking_enabled: bool = False
     trace_viewer_profile: str = "safe"
+    trace_normalized_writes_enabled: bool = True
+    trace_normalized_reads_enabled: bool = True
+    trace_legacy_writes_enabled: bool = False
 
 
 def build_settings_privacy_posture(
@@ -104,6 +112,15 @@ def build_settings_privacy_posture(
     if not isinstance(console, Mapping):
         console = {}
     trace_privacy = validate_trace_privacy_config(console)
+    # Keep this first-paint helper aligned with the runtime policy without
+    # adding config.py to the eager Settings import closure.
+    from tldw_chatbook.config import (
+        coerce_bool_setting,
+        resolve_trace_rollout_settings,
+    )
+
+    rollout = resolve_trace_rollout_settings(console, environ=env)
+
     return SettingsPrivacyPosture(
         encryption_enabled=encryption_enabled,
         sensitive_config_fields=_sensitive_config_field_count(app_config),
@@ -119,9 +136,15 @@ def build_settings_privacy_posture(
         skill_trust_reduced_rollback_protection=_safe_bool(
             trust.get("reduced_rollback_protection")
         ),
-        trace_capture_enabled=console.get("exchange_capture", True) is not False,
+        trace_capture_enabled=coerce_bool_setting(
+            console.get("exchange_capture", True),
+            True,
+        ),
         trace_pii_masking_enabled=trace_privacy.exchange_capture_pii_redaction,
         trace_viewer_profile=trace_privacy.effective_viewer_profile,
+        trace_normalized_writes_enabled=rollout.normalized_writes_enabled,
+        trace_normalized_reads_enabled=rollout.normalized_reads_enabled,
+        trace_legacy_writes_enabled=rollout.legacy_writes_enabled,
     )
 
 
@@ -202,10 +225,26 @@ def build_privacy_posture_rows(posture: SettingsPrivacyPosture) -> tuple[str, ..
             else "Trace PII masking: Off"
         ),
         f"Trace viewer: {posture.trace_viewer_profile.title()} disclosure profile",
+        _trace_storage_row(posture),
+        (
+            "Trace history: compact and legacy traces are readable"
+            if posture.trace_normalized_reads_enabled
+            else "Trace history: compact traces are retained but temporarily hidden"
+        ),
         f"Data boundary: {posture.data_boundary}",
         f"Server boundary: {posture.server_boundary}",
         "Privacy safety: no secret values were printed or written.",
     )
+
+
+def _trace_storage_row(posture: SettingsPrivacyPosture) -> str:
+    if posture.trace_normalized_writes_enabled and not posture.trace_legacy_writes_enabled:
+        return "Trace storage: compact ledger for new calls; no transcript copies"
+    if posture.trace_normalized_writes_enabled:
+        return "Trace storage: compact ledger plus compatibility copies"
+    if posture.trace_legacy_writes_enabled:
+        return "Trace storage: legacy compatibility copies"
+    return "Trace storage: new trace writes paused"
 
 
 def _safe_skill_trust_status(value: object) -> str:

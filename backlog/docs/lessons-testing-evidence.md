@@ -10517,6 +10517,44 @@ subject, assert the generated semantic keys are unique, and run at least one
 end-to-end test that answers and commits every question in the real pack. This
 is especially important when a compact topic label also participates in record
 identity.
+---
+
+## Active surface order can diverge from append sequence after compaction
+
+**Incident.** TASK-23113.9, 2026-08-31. The semantic-trace replacement benchmark
+passed its first context compaction and failed on the second. The planner treated
+the first and last changed entries in active display order as the numeric
+replacement range. After the first compaction, however, a newly appended summary
+occupied an older display ordinal with a newer sequence number, so display order
+was no longer sequence-number order. The next range unintentionally swept an
+unchanged active node.
+
+**What to do.** For an append-only structure with bounded replacement records,
+derive a replacement's numeric bounds from every changed active entry, then
+explicitly reject the range if any unchanged active entry lies inside those
+bounds. Do not infer persisted sequence bounds from the endpoints of a projected
+display slice. A replacement-heavy test must compact the same surface at least
+twice; a single compaction cannot expose this ordering divergence.
+
+---
+
+## A short post-ready timer is not a first-paint boundary
+
+**Incident.** TASK-23113.9, 2026-08-31. After rebasing the trace rollout, the
+UI-ready census repeatedly found Notes organization and Sync modules that were
+supposed to load after the first interactive frame. The callback was scheduled
+only after `_ui_ready` became true, but its 0.1-second timer started before the
+rest of the synchronous post-ready setup completed. On a slow start, the delay
+expired before the census task regained the event loop, so the callback and its
+imports won the race. Merely moving the timer later reduced the remaining work
+but did not establish a deterministic boundary.
+
+**What to do.** Treat a short elapsed-time delay as load shedding, not as proof
+that work happens after first paint. If a startup import must be absent at the
+readiness boundary, use a comfortably separated idle-maintenance window (or an
+explicit paint/phase signal) and enforce the absence in the real UI-ready
+census. Keep first-use owners lazy as well: app-lifetime ownership does not
+require eager construction.
 
 ---
 

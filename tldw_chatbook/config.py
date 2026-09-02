@@ -41,6 +41,14 @@ from typing import (
 #
 # Third-Party Imports
 from loguru import logger
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    TypeAdapter,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+)
 
 
 #
@@ -3271,6 +3279,12 @@ sidechat_prompt_template = "Give me more details about: {selection}"  # {selecti
 # Conversation Inspector: capture each provider exchange (request/response)
 # locally per turn. Local-only; never synced. Set false to disable.
 exchange_capture = true
+# Independent rollout/rollback gates for the normalized semantic trace ledger.
+# Environment overrides use TLDW_CONSOLE_TRACE_NORMALIZED_WRITES,
+# TLDW_CONSOLE_TRACE_NORMALIZED_READS, and TLDW_CONSOLE_TRACE_LEGACY_WRITES.
+trace_normalized_writes = true
+trace_normalized_reads = true
+trace_legacy_writes = false
 # Retired future-write detail retained only for legacy provenance/migration.
 exchange_capture_detail = "safe"
 # Optional capture-time PII masking is independent of capture and defaults Off.
@@ -7148,17 +7162,138 @@ def apply_settings_mutation_to_cli_config(
 
 @dataclass(frozen=True, slots=True)
 class RuntimeCapturePolicy:
-    """Canonical process projection for future Console capture admission."""
+    """Canonical process projection for future Console capture admission.
+
+    Attributes:
+        enabled: Whether future Console calls require durable trace capture.
+        detail: Admission-frozen trace capture detail.
+        generation: Monotonic policy publication generation.
+        pii_redaction_enabled: Whether configured PII masking is active.
+        viewer_profile: Default redacted viewer profile.
+        normalized_writes_enabled: Whether new normalized calls may be written.
+        normalized_reads_enabled: Whether normalized calls participate in reads.
+        legacy_writes_enabled: Whether compatibility snapshots are also written.
+    """
 
     enabled: bool
     detail: CaptureDetail
     generation: int
     pii_redaction_enabled: bool = False
     viewer_profile: str = "safe"
+    normalized_writes_enabled: bool = True
+    normalized_reads_enabled: bool = True
+    legacy_writes_enabled: bool = False
+
+
+_TRACE_ROLLOUT_BOOLEAN_ADAPTER = TypeAdapter(bool)
+
+
+class TraceRolloutSettings(BaseModel):
+    """Validated effective gates for the semantic trace rollout.
+
+    Attributes:
+        normalized_writes_enabled: Whether normalized calls may be written.
+        normalized_reads_enabled: Whether normalized calls participate in reads.
+        legacy_writes_enabled: Whether compatibility snapshots are also written.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    normalized_writes_enabled: bool = True
+    normalized_reads_enabled: bool = True
+    legacy_writes_enabled: bool = False
+
+    @field_validator(
+        "normalized_writes_enabled",
+        "normalized_reads_enabled",
+        "legacy_writes_enabled",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_boolean(cls, value: object, info: ValidationInfo) -> bool:
+        defaults = {
+            "normalized_writes_enabled": True,
+            "normalized_reads_enabled": True,
+            "legacy_writes_enabled": False,
+        }
+        try:
+            return _TRACE_ROLLOUT_BOOLEAN_ADAPTER.validate_python(value)
+        except ValidationError:
+            return defaults[info.field_name]
 
 
 _RUNTIME_CAPTURE_POLICY_LOCK = _threading.RLock()
 _RUNTIME_CAPTURE_POLICY: RuntimeCapturePolicy | None = None
+_TRACE_ROLLOUT_ENV_NAMES = (
+    "TLDW_CONSOLE_TRACE_NORMALIZED_WRITES",
+    "TLDW_CONSOLE_TRACE_NORMALIZED_READS",
+    "TLDW_CONSOLE_TRACE_LEGACY_WRITES",
+)
+_RUNTIME_CAPTURE_POLICY_ENV: tuple[str | None, ...] | None = None
+
+
+def _trace_rollout_environment() -> tuple[str | None, ...]:
+    """Return the three rollout overrides as one cache identity.
+
+    Returns:
+        Environment values aligned with ``_TRACE_ROLLOUT_ENV_NAMES``.
+    """
+
+    return tuple(os.environ.get(name) for name in _TRACE_ROLLOUT_ENV_NAMES)
+
+
+def _trace_rollout_environment_mapping(
+    values: tuple[str | None, ...],
+) -> dict[str, str]:
+    """Map one captured rollout environment identity back to present values."""
+
+    return {
+        name: value
+        for name, value in zip(_TRACE_ROLLOUT_ENV_NAMES, values, strict=True)
+        if value is not None
+    }
+
+
+def resolve_trace_rollout_settings(
+    console: object,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> TraceRolloutSettings:
+    """Validate rollout gates with environment-first precedence.
+
+    Args:
+        console: Raw Console configuration mapping.
+        environ: Optional environment mapping. Defaults to ``os.environ``.
+
+    Returns:
+        The validated effective rollout settings.
+    """
+
+    values = console if isinstance(console, Mapping) else {}
+    environment = os.environ if environ is None else environ
+
+    def selected(environment_name: str, config_name: str, default: bool) -> object:
+        override = environment.get(environment_name)
+        return values.get(config_name, default) if override in (None, "") else override
+
+    return TraceRolloutSettings.model_validate(
+        {
+            "normalized_writes_enabled": selected(
+                _TRACE_ROLLOUT_ENV_NAMES[0],
+                "trace_normalized_writes",
+                True,
+            ),
+            "normalized_reads_enabled": selected(
+                _TRACE_ROLLOUT_ENV_NAMES[1],
+                "trace_normalized_reads",
+                True,
+            ),
+            "legacy_writes_enabled": selected(
+                _TRACE_ROLLOUT_ENV_NAMES[2],
+                "trace_legacy_writes",
+                False,
+            ),
+        }
+    )
 
 
 def _publish_runtime_capture_policy(
@@ -7167,6 +7302,9 @@ def _publish_runtime_capture_policy(
     generation: int,
     pii_redaction_enabled: bool = False,
     viewer_profile: str = "safe",
+    normalized_writes_enabled: bool = True,
+    normalized_reads_enabled: bool = True,
+    legacy_writes_enabled: bool = False,
 ) -> RuntimeCapturePolicy:
     """Publish one validated capture policy without touching general caches."""
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
@@ -7175,16 +7313,29 @@ def _publish_runtime_capture_policy(
         raise TypeError("detail must be CaptureDetail")
     if viewer_profile not in {"safe", "full"}:
         raise ValueError("viewer_profile")
+    rollout_environment = _trace_rollout_environment()
+    rollout = resolve_trace_rollout_settings(
+        {
+            "trace_normalized_writes": normalized_writes_enabled,
+            "trace_normalized_reads": normalized_reads_enabled,
+            "trace_legacy_writes": legacy_writes_enabled,
+        },
+        environ=_trace_rollout_environment_mapping(rollout_environment),
+    )
     policy = RuntimeCapturePolicy(
         bool(enabled),
         detail,
         generation,
         bool(pii_redaction_enabled),
         viewer_profile,
+        rollout.normalized_writes_enabled,
+        rollout.normalized_reads_enabled,
+        rollout.legacy_writes_enabled,
     )
-    global _RUNTIME_CAPTURE_POLICY
+    global _RUNTIME_CAPTURE_POLICY, _RUNTIME_CAPTURE_POLICY_ENV
     with _RUNTIME_CAPTURE_POLICY_LOCK:
         _RUNTIME_CAPTURE_POLICY = policy
+        _RUNTIME_CAPTURE_POLICY_ENV = rollout_environment
     return policy
 
 
@@ -7196,15 +7347,24 @@ def runtime_capture_policy() -> RuntimeCapturePolicy:
     """
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
 
-    global _RUNTIME_CAPTURE_POLICY
+    rollout_environment = _trace_rollout_environment()
+    global _RUNTIME_CAPTURE_POLICY, _RUNTIME_CAPTURE_POLICY_ENV
     with _RUNTIME_CAPTURE_POLICY_LOCK:
         current = _RUNTIME_CAPTURE_POLICY
-        if current is not None and current.generation == _CONFIG_GENERATION:
+        if (
+            current is not None
+            and current.generation == _CONFIG_GENERATION
+            and _RUNTIME_CAPTURE_POLICY_ENV == rollout_environment
+        ):
             return current
     snapshot = _published_runtime_config_snapshot()
     with _RUNTIME_CAPTURE_POLICY_LOCK:
         current = _RUNTIME_CAPTURE_POLICY
-        if current is not None and current.generation == snapshot.generation:
+        if (
+            current is not None
+            and current.generation == snapshot.generation
+            and _RUNTIME_CAPTURE_POLICY_ENV == rollout_environment
+        ):
             return current
         console = snapshot.values.get("console", {})
         if not isinstance(console, Mapping):
@@ -7216,14 +7376,22 @@ def runtime_capture_policy() -> RuntimeCapturePolicy:
         privacy = validate_trace_privacy_config(console)
         pii_redaction_enabled = privacy.exchange_capture_pii_redaction
         viewer_profile = privacy.effective_viewer_profile
+        rollout = resolve_trace_rollout_settings(
+            console,
+            environ=_trace_rollout_environment_mapping(rollout_environment),
+        )
         current = RuntimeCapturePolicy(
             coerce_bool_setting(console.get("exchange_capture", True), True),
             detail,
             snapshot.generation,
             pii_redaction_enabled,
             viewer_profile,
+            rollout.normalized_writes_enabled,
+            rollout.normalized_reads_enabled,
+            rollout.legacy_writes_enabled,
         )
         _RUNTIME_CAPTURE_POLICY = current
+        _RUNTIME_CAPTURE_POLICY_ENV = rollout_environment
         return current
 
 
@@ -7276,6 +7444,9 @@ def apply_console_capture_settings(
             expected_generation,
             resolved_pii,
             resolved_viewer,
+            current.normalized_writes_enabled,
+            current.normalized_reads_enabled,
+            current.legacy_writes_enabled,
         )
 
     def publish_after_replace() -> None:
@@ -7291,6 +7462,9 @@ def apply_console_capture_settings(
             expected_generation,
             resolved_pii,
             resolved_viewer,
+            current.normalized_writes_enabled,
+            current.normalized_reads_enabled,
+            current.legacy_writes_enabled,
         )
 
     more_revealing = (
