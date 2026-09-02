@@ -967,11 +967,11 @@ async def _assert_keyboard_traversal_and_viewer_entry(size):
             screen, pilot, compact=size[0] < 120
         )
 
-        # Footer honesty: the plain media list advertises the shared
-        # list-canvas set through the one seam, in BOTH layouts.
+        # Footer honesty: the plain media list advertises its own set
+        # (task-28012 adds the "s: select" key), in BOTH layouts.
         assert (
             screen._library_footer_shortcuts_for_current_state()
-            == screen.LIBRARY_LIST_SHORTCUTS
+            == screen.LIBRARY_MEDIA_LIST_SHORTCUTS
         )
 
         # Rows: Up/Down move DOM focus between rows.
@@ -1126,12 +1126,13 @@ async def _assert_select_mode_keyboard_toggle_and_footer(size):
         assert str(row_1.label).startswith("☑")
         assert "2 selected" in str(count.renderable)
 
-        # Footer honesty through the armed sub-state: arming bulk delete
-        # swaps the advertised set to the confirm context (esc cancels), in
-        # this layout exactly as in the other.
+        # Footer honesty through the armed sub-state: while selecting the
+        # footer advertises the select keys (task-28012); arming bulk delete
+        # swaps to the confirm context (esc cancels), in this layout exactly
+        # as in the other.
         assert (
             screen._library_footer_shortcuts_for_current_state()
-            == screen.LIBRARY_LIST_SHORTCUTS
+            == screen.LIBRARY_MEDIA_SELECT_SHORTCUTS
         )
         screen.query_one("#library-media-delete-selected", Button).press()
         await _wait_for_selector(
@@ -1146,7 +1147,7 @@ async def _assert_select_mode_keyboard_toggle_and_footer(size):
         assert not screen.query("#library-media-bulk-delete-confirm-copy")
         assert (
             screen._library_footer_shortcuts_for_current_state()
-            == screen.LIBRARY_LIST_SHORTCUTS
+            == screen.LIBRARY_MEDIA_SELECT_SHORTCUTS
         )
 
 

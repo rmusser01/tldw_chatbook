@@ -2421,6 +2421,17 @@ class LibraryScreen(BaseAppScreen):
         # printable key first, so "[" / "]" still type in the search box.
         Binding("]", "library_media_next_item", "Next item", show=False),
         Binding("[", "library_media_prev_item", "Previous item", show=False),
+        # task-28012: keyboard access to bulk selection. "s" enters/exits
+        # select mode on the media list; Space toggles the focused row while
+        # in it. ``check_action`` gates both; a focused Input consumes the
+        # printable "s"/Space first, so they still type in the filter/search.
+        Binding("s", "library_media_toggle_select_mode", "Select", show=False),
+        Binding(
+            "space",
+            "library_media_toggle_row_selection",
+            "Toggle selection",
+            show=False,
+        ),
     ]
 
     #: task-4023 AC#7: which canvas's "Export…" action opened the Export
@@ -2552,6 +2563,23 @@ class LibraryScreen(BaseAppScreen):
     LIBRARY_LIST_SHORTCUTS = (
         ("/", "focus search"),
         ("F6", "next pane"),
+        ("esc", "focus rail"),
+    )
+
+    #: task-28012: the media list teaches the bulk-selection keys the other
+    #: list canvases don't have -- "s" enters Select mode; while selecting,
+    #: Space toggles the focused row and "s" leaves.
+    LIBRARY_MEDIA_LIST_SHORTCUTS = (
+        ("/", "focus search"),
+        ("F6", "next pane"),
+        ("s", "select"),
+        ("esc", "focus rail"),
+    )
+    LIBRARY_MEDIA_SELECT_SHORTCUTS = (
+        ("/", "focus search"),
+        ("F6", "next pane"),
+        ("space", "toggle selection"),
+        ("s", "done selecting"),
         ("esc", "focus rail"),
     )
 
@@ -4954,6 +4982,15 @@ class LibraryScreen(BaseAppScreen):
         open_strip = self._library_open_choice_strip()
         if open_strip is not None:
             return (("enter", f"choose {open_strip[0]}"), ("esc", "cancel"))
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+            and self._library_media_view == "list"
+            and self._library_list_canvas_showing_list()
+        ):
+            # task-28012: teach the bulk-selection keys on the media list.
+            if self._library_media_select_mode:
+                return self.LIBRARY_MEDIA_SELECT_SHORTCUTS
+            return self.LIBRARY_MEDIA_LIST_SHORTCUTS
         if self._library_list_canvas_showing_list():
             return self.LIBRARY_LIST_SHORTCUTS
         return self.LIBRARY_GENERAL_SHORTCUTS
@@ -26890,6 +26927,14 @@ class LibraryScreen(BaseAppScreen):
         the selection [silently]" finding.
         """
         event.stop()
+        self._toggle_library_media_select_mode()
+
+    def _toggle_library_media_select_mode(self) -> None:
+        """Enter/exit media select mode (shared by the button and the key).
+
+        task-28012: the "s" binding reuses this exact seam so the keyboard
+        and the "Select"/"Done" button can never drift.
+        """
         if self._library_media_bulk_delete_in_flight:
             return
         if self._library_media_select_mode:
@@ -26907,6 +26952,34 @@ class LibraryScreen(BaseAppScreen):
             # underneath a new one.
             self._library_media_delete_receipt_ids = ()
         _sync_library_canvas(self, "media")
+
+    def action_library_media_toggle_select_mode(self) -> None:
+        """Keyboard "s": enter/exit media select mode (task-28012)."""
+        self._toggle_library_media_select_mode()
+
+    def action_library_media_toggle_row_selection(self) -> None:
+        """Keyboard Space: toggle the focused media row's selection (task-28012).
+
+        A no-op outside select mode, while a bulk-delete confirm is armed
+        (task-2853 AC3), or when focus is not on a media row. Mirrors the
+        select-mode branch of ``handle_library_media_row`` but acts on the
+        focused row rather than a pressed button, so keyboard-only users can
+        build a selection without a mouse.
+        """
+        if not self._library_media_select_mode:
+            return
+        if self._library_media_confirming_bulk_delete:
+            return
+        if self._library_media_bulk_delete_in_flight:
+            return
+        focused = self.focused
+        if focused is None or not focused.has_class("library-media-row"):
+            return
+        media_id = str(getattr(focused, "media_id", "") or "")
+        if not media_id:
+            return
+        self._library_media_row_selection.toggle(media_id)
+        _apply_library_row_toggle(self, "media", focused, media_id)
 
     def _exit_library_media_select_mode(self, *, announce_discard: bool) -> None:
         """Leave media Select mode: clear the selection and any pending
@@ -30497,6 +30570,24 @@ class LibraryScreen(BaseAppScreen):
             "library_rag_result_card_open",
         ):
             return self._focused_library_rag_result_card_index() is not None
+        if action == "library_media_toggle_select_mode":
+            # task-28012: only on the media LIST (not viewer/trash), and not
+            # while a bulk-delete confirm is armed or a delete is in flight.
+            return (
+                self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+                and self._library_media_view == "list"
+                and not self._library_media_confirming_bulk_delete
+                and not self._library_media_bulk_delete_in_flight
+            )
+        if action == "library_media_toggle_row_selection":
+            # task-28012: only while select mode is active with a media row
+            # focused -- otherwise Space falls through to its default.
+            if not self._library_media_select_mode:
+                return False
+            focused = self.focused
+            return bool(
+                focused is not None and focused.has_class("library-media-row")
+            )
         if action in ("library_media_next_item", "library_media_prev_item"):
             # task-28005: active only in the plain Reader with a neighbour in
             # that direction, so the key no-ops (and drops from the footer)

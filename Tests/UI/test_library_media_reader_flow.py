@@ -269,6 +269,37 @@ async def _load_row_0(screen, service, pilot):
 
 
 @pytest.mark.asyncio
+async def test_s_key_enters_select_mode_and_space_toggles_a_row():
+    """task-28012: keyboard-only bulk selection on the media list."""
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        assert screen._library_media_select_mode is False
+        assert ("s", "select") in screen._library_footer_shortcuts_for_current_state()
+
+        # "s" from a focused row enters select mode.
+        screen.query_one("#library-media-row-0", Button).focus()
+        await pilot.pause()
+        await pilot.press("s")
+        await pilot.pause()
+        assert screen._library_media_select_mode is True
+        footer = screen._library_footer_shortcuts_for_current_state()
+        assert ("space", "toggle selection") in footer
+        assert ("s", "done selecting") in footer
+
+        # Space toggles the focused row's selection.
+        row = screen.query_one("#library-media-row-0", Button)
+        row_id = str(row.media_id)
+        row.focus()
+        await pilot.pause()
+        await pilot.press("space")
+        await pilot.pause()
+        assert screen._library_media_row_selection.is_selected(row_id)
+
+
+@pytest.mark.asyncio
 async def test_bracket_keys_walk_to_next_and_previous_item_in_the_reader():
     """task-28005: ] opens the next browse item, [ the previous, from the Reader."""
     app, service = _flow_app(count=3)
