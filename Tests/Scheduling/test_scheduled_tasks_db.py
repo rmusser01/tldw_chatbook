@@ -43,8 +43,9 @@ def test_get_schema_version(db: ScheduledTasksDB) -> None:
     # v2 added missed_count (task-18937); v3 adds timeout_seconds
     # Full chain: v0..v3 as before; v4 = automation runs/results
     # (schedules-handoff §4, dev); v5 = scheduled_task_runs ledger
-    # (task-26026); v6 = task_incidents (task-26027).
-    assert db.get_schema_version() == 6
+    # (task-26026); v6 = task_incidents (task-26027);
+    # v7 = automation_results server_id unique index (schedules-handoff PR-6 task 1).
+    assert db.get_schema_version() == 7
 
 
 def test_create_and_get_reminder_task(db: ScheduledTasksDB) -> None:
@@ -2167,6 +2168,134 @@ def test_upsert_results_skips_item_missing_id(tmp_path):
     counts = db.upsert_automation_results_from_server("server:42", [item])
     assert counts == {"inserted": 0, "updated": 0, "skipped_dedupe": 0}
     assert db.list_automation_results("server:42") == []
+
+
+def test_upsert_results_double_pull_race_falls_into_update_or_skip_not_raise(tmp_path):
+    """v7's partial UNIQUE index on ``(owner_id, server_id)`` turns a genuine
+    double-pull race (two overlapping syncs each read the row as absent)
+    into an ``IntegrityError`` on the loser's INSERT. Proves the loser
+    recovers into the same update-or-skip path the "already present"
+    branch takes -- not re-raised, and not miscounted as a ``dedupe_key``
+    collision (a different UNIQUE constraint on the same table).
+    """
+    db = _mk_db(tmp_path)
+    db_path = str(tmp_path / "s.db")
+
+    real_get_connection = ScheduledTasksDB._get_connection
+    injected = {"done": False}
+
+    def _get_connection_with_injector(self):
+        conn = real_get_connection(self)
+
+        def _on_statement(sql):
+            if injected["done"] or "INSERT INTO automation_results (" not in sql:
+                return
+            injected["done"] = True
+            # Simulate a concurrent pull inserting the exact same server
+            # row between our SELECT-miss (already run) and this INSERT
+            # (about to run).
+            side_conn = sqlite3.connect(db_path)
+            try:
+                side_conn.execute(
+                    "INSERT INTO automation_results "
+                    "(id, server_id, owner_id, definition_id, run_id, kind, "
+                    "title, summary, dedupe_key, review_state, answer_mode, "
+                    "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        "raced-in-row", "srv-res-1", "server:42", "srv-def-1",
+                        "srv-run-1", "finding", "Raced title", "Raced summary",
+                        "raced-dedupe-key", "unread", "none",
+                        "2026-08-30T09:00:00+00:00", "2026-08-30T09:00:00+00:00",
+                    ),
+                )
+                side_conn.commit()
+            finally:
+                side_conn.close()
+
+        conn.set_trace_callback(_on_statement)
+        return conn
+
+    with mock.patch.object(
+        ScheduledTasksDB, "_get_connection", _get_connection_with_injector
+    ):
+        counts = db.upsert_automation_results_from_server(
+            "server:42",
+            [_result_item(review_state="read", reviewed_by="user:42")],
+        )
+
+    assert injected["done"], "the spy never saw the expected INSERT -- test setup is stale"
+    # Our INSERT lost the race (IntegrityError) but recovered: no raise,
+    # no dedupe_key miscount, and the review fields from our item applied
+    # onto the row the race was lost to.
+    assert counts == {"inserted": 0, "updated": 1, "skipped_dedupe": 0}
+    rows = db.list_automation_results("server:42")
+    assert len(rows) == 1
+    assert rows[0]["id"] == "raced-in-row"
+    assert rows[0]["review_state"] == "read"
+    assert rows[0]["reviewed_by"] == "user:42"
+
+
+def test_list_automation_results_owner_none_spans_all_owners(tmp_path):
+    db = _mk_db(tmp_path)
+    db.create_automation_result("owner-a", "d1", "r1", "finding", "A", "S", "key-a")
+    db.create_automation_result("owner-b", "d1", "r2", "finding", "B", "S", "key-b")
+
+    rows = db.list_automation_results(None)
+    assert {row["owner_id"] for row in rows} == {"owner-a", "owner-b"}
+    assert len(rows) == 2
+
+
+def test_count_unread_results_owner_none_spans_all_owners(tmp_path):
+    db = _mk_db(tmp_path)
+    rid = db.create_automation_result("owner-a", "d1", "r1", "finding", "A", "S", "key-a")
+    db.create_automation_result("owner-b", "d1", "r2", "finding", "B", "S", "key-b")
+    assert db.count_unread_results(None) == 2
+
+    db.update_result_review(rid, "read")
+    assert db.count_unread_results(None) == 1
+    assert db.count_unread_results("owner-b") == 1
+
+
+def test_list_automation_results_orders_mixed_offset_timestamps_correctly(tmp_path):
+    """The parked F7 fix: server-mirrored rows copy ``created_at`` verbatim
+    (see ``upsert_automation_results_from_server``'s insert path, and
+    ``_serialize_result_fields``'s docstring on why it's an unenforced
+    assumption that they arrive UTC). A ``+05:00``-offset timestamp is
+    lexically GREATER than the same clock-digits with a ``+00:00`` offset
+    (the character after the ``+`` compares ``'5' > '0'``), even though
+    the true UTC instant it names is 5 hours EARLIER. Plain string
+    ``ORDER BY created_at DESC`` would put that row first; casting through
+    ``datetime(created_at)`` compares the real instants instead.
+    """
+    db = _mk_db(tmp_path)
+    counts_true_later = db.upsert_automation_results_from_server(
+        "owner-a",
+        [_result_item(
+            id="srv-true-later", dedupe_key="key-true-later",
+            # 2026-08-30T09:00:00 UTC -- the later instant.
+            created_at="2026-08-30T09:00:00+00:00",
+            updated_at="2026-08-30T09:00:00+00:00",
+        )],
+    )
+    counts_true_earlier = db.upsert_automation_results_from_server(
+        "owner-a",
+        [_result_item(
+            id="srv-true-earlier", dedupe_key="key-true-earlier",
+            # 2026-08-30T04:00:00 UTC -- genuinely EARLIER than the row
+            # above, but its raw string is lexically greater ("+05:00" >
+            # "+00:00" after identical clock digits), so string DESC
+            # would rank it first.
+            created_at="2026-08-30T09:00:00+05:00",
+            updated_at="2026-08-30T09:00:00+05:00",
+        )],
+    )
+    assert counts_true_later == {"inserted": 1, "updated": 0, "skipped_dedupe": 0}
+    assert counts_true_earlier == {"inserted": 1, "updated": 0, "skipped_dedupe": 0}
+
+    rows = db.list_automation_results("owner-a")
+    # True UTC order (newest first): the 09:00 UTC row, then the 04:00
+    # UTC row -- the opposite of what raw string DESC would produce.
+    assert [row["server_id"] for row in rows] == ["srv-true-later", "srv-true-earlier"]
 
 
 def test_get_pending_mutation_for_local_id_returns_newest_across_owners(tmp_path):

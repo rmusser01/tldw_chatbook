@@ -52,7 +52,7 @@ IN_FLIGHT_TRANSFER_STATES = ("to_server_pending", *DORMANT_TRANSFER_STATES)
 class ScheduledTasksDB(BaseDB):
     """Database operations for scheduled tasks and reminders."""
 
-    _CURRENT_SCHEMA_VERSION = 6
+    _CURRENT_SCHEMA_VERSION = 7
 
     #: Defensive cap on `list_armable_automation_definitions` -- mirrors the
     #: Automations tab's `AUTOMATIONS_LOAD_MAX_ROWS` cap-500 precedent
@@ -254,7 +254,7 @@ class ScheduledTasksDB(BaseDB):
         """
         if self._schema_is_current():
             # Warm-boot fast path (ADR-097 boot ratchet): a fully-migrated
-            # file DB skips importing the four migration modules entirely,
+            # file DB skips importing any of the migration modules entirely,
             # keeping them out of the `_ui_ready` module census on every
             # boot after the first. Only a PROOF of completeness skips --
             # any probe failure (missing table on a fresh or `:memory:`
@@ -281,6 +281,9 @@ class ScheduledTasksDB(BaseDB):
         from tldw_chatbook.Scheduling.db.migrations.v5_to_v6 import (
             migrate as migrate_v5_to_v6,
         )
+        from tldw_chatbook.Scheduling.db.migrations.v6_to_v7 import (
+            migrate as migrate_v6_to_v7,
+        )
 
         migrate_v0_to_v1(self)
         migrate_v1_to_v2(self)
@@ -288,6 +291,7 @@ class ScheduledTasksDB(BaseDB):
         migrate_v3_to_v4(self)
         migrate_v4_to_v5(self)
         migrate_v5_to_v6(self)
+        migrate_v6_to_v7(self)
 
     def _schema_is_current(self) -> bool:
         """Return True when the recorded version proves the chain already ran.
@@ -2299,19 +2303,31 @@ class ScheduledTasksDB(BaseDB):
 
     def list_automation_results(
         self,
-        owner_id: str,
+        owner_id: str | None,
         review_state: str | None = None,
         definition_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """List automation results for an owner, newest first.
+        """List automation results, newest first.
 
-        Optionally filtered by ``review_state`` and/or ``definition_id``;
-        paginated via ``limit``/``offset``.
+        ``owner_id=None`` lists across every owner (e.g. a single-user
+        local+server inbox); otherwise scoped to that one owner. Optionally
+        filtered by ``review_state`` and/or ``definition_id``; paginated
+        via ``limit``/``offset``.
+
+        Ordered by ``datetime(created_at)`` rather than a raw string
+        comparison: server-mirrored rows copy ``created_at`` verbatim from
+        the server payload (see ``upsert_automation_results_from_server``),
+        so a mix of offset formats between locally-created and mirrored
+        rows would otherwise sort wrong under plain string ``ORDER BY``.
         """
-        conditions = ["owner_id = ?"]
-        params: list[Any] = [owner_id]
+        conditions: list[str] = []
+        params: list[Any] = []
+
+        if owner_id is not None:
+            conditions.append("owner_id = ?")
+            params.append(owner_id)
 
         if review_state is not None:
             conditions.append("review_state = ?")
@@ -2321,26 +2337,34 @@ class ScheduledTasksDB(BaseDB):
             conditions.append("definition_id = ?")
             params.append(definition_id)
 
-        where_clause = f"WHERE {' AND '.join(conditions)}"
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         params.extend([limit, offset])
 
         with closing(self._get_connection()) as conn:
             cursor = conn.execute(
                 f"SELECT * FROM automation_results {where_clause} "
-                "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                "ORDER BY datetime(created_at) DESC, id DESC LIMIT ? OFFSET ?",
                 params,
             )
             return self._rows_to_dicts(
                 cursor.fetchall(), json_fields=self._AUTOMATION_RESULT_JSON_FIELDS
             )
 
-    def count_unread_results(self, owner_id: str) -> int:
-        """Count unread results for an owner (spec §4's inbox badge)."""
+    def count_unread_results(self, owner_id: str | None) -> int:
+        """Count unread results (spec §4's inbox badge).
+
+        ``owner_id=None`` counts across every owner, matching
+        ``list_automation_results``'s all-owners mode.
+        """
+        conditions = ["review_state = 'unread'"]
+        params: list[Any] = []
+        if owner_id is not None:
+            conditions.append("owner_id = ?")
+            params.append(owner_id)
         with closing(self._get_connection()) as conn:
             cursor = conn.execute(
-                "SELECT COUNT(*) FROM automation_results "
-                "WHERE owner_id = ? AND review_state = 'unread'",
-                (owner_id,),
+                f"SELECT COUNT(*) FROM automation_results WHERE {' AND '.join(conditions)}",
+                params,
             )
             row = cursor.fetchone()
             return int(row[0]) if row else 0
@@ -2659,6 +2683,16 @@ class ScheduledTasksDB(BaseDB):
         then immediately echoes different data back on pull) -- not
         something a client-side guard can detect.
 
+        Task 1 (v7 partial UNIQUE index on ``(owner_id, server_id) WHERE
+        server_id IS NOT NULL``): two overlapping pulls (e.g. a manual
+        sync and a notification-triggered sync racing) can both read this
+        row as absent and both attempt the insert. The loser's INSERT now
+        raises ``IntegrityError`` against that index instead of silently
+        creating a duplicate row -- caught below and routed into the same
+        update-or-skip path the "existing" branch takes (re-fetching the
+        row the race was lost to), not re-raised and not miscounted as a
+        ``dedupe_key`` collision.
+
         Returns:
             ``{"inserted": n, "updated": n, "skipped_dedupe": n}``.
         """
@@ -2709,53 +2743,94 @@ class ScheduledTasksDB(BaseDB):
                             list(serialized.values()),
                         )
                     except sqlite3.IntegrityError as exc:
-                        if "UNIQUE constraint failed" not in str(exc):
+                        message = str(exc)
+                        if "UNIQUE constraint failed" not in message:
                             raise
+                        if "automation_results.server_id" in message:
+                            # Double-pull race (see docstring): another
+                            # writer inserted this exact server row
+                            # between our SELECT miss and this INSERT.
+                            # Re-fetch and fall into the normal
+                            # update-or-skip path below instead of
+                            # raising or double-counting it as a
+                            # dedupe_key collision.
+                            raced_row = conn.execute(
+                                "SELECT id FROM automation_results "
+                                "WHERE owner_id = ? AND server_id = ?",
+                                (owner_id, server_id),
+                            ).fetchone()
+                            if raced_row is not None and self._apply_result_review_update(
+                                conn, owner_id, raced_row["id"], server_id, item,
+                                skip_review_server_ids,
+                            ):
+                                updated += 1
+                            continue
                         # (owner_id, dedupe_key) collided with a
                         # locally-created row -- skip, don't overwrite it.
                         skipped_dedupe += 1
                         continue
                     inserted += 1
                 else:
-                    if server_id in skip_review_server_ids:
-                        # Guard 2 (pushed-this-cycle): just replayed by
-                        # this same sync's pushback phase -- see the
-                        # design comment on this method.
-                        continue
-                    has_pending_review = conn.execute(
-                        """
-                        SELECT 1 FROM pending_mutations
-                        WHERE local_id = ? AND primitive = ? AND owner_id = ?
-                        LIMIT 1
-                        """,
-                        (existing["id"], self._RESULT_REVIEW_PRIMITIVE, owner_id),
-                    ).fetchone()
-                    if has_pending_review is not None:
-                        # Guard 1 (pending-mutation): checked here, inside
-                        # this row's own write transaction, not via a
-                        # snapshot taken before the loop started -- see
-                        # the design comment on this method.
-                        continue
-                    review_fields = {
-                        key: item[key]
-                        for key in self._AUTOMATION_RESULT_REVIEW_FIELDS
-                        if key in item
-                    }
-                    if not review_fields:
-                        continue
-                    serialized = self._serialize_result_fields(review_fields)
-                    self._validate_sql_identifiers(list(serialized.keys()))
-                    updates = ", ".join(f"{key} = ?" for key in serialized)
-                    conn.execute(
-                        f"UPDATE automation_results SET {updates} WHERE id = ?",
-                        [*serialized.values(), existing["id"]],
-                    )
-                    updated += 1
+                    if self._apply_result_review_update(
+                        conn, owner_id, existing["id"], server_id, item,
+                        skip_review_server_ids,
+                    ):
+                        updated += 1
         return {
             "inserted": inserted,
             "updated": updated,
             "skipped_dedupe": skipped_dedupe,
         }
+
+    def _apply_result_review_update(
+        self,
+        conn: sqlite3.Connection,
+        owner_id: str,
+        existing_id: str,
+        server_id: str,
+        item: dict[str, Any],
+        skip_review_server_ids: frozenset[str],
+    ) -> bool:
+        """Update ``existing_id``'s review fields from ``item``, if allowed.
+
+        Shared by ``upsert_automation_results_from_server``'s normal
+        "row already present" branch and its double-pull race recovery --
+        same two TOCTOU guards (see that method's docstring) in both
+        cases. Returns whether a write actually happened.
+        """
+        if server_id in skip_review_server_ids:
+            # Guard 2 (pushed-this-cycle): just replayed by this same
+            # sync's pushback phase -- see the design comment on the
+            # caller.
+            return False
+        has_pending_review = conn.execute(
+            """
+            SELECT 1 FROM pending_mutations
+            WHERE local_id = ? AND primitive = ? AND owner_id = ?
+            LIMIT 1
+            """,
+            (existing_id, self._RESULT_REVIEW_PRIMITIVE, owner_id),
+        ).fetchone()
+        if has_pending_review is not None:
+            # Guard 1 (pending-mutation): checked here, inside this row's
+            # own write transaction -- see the design comment on the
+            # caller.
+            return False
+        review_fields = {
+            key: item[key]
+            for key in self._AUTOMATION_RESULT_REVIEW_FIELDS
+            if key in item
+        }
+        if not review_fields:
+            return False
+        serialized = self._serialize_result_fields(review_fields)
+        self._validate_sql_identifiers(list(serialized.keys()))
+        updates = ", ".join(f"{key} = ?" for key in serialized)
+        conn.execute(
+            f"UPDATE automation_results SET {updates} WHERE id = ?",
+            [*serialized.values(), existing_id],
+        )
+        return True
 
     def _serialize_result_fields(self, fields: dict[str, Any]) -> dict[str, Any]:
         """Apply the same JSON conversion `create_automation_result` uses.

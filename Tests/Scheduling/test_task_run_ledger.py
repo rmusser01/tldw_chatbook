@@ -19,8 +19,10 @@ def db(tmp_path):
 
 
 def test_migration_lands_on_version_5(db):
-    # v4 = run ledger (this task), v5 = incidents (TASK-26027)
-    assert db.get_schema_version() == 6
+    # v4 = run ledger (this task), v5 = incidents (TASK-26027), v6 =
+    # incidents table (TASK-26027), v7 = automation_results server_id
+    # unique index (schedules-handoff PR-6 task 1)
+    assert db.get_schema_version() == 7
 
 
 def test_begin_and_finish_records_a_terminal_run(db):

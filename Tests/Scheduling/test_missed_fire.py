@@ -76,8 +76,9 @@ def test_schema_v2_adds_missed_count(db):
     # The full chain now reaches v4 (v2 = missed_count here; v3 =
     # Full chain: v0..v3 as before; v4 = automation runs/results
     # (schedules-handoff §4, dev); v5 = scheduled_task_runs ledger
-    # (task-26026); v6 = task_incidents (task-26027).
-    assert db.get_schema_version() == 6
+    # (task-26026); v6 = task_incidents (task-26027);
+    # v7 = automation_results server_id unique index (schedules-handoff PR-6 task 1).
+    assert db.get_schema_version() == 7
     with db._get_connection() as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(reminder_tasks)")}
     assert "missed_count" in columns
@@ -96,8 +97,9 @@ def test_migration_v1_to_v2_preserves_rows(tmp_path):
     v1_to_v2.migrate(database)
     # Full chain: v0..v3 as before; v4 = automation runs/results
     # (schedules-handoff §4, dev); v5 = scheduled_task_runs ledger
-    # (task-26026); v6 = task_incidents (task-26027).
-    assert database.get_schema_version() == 6
+    # (task-26026); v6 = task_incidents (task-26027);
+    # v7 = automation_results server_id unique index (schedules-handoff PR-6 task 1).
+    assert database.get_schema_version() == 7
     row = database.get_reminder_task(task_id)
     assert row["title"] == "pre-migration"
     assert row["missed_count"] == 0
