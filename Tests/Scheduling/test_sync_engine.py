@@ -1169,7 +1169,10 @@ async def test_sync_now_replays_definition_create_and_dedupes_same_cycle_pull(tm
             "definition_payload": {
                 "family": "recurring_question",
                 "name": "Daily digest",
-                "schedule": {"kind": "cron", "expression": "0 9 * * 1-5"},
+                # Client vocabulary (schedule_compute.py): `every_seconds`,
+                # not the server's `seconds` -- the push must translate
+                # this onto the wire (schedule_vocabulary.py, task 3).
+                "schedule": {"kind": "interval", "every_seconds": 3600},
             },
             "server_definition_id": None,
         },
@@ -1199,6 +1202,9 @@ async def test_sync_now_replays_definition_create_and_dedupes_same_cycle_pull(tm
     request = server_client.preview_automation_definition.await_args.args[0]
     assert request["mode"] == "create"
     assert "definition_id" not in request
+    assert request["schedule"] == {"kind": "interval", "seconds": 3600}, (
+        "schedule must be translated to server vocabulary on the wire"
+    )
     server_client.create_automation_definition.assert_awaited_once_with(
         "prev-1", initial_lifecycle="configured"
     )
@@ -1236,7 +1242,10 @@ async def test_sync_now_definition_create_orphan_clears_mutation_and_reports_bot
             "definition_payload": {
                 "family": "recurring_question",
                 "name": "Daily digest",
-                "schedule": {"kind": "cron", "expression": "0 9 * * 1-5"},
+                # Client vocabulary (schedule_compute.py): `time_of_day`,
+                # not the server's `at` -- the push must translate this
+                # onto the wire (schedule_vocabulary.py, task 3).
+                "schedule": {"kind": "daily", "time_of_day": "09:00"},
             },
             "server_definition_id": None,
         },
@@ -1263,6 +1272,10 @@ async def test_sync_now_definition_create_orphan_clears_mutation_and_reports_bot
     outcome = await engine.sync_now()
 
     assert outcome.status == "ok"
+    request = server_client.preview_automation_definition.await_args.args[0]
+    assert request["schedule"] == {"kind": "daily", "at": "09:00"}, (
+        "schedule must be translated to server vocabulary on the wire"
+    )
     assert (
         db.get_pending_mutations("server:1", primitive="automation_definition") == []
     ), "replaying would create a duplicate server definition"

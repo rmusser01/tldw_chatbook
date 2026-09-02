@@ -9,6 +9,7 @@ from typing import Any
 from loguru import logger
 
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+from tldw_chatbook.Scheduling.schedule_vocabulary import to_server_schedule
 from tldw_chatbook.Scheduling.services.server_client import (
     SchedulingServerClient,
     ServerClientError,
@@ -600,6 +601,13 @@ class SyncEngine:
         # update-shaped payload before this offline/404 conversion.
         request.pop("definition_id", None)
         request.pop("definition_version", None)
+        # Locally authored/previewed schedules are in CLIENT vocabulary
+        # (schedule_compute.py); the server's own preview only validates
+        # `kind`, so an untranslated payload would pass preview and then
+        # silently never arm server-side (schedule_vocabulary.py).
+        schedule = request.get("schedule")
+        if isinstance(schedule, dict):
+            request["schedule"] = to_server_schedule(schedule)
 
         assert self.server_client is not None
         preview = await self.server_client.preview_automation_definition(request)
@@ -644,6 +652,9 @@ class SyncEngine:
         request = dict(definition_payload)
         request["mode"] = "update"
         request["definition_id"] = server_definition_id
+        schedule = request.get("schedule")
+        if isinstance(schedule, dict):
+            request["schedule"] = to_server_schedule(schedule)
 
         assert self.server_client is not None
         try:
