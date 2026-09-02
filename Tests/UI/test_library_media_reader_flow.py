@@ -93,7 +93,15 @@ def _row_identity(row: Button) -> tuple[str, int, str]:
 
 
 @pytest.mark.asyncio
-async def test_media_global_f6_reaches_permanent_work_region() -> None:
+async def test_media_global_f6_reaches_content_scroller() -> None:
+    """task-28003: F6 into the Reader lands on the scrollable content.
+
+    Before this, the Reader pane's only F6 target was the Find button, so
+    the content ScrollView (VirtualizedRawContent, can_focus) was reachable
+    by mouse click alone -- keyboard scroll was dead on a fresh open
+    (live-verified 2026-09-02). The content scroller is now the first F6
+    candidate; Find stays reachable via "/".
+    """
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items(3))
     host = LibraryGlobalKeyProductionCSSHarness(app)
@@ -101,13 +109,17 @@ async def test_media_global_f6_reaches_permanent_work_region() -> None:
     async with host.run_test(size=WIDE_SIZE) as pilot:
         screen = await _open_media_list(host, pilot)
         screen.query_one("#library-media-row-0", Button).press()
-        find = await _wait_for_selector(screen, pilot, "#library-media-reader-find")
+        await _wait_for_selector(screen, pilot, "#library-media-reader-find")
+        content = await _wait_for_selector(
+            screen, pilot, "#library-media-viewer-content-text"
+        )
+        assert content.can_focus  # scroll keys have somewhere to land
         rail = screen.query_one("#library-search-input", Input)
         items = screen.query_one("#library-media-filter", Input)
         rail.focus()
         await pilot.pause()
 
-        for expected in (items, find, rail):
+        for expected in (items, content, rail):
             await pilot.press("f6")
             await pilot.pause()
             assert screen.focused is expected

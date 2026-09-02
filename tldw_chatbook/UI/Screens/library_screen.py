@@ -2655,7 +2655,15 @@ class LibraryScreen(BaseAppScreen):
         WorkbenchPaneTarget("library-canvas", ("library-media-filter",)),
         WorkbenchPaneTarget(
             "library-media-viewer",
-            ("library-media-reader-find", "library-media-back"),
+            # task-28003: the scrollable content is the first F6 target so
+            # a fresh open has a keyboard scroll path (the raw ScrollView is
+            # focusable). It exists only in Read mode; other modes fall
+            # through to Find, which "/" also reaches.
+            (
+                "library-media-viewer-content-text",
+                "library-media-reader-find",
+                "library-media-back",
+            ),
         ),
     )
     _NOTES_WORKBENCH_FOCUS_TARGETS = (
