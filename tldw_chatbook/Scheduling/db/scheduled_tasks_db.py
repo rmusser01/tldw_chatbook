@@ -1274,11 +1274,23 @@ class ScheduledTasksDB(BaseDB):
 
         The transfer machine's transitions (§6.1/§6.2) must be race-safe
         against a concurrent sync push and a concurrent UI cancel/retry
-        both touching the same row's ``transfer_state`` -- so the current
-        value is read and the new value written inside ONE transaction
-        (SQLite's transaction isolation serializes the read-then-write;
-        two racing callers can't both observe the pre-transition state and
-        both "succeed").
+        both touching the same row's ``transfer_state`` -- so this is ONE
+        guarded ``UPDATE ... WHERE id = ? AND (<expected-state guard>)``,
+        never a separate SELECT-then-UPDATE: a plain ``SELECT`` takes no
+        lock under Python's ``sqlite3`` default isolation (no implicit
+        ``BEGIN`` before a read), so a read-then-write pair across two
+        statements is NOT serialized against a second connection racing
+        the same row -- two callers could each read the pre-transition
+        state before either writes, and both would then "succeed",
+        the second silently clobbering the first (fix-round-1 finding,
+        reproduced by `test_set_transfer_state_concurrent_callers_do_not_
+        both_succeed`). Folding the state check into the UPDATE's own
+        WHERE clause makes the check-and-write a single statement, which
+        SQLite's writer lock always runs atomically against other
+        connections: whichever caller's UPDATE actually executes first
+        wins and commits; a second caller's UPDATE then finds the WHERE
+        no longer matches (the row already changed), so its
+        ``rowcount`` is 0 and it correctly returns ``False``.
 
         Deliberately does NOT bump `automation_definitions.version` --
         same ``bump_version=False`` precedent `update_automation_
@@ -1307,15 +1319,29 @@ class ScheduledTasksDB(BaseDB):
         if table is None:
             raise ValueError(f"Unknown table_kind for transfer_state: {table_kind!r}")
 
+        # Build the expected-state guard as part of the UPDATE's WHERE,
+        # not a separate read: `IN (...)` never matches NULL in SQL, so
+        # a `None` in `expected` needs its own `IS NULL` branch alongside
+        # the `IN (...)` branch for any non-NULL expected values.
+        non_null_expected = [value for value in expected if value is not None]
+        guard_clauses: list[str] = []
+        params: list[Any] = [state, self._to_utc_iso(datetime.now(timezone.utc)), row_id]
+        if None in expected:
+            guard_clauses.append("transfer_state IS NULL")
+        if non_null_expected:
+            placeholders = ", ".join("?" for _ in non_null_expected)
+            guard_clauses.append(f"transfer_state IN ({placeholders})")
+            params.extend(non_null_expected)
+        if not guard_clauses:
+            # Nothing in `expected` -- no live state can ever satisfy an
+            # empty set, so refuse without touching the DB.
+            return False
+
         with self.transaction() as conn:
-            row = conn.execute(
-                f"SELECT transfer_state FROM {table} WHERE id = ?", (row_id,)
-            ).fetchone()
-            if row is None or row["transfer_state"] not in expected:
-                return False
             cursor = conn.execute(
-                f"UPDATE {table} SET transfer_state = ?, updated_at = ? WHERE id = ?",
-                (state, self._to_utc_iso(datetime.now(timezone.utc)), row_id),
+                f"UPDATE {table} SET transfer_state = ?, updated_at = ? "
+                f"WHERE id = ? AND ({' OR '.join(guard_clauses)})",
+                params,
             )
             return cursor.rowcount > 0
 

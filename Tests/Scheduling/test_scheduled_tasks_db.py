@@ -761,6 +761,80 @@ def test_clear_transfer_state_is_set_transfer_state_none_sugar(
     assert rejected is False
 
 
+def test_set_transfer_state_concurrent_callers_do_not_both_succeed(tmp_path) -> None:
+    """Genuine two-connection race (fix-round-1 finding): the pre-fix
+    read-then-write implementation let two real callers both observe the
+    pre-transition state and both commit, the second silently clobbering
+    the first. Modeled on the repo's existing TOCTOU-race technique
+    (test_upsert_results_pending_mutation_recorded_mid_loop_still_blocks_
+    update, above): `set_trace_callback` injects a second real connection's
+    FULL `set_transfer_state` call at the exact moment the first call's
+    guarded UPDATE is about to run -- i.e. after the first call has
+    already decided the row is eligible but before either write lands --
+    which is the only way to force two callers' "current state" reads to
+    both land before either write in a single-threaded test.
+
+    The fixed implementation is one guarded `UPDATE ... WHERE id = ? AND
+    (transfer_state ...)`: whichever caller's UPDATE actually runs first
+    wins (SQLite's writer lock makes a single UPDATE statement atomic
+    against other writers) and commits; the second caller's UPDATE no
+    longer matches the WHERE guard (the row already changed), so its
+    `rowcount` is 0 and it returns False. Exactly one of the two racing
+    calls succeeds, and the persisted value is always the WINNER's --
+    never silently overwritten by a loser that also reported success.
+    """
+    db_path = tmp_path / "race.db"
+    db = ScheduledTasksDB(str(db_path))
+    def_id = db.create_automation_definition(
+        owner_id="local", family="recurring_question", name="Race target"
+    )
+
+    results: dict[str, bool] = {}
+    injected = {"done": False}
+    real_get_connection = ScheduledTasksDB._get_connection
+
+    def _get_connection_with_injector(self):
+        conn = real_get_connection(self)
+
+        def _on_statement(sql):
+            if injected["done"] or "UPDATE automation_definitions SET transfer_state" not in sql:
+                return
+            injected["done"] = True
+            # A second real connection races in right as the first call's
+            # UPDATE is about to run -- before it has committed -- and
+            # completes its own full set_transfer_state call first.
+            side_db = ScheduledTasksDB(str(db_path))
+            try:
+                results["second"] = side_db.set_transfer_state(
+                    "automation_definition", def_id, "to_server_sent",
+                    expected=(None,),
+                )
+            finally:
+                side_db.close()
+
+        conn.set_trace_callback(_on_statement)
+        return conn
+
+    with mock.patch.object(
+        ScheduledTasksDB, "_get_connection", _get_connection_with_injector
+    ):
+        results["first"] = db.set_transfer_state(
+            "automation_definition", def_id, "to_server_pending", expected=(None,)
+        )
+
+    assert injected["done"], "the spy never saw the expected UPDATE -- test setup is stale"
+    # Exactly one of the two racing callers succeeds -- never both.
+    assert results["first"] != results["second"]
+
+    # The persisted value is the WINNER's -- never silently overwritten by
+    # a loser that also reported success.
+    final_state = db.get_automation_definition(def_id)["transfer_state"]
+    if results["first"]:
+        assert final_state == "to_server_pending"
+    else:
+        assert final_state == "to_server_sent"
+
+
 def test_update_automation_definition(db: ScheduledTasksDB) -> None:
     schedule = {"kind": "cron", "expression": "0 9 * * *"}
     def_id = db.create_automation_definition(
