@@ -1,4 +1,4 @@
-# ADR-1XX: Per-task schedule ownership transfer, local recurring_question execution, and results sync-down
+# ADR-112: Per-task schedule ownership transfer, local recurring_question execution, and results sync-down
 
 Status: Proposed
 Date: 2026-09-02
