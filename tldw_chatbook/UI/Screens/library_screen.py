@@ -42818,7 +42818,11 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, ".library-media-reader-mode")
     def handle_library_media_reader_mode(self, event: Button.Pressed) -> None:
-        """Select one permanent Reader mode without reloading the item."""
+        """Select one permanent Reader mode without reloading the item.
+
+        Args:
+            event: The Reader mode button press; its id names the target mode.
+        """
         event.stop()
         button_id = str(event.button.id or "")
         prefix = "library-media-reader-select-"
@@ -42828,13 +42832,7 @@ class LibraryScreen(BaseAppScreen):
         self._capture_library_media_loaded_progress()
         if mode == "read":
             self._library_media_progress_restored_id = None
-        # task-28026: each tab searches its own corpus, so a tab switch drops
-        # the active query rather than carrying its highlights (and a stale
-        # match index) onto the other tab's text.
-        if mode != self._library_media_reader_session.mode:
-            self._library_media_content_query = ""
-            self._library_media_content_match_index = 0
-            self._library_media_content_match_memo = None
+        self._reset_library_media_search_on_mode_change(mode)
         self._library_media_reader_session = set_mode(
             self._library_media_reader_session,
             mode,  # type: ignore[arg-type]
@@ -42847,6 +42845,24 @@ class LibraryScreen(BaseAppScreen):
                     self._restore_library_media_loaded_progress, loaded_id
                 )
 
+    def _reset_library_media_search_on_mode_change(self, new_mode: str) -> None:
+        """Drop the in-item search when the Reader actually changes tab.
+
+        task-28026: each Reader tab searches its own corpus (the analysis
+        text vs the transcript), so a real mode transition clears the active
+        query, its match index, and the one-slot match memo rather than
+        carrying one tab's highlights -- and a possibly out-of-range match
+        index -- onto the other tab's text. A no-op re-press of the current
+        mode leaves the search intact.
+
+        Args:
+            new_mode: The Reader mode being switched to.
+        """
+        if new_mode != self._library_media_reader_session.mode:
+            self._library_media_content_query = ""
+            self._library_media_content_match_index = 0
+            self._library_media_content_match_memo = None
+
     def _capture_library_media_loaded_progress(self) -> None:
         """Snapshot and queue persistence of the local content body's offset.
 
@@ -42858,8 +42874,13 @@ class LibraryScreen(BaseAppScreen):
         """
         session = self._library_media_reader_session
         loaded_id = session.loaded_id
+        # task-28026: only the Read tab's content body carries transcript
+        # reading progress. The Analysis tab reuses the same
+        # #library-media-viewer-content id, so a capture taken in any other
+        # mode would persist an unrelated scroll offset as transcript progress.
         if (
             session.external_detail
+            or session.mode != "read"
             or loaded_id is None
             or not loaded_id.startswith("local:media:")
         ):
@@ -42992,8 +43013,16 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-media-reader-find")
     def handle_library_media_reader_find(self, event: Button.Pressed) -> None:
-        """Take Find to the loaded item's content body."""
+        """Take Find to the loaded item's content body.
+
+        Args:
+            event: The Find button press.
+        """
         event.stop()
+        # task-28026: Find is a real Analysis->Read transition too, so it
+        # clears any active analysis search before focusing the transcript
+        # find bar -- the same reset the Reader mode buttons apply.
+        self._reset_library_media_search_on_mode_change("read")
         self._library_media_reader_session = set_mode(
             self._library_media_reader_session, "read"
         )

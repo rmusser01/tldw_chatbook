@@ -1368,6 +1368,109 @@ async def test_offset_burst_settles_only_the_newest_value_per_item():
     assert fake._library_media_progress_persisted_offsets["local:media:3"] == (0, 17)
 
 
+@pytest.mark.asyncio
+async def test_capture_outside_read_never_persists_the_analysis_body_offset():
+    """task-28026: the Analysis body reuses ``#library-media-viewer-content``,
+    so capturing progress while a non-Read tab is active must NOT record that
+    scroll offset as the transcript's reading progress."""
+    calls = []
+
+    async def update_reading_progress(**kwargs):
+        calls.append(kwargs)
+
+    async def run_service_call(call, *args, **kwargs):
+        kwargs.pop("isolate_in_worker", None)
+        return await call(*args, **kwargs)
+
+    workers: list = []
+    fake = _progress_capture_fake(
+        workers=workers,
+        update_reading_progress=update_reading_progress,
+        run_service_call=run_service_call,
+        scroll_y=42,
+    )
+    fake._library_media_reader_session = set_mode(
+        fake._library_media_reader_session, "analysis"
+    )
+
+    LibraryScreen._capture_library_media_loaded_progress(fake)
+
+    assert workers == []
+    assert calls == []
+    assert fake._library_media_read_scroll_by_id == {}
+
+
+def test_find_from_analysis_clears_the_search_before_reading_the_transcript():
+    """task-28026: the always-visible Find action switches Analysis->Read, so
+    it must drop the analysis query/index/memo the same way the mode buttons
+    do -- otherwise a stale, possibly out-of-range match index scans the
+    transcript."""
+    session = set_mode(
+        LibraryMediaReaderSessionState(
+            selected_id="local:media:1",
+            selected_backing_id=1,
+            selected_title="A",
+            loaded_id="local:media:1",
+            loaded_backing_id=1,
+            loaded_title="A",
+        ),
+        "analysis",
+    )
+    fake = SimpleNamespace(
+        _library_media_reader_session=session,
+        _library_media_content_query="needle",
+        _library_media_content_match_index=5,
+        _library_media_content_match_memo=(object(), "needle", (1, 2, 3), "analysis"),
+        _sync_library_media_viewer_or_recompose=lambda: None,
+        call_after_refresh=lambda *a, **k: None,
+        _focus_library_media_content_search_input=lambda: None,
+    )
+    fake._reset_library_media_search_on_mode_change = MethodType(
+        LibraryScreen._reset_library_media_search_on_mode_change, fake
+    )
+
+    LibraryScreen.handle_library_media_reader_find(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+
+    assert fake._library_media_reader_session.mode == "read"
+    assert fake._library_media_content_query == ""
+    assert fake._library_media_content_match_index == 0
+    assert fake._library_media_content_match_memo is None
+
+
+def test_media_content_matches_scopes_corpus_to_the_active_reader_mode():
+    """task-28026: the match memo key includes reader mode, so the Analysis
+    tab searches the analysis text and Read searches the transcript -- a tab
+    switch never serves the other tab's matches from the one-slot memo."""
+    detail = {"id": 1}
+    state = SimpleNamespace(
+        content="alpha\nbeta\nalpha",
+        analysis="gamma\nalpha\ndelta",
+    )
+    fake = SimpleNamespace(
+        _library_media_detail=detail,
+        _library_media_content_query="alpha",
+        _library_media_content_match_memo=None,
+        _library_media_reader_session=LibraryMediaReaderSessionState(),
+        _library_media_viewer_state_cached=lambda _detail: state,
+    )
+
+    # Read tab -> transcript corpus ("alpha" on lines 0 and 2).
+    assert LibraryScreen._library_media_content_matches(fake) == (0, 2)
+    memo_after_read = fake._library_media_content_match_memo
+    assert memo_after_read is not None and memo_after_read[3] == "read"
+
+    # Same detail + query, Analysis tab: the memo must MISS on the mode and
+    # rescan the analysis text ("alpha" on line 1), not serve the cached
+    # transcript matches.
+    fake._library_media_reader_session = set_mode(
+        fake._library_media_reader_session, "analysis"
+    )
+    assert LibraryScreen._library_media_content_matches(fake) == (1,)
+    assert fake._library_media_content_match_memo[3] == "analysis"
+
+
 def test_capture_matching_fetched_progress_skips_the_write():
     """TASK-22210 probe: an offset already in the DB never re-writes."""
     workers: list = []
