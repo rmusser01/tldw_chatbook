@@ -73,13 +73,22 @@ pytest task-ID guard.
   `a003aee74e01c2729136e244474f1fac08a06ae9ee9331752f56d1bfbffe9e79`,
   `6d7559449c35cd6db3dca31dbbdb510efbb45d1dc0a96c4f01f59c6a8461403b`,
   and `4a08b6a5a9a8b12926ab9417bc330a4e94eb60c3b4afe88226ef232e2653a17a`.
-- Current post-failure/Task 7 materializer and allocator SHA-256 values are
-  `353160bc073aef50dfcf51f55bd18e261c58e91147db9df30a6e3d0d0f5a2977` and
-  `2e456e41bdd2b4f357d181a32b91efdfd07060c33a8f23cc1622d3ef8a4bd432`.
+- Current post-review checker, renderer, materializer, and allocator SHA-256 values
+  are `90fe803f28d783feae839b6078ed3244a5881aa62e4f65facfa2a53434bb7ccc`,
+  `a59bcb7c647927f47e9b858bdcb4329f283f8273138f9ef227381707e6a2ea8e`,
+  `3804046bd5692ef8ac833193cae84cfc8a4f3c05b4ddd86dad463a547c50931d`,
+  and `2e456e41bdd2b4f357d181a32b91efdfd07060c33a8f23cc1622d3ef8a4bd432`.
 - After Task 5, the canonical manifest contains 83 cleanup records with contiguous
   IDs `TASK-26933` through `TASK-27015`; `TASK-27015` is the final record. Its
-  post-record SHA-256 is
+  original post-record SHA-256 is
   `ded7288d8580367842110dd1a9e79976dc9c00663361251bb9212ca717cea0b9`.
+- Qodo review correction (2026-09-01): `TASK-27015` now requires Git to report no
+  untracked files before the `.`-scoped Ruff gate. Its task SHA-256 is
+  `c36d021037aad553df21ba3efee6fdd59159b718d862cfd4e6535e59bb1d0160`,
+  and the current canonical manifest SHA-256 is
+  `eadbbabc7e6ba9910ebe086702d2c3ebc9a2b4d97b9a8031f5abff6a96ed75e3`.
+  The authenticated renderer source generates that exact corrected criterion and
+  the checker requires it; the superseded refresh entry point remained closed.
 - The 83 exact sorted labels are `ruff-active-pr-1655`,
   `ruff-active-pr-1655-2059`, `ruff-active-pr-1903-2196`,
   `ruff-active-pr-2196`, `ruff-active-pr-2230`, `ruff-active-pr-2264`,
@@ -129,7 +138,10 @@ pytest task-ID guard.
   `raw/allocation-closeout-rescan.json`. Record its canonical final allocation-audit
   SHA-256 plus bound `manifest_pin`, `observed_origin_dev`, and
   `origin_dev_ancestry` in Task 7 Implementation Notes, retain the raw audit through
-  review and integration, and do not fetch after that scan.
+  review and integration, publish its compact review record at
+  `Docs/superpowers/reviews/evidence/task-26000/allocation-closeout-rescan-summary.json`,
+  and do not fetch after that scan. The summary retains the full allocation and a
+  lossless occupied-ID range encoding plus section counts/hashes and the raw SHA-256.
 - Parent plans and task records use stable batch labels, not future task IDs. Cleanup
   records may reference TASK-26000 because it has a lower ID. The final cleanup
   record is created last and depends only on already-created lower IDs.
@@ -1284,9 +1296,11 @@ current raw census, and complete lineage were rebuilt.
   `a003aee74e01c2729136e244474f1fac08a06ae9ee9331752f56d1bfbffe9e79`,
   `6d7559449c35cd6db3dca31dbbdb510efbb45d1dc0a96c4f01f59c6a8461403b`,
   and `4a08b6a5a9a8b12926ab9417bc330a4e94eb60c3b4afe88226ef232e2653a17a`.
-- Current post-failure/Task 7 materializer and allocator SHA-256 values are
-  `353160bc073aef50dfcf51f55bd18e261c58e91147db9df30a6e3d0d0f5a2977` and
-  `2e456e41bdd2b4f357d181a32b91efdfd07060c33a8f23cc1622d3ef8a4bd432`.
+- Current post-review checker, renderer, materializer, and allocator SHA-256 values
+  are `90fe803f28d783feae839b6078ed3244a5881aa62e4f65facfa2a53434bb7ccc`,
+  `a59bcb7c647927f47e9b858bdcb4329f283f8273138f9ef227381707e6a2ea8e`,
+  `3804046bd5692ef8ac833193cae84cfc8a4f3c05b4ddd86dad463a547c50931d`,
+  and `2e456e41bdd2b4f357d181a32b91efdfd07060c33a8f23cc1622d3ef8a4bd432`.
 
 ---
 
@@ -1324,15 +1338,15 @@ task26000_renderer="${task26000_tmp_root}/task26000_render_cleanup.py"
 task26000_verify_child_hashes() {
   printf '%s  %s\n' \
     'fd33448f2841d0502509201a5bf6fd2f279f3f2c67cff8f3d4391b9ed7d9ce3e' "${task26000_manifest_producer}" \
-    'a003aee74e01c2729136e244474f1fac08a06ae9ee9331752f56d1bfbffe9e79' "${task26000_manifest_checker}" \
+    '90fe803f28d783feae839b6078ed3244a5881aa62e4f65facfa2a53434bb7ccc' "${task26000_manifest_checker}" \
     '2e456e41bdd2b4f357d181a32b91efdfd07060c33a8f23cc1622d3ef8a4bd432' "${task26000_allocator}" \
-    '4a08b6a5a9a8b12926ab9417bc330a4e94eb60c3b4afe88226ef232e2653a17a' "${task26000_renderer}" | shasum -a 256 -c - || {
+    'a59bcb7c647927f47e9b858bdcb4329f283f8273138f9ef227381707e6a2ea8e' "${task26000_renderer}" | shasum -a 256 -c - || {
       echo 'E_TOOL_AUTHORITY_PREFLIGHT: child digest mismatch' >&2
       exit 2
     }
 }
 printf '%s  %s\n' \
-  '353160bc073aef50dfcf51f55bd18e261c58e91147db9df30a6e3d0d0f5a2977' \
+  '3804046bd5692ef8ac833193cae84cfc8a4f3c05b4ddd86dad463a547c50931d' \
   "${task26000_tool_authority}" | shasum -a 256 -c - || {
     echo 'E_TOOL_AUTHORITY_PREFLIGHT: materializer digest mismatch' >&2
     exit 2
@@ -1349,7 +1363,7 @@ printf '%s  %s\n' \
 task26000_verify_child_hashes
 task26000_verify_tool_authority() {
   printf '%s  %s\n' \
-    '353160bc073aef50dfcf51f55bd18e261c58e91147db9df30a6e3d0d0f5a2977' \
+    '3804046bd5692ef8ac833193cae84cfc8a4f3c05b4ddd86dad463a547c50931d' \
     "${task26000_tool_authority}" | shasum -a 256 -c - || {
       echo 'E_TOOL_AUTHORITY_PREFLIGHT: materializer digest mismatch' >&2
       exit 2
@@ -1481,14 +1495,16 @@ task26000_verify_tool_authority
 - [ ] **Step 3: Create the final cleanup record last**
 
   Give it the same per-batch contract and dependencies on every earlier cleanup
-  record. Add an acceptance criterion requiring an explicit Git-tracked,
-  repository-wide `ruff format --check --force-exclude` zero exit after dependencies
-  merge. Require any new unassigned failure to block the gate or receive an
-  independently created correction record; the final task must not absorb it.
+  record. Add an acceptance criterion requiring
+  `git ls-files --others --exclude-standard` to print no paths before an
+  explicit Git-tracked, repository-wide `ruff format --check --force-exclude` zero
+  exit after dependencies merge. Require any new unassigned failure to block the
+  gate or receive an independently created correction record; the final task must
+  not absorb it.
   The manifest checker parses every final dependency and asserts its numeric task ID
   is lower than the final record's ID. The final command is exactly the pinned
   interpreter's `-m ruff format --check --force-exclude .` from a clean Git-tracked
-  repository checkout after all dependencies merge.
+  repository checkout with no untracked files after all dependencies merge.
 
 - [ ] **Step 4: Bind batch labels to records and run the positive checker**
 
@@ -2373,10 +2389,12 @@ if approval != {"schema_version":1,"decision":"APPROVED","request_sha256":hashli
   exact `E_ORIGIN_DEV_DIVERGED` and stops. Collision recovery is bounded by the
   one-attempt procedure above. No fetch occurs after this final scan.
   Retain the canonical
-  `raw/allocation-closeout-rescan.json` through review and integration; its
-  canonical final allocation-audit SHA-256 and bound `manifest_pin`,
-  `observed_origin_dev`, and `origin_dev_ancestry` variables are closeout evidence,
-  not replaceable summaries.
+  `raw/allocation-closeout-rescan.json` through review and integration. Publish the
+  review-accessible allocation, occupied-ID ranges, source counts, section hashes,
+  and raw SHA-256 in
+  `Docs/superpowers/reviews/evidence/task-26000/allocation-closeout-rescan-summary.json`;
+  its canonical final allocation-audit SHA-256 and bound `manifest_pin`,
+  `observed_origin_dev`, and `origin_dev_ancestry` variables remain closeout evidence.
   The ordinary point-in-time manifest oracle and task-ID guard must pass; PR-head
   movement and task-ID/worktree collision checks remain strict.
 
@@ -2477,10 +2495,10 @@ if approval != {"schema_version":1,"decision":"APPROVED","request_sha256":hashli
   ```
 
   Expected: clean worktree. Preserve the temporary raw snapshots, including the exact
-  canonical `raw/allocation-closeout-rescan.json`, through review and integration;
-  the committed JSON remains the durable point-in-time formatter evidence afterward,
-  while Task 7 Implementation Notes retain the final allocation-audit digest and
-  ancestry binding.
+  canonical `raw/allocation-closeout-rescan.json`, through review and integration.
+  The committed formatter manifest and compact allocation-audit summary remain the
+  durable, review-accessible point-in-time evidence afterward, while Task 7
+  Implementation Notes retain the final raw-audit digest and ancestry binding.
   Remove every clean detached worktree with:
 
   ```bash
@@ -5342,7 +5360,7 @@ authority-cut capture diagnostic/self-test.
 passes both positive phases, and exercises 34 deterministic manifest, canonical-byte,
 Git-object, temporal-ledger, captured-ref, and explicit-live-current mutations.
 
-<!-- TASK-26000-CHECKER-SOURCE-BEGIN sha256=a003aee74e01c2729136e244474f1fac08a06ae9ee9331752f56d1bfbffe9e79 -->
+<!-- TASK-26000-CHECKER-SOURCE-BEGIN sha256=90fe803f28d783feae839b6078ed3244a5881aa62e4f65facfa2a53434bb7ccc -->
 ```python
 from __future__ import annotations
 
@@ -6380,6 +6398,8 @@ def validate_records(data: dict[str, Any], repo: Path, batches: dict[str, set[st
             "post-cut-unassigned-correction",
         }
         <= final["markers"]
+        and "git ls-files --others --exclude-standard" in final["text"]
+        and "prints no paths" in final["text"]
         and "ruff format --check --force-exclude ." in final["text"]
         and "separate correction record" in final["text"],
         "E_FINAL_GATE",
@@ -6550,7 +6570,7 @@ AC_LINES = [
     "- [ ] `git diff --check` and `Tests/CI/test_backlog_task_id_uniqueness.py` pass. <!-- TASK-26000-CONTRACT: governance -->",
     "- [ ] The diff contains no hand-written production behavior change. <!-- TASK-26000-CONTRACT: no-handwritten-behavior -->",
 ]
-FINAL_AC = "- [ ] After all lower-ID cleanup dependencies pass, the explicit Git-tracked repository-wide command exits zero under the recorded Python 3.12.11 interpreter: `python -m ruff format --check --force-exclude .`; any post-cut unassigned failure blocks this gate, is never absorbed into the pinned counts or current batches, and requires a separate correction record. <!-- TASK-26000-CONTRACT: repository-zero-gate --><!-- TASK-26000-CONTRACT: post-cut-unassigned-correction -->"
+FINAL_AC = "- [ ] After all lower-ID cleanup dependencies pass, first require an untracked-file-free checkout (`git ls-files --others --exclude-standard` prints no paths), then require the explicit Git-tracked repository-wide command to exit zero under the recorded Python 3.12.11 interpreter: `python -m ruff format --check --force-exclude .`; any post-cut unassigned failure blocks this gate, is never absorbed into the pinned counts or current batches, and requires a separate correction record. <!-- TASK-26000-CONTRACT: repository-zero-gate --><!-- TASK-26000-CONTRACT: post-cut-unassigned-correction -->"
 
 
 def task_bytes(task_id: int, label: str, paths: list[str], dependencies: list[int], final: bool, *, drop_behavior: bool = False, drop_gate: bool = False, drop_post_cut_correction: bool = False) -> bytes:
@@ -7303,9 +7323,9 @@ only after both positive phases and all mutations pass.
 
 ## Appendix B.1: Durable Tool Authority Materializer
 
-Materialize this file verbatim as `task26000_tmp_root/task26000_tool_authority.py`. Before executing it, require SHA-256 `353160bc073aef50dfcf51f55bd18e261c58e91147db9df30a6e3d0d0f5a2977`. It authenticates its own tracked source against the executing file, then deterministically extracts the tracked producer, checker, allocator, and renderer sources and requires both every adjacent marker and every extracted byte digest to equal the closed approved child hashes embedded below. The shell independently rechecks the same four reviewed literals after extraction.
+Materialize this file verbatim as `task26000_tmp_root/task26000_tool_authority.py`. Before executing it, require SHA-256 `3804046bd5692ef8ac833193cae84cfc8a4f3c05b4ddd86dad463a547c50931d`. It authenticates its own tracked source against the executing file, then deterministically extracts the tracked producer, checker, allocator, and renderer sources and requires both every adjacent marker and every extracted byte digest to equal the closed approved child hashes embedded below. The shell independently rechecks the same four reviewed literals after extraction.
 
-<!-- TASK-26000-AUTHORITY-MATERIALIZER-BEGIN sha256=353160bc073aef50dfcf51f55bd18e261c58e91147db9df30a6e3d0d0f5a2977 -->
+<!-- TASK-26000-AUTHORITY-MATERIALIZER-BEGIN sha256=3804046bd5692ef8ac833193cae84cfc8a4f3c05b4ddd86dad463a547c50931d -->
 ```python
 from __future__ import annotations
 
@@ -7323,9 +7343,9 @@ class AuthorityError(RuntimeError):
 
 EXPECTED_CHILD_SHA256 = {
     "producer": "fd33448f2841d0502509201a5bf6fd2f279f3f2c67cff8f3d4391b9ed7d9ce3e",
-    "checker": "a003aee74e01c2729136e244474f1fac08a06ae9ee9331752f56d1bfbffe9e79",
+    "checker": "90fe803f28d783feae839b6078ed3244a5881aa62e4f65facfa2a53434bb7ccc",
     "allocator": "2e456e41bdd2b4f357d181a32b91efdfd07060c33a8f23cc1622d3ef8a4bd432",
-    "renderer": "4a08b6a5a9a8b12926ab9417bc330a4e94eb60c3b4afe88226ef232e2653a17a",
+    "renderer": "a59bcb7c647927f47e9b858bdcb4329f283f8273138f9ef227381707e6a2ea8e",
 }
 
 
@@ -9217,7 +9237,7 @@ ignoring a retired path that was never tracked.
 inode identity. Cleanup unlinks that temporary only when `lstat` still matches the
 owned device/inode; a colliding or substituted path is never removed.
 
-<!-- TASK-26000-RENDERER-SOURCE-BEGIN sha256=4a08b6a5a9a8b12926ab9417bc330a4e94eb60c3b4afe88226ef232e2653a17a -->
+<!-- TASK-26000-RENDERER-SOURCE-BEGIN sha256=a59bcb7c647927f47e9b858bdcb4329f283f8273138f9ef227381707e6a2ea8e -->
 ```python
 from __future__ import annotations
 
@@ -9262,7 +9282,7 @@ AC_LINES = [
     "- [ ] `git diff --check` and `Tests/CI/test_backlog_task_id_uniqueness.py` pass. <!-- TASK-26000-CONTRACT: governance -->",
     "- [ ] The diff contains no hand-written production behavior change. <!-- TASK-26000-CONTRACT: no-handwritten-behavior -->",
 ]
-FINAL_AC = "- [ ] After all lower-ID cleanup dependencies pass, the explicit Git-tracked repository-wide command exits zero under the recorded Python 3.12.11 interpreter: `python -m ruff format --check --force-exclude .`; any post-cut unassigned failure blocks this gate, is never absorbed into the pinned counts or current batches, and requires a separate correction record. <!-- TASK-26000-CONTRACT: repository-zero-gate --><!-- TASK-26000-CONTRACT: post-cut-unassigned-correction -->"
+FINAL_AC = "- [ ] After all lower-ID cleanup dependencies pass, first require an untracked-file-free checkout (`git ls-files --others --exclude-standard` prints no paths), then require the explicit Git-tracked repository-wide command to exit zero under the recorded Python 3.12.11 interpreter: `python -m ruff format --check --force-exclude .`; any post-cut unassigned failure blocks this gate, is never absorbed into the pinned counts or current batches, and requires a separate correction record. <!-- TASK-26000-CONTRACT: repository-zero-gate --><!-- TASK-26000-CONTRACT: post-cut-unassigned-correction -->"
 RECORD_KEYS = {
     "label", "path", "task_id", "final", "dependencies", "paths_sha256",
     "task_sha256", "created_at", "updated_at",
@@ -10279,7 +10299,7 @@ def run_self_tests() -> None:
     try:
         read_authority = globals().get("read_allocation_authority")
         need(callable(read_authority), "E_SELF_TEST", "mode-specific allocation authority reader")
-        expected_final_ac = "- [ ] After all lower-ID cleanup dependencies pass, the explicit Git-tracked repository-wide command exits zero under the recorded Python 3.12.11 interpreter: `python -m ruff format --check --force-exclude .`; any post-cut unassigned failure blocks this gate, is never absorbed into the pinned counts or current batches, and requires a separate correction record. <!-- TASK-26000-CONTRACT: repository-zero-gate --><!-- TASK-26000-CONTRACT: post-cut-unassigned-correction -->"
+        expected_final_ac = "- [ ] After all lower-ID cleanup dependencies pass, first require an untracked-file-free checkout (`git ls-files --others --exclude-standard` prints no paths), then require the explicit Git-tracked repository-wide command to exit zero under the recorded Python 3.12.11 interpreter: `python -m ruff format --check --force-exclude .`; any post-cut unassigned failure blocks this gate, is never absorbed into the pinned counts or current batches, and requires a separate correction record. <!-- TASK-26000-CONTRACT: repository-zero-gate --><!-- TASK-26000-CONTRACT: post-cut-unassigned-correction -->"
         final_task = render_task(
             self_test_batch("ruff-final-gate", "z.py"),
             30001,

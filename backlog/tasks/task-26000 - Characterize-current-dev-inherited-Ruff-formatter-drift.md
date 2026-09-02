@@ -72,9 +72,13 @@ canonical final allocation-audit SHA-256 plus its bound `manifest_pin`,
 `observed_origin_dev`, and `origin_dev_ancestry` values must be recorded in Task 7
 Implementation Notes, and
 `raw/allocation-closeout-rescan.json` must be retained through review and integration.
-The final cleanup record retains the clean Git-tracked repository-wide Ruff gate;
-any post-cut unassigned failure blocks and requires a separate correction record
-rather than changing the pinned counts or batches.
+The tracked `allocation-closeout-rescan-summary.json` publishes its complete
+allocation, occupied-ID ranges, source counts and hashes, open-PR heads, and raw
+SHA-256 for reviewer access without requiring the author-local temporary directory.
+The final cleanup record retains the clean Git-tracked repository-wide Ruff gate and
+requires Git to report no untracked files before its `.`-scoped command; any
+post-cut unassigned failure blocks and requires a separate correction record rather
+than changing the pinned counts or batches.
 
 Pre-record authority-cut manifest record (2026-08-31): pins are task base/current
 `e555df102c950c29beed5e7119f433d35eee1f3c`, common
@@ -157,8 +161,10 @@ Pre-record manifest/materializer/producer/checker/allocator/renderer hashes are
 `a003aee74e01c2729136e244474f1fac08a06ae9ee9331752f56d1bfbffe9e79`,
 `6d7559449c35cd6db3dca31dbbdb510efbb45d1dc0a96c4f01f59c6a8461403b`,
 and `4a08b6a5a9a8b12926ab9417bc330a4e94eb60c3b4afe88226ef232e2653a17a`.
-Current post-failure/Task 7 materializer and allocator hashes are
-`353160bc073aef50dfcf51f55bd18e261c58e91147db9df30a6e3d0d0f5a2977` and
+Current post-review checker, renderer, materializer, and allocator hashes are
+`90fe803f28d783feae839b6078ed3244a5881aa62e4f65facfa2a53434bb7ccc`,
+`a59bcb7c647927f47e9b858bdcb4329f283f8273138f9ef227381707e6a2ea8e`,
+`3804046bd5692ef8ac833193cae84cfc8a4f3c05b4ddd86dad463a547c50931d`, and
 `2e456e41bdd2b4f357d181a32b91efdfd07060c33a8f23cc1622d3ef8a4bd432`.
 <!-- SECTION:PLAN:END -->
 
@@ -170,8 +176,11 @@ Current post-failure/Task 7 materializer and allocator hashes are
   `f0e8961222fe1a7a3ac7566f7f78142e717358f3`, and historical
   base/pre-closeout/closeout pins `31ed49bb368f54211d6482599e00a5c1340f80b2`,
   `1f4f72ac5ff02f5237a4946745e82e8932cd41cf`, and
-  `642b1c782fe6c066a781314dae669a55b05b62ad`. The canonical manifest SHA-256 is
-  `ded7288d8580367842110dd1a9e79976dc9c00663361251bb9212ca717cea0b9`.
+  `642b1c782fe6c066a781314dae669a55b05b62ad`. The original post-record manifest
+  SHA-256 was
+  `ded7288d8580367842110dd1a9e79976dc9c00663361251bb9212ca717cea0b9`;
+  after the Qodo review correction, the current canonical manifest SHA-256 is
+  `eadbbabc7e6ba9910ebe086702d2c3ebc9a2b4d97b9a8031f5abff6a96ed75e3`.
 - Historical comparison passed with `M=99`, `B=64`, `C=77`, `C-B=16`, `B-C=3`,
   and `H=61`. The formatter censuses recorded `F_closeout=1,738`,
   `F_common=1,746`, and current failures `=1,966`, classified exactly as
@@ -183,7 +192,8 @@ Current post-failure/Task 7 materializer and allocator hashes are
   Plan above, beginning `ruff-active-pr-1655`, including the final lower-ID-dependent
   `ruff-root-ci-architecture-final` batch, and ending `ruff-workspaces-runtime`.
   Every record requires behavior preservation; only `TASK-27015` owns the future
-  clean Git-tracked repository-wide Ruff zero-exit gate. None of the cleanup records
+  clean Git-tracked repository-wide Ruff zero-exit gate, guarded by an explicit check
+  that the checkout contains no untracked files. None of the cleanup records
   was marked Done by this characterization.
 - Authenticated validators passed the 20-case census self-test, both manifest
   positive phases plus 34 deterministic corrupt-manifest mutations, the 40-case
@@ -203,6 +213,10 @@ Current post-failure/Task 7 materializer and allocator hashes are
   `/tmp/task26000.b0z8M0/` through review and integration, has empty captured stderr,
   preserves all 83 IDs, and was the final remote observation through the TASK-26000
   closeout commit; later integration rebases do not replace this point-in-time audit.
+  The tracked
+  `Docs/superpowers/reviews/evidence/task-26000/allocation-closeout-rescan-summary.json`
+  exposes the full allocation and lossless occupied-ID ranges, source counts and
+  section hashes, open-PR heads, and raw artifact hash for independent review.
 - Final point-in-time manifest replay passed with 83 cleanup records, 83 batches,
   1,966 current failures, category counts `M/B/C/H=99/64/77/61`, and zero blockers.
   `Tests/CI/test_backlog_task_id_uniqueness.py` passed all three targeted tests; the
@@ -327,3 +341,10 @@ historical `TASK-24653` citations retain their own local meaning.
   strict-NUL, and atomic-output cases.
   `F_closeout & project(M, closeout) == project(H, closeout)` passed with exactly
   61 projected identities.
+- Qodo review correction (2026-09-01): published the compact, tracked allocation
+  audit summary and strengthened `TASK-27015` so
+  `git ls-files --others --exclude-standard` must print no paths before
+  its `.`-scoped repository gate. The corrected task SHA-256 is
+  `c36d021037aad553df21ba3efee6fdd59159b718d862cfd4e6535e59bb1d0160`;
+  the authenticated checker and renderer self-tests cover the exact criterion, and
+  the superseded refresh entry point remained fail-closed.

@@ -70,13 +70,17 @@ producer, checker, allocator, and renderer SHA-256 values are respectively
 `a003aee74e01c2729136e244474f1fac08a06ae9ee9331752f56d1bfbffe9e79`,
 `6d7559449c35cd6db3dca31dbbdb510efbb45d1dc0a96c4f01f59c6a8461403b`,
 and `4a08b6a5a9a8b12926ab9417bc330a4e94eb60c3b4afe88226ef232e2653a17a`.
-The current post-failure/Task 7 materializer and allocator SHA-256 values are
-`353160bc073aef50dfcf51f55bd18e261c58e91147db9df30a6e3d0d0f5a2977` and
+The current post-review checker, renderer, materializer, and allocator SHA-256 values
+are `90fe803f28d783feae839b6078ed3244a5881aa62e4f65facfa2a53434bb7ccc`,
+`a59bcb7c647927f47e9b858bdcb4329f283f8273138f9ef227381707e6a2ea8e`,
+`3804046bd5692ef8ac833193cae84cfc8a4f3c05b4ddd86dad463a547c50931d`, and
 `2e456e41bdd2b4f357d181a32b91efdfd07060c33a8f23cc1622d3ef8a4bd432`.
 After Task 5, the canonical manifest contains 83 cleanup records allocated as
 `TASK-26933` through `TASK-27015`, with `TASK-27015` as the final record. Its
-post-record SHA-256 is
-`ded7288d8580367842110dd1a9e79976dc9c00663361251bb9212ca717cea0b9`.
+original post-record SHA-256 was
+`ded7288d8580367842110dd1a9e79976dc9c00663361251bb9212ca717cea0b9`;
+after the review correction to the final gate, the current canonical SHA-256 is
+`eadbbabc7e6ba9910ebe086702d2c3ebc9a2b4d97b9a8031f5abff6a96ed75e3`.
 The cache-cold temporal replay checked 319 ledgers and 1,272 candidates: 736
 failing, 533 clean, and three transient syntax-invalid states. The ownership
 capture inspected all 13 open PRs at `2026-08-31T17:40:01Z`; exact
@@ -164,9 +168,12 @@ records the manifest pin, observed SHA, and exact ancestry result, and fails exa
 PR-head movement and task-ID/worktree collisions remain strict. No fetch occurs after
 that final claim scan. The canonical final allocation-audit SHA-256 and its bound
 `manifest_pin`, `observed_origin_dev`, and `origin_dev_ancestry` values are required
-in Task 7 Implementation Notes. The canonical
+in Task 7 Implementation Notes. The canonical 155 MB
 `raw/allocation-closeout-rescan.json` remains outside the repository but is retained
-through review and integration with the other temporary evidence. Before cleanup
+through review and integration with the other temporary evidence. Its tracked,
+review-accessible `allocation-closeout-rescan-summary.json` publishes the complete
+83-label allocation, a lossless inclusive-range encoding of all 2,671 occupied IDs,
+the open-PR heads, section counts and hashes, and the raw artifact hash. Before cleanup
 records exist, a live external-maximum change recomputes the proposed allocation and
 forces regeneration. Once all cleanup records exist, the final scan authenticates
 their exact manifest-bound self identities, proves they appeared in the live claim
@@ -277,11 +284,13 @@ mechanical proof. It never silently drops a path or absorbs an unassigned one.
 The final cleanup record is created after the earlier cleanup records so its
 dependencies only point to lower task IDs. It owns the final explicit Git-tracked
 repository-wide Ruff format check from a clean Git-tracked checkout after all
-dependencies merge. A post-cut unassigned failure blocks that gate, is never silently
-added to the pinned counts or existing batches, and requires a separate correction
-record. The series either waits for its independently owned correction or creates a
-superseding final record after the new correction record exists; the final task never
-absorbs the regression as formatting debt.
+dependencies merge. Before that check, Git must report no untracked files via
+`git ls-files --others --exclude-standard`, so the command's `.` operand
+cannot silently broaden the audited scope. A post-cut unassigned failure blocks that
+gate, is never silently added to the pinned counts or existing batches, and requires
+a separate correction record. The series either waits for its independently owned
+correction or creates a superseding final record after the new correction record
+exists; the final task never absorbs the regression as formatting debt.
 
 ## Records and Scope
 
