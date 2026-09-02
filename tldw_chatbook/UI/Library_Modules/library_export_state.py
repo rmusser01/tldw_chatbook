@@ -56,10 +56,18 @@ from ...Library.library_export_scope import ExportScope
 class LibraryExportState:
     """Every field the Export subsystem exclusively owns."""
 
+    # Export canvas state (F4 Task 2). ``_library_export_counts`` is
+    # ``None`` until the counts worker lands a result for the current
+    # scope (drives ``LibraryExportFormState.counts_loading`` --
+    # deliberately not a separate boolean flag, so "loading" and "no
+    # result yet" can never drift apart). ``_library_export_form`` is
+    # a plain dict (not a dataclass, unlike the ingest form echo)
+    # since Task 3 reads specific keys off it directly per the F4
+    # plan's screen-attrs contract.
     scope: ExportScope = ExportScope(kind="everything")
     counts: dict[str, int] | None = None
     # Monotonic ownership for the counts request, separate from the export
-    # execution token below. Scope/route/generation can all repeat after a
+    # execution token below.  Scope/route/generation can all repeat after a
     # leave -> return ABA visit, so none of them can identify the newest
     # counts worker on its own.
     counts_request_id: int = 0
@@ -78,7 +86,8 @@ class LibraryExportState:
     # Task 3: the running export's quiet status line ("Exporting…
     # (N items)"); no backing field existed after Task 2 (its report
     # flagged this as the natural next attr). Cleared alongside
-    # ``error`` on every canvas reset and on run completion.
+    # ``_library_export_error`` on every canvas reset and on run
+    # completion.
     status: str = ""
     # Task 3 review fix: a monotonic token identifying the CURRENT
     # export attempt. Bumped both when a new export starts
@@ -90,15 +99,18 @@ class LibraryExportState:
     # preempted mid-``asyncio.run`` by ``Worker.cancel()``). The
     # worker captures the token at dispatch time and the completion
     # handlers compare it back against the live value before mutating
-    # ``running``/``error``/``status`` or touching the DOM -- an
-    # orphaned run's late completion still notifies (the export
-    # genuinely happened) but can never stomp whatever the user is now
-    # looking at, mirroring ``_apply_library_export_counts``'s
-    # scope-mismatch staleness guard for the sibling counts worker.
+    # ``_library_export_running``/``_library_export_error``/
+    # ``_library_export_status`` or touching the DOM -- an orphaned
+    # run's late completion still notifies (the export genuinely
+    # happened) but can never stomp whatever the user is now looking
+    # at, mirroring ``_apply_library_export_counts``'s scope-mismatch
+    # staleness guard for the sibling counts worker.
     run_id: int = 0
     # Task 4: the current run's cancellation signal. Created fresh at
     # every submit (``handle_library_export_submit``); the worker reads
-    # ``event.is_set`` as the service's ``cancel_check``.
+    # ``event.is_set`` as the service's ``cancel_check``. Nothing sets
+    # it yet in this task -- the Cancel button and navigate-away wiring
+    # land in Task 5.
     cancel_event: threading.Event | None = None
     # task-2858 AC#3 (LIB-12): the last successful export's destination
     # + completion timestamp, for the durable "Last export: ..."
@@ -113,11 +125,16 @@ class LibraryExportState:
     last_path: str = ""
     last_at: float | None = None
 
-    # task-4023 AC#7: which canvas's "Export…" action opened the Export
-    # canvas ("" = entered from the rail/deep link). Escape returns
-    # there; a plain rail switch clears it. See module docstring: this
-    # field alone was never a `__init__` assignment -- only a class-level
-    # default -- so it has no matching entry in `LibraryScreen.__init__`'s
-    # constructor call; the dataclass default below supplies the same
-    # value the class-level attribute used to.
+    #: task-4023 AC#7: which canvas's "Export…" action opened the Export
+    #: canvas ("" = entered from the rail/deep link). Escape returns
+    #: there; a plain rail switch clears it. Class-level default for the
+    #: same restored-session reason as the other class-level route defaults.
+    #
+    # (The "class-level default" sentence above is carried verbatim from
+    # its original site, ``LibraryScreen``'s own class body -- see module
+    # docstring: this field alone was never a `__init__` assignment, only
+    # that class-level annotation, so it has no matching entry in
+    # `LibraryScreen.__init__`'s constructor call; this dataclass's own
+    # default below supplies the same value the class-level attribute
+    # used to, through the generated property shim.)
     origin_row_id: str = ""
