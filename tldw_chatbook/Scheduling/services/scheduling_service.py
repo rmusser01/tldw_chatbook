@@ -35,6 +35,7 @@ def compute_local_health(app, row):
 # ui-ready census (975 > 972).
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import (
     DORMANT_TRANSFER_STATES,
+    IN_FLIGHT_TRANSFER_STATES,
     ScheduledTasksDB,
 )
 from tldw_chatbook.Scheduling.models import (
@@ -115,6 +116,21 @@ _CANCEL_TOO_LATE_REASON = "Too late to cancel -- start a reverse transfer instea
 _CANCEL_NOT_IN_PROGRESS_REASON = (
     "No transfer in progress on this row -- if it already moved, start a "
     "reverse transfer instead."
+)
+
+#: Spec §6.4's "a transfer is already in progress" refusal, shared by
+#: `transfer_refusal`, `begin_transfer_to_server`'s CAS backstop and
+#: `begin_transfer_to_local`'s queued-release guard (final review I5).
+_TRANSFER_IN_PROGRESS_REASON = "A transfer is already in progress on this row."
+
+#: Spec §6.3's read-only rule: while a transfer is in flight the row's
+#: content is frozen (final review I7). `begin_transfer_to_server`
+#: snapshots the create payload at begin time, so a later edit would ship
+#: the PRE-edit content to the server and then be overwritten locally by
+#: the first mirror pull -- silently discarding the user's edit.
+_TRANSFER_READ_ONLY_REASON = (
+    "This row is moving between this device and the server -- it is "
+    "read-only until the move finishes. Cancel the transfer first."
 )
 
 
@@ -431,6 +447,18 @@ class SchedulingService:
         if row is None:
             return None
 
+        # spec §6.3: in-flight rows are read-only except cancel. The UI
+        # disables Edit/Enable/Disable with this same reason; this is the
+        # backstop for every other caller (final review I7).
+        locked = self.transfer_lock_reason(row)
+        if locked is not None:
+            logger.warning(
+                "Reminder update refused for task {task_id}: {reason}",
+                task_id=task_id,
+                reason=locked,
+            )
+            return None
+
         use_server = self._owner_uses_server(owner_id)
         if use_server:
             assert self.server_client is not None
@@ -495,6 +523,19 @@ class SchedulingService:
         """
         row = self.db.get_reminder_task(task_id)
         if row is None:
+            return False
+
+        # spec §6.3 (final review I7): deleting a row mid-transfer either
+        # strands a live server task with no local trace, or -- for a
+        # dormant release copy -- silently discards the only row the
+        # release is about to arm. Cancel first.
+        locked = self.transfer_lock_reason(row)
+        if locked is not None:
+            logger.warning(
+                "Reminder delete refused for task {task_id}: {reason}",
+                task_id=task_id,
+                reason=locked,
+            )
             return False
 
         use_server = self._use_server()
@@ -825,17 +866,32 @@ class SchedulingService:
                 if health != "ready":
                     return reason
 
-        if row.get("transfer_state") in (
-            "to_server_pending",
-            "to_server_sent",
-            "from_server_pending",
-        ):
-            return "A transfer is already in progress on this row."
+        if row.get("transfer_state") in IN_FLIGHT_TRANSFER_STATES:
+            return _TRANSFER_IN_PROGRESS_REASON
 
         lifecycle = row.get("lifecycle")
         if lifecycle is not None and lifecycle not in ("configured", "paused"):
             return f"This automation is {lifecycle} and cannot transfer."
 
+        return None
+
+    @staticmethod
+    def transfer_lock_reason(row: dict[str, Any]) -> str | None:
+        """Why ``row`` is read-only right now, or `None` when it is editable.
+
+        Spec §6.3: "dormant and in-flight rows are read-only except
+        cancel". This is the ONE source of truth for that rule -- the
+        facade's own edit/delete/enable-disable guards call it, and the UI
+        calls it to disable those affordances with the same words
+        (UX-073), rather than re-deriving the state set in two places
+        (the drift `cancel_refusal` was introduced to stop).
+
+        A `to_server_failed` row is NOT locked: it re-armed locally,
+        nothing is queued against it, and editing before a retry is
+        exactly what should be possible.
+        """
+        if row.get("transfer_state") in IN_FLIGHT_TRANSFER_STATES:
+            return _TRANSFER_READ_ONLY_REASON
         return None
 
     def transfer_warnings(self, row: dict[str, Any], direction: str) -> list[str]:
@@ -909,8 +965,9 @@ class SchedulingService:
         builds one, below) atomically replaces the retained mutation --
         stripping its `transfer_errors` for free rather than editing it
         in place. `_replay_definition_mutations`/`_network_phase`'s skip
-        checks key off `"transfer_errors" in payload`, so this is what
-        makes the row eligible for replay again.
+        checks key off a TRUTHY `payload["transfer_errors"]` (not mere key
+        presence), so this is what makes the row eligible for replay
+        again.
         """
         row = self._get_transfer_row(table_kind, row_id)
         if row is None:
@@ -934,8 +991,7 @@ class SchedulingService:
         )
         if not armed:
             return TransferOutcome(
-                status="refused",
-                reason="A transfer is already in progress on this row.",
+                status="refused", reason=_TRANSFER_IN_PROGRESS_REASON
             )
 
         if table_kind == _DEFINITION_PRIMITIVE:
@@ -966,6 +1022,19 @@ class SchedulingService:
         (`_push_definition_release`/`_push_reminder_release`) finds it.
         The mirror row itself is untouched and keeps executing
         server-side until the release actually acks.
+
+        Refuses when a release is ALREADY queued for this mirror. Unlike
+        every other in-progress check in this facade, that one cannot key
+        off `transfer_state`: the release marks only the dormant COPY, and
+        the mirror the user is pressing on carries no state at all. Two
+        presses therefore built two copies while the second mutation
+        REPLACED the first (same `(local_id, primitive, owner_id)` upsert
+        key), stranding copy #1 dormant forever -- invisible to every
+        armable query, named by no mutation (final review I5). Mutation
+        existence is the only observable here, and it is safe as a
+        REFUSAL: cancel stays state-keyed (Task 5 adjudication), so a
+        definitively-failed release whose mutation is already cleared is
+        still cancelable.
         """
         row = self._get_transfer_row(table_kind, row_id)
         if row is None:
@@ -974,6 +1043,14 @@ class SchedulingService:
         reason = self.transfer_refusal(row, "to_local")
         if reason is not None:
             return TransferOutcome(status="refused", reason=reason)
+
+        queued = self.db.get_pending_mutation_for_local_id(row_id, table_kind)
+        if queued is not None and (queued.get("payload") or {}).get(
+            "action"
+        ) == "release_from_server":
+            return TransferOutcome(
+                status="refused", reason=_TRANSFER_IN_PROGRESS_REASON
+            )
 
         owner_id = row["owner_id"]
         server_id = row["server_id"]
@@ -994,7 +1071,7 @@ class SchedulingService:
         return TransferOutcome(status="pending", row_id=copy_id)
 
     def _find_release_mutation(
-        self, table_kind: str, owner_id: str, local_copy_id: str
+        self, table_kind: str, local_copy_id: str
     ) -> dict[str, Any] | None:
         """Find a queued `release_from_server` mutation by its `local_copy_id`.
 
@@ -1003,8 +1080,16 @@ class SchedulingService:
         with the COPY's id (the only row that actually carries
         `from_server_pending`, per `cancel_transfer`'s docstring) has to
         search by the payload's nested field instead of a direct lookup.
+
+        Scanned across ALL owners (final review C2). Scoping the scan to
+        "today's active server" was the bug: with no server connected --
+        the state a user is most likely to cancel in -- the lookup was
+        skipped entirely, the copy was deleted, and the release mutation
+        survived to delete the task server-side on the next reconnect.
+        The mutation's own `owner_id` is the answer, not a guess, exactly
+        as `get_pending_mutation_for_local_id` already established.
         """
-        for mutation in self.db.get_pending_mutations(owner_id, primitive=table_kind):
+        for mutation in self.db.get_pending_mutations(primitive=table_kind):
             payload = mutation.get("payload") or {}
             if (
                 payload.get("action") == "release_from_server"
@@ -1012,6 +1097,28 @@ class SchedulingService:
             ):
                 return mutation
         return None
+
+    def _delete_transfer_mutation(self, table_kind: str, row_id: str) -> None:
+        """Drop the queued `transfer_to_server` mutation for ``row_id``.
+
+        Read via `get_pending_mutation_for_local_id` -- the mutation's OWN
+        `owner_id` column -- never via "today's active server". Guessing
+        left the mutation behind on every offline or post-server-switch
+        cancel: the state cleared, so the UI said cancelled, while the
+        mutation sat in the queue forever, CAS-skipped each cycle and
+        suppressing pull-apply for that row via `pending_local_ids`
+        (final review C2/I3). Same lesson as the Task 7 retry-error
+        lookup, applied to the write side.
+        """
+        mutation = self.db.get_pending_mutation_for_local_id(row_id, table_kind)
+        if mutation is None:
+            return
+        if (mutation.get("payload") or {}).get("action") != "transfer_to_server":
+            # Not this machine's mutation (a plain create/update edit on a
+            # server-owned row) -- cancelling a transfer must not discard
+            # the user's unrelated queued edit.
+            return
+        self.db.delete_pending_mutation(mutation["id"])
 
     def cancel_refusal(self, row: dict[str, Any]) -> str | None:
         """Preview whether `cancel_transfer` would refuse ``row``, without
@@ -1054,8 +1161,13 @@ class SchedulingService:
         - `to_server_sent`: too late -- refused, offering a reverse
           transfer once this one lands.
         - `from_server_pending` (the dormant COPY row -- unpushed release,
-          or one that definitively failed): delete the copy, drop any
-          live release mutation naming it. Server unaffected.
+          or one that definitively failed): drop any live release
+          mutation naming it, then delete the copy. Nothing further is
+          sent. NOT the same as "no server-side effect": this state also
+          covers a release whose delete already landed but whose ack was
+          lost, and that delete cannot be undone from here (spec §6.3;
+          the user-facing copy says "nothing further will be sent", not
+          "nothing happened").
         - Anything else (``None`` -- never transferring, or a release
           that already acked and armed): too late -- refused, offering a
           reverse transfer.
@@ -1073,18 +1185,17 @@ class SchedulingService:
             )
             if not cleared:
                 return too_late
-            owner_id = self._active_server_owner_id()
-            if owner_id is not None:
-                self.db.delete_pending_mutation_for_record(row_id, table_kind, owner_id)
+            self._delete_transfer_mutation(table_kind, row_id)
             self._notify_queue_changed()
             return TransferOutcome(status="cancelled")
 
         if state == "from_server_pending":
-            owner_id = self._active_server_owner_id()
-            if owner_id is not None:
-                mutation = self._find_release_mutation(table_kind, owner_id, row_id)
-                if mutation is not None:
-                    self.db.delete_pending_mutation(mutation["id"])
+            # The mutation goes FIRST: if the copy delete were to land
+            # without it, the surviving release would still delete the
+            # task server-side on the next sync, with no local copy left.
+            mutation = self._find_release_mutation(table_kind, row_id)
+            if mutation is not None:
+                self.db.delete_pending_mutation(mutation["id"])
             self._delete_transfer_row(table_kind, row_id)
             self._notify_queue_changed()
             return TransferOutcome(status="cancelled")
@@ -1095,6 +1206,112 @@ class SchedulingService:
         return TransferOutcome(
             status="refused", reason=_CANCEL_NOT_IN_PROGRESS_REASON
         )
+
+    #: Which `lifecycle` value each lifecycle action lands the row on.
+    #: The action names are the server's own endpoint verbs and the
+    #: `pending_mutations` payload actions `SyncEngine._push_definition_
+    #: lifecycle` replays -- one table, so a rename cannot drift between
+    #: the local write and the queued mutation.
+    _LIFECYCLE_ACTIONS = {
+        "pause": "paused",
+        "resume": "configured",
+        "archive": "archived",
+    }
+
+    async def set_definition_lifecycle(
+        self, row_id: str, action: str
+    ) -> SaveDefinitionOutcome:
+        """Pause / resume / archive an automation definition.
+
+        The missing PRODUCER for the `pause`/`resume`/`archive` pending
+        mutations `SyncEngine._push_definition_lifecycle` (PR-4 Task 2)
+        replays: until this existed, that replay leg -- and the four
+        client methods under it -- had no caller at all outside the
+        release leg's archive, so the whole seam was inert (final review
+        M9).
+
+        Local rows: a direct lifecycle write, no mutation (nothing to
+        sync). Server-owned rows: the local row is updated optimistically
+        and ONE lifecycle mutation is recorded in the SAME transaction
+        (`update_automation_definition`'s `pending_mutation` kwarg), for
+        the replay to push -- so a lifecycle change made offline survives
+        and lands on the next sync, exactly like an offline edit.
+
+        **No UI is wired to this yet, deliberately**: the Automations
+        tab's pause/resume/archive affordances belong to the schedules
+        redesign program, not to PR-5, whose scope is the transfer
+        machine. This method exists so the replay leg below it is
+        reachable and tested rather than dead code.
+
+        Args:
+            row_id: The definition's LOCAL row id.
+            action: ``"pause"``, ``"resume"``, or ``"archive"``.
+
+        Returns:
+            `SaveDefinitionOutcome` -- ``"saved"`` for a local row or a
+            server row written and queued, ``"error"`` for an unknown
+            action, a missing row, or a row locked by an in-flight
+            transfer.
+        """
+        from tldw_chatbook.Scheduling.automation_validation import field_error
+
+        lifecycle = self._LIFECYCLE_ACTIONS.get(action)
+        if lifecycle is None:
+            return SaveDefinitionOutcome(
+                status="error",
+                errors=[
+                    field_error(
+                        "_lifecycle",
+                        "unknown_action",
+                        f"Unknown lifecycle action {action!r}.",
+                    )
+                ],
+                definition_id=row_id,
+            )
+
+        row = await asyncio.to_thread(self.db.get_automation_definition, row_id)
+        if row is None:
+            return SaveDefinitionOutcome(
+                status="error",
+                errors=[
+                    field_error(
+                        "_definition",
+                        "not_found",
+                        f"Automation definition {row_id} was not found.",
+                    )
+                ],
+                definition_id=row_id,
+            )
+
+        locked = self.transfer_lock_reason(row)
+        if locked is not None:
+            return SaveDefinitionOutcome(
+                status="error",
+                errors=[field_error("_transfer", "transfer_in_progress", locked)],
+                definition_id=row_id,
+            )
+
+        owner_id = str(row.get("owner_id") or "local")
+        pending_mutation = None
+        if self._owner_uses_server(owner_id):
+            pending_mutation = {
+                "primitive": _DEFINITION_PRIMITIVE,
+                "owner_id": owner_id,
+                "payload": {
+                    "action": action,
+                    "server_definition_id": row.get("server_id"),
+                },
+            }
+
+        await asyncio.to_thread(
+            lambda: self.db.update_automation_definition(
+                row_id,
+                lifecycle=lifecycle,
+                pending_mutation=pending_mutation,
+            )
+        )
+        self._notify_queue_changed()
+        return SaveDefinitionOutcome(status="saved", definition_id=row_id)
 
     async def recover_inflight_transfers(self) -> None:
         """Startup recovery for rows stuck `to_server_sent` (spec §6.1.3).
@@ -1406,6 +1623,16 @@ class SchedulingService:
                             f"Automation definition {definition_id} was not found.",
                         )
                     ],
+                    definition_id=definition_id,
+                )
+            # spec §6.3 (final review I7): the transfer snapshotted this
+            # row's payload at begin time, so an edit now would ship the
+            # PRE-edit content and then be overwritten by the mirror pull.
+            locked = self.transfer_lock_reason(local_row)
+            if locked is not None:
+                return SaveDefinitionOutcome(
+                    status="error",
+                    errors=[field_error("_transfer", "transfer_in_progress", locked)],
                     definition_id=definition_id,
                 )
             payload = self._merge_definition_payload(payload, local_row)

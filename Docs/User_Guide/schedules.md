@@ -270,15 +270,53 @@ immediately (shown as "(Waiting for server release)"); it stays inert
 until the server's release is acknowledged, at which point it arms and
 starts running here.
 
+**While a move is in flight the task is read-only.** Edit, Delete and
+Enable/Disable are disabled with the reason stated, on the buttons and
+as text, for a queued local → server move, one already sent, and a
+dormant server → local copy. This is not fussiness: the move takes a
+snapshot of the task when you start it, so an edit made afterwards would
+be sent nowhere and then overwritten by the first sync. Cancel the
+transfer first, edit, then move it. A move the server *rejected* is not
+in flight — that task is editable again, and retryable.
+
 **Cancel transfer** is available on any in-flight state except one
 already sent to the server (too late by then — the button says so and
-suggests moving it back once it lands). Cancelling an unattempted
-local → server queue, a failed one, or an unpushed server → local
-release all undo cleanly with no server-side effect.
+suggests moving it back once it lands). Cancelling drops the queued
+transfer, so nothing further is sent: an unattempted local → server
+queue and a definitively failed one both simply stay here. Note the one
+case cancel cannot undo — a server → local release whose delete already
+reached the server but whose acknowledgement was lost still looks
+"waiting for release" locally, and cancelling then removes the dormant
+copy without bringing the server's task back. That is why the
+confirmation says "nothing further will be sent" rather than "nothing
+happened".
 
 **Retry transfer** appears only alongside a local → server move the
 server definitively rejected; the stored reason is shown beside the
 button, and retrying resubmits the same task.
+
+**A disabled server reminder stays disabled** when it is released to this
+device — the release moves the task, not its on/off state.
+
+### Moving an automation (Automations tab)
+
+Automations use keys instead of buttons, because that tab has no
+per-row detail pane:
+
+| Key | Action |
+| --- | --- |
+| `M` | Move the selected local automation **to the server** |
+| `m` | Move the selected server-owned automation **to this device** |
+| `y` | Retry a local → server move the server rejected |
+| `k` | Cancel the selected automation's in-progress move |
+
+These four are **Automations-tab only**, even though the footer
+advertises them on every tab: pressing them elsewhere answers with a
+"Switch to the Automations tab…" notice rather than acting on whatever
+the Queue tab happens to have selected. They run the same confirmation,
+warnings and honest toasts as the reminder buttons above, and a refusal
+appears inline in the Automations pane's notice line rather than as a
+toast.
 
 ## Creating a recurring question
 
@@ -364,7 +402,10 @@ The default bound is `handler_timeout_seconds` under `[scheduling]` in
 bound entirely — every handler may then run as long as it likes, and a
 wedged handler will wedge the scheduler, which is why the default is on.
 
-*Verified against working tree — 2026-09-02 (schedules-handoff PR-5 task 7:
+*Verified against working tree — 2026-09-02 (schedules-handoff PR-5 final
+fix wave: the Automations tab's M/m/y/k transfer keys and their
+tab-scoping, the read-only-except-cancel rule on in-flight rows, and the
+corrected cancel copy; plus PR-5 task 7's
 the detail pane's Move to server/Move to local/Cancel transfer/Retry
 transfer buttons, the confirm dialog and its warnings, honest transfer
 toasts, and the queue row's transfer-state suffix; supersedes the

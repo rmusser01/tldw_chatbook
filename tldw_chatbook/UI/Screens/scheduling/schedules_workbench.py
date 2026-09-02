@@ -166,6 +166,23 @@ def automation_name_cell(definition: dict[str, Any]) -> str:
     return f"[{label}] {name}"
 
 
+def _cancel_toast_text(name: str) -> str:
+    """Honest cancel confirmation (final review L13).
+
+    The old copy ("Transfer cancelled for 'X'.") and the docs beside it
+    promised "no server-side effect", which spec §6.3's own table does
+    not support: `from_server_pending` also covers a release whose
+    server-side delete already landed but whose ack was lost, and that
+    delete cannot be undone from here. What IS true in every cancellable
+    state is that the queued mutation is gone, so nothing further goes
+    out -- which is what this now says.
+    """
+    return (
+        f"Transfer cancelled for '{name}' — nothing further will be sent "
+        "to the server."
+    )
+
+
 #: Delayed second fetch of the run-history pane after a Run-now dispatch:
 #: the terminal audit event lands only after the server finishes executing
 #: the run, so an immediate fetch alone would usually miss it.
@@ -190,6 +207,7 @@ class SchedulesWorkbench(BaseAppScreen):
         # not new buttons (mirrors _edit_selected_automation/
         # _run_automation_now, the tab's existing action grammar).
         Binding("m", "move_automation_to_local", "Move to local"),
+        Binding("M", "move_automation_to_server", "Move to server"),
         Binding("y", "retry_automation_transfer", "Retry transfer"),
         Binding("k", "cancel_automation_transfer", "Cancel transfer"),
     ]
@@ -206,6 +224,7 @@ class SchedulesWorkbench(BaseAppScreen):
         ("x", "mark"),
         ("s", "sync"),
         ("m", "move to local"),
+        ("M", "move to server"),
         ("y", "retry transfer"),
         ("k", "cancel transfer"),
     )
@@ -708,6 +727,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 cancel_reason=None,
                 retry_errors=[],
             )
+            task_detail.set_lifecycle_lock(None)
             return
 
         row = transfer_row_dict(task)
@@ -755,6 +775,28 @@ class SchedulesWorkbench(BaseAppScreen):
             cancel_reason=cancel_reason,
             retry_errors=retry_errors,
         )
+        # spec §6.3 read-only-except-cancel (final review I7). Applied
+        # AFTER set_transfer_reasons, which owns the same reason Static.
+        task_detail.set_lifecycle_lock(service.transfer_lock_reason(row))
+
+    def _refuse_if_transfer_locked(self, task: Any, verb: str) -> bool:
+        """Notify and return True when ``task`` is read-only mid-transfer.
+
+        Spec §6.3 (final review I7): the key-bound Edit / Delete /
+        Enable-Disable verbs share the detail pane's lock, so pressing
+        `e`/`d`/`space` on an in-flight row says why instead of silently
+        no-oping against the facade's own guard. The reason string comes
+        from `SchedulingService.transfer_lock_reason` -- never re-derived
+        here.
+        """
+        service = self._scheduling_service
+        if service is None or not isinstance(task, ReminderTask):
+            return False
+        reason = service.transfer_lock_reason(transfer_row_dict(task))
+        if reason is None:
+            return False
+        self.app_instance.notify(f"Cannot {verb}: {reason}", severity="warning")
+        return True
 
     async def _refresh_console_context(self) -> None:
         """Load the latest Schedules Console-follow context."""
@@ -1092,7 +1134,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 return
             if outcome.status == "cancelled":
                 self.app_instance.notify(
-                    f"Transfer cancelled for '{task.title}'.",
+                    _cancel_toast_text(task.title),
                     severity="information",
                 )
             else:
@@ -2055,14 +2097,29 @@ class SchedulesWorkbench(BaseAppScreen):
     # existing status affordance -- reused rather than adding a second
     # one); an allowed Move reuses the same `ConfirmationDialog` +
     # honest-toast shape the Queue tab's reminder flow already
-    # established. "Move to server" is deliberately NOT added here (not
-    # asked for) -- Retry re-arms an already-failed transfer via the same
-    # `begin_transfer_to_server` call regardless.
+    # established. Move to server (`M`) and Retry (`y`) share one call:
+    # a retry IS a re-begin, so the difference is the label and which
+    # state each is offered in, not the code path.
 
     def action_move_automation_to_local(self) -> None:
         """m key: queue a server-owned automation mirror to move here
         (spec §6.2), Automations-tab only."""
         self._begin_automation_transfer("to_local")
+
+    def action_move_automation_to_server(self) -> None:
+        """M key: queue a LOCAL automation definition to move to the
+        server (spec §6.1), Automations-tab only.
+
+        The missing half of the definitions transfer UI (final review
+        M8): `y`/Retry already reached `begin_transfer_to_server`, but
+        only ever as a retry beside a failed transfer, so a plain local
+        definition had no way to start one. Same facade call -- a retry
+        IS a re-begin (`transfer_refusal` excludes `to_server_failed`
+        from "in progress", and the CAS accepts both `None` and
+        `to_server_failed`) -- given its own honest label and key, rather
+        than teaching users that "Retry" means "Move".
+        """
+        self._begin_automation_transfer("to_server")
 
     def action_retry_automation_transfer(self) -> None:
         """y key: retry a definitively-failed local -> server automation
@@ -2256,7 +2313,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 return
             if outcome.status == "cancelled":
                 self.app_instance.notify(
-                    f"Transfer cancelled for '{name}'.", severity="information"
+                    _cancel_toast_text(name), severity="information"
                 )
             else:
                 self._show_automations_inline_reason(
@@ -2554,6 +2611,8 @@ class SchedulesWorkbench(BaseAppScreen):
                 severity="warning",
             )
             return
+        if self._refuse_if_transfer_locked(self._selected_task(), "delete this task"):
+            return
         self.query_one("#scheduling-task-detail", TaskDetail).request_delete()
 
     def _on_bulk_delete_confirmed(self, confirmed, marked: list[ReminderTask]) -> None:
@@ -2572,7 +2631,12 @@ class SchedulesWorkbench(BaseAppScreen):
             errors = 0
             for task in marked:
                 try:
-                    await service.delete_reminder(task.id)
+                    # A False return is a refusal, not a crash (e.g. the
+                    # transfer read-only guard, final review I7) -- count
+                    # it, so the toast never claims a delete that the
+                    # facade declined.
+                    if not await service.delete_reminder(task.id):
+                        errors += 1
                 except Exception:  # noqa: BLE001
                     logger.exception("Failed to delete reminder {}", task.id)
                     errors += 1
@@ -2631,6 +2695,8 @@ class SchedulesWorkbench(BaseAppScreen):
                 _managed_elsewhere_notice(task, verb="edit"),
                 severity="warning",
             )
+            return
+        if self._refuse_if_transfer_locked(task, "edit this task"):
             return
         self.post_message(EditTaskRequested(task))
 
@@ -2710,6 +2776,8 @@ class SchedulesWorkbench(BaseAppScreen):
                 severity="warning",
             )
             return
+        if self._refuse_if_transfer_locked(task, "enable or disable this task"):
+            return
         self._set_reminder_enabled(task, not task.enabled)
 
     def _bulk_toggle_marked(self, marked: list[ReminderTask]) -> None:
@@ -2726,9 +2794,12 @@ class SchedulesWorkbench(BaseAppScreen):
             errors = 0
             for task in marked:
                 try:
-                    await service.update_reminder(
+                    # A None return is a refusal, not a crash -- same
+                    # reasoning as the bulk delete above.
+                    if await service.update_reminder(
                         task.id, {"enabled": not task.enabled}
-                    )
+                    ) is None:
+                        errors += 1
                 except Exception:  # noqa: BLE001
                     logger.exception("Failed to toggle reminder {}", task.id)
                     errors += 1

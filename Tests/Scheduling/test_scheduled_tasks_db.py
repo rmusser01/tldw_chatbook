@@ -1113,6 +1113,27 @@ def test_create_local_copy_from_mirror_reminder_one_time_copies_run_at(
     assert mirror_row["transfer_state"] is None
 
 
+def test_create_local_copy_from_mirror_reminder_preserves_disabled(
+    db: ScheduledTasksDB,
+) -> None:
+    """Final review M11: a DISABLED server reminder released to this
+    device must not arm and fire the moment the release acks -- the copy
+    carries the mirror's own `enabled` flag, the way the definitions leg
+    already carried `lifecycle`."""
+    mirror_id = db.create_reminder_task(
+        owner_id="server:1",
+        title="Standup",
+        schedule_kind="one_time",
+        run_at=_utc(2026, 12, 25, 9, 0),
+        server_id="srv-rem-off",
+        enabled=False,
+    )
+
+    copy_id = db.create_local_copy_from_mirror("reminder_task", mirror_id)
+
+    assert db.get_reminder_task(copy_id)["enabled"] == 0
+
+
 def test_create_local_copy_from_mirror_reminder_recurring_computes_next_run(
     db: ScheduledTasksDB,
 ) -> None:

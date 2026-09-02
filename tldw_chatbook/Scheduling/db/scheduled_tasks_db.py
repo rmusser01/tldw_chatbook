@@ -36,6 +36,17 @@ from tldw_chatbook.Scheduling.schedule_vocabulary import to_local_schedule
 #: which excluded ANY non-NULL ``transfer_state`` on the definitions side.
 DORMANT_TRANSFER_STATES = ("to_server_sent", "from_server_pending")
 
+#: Every state in which a transfer is genuinely under way (spec §6.3's
+#: "dormant and in-flight rows are read-only except cancel"): the two
+#: dormant states plus `to_server_pending`, which still executes locally
+#: but has a queued create payload snapshotted at begin time -- editing it
+#: would silently ship the pre-edit content and then have the mirror pull
+#: overwrite the edit (final review I7). `to_server_failed` is
+#: deliberately absent: that row re-armed locally, nothing is queued
+#: against it, and editing it before a retry is exactly what the user
+#: should be able to do.
+IN_FLIGHT_TRANSFER_STATES = ("to_server_pending", *DORMANT_TRANSFER_STATES)
+
 
 class ScheduledTasksDB(BaseDB):
     """Database operations for scheduled tasks and reminders."""
@@ -1554,6 +1565,11 @@ class ScheduledTasksDB(BaseDB):
                     cron=mirror.get("cron"),
                     timezone=mirror.get("timezone"),
                     timeout_seconds=mirror.get("timeout_seconds"),
+                    # A DISABLED server reminder must not arm the moment
+                    # its release acks (final review M11): the copy
+                    # carries the mirror's own `enabled` flag, the same
+                    # way the definitions leg carries `lifecycle` below.
+                    enabled=mirror.get("enabled", 1),
                     transfer_state="from_server_pending",
                     next_run_at=next_run_at,
                 )
@@ -2809,17 +2825,29 @@ class ScheduledTasksDB(BaseDB):
 
     def get_pending_mutations(
         self,
-        owner_id: str,
+        owner_id: Optional[str] = None,
         primitive: Optional[str] = None,
     ) -> list[dict[str, Any]]:
-        """Return pending mutations for ``owner_id``, optionally filtered by primitive."""
-        conditions = ["owner_id = ?"]
-        params: list[Any] = [owner_id]
+        """Return pending mutations for ``owner_id``, optionally filtered by primitive.
+
+        ``owner_id=None`` returns every owner's mutations. That is what a
+        release cancel needs (final review C2): the release mutation is
+        keyed by the MIRROR's id under the MIRROR's owner, but cancel is
+        called with the dormant COPY's id, so the only way to find it is a
+        payload scan -- and scoping that scan to "today's active server"
+        silently misses it whenever the server is disconnected or has been
+        switched, which is exactly when a user cancels.
+        """
+        conditions: list[str] = []
+        params: list[Any] = []
+        if owner_id is not None:
+            conditions.append("owner_id = ?")
+            params.append(owner_id)
         if primitive is not None:
             conditions.append("primitive = ?")
             params.append(primitive)
 
-        where_clause = " AND ".join(conditions)
+        where_clause = " AND ".join(conditions) if conditions else "1 = 1"
         with closing(self._get_connection()) as conn:
             cursor = conn.execute(
                 f"""

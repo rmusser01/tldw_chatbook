@@ -2567,3 +2567,237 @@ def test_transfer_refusal_checks_family_health_before_lifecycle(db):
     row = db.get_automation_definition(definition_id)
     reason = svc.transfer_refusal(row, "to_local")
     assert reason == "Agent-task automations cannot run locally yet."
+
+
+# ---------------------------------------------------------------------------
+# Final whole-branch review fixes (2026-09-02)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cancel_to_server_offline_still_drops_the_mutation(db):
+    """C2/I3: cancel keys off the mutation's OWN owner, never today's
+    active server. Offline (`active_server_id` gone) the mutation used to
+    survive the cancel forever, CAS-skipped every cycle."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    reminder_id = _make_reminder(db)
+    assert (
+        await svc.begin_transfer_to_server("reminder_task", reminder_id)
+    ).status == "pending"
+
+    # The connection drops between begin and cancel.
+    offline = _transfer_service(
+        db, server_client=_connected_server_client(), active_server_id=None
+    )
+    outcome = await offline.cancel_transfer("reminder_task", reminder_id)
+
+    assert outcome.status == "cancelled"
+    assert db.get_reminder_task(reminder_id)["transfer_state"] is None
+    assert db.get_pending_mutations(primitive="reminder_task") == [], (
+        "the transfer mutation must not outlive its cancel"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_release_offline_still_drops_the_release_mutation(db):
+    """C2: the destructive half. Offline, the old cancel deleted the
+    dormant copy but left the release mutation, which then DELETED the
+    task server-side on the next reconnect -- the task ended up existing
+    nowhere."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    mirror_id = _make_reminder(db, owner_id="server:1", server_id="srv-1")
+    copy_id = (
+        await svc.begin_transfer_to_local("reminder_task", mirror_id)
+    ).row_id
+
+    offline = _transfer_service(
+        db, server_client=_connected_server_client(), active_server_id=None
+    )
+    outcome = await offline.cancel_transfer("reminder_task", copy_id)
+
+    assert outcome.status == "cancelled"
+    assert db.get_reminder_task(copy_id) is None
+    assert db.get_reminder_task(mirror_id) is not None
+    assert db.get_pending_mutations(primitive="reminder_task") == [], (
+        "a surviving release would delete the server task on reconnect"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_does_not_discard_an_unrelated_queued_edit(db):
+    """The mutation-keyed cancel must only claim the TRANSFER mutation:
+    a plain queued edit on the same row is the user's work, not this
+    machine's bookkeeping."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    reminder_id = _make_reminder(db)
+    db.set_transfer_state(
+        "reminder_task", reminder_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        reminder_id,
+        "reminder_task",
+        "server:1",
+        {"action": "update", "fields": {"title": "Edited"}},
+    )
+
+    outcome = await svc.cancel_transfer("reminder_task", reminder_id)
+
+    assert outcome.status == "cancelled"
+    remaining = db.get_pending_mutations(primitive="reminder_task")
+    assert [m["payload"]["action"] for m in remaining] == ["update"]
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_local_refuses_a_second_press(db):
+    """I5: the mirror carries no `transfer_state` (only the copy does), so
+    a second press built a second copy while the second mutation REPLACED
+    the first -- stranding copy #1 dormant forever."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    mirror_id = _make_reminder(db, owner_id="server:1", server_id="srv-1")
+
+    first = await svc.begin_transfer_to_local("reminder_task", mirror_id)
+    second = await svc.begin_transfer_to_local("reminder_task", mirror_id)
+
+    assert first.status == "pending"
+    assert second.status == "refused"
+    assert "already in progress" in second.reason
+    dormant = [
+        row
+        for row in db.list_reminder_tasks(owner_id="local")
+        if row["transfer_state"] == "from_server_pending"
+    ]
+    assert len(dormant) == 1
+    assert dormant[0]["id"] == first.row_id
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_local_definition_refuses_a_second_press(db, monkeypatch):
+    """I5 on the definitions leg -- same keying, same stranded copy."""
+    monkeypatch.setattr(
+        scheduling_service_module, "compute_local_health", lambda app, row: ("ready", "")
+    )
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    mirror_id = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
+
+    first = await svc.begin_transfer_to_local("automation_definition", mirror_id)
+    second = await svc.begin_transfer_to_local("automation_definition", mirror_id)
+
+    assert first.status == "pending"
+    assert second.status == "refused"
+
+
+@pytest.mark.parametrize(
+    "state", ["to_server_pending", "to_server_sent", "from_server_pending"]
+)
+def test_transfer_lock_reason_locks_every_in_flight_state(state):
+    """I7: spec §6.3's read-only rule, one source of truth."""
+    assert SchedulingService.transfer_lock_reason({"transfer_state": state})
+
+
+@pytest.mark.parametrize("state", [None, "to_server_failed"])
+def test_transfer_lock_reason_leaves_editable_rows_alone(state):
+    """A failed transfer re-armed locally -- editing before a retry is
+    exactly what should be possible."""
+    assert SchedulingService.transfer_lock_reason({"transfer_state": state}) is None
+
+
+@pytest.mark.asyncio
+async def test_update_reminder_refused_while_transferring(db):
+    """I7 facade layer: the create payload was snapshotted at begin time,
+    so an edit now ships pre-edit content and is then overwritten by the
+    mirror pull."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    reminder_id = _make_reminder(db, title="Original")
+    db.set_transfer_state(
+        "reminder_task", reminder_id, "to_server_pending", expected=(None,)
+    )
+
+    assert await svc.update_reminder(reminder_id, {"title": "Edited"}) is None
+    assert db.get_reminder_task(reminder_id)["title"] == "Original"
+
+
+@pytest.mark.asyncio
+async def test_delete_reminder_refused_while_transferring(db):
+    """I7: deleting a dormant release copy discards the only row the
+    release is about to arm."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    mirror_id = _make_reminder(db, owner_id="server:1", server_id="srv-1")
+    copy_id = (
+        await svc.begin_transfer_to_local("reminder_task", mirror_id)
+    ).row_id
+
+    assert await svc.delete_reminder(copy_id) is False
+    assert db.get_reminder_task(copy_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_save_definition_refused_while_transferring(db):
+    """I7 on the definitions leg."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(db, name="Original")
+    db.set_transfer_state(
+        "automation_definition", definition_id, "to_server_pending", expected=(None,)
+    )
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Edited"),
+        owner_id="local",
+        definition_id=definition_id,
+    )
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["code"] == "transfer_in_progress"
+    assert db.get_automation_definition(definition_id)["name"] == "Original"
+
+
+@pytest.mark.asyncio
+async def test_set_definition_lifecycle_local_writes_without_a_mutation(db):
+    """M9: the missing producer. A local row has nothing to sync."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(db)
+
+    outcome = await svc.set_definition_lifecycle(definition_id, "pause")
+
+    assert outcome.status == "saved"
+    assert db.get_automation_definition(definition_id)["lifecycle"] == "paused"
+    assert db.get_pending_mutations(primitive="automation_definition") == []
+
+
+@pytest.mark.asyncio
+async def test_set_definition_lifecycle_server_row_records_the_replay_mutation(db):
+    """M9: a server row writes optimistically AND queues the mutation
+    `SyncEngine._push_definition_lifecycle` replays -- the leg that had no
+    producer at all before this."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(
+        db, owner_id="server:1", server_id="srv-def-1", lifecycle="paused"
+    )
+
+    outcome = await svc.set_definition_lifecycle(definition_id, "resume")
+
+    assert outcome.status == "saved"
+    assert db.get_automation_definition(definition_id)["lifecycle"] == "configured"
+    mutations = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert [m["payload"]["action"] for m in mutations] == ["resume"]
+    assert mutations[0]["payload"]["server_definition_id"] == "srv-def-1"
+
+
+@pytest.mark.asyncio
+async def test_set_definition_lifecycle_rejects_unknown_action(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(db)
+    outcome = await svc.set_definition_lifecycle(definition_id, "obliterate")
+    assert outcome.status == "error"
+    assert outcome.errors[0]["code"] == "unknown_action"
+
+
+@pytest.mark.asyncio
+async def test_set_definition_lifecycle_refused_while_transferring(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(db)
+    db.set_transfer_state(
+        "automation_definition", definition_id, "to_server_sent", expected=(None,)
+    )
+    outcome = await svc.set_definition_lifecycle(definition_id, "archive")
+    assert outcome.status == "error"
+    assert outcome.errors[0]["code"] == "transfer_in_progress"

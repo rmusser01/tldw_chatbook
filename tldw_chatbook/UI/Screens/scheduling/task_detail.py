@@ -1053,6 +1053,50 @@ class TaskDetail(Vertical):
             "\n".join(reason_lines)
         )
 
+    def set_lifecycle_lock(self, reason: str | None) -> None:
+        """Freeze Edit/Enable/Disable/Delete while a transfer is in flight.
+
+        Spec §6.3's "dormant and in-flight rows are read-only except
+        cancel" (final review I7): the transfer snapshotted this row's
+        payload at begin time, so an edit made now ships the PRE-edit
+        content to the server and is then overwritten locally by the
+        first mirror pull -- the user's edit vanishes with no warning.
+        ``reason`` comes from `SchedulingService.transfer_lock_reason`
+        (never re-derived here) and is both each button's tooltip and a
+        line in the always-visible Static, since keyboard users cannot
+        see tooltips (UX-073). ``None`` restores the row's normal
+        enabled/disabled logic, which `set_task` has already applied.
+        """
+        locked = reason is not None
+        for button_id, tooltip in (
+            ("scheduling-edit-task", "Edit this scheduled task."),
+            ("scheduling-delete-task", "Delete this scheduled task."),
+        ):
+            button = self.query_one(f"#{button_id}", Button)
+            button.disabled = locked
+            button.tooltip = reason or tooltip
+        enable_btn = self.query_one("#scheduling-enable-task", Button)
+        disable_btn = self.query_one("#scheduling-disable-task", Button)
+        if locked:
+            enable_btn.disabled = True
+            disable_btn.disabled = True
+            enable_btn.tooltip = reason
+            disable_btn.tooltip = reason
+        else:
+            enable_btn.tooltip = "Enable this scheduled task."
+            disable_btn.tooltip = "Disable this scheduled task."
+
+        why = self.query_one("#scheduling-transfer-why", Static)
+        line = f"Edit/Enable/Disable/Delete: {reason}" if reason else ""
+        existing = [
+            text
+            for text in str(why.renderable).split("\n")
+            if text and not text.startswith("Edit/Enable/Disable/Delete:")
+        ]
+        if line:
+            existing.append(line)
+        why.update("\n".join(existing))
+
     def _update_static(self, widget_id: str, content: str) -> None:
         """Update a child Static widget by id."""
         static = self.query_one(f"#{widget_id}", Static)

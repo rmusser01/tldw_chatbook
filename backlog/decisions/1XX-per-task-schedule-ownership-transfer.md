@@ -32,8 +32,13 @@ but which side owns a given task can change.
    (`from_server_pending`, excluded from every armable-row query) while the
    release (delete for a reminder, archive for a definition) is queued; the
    server keeps executing until the release acks, at which point the copy
-   arms and the mirror is torn down (deleted for a reminder via the next
-   pull's full-set reconciliation, archived in place for a definition).
+   arms and the mirror is torn down (deleted outright, with its sync
+   mapping, on the ack for a reminder; archived in place for a
+   definition). The reminder mirror's teardown is deliberately NOT left
+   to the next pull's full-set reconciliation: that scan only DELETES a
+   row carrying a local tombstone, so a released mirror would instead
+   become a standing "the server deleted this row" conflict beside the
+   already-armed local copy (final review I4).
 
 2. **§3's invariant, machine-checked.** *At most one side is armed for a
    given task at any instant.* This is not just prose: a `RuleBasedState
@@ -126,10 +131,18 @@ test that tries to break it.
 - `agent_task` transfer/local-execution stays out of scope (ADR-077 §4's
   side-effect-free phase-1 boundary, unchanged); the transfer refusal gate
   is already family-aware so it drops in without rework.
-- Definitions transfer UI rides the Queue tab's row adapter (PR-6); this PR
-  ships the transfer machine and reminder-side UI trigger, with definitions
-  transfer fully facade-complete and end-to-end tested ahead of its UI
-  trigger landing.
+- Definitions DO get transfer UI in this PR, as Automations-tab
+  keybindings rather than the Queue tab's row adapter: `M` Move to server,
+  `m` Move to local, `y` Retry, `k` Cancel, sharing the reminder flow's
+  confirmation, warnings and toasts. What genuinely rides PR-6's row
+  adapter is the unified Queue-tab presentation of both families (badges,
+  owner column), not the transfer triggers themselves.
+- Lifecycle (pause/resume/archive) has a service producer
+  (`SchedulingService.set_definition_lifecycle`, which writes locally and
+  queues the mutation `SyncEngine._push_definition_lifecycle` replays) but
+  no UI caller yet: those affordances belong to the schedules redesign
+  program. The seam is reachable and tested rather than dead code, and
+  that is the whole of the claim.
 
 ## Links
 

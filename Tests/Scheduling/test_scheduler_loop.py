@@ -461,6 +461,73 @@ def test_queue_never_arms_a_dormant_transfer_reminder_due_before_path(db, dorman
     assert dormant_id not in ids
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dormant_state", list(DORMANT_TRANSFER_STATES))
+async def test_dispatch_rechecks_transfer_state_after_the_queue_snapshot(
+    db, dormant_state
+):
+    """Final review I6: `pop_due` filters the snapshot by time ALONE, so a
+    transfer push landing between `queue.load()` and the actual dispatch
+    (it CASes the row and creates the server task while an earlier task in
+    the same due list is awaited) left the loop firing a row that was by
+    then live on the server -- one local fire plus one server fire."""
+    task_id = _create_reminder(db, "Moving", "2026-01-01T00:00:00+00:00")
+    handler = AsyncMock()
+    loop = SchedulerLoop(
+        db,
+        handlers={"reminder": handler},
+        clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    loop.queue.load()
+    assert len(loop.queue) == 1, "armed at snapshot time"
+
+    # The interleaving: the sync's push disarms the row after the
+    # snapshot, before this tick reaches it.
+    db.update_reminder_task(task_id, transfer_state=dormant_state)
+
+    await loop.tick()
+
+    handler.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_rechecks_owner_after_the_queue_snapshot(db):
+    """Same window, the other half of "armed": a completed transfer flips
+    `owner_id` to the server scope (ADR-077 single-owner execution)."""
+    task_id = _create_reminder(db, "Moved", "2026-01-01T00:00:00+00:00")
+    handler = AsyncMock()
+    loop = SchedulerLoop(
+        db,
+        handlers={"reminder": handler},
+        clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    loop.queue.load()
+
+    db.update_reminder_task(task_id, owner_id="server:1", server_id="srv-1")
+
+    await loop.tick()
+
+    handler.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_recheck_still_fires_an_unchanged_row(db):
+    """The guard refuses only on a positively-read disqualifying row --
+    the ordinary path must be untouched."""
+    _create_reminder(db, "Normal", "2026-01-01T00:00:00+00:00")
+    handler = AsyncMock()
+    loop = SchedulerLoop(
+        db,
+        handlers={"reminder": handler},
+        clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    loop.queue.load()
+
+    await loop.tick()
+
+    handler.assert_awaited_once()
+
+
 class _FakeWatchlistProjection(WatchlistProjection):
     """Projection stub that returns canned jobs without touching SubscriptionsDB."""
 

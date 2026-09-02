@@ -794,3 +794,206 @@ async def test_automation_transfer_actions_no_op_outside_automations_tab(
 
         assert len(notifications) == 3
         assert all("Automations tab" in message for message in notifications)
+
+
+# ---------------------------------------------------------------------------
+# Final whole-branch review fixes (2026-09-02)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "state", ["to_server_pending", "to_server_sent", "from_server_pending"]
+)
+async def test_in_flight_row_disables_lifecycle_actions_with_a_reason(state):
+    """Final review I7 / spec §6.3: an in-flight row is read-only except
+    cancel. The reason must be in TEXT, not only a tooltip (UX-073)."""
+    async with _DetailHarnessApp().run_test() as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_reminder(owner_id="local", transfer_state=state))
+        detail.set_lifecycle_lock("This row is moving -- read-only.")
+
+        for button_id in (
+            "scheduling-edit-task",
+            "scheduling-delete-task",
+            "scheduling-enable-task",
+            "scheduling-disable-task",
+        ):
+            assert detail.query_one(f"#{button_id}", Button).disabled, button_id
+        why = detail.query_one("#scheduling-transfer-why", Static)
+        assert "read-only" in why.visual.plain
+
+
+@pytest.mark.asyncio
+async def test_clearing_the_lifecycle_lock_restores_the_buttons():
+    """An editable row keeps its normal enable/disable logic, and the lock
+    line is removed from the shared reason Static."""
+    async with _DetailHarnessApp().run_test() as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(_reminder(owner_id="local", transfer_state="to_server_sent"))
+        detail.set_lifecycle_lock("locked for now")
+        detail.set_task(_reminder(owner_id="local", transfer_state=None, enabled=True))
+        detail.set_lifecycle_lock(None)
+
+        assert not detail.query_one("#scheduling-edit-task", Button).disabled
+        assert not detail.query_one("#scheduling-delete-task", Button).disabled
+        # set_task's own UX-059 rule still owns these two.
+        assert detail.query_one("#scheduling-enable-task", Button).disabled
+        assert not detail.query_one("#scheduling-disable-task", Button).disabled
+        why = detail.query_one("#scheduling-transfer-why", Static)
+        assert "locked for now" not in why.visual.plain
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_lock_shares_the_reason_static_without_clobbering_it():
+    """`set_transfer_reasons` and `set_lifecycle_lock` both write the one
+    reason Static (the workbench calls them in that order): the lock line
+    is appended and later removed on its own, leaving the transfer
+    reasons intact."""
+    async with _DetailHarnessApp().run_test() as pilot:
+        detail = pilot.app.query_one(TaskDetail)
+        detail.set_task(
+            _reminder(owner_id="local", transfer_state="to_server_pending")
+        )
+        detail.set_transfer_reasons(
+            to_server_reason="already moving",
+            to_local_reason=None,
+            retry_reason=None,
+            cancel_reason=None,
+            retry_errors=[],
+        )
+        detail.set_lifecycle_lock("read-only while moving")
+        why = detail.query_one("#scheduling-transfer-why", Static)
+        assert "Move to server: already moving" in why.visual.plain
+        assert "read-only while moving" in why.visual.plain
+
+        detail.set_lifecycle_lock(None)
+        assert why.visual.plain == "Move to server: already moving"
+
+
+@pytest.mark.asyncio
+async def test_workbench_locks_lifecycle_for_a_transferring_row(transfer_db):
+    """The workbench sources the lock from the REAL facade's
+    `transfer_lock_reason` on every selection."""
+    db = transfer_db
+    task_id = db.create_reminder_task(
+        owner_id="local",
+        title="Moving",
+        schedule_kind="one_time",
+        run_at=(datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+    )
+    db.set_transfer_state(
+        "reminder_task", task_id, "to_server_pending", expected=(None,)
+    )
+    app = TransferWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        await _select_row(pilot)
+
+        edit_button = pilot.app.screen.query_one("#scheduling-edit-task", Button)
+        assert edit_button.disabled
+        why = pilot.app.screen.query_one("#scheduling-transfer-why", Static)
+        assert "read-only" in why.visual.plain
+
+
+@pytest.mark.asyncio
+async def test_key_bound_edit_refuses_on_a_transferring_row(transfer_db):
+    """The `e`/`d`/`space` verbs share the same lock -- pressing them says
+    why instead of silently no-oping against the facade guard."""
+    db = transfer_db
+    task_id = db.create_reminder_task(
+        owner_id="local",
+        title="Moving",
+        schedule_kind="one_time",
+        run_at=(datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+    )
+    db.set_transfer_state(
+        "reminder_task", task_id, "from_server_pending", expected=(None,)
+    )
+    app = TransferWorkbenchTestApp(db)
+    notifications: list[str] = []
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        await _select_row(pilot)
+        pilot.app.notify = lambda message, **kw: notifications.append(message)
+
+        pilot.app.screen.action_edit_task()
+        pilot.app.screen.action_toggle_enabled()
+        await pilot.pause()
+
+        assert len(notifications) == 2
+        assert all("read-only" in message for message in notifications)
+
+
+@pytest.mark.asyncio
+async def test_automation_move_to_server_has_its_own_trigger(transfer_db):
+    """Final review M8: a plain LOCAL definition had no way to start a
+    move -- `y`/Retry only ever appeared as a retry. `M` is that trigger,
+    on the same facade call."""
+    db = transfer_db
+    definition_id = _local_definition(db, name="Nightly digest")
+    app = TransferWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        await _select_automations_tab_row(pilot)
+
+        pilot.app.screen.action_move_automation_to_server()
+        await pilot.pause()
+        assert isinstance(pilot.app.screen, ConfirmationDialog)
+        pilot.app.screen.dismiss(True)
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        row = db.get_automation_definition(definition_id)
+        assert row["transfer_state"] == "to_server_pending"
+        mutations = db.get_pending_mutations(
+            "server:1", primitive="automation_definition"
+        )
+        assert [m["payload"]["action"] for m in mutations] == ["transfer_to_server"]
+
+
+@pytest.mark.asyncio
+async def test_move_to_server_is_advertised_in_the_footer_hints(transfer_db):
+    """ADR-031: footer hints stay 1:1 with BINDINGS."""
+    binding_keys = {binding.key for binding in SchedulesWorkbench.BINDINGS}
+    hint_keys = {key for key, _label in SchedulesWorkbench.SCHEDULES_SHORTCUTS}
+    assert "M" in binding_keys and "M" in hint_keys
+    assert hint_keys <= binding_keys
+
+
+@pytest.mark.asyncio
+async def test_cancel_toast_does_not_promise_no_server_effect(transfer_db):
+    """Final review L13: `from_server_pending` also covers a release whose
+    delete already landed but whose ack was lost, so the toast may not
+    claim nothing happened -- only that nothing further will be sent."""
+    db = transfer_db
+    mirror_id = db.create_reminder_task(
+        owner_id="server:1",
+        server_id="srv-1",
+        title="Standup",
+        schedule_kind="one_time",
+        run_at=(datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+    )
+    copy_id = db.create_local_copy_from_mirror("reminder_task", mirror_id)
+    app = TransferWorkbenchTestApp(db)
+    notifications: list[str] = []
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        rows = pilot.app.screen._visible_tasks
+        index = next(i for i, task in enumerate(rows) if task.id == copy_id)
+        await _select_row(pilot, index)
+        pilot.app.notify = lambda message, **kw: notifications.append(message)
+
+        pilot.app.screen.query_one("#scheduling-cancel-transfer", Button).press()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert notifications, "cancel must report its outcome"
+        assert "nothing further will be sent" in notifications[0]
+        assert "no server-side effect" not in notifications[0]

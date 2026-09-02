@@ -13,6 +13,8 @@ from typing import Any
 
 import pytest
 
+from tldw_chatbook.Scheduling.services.scheduling_service import SchedulingService
+
 
 class MockServerClient:
     """Stub server client for test scheduling services."""
@@ -142,6 +144,13 @@ class MockSchedulingServiceMixin:
         if getattr(self.server_client, "notifications_service", None) is None:
             return "No server connection is configured."
         return None
+
+    #: Delegates to the REAL implementation rather than restating the
+    #: state set (final review I7): `transfer_lock_reason` is a
+    #: `@staticmethod` reading only the row dict, so there is nothing to
+    #: fake -- and a second copy of the in-flight state list here is
+    #: exactly the drift the shared constant was introduced to kill.
+    transfer_lock_reason = staticmethod(SchedulingService.transfer_lock_reason)
 
     def cancel_refusal(self, row: dict) -> str | None:
         """Mirrors the real facade's `cancel_refusal` (Task 7 fix round

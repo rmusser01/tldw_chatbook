@@ -460,3 +460,85 @@ async def test_failed_definition_transfer_retries_and_succeeds(tmp_path):
     assert (
         db.get_pending_mutations("server:1", primitive="automation_definition") == []
     )
+
+
+@pytest.mark.asyncio
+async def test_offline_cancel_of_a_release_reaches_the_server_never(tmp_path):
+    """(f) Final review C2, end to end: server reminder -> Move to local ->
+    connection drops -> user cancels -> reconnect -> sync.
+
+    The cancelled release must make NO server call. Before the fix the
+    cancel deleted the dormant copy but left the mutation (it was looked
+    up via "today's active server", which is `None` while offline), so the
+    reconnected sync deleted the reminder server-side: the task then
+    existed nowhere.
+    """
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    fake = _FakeTransferServerClient()
+    app = _FakeApp()
+    svc = SchedulingService(
+        db=db, server_client=fake, runtime_source="server:1", app_getter=lambda: app
+    )
+
+    mirror_id = db.create_reminder_task(
+        owner_id="server:1",
+        title="Ping",
+        schedule_kind="one_time",
+        run_at="2030-01-01T00:00:00+00:00",
+        server_id="srv-rem-9",
+    )
+    fake.reminders["srv-rem-9"] = {"id": "srv-rem-9", "title": "Ping"}
+
+    copy_id = (await svc.begin_transfer_to_local("reminder_task", mirror_id)).row_id
+    assert copy_id is not None
+
+    # The connection drops: no server identity resolves any more.
+    app.active_server_id = None
+    cancel = await svc.cancel_transfer("reminder_task", copy_id)
+    assert cancel.status == "cancelled"
+    assert db.get_reminder_task(copy_id) is None
+
+    # Reconnect and sync.
+    app.active_server_id = "1"
+    sync_outcome = await svc.sync_now()
+
+    assert sync_outcome.status == "ok"
+    assert fake.deleted_reminders == set(), (
+        "a cancelled release must never reach the server"
+    )
+    assert db.get_reminder_task(mirror_id) is not None, "the mirror is intact"
+
+
+@pytest.mark.asyncio
+async def test_offline_cancel_of_a_to_server_move_reaches_the_server_never(tmp_path):
+    """(g) Final review I3, the other direction: an unattempted local ->
+    server move cancelled offline left its mutation queued forever,
+    CAS-skipped every cycle and suppressing pull-apply for that row."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    fake = _FakeTransferServerClient()
+    app = _FakeApp()
+    svc = SchedulingService(
+        db=db, server_client=fake, runtime_source="server:1", app_getter=lambda: app
+    )
+
+    row_id = db.create_reminder_task(
+        owner_id="local",
+        title="Ping",
+        schedule_kind="one_time",
+        run_at="2030-01-01T00:00:00+00:00",
+    )
+    assert (
+        await svc.begin_transfer_to_server("reminder_task", row_id)
+    ).status == "pending"
+
+    app.active_server_id = None
+    assert (await svc.cancel_transfer("reminder_task", row_id)).status == "cancelled"
+
+    app.active_server_id = "1"
+    assert (await svc.sync_now()).status == "ok"
+
+    assert fake.reminder_create_calls == [], "nothing may be sent after a cancel"
+    assert db.get_pending_mutations(primitive="reminder_task") == []
+    row = db.get_reminder_task(row_id)
+    assert row["owner_id"] == "local" and row["transfer_state"] is None
+    assert _locally_armed(row), "the cancelled row keeps running here"

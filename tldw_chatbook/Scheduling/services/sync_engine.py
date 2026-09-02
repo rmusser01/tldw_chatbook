@@ -43,6 +43,12 @@ _RESULT_REVIEW_PRIMITIVE = "automation_result_review"
 _RESULTS_PAGE_SIZE = 50
 _SYNC_MAX_PAGES = 4
 
+#: Mutation actions the transfer machine (spec §6) files. They are NOT
+#: content edits of the row they name, so the pull's "a local mutation is
+#: pending, therefore the server's version is a conflict" rule must skip
+#: them (final review I4).
+_TRANSFER_ACTIONS = ("transfer_to_server", "release_from_server")
+
 
 @dataclass(frozen=True)
 class SyncOutcome:
@@ -354,6 +360,22 @@ class SyncEngine:
                 seen_server_ids = {
                     item["id"] for item in pulled_items if item.get("id")
                 }
+                # `_network_phase` pulls BEFORE it pushes, so a reminder
+                # this cycle transferred to the server carries a brand-new
+                # server_id the pull could not possibly have listed -- and
+                # `convert_row_to_server_mirror` also flipped its owner_id
+                # to the destination scope, which is exactly the
+                # (owner_id, server_id) pair the deletion scan reads. Left
+                # unmerged, a SUCCESSFUL move recorded a "the server
+                # deleted this row" conflict on the same cycle (final
+                # review C1). Same precedent as the results pushback
+                # phase's `skip_review_server_ids`: what this cycle just
+                # wrote counts as seen.
+                seen_server_ids.update(
+                    outcome["adopted_server_id"]
+                    for outcome in staged_outcomes
+                    if outcome.get("adopted_server_id")
+                )
                 self.db._detect_server_deletions_conn(
                     conn, target_owner, seen_server_ids
                 )
@@ -978,8 +1000,10 @@ class SyncEngine:
         "INSERT OR REPLACE keyed by (local_id, primitive, owner_id)"
         upsert -- which also preserves the original `idempotency_key`
         already present in ``payload``. `_replay_definition_mutations`'s
-        and `_network_phase`'s skip checks (`"transfer_errors" in
-        payload`) then stop this mutation from being retried automatically
+        and `_network_phase`'s skip checks (a TRUTHY
+        `payload["transfer_errors"]` -- an empty list would re-arm
+        auto-retry, which is why this always writes a non-empty one) then
+        stop this mutation from being retried automatically
         -- recovery is a user retry/cancel action via Task 6's facade, not
         another sync cycle.
         """
@@ -1135,7 +1159,18 @@ class SyncEngine:
         pulled_items = response.get("items", [])
 
         mutations = self.db.get_pending_mutations(owner_id, primitive=_REMINDER_PRIMITIVE)
-        pending_local_ids = {m["local_id"] for m in mutations}
+        # `_apply_pulled_reminders`' rule is "a local EDIT is pending, so
+        # the server's version must not silently win" -- a transfer action
+        # is not an edit of the pulled row's content, and a
+        # `release_from_server` mutation is deliberately keyed on the
+        # MIRROR the pull is listing, so leaving them in made EVERY
+        # server -> local move raise a bogus conflict on the very cycle
+        # that performed it (final review I4).
+        pending_local_ids = {
+            m["local_id"]
+            for m in mutations
+            if (m.get("payload") or {}).get("action") not in _TRANSFER_ACTIONS
+        }
         for mutation in mutations:
             mutation_payload = mutation.get("payload") or {}
             if mutation_payload.get("transfer_errors"):
@@ -1288,15 +1323,25 @@ class SyncEngine:
           Task 6's list-and-match on the next pull (spec §6.1.3) -- the
           row and its mutation are simply left in place
           (`to_server_sent`, mutation retained) for that recovery, not
-          retried by this replay loop itself.
+          retried by this replay loop itself. A reminder that ALREADY
+          carries a link (a `watchlist_run`, say) keeps it: overwriting
+          it destroyed the original link both server-side and, via the
+          next pull, locally too (final review L12). The cost is that
+          such a row is not list-and-matchable by the transfer marker, so
+          an ambiguous timeout on it waits for a user retry/cancel
+          instead of self-healing -- losing the user's own link is the
+          worse of the two.
 
-        Returns a plain ``{"local_id": ...}`` outcome (no ``server_id``/
-        ``delete_local``/``mutation_id`` keys): unlike create/update/
-        delete, this action does its own DB write immediately
-        (`convert_row_to_server_mirror` + `delete_pending_mutation`, both
-        self-contained transactions) rather than deferring to
-        `_sync_reminders`'s batched apply -- so there is nothing left for
-        that batched loop to do with this outcome.
+        Returns ``{"local_id": ..., "adopted_server_id": ...}`` (no
+        ``server_id``/``delete_local``/``mutation_id`` keys): unlike
+        create/update/delete, this action does its own DB write
+        immediately (`convert_row_to_server_mirror` +
+        `delete_pending_mutation`, both self-contained transactions)
+        rather than deferring to `_sync_reminders`'s batched apply.
+        ``adopted_server_id`` exists only so that batched apply can count
+        this cycle's brand-new server id as "seen" by the deletion scan
+        (final review C1) -- it deliberately is NOT ``server_id``, which
+        that loop would re-apply as a mapping/update write.
         """
         disarmed = self.db.set_transfer_state(
             _REMINDER_PRIMITIVE,
@@ -1313,8 +1358,9 @@ class SyncEngine:
             return {"local_id": local_id}
 
         task_payload = dict(payload.get("task_payload") or {})
-        task_payload["link_type"] = "chatbook_transfer"
-        task_payload["link_id"] = local_id
+        if not task_payload.get("link_type") and not task_payload.get("link_id"):
+            task_payload["link_type"] = "chatbook_transfer"
+            task_payload["link_id"] = local_id
 
         assert self.server_client is not None
         try:
@@ -1332,6 +1378,7 @@ class SyncEngine:
             _REMINDER_PRIMITIVE, local_id, response, owner_id
         )
         self.db.delete_pending_mutation(mutation_id)
+        outcome = {"local_id": local_id, "adopted_server_id": response.get("id")}
         if result == "vanished":
             server_id = response.get("id") or "unknown"
             logger.warning(
@@ -1346,7 +1393,7 @@ class SyncEngine:
                 "local reminder",
                 owner_id,
             )
-        return {"local_id": local_id}
+        return outcome
 
     async def _push_reminder_release(
         self,
@@ -1375,13 +1422,18 @@ class SyncEngine:
 
         Unlike a definition release, there is no upsert-echo to mirror the
         outcome onto the mirror row here: the server task is now GONE (a
-        delete, not an archive), and the mirror row's own cleanup happens
-        via `_detect_server_deletions_conn` on the NEXT reminders pull's
-        full-set reconciliation (task-5 brief: "the mirror's cleanup
-        happens via the pull's full-set reconciliation -- do NOT hand-
-        delete it here") -- hand-deleting it here would race that
-        reconciliation and duplicate its bookkeeping (sync_mapping/
-        tombstone cleanup) for no benefit.
+        delete, not an archive). The mirror row is torn down HERE, on the
+        ack, together with its sync mapping. Task 5's original brief
+        deferred that to "the next pull's full-set reconciliation", but
+        `_detect_server_deletions_conn` only DELETES a row that has a
+        local tombstone -- a released mirror has none, so what it actually
+        did was record a "the server deleted this row" conflict, on the
+        very cycle that performed the release, and then skip the row
+        forever after because an unresolved conflict already existed
+        (final review I4). Resolving that conflict "local" re-created the
+        reminder server-side while the local copy was already armed --
+        genuine double execution. Deleting the mirror on the ack is what
+        makes the ADR's "the mirror is torn down" claim true.
 
         Returns a plain ``{"local_id": ...}`` outcome, same shape and same
         reasoning as `_push_reminder_transfer`'s: this action does its own
@@ -1406,11 +1458,37 @@ class SyncEngine:
                 f"Reminder {server_task_id} release: already gone "
                 "server-side; treating as acked"
             )
+        except ServerClientPolicyError:
+            raise
+        except ServerClientValidationError as exc:
+            # A definitively rejected release settles PER MUTATION, the
+            # same containment `_reject_definition_mutation` gives the
+            # definitions leg: left to propagate it aborted the entire
+            # reminder push phase, every cycle, forever (final review
+            # L15). The dormant copy is deliberately left
+            # `from_server_pending` -- nothing was released, so nothing
+            # may arm; `cancel_transfer` is its recovery (Task 5
+            # adjudication: cancel is state-keyed, not mutation-keyed).
+            logger.warning(
+                f"Reminder {server_task_id} release rejected by the server: {exc}"
+            )
+            self._record_sync_error(
+                f"Moving reminder {server_task_id} to this device was "
+                f"refused by the server: {exc}",
+                owner_id,
+            )
+            self.db.delete_pending_mutation(mutation_id)
+            return {"local_id": local_id}
 
         if local_copy_id:
             self.db.clear_transfer_state(
                 _REMINDER_PRIMITIVE, local_copy_id, expected=("from_server_pending",)
             )
+        # The mirror is now a row pointing at a server task that no longer
+        # exists -- tear it down with its mapping (see the docstring: the
+        # pull's reconciliation does NOT delete it, it conflicts on it).
+        self.db.delete_reminder_task(local_id)
+        self.db.delete_sync_mapping(local_id, _REMINDER_PRIMITIVE, owner_id)
         self.db.delete_pending_mutation(mutation_id)
         return {"local_id": local_id}
 

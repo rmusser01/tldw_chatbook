@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.services.server_client import (
     ServerClientNotFoundError,
+    ServerClientValidationError,
     ServerUnavailableError,
 )
 from tldw_chatbook.Scheduling.services.sync_engine import SyncEngine
@@ -2645,10 +2646,16 @@ async def test_sync_now_reminder_release_deletes_and_arms_local_copy(tmp_path):
     assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
     copy_row = db.get_reminder_task(copy_id)
     assert copy_row["transfer_state"] is None, "ack arms the local copy"
-    # The mirror's own cleanup is the NEXT pull's full-set reconciliation
-    # (`_detect_server_deletions_conn`), not this replay -- it is left in
-    # place here.
-    assert db.get_reminder_task(mirror_id) is not None
+    # Final review I4: the mirror is torn down HERE, on the ack. Deferring
+    # it to the pull's full-set reconciliation did not delete it -- that
+    # scan only deletes rows carrying a local tombstone, so a released
+    # mirror instead became a permanent bogus "the server deleted this"
+    # conflict beside the armed local copy.
+    assert db.get_reminder_task(mirror_id) is None
+    assert (
+        db.get_sync_mapping_by_local_id(mirror_id, "reminder_task", "server:1") is None
+    )
+    assert db.get_conflicts("server:1") == []
 
 
 @pytest.mark.asyncio
@@ -3068,3 +3075,158 @@ async def test_sync_now_all_policy_refusal_stays_not_applicable(tmp_path):
     assert outcome.status == "not_applicable"
     state = db.get_sync_state("local") or {}
     assert not (state.get("sync_errors") or [])
+
+
+# ---------------------------------------------------------------------------
+# Final whole-branch review fixes (2026-09-02)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reminder_transfer_does_not_fabricate_a_deletion_conflict(tmp_path):
+    """C1: `_network_phase` pulls BEFORE it pushes, so the transfer's
+    brand-new server_id is absent from the pull snapshot -- and
+    `convert_row_to_server_mirror` flips owner_id into the scan's own
+    (owner_id, server_id) window. A SUCCESSFUL move used to light up the
+    Conflicts tab claiming the server had deleted the row."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_reminder_task(
+        owner_id="local", title="Ping", schedule_kind="one_time"
+    )
+    db.set_transfer_state(
+        "reminder_task", local_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        local_id,
+        "reminder_task",
+        "server:1",
+        {"action": "transfer_to_server", "task_payload": {"title": "Ping"}},
+    )
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    server_client.create_reminder.return_value = {"id": "srv-rem-1", "title": "Ping"}
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    row = db.get_reminder_task(local_id)
+    assert row["owner_id"] == "server:1" and row["server_id"] == "srv-rem-1"
+    assert db.get_conflicts("server:1") == [], (
+        "a successful move must not report itself as a server-side deletion"
+    )
+
+
+@pytest.mark.asyncio
+async def test_reminder_transfer_keeps_an_existing_link(tmp_path):
+    """L12: a reminder that already carries a link (a watchlist run, say)
+    keeps it -- the transfer marker is only stamped when there is none."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_reminder_task(
+        owner_id="local", title="Ping", schedule_kind="one_time"
+    )
+    db.set_transfer_state(
+        "reminder_task", local_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        local_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "task_payload": {
+                "title": "Ping",
+                "link_type": "watchlist_run",
+                "link_id": "wl-9",
+            },
+        },
+    )
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    server_client.create_reminder.return_value = {"id": "srv-rem-1"}
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    await engine.sync_now()
+
+    sent = server_client.create_reminder.await_args.kwargs
+    assert sent["link_type"] == "watchlist_run"
+    assert sent["link_id"] == "wl-9"
+
+
+@pytest.mark.asyncio
+async def test_reminder_release_raises_no_conflict_while_the_mirror_is_listed(tmp_path):
+    """I4: the release mutation is keyed on the MIRROR, so the pull that
+    still lists that (not yet released) server row used to hit the
+    unconditional "local mutation pending => conflict" rule -- every
+    server -> local move raised a bogus conflict on its own cycle."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    mirror_id = db.create_reminder_task(
+        owner_id="server:1",
+        title="Standup",
+        schedule_kind="one_time",
+        server_id="srv-rem-9",
+    )
+    db.set_sync_mapping(mirror_id, "srv-rem-9", "reminder_task", "server:1")
+    copy_id = db.create_local_copy_from_mirror("reminder_task", mirror_id)
+    db.record_pending_mutation(
+        mirror_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "release_from_server",
+            "server_task_id": "srv-rem-9",
+            "local_copy_id": copy_id,
+        },
+    )
+    server_client = AsyncMock()
+    # The pull still lists the server row: the release has not run yet.
+    server_client.list_reminders.return_value = {
+        "items": [{"id": "srv-rem-9", "title": "Standup"}]
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    assert db.get_conflicts("server:1") == []
+    assert db.get_reminder_task(copy_id)["transfer_state"] is None, "copy armed"
+    assert db.get_reminder_task(mirror_id) is None, "mirror torn down on the ack"
+
+
+@pytest.mark.asyncio
+async def test_rejected_reminder_release_settles_per_mutation(tmp_path):
+    """L15: a definitively rejected release used to re-raise through
+    `_push_mutation`'s blanket `except ServerClientError: raise`, aborting
+    the whole reminder push phase every cycle, forever."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    mirror_id = db.create_reminder_task(
+        owner_id="server:1",
+        title="Standup",
+        schedule_kind="one_time",
+        server_id="srv-rem-9",
+    )
+    copy_id = db.create_local_copy_from_mirror("reminder_task", mirror_id)
+    db.record_pending_mutation(
+        mirror_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "release_from_server",
+            "server_task_id": "srv-rem-9",
+            "local_copy_id": copy_id,
+        },
+    )
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    server_client.delete_reminder.side_effect = ServerClientValidationError("refused")
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok", "one poisoned release must not abort the phase"
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+    assert db.get_reminder_task(copy_id)["transfer_state"] == "from_server_pending", (
+        "nothing was released, so nothing may arm -- cancel is its recovery"
+    )
+    state = db.get_sync_state("server:1") or {}
+    assert state.get("sync_errors"), "the refusal must be reported, not swallowed"
