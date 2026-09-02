@@ -186,6 +186,31 @@ def test_space_action_noop_when_focus_is_not_a_row():
     assert fake._library_media_row_selection.count == 0
 
 
+def test_select_enter_available_matches_the_button_gate():
+    """task-28012 (Qodo #2309): entering select mode needs fresh rows.
+
+    The keyboard "s" must obey the same availability as the Select button
+    (disabled with no rows or on a stale page), so this predicate -- the
+    one check_action consults for entry -- gates on controller state.
+    """
+    fake = SimpleNamespace(
+        _library_media_browse_controller=SimpleNamespace(
+            freshness="fresh",
+            retained_items=({"id": "local:media:1"},),
+        )
+    )
+    assert LibraryScreen._library_media_select_enter_available(fake) is True
+
+    # No rows -> not available (matches the disabled Select button).
+    fake._library_media_browse_controller.retained_items = ()
+    assert LibraryScreen._library_media_select_enter_available(fake) is False
+
+    # Stale page -> not available even with rows.
+    fake._library_media_browse_controller.retained_items = ({"id": "x"},)
+    fake._library_media_browse_controller.freshness = "stale"
+    assert LibraryScreen._library_media_select_enter_available(fake) is False
+
+
 @pytest.mark.asyncio
 async def test_export_selected_builds_ids_scope():
     fake = _media_fake(select_mode=True)

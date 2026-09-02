@@ -784,6 +784,11 @@ _LIBRARY_PROMPTS_SEARCH_DEBOUNCE_SECONDS = 0.25
 # above, kept local rather than in library_skills_state.py.
 _LIBRARY_SKILLS_SORT_MODES = ("name", "status")
 
+# task-28012 (Qodo #2309): the media bulk-selection keys, named once so the
+# key ``Binding``s and the advertised footer shortcuts cannot drift apart.
+_MEDIA_SELECT_MODE_KEY = "s"
+_MEDIA_ROW_SELECT_KEY = "space"
+
 
 def _library_screen_is_current(screen: Any) -> bool:
     """Reject delayed callbacks owned by a replaced Library screen."""
@@ -2426,9 +2431,14 @@ class LibraryScreen(BaseAppScreen):
         # select mode on the media list; Space toggles the focused row while
         # in it. ``check_action`` gates both; a focused Input consumes the
         # printable "s"/Space first, so they still type in the filter/search.
-        Binding("s", "library_media_toggle_select_mode", "Select", show=False),
         Binding(
-            "space",
+            _MEDIA_SELECT_MODE_KEY,
+            "library_media_toggle_select_mode",
+            "Select",
+            show=False,
+        ),
+        Binding(
+            _MEDIA_ROW_SELECT_KEY,
             "library_media_toggle_row_selection",
             "Toggle selection",
             show=False,
@@ -2573,14 +2583,14 @@ class LibraryScreen(BaseAppScreen):
     LIBRARY_MEDIA_LIST_SHORTCUTS = (
         ("/", "focus search"),
         ("F6", "next pane"),
-        ("s", "select"),
+        (_MEDIA_SELECT_MODE_KEY, "select"),
         ("esc", "focus rail"),
     )
     LIBRARY_MEDIA_SELECT_SHORTCUTS = (
         ("/", "focus search"),
         ("F6", "next pane"),
-        ("space", "toggle selection"),
-        ("s", "done selecting"),
+        (_MEDIA_ROW_SELECT_KEY, "toggle selection"),
+        (_MEDIA_SELECT_MODE_KEY, "done selecting"),
         ("esc", "focus rail"),
     )
 
@@ -27030,6 +27040,23 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_delete_receipt_ids = ()
         _sync_library_canvas(self, "media")
 
+    def _library_media_select_enter_available(self) -> bool:
+        """Whether ENTERING media Select mode is offered (task-28012).
+
+        Qodo #2309: the keyboard "s" must obey the same availability as the
+        Select button, which is disabled with no rows or on a stale page.
+        Exiting an active selection stays possible regardless (the caller
+        gates that), so this covers entry only. State-level (controller
+        freshness + retained rows), never presentation labels.
+
+        Returns:
+            True when a fresh page with at least one row is showing.
+        """
+        controller = self._library_media_browse_controller
+        if controller.freshness == "stale":
+            return False
+        return bool(controller.retained_items)
+
     def action_library_media_toggle_select_mode(self) -> None:
         """Keyboard "s": enter/exit media select mode (task-28012)."""
         self._toggle_library_media_select_mode()
@@ -30650,16 +30677,32 @@ class LibraryScreen(BaseAppScreen):
         if action == "library_media_toggle_select_mode":
             # task-28012: only on the media LIST (not viewer/trash), and not
             # while a bulk-delete confirm is armed or a delete is in flight.
-            return (
-                self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-                and self._library_media_view == "list"
-                and not self._library_media_confirming_bulk_delete
-                and not self._library_media_bulk_delete_in_flight
-            )
+            if (
+                self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
+                or self._library_media_view != "list"
+                or self._library_media_confirming_bulk_delete
+                or self._library_media_bulk_delete_in_flight
+            ):
+                return False
+            # task-28012 (Qodo #2309): exiting an active selection is always
+            # allowed (rows may have vanished), but ENTERING must obey the
+            # same availability as the Select button -- no rows, or a stale
+            # page, disables it.
+            if self._library_media_select_mode:
+                return True
+            return self._library_media_select_enter_available()
         if action == "library_media_toggle_row_selection":
             # task-28012: only while select mode is active with a media row
-            # focused -- otherwise Space falls through to its default.
+            # focused -- otherwise Space falls through to its default. Qodo
+            # #2309: a stale page (or an armed/in-flight bulk delete) gates
+            # row toggling exactly as it gates the row buttons.
             if not self._library_media_select_mode:
+                return False
+            if (
+                self._library_media_browse_controller.freshness == "stale"
+                or self._library_media_confirming_bulk_delete
+                or self._library_media_bulk_delete_in_flight
+            ):
                 return False
             focused = self.focused
             return bool(
