@@ -271,8 +271,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 66,
-      "diagnostic_digest": "d480c3b12d394f04e0ca",
+      "call_count": 67,
+      "diagnostic_digest": "19602e88d64db2e34989",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_chat_controller.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -1069,8 +1069,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 142,
-      "diagnostic_digest": "5f5f1efb6ba9405b8a66",
+      "call_count": 143,
+      "diagnostic_digest": "79e6d9261f07f7972efc",
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/LLM_API_Calls.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -1314,8 +1314,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 51,
-      "diagnostic_digest": "804a512333e204b1c463",
+      "call_count": 52,
+      "diagnostic_digest": "dbf3dcc6bcd0a994f11c",
       "owner": "TASK-492",
       "path": "tldw_chatbook/MCP/client.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -1325,6 +1325,20 @@
       "diagnostic_digest": "b836a17484abae8e1c7b",
       "owner": "TASK-492",
       "path": "tldw_chatbook/MCP/execution_log.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "4140ccc0feeb1d33e399",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/MCP/live_server_request_wiring.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "64628551031cdc7f498a",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/MCP/local_control_service.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
@@ -11239,10 +11253,10 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 560,
+    "owner_files": 562,
     "path_privacy_candidate_calls": 714,
     "persistent_sink_files": 10,
-    "task_492_calls": 1323,
+    "task_492_calls": 1328,
     "task_494_calls": 7508
   }
 }

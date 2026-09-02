@@ -4,7 +4,7 @@ title: Cross-session persistent memory for the agent
 status: To Do
 assignee: []
 created_date: '2026-08-31 15:09'
-updated_date: '2026-08-31 15:11'
+updated_date: '2026-09-02 06:50'
 labels:
   - agents
   - memory
@@ -31,3 +31,9 @@ Chatbook's memory is strictly per-conversation: Chat/console_context_repository.
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes. ADR path: backlog/decisions/<next> - cross-session-agent-memory.md. Reason: this creates a new durable store of user-derived data and a new automatic write path; the privacy and retention decisions are the user's, not the implementer's. Sweep the decisions directory for a free number at authoring time - ADR numbers in this repo collide routinely.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+DEFERRED by owner (2026-09-02) until Personal Context 02 (interviews + agent tools) lands. Re-scope recorded: chatbook already has three memory pillars — Notes (freeform), Agent-Lessons (human-gated learned facts -> AGENTS.md), and the in-flight Personal Context program (encrypted USER-profile core, plans 01-04 merged, append_personal_context live in agent_service). Any 25907 ADR should be a short POSITIONING decision over those pillars (no fourth store), mapping the four deferred rows onto them (curator -> later lessons/notes maintenance automation; external MemoryProviders + journey graph -> rejected or server-side). Do not design a parallel memory system.
+<!-- SECTION:NOTES:END -->

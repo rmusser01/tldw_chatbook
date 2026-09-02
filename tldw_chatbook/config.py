@@ -3724,6 +3724,14 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     [api_settings.anthropic]
     api_key_env_var = "ANTHROPIC_API_KEY"
     # api_key = "" # Less secure fallback - use env var instead
+    # TASK-26022: how requests authenticate. "api_key" (default) uses the key
+    # above. "claude_subscription" borrows the OAuth credential Claude Code
+    # minted (~/.claude/.credentials.json) READ-ONLY, billing your Pro/Max
+    # subscription instead of API rates. Explicit opt-in: a credential on disk
+    # never changes billing by itself. Chatbook never refreshes the token --
+    # when it expires, log in with Claude Code again. Whether subscription use
+    # from a third-party client fits Anthropic's terms is YOUR call.
+    # auth_source = "api_key"
     model = "claude-sonnet-5"
     temperature = 0.7
     top_p = 1.0 # Anthropic uses top_p (represented as topp in UI)

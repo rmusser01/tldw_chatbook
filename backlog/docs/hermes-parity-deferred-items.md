@@ -126,3 +126,45 @@ Nothing here is blocked or rejected; these are real gaps that lost on priority.
 - **Profiles / multi-instance** — isolated config homes.
 - **Packaging: Dockerfile** — the one genuinely missing distribution target for a terminal app.
 - **Resource monitoring** — no disk-free or leak time series.
+
+---
+
+## Review 2026-09-02 (TASK-26041)
+
+Recheck pins: hermes origin/main `c5c9aa8d44` (591 commits past the report's
+`a0a63a1bc2`; release v0.21.0 rolls up pre-pin code) · chatbook dev `e167d0be2`
+(post-#2301). Full evidence in the TASK-26041 close-out. Hermes: nothing
+removed; no deferred row invalidated. Decisions:
+
+**Closed as covered on dev:**
+- Progressive-disclosure tool_call baseline → `find_tools` shipped (TASK-26007).
+- Natural-language schedule input → resolved-by-decision: 23102/23103 closed
+  expert-only; no NL parser exists. Closed for real, not merely deferred.
+- Scheduled-output storage + retention → dev's automations run-history landed
+  (`automation_audit_events`, `retention_policy`, run-history UI).
+
+**Promoted to filed tasks (ids swept to global max 28226 at filing):**
+C6→TASK-28237 (code execution/PTC) · C3+C7→TASK-28238 (worktree isolation +
+stale-write guard; the fleet made these live) · C21→TASK-28229 (rate-limit
+headers) · C5→TASK-28230 (busy-input policy) · C36-slice→TASK-28231 (version
+check) · C39→TASK-28232 (Dockerfile) · C35→TASK-28233 (CJK alignment) ·
+C2-residue→TASK-28234 (durable transcript rewind) · C22→TASK-28235
+(schedule blueprints) · A9→TASK-28236 (LLM guardian, unblocked by 25905).
+
+**Folded into existing tasks:** inbound webhooks + sandbox-urgency +
+non-interactive fail-closed policy + IPC control surface → TASK-26033 (local
+API server); skill bundles + remote install/catalog → TASK-26008; the four
+memory rows remain behind TASK-25907; other-provider subscription OAuth →
+rider on TASK-26022 once its owner live-verify closes.
+
+**Premise corrections:** (1) /rewind predates the report (task-2705) — the
+"regenerate-only" framing was stale even then; (2) "cron CRUD as agent tool =
+record a decision" was never recorded while `watchlists_set_briefing_schedule`
+already ships as a narrow precedent — recorded here: agent-writable schedules
+stay LIMITED to that one tool absent a new decision; (3) "scheduled tasks do
+no stateful work" no longer holds (incident dedupe, run history, retention);
+(4) NL-schedule row belonged in closed-by-decision, not recommend-closing;
+(5) the trace/observability row's "metrics are the only observability" premise
+is stale — dev landed a full local trace stack (no OTLP; close-reason holds).
+
+**Everything else:** deferred reasons re-verified and stand as written.

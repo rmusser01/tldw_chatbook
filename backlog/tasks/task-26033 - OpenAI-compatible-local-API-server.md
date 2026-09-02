@@ -1,9 +1,10 @@
 ---
 id: TASK-26033
 title: OpenAI-compatible local API server
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-31 15:47'
+updated_date: '2026-09-02 13:58'
 labels:
   - interop
   - agents
@@ -33,3 +34,9 @@ Chatbook's agent cannot be driven by anything but its own TUI. Verified on origi
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes. ADR path: backlog/decisions/<next> - local-api-server-and-auth-boundary.md. Reason: this opens a network surface that can drive the agent and spend the user's tokens; the authentication boundary and what an API caller may do relative to a Console user are decisions to record, not to infer. Sweep backlog/decisions for a free number at authoring time - ADR numbers in this repo collide routinely.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+REJECTED by owner (2026-09-02): a local HTTP API inside the TUI duplicates tldw_server, which IS the API surface of this ecosystem — anything that wants to drive an agent over HTTP should talk to the server, not to a second embedded server in the chatbook process. Filed from hermes parity, not from a real need. The 26041 fold-ins recorded onto this task (inbound webhooks, IPC control surface, non-interactive fail-closed policy, sandbox-urgency trigger) do NOT get a new home: the webhook family was already owner-rejected, IPC/control belongs to tldw_server if anywhere, and the policy/sandbox notes only mattered if an unattended API existed here. The framework question (FastAPI vs aiohttp) is moot.
+<!-- SECTION:NOTES:END -->

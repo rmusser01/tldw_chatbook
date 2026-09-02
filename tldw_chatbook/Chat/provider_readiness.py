@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import os
+
+from tldw_chatbook.LLM_Calls.anthropic_subscription import (
+    anthropic_auth_source,
+    read_claude_code_credential,
+)
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -46,6 +51,11 @@ from .provider_test_evidence import (
     ProviderTestEvidence,
     provider_readiness_verdict,
 )
+
+# TASK-26022: readiness label for the borrowed Claude Code credential. The
+# token itself is NEVER carried on a readiness record (the call path re-reads
+# it); the source string is the AC#5 "which credential is in use" signal.
+SUBSCRIPTION_SOURCE = "subscription:claude_code"
 
 PROVIDERS_REQUIRING_API_KEY_KEYS = frozenset(
     {
@@ -125,6 +135,11 @@ _CONFIGURATION_STATE_BY_REASON: dict[
     str, tuple[ConfigurationFacet, ConfigurationIssueCode | None]
 ] = {
     "Ready": ("configured", None),
+    # TASK-26022: subscription-mode states (AC#5). Both blocked states map to
+    # credential_missing -- the remedy is external (log in with Claude Code).
+    "Ready (Claude subscription)": ("configured", None),
+    "Claude subscription credential is expired": ("incomplete", "credential_missing"),
+    "No Claude subscription credential found": ("incomplete", "credential_missing"),
     "Select a provider": ("incomplete", "provider_missing"),
     "Missing API key": ("incomplete", "credential_missing"),
     "Invalid provider settings": ("incomplete", "invalid_settings"),
@@ -239,11 +254,15 @@ class ProviderReadiness:
 
         has_key = self.api_key is not None
         has_source = self.api_key_source is not None
-        if has_key != has_source:
+        subscription_source = self.api_key_source == SUBSCRIPTION_SOURCE
+        # TASK-26022: the subscription source is deliberately key-less -- the
+        # borrowed token never rides a readiness record (AC#3); the call path
+        # reads the credential file itself.
+        if has_key != has_source and not (subscription_source and not has_key):
             raise ValueError("Provider credential source is inconsistent.")
         if not self.ready and (has_key or has_source):
             raise ValueError("Blocked provider cannot retain a credential.")
-        if self.ready and self.requires_api_key and not has_key:
+        if self.ready and self.requires_api_key and not has_source:
             raise ValueError("Ready keyed provider requires a credential source.")
         if has_key:
             if not is_valid_provider_api_key(self.api_key):
@@ -514,6 +533,46 @@ def get_provider_readiness(
         return _invalid_settings_readiness(provider_name, provider_key)
 
     requires_api_key = _requires_api_key(provider_key)
+
+    # TASK-26022 (AC#5): explicit subscription mode for Anthropic. Reported as
+    # its own source so subscription vs API key is visible at a glance; the
+    # token never rides the record. Missing/expired blocks with the
+    # refresh-in-Claude-Code copy -- never a silent API-key fallback.
+    if provider_key == "anthropic" and anthropic_auth_source(
+        provider_settings
+    ) == "claude_subscription":
+        _sub = read_claude_code_credential()
+        if _sub is not None and not _sub.expired:
+            return ProviderReadiness(
+                provider=provider_name,
+                provider_key=provider_key,
+                requires_api_key=requires_api_key,
+                ready=True,
+                api_key=None,
+                api_key_source=SUBSCRIPTION_SOURCE,
+                env_var=None,
+                reason="Ready (Claude subscription)",
+                recovery=None,
+            )
+        return ProviderReadiness(
+            provider=provider_name,
+            provider_key=provider_key,
+            requires_api_key=requires_api_key,
+            ready=False,
+            api_key=None,
+            api_key_source=None,
+            env_var=None,
+            reason=(
+                "Claude subscription credential is expired"
+                if _sub is not None
+                else "No Claude subscription credential found"
+            ),
+            recovery=(
+                "Refresh it in the tool that owns it (log in with Claude Code), "
+                "or set [api_settings.anthropic] auth_source back to \"api_key\"."
+            ),
+        )
+
     configured_key, configured_source, env_var = resolve_provider_credential(
         provider_key,
         provider_settings,

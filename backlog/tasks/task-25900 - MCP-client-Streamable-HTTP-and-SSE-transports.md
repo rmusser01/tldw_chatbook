@@ -4,6 +4,7 @@ title: 'MCP client: Streamable HTTP and SSE transports'
 status: To Do
 assignee: []
 created_date: '2026-08-31 15:07'
+updated_date: '2026-09-02 06:50'
 labels:
   - mcp
   - interop
@@ -31,7 +32,9 @@ Chatbook's MCP client can only reach servers it spawns as a local process, so th
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: yes. ADR path: backlog/decisions/111-mcp-remote-transport-and-client-dependency.md. Reason: the SDK-versus-hand-rolled choice changes a core dependency and the client's concurrency model; record it before implementing.
-
-BLOCKED (2026-09-01): ADR-111 authored (Status: Proposed) recommending Option B (hand-roll HTTP/SSE on the already-present httpx, single asyncio concurrency model, reuse the existing gate/hash/log). Implementation is deferred pending the owner accepting the ADR's dependency decision (adopt the official mcp SDK vs. hand-roll). No transport code lands until ADR-111 is Accepted.
+RESHAPED by ADR-111 Option C (2026-09-02, supersedes the hand-roll plan):
+1. [tldw_server repo] Implement Streamable HTTP + SSE ExternalFederationTransport impls in mcp_unified/federation (httpx + websockets deps already present); release; bump the mcp-unified pin here.
+2. [chatbook] Wire remote server records through mcp_unified.federation's manager in the hub path: same permission gate, rug-pull hash, execution log as stdio (AC#4); URL-based server records in local_store round-trip distinctly (AC#3); distinct readiness for connect/TLS/auth failures (AC#6).
+3. stdio path untouched and extra-free (AC#5); remote servers require the mcp extra.
+Cross-repo dependency: step 1 first.
 <!-- SECTION:PLAN:END -->

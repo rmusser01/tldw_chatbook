@@ -1100,6 +1100,12 @@ class LocalMCPStore:
         )
         if existing_request is None:
             return None
+        # Qodo #9 (PR #2313): only a PENDING request may be resolved. Without
+        # this, an approval action raced against an elicitation timeout could
+        # overwrite the terminal "expired" state with "approved" -- a false
+        # audit record for a request nobody is waiting on.
+        if existing_request.status != "pending":
+            return None
         now = datetime.now(timezone.utc)
         resolved_request = LocalApprovalRequest(
             request_id=existing_request.request_id,
