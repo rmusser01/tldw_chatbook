@@ -1697,3 +1697,94 @@ body literally: a `rate_limit_error` here was really "this token is Claude-Code
 only." Corollary: a misleading upstream error code (429 for an identity
 rejection) will send you chasing the wrong fix unless you test the discriminating
 cases (identity present vs absent vs other) rather than trusting the label.
+
+---
+
+## `TLDW_CONFIG_PATH` does not isolate the OS keyring, and the app writes your config token into it on first use (schedules-handoff PR-6 task 6, 2026-09-02)
+
+**What happened.** The PR-6 live gate launched a scratch profile
+(`TLDW_CONFIG_PATH`, `users_name = "verify_pr6"`) against a local tldw_server and
+could not authenticate: every scheduling call returned 401 and the Automations tab
+said only *"Could not load server automations — see the log."* The scratch config
+carried the real `SINGLE_USER_API_KEY`. A direct `httpx` probe with that key
+returned 200. A header-dumping listener proved the app was putting the **correct**
+`X-API-KEY` on the wire when pointed at a different port. It still 401'd on the
+original one. Roughly 25 minutes went into this before the cause was read out of
+`RuntimeServerContextProvider._resolve_auth_token`: credentials resolve from
+`KeyringServerCredentialStore` — the **machine-global** OS keyring, service
+`tldw_chatbook.server_credentials`, keyed by `server_id` — *before* the
+`[tldw_api]` config fallback, and `_import_legacy_token` writes the config token
+into that keyring the first time it is used. The scratch profile's very first boot
+had happened with a placeholder token (see the sibling trap below), which was
+imported under `server_id = "http://127.0.0.1:8000"` and from then on outranked
+every corrected config value. Moving the server to an unused port (`:8010`, a
+`server_id` with no keyring entry) made the identical client and identical config
+authenticate on the first request.
+
+**What to do.** `TLDW_CONFIG_PATH` isolates the config *file*; it does not isolate
+the keyring, and neither does `users_name`. For a live server run: pick a
+`server_id` (host:port) no other profile on the machine has used, or clear the
+entry first — `KeyringServerCredentialStore().clear_server("<base_url>")`. Clear
+the entries you created when you are done; they hold a live credential. And treat
+"the wire carries the right key but the server says 401" as evidence that the app
+is not reading the credential you edited, not as a server problem.
+
+**The sibling trap that seeded it.** A scratch `[tldw_api]` written with only
+`api_key = <real>` comes back from the first boot with the app's own
+`auth_token = "default-secret-key-for-single-user"` added beside it — and
+`build_runtime_api_client` resolves `auth_token or api_key or bearer_token`, so the
+placeholder wins. `config.py` screens *provider* keys for placeholder values
+(`resolve_provider_api_key`); the `[tldw_api]` token gets no such check. Write
+`auth_token`, not `api_key`, in a scratch profile, and re-read the file after the
+first boot to see what the app made of it.
+
+---
+
+## A captured server fixture that drifted from the real response hides a whole class of routing defect (schedules-handoff PR-6 task 6, 2026-09-02)
+
+**What happened.** The Schedules workbench decides whether an automation is
+server-executed with `is_server_scoped_owner(row["owner_id"])`, which requires a
+`server:` prefix. `Tests/Scheduling/fixtures/server_responses/automation_definition_list.json`
+supplies `"owner_id": "server:42"` for every item, and every test passed. The live
+server sends `"owner_id": "1"` — a bare user id. `_load_server_automations` stamps
+an owner only when the field is **absent** (`if not item.get("owner_id")`), which a
+present-but-wrong-shaped value defeats, so against a real server *every* server
+automation is classified local. Live consequences, all in one pane: rows render
+`[This device] …` while the pane's own notice says "2 automations on the server";
+`r` (run now) refuses with the **local** health message instead of dispatching
+server-side; `m` (move to this device) refuses with "This automation no longer
+exists." Leg (b) of the live plan could not be started at all. The same session
+found the sibling of this bug — a synced result carries the server's
+`definition_id` while the mark-solved eligibility check looks it up among **local**
+ids, so `o` always refuses on exactly the rows it exists for.
+
+**What to do.** A fixture is a *recording*, not a contract: re-capture it from a
+running server whenever the code that reads it changes shape, and diff the field
+values, not just the field names. When a guard has the form "fill this in if the
+server omitted it", ask what happens when the server sends something present but
+different — that is the case a fixture written by hand never covers. And whenever
+an id crosses the client/server boundary, check which id space every lookup keyed
+on it lives in.
+
+---
+
+## An attribute assignment a test can read back is not a render (schedules-handoff PR-6 task 6, 2026-09-02)
+
+**What happened.** The Results tab's unread badge is written as
+`pane.label = f"Results ({unread})"` on a `TabPane`, mirroring the Conflicts tab.
+`Tests/UI/test_schedules_results_tab.py:408` asserts `str(pane.label) == "Results (2)"`
+and passes. Live, with two unread results in the database, the tab bar reads plain
+`Results`. Textual 8.2.8's `TabPane` has no `label` attribute or reactive at all —
+it stores `self._title`, and the tab text is rendered by a separate `Tab` widget —
+so the assignment creates an inert Python attribute on the widget and nothing
+repaints. The user-guide had already been written promising the badge. The bug was
+pre-existing in the Conflicts badge and was copied verbatim into the new code
+because "the Conflicts tab does it this way" was taken as proof it works.
+
+**What to do.** For any widget property you assign to drive a visual, confirm the
+framework actually declares it (`'x' in Widget._reactives`, or read the class) —
+Python will happily accept an assignment to a name the widget has never heard of.
+A test that asserts on the same attribute it set proves the assignment ran, nothing
+more; the assertion has to read the rendered surface (or at minimum the widget the
+framework really renders from). And "the neighbouring feature does it this way" is
+a precedent for the *shape* of the code, never evidence that the shape works.
