@@ -23,8 +23,11 @@ from ..glyph_fallback import ascii_glyph_mode, resolve_glyph
 
 _TEXTUAL_PRIVATE_MOVE_VERSION = "8.2.8"
 
-#: TASK-25712: the trailing per-row menu opener glyph and its cell width.
-_MENU_AFFORDANCE = " *"
+#: TASK-27137: row-specific menu openers share one right-edge action column.
+_MENU_AFFORDANCES = {
+    "workspace": " @",
+    "conversation": " *",
+}
 _NodeKind = Literal["workspace", "conversation", "status", "load-more", "retry"]
 
 
@@ -172,8 +175,8 @@ class WorkspaceTreeFocusRecoveryRequested(Message):
 class WorkspaceTreeMenuRequested(Message):
     """The user asked for the row action menu on one tree node (TASK-25712).
 
-    Posted by a pointer press on a row's trailing asterisk cell or the ``m``
-    binding on the cursor row. The tree stays display-only: the owning
+    Posted by a pointer press on a row's right-edge action marker or the
+    ``m`` binding on the cursor row. The tree stays display-only: the owning
     ``ChatScreen`` mounts the anchored menu (the workspace action menu for a
     workspace node, the conversation action menu for a chat node).
     """
@@ -310,7 +313,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         )
         self.show_root = False
         self.auto_expand = False
-        self.guide_depth = 2
+        self.guide_depth = 4
         self.root.expand()
         self.root.allow_expand = False
         self.workspace_nodes: dict[str, TreeNode[WorkspaceTreeNodeData]] = {}
@@ -328,11 +331,11 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         self.can_focus = False
         self._pressed_node_key: str | None = None
         self._last_pointer_click_key: str | None = None
-        # TASK-25712: x-range (widget content cells, half-open) of the
-        # trailing asterisk each menu-bearing row painted in its LAST render
-        # pass, keyed by node key. Rebuilt by ``render_label``; cleared at
-        # the start of every ``sync_projection`` pass so removed rows can
-        # never keep a stale hit zone.
+        # TASK-25712/TASK-27137: x-range (widget content cells, half-open) of
+        # the right-edge action marker each menu-bearing row painted in its
+        # LAST render pass, keyed by node key. Rebuilt by ``render_label``;
+        # cleared at the start of every ``sync_projection`` pass so removed
+        # rows can never keep a stale hit zone.
         self._menu_zones: dict[str, tuple[int, int]] = {}
         self._pressed_x: int | None = None
         # TASK-22203: identity+geometry key of the last computed tooltip, so
@@ -451,7 +454,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             return
         self._projection_memo = None
         # TASK-25712: a full pass rebuilds every label; drop the previous
-        # pass's asterisk hit zones so removed rows keep no stale target.
+        # pass's action-marker hit zones so removed rows keep no stale target.
         self._menu_zones.clear()
         hovered_node = (
             self.get_node_at_line(self.hover_line) if self.hover_line >= 0 else None
@@ -614,12 +617,18 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
     ) -> Text:
         """Render one literal row with an end ellipsis inside the Tree width.
 
-        TASK-25712: workspace and conversation rows also carry a trailing
-        ``*`` that opens the row's action menu when pressed. It is appended
-        AFTER truncation (with the budget reduced by its width) so a long
-        title can never ellipsize over it, and its x-range is recorded in
-        ``_menu_zones`` for the pointer hit-test -- the painted text IS the
-        geometry source, so the two cannot drift.
+        TASK-27137: workspace and conversation rows carry distinct action
+        markers (``@`` and ``*``) in one right-edge column. Content is
+        truncated and padded before the marker, and its absolute x-range is
+        recorded in ``_menu_zones`` so painted and clickable geometry agree.
+
+        Args:
+            node: Tree node whose label is being rendered.
+            base_style: Style used for the unfocused row and action marker.
+            style: Style used for the focused cursor marker.
+
+        Returns:
+            The rendered row label with truncation and any action affordance.
         """
 
         label = super().render_label(node, base_style, style)
@@ -638,13 +647,15 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             (marker, marker_style),
             label[toggle_length:],
         )
-        label.truncate(self._label_budget(node), overflow="ellipsis")
         data = node.data
         kind = data.kind if data is not None else None
-        if kind in {"workspace", "conversation"} and data is not None:
-            affordance = _MENU_AFFORDANCE
+        affordance = _MENU_AFFORDANCES.get(kind or "")
+        content_budget = self._label_budget(node)
+        label.truncate(content_budget, overflow="ellipsis")
+        if affordance is not None and data is not None:
+            label.append(" " * max(0, content_budget - label.cell_len), base_style)
             label.append(affordance, base_style)
-            end = label.cell_len
+            end = self._visible_guide_cells(node) + label.cell_len
             self._menu_zones[data.key] = (end - len(affordance), end)
         else:
             if data is not None:
@@ -654,27 +665,35 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
     def _label_budget(self, node: TreeNode[WorkspaceTreeNodeData]) -> int:
         """Return the content-cell budget for one row's label.
 
-        TASK-25712: menu-bearing rows reserve the trailing ``*`` affordance,
-        so their CONTENT truncates two cells early. Render and the tooltip
-        fit decision must share this -- a tooltip that ignores the reserved
-        cells fires for rows that only look truncated.
+        TASK-27137: menu-bearing rows reserve their right-edge action marker,
+        so content truncates two cells early. Render and the tooltip fit
+        decision share this budget.
         """
 
         budget = self._available_label_cells(node)
         data = node.data
-        if data is not None and data.kind in {"workspace", "conversation"}:
-            budget -= len(_MENU_AFFORDANCE)
+        affordance = _MENU_AFFORDANCES.get(data.kind) if data is not None else None
+        if affordance is not None:
+            budget -= len(affordance)
         return max(1, budget)
 
-    def _available_label_cells(self, node: TreeNode[WorkspaceTreeNodeData]) -> int:
-        """Return the painted label budget after visible native guides."""
+    def _visible_guide_cells(self, node: TreeNode[WorkspaceTreeNodeData]) -> int:
+        """Return the native guide cells painted before one node label."""
 
         guide_cells = 0
         ancestor = node.parent
         while ancestor is not None and (self.show_root or ancestor is not self.root):
             guide_cells += self.guide_depth
             ancestor = ancestor.parent
-        return max(1, self.scrollable_content_region.width - guide_cells)
+        return guide_cells
+
+    def _available_label_cells(self, node: TreeNode[WorkspaceTreeNodeData]) -> int:
+        """Return the painted label budget after visible native guides."""
+
+        return max(
+            1,
+            self.scrollable_content_region.width - self._visible_guide_cells(node),
+        )
 
     def _untruncated_visible_label(self, node: TreeNode[WorkspaceTreeNodeData]) -> str:
         """Return the complete literal label measured for truncation."""
@@ -947,7 +966,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         self,
         data: WorkspaceTreeNodeData,
     ) -> bool:
-        """Whether the pressed cell was the row's trailing asterisk.
+        """Whether the pressed cell was the row's right-edge action marker.
 
         TASK-25712: the zone comes from the row's own last ``render_label``
         pass, so the hit-test matches what is painted without duplicating
@@ -983,9 +1002,8 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             if data.kind in {"workspace", "conversation"} and (
                 self._pressed_menu_affordance(data)
             ):
-                # TASK-25712: the asterisk opens the row's action menu
-                # instead of selecting/activating, exactly like the grouped
-                # browser's asterisk column.
+                # TASK-25712/TASK-27137: the edge marker opens the row's
+                # action menu instead of selecting or activating it.
                 self._last_pointer_click_key = None
                 conversation_id, title, native_sid = _menu_conversation_payload(data)
                 self.post_message(

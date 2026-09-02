@@ -3,9 +3,9 @@
 TASK-25712. TASK-23200 gave the grouped browser's conversation rows an
 asterisk menu and TASK-25709 made it dismissable everywhere; this suite pins
 the same pattern on the Workspaces tree: workspace rows open the workspace
-action menu, chat rows open the shared conversation menu, the pointer
-affordance is the row's trailing asterisk, and the ``m`` binding is the
-keyboard equivalent.
+action menu through ``@``, chat rows open the shared conversation menu through
+``*``, both pointer affordances sit at the right edge, and the ``m`` binding is
+the keyboard equivalent.
 """
 
 from __future__ import annotations
@@ -62,19 +62,31 @@ def _request_menu(console, *, kind: str, **kwargs) -> None:
 
 
 @pytest.mark.asyncio
-async def test_tree_rows_paint_a_trailing_asterisk_affordance() -> None:
-    """Workspace and chat rows carry the opener; auxiliary rows do not."""
+async def test_tree_rows_paint_distinct_right_edge_affordances() -> None:
+    """Workspace and chat rows carry distinct openers in one edge column."""
     async with make_console_pilot(size=(160, 44), production_styles=True) as pilot:
         host = pilot.app
         console, _rail, tree = await _console_with_probe_tree(host, pilot)
 
+        await _click_rail_toggle(pilot, "workspace")
+        await pilot.pause(0.4)
+        assert tree.region, "workspace section stayed collapsed"
+
         workspace_key = tree.workspace_nodes["ws-alpha"].data.key
         conversation_key = tree.conversation_nodes["conv-a0"].data.key
-        assert workspace_key in tree._menu_zones, "workspace row lost its asterisk"
-        assert conversation_key in tree._menu_zones, "chat row lost its asterisk"
+        assert workspace_key in tree._menu_zones, "workspace row lost its @"
+        assert conversation_key in tree._menu_zones, "chat row lost its *"
 
-        start, end = tree._menu_zones[conversation_key]
-        assert start < end, "empty asterisk zone"
+        edge = tree.scrollable_content_region.width
+        workspace_zone = tree._menu_zones[workspace_key]
+        conversation_zone = tree._menu_zones[conversation_key]
+        assert workspace_zone == conversation_zone == (edge - 2, edge)
+        workspace = tree.workspace_nodes["ws-alpha"]
+        conversation = tree.conversation_nodes["conv-a0"]
+        assert tree.render_line(int(workspace._line)).text[edge - 1] == "@"
+        assert tree.render_line(int(conversation._line)).text[edge - 1] == "*"
+
+        start, end = conversation_zone
         # The affordance press is recognized inside the zone and not outside.
         tree._pressed_x = start
         assert tree._pressed_menu_affordance(
