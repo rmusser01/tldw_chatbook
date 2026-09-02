@@ -288,6 +288,8 @@ Use **Console** to:
 - stage Library sources for grounded answers;
 - review tool calls, results, approvals, and agent-run activity;
 - switch sessions, models, context policy, and workspace bindings;
+- open separately armed, user-only persistent Terminal sessions on supported
+  POSIX hosts;
 - inspect failures and follow explicit recovery actions.
 
 The conversation transcript is the primary work surface. Home, Library,
@@ -296,6 +298,15 @@ active Console session.
 
 Read the [Console guide](Docs/User_Guide/console.md) for chat basics, context
 and RAG, attachments, tools, sessions, branching, and rewind.
+
+Persistent Terminal is deliberately different from both one-shot raw commands
+and model tools. It runs a normal interactive shell with the full authority of
+your OS account, retains its current directory/environment/screen in memory,
+and is not confined to a Workspace. It requires the saved raw-CLI unlock plus
+its own per-launch arm. Terminal content is never sent to a model, persisted,
+exported, or reconnected after restart. Up to four sessions are retained.
+Current builds support admitted PTYs on macOS/Linux; Windows refuses Terminal
+launches because no qualified ConPTY dependency ships.
 
 ### Local knowledge, search, and RAG
 

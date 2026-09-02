@@ -55,6 +55,11 @@ class ConsoleCommandProvider(Provider):
                 "Return focus to the composer (Esc)",
             ),
             (
+                "Console: Open Terminal",
+                screen.action_open_console_terminal,
+                "Open the persistent user-only host Terminal",
+            ),
+            (
                 "Console: Switch workspace…",
                 screen.action_open_console_workspace_switcher,
                 "Change the active Console workspace (Alt+W)",

@@ -3015,6 +3015,24 @@ LibraryFileNotesGitPanel #file-notes-git-commit-body:focus {
     margin: 0;
 }
 
+ConsoleTerminalWorkspace Button {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    content-align: center middle;
+}
+
+ConsoleTerminalWorkspace Button:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
 #console-right-rail {
     width: 4fr;
     min-width: 34;

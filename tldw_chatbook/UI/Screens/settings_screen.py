@@ -106,6 +106,8 @@ from ...Sync_Interop.sync_readiness import (
     build_sync_readiness_report,
 )
 from ...Sync_Interop.manual_sync_control import ManualSyncPreview, ManualSyncRunResult
+from ...Terminal.contracts import TERMINAL_DISCLOSURE_LINES
+
 # NOTE (boot budget, ADR-097): `Workspaces.assistant_defaults` is imported
 # lazily at its render/use sites (settings interaction only) so it stays out
 # of the UI-ready module census.
@@ -792,23 +794,6 @@ HOST_ACCESS_UNLOCK_DISCLOSURE_LINES = (
     "user. Neither is sandboxed or confined to a workspace.",
     "Review each feature's separate arm disclosure before use.",
 )
-TERMINAL_DISCLOSURE_LINES = (
-    "The Terminal shell and every program run with the same OS permissions as "
-    "Chatbook.",
-    "Programs may read, modify, or delete any accessible data, use the network, "
-    "invoke credentialed clients, or exhaust machine resources.",
-    "Chatbook starts Terminal from a scrubbed environment, but normal shell profile "
-    "and startup files run and may restore secrets, credentials, agents, proxies, "
-    "aliases, environment variables, or arbitrary commands.",
-    "Shells and programs may save history, files, logs, caches, and other side "
-    "effects outside Chatbook.",
-    "Your active workspace—or your home directory when no workspace is selected—is "
-    "only the starting directory. Terminal is not sandboxed or confined there.",
-    "Closing, disarming, or quitting Chatbook attempts bounded cleanup, but "
-    "deliberately detached processes may survive and cleanup may remain unproven.",
-    "Terminal content is user-only and is not sent to a model.",
-)
-
 # ADR-090: ids of the instant-apply [permission_summary] controls, for the
 # same focus-tracking reason as MODEL_CATALOG_FIELD_IDS above.
 PERMISSION_SUMMARY_FIELD_IDS = frozenset(

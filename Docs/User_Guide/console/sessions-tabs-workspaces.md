@@ -285,6 +285,21 @@ conversation.
 Press Escape (or click "Cancel") anywhere in the "New Workspace" dialog —
 nothing is created, no matter what you had typed or added.
 
+## Persistent Terminal sessions
+
+The pinned **Context** rail includes a Terminal row, and the command palette
+contains the same open action. This opens a dedicated user-only workspace for
+up to four app-global sessions. **New**, **Rename**, **Focus**, **Close**,
+cleanup **Retry**, and **Jump live** act on the retained session owner rather
+than a particular conversation screen, so navigation and recomposition do not
+restart or discard a running shell.
+
+Terminal requires the shared saved raw-CLI unlock and its own per-launch arm.
+It is a real host terminal, not a Workspace tool: the active Workspace or home
+directory is only its starting directory and provides no confinement. See
+[Persistent Terminal: user-only interactive PTY](agent-runs-and-tools.md#persistent-terminal-user-only-interactive-pty)
+for authority, privacy, limits, key routing, cleanup, and platform support.
+
 ## Keyboard & commands
 
 | Key | Action |
@@ -353,5 +368,5 @@ next resume instead of staying stale until an in-Console switch, so the
 Default-workspace paragraph above gained a one-sentence note on that; the
 rest of this page's content unchanged from the prior stamp).*
 *Reconciled against the TASK-20937 native Workspace Tree and exclusive
-Default/unassigned ownership implementation — 2026-08-23. Same-cell iTerm2
-and Windows Terminal verification remains tracked by TASK-20937.6.*
+Default/unassigned ownership implementation — 2026-08-23. Additional
+same-cell terminal-client verification remains tracked by TASK-20937.6.*

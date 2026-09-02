@@ -12,12 +12,13 @@ import time
 
 
 def main() -> int:
-    if len(sys.argv) not in (3, 4, 5):
+    if len(sys.argv) not in (3, 4, 5, 6):
         return 2
     pid_file = Path(sys.argv[1])
     after_shell_file = Path(sys.argv[2])
     tail_output = None if len(sys.argv) == 3 else sys.argv[3].encode("utf-8")
     release_tail = None if len(sys.argv) < 5 else Path(sys.argv[4])
+    tail_written = None if len(sys.argv) < 6 else Path(sys.argv[5])
     child_pid = os.fork()
     if child_pid:
         return 0
@@ -61,6 +62,8 @@ def main() -> int:
             while release_tail is not None and not release_tail.exists():
                 time.sleep(0.01)
             os.write(held_slave_fd, tail_output + b"\n")
+            if tail_written is not None:
+                tail_written.write_text("written", encoding="ascii")
         while True:
             signal.pause()
     finally:

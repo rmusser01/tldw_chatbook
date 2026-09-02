@@ -31,6 +31,7 @@ break silently:
    the six cannot matter.
 """
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -61,9 +62,11 @@ from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalControlle
 from tldw_chatbook.UI.Console_Modules.send_price import ConsoleSendPriceController
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Console_Modules.skill import ConsoleSkillController
+from tldw_chatbook.UI.Console_Modules.terminal import ConsoleTerminalController
 from tldw_chatbook.UI.Console_Modules.video import ConsoleVideoController
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Workspaces.models import RuntimeBindingKind, RuntimeBindingStatus
 
 #: (screen attribute, controller class), in the order the wiring builds them.
 _EXPECTED_SLOTS: list[tuple[str, type]] = [
@@ -92,6 +95,7 @@ _ALL_CONTROLLER_SLOTS: list[tuple[str, type]] = [
     ("_message", ConsoleMessageController),
     ("_prompts", ConsolePromptsController),
     ("_agent", ConsoleAgentController),
+    ("_terminal", ConsoleTerminalController),
     ("_prompt_queue", ConsolePromptQueueUIController),
     ("_review_selection", ConsoleReviewSelectionController),
     ("_send_price", ConsoleSendPriceController),
@@ -125,7 +129,7 @@ def test_all_six_controllers_are_constructed_with_the_right_classes():
         )
 
 
-def test_all_seventeen_controllers_are_constructed_with_the_right_classes() -> None:
+def test_all_eighteen_controllers_are_constructed_with_the_right_classes() -> None:
     screen = _unmounted_console()
     names = [attr for attr, _ in _ALL_CONTROLLER_SLOTS]
     observed = [key for key in vars(screen) if key in set(names)]
@@ -137,6 +141,141 @@ def test_all_seventeen_controllers_are_constructed_with_the_right_classes() -> N
             f"{attr} is {type(controller).__name__}, expected {cls.__name__}"
         )
     assert observed == names, f"controller build order changed: {observed}"
+
+
+def test_terminal_controller_is_wired_to_late_bound_app_and_console_edges(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    screen = _unmounted_console()
+    controller = getattr(screen, "_terminal", None)
+    assert isinstance(controller, ConsoleTerminalController), (
+        "_terminal was never wired"
+    )
+
+    manager = object()
+    workspace = object()
+    selected_root = Path("/late-bound-terminal-root")
+    settings_calls: list[None] = []
+    screen.app_instance.terminal_session_manager = manager
+    screen._console_terminal_workspace = workspace
+    screen._open_terminal_privacy_settings = lambda: settings_calls.append(None)
+    monkeypatch.setattr(
+        wiring_module,
+        "_selected_console_local_root",
+        lambda current_screen, session_id=None: (
+            selected_root,
+            current_screen,
+            session_id,
+        ),
+    )
+
+    assert controller._terminal_runtime() is manager
+    assert controller._workspace_accessor() is workspace
+    assert controller._selected_local_root() == (selected_root, screen, None)
+    assert screen._raw_cli._selected_local_root("raw-session") == (
+        selected_root,
+        screen,
+        "raw-session",
+    )
+    replacement_home = Path("/late-bound-terminal-home")
+    monkeypatch.setattr(
+        Path,
+        "home",
+        classmethod(lambda _path_class: replacement_home),
+    )
+    assert controller._account_home() == replacement_home
+    controller._open_privacy_settings()
+    assert settings_calls == [None]
+
+
+def _selected_root_screen(
+    root: Path,
+    *,
+    status: RuntimeBindingStatus | str = RuntimeBindingStatus.READY,
+    workspace_id: str = "workspace-one",
+    binding_kind: RuntimeBindingKind | str = RuntimeBindingKind.LOCAL_FILESYSTEM,
+) -> SimpleNamespace:
+    session = SimpleNamespace(
+        id="session-one",
+        workspace_id="workspace-one",
+        project_instruction_state=SimpleNamespace(
+            working_folder_binding_id="binding-one"
+        ),
+    )
+    store = SimpleNamespace(
+        active_session_id=session.id,
+        sessions=lambda: (session,),
+    )
+    binding = SimpleNamespace(
+        workspace_id=workspace_id,
+        binding_kind=binding_kind,
+        status=status,
+        locator=str(root),
+    )
+    registry = SimpleNamespace(get_runtime_binding=lambda _binding_id: binding)
+    return SimpleNamespace(
+        _ensure_console_chat_store=lambda: store,
+        app_instance=SimpleNamespace(workspace_registry_service=registry),
+    )
+
+
+@pytest.mark.parametrize(
+    "status",
+    [RuntimeBindingStatus.READY, RuntimeBindingStatus.READY.value],
+    ids=["enum", "value"],
+)
+def test_selected_console_local_root_accepts_only_ready_status_forms(
+    tmp_path: Path,
+    status: RuntimeBindingStatus | str,
+) -> None:
+    screen = _selected_root_screen(tmp_path, status=status)
+
+    assert wiring_module._selected_console_local_root(screen) == tmp_path
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        *(
+            status
+            for status in RuntimeBindingStatus
+            if status is not RuntimeBindingStatus.READY
+        ),
+        "stale",
+    ],
+    ids=lambda status: getattr(status, "value", status),
+)
+def test_selected_console_local_root_rejects_every_non_ready_status(
+    tmp_path: Path,
+    status: RuntimeBindingStatus | str,
+) -> None:
+    screen = _selected_root_screen(tmp_path, status=status)
+
+    assert wiring_module._selected_console_local_root(screen) is None
+
+
+def test_selected_console_local_root_rejects_wrong_workspace(tmp_path: Path) -> None:
+    screen = _selected_root_screen(tmp_path, workspace_id="workspace-two")
+
+    assert wiring_module._selected_console_local_root(screen) is None
+
+
+@pytest.mark.parametrize(
+    "binding_kind",
+    [
+        kind
+        for kind in RuntimeBindingKind
+        if kind is not RuntimeBindingKind.LOCAL_FILESYSTEM
+    ],
+    ids=lambda kind: kind.value,
+)
+def test_selected_console_local_root_rejects_non_local_bindings(
+    tmp_path: Path,
+    binding_kind: RuntimeBindingKind,
+) -> None:
+    screen = _selected_root_screen(tmp_path, binding_kind=binding_kind)
+
+    assert wiring_module._selected_console_local_root(screen) is None
 
 
 def test_raw_cli_worker_adapter_uses_its_own_group() -> None:

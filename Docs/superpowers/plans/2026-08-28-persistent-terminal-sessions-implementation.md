@@ -1095,6 +1095,8 @@ git commit -m "feat: add independent terminal launch arm"
 ### Task 12: Build the user-only Terminal workspace widget and controller
 
 **Files:**
+- Modify: `tldw_chatbook/Terminal/contracts.py`
+- Modify: `tldw_chatbook/UI/Screens/settings_screen.py`
 - Create: `tldw_chatbook/UI/Console_Modules/terminal.py`
 - Create: `tldw_chatbook/Widgets/Console/console_terminal_workspace.py`
 - Create: `tldw_chatbook/Widgets/Console/console_terminal_session_modal.py`
@@ -1105,15 +1107,15 @@ git commit -m "feat: add independent terminal launch arm"
 - Create: `Tests/UI/test_console_terminal_keyboard.py`
 - Create: `Tests/UI/test_console_terminal_session_modal.py`
 
-- [ ] **Step 1: Write safe projection/render RED tests**
+- [x] **Step 1: Write safe projection/render RED tests**
 
 Construct the workspace only from immutable manager projections. Require locked state plus Settings route, unlocked/unarmed state plus the same first-arm disclosure flow, persistent armed danger banner, selected name/lifecycle/shell/starting-directory, dimensions/clamping, four-record list, New/Rename/Focus/Close/Retry/Jump-live actions by state, content-free refusal/status copy, and safe styled cells. Closing a running/draining session confirms termination; closing an exited session does not confirm. Assert no widget field contains a backend, process handle, environment mapping, raw output bytes, or parser object.
 
-- [ ] **Step 2: Write creation/rename form RED tests**
+- [x] **Step 2: Write creation/rename form RED tests**
 
 New defaults to `Terminal N`, discovered `Default` shell, and the selected working-folder binding or real home. Rename exposes only name. Validate names both in the modal for feedback and again in the manager for authority. Validate the launch directory again immediately before backend admission to close mount/modal races.
 
-- [ ] **Step 3: Write keyboard and local scrollback RED tests**
+- [x] **Step 3: Write keyboard and local scrollback RED tests**
 
 Use explicit key-event mapping tests:
 
@@ -1128,11 +1130,11 @@ Use explicit key-event mapping tests:
 
 Do not add a Screen binding for terminal-convention keys; the focused viewport handles them and lets reserved globals bubble.
 
-- [ ] **Step 4: Write view-generation and repaint RED tests**
+- [x] **Step 4: Write view-generation and repaint RED tests**
 
 Attach/detach/remount the controller around one live manager session. Stale generation callbacks must not resize/focus/repaint. Hidden sessions parse but schedule no widget refresh; when selected again, their accumulated safe state and new-output count project without restarting. A visible session coalesces dirty updates to one Textual frame and sends one debounced resize after remount without clearing screen/scrollback.
 
-- [ ] **Step 5: Verify RED**
+- [x] **Step 5: Verify RED**
 
 Run:
 
@@ -1144,11 +1146,11 @@ Run:
 
 Expected: each test collects against the minimal presentation skeleton and reaches its own safe-projection, keyboard-routing, or modal-state assertion while the widgets render neutral/refusal state. Import, collection, or a failure in another file does not count.
 
-- [ ] **Step 6: Implement a thin controller and projection-only widgets**
+- [x] **Step 6: Implement a thin controller and projection-only widgets**
 
 `ConsoleTerminalController` owns only screen-local open/closed mode, selected projection subscription, view generation, first-arm confirmation routing, and modal/action routing. Its constructor accepts only named keyword accessors suitable for centralized late binding; do not construct it in `chat_screen.py` yet. It calls app-owned manager methods for arm/create/rename/focus/close/retry/input/resize. `ConsoleTerminalWorkspace` renders safe lines and owns local scrollback offset/focus state; it never launches or reaps. Both Settings and Console render disclosure from the same immutable copy constants and let the manager enforce first-arm acknowledgement. Implement renderer/input mapping fresh; this plan forbids copying or adapting `textual-terminal` source.
 
-- [ ] **Step 7: Verify GREEN and commit**
+- [x] **Step 7: Verify GREEN and commit**
 
 Run:
 
@@ -1182,6 +1184,11 @@ git commit -m "feat: build console terminal workspace"
 
 ### Task 13: Integrate Terminal into Console rails, center routing, palette, and CSS
 
+> **Current-dev adaptation:** TASK-23199 retired the redundant Sessions rail
+> section after this plan was approved. Preserve the six bounded Context
+> sections and expose Terminal as a pinned Context-rail action outside the
+> bounded scroll body; do not recreate Sessions.
+
 **Files:**
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
 - Modify: `tldw_chatbook/UI/Console_Modules/wiring.py`
@@ -1197,23 +1204,23 @@ git commit -m "feat: build console terminal workspace"
 - Modify: `Tests/UI/test_css_bundle_sync_guard.py`
 - Create: `Tests/UI/test_console_terminal_integration.py`
 
-- [ ] **Step 1: Write controller-wiring and visible-entry RED tests**
+- [x] **Step 1: Write controller-wiring and visible-entry RED tests**
 
-Extend `test_console_controller_wiring.py` to require `build_console_controllers` to construct `screen._terminal` with late-bound accessors for `app_instance.terminal_session_manager`, the current session ID, `_selected_console_local_root`, account home, Settings routing, center recomposition, and focus. Then add a `TerminalRequested` message to `ConsoleLeftRail` and require one visible `Terminal` button inside the existing Sessions body. Require `Console: Open Terminal` in `ConsoleCommandProvider`. Both routes call one guarded screen action; no global shortcut is added.
+Extend `test_console_controller_wiring.py` to require `build_console_controllers` to construct `screen._terminal` with late-bound accessors for `app_instance.terminal_session_manager`, the current session ID, `_selected_console_local_root`, account home, Settings routing, center recomposition, and focus. Then add a `TerminalRequested` message to `ConsoleLeftRail` and require one visible pinned `Terminal` action outside the bounded Context scroll body. Require `Console: Open Terminal` in `ConsoleCommandProvider`. Both routes call one guarded screen action; no global shortcut is added.
 
-- [ ] **Step 2: Write center-routing and rail-preservation RED tests**
+- [x] **Step 2: Write center-routing and rail-preservation RED tests**
 
 When Terminal is closed, preserve the existing `ConsoleTranscriptRegion` IDs/nesting and geometry. When open, replace only the center `#console-main-column` content with `ConsoleTerminalWorkspace`; Context and Inspector rails, handles, header, control bar, and ordinary navigation stay mounted. Opening while locked shows the explicit route to canonical Privacy & Security Settings. Opening while unlocked/unarmed shows the Terminal Arm action and full first-arm disclosure. Neither path launches automatically, and cleanup receipts/Retry remain usable without unlocking or arming.
 
-- [ ] **Step 3: Write live navigation/remount RED tests**
+- [x] **Step 3: Write live navigation/remount RED tests**
 
 With a fake backend identity and real manager, create a session, emit output, switch conversation and app screen, return/reopen Terminal, and prove process/backend identity, parsed screen, current directory state, and session list survive. Recompose rails and center repeatedly; assert no restart, duplicate read loop, duplicate reaper, or close.
 
-- [ ] **Step 4: Write exact painted-geometry and focus RED tests**
+- [x] **Step 4: Write exact painted-geometry and focus RED tests**
 
 Mount the production hierarchy with app styles at standard, 100-column, and narrow widths. Assert the Terminal center receives the actual allocated pane dimensions capped at 300x120, exposes visible clamp state, and does not overflow the workspace grid. Verify focus transition from rail action to actions/viewport, Ctrl+] release, Tab walk, and return to transcript.
 
-- [ ] **Step 5: Verify RED**
+- [x] **Step 5: Verify RED**
 
 Run:
 
@@ -1228,11 +1235,11 @@ Run:
 
 Expected: every file collects and independently reaches its new entry, routing, geometry, or remount assertion while the minimal integration hooks still refuse. Existing transcript and rail assertions remain green; import, collection, or cross-file masking does not count.
 
-- [ ] **Step 6: Wire the thin Console integration**
+- [x] **Step 6: Wire the thin Console integration**
 
 Construct `screen._terminal` in `UI/Console_Modules/wiring.py::build_console_controllers`, alongside the centralized decomposed controller graph, using only late-bound accessors. Generalize the existing raw-CLI selected-root helper there and keep both consumers on that one seam. `chat_screen.py` handles the typed rail message/action and selects one zero-argument center builder only; do not construct the controller, move terminal lifecycle, or add backend branches there. The screen action opens the discoverable workspace and focuses the appropriate control; only explicit New launches.
 
-- [ ] **Step 7: Add source CSS and regenerate the bundle**
+- [x] **Step 7: Add source CSS and regenerate the bundle**
 
 Style the center workspace, session strip, safe viewport, clamp/new-output/status rows, receipt actions, and persistent red danger banner in `_agentic_terminal.tcss`. Preserve the existing 3fr/13fr/4fr sibling sizing and narrow-layout waivers. Regenerate—never hand-edit—the bundle:
 
@@ -1240,7 +1247,7 @@ Style the center workspace, session strip, safe viewport, clamp/new-output/statu
 ../../.venv/bin/python tldw_chatbook/css/build_css.py
 ```
 
-- [ ] **Step 8: Verify UI GREEN and CSS sync**
+- [x] **Step 8: Verify UI GREEN and CSS sync**
 
 Run:
 
@@ -1266,7 +1273,7 @@ git diff --check
 
 Expected: PASS and the CSS bundle reproduces exactly.
 
-- [ ] **Step 9: Commit the Console integration**
+- [x] **Step 9: Commit the Console integration**
 
 ```bash
 git add tldw_chatbook/UI/Screens/chat_screen.py \
@@ -1284,6 +1291,24 @@ git add tldw_chatbook/UI/Screens/chat_screen.py \
   Tests/UI/test_console_terminal_integration.py
 git commit -m "feat: expose persistent terminal in console"
 ```
+
+**Task 13 implementation note (2026-09-01):** The current Console keeps its
+six bounded Context sections and exposes Terminal through one pinned rail
+action plus the command palette. The guarded action swaps only the center
+column, preserves surrounding shell widgets, and routes locked or unarmed
+states through the existing permission and disclosure boundaries. The
+app-owned manager remains the sole lifecycle owner; Console wiring uses one
+late-bound ready-local-binding root seam shared with raw CLI. Painted viewport
+geometry drives bounded PTY resize and live cap metadata. Review also hardened
+vertical shrink behavior so displaced primary rows enter bounded scrollback,
+alternate rows remain isolated, dirty rows stay in range, duplicate resize is
+a no-op, and pending-wrap/margin state survives correctly. Targeted behavioral,
+CSS-sync, Ruff, diff, visual, specification, code-quality, and final reviews
+passed; unrelated deterministic failures were reproduced at the untouched
+Task 13 base. ADR required: yes. ADR path:
+`backlog/decisions/099-persistent-terminal-session-runtime-boundary.md`.
+Reason: this task directly implements the accepted runtime, authority, privacy,
+and resource boundary without changing it.
 
 ### Task 14: Prove the user-only privacy, logging, persistence, and tool boundary
 
@@ -1368,11 +1393,11 @@ If the inventory file did not change, omit it from `git add` rather than creatin
 - Modify: `backlog/tasks/task-22512 - Persistent-interactive-PTY-and-ConPTY-terminal-sessions.md`
 - Modify: `backlog/docs/lessons-testing-evidence.md` or `backlog/docs/lessons-live-verification.md` only if this work produces a genuinely new evidenced lesson
 
-- [ ] **Step 1: Add distribution, four-session memory, and flood qualification**
+- [x] **Step 1: Add distribution, four-session memory, and flood qualification**
 
 Build a wheel without network/isolation and assert it contains the `tldw_chatbook.Terminal` package plus metadata for unconditional `pyte==0.8.2` and no pywinpty dependency. Then measure empty-manager baseline and four sessions at 300x120 plus 5,000 lines/4 MiB normal scrollback. After five-second quiescence, sum Chatbook parent delta and app-owned worker/helper/IPC RSS while excluding identified user shell/program RSS. Assert `<=256 MiB` only on named qualification hosts; developer runs report measurements. Run ten seconds of synthetic ANSI output with a 100 ms sentinel and assert p95 `<100 ms` on each claimed platform host.
 
-- [ ] **Step 2: Add mounted/live lifetime verification**
+- [x] **Step 2: Add mounted/live lifetime verification**
 
 Launch the real Textual app hierarchy with fd-backed standard streams and worktree provenance. Exercise arm, create, real shell input, retained `cd`/environment, Unicode, resize, alternate screen, Ctrl+] local navigation, model-turn independence, conversation/screen navigation, recompose/remount, shell exit with final state retained, close, Disarm, Retry cleanup, and app shutdown. Wait for screen state, DOM mount, and compositor paint; Pilot-only key/process evidence is insufficient.
 
@@ -1392,15 +1417,15 @@ Expected: the native POSIX test passes on every claimed POSIX row and the
 Windows availability contract proves refusal without importing or launching a
 fallback backend.
 
-- [ ] **Step 3: Re-run platform-native cleanup and crash probes**
+- [x] **Step 3: Re-run platform-native cleanup and crash probes**
 
 On macOS/Linux, rerun normal close, parallel Disarm, global Shutdown, exact-shell-exit descendant drain, parser-failure raw cleanup drain, cleanup-unproven Retry, and app-process-failure fixtures. On native Windows, rerun only the fail-closed dependency/availability checks; do not rerun or reinterpret the rejected backend as product evidence. Append exact results and commands to the qualification artifact. Rebase onto latest `origin/dev` before merge, rerun `format_ratchet.py snapshot` against that newly resolved base to replace `format-baseline.json`, then verify `HEAD` against the new stored immutable SHA. Recheck ADR-099's ID/status/index after the rebase.
 
-- [ ] **Step 4: Update user and setup documentation**
+- [x] **Step 4: Update user and setup documentation**
 
 Document:
 
-- entry from Sessions rail and command palette;
+- entry from the pinned Context-rail action and command palette;
 - New/Rename/Focus/Close/Retry/Jump live;
 - four-session and resource limits;
 - starting directory convenience versus no confinement;
@@ -1415,7 +1440,7 @@ Document:
 
 ADR-094 receives only a cross-reference to accepted ADR-099; do not rewrite its one-shot contracts.
 
-- [ ] **Step 5: Run the focused verification matrix**
+- [x] **Step 5: Run the focused verification matrix**
 
 First prove provenance:
 
@@ -1455,7 +1480,7 @@ Then run the reachable focused suites:
 Expected: PASS. Windows checks prove unavailability and dependency absence; no
 native Windows backend test or support claim is part of the current delivery.
 
-- [ ] **Step 6: Run static and generated-artifact checks**
+- [x] **Step 6: Run static and generated-artifact checks**
 
 Run:
 
@@ -1518,11 +1543,15 @@ git diff --check origin/dev...HEAD
 
 Expected: the normalized base-vs-HEAD formatter ratchet passes for every existing modified Python file; Ruff lint and formatting of every new file, CSS sync, working-tree whitespace, and branch-wide whitespace checks pass. Do not introduce formatter debt on a task-changed line or mass-format unrelated code.
 
-- [ ] **Step 7: Ask whether the user wants a full suite**
+- [x] **Step 7: Ask whether the user wants a full suite**
 
 Do not infer consent from pre-PR or merge language. If explicitly approved, run the repository's full suite and record the command/result. Otherwise state that focused reachable suites and native platform matrices were run under repository policy.
 
-- [ ] **Step 8: Self-review against every acceptance criterion and tripwire**
+The user explicitly declined the full repository suite on 2026-09-01 and
+directed closeout using the focused reachable suites and native platform
+matrices.
+
+- [x] **Step 8: Self-review against every acceptance criterion and tripwire**
 
 Read the complete diff. Confirm:
 
@@ -1537,11 +1566,11 @@ Read the complete diff. Confirm:
 - no nested-program mouse support slipped into v1;
 - no config key for `terminal_armed` exists.
 
-- [ ] **Step 9: Complete task hygiene only after all evidence is green**
+- [x] **Step 9: Complete task hygiene only after all evidence is green**
 
 Edit the five-digit task file directly: check AC #1-#8 and #10, add concise `## Implementation Notes`, link ADR-099 and the qualification artifact, record focused/native verification, and set frontmatter status to `Done`. Add a lesson only if an incident produced reusable evidence; do not invent one.
 
-- [ ] **Step 10: Commit closeout**
+- [x] **Step 10: Commit closeout**
 
 ```bash
 git add Docs/User_Guide/console/sessions-tabs-workspaces.md \

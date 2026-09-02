@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
-from threading import Event, Lock, RLock
+from threading import Event, Lock, RLock, Thread
 from time import monotonic
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -16,6 +16,7 @@ from .contracts import (
     CleanupAttempt,
     CleanupProof,
     CleanupSchedule,
+    MAX_IO_CHUNK_BYTES,
     MAX_SESSION_RECORDS,
     TerminalLaunchRequest,
     TerminalLifecycle,
@@ -46,6 +47,9 @@ else:
     TerminalInputEvent = Any
     TerminalOutputActor = Any
     TerminalScreenSnapshot = Any
+
+
+_RUNTIME_POLL_SECONDS = 0.005
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +146,8 @@ class _SessionRecord:
     receipt: TerminalReceipt | None = None
     cleanup_future: Future[None] | None = None
     cleanup_action: str = ""
+    runtime_stop: Event = field(default_factory=Event, repr=False)
+    runtime_thread: Thread | None = field(default=None, repr=False)
 
 
 class TerminalSessionManager:
@@ -348,7 +354,23 @@ class TerminalSessionManager:
             self._replace_lifecycle_locked(session_id, TerminalLifecycle.RUNNING)
             if self._selected_session_id is None:
                 self._selected_session_id = session_id
-            result = TerminalCreateResult(admitted=True, projection=record.projection)
+            if not self._start_runtime_locked(session_id, record):
+                record.projection = replace(
+                    record.projection,
+                    reason=TerminalReason.IO_FAILED,
+                    output_complete=False,
+                )
+                self._begin_cleanup_locked(
+                    session_id,
+                    action="io_failure",
+                    t0=self._clock(),
+                )
+                result = TerminalCreateResult(reason=TerminalReason.IO_FAILED)
+            else:
+                result = TerminalCreateResult(
+                    admitted=True,
+                    projection=record.projection,
+                )
         self._notify_subscribers()
         return result
 
@@ -501,6 +523,8 @@ class TerminalSessionManager:
             if self._shutdown_finalized:
                 return
             self._shutdown_finalized = True
+            for record in self._sessions.values():
+                record.runtime_stop.set()
             backends = tuple(
                 {
                     id(record.backend): record.backend
@@ -809,11 +833,21 @@ class TerminalSessionManager:
         with self._lock:
             if not self._valid_view_locked(view):
                 return None
-            receipt = self._begin_cleanup_locked(
-                session_id,
-                action="close",
-                t0=self._clock(),
-            )
+            record = self._sessions.get(session_id)
+            if (
+                record is not None
+                and record.projection.lifecycle is TerminalLifecycle.EXITED
+            ):
+                record.runtime_stop.set()
+                receipt = record.receipt
+                self._sessions.pop(session_id)
+                self._select_after_removal_locked(session_id)
+            else:
+                receipt = self._begin_cleanup_locked(
+                    session_id,
+                    action="close",
+                    t0=self._clock(),
+                )
         self._notify_subscribers()
         return receipt
 
@@ -989,6 +1023,7 @@ class TerminalSessionManager:
                 TerminalLifecycle.CLEANUP_UNPROVEN,
             }:
                 return
+            record.runtime_stop.set()
             self._sessions.pop(session_id, None)
             self._select_after_removal_locked(session_id)
 
@@ -1011,9 +1046,11 @@ class TerminalSessionManager:
         if record is None:
             return None
         if record.backend is None:
+            record.runtime_stop.set()
             self._sessions.pop(session_id, None)
             self._select_after_removal_locked(session_id)
             return None
+        record.runtime_stop.set()
         if (
             record.projection.lifecycle is TerminalLifecycle.CLEANUP_UNPROVEN
             and action != "retry"
@@ -1234,6 +1271,7 @@ class TerminalSessionManager:
             record = self._sessions.get(session_id)
             if record is None:
                 return
+            record.runtime_stop.set()
             action = record.cleanup_action
             parser_failed = record.projection.parser_failed
             if action == "shell_exit" and proof.process_dead and proof.stream_closed:
@@ -1260,6 +1298,193 @@ class TerminalSessionManager:
 
     def _valid_view_locked(self, view: TerminalViewToken) -> bool:
         return type(view) is TerminalViewToken and view == self._current_view
+
+    def _start_runtime_locked(
+        self,
+        session_id: str,
+        record: _SessionRecord,
+    ) -> bool:
+        """Start one manager-owned bridge only for live-runtime backends."""
+        backend = record.backend
+        if backend is None or not all(
+            callable(getattr(backend, method, None))
+            for method in ("read", "write", "wait_for_shell_exit")
+        ):
+            return True
+        thread = Thread(
+            target=self._run_runtime,
+            args=(session_id, backend, record.runtime_stop),
+            name=f"terminal-runtime-{session_id}",
+            daemon=True,
+        )
+        record.runtime_thread = thread
+        try:
+            thread.start()
+        except Exception:
+            record.runtime_thread = None
+            return False
+        return True
+
+    def _run_runtime(
+        self,
+        session_id: str,
+        backend: TerminalBackend,
+        stop: Event,
+    ) -> None:
+        """Bridge one backend to its bounded actors and authoritative reaper."""
+        output_eof = False
+        try:
+            while not stop.is_set():
+                worked = False
+                event = self.take_input(session_id)
+                if event is not None:
+                    if not self._write_runtime_input(session_id, backend, event.data):
+                        return
+                    worked = True
+
+                pending, visible = self._runtime_output_state(
+                    session_id,
+                    backend,
+                )
+                if pending:
+                    turn = self.process_output(session_id, visible=visible)
+                    if turn is None:
+                        return
+                    worked = worked or turn.processed_bytes > 0
+
+                if not output_eof and not stop.is_set():
+                    chunk = self._read_runtime_output(session_id, backend)
+                    if chunk is not None:
+                        worked = worked or bool(chunk)
+                        output_eof = chunk == b""
+
+                if stop.is_set():
+                    return
+                active, exit_code = self._poll_runtime_exit(session_id, backend)
+                if not active:
+                    return
+                if exit_code is not None:
+                    if type(exit_code) is not int:
+                        raise TypeError("terminal exit code is invalid")
+                    self.shell_exited(session_id, exit_code=exit_code)
+                    return
+                if not worked:
+                    stop.wait(_RUNTIME_POLL_SECONDS)
+        except Exception:
+            self._runtime_io_failed(session_id, backend)
+
+    def _write_runtime_input(
+        self,
+        session_id: str,
+        backend: TerminalBackend,
+        data: bytes,
+    ) -> bool:
+        """Transport one admitted event in bounded writes without interleaving."""
+        with self._lock:
+            record = self._sessions.get(session_id)
+            if (
+                record is None
+                or record.backend is not backend
+                or record.projection.lifecycle is not TerminalLifecycle.RUNNING
+                or record.runtime_stop.is_set()
+            ):
+                return False
+            for offset in range(0, len(data), MAX_IO_CHUNK_BYTES):
+                backend.write(data[offset : offset + MAX_IO_CHUNK_BYTES])
+            return True
+
+    def _poll_runtime_exit(
+        self,
+        session_id: str,
+        backend: TerminalBackend,
+    ) -> tuple[bool, int | None]:
+        """Poll the sole backend reaper while serialized with cleanup startup."""
+        with self._lock:
+            record = self._sessions.get(session_id)
+            if (
+                record is None
+                or record.backend is not backend
+                or record.projection.lifecycle is not TerminalLifecycle.RUNNING
+                or record.runtime_stop.is_set()
+            ):
+                return False, None
+            return True, backend.wait_for_shell_exit(timeout_seconds=0.0)
+
+    def _runtime_output_state(
+        self,
+        session_id: str,
+        backend: TerminalBackend,
+    ) -> tuple[int, bool]:
+        with self._lock:
+            record = self._sessions.get(session_id)
+            if (
+                record is None
+                or record.backend is not backend
+                or record.output_actor is None
+                or record.projection.lifecycle is not TerminalLifecycle.RUNNING
+                or record.runtime_stop.is_set()
+            ):
+                return 0, False
+            return (
+                record.output_actor.pending_bytes,
+                self._current_view is not None
+                and self._selected_session_id == session_id,
+            )
+
+    def _read_runtime_output(
+        self,
+        session_id: str,
+        backend: TerminalBackend,
+    ) -> bytes | None:
+        """Read only under positive actor credit and admit the exact chunk."""
+        with self._lock:
+            record = self._sessions.get(session_id)
+            if (
+                record is None
+                or record.backend is not backend
+                or record.output_actor is None
+                or record.projection.lifecycle is not TerminalLifecycle.RUNNING
+                or record.runtime_stop.is_set()
+            ):
+                return None
+            actor = record.output_actor
+            maximum = actor.next_read_size
+            if maximum <= 0:
+                return None
+            chunk = backend.read(maximum)
+            if chunk is None:
+                return None
+            if type(chunk) is not bytes or len(chunk) > maximum:
+                raise TypeError("terminal backend returned invalid output")
+            if chunk and not actor.offer_output(chunk).accepted:
+                raise RuntimeError("terminal output admission failed")
+            return chunk
+
+    def _runtime_io_failed(
+        self,
+        session_id: str,
+        backend: TerminalBackend,
+    ) -> None:
+        """Fail one live bridge closed without retaining exception content."""
+        with self._lock:
+            record = self._sessions.get(session_id)
+            if (
+                record is None
+                or record.backend is not backend
+                or record.projection.lifecycle is not TerminalLifecycle.RUNNING
+            ):
+                return
+            record.projection = replace(
+                record.projection,
+                reason=TerminalReason.IO_FAILED,
+                output_complete=False,
+            )
+            self._begin_cleanup_locked(
+                session_id,
+                action="io_failure",
+                t0=self._clock(),
+            )
+        self._notify_subscribers()
 
     @staticmethod
     def _request_priority_close(backend: TerminalBackend) -> None:

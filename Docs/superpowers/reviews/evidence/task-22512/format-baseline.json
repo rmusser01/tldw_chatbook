@@ -1,11 +1,12 @@
 {
   "base_ref": "origin/dev",
-  "base_sha": "49e648b7d12357871f1feeb8e497d422e7b68d71",
+  "base_sha": "bcba4b387a36d3a01642c9209abf2c2b54925d0f",
   "baseline_red_paths": [
     "tldw_chatbook/app.py",
     "tldw_chatbook/UI/Screens/settings_screen.py",
     "tldw_chatbook/UI/Screens/chat_screen.py",
     "tldw_chatbook/UI/Console_Modules/left_rail.py",
+    "tldw_chatbook/Widgets/Console/__init__.py",
     "Tests/Chat/test_console_runtime_lifetime.py",
     "Tests/UI/test_console_left_rail.py",
     "Tests/UI/test_console_internals_decomposition.py",
@@ -141,7 +142,7 @@
       "formatter_required": false,
       "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "source_hunks": [],
-      "source_sha256": "8204eca8038f207149167f2537a18b066dde0be0016b8c7b8cc39d5617b1bd3a"
+      "source_sha256": "91a6f632cee7e16ad7b243b302ce193a76bd2cf248f0ba8705471689d259eec0"
     },
     "Tests/UI/test_console_shell_regions.py": {
       "debt_units": 3,
@@ -199,7 +200,7 @@
       "formatter_required": false,
       "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "source_hunks": [],
-      "source_sha256": "a94cbd4cb364f17442081ffdbcfefb9fc81ba99c244adfbe346104ff02ced64c"
+      "source_sha256": "1054f1e1e65cd76a67cb146198a462c774b48b4b18a69f5646093a9f4ee721a7"
     },
     "tldw_chatbook/UI/Console_Modules/left_rail.py": {
       "debt_units": 17,
@@ -223,7 +224,7 @@
           668
         ]
       ],
-      "source_sha256": "43386a305520c74918496f2dcb3ae8db65b7b9d7d8593db160641acd0774284d"
+      "source_sha256": "2c896c4461d0a8f384d1f4d886fd5ce363b90cbf2763b1a62e2308979497a4c4"
     },
     "tldw_chatbook/UI/Console_Modules/wiring.py": {
       "debt_units": 0,
@@ -242,155 +243,175 @@
           1544
         ],
         [
-          4491,
-          4500
+          4508,
+          4517
         ],
         [
-          4604,
-          4621
+          4621,
+          4638
         ],
         [
-          5032,
-          5038
+          5054,
+          5060
         ],
         [
-          5159,
-          5167
+          5192,
+          5200
         ],
         [
-          5185,
-          5193
+          5218,
+          5226
         ],
         [
-          5283,
-          5289
+          5316,
+          5322
         ],
         [
-          5387,
-          5393
+          5420,
+          5426
         ],
         [
-          8623,
-          8635
+          8659,
+          8671
         ],
         [
-          8648,
-          8656
+          8684,
+          8692
         ],
         [
-          10921,
-          10937
+          11005,
+          11021
         ],
         [
-          19014,
-          19020
+          19098,
+          19104
         ],
         [
-          19161,
-          19176
+          19245,
+          19260
         ],
         [
-          19179,
-          19186
+          19263,
+          19270
         ]
       ],
-      "source_sha256": "7a820a8d8465a72560753f4210d2c417f139b809fbabcdde83f653825c36aea3"
+      "source_sha256": "f156ef03e8b6cce7390d8654d400560a7fa67a848859b169aa6473d0665b67ce"
     },
     "tldw_chatbook/UI/Screens/settings_screen.py": {
-      "debt_units": 126,
+      "debt_units": 144,
       "formatter_required": true,
-      "normalized_diff_sha256": "1318b6b282ff2a18d419796d8d9c416931ed0e95764c5f589948d803fc8a3580",
+      "normalized_diff_sha256": "2be3b5111e71fcbf5d43f1df3f89e357e4a06c2b112e61be2b96ab901498fcbd",
       "source_hunks": [
         [
           106,
           111
         ],
         [
-          1101,
-          1109
+          818,
+          823
         ],
         [
-          2932,
-          2940
+          1147,
+          1155
         ],
         [
-          3199,
-          3207
+          3017,
+          3025
         ],
         [
-          3235,
-          3243
+          3052,
+          3060
         ],
         [
-          3273,
-          3282
+          3303,
+          3311
         ],
         [
-          3831,
-          3839
+          3341,
+          3349
         ],
         [
-          6245,
-          6251
+          3379,
+          3388
         ],
         [
-          6648,
-          6662
+          3944,
+          3952
         ],
         [
-          11414,
-          11428
+          4440,
+          4447
         ],
         [
-          11560,
-          11567
+          6566,
+          6572
         ],
         [
-          15872,
-          15880
+          6969,
+          6983
         ],
         [
-          15890,
-          15909
+          7835,
+          7844
         ],
         [
-          16150,
-          16158
+          11772,
+          11786
         ],
         [
-          16242,
-          16250
+          11918,
+          11925
         ],
         [
-          16278,
-          16290
+          16283,
+          16291
         ],
         [
-          16381,
-          16389
+          16301,
+          16320
         ],
         [
-          19864,
-          19872
+          16561,
+          16569
         ],
         [
-          20587,
-          20594
+          16653,
+          16661
         ],
         [
-          20721,
-          20727
+          16689,
+          16701
         ],
         [
-          20813,
-          20823
+          16792,
+          16800
         ],
         [
-          22917,
-          22928
+          20324,
+          20332
+        ],
+        [
+          21076,
+          21083
+        ],
+        [
+          21210,
+          21216
+        ],
+        [
+          21302,
+          21312
+        ],
+        [
+          23406,
+          23417
+        ],
+        [
+          25159,
+          25167
         ]
       ],
-      "source_sha256": "25d3a2a44e8aa1372296273390f29bd0c6172b4b49cbd83fd7e1088414d81702"
+      "source_sha256": "cf81c667548ab14f0197c1b826344bf33bef3e6c88d1b8bce8a1fc5381fa5504"
     },
     "tldw_chatbook/UI/console_command_provider.py": {
       "debt_units": 0,
@@ -400,94 +421,87 @@
       "source_sha256": "697ebd8180de74db1bd1abb0e9a4bb843a5a425345f7074356ee3876cf6b63bb"
     },
     "tldw_chatbook/Widgets/Console/__init__.py": {
-      "debt_units": 0,
-      "formatter_required": false,
-      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "source_hunks": [],
-      "source_sha256": "89c2309596c907f9da9f9f7e3d3af3e45e0120630cbe01b68ec1abbebbf73b13"
-    },
-    "tldw_chatbook/app.py": {
-      "debt_units": 122,
+      "debt_units": 1,
       "formatter_required": true,
-      "normalized_diff_sha256": "234967bfb4a010b1c4092f03e3ff39f1577c903360c07568fa8625dc7f56e8e0",
+      "normalized_diff_sha256": "075f9a52af82c984b560d9c9b60874a7e986c0652bd57a0b0f6a4d05040fd43b",
       "source_hunks": [
         [
-          360,
-          365
-        ],
-        [
-          420,
-          425
-        ],
-        [
-          444,
-          449
-        ],
-        [
-          697,
-          702
-        ],
-        [
-          3469,
-          3477
-        ],
-        [
-          6086,
-          6095
-        ],
-        [
-          6144,
-          6152
-        ],
-        [
-          6199,
-          6207
-        ],
-        [
-          6964,
-          6974
-        ],
-        [
-          7093,
-          7123
-        ],
-        [
-          7829,
-          7836
-        ],
-        [
-          8209,
-          8215
-        ],
-        [
-          8532,
-          8542
-        ],
-        [
-          8950,
-          8955
-        ],
-        [
-          11233,
-          11241
-        ],
-        [
-          13605,
-          13613
-        ],
-        [
-          13628,
-          13636
-        ],
-        [
-          13881,
-          13889
+          84,
+          89
         ]
       ],
-      "source_sha256": "a651cb7191712718fa2a1772be7e5feab8c0395ad769144ecc8d08970e8d646f"
+      "source_sha256": "d53e51d3f582623c49c63246013a58cfe0d8f2e2d155de03ee13dd88427dc848"
+    },
+    "tldw_chatbook/app.py": {
+      "debt_units": 68,
+      "formatter_required": true,
+      "normalized_diff_sha256": "3836563ec88a6e375726fa9b9ba7c524773b32d6e7dedb5e32b523672b6902b4",
+      "source_hunks": [
+        [
+          705,
+          710
+        ],
+        [
+          6998,
+          7008
+        ],
+        [
+          7042,
+          7048
+        ],
+        [
+          7084,
+          7094
+        ],
+        [
+          9142,
+          9147
+        ],
+        [
+          9416,
+          9424
+        ],
+        [
+          9429,
+          9434
+        ],
+        [
+          9443,
+          9451
+        ],
+        [
+          10445,
+          10453
+        ],
+        [
+          10652,
+          10659
+        ],
+        [
+          11902,
+          11910
+        ],
+        [
+          11912,
+          11919
+        ],
+        [
+          14444,
+          14452
+        ],
+        [
+          14467,
+          14475
+        ],
+        [
+          14773,
+          14781
+        ]
+      ],
+      "source_sha256": "4276361c0f2a5df79f8bd2417813226b17a98f215688367465dfccfe84eac32b"
     }
   },
-  "generated_at_utc": "2026-09-01T00:22:03.970478+00:00",
+  "generated_at_utc": "2026-09-02T02:02:30.499987+00:00",
   "paths": [
     "tldw_chatbook/app.py",
     "tldw_chatbook/UI/Screens/settings_screen.py",
