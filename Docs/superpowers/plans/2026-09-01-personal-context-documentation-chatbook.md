@@ -1518,7 +1518,7 @@ Expected: all guide/index content, Tasks 1-5 execution checkboxes, final verific
 - Modify: `Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md`
 - Modify: `backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md`
 
-- [ ] **Step 1: Push and open the PR while TASK-27019 is In Progress**
+- [x] **Step 1: Push and open the PR while TASK-27019 is In Progress**
 
 Prepare `/tmp/personal-context-chatbook-pr.md` with the documentation summary, current limitations, exact Task 5 evidence, and ADR result. Do not check this plan step yet; Task 6 execution checkboxes are recorded together in Step 3 after review completes.
 
@@ -1541,7 +1541,7 @@ backlog task 27019 --plain | rg -q 'Status:.*In Progress'
 
 Expected: the PR is open against `dev` from `codex/personal-context-docs`, and TASK-27019 is still **In Progress**.
 
-- [ ] **Step 2: Wait for initial checks/review and address valid feedback while the task is open**
+- [x] **Step 2: Wait for initial checks/review and address valid feedback while the task is open**
 
 Inspect the initial review comments and required checks. Address valid feedback only while TASK-27019 is **In Progress**. If feedback requires a rebase or repository edit, make that change while the task is open, rerun Task 5 Steps 1-5, commit it, push it, and restart this step. Do not edit Task 6 checkboxes during that loop.
 
@@ -1597,7 +1597,7 @@ backlog task 27019 --plain | rg -q 'Status:.*In Progress'
 
 Expected: initial required checks pass, required review is approved or the repository has no required review decision, the PR is mergeable with the exact base/head and docs-only scope, and TASK-27019 remains **In Progress**. Repeat this step after every feedback commit.
 
-- [ ] **Step 3: Close TASK-27019 only after the PR is clean, then push final metadata**
+- [x] **Step 3: Close TASK-27019 only after the PR is clean, then push final metadata**
 
 Rerun the exact Step 2 verification block immediately before closing. Then mark Task 6 Steps 1, 2, and 3 `[x]` together in this plan and run the following, replacing bracketed evidence with the exact Task 5/PR results. This plan-and-task commit is the final repository mutation when its post-push checks pass.
 

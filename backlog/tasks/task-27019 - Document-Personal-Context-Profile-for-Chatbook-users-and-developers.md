@@ -1,17 +1,18 @@
 ---
 id: TASK-27019
 title: Document Personal Context Profile for Chatbook users and developers
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-01 14:45'
-updated_date: '2026-09-02 13:37'
+updated_date: '2026-09-02 12:38'
 labels: []
 dependencies: []
 references:
   - Docs/superpowers/specs/2026-08-31-personal-context-documentation-design.md
   - >-
     backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md
+  - 'https://github.com/rmusser01/tldw_chatbook/pull/2311'
 priority: medium
 ---
 
@@ -23,11 +24,11 @@ Publish accurate, discoverable Chatbook documentation for using and extending th
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The canonical user guide includes a quick start, task-oriented workflows, the corrected first-link-only publication boundary, and the eleven shipped troubleshooting states.
-- [ ] #2 A developer guide maps Shared Core, encrypted local storage, interviews, agent authority, exact bounded context ordering, Sync-v2 integration, current limitations, separate full-local-first and API-only extension responsibilities, and targeted tests.
+- [x] #1 The canonical user guide includes a quick start, task-oriented workflows, the corrected first-link-only publication boundary, and the eleven shipped troubleshooting states.
+- [x] #2 A developer guide maps Shared Core, encrypted local storage, interviews, agent authority, exact bounded context ordering, Sync-v2 integration, current limitations, separate full-local-first and API-only extension responsibilities, and targeted tests.
 - [x] #3 User and developer indexes link to the guides, and stable links connect to merged server documentation.
-- [ ] #4 Documentation does not advertise an ongoing Personal Context sync caller or status surface, Manual Sync support, server REST publication, recovery import, delete-everywhere, purge acknowledgement, or a dedicated post-link conflict resolver; adaptive-interview disclosure, TLS behavior, first-link review, and local-removal residual state—including separate interview and link-key custody—match shipped code.
-- [ ] #5 Targeted UI, interview, TLS, Console, first-link, dispatcher, client, removal/export, contract, link, and diff checks pass after the final rebase.
+- [x] #4 Documentation does not advertise an ongoing Personal Context sync caller or status surface, Manual Sync support, server REST publication, recovery import, delete-everywhere, purge acknowledgement, or a dedicated post-link conflict resolver; adaptive-interview disclosure, TLS behavior, first-link review, and local-removal residual state—including separate interview and link-key custody—match shipped code.
+- [x] #5 Targeted UI, interview, TLS, Console, first-link, dispatcher, client, removal/export, contract, link, and diff checks pass after the final rebase.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -44,6 +45,12 @@ ADR required: no new ADR required; existing ADR applies
 ADR path: backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md
 Reason: Documentation only; the existing Personal Context authority, Sync, and encryption ADR applies.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented the Chatbook Personal Context user and developer guides, discovery links, exact shared-contract parity block, current sync/non-sync matrix, eleven structured failure states, and ten-item extension checklist. Verification: rebased onto current origin/dev; server PRs #2858 and #2860 and all stable guide paths verified; exact four-bullet contract matched across both Chatbook guides and server dev; UI/service/five-domain Sync and negative purge/resolver inventories passed; 218 focused tests passed under Python 3.12.11; semantic, privacy, discovery-link, allowed-path, and diff guards passed. PR checks/review/base/head/scope: PR #2311 targeted dev at base f5e80bf530e282a0ea116feab54bc8aa838d8af3 from pre-close head 0454a0ec5d296d985cfe984a7c7b5d0eb0119f86; PR Fast Lane, Derived Artifacts, and duplicate-task guards passed; Qodo reported 0 bugs, 0 rule violations, and 0 requirement gaps on the substantive guide head; no review threads or change requests; mergeable CLEAN; 10 approved documentation/task-metadata paths. ADR required: no new ADR required; existing ADR applies. ADR path: backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md. Reason: documentation only; the existing Personal Context authority, Sync, and encryption ADR applies. Lessons learned: backlog/docs/lessons-backlog-hygiene.md records that historical refs are collision-discovery inputs, while an explicit collision rename must be closed against merge-candidate uniqueness because origin/dev and historical worktrees necessarily retain pre-rename snapshots before merge.
+<!-- SECTION:NOTES:END -->
 
 ## Corrected shipped-behavior claim inventory
 
