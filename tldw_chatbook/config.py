@@ -21,23 +21,22 @@ else:
 import os
 import time
 from pathlib import Path
+import toml
+import portalocker
 from typing import (
-    TYPE_CHECKING,
     Any,
-    Callable,
     Collection,
+    Callable,
     Dict,
-    Iterator,
     List,
     Literal,
     Mapping,
     NamedTuple,
     Optional,
     Sequence,
+    TYPE_CHECKING,
+    Iterator,
 )
-
-import portalocker
-import toml
 
 #
 # Third-Party Imports
@@ -51,12 +50,12 @@ from pydantic import (
     field_validator,
 )
 
+
 #
 # Local Imports
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
-
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
     from tldw_chatbook.Chat.console_trace_custom_pii import CustomPIIRuleset
@@ -6762,9 +6761,7 @@ def _validate_literal_config_mutation_targets(
             raise TypeError("Literal configuration delete keys must be collections")
         for key in keys:
             if type(key) is not str or not key:
-                raise TypeError(
-                    "Literal configuration delete keys must be non-empty strings"
-                )
+                raise TypeError("Literal configuration delete keys must be non-empty strings")
             delete_targets.add((path, key))
 
     if set_targets.intersection(delete_targets):
@@ -6928,7 +6925,9 @@ def _apply_literal_settings_transaction_locked(
                     "(phase=precondition, error_type={}).",
                     type(error).__name__,
                 )
-                return LiteralConfigMutationResult(False, False, None, "before_replace")
+                return LiteralConfigMutationResult(
+                    False, False, None, "before_replace"
+                )
 
         try:
             effective_values = _atomic_config_values_from_raw(config_data)
@@ -6951,7 +6950,8 @@ def _apply_literal_settings_transaction_locked(
                 _validate_literal_config_mutation_targets(mutation)
             logged_sets, logged_deletes = _literal_mutation_log_shape(mutation)
             logger.info(
-                "Attempting to apply literal settings mutation: sets={}, deletes={}",
+                "Attempting to apply literal settings mutation: "
+                "sets={}, deletes={}",
                 logged_sets,
                 logged_deletes,
             )
@@ -7004,7 +7004,9 @@ def _apply_literal_settings_transaction_locked(
                     config_path,
                     type(error).__name__,
                 )
-                return LiteralConfigMutationResult(False, False, None, "before_replace")
+                return LiteralConfigMutationResult(
+                    False, False, None, "before_replace"
+                )
             logger.success(f"Successfully replaced settings file at {config_path}")
         else:
             _invalidate_config_caches()
@@ -7466,9 +7468,7 @@ def apply_console_capture_settings(
         if pii_redaction_enabled is None
         else pii_redaction_enabled
     )
-    resolved_viewer = (
-        current.viewer_profile if viewer_profile is None else viewer_profile
-    )
+    resolved_viewer = current.viewer_profile if viewer_profile is None else viewer_profile
 
     def generation_is_current(snapshot: AtomicConfigSnapshot) -> bool:
         return snapshot.generation == expected_generation
@@ -7507,7 +7507,10 @@ def apply_console_capture_settings(
 
     more_revealing = (
         (enabled and not current.enabled)
-        or (detail is CaptureDetail.FULL and current.detail is CaptureDetail.SAFE)
+        or (
+            detail is CaptureDetail.FULL
+            and current.detail is CaptureDetail.SAFE
+        )
         or (not resolved_pii and current.pii_redaction_enabled)
         or (resolved_viewer == "full" and current.viewer_profile == "safe")
     )
