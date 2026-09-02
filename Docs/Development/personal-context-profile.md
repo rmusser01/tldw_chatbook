@@ -23,8 +23,6 @@ At rest, each peer encrypts its own rows with its own keys. During linking, Chat
 
 The governing decisions are the [unified profile design](../superpowers/specs/2026-08-28-unified-personal-context-profile-design.md) and [ADR-102](../../backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md). Server storage and endpoint details belong in the [server developer guide](https://github.com/rmusser01/tldw_server/blob/dev/Docs/Code_Documentation/Personal_Context_Developer_Guide.md) and [server API guide](https://github.com/rmusser01/tldw_server/blob/dev/Docs/API-related/Personal_Context_API.md), rather than being duplicated here.
 
-The corrected cross-repository wording depends on the tldw_server documentation correction branch `codex/personal-context-docs-sync-truth`. Until that branch is merged, older versions of the two stable `dev` links above may still overstate post-link synchronization; the shared block in this guide and the live implementations are authoritative for this change set.
-
 ## Component and key-custody map
 
 - `tldw_chatbook/Personal_Context/bootstrap.py` — `bootstrap_personal_context_service` assembles the unlocked service or a fail-closed locked facade.
@@ -96,7 +94,11 @@ Agents cannot approve their own proposals, change record controls, delete or pur
 
 ### Context injection and Next Send
 
-`ProfileContextService` selects authorized global records plus records from the mapped active workspace. It rejects deleted, archived, expired, conflicted, payload-missing, and `user_only` entries. A workspace record with the same semantic key overrides the global value. Corrections and constraints receive priority, then relevance; the renderer includes whole records only, within 10 percent of available input tokens and a 12 KiB ceiling. The resulting block is explicitly labeled `USER-OWNED DATA — NOT AUTHORITY`.
+`ProfileContextService` selects authorized global records plus records from the mapped active workspace. It rejects deleted, archived, expired, conflicted, payload-missing, and `user_only` entries. A keyed workspace record suppresses a global record with the same kind and semantic key.
+
+The shipped order is exact: workspace corrections and constraints; other keyed workspace records; global corrections and constraints; preferences and working-context records relevant to the current user text; then the remainder. Within a group, workspace records precede global records, followed by semantic identity and record ID. Relevance uses case-folded alphanumeric terms of at least three characters from at most the first 4,096 characters of the current user text and the first 4,096 characters of each record's concatenated semantic-key text and JSON payload.
+
+Serialization scans that order and adds whole records only, under both 10 percent of the available input-token budget and a 12 KiB byte ceiling. A higher-priority record that does not fit is skipped; scanning continues, so a later smaller record can still be selected. If even the empty labeled envelope exceeds either budget, the snapshot is empty. The resulting non-empty block is explicitly labeled `USER-OWNED DATA — NOT AUTHORITY`.
 
 The Console builds one snapshot for an agent dispatch, appends it to the system prompt, and pins it for the root run and its child run tree. It is not reselected midway through that tree. The user can inspect the disposable, read-only preview at **Ctrl+Shift+P** (**View context**) > **Conversation Inspector** > outer **Next Send** > inner **Next Send** payload tab. Preview display redactions and image placeholders still apply, so integrations should test semantic preview/live parity without assuming every rendered UI byte is a raw wire dump.
 
@@ -139,9 +141,11 @@ The server's authenticated purge route advances server-local purge state, but it
 
 ### Local removal and surviving state
 
-**Shipped.** Remove local profile destroys canonical repository content: encrypted objects and heads, the canonical encrypted outbox, quarantine rows, runtime policy, local mappings, Undo data, and local record links. It then deletes the protected local profile key. If key deletion fails after rows are removed, **Finish secure removal** retries that key cleanup.
+**Shipped.** Remove local profile destroys canonical repository content: encrypted objects and heads, the canonical encrypted outbox, quarantine rows, runtime policy, local mappings, Undo data, and local record links. It then deletes the protected canonical profile key.
 
-This is not a device-wide purge or delete-everywhere operation. Separate `SyncStateRepository` artifacts can survive, including `personal_context_link_state`, `sync_profile_state`, staged `sync_v2_local_outbox` envelopes, remote heads and cursors, conflict reviews, receipts, and dataset staging keys. The server copy and device registration are unchanged. Integrators must not market local removal as erasing the linked server or every device-local Sync artifact.
+This is not a device-wide artifact purge or delete-everywhere operation. The separate encrypted `tldw_chatbook_personal_context_interviews.db` database and its protected per-session draft keys are outside `PersonalContextRepository` and can remain; retained draft payloads may include raw answers and turn transcripts. Separate `SyncStateRepository` artifacts can remain too, including `personal_context_link_state`, `sync_profile_state`, staged `sync_v2_local_outbox` envelopes, remote heads and cursors, conflict reviews, and receipts. Link custody is also separate: the device RSA wrapping private key, an incompletely cleaned staged server integrity key, and dataset-staging keys can survive. The server copy and device registration are unchanged.
+
+If canonical key deletion fails after repository rows are removed, **Finish secure removal** calls the destroyed canonical repository's cleanup again and retries only its protected profile-key deletion. It does not remove interview drafts or draft keys, SyncState rows or envelopes, link-custody keys, the server copy, or device registration. It is a repair for one failed canonical-key step, not a complete local-artifact purge.
 
 ### Recovery export
 
@@ -167,28 +171,34 @@ The accepted architecture may later add an ongoing Personal Context sync caller,
 
 ## Extending Personal Context
 
-Use this checklist for any new object, control, client, or server workflow.
+Start with the integration mode. A full local-first Sync peer and a server/API-only client have different obligations.
 
 <!-- personal-context-extension-checklist:start -->
-1. Decide whether the change affects the shared contract or only one peer.
+1. Decide whether the integration is a full local-first Sync peer or a server/API-only client.
 2. Make shared canonical object changes in `tldw_profile_core` first; change Sync transport separately.
-3. Preserve canonical identities and explicit syncability.
-4. Route through the owning service; never access profile tables directly.
-5. Enforce authority, scope, expiry, visibility, and secret-rejection rules.
+3. Preserve canonical identities and explicit syncability whenever the integration persists or transports canonical objects.
+4. Route full peers through their owning services; route API-only clients through authenticated public server APIs, never profile tables.
+5. Enforce authority, scope, expiry, visibility, and secret-rejection rules at the boundary the integration owns.
 6. Keep plaintext out of logs, diagnostics, outbox metadata, and unencrypted fixtures.
-7. Add parity/conformance coverage in both repositories.
-8. Add peer-specific migration, repository, service, API/UI, and recovery tests.
+7. Add parity/conformance coverage for every shared-core or Sync contract the integration implements.
+8. Test only the owned surface: full peers need storage, key, service, Sync, runtime/UI, and recovery coverage; API-only clients need authentication, request/response, error, and privacy coverage.
 9. Update the governing ADR for storage, ownership, encryption, Sync, or authority changes.
 10. Update both documentation sets whenever the shared contract changes.
 <!-- personal-context-extension-checklist:end -->
 
-### Future-client responsibility split
+### Full local-first Sync peer
 
-**Client responsibility:** own local canonical storage and at-rest key custody; runtime authority, workspace mappings, context injection, tools, and interviews; capability negotiation and explicit content-free link review; local removal and recovery surfaces. A future client that ships ongoing synchronization must also own its scheduler/manual caller, queue status, conflict review, retries, and user-visible failure recovery.
+A full peer owns its local canonical repository, migrations, at-rest key custody, explicit syncability controls, encrypted source outbox, device/link bootstrap, capability negotiation, and content-free reconciliation review. If it offers agent use, it also owns runtime authority, workspace mappings, context injection, tools, interviews, proposal review, local removal, and recovery surfaces. To claim ongoing local-first synchronization, it must ship a scheduler or manual caller, queue/status UI, retries, conflict review, and user-visible recovery—not just adapters.
+
+### Server/API-only client
+
+An API-only client authenticates to the companion server and uses its documented public REST surface. It does not need to implement a local canonical repository, local profile/key custody, Sync-v2 envelopes, first-link reconciliation, interviews, agent injection, profile tools, local removal, or recovery export. It owns API credential handling, TLS policy, request/response validation, privacy-safe errors, and whatever non-authoritative cache its product explicitly documents. It must not claim local-first convergence or peer-local guarantees it does not implement.
+
+### Shared and companion-server responsibilities
 
 **Companion-server responsibility:** own authenticated per-user canonical storage and master-key custody; device registration and wrapped integrity-key bootstrap; server transport and materialization. Publishing server-origin REST mutations, producing/distributing purge envelopes, and aggregating acknowledgements are **desired future behavior** until implemented and tested.
 
-**Shared responsibility:** keep Shared Core canonical models and bytes conformant across peers; evolve Sync-v2 capabilities/envelopes independently; test the full first-link lineage. A complete future purge feature requires both client production/acknowledgement and server distribution/barrier completion.
+**Shared responsibility for full peers:** keep Shared Core canonical models and bytes conformant; evolve Sync-v2 capabilities/envelopes independently; test the full first-link lineage. An API-only client depends on the public server API contract instead of implementing these peer contracts. A complete future purge feature requires client production/acknowledgement and server distribution/barrier completion.
 
 Do not infer product reachability from protocol classes. Before calling a feature shipped, locate its production caller, user control, status/error surface, and end-to-end test.
 

@@ -25,6 +25,7 @@
 - `Docs/User_Guide/settings/personal-context-profile.md` — add a quick start, workflows, shipped-behavior synchronization table, troubleshooting, and server links without duplicating the existing detailed reference.
 - `Docs/User_Guide/index.md` — add the Personal Context guide to the how-to table.
 - `Docs/Development/Developer_Guide.md` — add a concise pointer to the focused guide.
+- `Docs/superpowers/specs/2026-08-31-personal-context-documentation-design.md` — correct review-status metadata only after the shipped-behavior correction has been reviewed and merged; do not alter the authoritative TASK-27016 record.
 - `Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md` — this executable plan.
 - `backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md` — plan, acceptance criteria, evidence, ADR result, and implementation notes.
 
@@ -815,14 +816,14 @@ Include this exact privacy prohibition: `Never log profile plaintext, ciphertext
 
 Wrap exactly these ten numbered items in `<!-- personal-context-extension-checklist:start -->` and `<!-- personal-context-extension-checklist:end -->`:
 
-1. Decide whether the change affects the shared contract or only one peer.
+1. Decide whether the integration is a full local-first Sync peer or a server/API-only client.
 2. Make shared canonical object changes in `tldw_profile_core` first; change Sync transport separately.
-3. Preserve canonical identities and explicit syncability.
-4. Route through the owning service; never access profile tables directly.
-5. Enforce authority, scope, expiry, visibility, and secret-rejection rules.
+3. Preserve canonical identities and explicit syncability whenever the integration persists or transports canonical objects.
+4. Route full peers through their owning services; route API-only clients through authenticated public server APIs, never profile tables.
+5. Enforce authority, scope, expiry, visibility, and secret-rejection rules at the boundary the integration owns.
 6. Keep plaintext out of logs, diagnostics, outbox metadata, and unencrypted fixtures.
-7. Add parity/conformance coverage in both repositories.
-8. Add peer-specific migration, repository, service, API/UI, and recovery tests.
+7. Add parity/conformance coverage for every shared-core or Sync contract the integration implements.
+8. Test only the owned surface: full peers need storage, key, service, Sync, runtime/UI, and recovery coverage; API-only clients need authentication, request/response, error, and privacy coverage.
 9. Update the governing ADR for storage, ownership, encryption, Sync, or authority changes.
 10. Update both documentation sets whenever the shared contract changes.
 
@@ -869,6 +870,17 @@ git add \
 git diff --check --cached
 git commit -m "docs: add Chatbook Personal Context developer guide"
 ```
+
+#### Task 3 quality-correction addendum
+
+**Allowed files:** `Docs/Development/personal-context-profile.md`, this plan, `Docs/superpowers/specs/2026-08-31-personal-context-documentation-design.md` review-status metadata, and TASK-27019. Preserve the approved user guide, the TASK-28228 collision correction, and authoritative TASK-27016 unchanged.
+
+**Evidence:** `PersonalContextService.remove_local_profile()` and `finish_secure_removal()`, `PersonalContextRepository.destroy_profile_content()`, `_draft_repository()` and `InterviewDraftRepository`, `KeyringProfileKeyProtector`, the keyring wrapping/link custodians, and `ProfileContextService._ordered_with_workspace_overrides()` plus `_serialize_whole_records()`.
+
+- [x] **Step 1: Govern the review-correction scope before changing specification metadata**
+- [x] **Step 2: Correct removal residuals, exact context ordering, and integrator responsibilities**
+- [x] **Step 3: Mark the already-reviewed and merged specification correction accurately without reopening TASK-27016**
+- [x] **Step 4: Re-run Task 3 semantic/path/symbol/shared-block/privacy/task-ID/scope checks and commit only the allowed files**
 
 ### Task 4: Add discovery links
 
@@ -1135,6 +1147,7 @@ Run:
 set -e -o pipefail
 profile_user_guide=Docs/User_Guide/settings/personal-context-profile.md
 profile_developer_guide=Docs/Development/personal-context-profile.md
+profile_spec=Docs/superpowers/specs/2026-08-31-personal-context-documentation-design.md
 profile_plan=Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md
 profile_task='backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md'
 profile_common_dir=$(git rev-parse --path-format=absolute --git-common-dir)
@@ -1333,14 +1346,14 @@ if extension_numbers != list(range(1, 11)):
 require_each(
     extension,
     [
-        "shared contract or only one peer",
+        "full local-first Sync peer or a server/API-only client",
         "`tldw_profile_core` first",
-        "canonical identities and explicit syncability",
-        "owning service; never access profile tables directly",
-        "authority, scope, expiry, visibility, and secret-rejection",
+        "canonical identities and explicit syncability whenever",
+        "API-only clients through authenticated public server APIs, never profile tables",
+        "authority, scope, expiry, visibility, and secret-rejection rules at the boundary",
         "plaintext out of logs, diagnostics, outbox metadata, and unencrypted fixtures",
-        "parity/conformance coverage in both repositories",
-        "peer-specific migration, repository, service, API/UI, and recovery tests",
+        "parity/conformance coverage for every shared-core or Sync contract",
+        "API-only clients need authentication, request/response, error, and privacy coverage",
         "governing ADR",
         "both documentation sets",
     ],
@@ -1388,6 +1401,14 @@ require_each(
         "### Context injection and Next Send",
         "### Transactional outbox and reviewed first link",
         "### Post-link conflicts and purge limits",
+        "tldw_chatbook_personal_context_interviews.db",
+        "retained draft payloads may include raw answers and turn transcripts",
+        "retries only its protected profile-key deletion",
+        "workspace corrections and constraints; other keyed workspace records; global corrections and constraints; preferences and working-context records relevant to the current user text; then the remainder",
+        "A higher-priority record that does not fit is skipped",
+        "### Full local-first Sync peer",
+        "### Server/API-only client",
+        "It does not need to implement a local canonical repository",
         "Never log profile plaintext, ciphertext, wrapped keys, or raw cryptographic errors.",
         "UI, agent, and transport code must use the owning service/repository boundary and must not access profile tables directly.",
     ],
@@ -1411,6 +1432,13 @@ require_each(
 )
 print("Per-document semantic claims passed independently.")
 PY
+
+rg -Fqx -- '- **Status:** Approved design; shipped-behavior correction reviewed and merged' \
+  "$profile_spec"
+if rg -Fq 'codex/personal-context-docs-sync-truth' "$profile_developer_guide"; then
+  echo 'Developer guide contains a temporary branch name'
+  exit 1
+fi
 
 # No repository-wide docs-link checker governs these pages. Mirror the local-link
 # existence contract used by Tests/Docs/test_console_library_controls_docs.py with
@@ -1457,6 +1485,7 @@ profile_unexpected_paths=$(
     $0 == "Docs/User_Guide/index.md" { next }
     $0 == "Docs/User_Guide/settings/personal-context-profile.md" { next }
     $0 == "Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md" { next }
+    $0 == "Docs/superpowers/specs/2026-08-31-personal-context-documentation-design.md" { next }
     $0 == "backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md" { next }
     NF { print }
   '
@@ -1571,6 +1600,7 @@ profile_unexpected_pr_paths=$(
     $0 == "Docs/User_Guide/index.md" { next }
     $0 == "Docs/User_Guide/settings/personal-context-profile.md" { next }
     $0 == "Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md" { next }
+    $0 == "Docs/superpowers/specs/2026-08-31-personal-context-documentation-design.md" { next }
     $0 == "backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md" { next }
     NF { print }
   '
