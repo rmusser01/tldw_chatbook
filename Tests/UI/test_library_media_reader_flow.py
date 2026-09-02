@@ -253,6 +253,67 @@ async def test_escape_from_reader_focuses_loaded_row_and_down_advances():
             service.release(media_id)
 
 
+async def _load_row_0(screen, service, pilot):
+    """Open and fully settle row 0 in the Reader; return its canonical id."""
+    row_0 = screen.query_one("#library-media-row-0", Button)
+    row_0_id, backing_id_0, _ = _row_identity(row_0)
+    row_0.press()
+    await _wait_for_detail_call(service, backing_id_0)
+    service.release(backing_id_0)
+    await _wait_for_condition(
+        pilot,
+        lambda: screen._library_media_reader_session.loaded_id == row_0_id,
+        message="Row 0 never settled in the Reader.",
+    )
+    return row_0_id
+
+
+@pytest.mark.asyncio
+async def test_bracket_keys_walk_to_next_and_previous_item_in_the_reader():
+    """task-28005: ] opens the next browse item, [ the previous, from the Reader."""
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        row_0_id = await _load_row_0(screen, service, pilot)
+        row_1_id = str(screen.query_one("#library-media-row-1", Button).media_id)
+        assert screen._selected_media_id == row_0_id
+
+        # ] walks DOWN the browse order (newest-first rows) to the next item.
+        await pilot.press("]")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._selected_media_id == row_1_id,
+            message="] did not select the next item.",
+        )
+        # [ walks back to the previous item.
+        await pilot.press("[")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._selected_media_id == row_0_id,
+            message="[ did not select the previous item.",
+        )
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
+
+
+@pytest.mark.asyncio
+async def test_prev_item_binding_disabled_at_the_first_item():
+    """task-28005: [ is gated off (no-op) at the first item; ] stays active."""
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        row_0_id = await _load_row_0(screen, service, pilot)
+        # Row 0 is the first (top) item: no previous exists.
+        assert screen.check_action("library_media_prev_item", ()) is False
+        assert screen.check_action("library_media_next_item", ()) is True
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
+
+
 @pytest.mark.asyncio
 async def test_reader_defaults_to_read_and_keeps_mode_across_local_items():
     """Reader mode is session state, not a per-detail display default."""

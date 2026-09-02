@@ -2413,6 +2413,13 @@ class LibraryScreen(BaseAppScreen):
         # fields. Advertised via ``LIBRARY_INGEST_SHORTCUTS`` (footer+F1),
         # so ``show=False`` like the other contextual keys.
         Binding("r", "library_ingest_retry_last", "Retry this batch", show=False),
+        # task-28005: sequential-review Prev/Next over the current browse
+        # result. ``check_action`` gates both to the media Reader with a
+        # neighbour in that direction (so they no-op at the list ends and
+        # drop from the footer there); a focused Input/TextArea consumes the
+        # printable key first, so "[" / "]" still type in the search box.
+        Binding("]", "library_media_next_item", "Next item", show=False),
+        Binding("[", "library_media_prev_item", "Previous item", show=False),
     ]
 
     #: task-4023 AC#7: which canvas's "Export…" action opened the Export
@@ -4898,11 +4905,20 @@ class LibraryScreen(BaseAppScreen):
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
                 and self._library_media_view == "viewer"
             ):
-                return (
+                shortcuts: list[tuple[str, str]] = [
                     ("/", "focus search"),
                     ("F6", "next pane"),
-                    ("esc", self._library_media_escape_label()),
-                )
+                ]
+                # task-28005: advertise Prev/Next only when there IS a
+                # neighbour that way, so the footer stops teaching a key
+                # that no-ops at the list ends.
+                if self._library_media_item_traversal_active():
+                    if self._library_media_adjacent_row(1) is not None:
+                        shortcuts.append(("]", "next item"))
+                    if self._library_media_adjacent_row(-1) is not None:
+                        shortcuts.append(("[", "prev item"))
+                shortcuts.append(("esc", self._library_media_escape_label()))
+                return tuple(shortcuts)
             return self.LIBRARY_DETAIL_BACK_SHORTCUTS
         if self._library_skill_editor_active():
             shortcuts = [("/", "focus search"), ("F6", "next pane")]
@@ -30468,6 +30484,15 @@ class LibraryScreen(BaseAppScreen):
             "library_rag_result_card_open",
         ):
             return self._focused_library_rag_result_card_index() is not None
+        if action in ("library_media_next_item", "library_media_prev_item"):
+            # task-28005: active only in the plain Reader with a neighbour in
+            # that direction, so the key no-ops (and drops from the footer)
+            # at the list ends -- the honest-footer idiom that communicates
+            # the boundary. A focused Input still consumes "[" / "]" first.
+            if not self._library_media_item_traversal_active():
+                return False
+            direction = 1 if action == "library_media_next_item" else -1
+            return self._library_media_adjacent_row(direction) is not None
         if action == "focus_previous_workbench_pane":
             return bool(self._library_selected_row_id)
         return True
@@ -41337,6 +41362,66 @@ class LibraryScreen(BaseAppScreen):
         else:
             self._exit_library_media_viewer()
         self._register_footer_shortcuts()
+
+    def _library_media_adjacent_row(
+        self, direction: int
+    ) -> tuple[str, str] | None:
+        """Return the (id, title) of the browse row ``direction`` from the current.
+
+        task-28005: neighbours come from the mounted rows -- they carry
+        ``media_id`` in exactly the form ``_selected_media_id`` holds (so no
+        id-format mismatch) and sit in browse order (newest first, so
+        ``direction=+1`` is the next item DOWN the list, matching Down). No
+        neighbour (at a list end, or the current item is off the loaded
+        page) returns None.
+        """
+        rows = list(self.query(".library-media-row"))
+        if not rows:
+            return None
+        selected = str(self._selected_media_id or "")
+        index = next(
+            (
+                i
+                for i, row in enumerate(rows)
+                if str(getattr(row, "media_id", "") or "") == selected
+            ),
+            None,
+        )
+        if index is None:
+            return None
+        neighbour = index + direction
+        if not 0 <= neighbour < len(rows):
+            return None
+        row = rows[neighbour]
+        media_id = str(getattr(row, "media_id", "") or "")
+        title = str(getattr(row, "_library_media_title", "") or media_id)
+        return (media_id, title)
+
+    def _library_media_item_traversal_active(self) -> bool:
+        """True while the Reader is showing a plain item (no sub-state)."""
+        return (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+            and self._library_media_view == "viewer"
+            and not self._library_media_viewer_substate_active()
+            and not self._library_media_select_mode
+        )
+
+    def action_library_media_next_item(self) -> None:
+        """Open the next browse item in the Reader (task-28005)."""
+        self._select_library_media_adjacent_item(1)
+
+    def action_library_media_prev_item(self) -> None:
+        """Open the previous browse item in the Reader (task-28005)."""
+        self._select_library_media_adjacent_item(-1)
+
+    def _select_library_media_adjacent_item(self, direction: int) -> None:
+        if not self._library_media_item_traversal_active():
+            return
+        neighbour = self._library_media_adjacent_row(direction)
+        if neighbour is None:
+            return
+        media_id, title = neighbour
+        self._select_library_media_reader_row(media_id, title, immediate=True)
 
     def _focus_library_media_items_pane(self) -> None:
         """Focus the Items pane at its most useful control (task-28004).
