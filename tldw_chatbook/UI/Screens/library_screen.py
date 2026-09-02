@@ -605,7 +605,13 @@ from ..Library_Modules.library_collections_capture_controller import (
 from ..Library_Modules.library_conversation_reader_controller import (
     LibraryConversationReaderController,
 )
-from ..Library_Modules.library_conversations_state import LibraryConversationsState
+from ..Library_Modules.library_conversations_controller import (
+    LibraryConversationsController,
+)
+from ..Library_Modules.library_conversations_state import (
+    CONVERSATIONS_PLURAL_STATE_FIELDS,
+    LibraryConversationsState,
+)
 from ..Library_Modules.library_note_import_controller import (
     LibraryNoteImportController,
 )
@@ -2200,6 +2206,75 @@ class LibraryScreen(BaseAppScreen):
             ),
             selected_row_id_accessor=lambda: self._library_selected_row_id,
             selected_conversation_id_accessor=lambda: self._selected_conversation_id,
+        )
+        self._conversations_controller = LibraryConversationsController(
+            self,
+            conversations_state_accessor=lambda: self._conversations_state,
+            ensure_reader_selection=(
+                lambda: self._conversation_reader_controller._ensure_library_conversation_reader_selection()
+            ),
+            start_reader_selection=(
+                lambda *a, **k: self._conversation_reader_controller._start_library_conversation_reader_selection(
+                    *a, **k
+                )
+            ),
+            sync_reader=(
+                lambda: self._conversation_reader_controller._sync_library_conversation_reader()
+            ),
+            selected_conversation_id_accessor=lambda: self._selected_conversation_id,
+            set_selected_conversation_id=(
+                lambda value: setattr(self, "_selected_conversation_id", value)
+            ),
+            pending_library_source_open_accessor=(
+                lambda: self._pending_library_source_open
+            ),
+            set_pending_library_source_open=(
+                lambda value: setattr(self, "_pending_library_source_open", value)
+            ),
+            selected_row_id_accessor=lambda: self._library_selected_row_id,
+            set_selected_row_id=(
+                lambda value: setattr(self, "_library_selected_row_id", value)
+            ),
+            local_source_records_accessor=(
+                lambda: getattr(self, "_local_source_records", {})
+            ),
+            library_canvas_projection_depth_accessor=(
+                lambda: self._library_canvas_projection_depth
+            ),
+            library_canvas_resync_pending_accessor=(
+                lambda: self._library_canvas_resync_pending
+            ),
+            set_library_canvas_resync_pending=(
+                lambda value: setattr(self, "_library_canvas_resync_pending", value)
+            ),
+            acknowledge_destination_change=(
+                lambda: self._acknowledge_library_destination_change()
+            ),
+            library_workspace_depth_state=(
+                lambda *a, **k: self._library_workspace_depth_state(*a, **k)
+            ),
+            open_library_export_canvas=(
+                lambda *a, **k: self._open_library_export_canvas(*a, **k)
+            ),
+            open_library_item_by_id=(
+                lambda *a, **k: self._open_library_item_by_id(*a, **k)
+            ),
+            run_library_service_call=(
+                lambda *args, **kwargs: self._run_library_service_call(
+                    *args, **kwargs
+                )
+            ),
+            safe_text=lambda *a, **k: self._safe_text(*a, **k),
+            source_record_id=lambda record: self._source_record_id(record),
+            source_title=(
+                lambda source_type, record: self._source_title(source_type, record)
+            ),
+            library_conversation_loaded_preview_selected=(
+                lambda: self._library_conversation_loaded_preview_selected()
+            ),
+            selected_conversation_handoff_payload=(
+                lambda: self._selected_conversation_handoff_payload()
+            ),
         )
         (
             self._library_reader_shared_preferences,
@@ -10228,34 +10303,12 @@ class LibraryScreen(BaseAppScreen):
         return False
 
     def _library_conversation_focus_region(self) -> str:
-        """Return the retained Conversations role containing current focus."""
-        focused = self.focused
-        if focused is None:
-            return ""
-        try:
-            shell = self.query_one(
-                "#library-conversations-reader-shell", LibraryAdaptiveReaderShell
-            )
-        except (NoMatches, QueryError):
-            return ""
-        for name, pane in (
-            ("library", shell.library),
-            ("items", shell.items),
-            ("work", shell.work),
-        ):
-            if focused is pane or pane in focused.ancestors:
-                return name
-        return ""
+        return self._conversations_controller._library_conversation_focus_region()
+
 
     def _library_conversation_escape_label(self) -> str:
-        """Name the nearest visible prior role reached by Escape."""
-        region = self._library_conversation_focus_region()
-        layout = self._library_conversation_reader_layout
-        if region == "work" and layout.items_open:
-            return "focus Items"
-        if region in {"work", "items"} and layout.library_open:
-            return "focus Library"
-        return ""
+        return self._conversations_controller._library_conversation_escape_label()
+
 
     def _arm_library_list_entry_focus(
         self,
@@ -11113,24 +11166,8 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _adopt_library_conversation_state_selection(self, selected_id: str) -> None:
-        """Adopt list normalization unless it would consume a pending deep link."""
+        return self._conversations_controller._adopt_library_conversation_state_selection(selected_id)
 
-        pending = self._pending_library_source_open
-        if (
-            pending is not None
-            and pending[0] == "conversations"
-            and self._selected_conversation_id == pending[1]
-            and selected_id != pending[1]
-        ):
-            return
-        retained_reader_id = self._library_conversation_reader_state.selected_id
-        if (
-            retained_reader_id
-            and not self._library_conversation_reader_state.unavailable
-            and selected_id != retained_reader_id
-        ):
-            return
-        self._selected_conversation_id = selected_id
 
     # Own group, deliberately separate from the "default" group the plain
     # `self.run_worker(self._sync_collections_panel(...))` calls above use
@@ -11201,66 +11238,9 @@ class LibraryScreen(BaseAppScreen):
             # pay for an off-thread keyring read it has no use for).
             self._refresh_library_skills_trust_posture()
 
-    def _carry_selected_conversation_into_snapshot(
-        self,
-        records: dict[str, tuple[Mapping[str, Any], ...]],
-    ) -> dict[str, tuple[Mapping[str, Any], ...]]:
-        """Preserve an out-of-page selected conversation across a snapshot replace.
+    def _carry_selected_conversation_into_snapshot(self, records: dict[str, tuple[Mapping[str, Any], ...]]) -> dict[str, tuple[Mapping[str, Any], ...]]:
+        return self._conversations_controller._carry_selected_conversation_into_snapshot(records)
 
-        (C3) A wholesale ``_local_source_records`` replace -- the periodic
-        background refresh, not a user action -- can silently drop the
-        currently-open conversation if it fell off the loaded page (the
-        conversations snapshot is capped, see
-        ``LIBRARY_SOURCE_PAGE_SIZES["conversations"]``) or was fetched
-        out-of-band via ``_open_library_item_by_id`` and prepended into the
-        OLD records. Without this, the next recompose would silently reset
-        the selection to the first row (``_ensure_selected_conversation_id``)
-        even though the user never navigated away -- the same class of race
-        ``_open_library_item_by_id`` already guards against for its own
-        out-of-snapshot fetch, just triggered by a background refresh
-        instead of a user click.
-
-        Pure in-memory merge: reads the OLD ``self._local_source_records``
-        (not yet replaced) and the INCOMING ``records``, and -- only when the
-        selected id is present in the old snapshot but missing from the new
-        one -- prepends the old record into the new conversations tuple so
-        the selection survives the replace.
-
-        Args:
-            records: The incoming snapshot about to replace
-                ``self._local_source_records``.
-
-        Returns:
-            ``records``, unchanged, or with the selected conversation's
-            record prepended into its ``"conversations"`` tuple.
-        """
-        selected_id = getattr(self, "_selected_conversation_id", "")
-        if not selected_id:
-            return records
-        old_conversations = getattr(self, "_local_source_records", {}).get(
-            "conversations", ()
-        )
-        old_index_by_id = {
-            self._conversation_record_id(record, index): record
-            for index, record in enumerate(old_conversations)
-        }
-        carried_record = old_index_by_id.get(selected_id)
-        if carried_record is None:
-            # Not present in the old snapshot either -- nothing to carry.
-            return records
-        new_conversations = records.get("conversations", ())
-        new_ids = {
-            self._conversation_record_id(record, index)
-            for index, record in enumerate(new_conversations)
-        }
-        if selected_id in new_ids:
-            # Still present in the incoming snapshot -- no carry-over needed.
-            return records
-        merged = dict(records)
-        merged["conversations"] = (carried_record, *new_conversations)[
-            :LIBRARY_CONVERSATION_PAGE_SIZE
-        ]
-        return merged
 
     @staticmethod
     def _structural_records_for_comparison(
@@ -13219,75 +13199,35 @@ class LibraryScreen(BaseAppScreen):
         ]
 
     def _conversation_records(self) -> tuple[Mapping[str, Any], ...]:
-        return tuple(self._library_conversation_page_records)
+        return self._conversations_controller._conversation_records()
+
 
     def _conversation_record_id(self, record: Mapping[str, Any], index: int) -> str:
-        return self._source_record_id(record) or f"conversation-{index + 1}"
+        return self._conversations_controller._conversation_record_id(record, index)
+
 
     def _ensure_selected_conversation_id(self) -> str:
-        records = self._conversation_records()
-        record_ids = {
-            self._conversation_record_id(record, index)
-            for index, record in enumerate(records)
-        }
-        if self._selected_conversation_id in record_ids:
-            return self._selected_conversation_id
-        self._selected_conversation_id = (
-            self._conversation_record_id(records[0], 0) if records else ""
-        )
-        return self._selected_conversation_id
+        return self._conversations_controller._ensure_selected_conversation_id()
+
 
     def _selected_conversation_record(self) -> tuple[int, Mapping[str, Any]] | None:
-        selected_id = self._ensure_selected_conversation_id()
-        if not selected_id:
-            return None
-        for index, record in enumerate(self._conversation_records()):
-            if self._conversation_record_id(record, index) == selected_id:
-                return index, record
-        return None
+        return self._conversations_controller._selected_conversation_record()
+
 
     @classmethod
     def _conversation_message_count_label(cls, record: Mapping[str, Any]) -> str:
-        for key in (
-            "message_count",
-            "messages_count",
-            "messageCount",
-            "message_total",
-            "messages_total",
-        ):
-            value = record.get(key)
-            if isinstance(value, int):
-                return f"Messages: {value}"
-            if isinstance(value, str) and value.strip().isdigit():
-                return f"Messages: {value.strip()}"
-        messages = record.get("messages")
-        if isinstance(messages, Sequence) and not isinstance(
-            messages, (str, bytes, bytearray)
-        ):
-            return f"Messages: {len(messages)}"
-        return "Messages: unknown"
+        return LibraryConversationsController._conversation_message_count_label(record)
+
 
     @classmethod
     def _conversation_workspace_label(cls, record: Mapping[str, Any]) -> str:
-        for key in ("workspace_name", "workspace_id", "workspace", "scope_id"):
-            value = cls._safe_text(record.get(key), max_length=64)
-            if value:
-                return f"Workspace: {value}"
-        return "Workspace: unassigned"
+        return LibraryConversationsController._conversation_workspace_label(record)
+
 
     @classmethod
     def _conversation_updated_label(cls, record: Mapping[str, Any]) -> str:
-        for key in (
-            "updated_at",
-            "last_modified",
-            "last_updated",
-            "modified_at",
-            "created_at",
-        ):
-            value = cls._safe_text(record.get(key), max_length=64)
-            if value:
-                return f"Updated: {value}"
-        return "Updated: unknown"
+        return LibraryConversationsController._conversation_updated_label(record)
+
 
     def _selected_conversation_handoff_payload(self) -> ChatHandoffPayload | None:
         selected = self._selected_conversation_record()
@@ -13331,6 +13271,8 @@ class LibraryScreen(BaseAppScreen):
                 "source_authority": "local",
             },
         )
+
+
 
     def _selected_media_handoff_payload(self) -> ChatHandoffPayload | None:
         """Build the Console handoff payload for the open Library media item.
@@ -15365,466 +15307,58 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _build_library_conversations_state(self):
-        """Build the conversations canvas display state from local records."""
-        state = build_library_conversations_state(
-            self._conversation_records(),
-            query=self._library_conversation_query,
-            selected_id=self._selected_conversation_id,
-            select_mode=self._library_conversations_select_mode,
-            selected_ids=self._library_conversations_row_selection.ids,
-            page=self._library_conversation_page,
-            requested_page=self._library_conversation_requested_page,
-            page_size=self._library_conversation_page_size,
-            total_count=self._library_conversation_total,
-            total_known=self._library_conversation_total_known,
-            has_more=self._library_conversation_has_more,
-            freshness=self._library_conversation_freshness,
-            stale_copy=self._library_conversation_stale_copy,
-            loading=self._library_conversation_loading,
-            error_copy=self._library_conversation_error,
-            selection_notice=self._library_conversation_selection_notice,
-        )
-        state = dataclasses.replace(
-            state,
-            query=self._library_conversation_requested_query,
-            status_copy=(
-                state.status_copy or self._library_conversation_selection_notice
-            ),
-        )
-        retained_reader_id = self._library_conversation_reader_state.selected_id
-        if (
-            retained_reader_id
-            and not self._library_conversation_reader_state.unavailable
-            and all(row.conversation_id != retained_reader_id for row in state.rows)
-        ):
-            state = dataclasses.replace(
-                state,
-                selected_id="",
-                preview_lines=(),
-                rows=tuple(
-                    dataclasses.replace(row, selected=False) for row in state.rows
-                ),
-            )
-        if self._library_conversation_deleted_selection_id:
-            state = dataclasses.replace(
-                state,
-                selected_id="",
-                preview_lines=(),
-                rows=tuple(
-                    dataclasses.replace(row, selected=False) for row in state.rows
-                ),
-            )
-        if self._library_conversations_select_mode:
-            self._library_conversations_row_selection.reconcile(
-                r.conversation_id for r in state.rows
-            )
-        return state
+        return self._conversations_controller._build_library_conversations_state()
 
-    def _sync_library_conversation_canvas(
-        self, *, then: Callable[[], None] | None = None
-    ) -> bool:
-        """Sync Conversation state through its canvas-owned action gates."""
 
-        return _sync_library_canvas(
-            self,
-            "conversations",
-            then=then,
-            allow_screen_fallback=False,
-        )
+    def _sync_library_conversation_canvas(self, *, then: Callable[[], None] | None=None) -> bool:
+        return self._conversations_controller._sync_library_conversation_canvas(then=then)
+
 
     @staticmethod
     def _normalize_library_conversation_page(page: object) -> int:
-        """Return a dispatch-safe one-based page, defaulting invalid input."""
+        return LibraryConversationsController._normalize_library_conversation_page(page)
 
-        if isinstance(page, bool) or not isinstance(page, int) or page < 1:
-            return 1
-        max_page = (2**63 - 1) // LIBRARY_CONVERSATION_PAGE_SIZE + 1
-        return page if page <= max_page else 1
 
-    def _start_library_conversation_page_request(
-        self,
-        page: int,
-        query: str,
-        *,
-        refocus_filter: bool = False,
-        focus_after_apply: str = "",
-    ) -> None:
-        """Start one generation-guarded conversation page request."""
-        self._pending_library_source_open = None
-        requested_page = self._normalize_library_conversation_page(page)
-        normalized_query, generation = self._prepare_library_conversation_page_request(
-            query,
-            page=requested_page,
-            refocus_filter=refocus_filter,
-            focus_after_apply=focus_after_apply,
-        )
-        self.run_worker(
-            self._load_library_conversation_page(
-                requested_page,
-                normalized_query,
-                generation,
-            ),
-            exclusive=True,
-            group="library_conversation_page",
-        )
+    def _start_library_conversation_page_request(self, page: int, query: str, *, refocus_filter: bool=False, focus_after_apply: str='') -> None:
+        return self._conversations_controller._start_library_conversation_page_request(page, query, refocus_filter=refocus_filter, focus_after_apply=focus_after_apply)
 
-    def _prepare_library_conversation_page_request(
-        self,
-        query: str,
-        *,
-        page: int = 1,
-        refocus_filter: bool = False,
-        focus_after_apply: str = "",
-    ) -> tuple[str, int]:
-        """Invalidate older requests and publish a coherent loading state."""
-        self._library_conversation_request_generation += 1
-        generation = self._library_conversation_request_generation
-        normalized_query = self._safe_text(query, max_length=200)
-        self._library_conversation_requested_page = (
-            self._normalize_library_conversation_page(page)
-        )
-        self._library_conversation_requested_query = normalized_query
-        if refocus_filter:
-            focus_after_apply = "#library-conversations-filter"
-        self._library_conversation_focus_after_apply = focus_after_apply
-        self._library_conversation_loading = True
-        self._library_conversation_error = ""
-        had_selection = (
-            self._library_conversations_select_mode
-            or self._library_conversations_row_selection.count > 0
-        )
-        self._library_conversation_selection_notice = (
-            "Selection cleared." if had_selection else ""
-        )
-        self._library_conversations_select_mode = False
-        self._library_conversations_row_selection.clear()
-        self._library_conversation_reader_state = project_conversation_multiselect(
-            self._library_conversation_reader_state,
-            active=False,
-            selected_count=0,
-            loaded_preview_selected=None,
-        )
-        self._sync_library_conversation_reader()
-        self._sync_library_conversation_canvas()
-        if refocus_filter:
-            self._refocus_library_conversations_filter_after_sync()
-        return normalized_query, generation
+
+    def _prepare_library_conversation_page_request(self, query: str, *, page: int=1, refocus_filter: bool=False, focus_after_apply: str='') -> tuple[str, int]:
+        return self._conversations_controller._prepare_library_conversation_page_request(query, page=page, refocus_filter=refocus_filter, focus_after_apply=focus_after_apply)
+
 
     def _library_conversation_page_needs_recovery(self) -> bool:
-        """Return whether Conversation entry needs its requested scope refetched."""
+        return self._conversations_controller._library_conversation_page_needs_recovery()
 
-        return not self._library_conversation_loading and bool(
-            not self._library_conversation_page_loaded
-            or self._library_conversation_freshness != "fresh"
-            or self._library_conversation_error
-        )
 
     def _finish_library_conversation_request_focus(self) -> None:
-        """Restore captured pager/filter focus after Conversation recomposition."""
+        return self._conversations_controller._finish_library_conversation_request_focus()
 
-        requested = self._library_conversation_focus_after_apply
-        self._library_conversation_focus_after_apply = ""
-        if not requested:
-            return
-        selectors = [requested]
-        if requested == "#library-conversations-next":
-            selectors.extend(
-                ("#library-conversations-previous", "#library-conversations-filter")
-            )
-        elif requested == "#library-conversations-previous":
-            selectors.extend(
-                ("#library-conversations-next", "#library-conversations-filter")
-            )
-        elif requested == "#library-conversations-retry":
-            selectors.append("#library-conversations-filter")
-        for selector in selectors:
-            matches = self.query(selector)
-            if not matches:
-                continue
-            target = matches.first()
-            if getattr(target, "disabled", False):
-                continue
-            target.focus()
-            return
 
     def _finish_library_conversation_page_apply(self) -> None:
-        """Finish list focus and align the permanent work selection."""
-        self._finish_library_conversation_request_focus()
-        self._ensure_library_conversation_reader_selection()
+        return self._conversations_controller._finish_library_conversation_page_apply()
 
-    def _fail_library_conversation_request(
-        self,
-        requested_page: int,
-        requested_query: str,
-        generation: int,
-        *,
-        copy: str = "",
-    ) -> None:
-        """Retain last-good applied state and publish retryable failure copy."""
 
-        if generation != self._library_conversation_request_generation:
-            return
-        self._library_conversation_loading = False
-        if self._library_conversation_freshness == "stale":
-            self._library_conversation_error = ""
-            if copy:
-                self._library_conversation_stale_copy = copy
-        elif copy:
-            self._library_conversation_error = copy
-        elif self._library_conversation_freshness == "uninitialized":
-            self._library_conversation_error = "Couldn't load conversations. Try again."
-        elif requested_query != self._library_conversation_query:
-            self._library_conversation_error = (
-                "Filter wasn’t applied; showing previous results."
-            )
-        else:
-            self._library_conversation_error = f"Couldn't load page {requested_page}."
-        self._sync_library_conversation_canvas(
-            then=self._finish_library_conversation_request_focus
-        )
+    def _fail_library_conversation_request(self, requested_page: int, requested_query: str, generation: int, *, copy: str='') -> None:
+        return self._conversations_controller._fail_library_conversation_request(requested_page, requested_query, generation, copy=copy)
+
 
     @staticmethod
-    def _conversation_out_of_range_total(
-        result: object, *, requested_offset: int
-    ) -> int | None:
-        """Return the coherent total proving an ordinary page is out of range."""
+    def _conversation_out_of_range_total(result: object, *, requested_offset: int) -> int | None:
+        return LibraryConversationsController._conversation_out_of_range_total(result, requested_offset=requested_offset)
 
-        if not isinstance(result, Mapping):
-            return None
-        items = result.get("items")
-        pagination = result.get("pagination")
-        if not isinstance(items, list) or items:
-            return None
-        if not isinstance(pagination, Mapping):
-            return None
-        limit = pagination.get("limit")
-        offset = pagination.get("offset")
-        total = pagination.get("total")
-        has_more = pagination.get("has_more")
-        coordinates = (limit, offset, total)
-        if any(
-            isinstance(value, bool) or not isinstance(value, int)
-            for value in coordinates
-        ):
-            return None
-        if (
-            limit != LIBRARY_CONVERSATION_PAGE_SIZE
-            or offset != requested_offset
-            or total < 0
-            or requested_offset == 0
-            or requested_offset < total
-            or has_more is not False
-        ):
-            return None
-        return total
 
-    def _library_conversation_absence_fence_is_current(
-        self,
-        *,
-        conversation_id: str,
-        version: int | None,
-        reader_generation: int,
-        page_generation: int,
-    ) -> bool:
-        """Fence an exact-ID absence probe to its mounted reader epoch."""
-        state = self._library_conversation_reader_state
-        return (
-            self._library_conversation_reader_mounted_authority
-            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
-            and page_generation == self._library_conversation_request_generation
-            and state.selected_id == conversation_id
-            and state.selected_version == version
-            and state.generation == reader_generation
-        )
+    def _library_conversation_absence_fence_is_current(self, *, conversation_id: str, version: int | None, reader_generation: int, page_generation: int) -> bool:
+        return self._conversations_controller._library_conversation_absence_fence_is_current(conversation_id=conversation_id, version=version, reader_generation=reader_generation, page_generation=page_generation)
 
-    async def _confirm_library_conversation_page_absence(
-        self,
-        *,
-        conversation_id: str,
-        version: int | None,
-        reader_generation: int,
-        page_generation: int,
-    ) -> Literal["exists", "deleted", "unknown", "stale"]:
-        """Confirm a missing page row through the existing exact-ID locator."""
-        service = getattr(self.app_instance, "chat_conversation_scope_service", None)
-        locate_page = getattr(service, "locate_conversation_page", None)
-        if not callable(locate_page):
-            return "unknown"
-        try:
-            located = await self._run_library_service_call(
-                locate_page,
-                conversation_id,
-                mode="local",
-                scope_type="all",
-                limit=LIBRARY_CONVERSATION_PAGE_SIZE,
-            )
-        except Exception:
-            logger.warning("Failed to confirm missing Library conversation.")
-            located = Ellipsis
-        if not self._library_conversation_absence_fence_is_current(
-            conversation_id=conversation_id,
-            version=version,
-            reader_generation=reader_generation,
-            page_generation=page_generation,
-        ):
-            return "stale"
-        if located is None:
-            return "deleted"
-        if located is Ellipsis:
-            return "unknown"
-        try:
-            self._validate_library_conversation_locator(located, conversation_id)
-        except (TypeError, ValueError):
-            return "unknown"
-        return "exists"
 
-    async def _load_library_conversation_page(
-        self,
-        page: int,
-        query: str,
-        generation: int,
-        *,
-        _clamp_attempted: bool = False,
-    ) -> None:
-        """Load a complete service-backed page, discarding stale results."""
-        service = getattr(self.app_instance, "chat_conversation_scope_service", None)
-        list_conversations = getattr(service, "list_conversations", None)
-        if not callable(list_conversations):
-            self._fail_library_conversation_request(page, query, generation)
-            return
+    async def _confirm_library_conversation_page_absence(self, *, conversation_id: str, version: int | None, reader_generation: int, page_generation: int) -> Literal['exists', 'deleted', 'unknown', 'stale']:
+        return await self._conversations_controller._confirm_library_conversation_page_absence(conversation_id=conversation_id, version=version, reader_generation=reader_generation, page_generation=page_generation)
 
-        requested_page = self._normalize_library_conversation_page(page)
-        normalized_query = self._safe_text(query, max_length=200)
-        requested_offset = (requested_page - 1) * LIBRARY_CONVERSATION_PAGE_SIZE
-        try:
-            result = await self._run_library_service_call(
-                list_conversations,
-                mode="local",
-                scope_type="all",
-                query=normalized_query or None,
-                limit=LIBRARY_CONVERSATION_PAGE_SIZE,
-                offset=requested_offset,
-            )
-        except Exception:
-            if generation != self._library_conversation_request_generation:
-                return
-            logger.warning("Failed to load Library conversations page.")
-            self._fail_library_conversation_request(
-                requested_page, normalized_query, generation
-            )
-            return
 
-        if generation != self._library_conversation_request_generation:
-            return
+    async def _load_library_conversation_page(self, page: int, query: str, generation: int, *, _clamp_attempted: bool=False) -> None:
+        return await self._conversations_controller._load_library_conversation_page(page, query, generation, _clamp_attempted=_clamp_attempted)
 
-        out_of_range_total = self._conversation_out_of_range_total(
-            result,
-            requested_offset=requested_offset,
-        )
-        if out_of_range_total is not None:
-            page_count = max(
-                1,
-                (out_of_range_total + LIBRARY_CONVERSATION_PAGE_SIZE - 1)
-                // LIBRARY_CONVERSATION_PAGE_SIZE,
-            )
-            if _clamp_attempted:
-                self._library_conversation_loading = False
-                self._library_conversation_freshness = "stale"
-                self._library_conversation_total_known = False
-                self._library_conversation_error = ""
-                self._library_conversation_stale_copy = (
-                    "Source changed again; try again."
-                )
-                self._sync_library_conversation_canvas(
-                    then=self._finish_library_conversation_request_focus
-                )
-                return
-            self._library_conversation_requested_page = page_count
-            await self._load_library_conversation_page(
-                page_count,
-                normalized_query,
-                generation,
-                _clamp_attempted=True,
-            )
-            return
-
-        try:
-            validated = validate_library_conversation_page(
-                result,
-                requested_limit=LIBRARY_CONVERSATION_PAGE_SIZE,
-                requested_offset=requested_offset,
-            )
-        except (TypeError, ValueError):
-            self._fail_library_conversation_request(
-                requested_page, normalized_query, generation
-            )
-            return
-
-        if generation != self._library_conversation_request_generation:
-            return
-
-        reader_state = self._library_conversation_reader_state
-        previous_ids = {
-            str(record.get("id") or "")
-            for record in self._library_conversation_page_records
-        }
-        refreshed_ids = {str(record.get("id") or "") for record in validated.items}
-        selected_id = reader_state.selected_id or ""
-        needs_exact_confirmation = (
-            self._library_conversation_page_loaded
-            and requested_page == self._library_conversation_page
-            and normalized_query == self._library_conversation_query
-            and selected_id in previous_ids
-            and selected_id not in refreshed_ids
-        )
-        absence_result: Literal["exists", "deleted", "unknown", "stale"] | None = None
-        if needs_exact_confirmation:
-            absence_result = await self._confirm_library_conversation_page_absence(
-                conversation_id=selected_id,
-                version=reader_state.selected_version,
-                reader_generation=reader_state.generation,
-                page_generation=generation,
-            )
-            if absence_result == "stale":
-                return
-        if absence_result == "deleted":
-            deleted_state = confirm_conversation_deleted(
-                self._library_conversation_reader_state,
-                selected_id,
-                version=reader_state.selected_version,
-                generation=reader_state.generation,
-            )
-            if deleted_state is not reader_state:
-                self._library_conversation_reader_state = deleted_state
-                self._library_conversation_deleted_selection_id = selected_id
-                self._selected_conversation_id = ""
-                self._sync_library_conversation_reader()
-
-        self._library_conversation_page_records = validated.items
-        self._library_conversation_page = requested_page
-        self._library_conversation_total = validated.total
-        self._library_conversation_total_known = True
-        self._library_conversation_has_more = validated.has_more
-        self._library_conversation_page_loaded = True
-        self._library_conversation_query = normalized_query
-        self._library_conversation_requested_page = requested_page
-        self._library_conversation_requested_query = normalized_query
-        self._library_conversation_freshness = (
-            "stale" if absence_result == "unknown" else "fresh"
-        )
-        self._library_conversation_stale_copy = (
-            "Conversation location could not be confirmed; try again."
-            if absence_result == "unknown"
-            else ""
-        )
-        self._library_conversation_loading = False
-        self._library_conversation_error = ""
-        self._adopt_library_conversation_state_selection(
-            self._build_library_conversations_state().selected_id
-        )
-        self._sync_library_conversation_canvas(
-            then=self._finish_library_conversation_page_apply
-        )
 
     def _build_library_media_state(self) -> LibraryMediaCanvasState:
         """Build Media rows only from the controller's retained exact page."""
@@ -24675,6 +24209,8 @@ class LibraryScreen(BaseAppScreen):
         if conversation_id:
             self._start_library_conversation_reader_selection(conversation_id)
 
+
+
     @on(Button.Pressed, "#library-conversation-reader-read")
     def show_library_conversation_reader_read(self, event: Button.Pressed) -> None:
         return self._conversation_reader_controller.show_library_conversation_reader_read(
@@ -24718,65 +24254,22 @@ class LibraryScreen(BaseAppScreen):
             return None
         return self._library_conversations_row_selection.is_selected(loaded_id)
 
+
+
     @on(Button.Pressed, "#library-conversations-select-toggle")
     def handle_library_conversations_select_toggle(self, event: Button.Pressed) -> None:
-        """Enter/exit conversations select mode; clears the selection set (both on enter and exit)."""
-        event.stop()
-        if self._library_conversation_freshness != "fresh":
-            return
-        self._library_conversations_select_mode = (
-            not self._library_conversations_select_mode
-        )
-        self._library_conversations_row_selection.clear()
-        self._library_conversation_reader_state = project_conversation_multiselect(
-            self._library_conversation_reader_state,
-            active=self._library_conversations_select_mode,
-            selected_count=0,
-            loaded_preview_selected=(
-                self._library_conversation_loaded_preview_selected()
-                if self._library_conversations_select_mode
-                else None
-            ),
-        )
-        self._sync_library_conversation_reader()
-        _sync_library_canvas(self, "conversations")
-        if not self._library_conversations_select_mode:
-            self._ensure_library_conversation_reader_selection()
+        return self._conversations_controller.handle_library_conversations_select_toggle(event)
+
 
     @on(Button.Pressed, "#library-conversations-select-all")
     def handle_library_conversations_select_all(self, event: Button.Pressed) -> None:
-        """Select every conversation row currently rendered by the canvas."""
-        event.stop()
-        if self._library_conversation_freshness != "fresh":
-            return
-        rows = self._build_library_conversations_state().rows
-        self._library_conversations_row_selection.select_all(
-            r.conversation_id for r in rows
-        )
-        self._library_conversation_reader_state = project_conversation_multiselect(
-            self._library_conversation_reader_state,
-            active=True,
-            selected_count=self._library_conversations_row_selection.count,
-            loaded_preview_selected=self._library_conversation_loaded_preview_selected(),
-        )
-        self._sync_library_conversation_reader()
-        _sync_library_canvas(self, "conversations")
+        return self._conversations_controller.handle_library_conversations_select_all(event)
+
 
     @on(Button.Pressed, "#library-conversations-select-clear")
     def handle_library_conversations_select_clear(self, event: Button.Pressed) -> None:
-        """Clear the current conversations selection without leaving select mode."""
-        event.stop()
-        if self._library_conversation_freshness != "fresh":
-            return
-        self._library_conversations_row_selection.clear()
-        self._library_conversation_reader_state = project_conversation_multiselect(
-            self._library_conversation_reader_state,
-            active=True,
-            selected_count=0,
-            loaded_preview_selected=self._library_conversation_loaded_preview_selected(),
-        )
-        self._sync_library_conversation_reader()
-        _sync_library_canvas(self, "conversations")
+        return self._conversations_controller.handle_library_conversations_select_clear(event)
+
 
     @on(Button.Pressed, "#library-conversations-export-selected")
     async def handle_library_conversations_export_selected(
@@ -24795,6 +24288,8 @@ class LibraryScreen(BaseAppScreen):
         await self._open_library_export_canvas(
             self._library_conversations_row_selection.export_scope()
         )
+
+
 
     @on(Button.Pressed, "#library-media-type-filter")
     def handle_library_media_type_filter_pressed(self, event: Button.Pressed) -> None:
@@ -37650,16 +37145,8 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-conversations-export")
     async def handle_library_conversations_export(self, event: Button.Pressed) -> None:
-        """Open the export canvas scoped to Conversations.
+        return await self._conversations_controller.handle_library_conversations_export(event)
 
-        Args:
-            event: Button press event emitted by the conversations
-                canvas's "Export…" action.
-        """
-        event.stop()
-        if self._library_conversation_freshness != "fresh":
-            return
-        await self._open_library_export_canvas(ExportScope(kind="conversations"))
 
     @on(Button.Pressed, "#library-notes-export")
     async def handle_library_notes_export(self, event: Button.Pressed) -> None:
@@ -41291,18 +40778,9 @@ class LibraryScreen(BaseAppScreen):
         return "Search Library…"
 
     @on(Input.Submitted, "#library-conversations-filter")
-    def handle_library_conversations_filter_submitted(
-        self, event: Input.Submitted
-    ) -> None:
-        """Search all conversations from the in-canvas filter box.
+    def handle_library_conversations_filter_submitted(self, event: Input.Submitted) -> None:
+        return self._conversations_controller.handle_library_conversations_filter_submitted(event)
 
-        Args:
-            event: Input submit event emitted by the conversations canvas's
-                filter box.
-        """
-        event.stop()
-        query = self._safe_text(event.value, max_length=200)
-        self._start_library_conversation_page_request(1, query, refocus_filter=True)
 
     @on(Button.Pressed, "#library-conversations-empty-console")
     def handle_library_conversations_empty_console(self, event: Button.Pressed) -> None:
@@ -41315,6 +40793,8 @@ class LibraryScreen(BaseAppScreen):
                 title="Start a conversation",
                 action_label="Start in Console",
             )
+
+
 
     @on(Button.Pressed, "#library-conversations-empty-clear-filter")
     def handle_library_conversations_empty_clear_filter(
@@ -41330,99 +40810,34 @@ class LibraryScreen(BaseAppScreen):
             refocus_filter=True,
         )
 
+
+
     @on(Button.Pressed, "#library-conversations-retry")
     def handle_library_conversations_retry(self, event: Button.Pressed) -> None:
-        """Retry the most recently requested Conversation scope."""
+        return self._conversations_controller.handle_library_conversations_retry(event)
 
-        event.stop()
-        if self._library_conversation_loading:
-            return
-        pending = self._pending_library_source_open
-        if pending is not None and pending[0] == "conversations":
-            self.run_worker(
-                self._retry_pending_library_conversation_open(pending),
-                exclusive=True,
-                group="library_nav_open_source",
-            )
-            return
-        self._start_library_conversation_page_request(
-            self._library_conversation_requested_page,
-            self._library_conversation_requested_query,
-            focus_after_apply="#library-conversations-retry",
-        )
 
-    async def _retry_pending_library_conversation_open(
-        self, pending: tuple[str, str]
-    ) -> None:
-        """Retry one retained Conversation locator intent."""
+    async def _retry_pending_library_conversation_open(self, pending: tuple[str, str]) -> None:
+        return await self._conversations_controller._retry_pending_library_conversation_open(pending)
 
-        if self._pending_library_source_open != pending:
-            return
-        await self._open_library_item_by_id(*pending)
 
     @on(Button.Pressed, "#library-conversations-previous")
     def handle_library_conversations_previous(self, event: Button.Pressed) -> None:
-        """Load the preceding complete conversation page.
+        return self._conversations_controller.handle_library_conversations_previous(event)
 
-        Args:
-            event: Button press emitted by the conversations pager.
-        """
-        event.stop()
-        if (
-            self._library_conversation_loading
-            or self._library_conversation_freshness != "fresh"
-            or self._library_conversation_page <= 1
-        ):
-            return
-        self._start_library_conversation_page_request(
-            self._library_conversation_page - 1,
-            self._library_conversation_query,
-            focus_after_apply="#library-conversations-previous",
-        )
 
     @on(Button.Pressed, "#library-conversations-next")
     def handle_library_conversations_next(self, event: Button.Pressed) -> None:
-        """Load the following complete conversation page.
+        return self._conversations_controller.handle_library_conversations_next(event)
 
-        Args:
-            event: Button press emitted by the conversations pager.
-        """
-        event.stop()
-        if (
-            self._library_conversation_loading
-            or self._library_conversation_freshness != "fresh"
-            or not self._library_conversation_has_more
-        ):
-            return
-        self._start_library_conversation_page_request(
-            self._library_conversation_page + 1,
-            self._library_conversation_query,
-            focus_after_apply="#library-conversations-next",
-        )
 
     def _focus_library_conversations_filter(self) -> None:
-        """Re-focus the conversations filter box after a submit-triggered recompose.
+        return self._conversations_controller._focus_library_conversations_filter()
 
-        Mirrors ``_focus_library_search_input``: the Submitted-driven
-        recompose remounts a brand-new ``#library-conversations-filter``;
-        without this, focus silently falls back to the screen after every
-        filter submit.
-        """
-        try:
-            self.query_one("#library-conversations-filter", Input).focus()
-        except (NoMatches, QueryError):
-            pass
 
     def _refocus_library_conversations_filter_after_sync(self) -> None:
-        """Focus the remounted filter after its canvas-scoped recompose."""
-        try:
-            canvas = self.query_one(
-                "#library-conversations-canvas", LibraryConversationsCanvas
-            )
-        except (NoMatches, QueryError):
-            self.call_after_refresh(self._focus_library_conversations_filter)
-            return
-        canvas.call_after_refresh(self._focus_library_conversations_filter)
+        return self._conversations_controller._refocus_library_conversations_filter_after_sync()
+
 
     def _library_collections_capture_request(
         self,
@@ -43323,63 +42738,13 @@ class LibraryScreen(BaseAppScreen):
         return None
 
     def _notify_library_conversation_unavailable(self) -> None:
-        """Preserve the existing deep-link warning for an unavailable target."""
+        return self._conversations_controller._notify_library_conversation_unavailable()
 
-        notify = getattr(self.app_instance, "notify", None)
-        if callable(notify):
-            notify("Conversation is unavailable.", severity="warning")
 
     @staticmethod
-    def _validate_library_conversation_locator(
-        response: object,
-        conversation_id: str,
-    ) -> tuple[tuple[Mapping[str, Any], ...], int, int, bool]:
-        """Validate the bounded rank-derived Conversation locator envelope."""
+    def _validate_library_conversation_locator(response: object, conversation_id: str) -> tuple[tuple[Mapping[str, Any], ...], int, int, bool]:
+        return LibraryConversationsController._validate_library_conversation_locator(response, conversation_id)
 
-        if not isinstance(response, Mapping):
-            raise ValueError("Conversation locator response must be a mapping.")
-        pagination = response.get("pagination")
-        if not isinstance(pagination, Mapping):
-            raise ValueError("Conversation locator pagination is required.")
-        limit = pagination.get("limit")
-        offset = pagination.get("offset")
-        page = pagination.get("page")
-        total = pagination.get("total")
-        target_index = pagination.get("target_index")
-        coordinates = (limit, offset, page, total, target_index)
-        if any(
-            isinstance(value, bool) or not isinstance(value, int)
-            for value in coordinates
-        ):
-            raise ValueError("Conversation locator coordinates must be integers.")
-        if limit != LIBRARY_CONVERSATION_PAGE_SIZE or target_index < 0:
-            raise ValueError("Conversation locator coordinates are invalid.")
-        expected_offset = (target_index // limit) * limit
-        if (
-            offset != expected_offset
-            or page != expected_offset // limit + 1
-            or target_index >= total
-        ):
-            raise ValueError("Conversation locator owner page is invalid.")
-        validated = validate_library_conversation_page(
-            response,
-            requested_limit=limit,
-            requested_offset=offset,
-        )
-        local_index = target_index - offset
-        if (
-            local_index < 0
-            or local_index >= len(validated.items)
-            or str(
-                validated.items[local_index].get("id")
-                or validated.items[local_index].get("conversation_id")
-                or validated.items[local_index].get("uuid")
-                or ""
-            ).strip()
-            != conversation_id
-        ):
-            raise ValueError("Conversation locator target position is invalid.")
-        return validated.items, page, validated.total, validated.has_more
 
     @on(Button.Pressed, "#library-rag-use-selected-in-console")
     def use_selected_library_rag_result_in_console(
@@ -44369,60 +43734,18 @@ class LibraryScreen(BaseAppScreen):
         return library_rag_scope_summary(panel_state.scope)
 
     def _open_selected_conversation_handoff(self) -> None:
-        if self._library_conversation_freshness != "fresh":
-            return
-        if not self._library_conversation_reader_state.loaded_actions_eligible:
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify(
-                    "Wait for the selected conversation to finish loading.",
-                    severity="warning",
-                )
-            return
-        workspace_state = self._library_workspace_depth_state()
-        payload = self._selected_conversation_handoff_payload()
-        notify = getattr(self.app_instance, "notify", None)
-        if payload is None:
-            if callable(notify):
-                notify(
-                    "Select a conversation before using it in Console.",
-                    severity="warning",
-                )
-            return
-        # Single-item action: gate on THIS conversation's own workspace
-        # eligibility, not the aggregate blocked-count — one foreign item
-        # elsewhere in the Library must not veto an eligible conversation
-        # (TASK-15423). Bulk staging keeps the aggregate gate.
-        item_eligible, item_reason = library_item_context_handoff(
-            workspace_state,
-            item_type=payload.item_type,
-            item_id=str(payload.source_id or ""),
-        )
-        if not item_eligible:
-            if callable(notify):
-                notify(item_reason, severity="warning")
-            return
-        open_chat_with_handoff = getattr(
-            self.app_instance, "open_chat_with_handoff", None
-        )
-        if not callable(open_chat_with_handoff):
-            if callable(notify):
-                notify(
-                    "Console handoff is unavailable for Library Conversations.",
-                    severity="warning",
-                )
-            return
-        open_chat_with_handoff(payload, action_label="Use in Console")
+        return self._conversations_controller._open_selected_conversation_handoff()
+
 
     @on(Button.Pressed, "#library-conversation-open-console")
     def open_selected_conversation_in_console(self, event: Button.Pressed) -> None:
-        event.stop()
-        self._open_selected_conversation_handoff()
+        return self._conversations_controller.open_selected_conversation_in_console(event)
+
 
     @on(Button.Pressed, "#library-conversation-use-source")
     def use_selected_conversation_as_source(self, event: Button.Pressed) -> None:
-        event.stop()
-        self._open_selected_conversation_handoff()
+        return self._conversations_controller.use_selected_conversation_as_source(event)
+
 
     def _open_selected_media_handoff(self) -> None:
         """Stage the media item open in the viewer into Console via the shared handoff.
@@ -44694,11 +44017,18 @@ class LibraryScreen(BaseAppScreen):
 # task 6: keeps every original `_library_conversation*` name working as a
 # property over `self._conversations_state`; attached programmatically so
 # the class body gains no FunctionDefs (the size ratchet counts those).
-_CONVERSATIONS_PLURAL_STATE_FIELDS = frozenset({"row_selection", "select_mode"})
+#
+# task 8: `CONVERSATIONS_PLURAL_STATE_FIELDS` now imported from
+# `library_conversations_state` (the dataclass's own module) instead of
+# kept as a local literal here -- task 7's own fix round 1 flagged this
+# set's independent copy here and on `LibraryConversationReaderController`
+# as a concrete drift risk; a third controller (`LibraryConversationsController`)
+# importing the same shared constant closes that gap for good. See that
+# module's docstring for the full note.
 for _cs_field in dataclasses.fields(LibraryConversationsState):
     _cs_prefix = (
         "_library_conversations_"
-        if _cs_field.name in _CONVERSATIONS_PLURAL_STATE_FIELDS
+        if _cs_field.name in CONVERSATIONS_PLURAL_STATE_FIELDS
         else "_library_conversation_"
     )
     setattr(
@@ -44713,3 +44043,18 @@ for _cs_field in dataclasses.fields(LibraryConversationsState):
     )
 del _cs_field, _cs_prefix
 # --- END generated conversations-state shims ---
+
+# task 8: classmethod dependency binding -- `_conversation_workspace_label`/
+# `_conversation_updated_label`'s moved bodies (byte-for-byte, on
+# `LibraryConversationsController`) call `cls._safe_text(...)`. `_safe_text`
+# is a general Library-wide staticmethod with ~36 non-Conversations call
+# sites, so it stays on `LibraryScreen` and is NOT itself moved. A
+# classmethod dispatches via the class object, not an instance, so the
+# usual per-instance constructor-dependency lambda (the canon's binding
+# kind 2) has no instance to attach to here; this rebinds the SAME name
+# onto the controller class object instead, once, at import time -- done
+# from this module (not the controller module) to avoid the circular
+# import a controller-side `from ..Screens.library_screen import
+# LibraryScreen` would create (the controller module is imported by this
+# one, before `LibraryScreen` itself is defined).
+LibraryConversationsController._safe_text = staticmethod(LibraryScreen._safe_text)

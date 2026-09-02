@@ -85,7 +85,20 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Lowered at the reader-controller move (exemplar 2/4): 45134/1300 ->
     #: 44715/1300 -- the recipe's lower-in-the-same-PR contract (§6), not
     #: deferred to the cleanup task as originally (incorrectly) instructed.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 44715, 1300),
+    # Lowered at the browse-controller move (exemplar 3/4, task 8):
+    # 44715/1300 -> 44060/1300 -- per the recipe's lower-in-the-same-PR
+    # contract (§6): 40 method bodies moved to
+    # `LibraryConversationsController`, replaced by one-line delegators (a
+    # pure move nets zero methods -- the count is unchanged). 6 more names
+    # were moved and then reverted in this same task after test-suite
+    # evidence caught two distinct test-bypass shapes (5 via
+    # `-k "conversation and library"`'s fake-self `SimpleNamespace` calls;
+    # 1 via the paired-baseline xdist sweep's instance-attribute
+    # monkeypatch -- see that controller module's docstring) -- they stay
+    # real, full-body methods on `LibraryScreen`, which is why this
+    # measurement is a smaller shrink than a 46-method move would have
+    # produced.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 44060, 1300),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

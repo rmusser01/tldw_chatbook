@@ -100,7 +100,10 @@ from ...Library.library_conversation_reader_state import (
 from ...Library.library_shell_state import LIBRARY_ROW_BROWSE_CONVERSATIONS
 from ...Utils.adaptive_reader_state import resolve_adaptive_reader_layout
 from ...Widgets.Library import LibraryAdaptiveReaderShell, LibraryConversationReader
-from .library_conversations_state import LibraryConversationsState
+from .library_conversations_state import (
+    CONVERSATIONS_PLURAL_STATE_FIELDS,
+    LibraryConversationsState,
+)
 from .screen_constants import (
     LIBRARY_CONVERSATION_READER_MAX_CHARS,
     LIBRARY_CONVERSATION_READER_PROFILE,
@@ -890,11 +893,18 @@ class LibraryConversationReaderController:
 # none) -- same generator shape as the shim block `LibraryScreen` carries
 # (task 6), attached programmatically so the class body gains no
 # `FunctionDef`s.
-_READER_PLURAL_STATE_FIELDS = frozenset({"row_selection", "select_mode"})
+#
+# task 8: `CONVERSATIONS_PLURAL_STATE_FIELDS` now imported from
+# `library_conversations_state` (the dataclass's own module) instead of
+# kept as a local literal -- task 7's own fix round 1 flagged this set's
+# independent copy here and on `LibraryScreen` as a concrete drift risk; a
+# third controller (task 8's `LibraryConversationsController`) importing
+# the same shared constant closes that gap for good. See that module's
+# docstring for the full note.
 for _rc_field in dataclasses.fields(LibraryConversationsState):
     _rc_prefix = (
         "_library_conversations_"
-        if _rc_field.name in _READER_PLURAL_STATE_FIELDS
+        if _rc_field.name in CONVERSATIONS_PLURAL_STATE_FIELDS
         else "_library_conversation_"
     )
     setattr(

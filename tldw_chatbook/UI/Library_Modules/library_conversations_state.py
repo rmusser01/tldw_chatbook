@@ -33,6 +33,21 @@ generated property shim silently routes the assignment into this
 dataclass's field, so the observable end-of-``__init__`` state is
 unchanged. Their dataclass defaults below are therefore momentary
 placeholders, overwritten before anything else in ``__init__`` reads them.
+
+``CONVERSATIONS_PLURAL_STATE_FIELDS`` (added task 8): the single
+authoritative home for which field names use the plural
+``_library_conversations_<name>`` shim prefix versus the singular
+``_library_conversation_<name>`` prefix every other field uses.
+``LibraryScreen``'s own generated shim block (task 6),
+``LibraryConversationReaderController``'s shim block (task 7), and
+``LibraryConversationsController``'s shim block (task 8) all import this
+constant instead of each keeping its own literal copy -- task 7's fix
+round 1 flagged the screen's and the reader controller's independent
+copies of this same two-name set as a concrete, reviewer-identified drift
+risk: a future field added to one copy and not the other fails silently,
+as an ``AttributeError`` inside whichever moved body reaches for it first,
+under the wrong prefix. One shared home closes that gap for good instead
+of adding a third copy.
 """
 from __future__ import annotations
 
@@ -52,6 +67,11 @@ from ...Utils.adaptive_reader_state import (
     resolve_adaptive_reader_layout,
 )
 from .screen_constants import LIBRARY_CONVERSATION_READER_PROFILE
+
+#: See the module docstring's ``CONVERSATIONS_PLURAL_STATE_FIELDS`` note.
+CONVERSATIONS_PLURAL_STATE_FIELDS: frozenset[str] = frozenset(
+    {"row_selection", "select_mode"}
+)
 
 
 @dataclass
