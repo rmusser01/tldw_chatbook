@@ -9,7 +9,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Generic, Literal, TypeAlias, TypeVar, cast, overload
+from typing import Generic, TypeVar, cast, overload
 from weakref import ReferenceType, ref
 
 from tldw_chatbook.Chat.console_prepared_request import freeze_json
@@ -164,7 +164,7 @@ class TraceCallIdentity:
 # leaf `console_trace_errors` so boot-resident callers that need ONLY the
 # exception do not pull this module's whole trace stack onto the boot path.
 # Re-exported here so existing importers keep the SAME class object.
-from tldw_chatbook.Chat.console_trace_errors import (  # noqa: F401
+from tldw_chatbook.Chat.console_trace_errors import (  # noqa: E402, F401
     TraceCallPersistenceError,
     TraceCallReservationStatus,
 )
@@ -4503,7 +4503,12 @@ def _saved_reference_key(
     if type(descriptor) is not DerivedTraceProvenance:
         return None
     derived = cast(DerivedTraceProvenance, descriptor)
-    if derived.artifact is not None:
+    # A saved continuation is persisted as a policy-owned artifact, but its
+    # provider value must still match the immutable revision that supplied it.
+    if (
+        derived.artifact is not None
+        and derived.transform is not TraceTransformKind.CONTINUATION_ATTACHMENT
+    ):
         return None
     saved = _saved_inputs(derived)
     if len(saved) != 1:

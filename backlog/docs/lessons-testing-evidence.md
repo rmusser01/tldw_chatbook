@@ -28,6 +28,26 @@ memory enforcement only where the host proves it can apply the limit.
 
 ---
 
+## Durable masking evidence must remove the detector before every read path
+
+**TASK-23113.10 review, 2026-09-01.** Custom-PII tests proved that ordinary
+message revisions and generic provider artifacts retained irreversible masks,
+but a saved provider-continuation sidecar still used a revision reference. The
+native viewer reran the process-local custom ruleset when reconstructing that
+sidecar. After a restart or registry eviction, the trace therefore omitted a
+continuation that had been successfully captured, even though the surrounding
+message remained readable. The domain-specific read path escaped tests that
+covered the same policy at a different storage owner.
+
+**What to do.** For every privacy transform claimed to be durable, enumerate
+each persisted source domain—not just messages versus artifacts, but their
+sidecars—and read it after the detector, key, registry, or worker has been
+removed. Viewer, copy, and export must consume the stored masked projection;
+they may fail closed when that durable projection is absent, but must not rerun
+an ephemeral detector to recreate it.
+
+---
+
 ## Current-version repair hooks must gate on the schema that introduced their columns
 
 **TASK-23113.8, 2026-08-31.** The trace-GC migration matrix reopened a genuine

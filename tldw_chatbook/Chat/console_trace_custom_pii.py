@@ -94,6 +94,30 @@ class _RuleModel(BaseModel):
         return tuple(sorted(value))
 
 
+class _RulesetModel(BaseModel):
+    """Strict Pydantic boundary for the versioned ruleset envelope."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    version: Literal[1]
+    revision_id: str = Field(min_length=36, max_length=36)
+    rules: tuple[object, ...] = Field(max_length=MAX_CUSTOM_PII_RULES)
+
+    @field_validator("rules", mode="before")
+    @classmethod
+    def _freeze_rules(cls, value: object) -> object:
+        if isinstance(value, list):
+            return tuple(value)
+        return value
+
+    @field_validator("revision_id")
+    @classmethod
+    def _canonical_revision_id(cls, value: str) -> str:
+        if _canonical_uuid4(value) is None:
+            raise ValueError("invalid revision")
+        return value
+
+
 @dataclass(frozen=True, slots=True)
 class CustomPIIRule:
     """One validated rule whose source pattern stays out of representations."""
@@ -190,11 +214,17 @@ def _pattern_diagnostic(raw: Mapping[object, object]) -> str | None:
     for flag in flags:
         bits |= _FLAG_BITS[flag]
     try:
-        compiled = re.compile(pattern, bits)
+        re.compile(pattern, bits)
     except re.error:
         return "invalid_pattern"
-    empty = compiled.search("")
-    if empty is not None and empty.start() == empty.end():
+    parser = getattr(re, "_parser", None)
+    if parser is None:
+        return "unsupported_construct"
+    try:
+        minimum_width = parser.parse(pattern, bits).getwidth()[0]
+    except (AttributeError, re.error):
+        return "invalid_pattern"
+    if minimum_width == 0:
         return "empty_match"
     return None
 
@@ -239,29 +269,35 @@ def validate_custom_pii_rules_config(value: object) -> CustomPIIRulesValidation:
 
     if value is None:
         return CustomPIIRulesValidation(None, ())
-    if not isinstance(value, Mapping) or set(value) != {
-        "version",
-        "revision_id",
-        "rules",
-    }:
-        return CustomPIIRulesValidation(None, (_diagnostic("invalid_ruleset"),))
-    if (
-        value.get("version") != CUSTOM_PII_RULESET_VERSION
-        or type(value.get("version")) is not int
-    ):
-        return CustomPIIRulesValidation(None, (_diagnostic("unsupported_version"),))
-    revision_id = _canonical_uuid4(value.get("revision_id"))
-    if revision_id is None:
-        return CustomPIIRulesValidation(None, (_diagnostic("invalid_revision_id"),))
+    try:
+        envelope = _RulesetModel.model_validate(value)
+    except ValidationError as error:
+        details = error.errors(
+            include_url=False,
+            include_context=False,
+            include_input=False,
+        )
+        if any(
+            item["type"] in {"extra_forbidden", "missing", "model_type", "tuple_type"}
+            for item in details
+        ):
+            code = "invalid_ruleset"
+        elif any(item["loc"] == ("version",) for item in details):
+            code = "unsupported_version"
+        elif any(item["loc"] == ("revision_id",) for item in details):
+            code = "invalid_revision_id"
+        elif any(
+            item["loc"] == ("rules",) and item["type"] == "too_long"
+            for item in details
+        ):
+            code = "rule_count_limit"
+        else:
+            code = "invalid_ruleset"
+        return CustomPIIRulesValidation(None, (_diagnostic(code),))
+    revision_id = envelope.revision_id
     if revision_id == BUILTIN_PII_RULESET_REVISION_ID:
         return CustomPIIRulesValidation(None, (_diagnostic("reserved_revision_id"),))
-    raw_rules = value.get("rules")
-    if not isinstance(raw_rules, Sequence) or isinstance(
-        raw_rules, (str, bytes, bytearray)
-    ):
-        return CustomPIIRulesValidation(None, (_diagnostic("invalid_ruleset"),))
-    if len(raw_rules) > MAX_CUSTOM_PII_RULES:
-        return CustomPIIRulesValidation(None, (_diagnostic("rule_count_limit"),))
+    raw_rules = envelope.rules
 
     valid: list[CustomPIIRule] = []
     diagnostics: list[CustomPIIRuleDiagnostic] = []

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from tldw_chatbook.Chat.console_trace_custom_pii import (
     CUSTOM_PII_RULESET_VERSION,
     custom_pii_ruleset_for_revision,
@@ -98,6 +100,22 @@ def test_invalid_rules_are_non_runnable_with_content_free_diagnostics() -> None:
     assert SECRET_PATTERN not in diagnostics
 
 
+@pytest.mark.parametrize(
+    "pattern",
+    (r"\b", r"(?<=a)", r"a*", r"(?:private)?"),
+)
+def test_zero_width_rules_are_rejected_before_worker_execution(pattern: str) -> None:
+    result = validate_custom_pii_rules_config(
+        _ruleset([_rule("zero-width", pattern=pattern)])
+    )
+
+    assert result.ruleset is not None
+    assert result.ruleset.runnable_rules == ()
+    assert [(item.rule_id, item.code) for item in result.diagnostics] == [
+        ("zero-width", "empty_match")
+    ]
+
+
 def test_duplicate_rule_ids_and_over_limit_rulesets_fail_closed() -> None:
     duplicate = validate_custom_pii_rules_config(
         _ruleset([_rule("same", pattern="first"), _rule("same", pattern="second")])
@@ -141,6 +159,24 @@ def test_ruleset_envelope_requires_v1_and_canonical_opaque_revision() -> None:
     assert reserved_revision.diagnostics[0].code == "reserved_revision_id"
     assert absent.ruleset is None
     assert absent.diagnostics == ()
+
+
+@pytest.mark.parametrize(
+    ("value", "expected_code"),
+    (
+        (_ruleset([]) | {"unexpected": True}, "invalid_ruleset"),
+        ({"version": "1", "revision_id": REVISION_ID, "rules": []}, "unsupported_version"),
+        ({"version": 1, "revision_id": REVISION_ID, "rules": {}}, "invalid_ruleset"),
+    ),
+)
+def test_ruleset_envelope_is_strict_and_forbids_unknown_fields(
+    value: object,
+    expected_code: str,
+) -> None:
+    result = validate_custom_pii_rules_config(value)
+
+    assert result.ruleset is None
+    assert [item.code for item in result.diagnostics] == [expected_code]
 
 
 def test_ephemeral_registry_rejects_revision_reuse_with_different_rules() -> None:

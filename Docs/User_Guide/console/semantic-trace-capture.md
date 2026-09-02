@@ -96,6 +96,8 @@ priority = 10
 Rule IDs and categories use lowercase letters, numbers, hyphens, or
 underscores. Supported flags are `ascii`, `dotall`, `ignorecase`, and
 `multiline`; put flags in the list instead of embedding them in the pattern.
+Patterns that can match without consuming text, including zero-width
+lookarounds and optional-only expressions, are rejected before worker launch.
 Settings reports enabled, disabled, and rejected rule counts plus content-free
 error codes. It never includes the pattern or matched text in diagnostics.
 

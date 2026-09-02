@@ -739,13 +739,9 @@ def _unit_provenance(
                 DerivedTraceProvenance(
                     TraceTransformKind.CONTINUATION_ATTACHMENT,
                     (descriptor,),
-                    artifact=(
-                        None
-                        if type(descriptor) is SavedRevisionTraceProvenance
-                        else ProviderArtifactTraceProvenance(
-                            TraceProvenanceSource.CONTINUATION,
-                            capture_policy,
-                        )
+                    artifact=ProviderArtifactTraceProvenance(
+                        TraceProvenanceSource.CONTINUATION,
+                        capture_policy,
                     ),
                 )
             )
