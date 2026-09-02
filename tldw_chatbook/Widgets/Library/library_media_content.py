@@ -48,8 +48,17 @@ def build_raw_content_match_lines(content: str, query: str) -> tuple[int, ...]:
     return find_content_matches(content, query)
 
 
-class LibraryMediaContentBody(Container):
-    """Lazily mount and retain the Raw and Rendered media content views."""
+class LibraryMediaContentBody(ScrollableContainer):
+    """Lazily mount and retain the Raw and Rendered media content views.
+
+    task-28003 (Qodo #2307): a ``ScrollableContainer`` (was a plain
+    ``Container``) so rendered-Markdown mode is keyboard-scrollable -- the
+    Markdown is a direct child that scrolls in THIS container, and only a
+    scrolling, focusable container gives F6 a target and Page/arrow keys an
+    effect there. Raw mode is unaffected: it pins this container's
+    ``overflow_y: hidden`` and brings its own ``VirtualizedRawContent``
+    ``ScrollView``, so the outer container never double-scrolls.
+    """
 
     _VALID_MODES = frozenset({"raw", "rendered"})
 
@@ -339,13 +348,20 @@ class LibraryMediaContentSearchControls(Vertical):
         self.set_class(bool(self.query), self.ACTIVE_SEARCH_CLASS)
 
     def compose(self) -> ComposeResult:
-        # task-28002: every child is PERSISTENT and display-gated on query
-        # activity, never torn down. The old activity-flip recompose
-        # destroyed this Input WHILE IT HELD FOCUS (a first submit is
-        # exactly such a flip), leaving screen focus on nothing -- a
-        # live-verified total keyboard deadlock, since every Escape gate
-        # reads ``self.focused``. Same persistent-child idiom as the
-        # task-22207 loading banner.
+        """Compose the persistent, display-gated content-search controls.
+
+        task-28002: every child is PERSISTENT and display-gated on query
+        activity, never torn down. The old activity-flip recompose destroyed
+        this Input WHILE IT HELD FOCUS (a first submit is exactly such a
+        flip), leaving screen focus on nothing -- a live-verified total
+        keyboard deadlock, since every Escape gate reads ``self.focused``.
+        Same persistent-child idiom as the task-22207 loading banner.
+
+        Yields:
+            The search ``Input``, the match-count ``Static``, and the
+            Prev/Next navigation toolbar -- the latter two hidden while no
+            query is active.
+        """
         is_active = bool(self.query)
         yield Input(
             value=self.query,

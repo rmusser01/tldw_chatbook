@@ -2664,11 +2664,14 @@ class LibraryScreen(BaseAppScreen):
         WorkbenchPaneTarget(
             "library-media-viewer",
             # task-28003: the scrollable content is the first F6 target so
-            # a fresh open has a keyboard scroll path (the raw ScrollView is
-            # focusable). It exists only in Read mode; other modes fall
+            # a fresh open has a keyboard scroll path. Raw mode focuses its
+            # inner ScrollView (``-content-text``); rendered-Markdown mode
+            # focuses the scrolling body itself (``-viewer-content``, a
+            # ScrollableContainer -- Qodo #2307). Other Reader modes fall
             # through to Find, which "/" also reaches.
             (
                 "library-media-viewer-content-text",
+                "library-media-viewer-content",
                 "library-media-reader-find",
                 "library-media-back",
             ),

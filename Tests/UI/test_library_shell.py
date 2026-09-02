@@ -11701,6 +11701,46 @@ async def test_library_shell_media_viewer_defaults_markdown_item_to_rendered():
 
 
 @pytest.mark.asyncio
+async def test_library_media_rendered_content_is_keyboard_focusable_for_scroll():
+    """task-28003 (Qodo #2307): rendered-Markdown content is F6-reachable.
+
+    In rendered mode the raw ScrollView (#library-media-viewer-content-text)
+    is absent, so keyboard scrolling has to land on the content body itself.
+    It must be a focusable, scrolling container and it must be the pane's
+    resolved F6 target once the raw view is gone.
+    """
+    from tldw_chatbook.Widgets.Library.library_media_content import (
+        LibraryMediaContentBody,
+    )
+    from tldw_chatbook.Widgets import workbench_focus
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_markdown_media_item())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_media_viewer(screen, pilot)
+
+        assert screen._library_media_content_mode == "rendered"
+        assert not screen.query("#library-media-viewer-content-text")
+
+        body = screen.query_one("#library-media-viewer-content", LibraryMediaContentBody)
+        assert body.can_focus, "rendered content body must be keyboard-focusable"
+
+        # The media viewer pane's F6 target resolves to the content body when
+        # the raw view is absent (rendered mode).
+        resolved = {
+            pane.id: target
+            for pane, target in workbench_focus._available_targets(
+                screen, screen._MEDIA_WORKBENCH_FOCUS_TARGETS
+            )
+        }
+        assert resolved.get("library-media-viewer") is body
+
+
+@pytest.mark.asyncio
 async def test_library_shell_media_viewer_content_mode_toggle_buttons_have_onscreen_geometry():
     """Rendered-geometry check (the P1 arc's lesson: a widget can exist in
     the DOM and pass an existence/label query while still being
