@@ -433,3 +433,147 @@ async def test_cancel_with_edits_asks_for_confirmation(local_service):
         await pilot.pause()
 
         assert isinstance(pilot.app.screen, ConfirmationDialog)
+
+
+# --- task-5 fix round: edit mode ------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_edit_mode_prefills_all_major_fields_and_disables_runs_on(
+    local_service, db
+):
+    """Create a real local definition via the facade, then reopen it in
+    edit mode and confirm every field reverse-maps correctly -- including
+    the cron schedule via `cron_to_preset` (the module-docstring fix)."""
+    create_payload = {
+        "family": "recurring_question",
+        "mode": "create",
+        "name": "Weekly digest",
+        "input": {"question": "What shipped this week?", "provider": "openai", "model": "gpt-5"},
+        "schedule": {"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+        "config": {
+            "scope": {"mode": "sources", "sources": ["notes", "chats"]},
+            "generation_mode": "required",
+            "finding_policy": {"preset": "high_confidence_only"},
+        },
+        "notification_policy": {"on_success": True, "on_failure": False},
+    }
+    outcome = await local_service.save_definition(create_payload, "local")
+    assert outcome.status == "saved"
+    row = db.get_automation_definition(outcome.definition_id)
+    assert row is not None
+
+    app = _FormHost(
+        local_service,
+        definition_row=row,
+        definition_id=row["id"],
+        available_owners=[("This device", "local")],
+        default_owner="local",
+    )
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        assert screen.query_one("#automation-name", Input).value == "Weekly digest"
+        assert (
+            screen.query_one("#automation-question", TextArea).text
+            == "What shipped this week?"
+        )
+        assert screen.query_one("#automation-provider", Input).value == "openai"
+        assert screen.query_one("#automation-model", Input).value == "gpt-5"
+
+        assert screen.query_one("#automation-scope-mode", Select).value == "sources"
+        assert screen.query_one("#automation-scope-notes", Checkbox).value is True
+        assert screen.query_one("#automation-scope-chats", Checkbox).value is True
+        assert screen.query_one("#automation-scope-media", Checkbox).value is False
+
+        assert (
+            screen.query_one("#automation-generation-mode", Select).value == "required"
+        )
+        assert (
+            screen.query_one("#automation-finding-policy", Select).value
+            == "high_confidence_only"
+        )
+        assert screen.query_one("#automation-notify", Checkbox).value is True
+
+        # Schedule: cron_to_preset maps "0 9 * * 1" -> ("monday", "09:00").
+        assert (
+            screen.query_one("#automation-schedule-kind", Select).value == "recurring"
+        )
+        assert screen.query_one("#automation-cron-preset", Select).value == "monday"
+        assert screen.query_one("#automation-preset-time", Input).value == "09:00"
+        assert screen.query_one("#automation-cron", Input).value == "0 9 * * 1"
+        assert screen.query_one("#automation-timezone", Select).value == "UTC"
+
+        runs_on = screen.query_one("#automation-runs-on", Select)
+        assert runs_on.disabled
+        assert runs_on.value == "local"
+
+        assert "Edit Recurring Question" in str(screen.query_one(".form-title").render())
+
+
+@pytest.mark.asyncio
+async def test_edit_mode_unrecognized_schedule_falls_back_to_create_defaults(
+    local_service, db
+):
+    """A schedule shape this form cannot itself produce (e.g. `interval`)
+    must never crash prefill -- it is left at the one-time/blank default."""
+    outcome = await local_service.save_definition(
+        {
+            "family": "recurring_question",
+            "name": "Interval one",
+            "input": {"question": "Q?"},
+            "schedule": {"kind": "interval", "every_seconds": 3600},
+        },
+        "local",
+    )
+    assert outcome.status == "saved"
+    row = db.get_automation_definition(outcome.definition_id)
+
+    app = _FormHost(local_service, definition_row=row, definition_id=row["id"])
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        assert (
+            screen.query_one("#automation-schedule-kind", Select).value == "one_time"
+        )
+        assert screen.query_one("#automation-run-at", Input).value == ""
+
+
+@pytest.mark.asyncio
+async def test_edit_mode_save_updates_the_existing_row_via_definition_id(
+    local_service, db
+):
+    outcome = await local_service.save_definition(
+        {
+            "family": "recurring_question",
+            "name": "Original name",
+            "input": {"question": "Original question?"},
+            "schedule": {"kind": "one_time", "run_at": _future_run_at()},
+        },
+        "local",
+    )
+    assert outcome.status == "saved"
+    definition_id = outcome.definition_id
+    row = db.get_automation_definition(definition_id)
+    assert row["version"] == 1
+
+    app = _FormHost(local_service, definition_row=row, definition_id=definition_id)
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#automation-name", Input).value = "Renamed"
+        await pilot.pause()
+
+        await pilot.click("#automation-save")
+        await pilot.pause()
+        await _wait_for_form_worker(pilot)
+
+    assert app.result is not None
+    assert app.result.status == "saved"
+    assert app.result.definition_id == definition_id
+    updated_row = db.get_automation_definition(definition_id)
+    assert updated_row["name"] == "Renamed"
+    assert updated_row["version"] == 2
+    # No second row was created.
+    assert len(db.list_automation_definitions(owner_id="local")) == 1

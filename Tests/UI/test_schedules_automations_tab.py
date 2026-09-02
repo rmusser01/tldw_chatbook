@@ -1,22 +1,28 @@
 """Automations tab behavior on the Schedules workbench (task-18940 slice 2).
 
-The tab surfaces the server's automation definitions (ADR-077) and its
-``r`` Run-now dispatches through the server control plane -- never the
-local scheduler loop.
+The tab surfaces both the server's automation definitions (ADR-077, ``r``
+dispatches through the server control plane) and, since task-5's fix
+round, this device's own local-owned `recurring_question` definitions
+(``r`` routes those through `SchedulingService.run_automation_now`
+instead -- never the server client, and never both).
 """
 
 from unittest.mock import AsyncMock
 
 import pytest
-from textual.widgets import DataTable, TabbedContent
+from textual.widgets import DataTable, Input, Select, TabbedContent
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.schedules_test_helpers import (
     MockSchedulingDB,
     MockSchedulingServiceMixin,
+    MockServerClient,
 )
 from tldw_chatbook.Scheduling.services.server_client import (
     ServerClientValidationError,
+)
+from tldw_chatbook.UI.Screens.scheduling.forms.automation_definition_form import (
+    AutomationDefinitionForm,
 )
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
 
@@ -85,14 +91,45 @@ class AutomationsServerClient:
 class AutomationsMockService(MockSchedulingServiceMixin):
     """Scheduling service whose server client knows automations."""
 
-    def __init__(self, server_client) -> None:
+    def __init__(self, server_client, local_definitions=None) -> None:
         self.owner_id = "local"
         self.server_client = server_client
-        self.db = MockSchedulingDB()
+        self.db = MockSchedulingDB(automation_definitions=local_definitions or [])
         self.sync_engine = None
+        # task-5 fix round: the PR-2 local run-now seam
+        # (SchedulingService.run_automation_now) -- overridable per test.
+        self.run_automation_now = AsyncMock(
+            return_value={"run_id": "run-local-1", "deduped": False}
+        )
 
     async def list_tasks(self):
         return []
+
+
+def _local_definition(**overrides):
+    """A local `automation_definitions` row (task-5 fix round fixtures)."""
+    row = {
+        "id": "local-def-1",
+        "server_id": None,
+        "owner_id": "local",
+        "family": "recurring_question",
+        "name": "Local digest",
+        "lifecycle": "configured",
+        # DB placeholder (never trusted -- the tab must recompute this via
+        # automation_health.compute_local_health, not read it verbatim).
+        "health": "execution_unavailable",
+        "schedule": {"kind": "one_time", "run_at": "2099-01-01T00:00:00+00:00"},
+        "input": {"question": "What's new?"},
+        "config": {},
+        "visibility_policy": {"mode": "findings_only"},
+        "notification_policy": {},
+        "approval_policy": {},
+        "version": 1,
+        "created_at": "2026-08-01T00:00:00+00:00",
+        "updated_at": None,
+    }
+    row.update(overrides)
+    return row
 
 
 class _ServerRuntimeState:
@@ -369,3 +406,276 @@ async def test_definitions_table_shows_the_model_column():
         ]
         assert table.get_cell_at((0, 4)) == "anthropic/claude-x"
         assert table.get_cell_at((1, 4)) == "auto"
+
+
+# --- task-5 fix round: merged local + server listing ------------------------
+
+
+@pytest.mark.asyncio
+async def test_local_automation_appears_with_recomputed_health():
+    """Local rows appear even without a connected server, and their Health
+    cell is the freshly COMPUTED value (automation_health), never the DB's
+    unreliable create-time placeholder."""
+    server_client = MockServerClient(notifications_service=None)
+    service = AutomationsMockService(server_client, local_definitions=[_local_definition()])
+    app = AutomationsTestApp(service)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+        table = workbench.query_one("#scheduling-automations-table", DataTable)
+        notice = workbench.query_one("#scheduling-automations-notice")
+
+        assert table.row_count == 1
+        assert table.get_cell_at((0, 0)) == "[This device] Local digest"
+        # No `library_rag_search_service` on the bare test app -> capability_unavailable,
+        # NOT the DB row's stored "execution_unavailable" placeholder.
+        assert table.get_cell_at((0, 3)) == "capability_unavailable"
+        assert "1 on this device" in str(notice.content)
+
+
+@pytest.mark.asyncio
+async def test_merged_list_shows_both_local_and_server_rows_with_owner_prefix():
+    server_client = AutomationsServerClient()
+    service = AutomationsMockService(
+        server_client, local_definitions=[_local_definition(name="Local one")]
+    )
+    app = AutomationsTestApp(service)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+        table = workbench.query_one("#scheduling-automations-table", DataTable)
+
+        assert table.row_count == 3
+        names = [table.get_cell_at((i, 0)) for i in range(3)]
+        assert names[0] == "[This device] Local one"
+        assert names[1] == "[server-1] Morning brief"
+        assert names[2] == "[server-1] Paused one"
+
+
+@pytest.mark.asyncio
+async def test_run_now_routes_local_automation_through_the_service_seam():
+    """Local AND server rows both present -- selecting the local one must
+    route through the local seam and never touch the server client."""
+    server_client = AutomationsServerClient()
+    service = AutomationsMockService(server_client, local_definitions=[_local_definition()])
+    app = AutomationsTestApp(service)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+        table = workbench.query_one("#scheduling-automations-table", DataTable)
+        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
+        tabs.active = "scheduling-automations-tab"
+        assert table.row_count == 3  # local row first, then the 2 server rows
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+        assert workbench._selected_automation_id == "local-def-1"
+
+        workbench.action_run_task_now()
+        await pilot.pause()
+        await pilot.pause()
+
+        service.run_automation_now.assert_awaited_once_with("local-def-1")
+        server_client.run_automation_definition_now.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_local_run_now_refusal_surfaces_without_raising():
+    server_client = MockServerClient(notifications_service=None)
+    service = AutomationsMockService(server_client, local_definitions=[_local_definition()])
+    service.run_automation_now = AsyncMock(return_value=None)
+    app = AutomationsTestApp(service)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+        table = workbench.query_one("#scheduling-automations-table", DataTable)
+        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
+        tabs.active = "scheduling-automations-tab"
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+
+        workbench.action_run_task_now()
+        await pilot.pause()
+        await pilot.pause()
+
+        service.run_automation_now.assert_awaited_once()
+        assert workbench._selected_automation_id == "local-def-1"
+
+
+@pytest.mark.asyncio
+async def test_local_automation_history_says_not_available_yet():
+    server_client = MockServerClient(notifications_service=None)
+    service = AutomationsMockService(server_client, local_definitions=[_local_definition()])
+    app = AutomationsTestApp(service)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+        table = workbench.query_one("#scheduling-automations-table", DataTable)
+        notice = workbench.query_one("#scheduling-automation-history-notice")
+
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+
+        assert "isn't available yet" in str(notice.content)
+
+
+@pytest.mark.asyncio
+async def test_refresh_after_local_save_shows_the_new_row():
+    """The exact gap the review named: a local save must not read as a no-op."""
+    server_client = MockServerClient(notifications_service=None)
+    service = AutomationsMockService(server_client, local_definitions=[])
+    app = AutomationsTestApp(service)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+        table = workbench.query_one("#scheduling-automations-table", DataTable)
+        assert table.row_count == 0
+
+        # Simulate what save_definition("local") just wrote to the DB.
+        service.db._automation_definitions.append(_local_definition(name="Just saved"))
+
+        from types import SimpleNamespace
+
+        workbench._on_automation_form_result(
+            SimpleNamespace(status="saved", definition_id="local-def-1")
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert table.row_count == 1
+        assert table.get_cell_at((0, 0)) == "[This device] Just saved"
+
+
+# --- task-5 fix round: edit affordance ---------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_edit_action_opens_form_prefilled_for_a_local_row():
+    server_client = MockServerClient(notifications_service=None)
+    service = AutomationsMockService(server_client, local_definitions=[_local_definition()])
+    app = AutomationsTestApp(service)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+        table = workbench.query_one("#scheduling-automations-table", DataTable)
+        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
+        tabs.active = "scheduling-automations-tab"
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+
+        workbench.action_edit_task()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert isinstance(pilot.app.screen, AutomationDefinitionForm)
+        form = pilot.app.screen
+        assert form.query_one("#automation-name", Input).value == "Local digest"
+        runs_on = form.query_one("#automation-runs-on", Select)
+        assert runs_on.disabled
+        assert runs_on.value == "local"
+        assert form._definition_id == "local-def-1"
+
+
+@pytest.mark.asyncio
+async def test_edit_action_refuses_agent_task_rows():
+    server_client = AutomationsServerClient()
+    server_client.list_automation_definitions = AsyncMock(
+        return_value={
+            "items": [
+                {
+                    "id": "def-agent",
+                    "name": "Agent one",
+                    "family": "agent_task",
+                    "lifecycle": "configured",
+                    "health": "ready",
+                    "owner_id": "server:1",
+                }
+            ],
+            "total": 1,
+        }
+    )
+    service = AutomationsMockService(server_client)
+    app = AutomationsTestApp(service)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+        table = workbench.query_one("#scheduling-automations-table", DataTable)
+        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
+        tabs.active = "scheduling-automations-tab"
+        table.cursor_coordinate = (0, 0)
+        await pilot.pause()
+
+        workbench.action_edit_task()
+        await pilot.pause()
+
+        assert isinstance(pilot.app.screen, SchedulesWorkbench)
+        notifications = list(pilot.app._notifications)
+        assert any("recurring-question" in n.message for n in notifications)
+
+
+@pytest.mark.asyncio
+async def test_edit_action_mirrors_a_server_only_row_on_demand():
+    """A server row with no local shadow yet gets one created on the fly
+    (via the same upsert the sync pull uses) so `save_definition`'s
+    LOCAL-id contract for `definition_id` is honored."""
+    server_client = AutomationsServerClient()
+    service = AutomationsMockService(server_client)  # no local rows yet
+    app = AutomationsTestApp(service)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+        table = workbench.query_one("#scheduling-automations-table", DataTable)
+        tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
+        tabs.active = "scheduling-automations-tab"
+        table.cursor_coordinate = (0, 0)  # def-1, "Morning brief"
+        await pilot.pause()
+
+        assert service.db._automation_definitions == []
+
+        workbench.action_edit_task()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert isinstance(pilot.app.screen, AutomationDefinitionForm)
+        assert len(service.db._automation_definitions) == 1
+        mirrored = service.db._automation_definitions[0]
+        assert mirrored["server_id"] == "def-1"
+        assert mirrored["owner_id"] == "server:server-1"
+
+        form = pilot.app.screen
+        assert form._definition_id == mirrored["id"]
+        runs_on = form.query_one("#automation-runs-on", Select)
+        assert runs_on.disabled
+        assert runs_on.value == "server:server-1"
+
+
+@pytest.mark.asyncio
+async def test_edit_save_reports_updated_not_created():
+    """A save from the edit flow must say "updated", not the create-mode
+    "created" wording -- both routes share one result handler."""
+    server_client = MockServerClient(notifications_service=None)
+    service = AutomationsMockService(server_client, local_definitions=[_local_definition()])
+    app = AutomationsTestApp(service)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+        from types import SimpleNamespace
+
+        workbench._on_automation_form_result(
+            SimpleNamespace(status="saved", definition_id="local-def-1"),
+            was_edit=True,
+        )
+        await pilot.pause()
+
+        notifications = list(pilot.app._notifications)
+        assert any(n.message == "Automation updated." for n in notifications)
+        assert not any(n.message == "Automation created." for n in notifications)

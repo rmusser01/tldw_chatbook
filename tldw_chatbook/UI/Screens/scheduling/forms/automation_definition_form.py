@@ -1,18 +1,24 @@
-"""Recurring-question automation-definition create modal (task-5).
+"""Recurring-question automation-definition create/edit modal (task-5).
 
 Mirrors `ReminderForm`'s structure (ADR-099 idiom parity: the modal box is
 its own scroll container, a docked footer keeps the live preview/errors/
 actions visible, Escape triggers a discard guard). The recurring-cron
 schedule sub-form reuses `reminder_form.py`'s task-23102 pure helpers
-(`preset_to_cron`, `cron_to_preset`, `parse_time_of_day`,
-`parse_forgiving_datetime`, timezone helpers) directly -- only the
-Textual wiring (widget ids, compose layout) is necessarily duplicated,
-since it is bound to this form's own field ids.
+(`preset_to_cron`, `cron_to_preset`, `parse_forgiving_datetime`, timezone
+helpers) directly -- only the Textual wiring (widget ids, compose layout)
+is necessarily duplicated, since it is bound to this form's own field ids.
+`cron_to_preset` is used for edit-mode prefill (mapping a stored cron
+expression back onto the preset/time-of-day fields); nothing here needs
+`parse_time_of_day` directly since `cron_to_preset` already returns the
+time text ready to use.
 
-v1 is create-only (spec sec 8 / plan task 4 handoff): the Automations tab
-has no local-definition listing or edit entry point yet (that is later
-program work, spec sec 9), so this form never receives an existing
-local row and always authors `mode="create"`.
+Edit mode (task-5 fix round; spec sec 8 calls for one create/EDIT modal)
+takes an existing definition row via `definition_row` (used to prefill
+every field) and `definition_id` (the facade's own LOCAL-id authority for
+`save_definition`, resolved by the caller -- see `SchedulesWorkbench.
+_resolve_local_definition_id`, which mirrors a server-only row on demand
+since it may have no local shadow yet). Without them this is a plain
+create form, `mode="create"`.
 """
 
 from __future__ import annotations
@@ -35,6 +41,7 @@ from .reminder_form import (
     _DEFAULT_TIMEZONE,
     _TIME_OF_DAY_PRESETS,
     _is_valid_zone,
+    cron_to_preset,
     detect_system_timezone,
     parse_forgiving_datetime,
     preset_to_cron,
@@ -100,7 +107,7 @@ def _format_occurrence(raw: str) -> str:
 
 
 class AutomationDefinitionForm(ModalScreen):
-    """Create modal for a `recurring_question` automation definition."""
+    """Create/edit modal for a `recurring_question` automation definition."""
 
     BINDINGS = [
         Binding("escape", "dismiss", "Close", show=False),
@@ -193,10 +200,12 @@ class AutomationDefinitionForm(ModalScreen):
         self,
         service: "SchedulingService",
         *,
+        definition_row: dict[str, Any] | None = None,
+        definition_id: str | None = None,
         available_owners: Sequence[tuple[str, str]] = (("This device", "local"),),
         default_owner: str = "local",
     ) -> None:
-        """Initialize the create form.
+        """Initialize the create or edit form.
 
         Args:
             service: The active `SchedulingService` -- this form calls its
@@ -204,12 +213,28 @@ class AutomationDefinitionForm(ModalScreen):
                 (Task 4), the same way the Preview button and Save need
                 live, in-modal feedback that a push_screen callback alone
                 cannot provide.
+            definition_row: An existing definition's fields (local DB row
+                or a server list-response dict -- both shapes prefill the
+                same way) to edit, or `None` to create. Display/prefill
+                only -- NOT the save-routing authority (see
+                `definition_id`).
+            definition_id: The LOCAL row id to pass to `save_definition`
+                when editing (`None` for create). The caller resolves this
+                -- a server-only row may have no local shadow yet, and
+                mirroring one on demand needs DB access this form does not
+                have (`SchedulesWorkbench._resolve_local_definition_id`).
             available_owners: `(label, owner_id)` options for "Runs on".
-            default_owner: The owner preselected on open (the current
-                screen owner, per spec sec 8).
+            default_owner: The owner preselected on open -- the current
+                screen owner when creating, or the row's own owner when
+                editing (spec sec 8; "Runs on" is disabled while editing,
+                same as `ReminderForm`'s owner-is-fixed-once-created rule
+                -- moving a saved automation between owners is a separate,
+                not-yet-built feature).
         """
         super().__init__()
         self._service = service
+        self._definition_row = definition_row
+        self._definition_id = definition_id
         self._available_owners = list(available_owners) or [("This device", "local")]
         self._default_owner = default_owner
         self._dirty = False
@@ -243,7 +268,12 @@ class AutomationDefinitionForm(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="automation-form-box"):
-            yield Label("New Recurring Question", classes="form-title")
+            yield Label(
+                "Edit Recurring Question"
+                if self._definition_row is not None
+                else "New Recurring Question",
+                classes="form-title",
+            )
 
             yield Label("Runs on:", classes="form-label")
             yield Select(
@@ -251,9 +281,12 @@ class AutomationDefinitionForm(ModalScreen):
                 allow_blank=False,
                 value=self._default_owner,
                 id="automation-runs-on",
+                disabled=self._definition_row is not None,
             )
             yield Static(
-                "Create it locally, or on the connected server if one is "
+                "Existing automations keep the owner they were created with."
+                if self._definition_row is not None
+                else "Create it locally, or on the connected server if one is "
                 "available.",
                 classes="form-helper",
             )
@@ -373,11 +406,103 @@ class AutomationDefinitionForm(ModalScreen):
         self._update_schedule_field_visibility(ScheduleKind.ONE_TIME.value)
         self._update_preset_field_visibility("daily")
         self._update_scope_field_visibility("all_searchable_library")
+        if self._definition_row is not None:
+            self._prefill_from_row(self._definition_row)
         self.call_after_refresh(self._mark_ready)
 
     def _mark_ready(self) -> None:
         self._dirty = False
         self._ready = True
+
+    def _prefill_from_row(self, row: dict[str, Any]) -> None:
+        """Reverse-map an existing definition's fields onto the form (edit mode).
+
+        Tolerant of both shapes `definition_row` can carry (a local DB
+        row or a raw server list-response dict) -- every lookup treats a
+        missing/wrong-typed field as absent rather than raising, since an
+        externally-sourced row is not this form's own contract to
+        validate. A schedule kind/shape this form cannot itself produce
+        (e.g. a real `interval`/`daily`/`weekly` schedule, or a `cron`
+        keyed differently than this local port's own `cron`/`timezone`)
+        is left at the create-mode default (one-time, blank run-at)
+        rather than guessed at -- the user sets an explicit new schedule
+        instead of silently keeping an un-editable one.
+        """
+        self.query_one("#automation-name", Input).value = str(row.get("name") or "")
+
+        input_fields = row.get("input") if isinstance(row.get("input"), dict) else {}
+        self.query_one("#automation-question", TextArea).text = str(
+            input_fields.get("question") or ""
+        )
+        provider = input_fields.get("provider")
+        if provider:
+            self.query_one("#automation-provider", Input).value = str(provider)
+        model = input_fields.get("model")
+        if model:
+            self.query_one("#automation-model", Input).value = str(model)
+
+        config = row.get("config") if isinstance(row.get("config"), dict) else {}
+        scope = config.get("scope") if isinstance(config.get("scope"), dict) else {}
+        scope_mode = (
+            scope.get("mode")
+            if scope.get("mode") in ("all_searchable_library", "sources")
+            else "all_searchable_library"
+        )
+        self.query_one("#automation-scope-mode", Select).value = scope_mode
+        self._update_scope_field_visibility(scope_mode)
+        if scope_mode == "sources":
+            selected_sources = set(scope.get("sources") or [])
+            for _label, value in _SCOPE_SOURCE_CHECKBOXES:
+                self.query_one(
+                    f"#automation-scope-{value.split('_')[0]}", Checkbox
+                ).value = value in selected_sources
+
+        generation_mode = config.get("generation_mode")
+        if generation_mode in {value for _, value in _GENERATION_MODE_OPTIONS}:
+            self.query_one("#automation-generation-mode", Select).value = generation_mode
+
+        finding_policy = (
+            config.get("finding_policy")
+            if isinstance(config.get("finding_policy"), dict)
+            else {}
+        )
+        preset_value = finding_policy.get("preset")
+        if preset_value in {value for _, value in _FINDING_POLICY_OPTIONS}:
+            self.query_one("#automation-finding-policy", Select).value = preset_value
+
+        notification_policy = (
+            row.get("notification_policy")
+            if isinstance(row.get("notification_policy"), dict)
+            else {}
+        )
+        notify = bool(notification_policy.get("on_success")) or bool(
+            notification_policy.get("on_failure")
+        )
+        self.query_one("#automation-notify", Checkbox).value = notify
+
+        schedule = row.get("schedule") if isinstance(row.get("schedule"), dict) else {}
+        kind = schedule.get("kind")
+        if kind == "one_time" and schedule.get("run_at"):
+            self.query_one("#automation-schedule-kind", Select).value = (
+                ScheduleKind.ONE_TIME.value
+            )
+            self.query_one("#automation-run-at", Input).value = str(schedule["run_at"])
+            self._update_schedule_field_visibility(ScheduleKind.ONE_TIME.value)
+        elif kind == "cron" and schedule.get("cron"):
+            self.query_one("#automation-schedule-kind", Select).value = (
+                ScheduleKind.RECURRING.value
+            )
+            cron_value = str(schedule["cron"])
+            self.query_one("#automation-cron", Input).value = cron_value
+            preset_key, time_text = cron_to_preset(cron_value)
+            self.query_one("#automation-cron-preset", Select).value = preset_key
+            if time_text:
+                self.query_one("#automation-preset-time", Input).value = time_text
+            self._update_preset_field_visibility(preset_key)
+            tz = schedule.get("timezone")
+            if tz and _is_valid_zone(str(tz)):
+                self.query_one("#automation-timezone", Select).value = str(tz)
+            self._update_schedule_field_visibility(ScheduleKind.RECURRING.value)
 
     # -- timezone helpers (reuse reminder_form's pure functions) -------------
 
@@ -500,13 +625,23 @@ class AutomationDefinitionForm(ModalScreen):
     def _build_payload(self) -> dict[str, Any]:
         """Build a `ScheduledTaskPreviewCreateRequest`-shaped payload.
 
-        v1 is create-only (module docstring): `mode` is always
-        `"create"`, and `definition_id`/`definition_version` are never
-        sent (the not-allowed-for-create validators would reject them).
         `visibility_policy`/`approval_policy`/`retention_policy` are not
         exposed as v1 fields (spec sec 8) -- omitting them lets the
         family default (`findings_only`) and the ported normalizers'
         own defaults apply, matching a payload that never mentioned them.
+
+        `mode`/`definition_id`/`definition_version` here only drive the
+        PREVIEW button's own local-validation presence checks
+        (`preview_definition` takes the payload as-is, unlike
+        `save_definition`, which always rebuilds these three itself from
+        its own `definition_id` parameter -- Task 4's contract, so this
+        method's values never affect what actually gets saved). Editing
+        always sends the LOCAL id here, which is correct for a local-owned
+        row but not what a server-owned row's OWN preview endpoint expects
+        (it wants the server's id) -- Preview during a server-owned edit
+        therefore falls back to local-only validation feedback
+        (`preview_definition`'s existing `ServerClientError` catch-all),
+        never a hard failure. Save is unaffected either way.
         """
         name = self.query_one("#automation-name", Input).value.strip()
         question = self.query_one("#automation-question", TextArea).text.strip()
@@ -520,9 +655,9 @@ class AutomationDefinitionForm(ModalScreen):
         if model:
             input_fields["model"] = model
 
-        return {
+        payload: dict[str, Any] = {
             "family": _FAMILY,
-            "mode": "create",
+            "mode": "update" if self._definition_id is not None else "create",
             "name": name,
             "input": input_fields,
             "schedule": self._schedule_payload(),
@@ -539,6 +674,10 @@ class AutomationDefinitionForm(ModalScreen):
             },
             "notification_policy": {"on_success": notify, "on_failure": notify},
         }
+        if self._definition_id is not None:
+            payload["definition_id"] = self._definition_id
+            payload["definition_version"] = (self._definition_row or {}).get("version")
+        return payload
 
     # -- validation-error rendering -----------------------------------------------
 
@@ -670,7 +809,7 @@ class AutomationDefinitionForm(ModalScreen):
     async def _save_async(self, payload: dict[str, Any], owner: str) -> None:
         try:
             outcome: "SaveDefinitionOutcome" = await self._service.save_definition(
-                payload, owner
+                payload, owner, definition_id=self._definition_id
             )
         except Exception:  # noqa: BLE001 - never let a save crash the modal
             logger.exception("Automation save failed")

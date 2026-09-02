@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -25,6 +26,7 @@ from ...Workbench.workbench_state import (
 )
 from ...Workbench.workbench_widgets import DestinationHeader, RecoveryCallout
 from ....runtime_policy.bootstrap import set_authoritative_runtime_source
+from ....Scheduling.automation_health import compute_local_health
 from ....Scheduling.events import (
     DeleteTaskRequested,
     DisableTaskRequested,
@@ -113,6 +115,38 @@ def automation_execution_target_label(definition: dict[str, Any]) -> str:
     if model:
         return model
     return "auto"
+
+
+def automation_name_cell(definition: dict[str, Any]) -> str:
+    """Name cell for the merged local+server Automations list (task-5 fix round).
+
+    The tab now mixes local-owned rows into what used to be a server-only
+    list, so every row needs a visible owner distinction or a local save
+    reads as indistinguishable from a server one. A prefix on the existing
+    Name cell is the smallest honest rendering -- no new column, no CSS
+    changes -- since the table's own `key=` already disambiguates rows for
+    everything that acts on them; this prefix is purely for the human
+    reading the table.
+
+    Args:
+        definition: One merged row (local DB dict or server API dict --
+            both carry `owner_id` and `name`, confirmed against the real
+            server fixture `automation_definition_list.json`).
+
+    Returns:
+        `"[This device] <name>"` for a local row, `"[<server id>] <name>"`
+        for a server-scoped one.
+    """
+    from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
+
+    owner_id = str(definition.get("owner_id") or "local")
+    name = str(definition.get("name") or definition.get("id") or "")
+    if is_server_scoped_owner(owner_id):
+        label = owner_id.split(":", 1)[1] if ":" in owner_id else owner_id
+    else:
+        label = "This device"
+    return f"[{label}] {name}"
+
 
 #: Delayed second fetch of the run-history pane after a Run-now dispatch:
 #: the terminal audit event lands only after the server finishes executing
@@ -814,18 +848,26 @@ class SchedulesWorkbench(BaseAppScreen):
         elif choice == "recurring_question":
             self.action_create_automation()
 
-    def _on_automation_form_result(self, outcome: Any | None) -> None:
-        """Notify and refresh the Automations list after a definition save."""
+    def _on_automation_form_result(
+        self, outcome: Any | None, *, was_edit: bool = False
+    ) -> None:
+        """Notify and refresh the Automations list after a definition save.
+
+        `was_edit` only changes the toast wording ("updated" vs
+        "created") -- an edit reusing the create-mode "created" copy
+        would misreport what actually happened.
+        """
         if outcome is None:
             return
         status = getattr(outcome, "status", None)
+        verb = "updated" if was_edit else "created"
         if status == "saved":
             self.app_instance.notify(
-                "Automation created.", severity="information"
+                f"Automation {verb}.", severity="information"
             )
         elif status == "queued":
             self.app_instance.notify(
-                "Automation created locally — it will sync to the server.",
+                f"Automation {verb} locally — it will sync to the server.",
                 severity="information",
             )
         self._request_automations_refresh()
@@ -1034,14 +1076,17 @@ class SchedulesWorkbench(BaseAppScreen):
         )  # type: ignore[arg-type]
 
     async def load_automations(self) -> None:
-        """Fetch server automation definitions for the Automations tab."""
+        """Fetch and merge local + server automation definitions (task-5 fix round).
+
+        This tab used to be server-only: a locally-saved recurring
+        question had no on-screen home. Local rows are now merged in
+        (owner distinguished via `automation_name_cell`'s Name-cell
+        prefix) so a local save's refresh actually shows the new row.
+        """
         notice = self.query_one("#scheduling-automations-notice", Static)
         table = self.query_one("#scheduling-automations-table", DataTable)
         service = self._scheduling_service
-        server_client = getattr(service, "server_client", None) if service else None
-        if server_client is None or not self._server_available(
-            service, self._active_server_id()
-        ):
+        if service is None:
             self._automations = []
             self._selected_automation_id = None
             table.clear()
@@ -1052,52 +1097,40 @@ class SchedulesWorkbench(BaseAppScreen):
                 "Run history needs a connected server."
             )
             return
+
         # task-15476 discipline: a rebuild must reconcile the selection by
         # id -- keep the cursor on the same definition when it survives the
-        # refresh, and clear it when it does not, so `r` can never act on a
-        # row the user is no longer looking at.
+        # refresh, and clear it when it does not, so `r`/`e` can never act
+        # on a row the user is no longer looking at.
         previous_selection = self._selected_automation_id
-        try:
-            # Follow `has_more` pages so the tab never silently hides the
-            # tail of a large definition list; the cap is a defensive bound,
-            # not an expected cliff.
-            items: list[dict[str, Any]] = []
-            total = 0
-            offset = 0
-            while True:
-                response = await server_client.list_automation_definitions(
-                    limit=50, offset=offset
+
+        local_items = await self._load_local_automations(service)
+
+        server_client = getattr(service, "server_client", None)
+        server_available = server_client is not None and self._server_available(
+            service, self._active_server_id()
+        )
+        server_items: list[dict[str, Any]] = []
+        total_server = 0
+        server_error = False
+        if server_available:
+            try:
+                server_items, total_server = await self._load_server_automations(
+                    server_client
                 )
-                page = list(response.get("items", []))
-                items.extend(page)
-                total = int(response.get("total", len(items)) or 0)
-                offset += len(page)
-                if (
-                    not page
-                    or not response.get("has_more")
-                    or len(items) >= AUTOMATIONS_LOAD_MAX_ROWS
-                ):
-                    break
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                "Failed to load server automations (server_id={})",
-                self._active_server_id(),
-            )
-            self._automations = []
-            self._selected_automation_id = None
-            table.clear()
-            self._update_static_content(
-                notice, "Could not load server automations — see the log."
-            )
-            self._clear_automation_history(
-                "Run history unavailable — the definition list failed to load."
-            )
-            return
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Failed to load server automations (server_id={})",
+                    self._active_server_id(),
+                )
+                server_error = True
+
+        items = local_items + server_items
         self._automations = items
         table.clear()
         for definition in items:
             table.add_row(
-                str(definition.get("name") or definition.get("id")),
+                automation_name_cell(definition),
                 str(definition.get("family", "?")),
                 str(definition.get("lifecycle", "?")),
                 str(definition.get("health", "?")),
@@ -1112,14 +1145,101 @@ class SchedulesWorkbench(BaseAppScreen):
         else:
             self._selected_automation_id = None
             self._clear_automation_history("Select an automation to see its history.")
-        shown = len(items)
-        suffix = f" (showing {shown} of {total})" if total > shown else ""
-        self._update_static_content(
-            notice,
-            f"{shown} automation{'' if shown == 1 else 's'} on the server{suffix}."
-            if shown
-            else "No automations on the server yet.",
+
+        notice_text = self._automations_notice_text(
+            local_items, server_items, server_available, total_server, server_error
         )
+        self._update_static_content(notice, notice_text)
+
+    async def _load_local_automations(
+        self, service: "SchedulingService"
+    ) -> list[dict[str, Any]]:
+        """This device's own automation definitions, off the event loop.
+
+        Health is never persisted (`automation_health.py`'s own docstring)
+        -- it is computed fresh here the same way `run_automation_now`
+        computes it before dispatching, so the column never shows the
+        create-time placeholder (`execution_unavailable`) as if it were
+        live.
+        """
+        try:
+            rows = await asyncio.to_thread(
+                service.db.list_automation_definitions, owner_id="local"
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to load local automation definitions")
+            return []
+        for row in rows:
+            health, _reason = compute_local_health(self.app_instance, row)
+            row["health"] = health
+        return rows
+
+    async def _load_server_automations(
+        self, server_client: Any
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Follow `has_more` pages so the tab never silently hides the tail
+        of a large definition list; the cap is a defensive bound, not an
+        expected cliff.
+
+        Every item is stamped with `owner_id` if the response omitted one
+        (some fixtures/older server versions do): these rows are known to
+        be server-scoped by construction (this IS the server fetch), so
+        the run-now/history/edit routing that reads `owner_id` off the row
+        must never depend on the wire response actually including it.
+        """
+        items: list[dict[str, Any]] = []
+        total = 0
+        offset = 0
+        while True:
+            response = await server_client.list_automation_definitions(
+                limit=50, offset=offset
+            )
+            page = list(response.get("items", []))
+            items.extend(page)
+            total = int(response.get("total", len(items)) or 0)
+            offset += len(page)
+            if (
+                not page
+                or not response.get("has_more")
+                or len(items) >= AUTOMATIONS_LOAD_MAX_ROWS
+            ):
+                break
+        active_server_id = self._active_server_id()
+        for item in items:
+            if not item.get("owner_id"):
+                item["owner_id"] = f"server:{active_server_id}"
+        return items, total
+
+    @staticmethod
+    def _automations_notice_text(
+        local_items: list[dict[str, Any]],
+        server_items: list[dict[str, Any]],
+        server_available: bool,
+        total_server: int,
+        server_error: bool,
+    ) -> str:
+        """Compose the Automations-pane notice honestly from what actually loaded.
+
+        A server failure never hides local rows that DID load -- the two
+        sources degrade independently, so the server segment reports its
+        own outcome and a local-count addendum is appended only when there
+        is one to report.
+        """
+        if server_error:
+            base = "Could not load server automations — see the log."
+        elif server_available:
+            shown = len(server_items)
+            suffix = f" (showing {shown} of {total_server})" if total_server > shown else ""
+            base = (
+                f"{shown} automation{'' if shown == 1 else 's'} on the server{suffix}."
+                if shown
+                else "No automations on the server yet."
+            )
+        else:
+            base = "Server automations need a connected server."
+        if local_items:
+            base += f" {len(local_items)} on this device."
+        return base
 
     def _clear_automation_history(self, notice_text: str) -> None:
         """Reset the run-history pane to an explanatory notice."""
@@ -1159,6 +1279,20 @@ class SchedulesWorkbench(BaseAppScreen):
         # must never leave another definition's trail under the new title.
         table.clear()
         self._update_static_content(notice, "Loading run history…")
+
+        from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
+
+        owner_id = (definition or {}).get("owner_id")
+        if not is_server_scoped_owner(owner_id):
+            # Honest gap (task-5 fix round): local automation runs are not
+            # tracked in a durable audit trail yet -- only the server side
+            # is. Never claim a server-shaped history for a local row.
+            table.clear()
+            self._update_static_content(
+                notice, "Local automation history isn't available yet."
+            )
+            return
+
         service = self._scheduling_service
         server_client = getattr(service, "server_client", None) if service else None
         if server_client is None:
@@ -1229,6 +1363,69 @@ class SchedulesWorkbench(BaseAppScreen):
         return None
 
     def _run_automation_now(self, definition: dict[str, Any]) -> None:
+        """Dispatch one automation definition now, routed by its owner.
+
+        Local rows use the existing PR-2 `SchedulingService.run_automation_
+        now` seam (the same claim/spawn machinery the scheduled dispatch
+        path uses); server rows keep the existing control-plane dispatch.
+        Never both -- ADR-077 decision 1, one executor per owner.
+        """
+        from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
+
+        if is_server_scoped_owner(definition.get("owner_id")):
+            self._run_automation_now_server(definition)
+        else:
+            self._run_automation_now_local(definition)
+
+    def _run_automation_now_local(self, definition: dict[str, Any]) -> None:
+        """Dispatch a local automation through the existing run-now seam."""
+        service = self._scheduling_service
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot run the automation.",
+                severity="warning",
+            )
+            return
+        definition_id = str(definition.get("id"))
+        name = str(definition.get("name") or definition_id)
+
+        async def _run() -> None:
+            try:
+                result = await service.run_automation_now(definition_id)
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Local automation run-now failed for definition {}",
+                    definition_id,
+                )
+                self.app_instance.notify(
+                    f"Failed to run '{name}'.", severity="error"
+                )
+                return
+            if result is None:
+                self.app_instance.notify(
+                    f"'{name}' did not run — it is missing, paused/"
+                    "archived, mid-transfer, or its health is not ready "
+                    "(the definition's own state shows which).",
+                    severity="warning",
+                )
+                return
+            deduped = (
+                " — deduped, a run was already in flight"
+                if result.get("deduped")
+                else ""
+            )
+            self.app_instance.notify(
+                f"'{name}' ran now{deduped}.", severity="information"
+            )
+            self._request_automations_refresh()
+
+        self.run_worker(
+            _run,
+            exclusive=True,
+            group="schedules-run-automation-now",
+        )  # type: ignore[arg-type]
+
+    def _run_automation_now_server(self, definition: dict[str, Any]) -> None:
         """Dispatch one server automation through the control-plane run endpoint."""
         service = self._scheduling_service
         server_client = getattr(service, "server_client", None) if service else None
@@ -1292,6 +1489,112 @@ class SchedulesWorkbench(BaseAppScreen):
             exclusive=True,
             group="schedules-run-automation-now",
         )  # type: ignore[arg-type]
+
+    def _edit_selected_automation(self) -> None:
+        """Open the selected automation definition for editing (e key).
+
+        `agent_task` rows are excluded -- only `recurring_question`
+        authoring exists (the same v1 scope guard `save_definition`
+        itself enforces via `_reject_unsupported_family`).
+        """
+        definition = self._selected_automation()
+        if definition is None:
+            self.app_instance.notify(
+                "Nothing to edit — select an automation first.",
+                severity="warning",
+            )
+            return
+        if definition.get("family") != "recurring_question":
+            self.app_instance.notify(
+                "Only recurring-question automations can be edited here "
+                "(agent-task authoring is not yet available).",
+                severity="warning",
+            )
+            return
+        service = self._scheduling_service
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable; cannot edit the automation.",
+                severity="warning",
+            )
+            return
+
+        async def _open() -> None:
+            definition_id = await self._resolve_local_definition_id(
+                service, definition
+            )
+            if definition_id is None:
+                self.app_instance.notify(
+                    "Could not prepare this automation for editing — see "
+                    "the log.",
+                    severity="error",
+                )
+                return
+            owner_id = str(definition.get("owner_id") or "local")
+            options, _default = self._runs_on_options()
+            if owner_id not in {value for _, value in options}:
+                # Same defensive fallback as the reminder form's timezone/
+                # owner selectors: the row's real owner always round-trips
+                # even when it is not among the currently offered choices
+                # (e.g. a server owner other than the active one).
+                options = [*options, (owner_id, owner_id)]
+            self.app.push_screen(
+                AutomationDefinitionForm(
+                    service,
+                    definition_row=definition,
+                    definition_id=definition_id,
+                    available_owners=options,
+                    default_owner=owner_id,
+                ),
+                callback=lambda outcome: self._on_automation_form_result(
+                    outcome, was_edit=True
+                ),
+            )
+
+        self.run_worker(_open, exclusive=True, group="schedules-edit-automation")
+
+    async def _resolve_local_definition_id(
+        self, service: "SchedulingService", definition: dict[str, Any]
+    ) -> str | None:
+        """Return the LOCAL row id `save_definition`'s `definition_id` needs.
+
+        `save_definition`'s `definition_id` parameter is always a LOCAL
+        id (Task 4's own contract). A row shown here from a pure server
+        fetch may have no local shadow yet (nothing has synced or saved
+        it locally before) -- editing it still needs one, so this mirrors
+        it in place via the same `upsert_automation_definitions_from_
+        server` the sync pull and `save_definition`'s own online-create
+        path already use, rather than inventing a second mirroring path.
+        """
+        from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
+
+        owner_id = str(definition.get("owner_id") or "local")
+        if not is_server_scoped_owner(owner_id):
+            local_id = definition.get("id")
+            return str(local_id) if local_id else None
+
+        server_id = str(definition.get("id"))
+        existing = await asyncio.to_thread(
+            service.db.get_automation_definition_by_server_id, owner_id, server_id
+        )
+        if existing is not None:
+            return existing.get("id")
+        try:
+            await asyncio.to_thread(
+                service.db.upsert_automation_definitions_from_server,
+                owner_id,
+                [definition],
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Failed to mirror server automation {} before editing",
+                server_id,
+            )
+            return None
+        mirrored = await asyncio.to_thread(
+            service.db.get_automation_definition_by_server_id, owner_id, server_id
+        )
+        return mirrored.get("id") if mirrored else None
 
     def _set_reminder_enabled(self, task: ReminderTask, enabled: bool) -> None:
         """Update a reminder's enabled state and refresh the queue."""
@@ -1625,7 +1928,20 @@ class SchedulesWorkbench(BaseAppScreen):
         return self._visible_tasks[row]
 
     def action_edit_task(self) -> None:
-        """Open the highlighted task in the edit form (e key)."""
+        """Open the highlighted task/definition in its edit form (e key).
+
+        Routes by active tab, same shape as `action_run_task_now`: the
+        Automations tab's `e` opens `AutomationDefinitionForm` pre-filled
+        for a `recurring_question` row (either owner); everywhere else it
+        is the existing reminder edit flow.
+        """
+        try:
+            active_pane = self.query_one("#scheduling-tabs", TabbedContent).active
+        except Exception:  # noqa: BLE001
+            active_pane = None
+        if active_pane == "scheduling-automations-tab":
+            self._edit_selected_automation()
+            return
         task = self._selected_task()
         if task is None:
             self.app_instance.notify(
