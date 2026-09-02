@@ -110,6 +110,7 @@ WORKER_THRESHOLD = 5000
 #: DataTable row key of the "load earlier" control row.
 LOAD_EARLIER_ROW_KEY = "__load_earlier__"
 
+_RECORD_ROW_PREFIX = "record:"
 _TURN_SEGMENT_ROW_PREFIX = "turn-segment:"
 
 _NARROW_COLUMNS = (
@@ -619,6 +620,11 @@ class TrajectoryScreen(ModalScreen[None]):
         self._record_keys = keys
 
     def _record_key(self, record: TrajectoryRecord) -> str:
+        return f"{_RECORD_ROW_PREFIX}{self._record_identity(record)}"
+
+    def _record_identity(self, record: TrajectoryRecord) -> str:
+        """Return the stable source identity without the table-row namespace."""
+
         return self._record_keys[id(record)]
 
     @property
@@ -1386,7 +1392,7 @@ class TrajectoryScreen(ModalScreen[None]):
             f"{rec.label or rec.kind.replace('_', ' ').strip().capitalize() or 'Event'} "
             f"· turn {rec.turn_id}"
         ]
-        event_id = self._record_key(rec)
+        event_id = self._record_identity(rec)
         lines.append(f"event id {event_id} · raw kind {rec.kind}")
         conversation_id = self._conversation_id or rec.conversation_id
         if conversation_id:

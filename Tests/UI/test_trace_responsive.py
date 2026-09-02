@@ -29,6 +29,8 @@ from .test_trajectory_screen import base_snapshot
 
 
 VIEWPORTS = ((60, 18), (80, 24), (100, 30), (120, 35))
+
+
 class _TraceHost(ConsolidatedCSSApp):
     CSS_PATH = BUNDLED_STYLESHEET
 
@@ -177,7 +179,7 @@ async def test_responsive_rebuild_preserves_stable_event_selection_and_filters()
     assistant = next(record for record in _flat(snapshot) if record.kind == "assistant")
     async with _mounted(snapshot, size=(80, 24)) as (app, pilot, screen):
         table = screen.query_one("#trajectory-table", DataTable)
-        selected_key = assistant.event_id
+        selected_key = screen._record_key(assistant)
         table.move_cursor(row=table.get_row_index(selected_key), animate=False)
         screen._collapsed.add("t2")
         screen._query = "checking"
@@ -800,7 +802,9 @@ async def test_projected_generic_retrieval_payload_is_preserved_as_safe_json() -
 
     async with _mounted(snapshot, size=(60, 18)) as (app, pilot, screen):
         table = screen.query_one("#trajectory-table", DataTable)
-        table.move_cursor(row=table.get_row_index(record.event_id), animate=False)
+        table.move_cursor(
+            row=table.get_row_index(screen._record_key(record)), animate=False
+        )
         await pilot.press("enter")
         await pilot.pause()
 
@@ -1077,7 +1081,8 @@ async def test_paused_live_append_retains_selected_event_outside_newest_page() -
     snapshot = _snapshot_with_records(records)
     async with _mounted(snapshot, size=(80, 24)) as (app, pilot, screen):
         table = screen.query_one("#trajectory-table", DataTable)
-        table.move_cursor(row=table.get_row_index("event-2"), animate=False)
+        selected_key = screen._record_key(records[1])
+        table.move_cursor(row=table.get_row_index(selected_key), animate=False)
         screen._follow = False
 
         appended = _snapshot_with_records(
@@ -1086,8 +1091,8 @@ async def test_paused_live_append_retains_selected_event_outside_newest_page() -
         screen._apply_live_snapshot(appended)
         await pilot.pause()
 
-        assert screen._cursor_key() == "event-2"
-        assert "event-2" in screen._visible_keys
+        assert screen._cursor_key() == selected_key
+        assert selected_key in screen._visible_keys
         assert screen._visible_count >= PAGE_SIZE + 1
 
 
@@ -1247,5 +1252,9 @@ async def test_record_label_prefers_projection_label_then_generic_sentence_case(
     ]
     async with _mounted(_snapshot_with_records(records)) as (app, pilot, screen):
         table = screen.query_one("#trajectory-table", DataTable)
-        assert str(table.get_row("event-1")[1]) == "Provider-specific step"
-        assert str(table.get_row("event-2")[1]) == "Future custom kind"
+        assert str(table.get_row(screen._record_key(records[0]))[1]) == (
+            "Provider-specific step"
+        )
+        assert str(table.get_row(screen._record_key(records[1]))[1]) == (
+            "Future custom kind"
+        )

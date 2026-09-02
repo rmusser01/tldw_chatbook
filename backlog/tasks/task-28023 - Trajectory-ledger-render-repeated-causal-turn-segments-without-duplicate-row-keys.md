@@ -41,11 +41,11 @@ Reason: This is a localized bug fix that preserves the existing projection, UI o
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented segment-aware Trajectory ledger row identity without altering causal projection output. The first occurrence retains its existing turn:<id> key for live cursor stability; later occurrences use turn-segment:<occurrence>:<id> and map back to the logical turn for inspection and collapse. Logical turn numbering now follows first occurrence, inspector counts aggregate records across repeated segments, and paused live refresh expands the pagination window when needed to restore a selected segment header.
+Implemented segment-aware Trajectory ledger row identity without altering causal projection output. The first occurrence retains its existing turn:<id> key for live cursor stability; later occurrences use turn-segment:<occurrence>:<id> and map back to the logical turn for inspection and collapse. Record rows use a disjoint record:<identity> table-key namespace so unrestricted imported event IDs cannot collide with generated headers or controls. Logical turn numbering now follows first occurrence, inspector counts aggregate records across repeated segments, and paused live refresh expands the pagination window when needed to restore a selected segment header.
 
-Added mounted Textual regression coverage for repeated t1 -> t2 -> t1 rendering, unique headers, complete record rendering, logical-turn actions, live first-header stability, and page-boundary restoration with a colon-bearing turn ID.
+Added mounted Textual regression coverage for repeated t1 -> t2 -> t1 rendering, unique headers, complete record rendering, imported event-ID collisions, logical-turn actions, live first-header stability, and page-boundary restoration with a colon-bearing turn ID. Added direct unit coverage for logical turn numbering and header-window calculations.
 
-Modified files: tldw_chatbook/UI/Screens/trajectory_screen.py; Tests/UI/test_trajectory_screen.py. No user documentation or ADR update was required because this preserves existing behavior and boundaries.
+Modified files: tldw_chatbook/UI/Screens/trajectory_screen.py; Tests/UI/test_trajectory_screen.py; Tests/UI/test_trace_responsive.py. No user documentation or ADR update was required because this preserves existing behavior and boundaries.
 
-Verification: 67 targeted Trajectory screen, timeline-integration, and live tests passed; Ruff format/check and git diff --check passed.
+Verification: 107 targeted Trajectory screen, responsive-layout, timeline-integration, and live tests passed; Ruff format/check and git diff --check passed. The full pre-merge sweep stops at `Tests/Actor_Packs/test_actor_pack_activation.py::test_create_new_persona_preserves_incoming_uuid`; the same failure was reproduced on an isolated `origin/dev` checkout at e7026bd5e, confirming it is a base-branch failure unrelated to this change.
 <!-- SECTION:NOTES:END -->

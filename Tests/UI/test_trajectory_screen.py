@@ -32,6 +32,7 @@ from tldw_chatbook.UI.Screens.trajectory_screen import (
     PAGE_SIZE,
     WORKER_THRESHOLD,
     TrajectoryScreen,
+    _number_logical_turns,
 )
 
 # ---------------------------------------------------------------------------
@@ -234,6 +235,20 @@ def repeated_turn_segments_with_live_tail() -> TrajectorySnapshot:
     return TrajectorySnapshot(snapshot.turns + (TrajectoryTurn("tail", tail_records),))
 
 
+def repeated_turn_segments_with_colliding_event_id() -> TrajectorySnapshot:
+    """A record event ID collides with the generated second-segment header."""
+
+    snapshot = repeated_turn_segments_snapshot()
+    first, middle, last = snapshot.turns
+    middle_records = (
+        replace(middle.records[0], event_id="turn-segment:2:t1"),
+        *middle.records[1:],
+    )
+    return TrajectorySnapshot(
+        (first, TrajectoryTurn(middle.turn_id, middle_records), last)
+    )
+
+
 class _Harness(App[None]):
     """Minimal host so the screen can be pushed like the Console would."""
 
@@ -282,6 +297,25 @@ def _inspector_content(screen: TrajectoryScreen) -> Static:
 # ---------------------------------------------------------------------------
 
 
+def test_number_logical_turns_uses_first_occurrence() -> None:
+    snapshot = repeated_turn_segments_snapshot()
+
+    assert _number_logical_turns(snapshot.turns) == {"t1": 1, "t2": 2}
+
+
+def test_visible_count_for_turn_header_resolves_segment_and_colon_id() -> None:
+    screen = TrajectoryScreen(repeated_turn_segments_with_live_tail())
+
+    assert screen._visible_count_for_turn_header("turn:thread:t1") == (
+        screen._total_records
+    )
+    assert screen._visible_count_for_turn_header("turn-segment:2:thread:t1") == (
+        screen._total_records - 3
+    )
+    assert screen._visible_count_for_turn_header("turn:missing") is None
+    assert screen._visible_count_for_turn_header("turn-segment:not-a-number:t1") is None
+
+
 @pytest.mark.asyncio
 async def test_mount_renders_one_row_per_record_plus_turn_headers() -> None:
     async with _mounted(base_snapshot()) as (app, pilot, screen):
@@ -309,6 +343,29 @@ async def test_mount_renders_repeated_turn_segments_with_unique_headers() -> Non
         assert header_keys[0] == "turn:t1"
         for seq in range(1, 7):
             assert table.get_row_index(_record_key_for_seq(screen, seq)) is not None
+
+
+@pytest.mark.asyncio
+async def test_record_event_id_cannot_collide_with_segment_header() -> None:
+    async with _mounted(repeated_turn_segments_with_colliding_event_id()) as (
+        app,
+        pilot,
+        screen,
+    ):
+        table = screen.query_one("#trajectory-table", DataTable)
+        record_key = _record_key_for_seq(screen, 5)
+
+        assert table.row_count == 9
+        assert record_key == "record:turn-segment:2:t1"
+        assert table.get_row_index("turn-segment:2:t1") is not None
+        assert table.get_row_index(record_key) is not None
+
+        table.move_cursor(row=table.get_row_index(record_key))
+        await pilot.press("enter")
+        await pilot.pause()
+        inspector = str(_inspector_content(screen).render())
+        assert "event id turn-segment:2:t1" in inspector
+        assert "event id record:turn-segment:2:t1" not in inspector
 
 
 @pytest.mark.asyncio
