@@ -1222,6 +1222,10 @@ ConsoleTerminalWorkspace#console-main-column {
 }
 
 #console-workspace-tree:focus {
+    /* TASK-28226: this tree can be only two rows tall. The global four-sided
+       focus outline overpaints both rows after an action menu restores focus;
+       the cursor treatment below and this background remain visible cues. */
+    outline: none;
     background: $ds-action-focus 12%;
 }
 

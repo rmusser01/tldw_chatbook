@@ -15,6 +15,10 @@ from types import SimpleNamespace
 import pytest
 from textual.widgets import Button
 
+from Tests.UI.test_console_dictation import (
+    FakeDictationSession,
+    _wait_for_mic_label,
+)
 from Tests.UI.test_console_left_rail import (
     _click_rail_toggle,
     make_console_pilot,
@@ -22,6 +26,8 @@ from Tests.UI.test_console_left_rail import (
 from Tests.UI.test_console_workspace_tree_cursor_layout import (
     _console_with_probe_tree,
 )
+from tldw_chatbook.UI.Console_Modules import dictation as dictation_module
+from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
     ConsoleConversationActionMenu,
 )
@@ -61,6 +67,14 @@ def _request_menu(console, *, kind: str, **kwargs) -> None:
     console.on_workspace_tree_menu_requested(WorkspaceTreeMenuRequested(**payload))
 
 
+async def _click_tree_marker(pilot, tree, node) -> None:
+    """Click one rendered row marker through the mounted production tree."""
+    edge = tree.scrollable_content_region.width
+    line = int(node._line) - int(tree.scroll_offset.y)
+    assert await pilot.click(tree, offset=(edge - 1, line))
+    await pilot.pause(0.4)
+
+
 @pytest.mark.asyncio
 async def test_tree_rows_paint_distinct_right_edge_affordances() -> None:
     """Workspace and chat rows carry distinct openers in one edge column."""
@@ -96,6 +110,148 @@ async def test_tree_rows_paint_distinct_right_edge_affordances() -> None:
         assert not tree._pressed_menu_affordance(
             tree.conversation_nodes["conv-a0"].data
         )
+
+
+@pytest.mark.asyncio
+async def test_marker_menus_claim_escape_before_hands_free_exit(monkeypatch) -> None:
+    """A row popup owns Escape before the priority hands-free binding.
+
+    Removing the row-menu gate from ``check_action`` makes the first Escape
+    exit hands-free while leaving the popup stranded. This drives both real
+    marker paths and pins the approved submenu-back, root-close, then
+    hands-free-exit order.
+    """
+    fake = FakeDictationSession()
+    monkeypatch.setattr(
+        dictation_module.ConsoleDictationController,
+        "_create_console_dictation_session",
+        lambda self: fake,
+    )
+
+    async with make_console_pilot(size=(160, 44), production_styles=True) as pilot:
+        host = pilot.app
+        console, _rail, tree = await _console_with_probe_tree(host, pilot)
+        console.app_instance.workspace_registry_service = _stub_registry()
+        await _click_rail_toggle(pilot, "workspace")
+        await pilot.pause(0.4)
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        console.action_toggle_console_hands_free()
+        await _wait_for_mic_label(composer, pilot, "Dictating")
+
+        await _click_tree_marker(pilot, tree, tree.workspace_nodes["ws-alpha"])
+        workspace_menu = console.query_one(ConsoleWorkspaceActionMenu)
+        next(
+            button
+            for button in workspace_menu.query(Button)
+            if getattr(button, "workspace_action_id", "") == "page:more"
+        ).press()
+        await pilot.pause(0.4)
+        assert workspace_menu.page == "more"
+
+        await pilot.press("escape")
+        await pilot.pause(0.4)
+        assert workspace_menu.page == "root"
+        assert console._console_hands_free is not None
+
+        await pilot.press("escape")
+        await pilot.pause(0.4)
+        assert not console.query(ConsoleWorkspaceActionMenu)
+        assert console._console_hands_free is not None
+
+        await _click_tree_marker(pilot, tree, tree.conversation_nodes["conv-a0"])
+        assert console.query(ConsoleConversationActionMenu)
+        console.set_focus(composer)
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await pilot.pause(0.4)
+        assert not console.query(ConsoleConversationActionMenu)
+        assert console._console_hands_free is not None
+
+        await pilot.press("escape")
+        await _wait_for_mic_label(composer, pilot, "Dictate")
+        assert console._console_hands_free is None
+        assert fake.stop_calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("node_key", "menu_type", "handler_name"),
+    [
+        (
+            "ws-alpha",
+            ConsoleWorkspaceActionMenu,
+            "on_workspace_action_chosen",
+        ),
+        (
+            "conv-a0",
+            ConsoleConversationActionMenu,
+            "on_conversation_action_chosen",
+        ),
+    ],
+)
+async def test_real_marker_menu_dismisses_on_outside_click(
+    monkeypatch,
+    node_key: str,
+    menu_type: type[ConsoleWorkspaceActionMenu] | type[ConsoleConversationActionMenu],
+    handler_name: str,
+) -> None:
+    """The production marker path closes without acting or stealing focus."""
+    async with make_console_pilot(size=(160, 44), production_styles=True) as pilot:
+        host = pilot.app
+        console, _rail, tree = await _console_with_probe_tree(host, pilot)
+        console.app_instance.workspace_registry_service = _stub_registry()
+        await _click_rail_toggle(pilot, "workspace")
+        await pilot.pause(0.4)
+
+        node = (
+            tree.workspace_nodes[node_key]
+            if node_key.startswith("ws-")
+            else tree.conversation_nodes[node_key]
+        )
+        await _click_tree_marker(pilot, tree, node)
+        assert console.query(menu_type)
+
+        dispatched: list[object] = []
+        monkeypatch.setattr(
+            console,
+            handler_name,
+            lambda event: dispatched.append(event),
+        )
+        composer = console.query_one("#console-native-composer")
+        assert await pilot.click(composer)
+        await pilot.pause(0.3)
+        assert not console.query(menu_type)
+        assert dispatched == []
+        assert pilot.app.focused is composer
+
+
+@pytest.mark.asyncio
+async def test_escape_focus_restore_keeps_two_row_workspace_tree_visible() -> None:
+    """The restored tree focus cue must not overpaint both visible rows."""
+    async with make_console_pilot(size=(160, 44), production_styles=True) as pilot:
+        host = pilot.app
+        console, _rail, tree = await _console_with_probe_tree(host, pilot)
+        console.app_instance.workspace_registry_service = _stub_registry()
+        await _click_rail_toggle(pilot, "workspace")
+        tree.styles.height = 2
+        await pilot.pause(0.4)
+        assert tree.region.height == 2
+
+        await _click_tree_marker(pilot, tree, tree.workspace_nodes["ws-alpha"])
+        assert console.query(ConsoleWorkspaceActionMenu)
+        await pilot.press("escape")
+        await pilot.pause(0.4)
+
+        assert tree.has_focus
+        assert not tree.styles.outline, (
+            "the global focus outline consumes both rows of the compact tree"
+        )
+        rendered = "\n".join(
+            tree.render_line(row).text for row in range(tree.region.height)
+        )
+        assert "@" in rendered and "*" in rendered
 
 
 @pytest.mark.asyncio
