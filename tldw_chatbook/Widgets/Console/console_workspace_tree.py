@@ -621,6 +621,14 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         markers (``@`` and ``*``) in one right-edge column. Content is
         truncated and padded before the marker, and its absolute x-range is
         recorded in ``_menu_zones`` so painted and clickable geometry agree.
+
+        Args:
+            node: Tree node whose label is being rendered.
+            base_style: Style used for the unfocused row and action marker.
+            style: Style used for the focused cursor marker.
+
+        Returns:
+            The rendered row label with truncation and any action affordance.
         """
 
         label = super().render_label(node, base_style, style)

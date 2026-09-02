@@ -58,4 +58,7 @@ the new `@` affordance. No ADR was required because storage, ownership,
 security, menu payloads, and cross-module boundaries are unchanged. No new
 general lesson was added; the baseline-evidence incident is already covered
 by `backlog/docs/lessons-testing-evidence.md`.
+
+PR review follow-up documented the public `render_label` override's arguments
+and return value in the repository's required Google-style format.
 <!-- SECTION:NOTES:END -->
