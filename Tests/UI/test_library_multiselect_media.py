@@ -113,6 +113,10 @@ def _media_fake(
     fake._exit_library_media_select_mode = types.MethodType(
         LibraryScreen._exit_library_media_select_mode, fake
     )
+    # task-28012: the "Select"/"Done" button and the "s" key share this seam.
+    fake._toggle_library_media_select_mode = types.MethodType(
+        LibraryScreen._toggle_library_media_select_mode, fake
+    )
     fake._clear_library_media_selection_for_scope_change = types.MethodType(
         LibraryScreen._clear_library_media_selection_for_scope_change, fake
     )
@@ -143,6 +147,68 @@ def test_row_press_normal_mode_opens_viewer():
     LibraryScreen.handle_library_media_row(fake, event)
     assert fake._viewer_opened == ["7"]
     assert not fake._library_media_row_selection.is_selected("7")
+
+
+def _focused_media_row(media_id):
+    return SimpleNamespace(
+        media_id=media_id,
+        has_class=lambda cls: cls == "library-media-row",
+    )
+
+
+def test_space_action_toggles_focused_row_in_select_mode():
+    """task-28012: Space on a focused row toggles its selection in select mode."""
+    fake = _media_fake(select_mode=True)
+    fake.refresh = lambda **k: setattr(fake, "_refreshed", fake._refreshed + 1)
+    fake.focused = _focused_media_row("7")
+    LibraryScreen.action_library_media_toggle_row_selection(fake)
+    assert fake._library_media_row_selection.is_selected("7")
+    # Toggling again clears it.
+    LibraryScreen.action_library_media_toggle_row_selection(fake)
+    assert not fake._library_media_row_selection.is_selected("7")
+
+
+def test_space_action_noop_outside_select_mode():
+    """task-28012: Space does nothing on a row when not in select mode."""
+    fake = _media_fake(select_mode=False)
+    fake.refresh = lambda **k: None
+    fake.focused = _focused_media_row("7")
+    LibraryScreen.action_library_media_toggle_row_selection(fake)
+    assert not fake._library_media_row_selection.is_selected("7")
+
+
+def test_space_action_noop_when_focus_is_not_a_row():
+    """task-28012: Space toggles nothing when focus is not on a media row."""
+    fake = _media_fake(select_mode=True)
+    fake.refresh = lambda **k: None
+    fake.focused = SimpleNamespace(has_class=lambda cls: False)
+    LibraryScreen.action_library_media_toggle_row_selection(fake)
+    assert fake._library_media_row_selection.count == 0
+
+
+def test_select_enter_available_matches_the_button_gate():
+    """task-28012 (Qodo #2309): entering select mode needs fresh rows.
+
+    The keyboard "s" must obey the same availability as the Select button
+    (disabled with no rows or on a stale page), so this predicate -- the
+    one check_action consults for entry -- gates on controller state.
+    """
+    fake = SimpleNamespace(
+        _library_media_browse_controller=SimpleNamespace(
+            freshness="fresh",
+            retained_items=({"id": "local:media:1"},),
+        )
+    )
+    assert LibraryScreen._library_media_select_enter_available(fake) is True
+
+    # No rows -> not available (matches the disabled Select button).
+    fake._library_media_browse_controller.retained_items = ()
+    assert LibraryScreen._library_media_select_enter_available(fake) is False
+
+    # Stale page -> not available even with rows.
+    fake._library_media_browse_controller.retained_items = ({"id": "x"},)
+    fake._library_media_browse_controller.freshness = "stale"
+    assert LibraryScreen._library_media_select_enter_available(fake) is False
 
 
 @pytest.mark.asyncio

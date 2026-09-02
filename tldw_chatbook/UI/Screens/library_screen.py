@@ -195,6 +195,7 @@ from ...Library.library_ingest_state import (
 from ...Library.library_media_state import (
     LibraryMediaCanvasState,
     LibraryMediaTrashState,
+    MEDIA_SORT_CHOICES,
     MediaBrowseScope,
     MediaTrashBrowseState,
     MediaTrashScope,
@@ -782,6 +783,11 @@ _LIBRARY_PROMPTS_SEARCH_DEBOUNCE_SECONDS = 0.25
 # concern, not pure list-state-building logic" posture as the prompts modes
 # above, kept local rather than in library_skills_state.py.
 _LIBRARY_SKILLS_SORT_MODES = ("name", "status")
+
+# task-28012 (Qodo #2309): the media bulk-selection keys, named once so the
+# key ``Binding``s and the advertised footer shortcuts cannot drift apart.
+_MEDIA_SELECT_MODE_KEY = "s"
+_MEDIA_ROW_SELECT_KEY = "space"
 
 
 def _library_screen_is_current(screen: Any) -> bool:
@@ -2421,6 +2427,22 @@ class LibraryScreen(BaseAppScreen):
         # printable key first, so "[" / "]" still type in the search box.
         Binding("]", "library_media_next_item", "Next item", show=False),
         Binding("[", "library_media_prev_item", "Previous item", show=False),
+        # task-28012: keyboard access to bulk selection. "s" enters/exits
+        # select mode on the media list; Space toggles the focused row while
+        # in it. ``check_action`` gates both; a focused Input consumes the
+        # printable "s"/Space first, so they still type in the filter/search.
+        Binding(
+            _MEDIA_SELECT_MODE_KEY,
+            "library_media_toggle_select_mode",
+            "Select",
+            show=False,
+        ),
+        Binding(
+            _MEDIA_ROW_SELECT_KEY,
+            "library_media_toggle_row_selection",
+            "Toggle selection",
+            show=False,
+        ),
     ]
 
     #: task-4023 AC#7: which canvas's "Export…" action opened the Export
@@ -2552,6 +2574,23 @@ class LibraryScreen(BaseAppScreen):
     LIBRARY_LIST_SHORTCUTS = (
         ("/", "focus search"),
         ("F6", "next pane"),
+        ("esc", "focus rail"),
+    )
+
+    #: task-28012: the media list teaches the bulk-selection keys the other
+    #: list canvases don't have -- "s" enters Select mode; while selecting,
+    #: Space toggles the focused row and "s" leaves.
+    LIBRARY_MEDIA_LIST_SHORTCUTS = (
+        ("/", "focus search"),
+        ("F6", "next pane"),
+        (_MEDIA_SELECT_MODE_KEY, "select"),
+        ("esc", "focus rail"),
+    )
+    LIBRARY_MEDIA_SELECT_SHORTCUTS = (
+        ("/", "focus search"),
+        ("F6", "next pane"),
+        (_MEDIA_ROW_SELECT_KEY, "toggle selection"),
+        (_MEDIA_SELECT_MODE_KEY, "done selecting"),
         ("esc", "focus rail"),
     )
 
@@ -3913,6 +3952,8 @@ class LibraryScreen(BaseAppScreen):
         # task-14902: True while the media type chooser's direct-pick strip
         # replaces the browse toolbar row (the Notes Sort strip pattern).
         self._library_media_type_choices_visible: bool = False
+        # task-28013: the browse sort chooser's direct-pick strip visibility.
+        self._library_media_sort_choices_visible: bool = False
         # Trash owns an independent source scope. Draft and semantic focus
         # remain screen concerns because Task 5 renders their controls; page
         # authority lives exclusively in ``_library_media_trash_browse_controller``.
@@ -4915,6 +4956,13 @@ class LibraryScreen(BaseAppScreen):
                     ("/", "focus search"),
                     ("F6", "next pane"),
                 ]
+                # task-28011: while a content search with matches is active,
+                # Enter walks to the next match (find-bar convention).
+                if (
+                    self._library_media_content_query
+                    and self._library_media_content_matches()
+                ):
+                    shortcuts.append(("enter", "next match"))
                 # task-28005: advertise Prev/Next only when there IS a
                 # neighbour that way, so the footer stops teaching a key
                 # that no-ops at the list ends.
@@ -4947,6 +4995,15 @@ class LibraryScreen(BaseAppScreen):
         open_strip = self._library_open_choice_strip()
         if open_strip is not None:
             return (("enter", f"choose {open_strip[0]}"), ("esc", "cancel"))
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+            and self._library_media_view == "list"
+            and self._library_list_canvas_showing_list()
+        ):
+            # task-28012: teach the bulk-selection keys on the media list.
+            if self._library_media_select_mode:
+                return self.LIBRARY_MEDIA_SELECT_SHORTCUTS
+            return self.LIBRARY_MEDIA_LIST_SHORTCUTS
         if self._library_list_canvas_showing_list():
             return self.LIBRARY_LIST_SHORTCUTS
         return self.LIBRARY_GENERAL_SHORTCUTS
@@ -17712,6 +17769,7 @@ class LibraryScreen(BaseAppScreen):
             confirming_bulk_delete=self._library_media_confirming_bulk_delete,
             delete_receipt_count=len(self._library_media_delete_receipt_ids),
             type_choices_visible=self._library_media_type_choices_visible,
+            sort_choices_visible=self._library_media_sort_choices_visible,
             loading_id=(
                 (self._library_media_reader_session.selected_id or "")
                 if self._library_media_reader_session.pending_request is not None
@@ -17780,6 +17838,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_media_lifecycle_generation
             )
             self._library_media_type_choices_visible = False
+            self._library_media_sort_choices_visible = False
             self._sync_library_media_browse_state(None)
             self._sync_library_media_viewer_mutation_gate()
         return self._library_media_mutation_scope
@@ -26729,6 +26788,9 @@ class LibraryScreen(BaseAppScreen):
             or self._library_media_confirming_bulk_delete
         ):
             return
+        # Mutually exclusive with the sort chooser (task-28013): one strip
+        # replaces the toolbar row at a time.
+        self._library_media_sort_choices_visible = False
         self._library_media_type_choices_visible = (
             not self._library_media_type_choices_visible
         )
@@ -26777,6 +26839,75 @@ class LibraryScreen(BaseAppScreen):
             self,
             "media",
             then=lambda: self._focus_library_control("#library-media-type-filter"),
+        )
+
+    @on(Button.Pressed, "#library-media-sort")
+    def handle_library_media_sort(self, event: Button.Pressed) -> None:
+        """Open (or close) the media browse sort chooser's direct-pick strip.
+
+        task-28013: mirrors the type chooser and the Prompts/Notes sort
+        choosers -- Sort is one control family across the list canvases. Inert
+        while a bulk delete is armed or in flight (task-2853 AC3: nothing may
+        drift the list state under an armed confirm).
+        """
+        event.stop()
+        if (
+            self._library_media_bulk_delete_in_flight
+            or self._library_media_confirming_bulk_delete
+        ):
+            return
+        # Mutually exclusive with the type chooser: only one strip at a time.
+        self._library_media_type_choices_visible = False
+        self._library_media_sort_choices_visible = (
+            not self._library_media_sort_choices_visible
+        )
+        _sync_library_canvas(self, "media")
+        if self._library_media_sort_choices_visible:
+            current = self._library_media_browse_controller.mutation_refresh_scope.sort_by
+            self.call_after_refresh(
+                self._focus_library_choice_strip_active,
+                ".library-media-sort-choice",
+                current,
+            )
+        else:
+            self.call_after_refresh(
+                self._focus_library_control, "#library-media-sort"
+            )
+
+    @on(Button.Pressed, ".library-media-sort-choice")
+    def handle_library_media_sort_choice(self, event: Button.Pressed) -> None:
+        """Apply the exact sort value carried by one strip choice (task-28013).
+
+        Picking the already-active sort only closes the strip -- no service
+        request. Any other value re-fetches page one under the new order.
+        """
+        event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
+        requested = str(getattr(event.button, "choice_value", "") or "")
+        self._library_media_sort_choices_visible = False
+        current = self._library_media_browse_controller.mutation_refresh_scope.sort_by
+        valid = {value for value, _ in MEDIA_SORT_CHOICES}
+        if requested not in valid or requested == current:
+            _sync_library_canvas(
+                self,
+                "media",
+                then=lambda: self._focus_library_control("#library-media-sort"),
+            )
+            return
+        self._request_library_media_sort(
+            requested, focus_identity="#library-media-sort"
+        )
+
+    def _request_library_media_sort(
+        self, sort_by: str, *, focus_identity: str | None
+    ) -> Any | None:
+        """Request page one after changing only the applied Media sort order."""
+        self._clear_library_media_selection_for_scope_change()
+        applied = self._library_media_browse_controller.mutation_refresh_scope
+        return self._request_library_media_browse(
+            dataclasses.replace(applied, sort_by=sort_by, page=1),
+            focus_identity=focus_identity,
         )
 
     @on(Button.Pressed, "#library-media-empty-import")
@@ -26883,6 +27014,14 @@ class LibraryScreen(BaseAppScreen):
         the selection [silently]" finding.
         """
         event.stop()
+        self._toggle_library_media_select_mode()
+
+    def _toggle_library_media_select_mode(self) -> None:
+        """Enter/exit media select mode (shared by the button and the key).
+
+        task-28012: the "s" binding reuses this exact seam so the keyboard
+        and the "Select"/"Done" button can never drift.
+        """
         if self._library_media_bulk_delete_in_flight:
             return
         if self._library_media_select_mode:
@@ -26900,6 +27039,51 @@ class LibraryScreen(BaseAppScreen):
             # underneath a new one.
             self._library_media_delete_receipt_ids = ()
         _sync_library_canvas(self, "media")
+
+    def _library_media_select_enter_available(self) -> bool:
+        """Whether ENTERING media Select mode is offered (task-28012).
+
+        Qodo #2309: the keyboard "s" must obey the same availability as the
+        Select button, which is disabled with no rows or on a stale page.
+        Exiting an active selection stays possible regardless (the caller
+        gates that), so this covers entry only. State-level (controller
+        freshness + retained rows), never presentation labels.
+
+        Returns:
+            True when a fresh page with at least one row is showing.
+        """
+        controller = self._library_media_browse_controller
+        if controller.freshness == "stale":
+            return False
+        return bool(controller.retained_items)
+
+    def action_library_media_toggle_select_mode(self) -> None:
+        """Keyboard "s": enter/exit media select mode (task-28012)."""
+        self._toggle_library_media_select_mode()
+
+    def action_library_media_toggle_row_selection(self) -> None:
+        """Keyboard Space: toggle the focused media row's selection (task-28012).
+
+        A no-op outside select mode, while a bulk-delete confirm is armed
+        (task-2853 AC3), or when focus is not on a media row. Mirrors the
+        select-mode branch of ``handle_library_media_row`` but acts on the
+        focused row rather than a pressed button, so keyboard-only users can
+        build a selection without a mouse.
+        """
+        if not self._library_media_select_mode:
+            return
+        if self._library_media_confirming_bulk_delete:
+            return
+        if self._library_media_bulk_delete_in_flight:
+            return
+        focused = self.focused
+        if focused is None or not focused.has_class("library-media-row"):
+            return
+        media_id = str(getattr(focused, "media_id", "") or "")
+        if not media_id:
+            return
+        self._library_media_row_selection.toggle(media_id)
+        _apply_library_row_toggle(self, "media", focused, media_id)
 
     def _exit_library_media_select_mode(self, *, announce_discard: bool) -> None:
         """Leave media Select mode: clear the selection and any pending
@@ -30490,6 +30674,40 @@ class LibraryScreen(BaseAppScreen):
             "library_rag_result_card_open",
         ):
             return self._focused_library_rag_result_card_index() is not None
+        if action == "library_media_toggle_select_mode":
+            # task-28012: only on the media LIST (not viewer/trash), and not
+            # while a bulk-delete confirm is armed or a delete is in flight.
+            if (
+                self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
+                or self._library_media_view != "list"
+                or self._library_media_confirming_bulk_delete
+                or self._library_media_bulk_delete_in_flight
+            ):
+                return False
+            # task-28012 (Qodo #2309): exiting an active selection is always
+            # allowed (rows may have vanished), but ENTERING must obey the
+            # same availability as the Select button -- no rows, or a stale
+            # page, disables it.
+            if self._library_media_select_mode:
+                return True
+            return self._library_media_select_enter_available()
+        if action == "library_media_toggle_row_selection":
+            # task-28012: only while select mode is active with a media row
+            # focused -- otherwise Space falls through to its default. Qodo
+            # #2309: a stale page (or an armed/in-flight bulk delete) gates
+            # row toggling exactly as it gates the row buttons.
+            if not self._library_media_select_mode:
+                return False
+            if (
+                self._library_media_browse_controller.freshness == "stale"
+                or self._library_media_confirming_bulk_delete
+                or self._library_media_bulk_delete_in_flight
+            ):
+                return False
+            focused = self.focused
+            return bool(
+                focused is not None and focused.has_class("library-media-row")
+            )
         if action in ("library_media_next_item", "library_media_prev_item"):
             # task-28005: active only in the plain Reader with a neighbour in
             # that direction, so the key no-ops (and drops from the footer)
@@ -34337,6 +34555,16 @@ class LibraryScreen(BaseAppScreen):
                 "_library_media_type_choices_visible",
             )
         if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+            and self._library_media_view == "list"
+            and self._library_media_sort_choices_visible
+        ):
+            return (
+                "sort",
+                "#library-media-sort",
+                "_library_media_sort_choices_visible",
+            )
+        if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
             and self._library_prompts_view == "list"
             and self._library_prompts_sort_choices_visible
@@ -34382,6 +34610,7 @@ class LibraryScreen(BaseAppScreen):
         self._sync_library_emergency_guard_presentation()
         canvas_kind = {
             "_library_media_type_choices_visible": "media",
+            "_library_media_sort_choices_visible": "media",
             "_library_prompts_sort_choices_visible": "prompts",
             "_library_skills_sort_choices_visible": "skills",
             "_library_export_quality_choices_visible": "export",
@@ -42082,6 +42311,9 @@ class LibraryScreen(BaseAppScreen):
         # and prev/next navigation all search the exact same needle.
         submitted = event.value.strip()
         if submitted == self._library_media_content_query:
+            # task-28011: re-pressing Enter on the same query walks to the
+            # next match (find-bar convention) instead of no-opping.
+            self._advance_library_media_content_match(1)
             return
         self._library_media_content_query = submitted
         self._library_media_content_match_index = 0
