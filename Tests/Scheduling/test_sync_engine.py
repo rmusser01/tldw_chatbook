@@ -1550,6 +1550,260 @@ async def test_sync_now_definition_poisoned_mutation_does_not_block_the_rest(tmp
     assert any("version_conflict" in error["message"] for error in errors)
 
 
+
+# ----------------------------------------------------------------------
+# Definition lifecycle mutation replay (pause/resume/archive) --
+# schedules-handoff PR-5, task 2. Direct endpoint calls (no preview):
+# success mirrors the response echo via `upsert_automation_definitions_
+# from_server` and clears the mutation; `ServerClientNotFoundError` clears
+# it with an info log (nothing left server-side to transition, no local
+# edit to preserve by converting to a create like the update leg does);
+# `ServerClientValidationError` settles via the existing per-mutation
+# rejection path (final review I3 -- one poisoned mutation never blocks
+# the rest); a retryable error leaves the mutation queued.
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sync_now_replays_definition_pause_and_mirrors_echo(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Daily digest", server_id="srv-def-1"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {"action": "pause", "server_definition_id": "srv-def-1"},
+    )
+    server_client = _empty_reminders_client()
+    server_client.pause_automation_definition.return_value = {
+        "id": "srv-def-1",
+        "family": "recurring_question",
+        "name": "Daily digest",
+        "lifecycle": "paused",
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.pause_automation_definition.assert_awaited_once_with("srv-def-1")
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    )
+    row = db.get_automation_definition(local_id)
+    assert row["lifecycle"] == "paused"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_replays_definition_resume(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1",
+        "recurring_question",
+        "Daily digest",
+        server_id="srv-def-1",
+        lifecycle="paused",
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {"action": "resume", "server_definition_id": "srv-def-1"},
+    )
+    server_client = _empty_reminders_client()
+    server_client.resume_automation_definition.return_value = {
+        "id": "srv-def-1",
+        "family": "recurring_question",
+        "name": "Daily digest",
+        "lifecycle": "configured",
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.resume_automation_definition.assert_awaited_once_with("srv-def-1")
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    )
+    assert db.get_automation_definition(local_id)["lifecycle"] == "configured"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_replays_definition_archive(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Daily digest", server_id="srv-def-1"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {"action": "archive", "server_definition_id": "srv-def-1"},
+    )
+    server_client = _empty_reminders_client()
+    server_client.archive_automation_definition.return_value = {
+        "id": "srv-def-1",
+        "family": "recurring_question",
+        "name": "Daily digest",
+        "lifecycle": "archived",
+        "archived_at": "2026-09-01T00:00:00+00:00",
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.archive_automation_definition.assert_awaited_once_with("srv-def-1")
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    )
+    row = db.get_automation_definition(local_id)
+    assert row["lifecycle"] == "archived"
+    assert row["archived_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_lifecycle_not_found_clears_without_sync_error(
+    tmp_path, captured_logs
+):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Gone", server_id="srv-def-gone"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {"action": "archive", "server_definition_id": "srv-def-gone"},
+    )
+    server_client = _empty_reminders_client()
+    server_client.archive_automation_definition.side_effect = ServerClientNotFoundError(
+        "gone"
+    )
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    ), "nothing left server-side to transition -- clear rather than retry forever"
+    state = db.get_sync_state("server:1") or {}
+    assert not (state.get("sync_errors") or []), "a 404 here is not a user-facing error"
+    assert any(
+        level == "INFO" and "srv-def-gone" in message for level, message in captured_logs
+    )
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_lifecycle_validation_error_does_not_block_the_rest(
+    tmp_path,
+):
+    from tldw_chatbook.Scheduling.services.server_client import (
+        ServerClientValidationError,
+    )
+
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    poisoned_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Archived already", server_id="srv-def-old"
+    )
+    db.record_pending_mutation(
+        poisoned_id,
+        "automation_definition",
+        "server:1",
+        {"action": "pause", "server_definition_id": "srv-def-old"},
+    )
+    healthy_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Healthy", server_id="srv-def-healthy"
+    )
+    db.record_pending_mutation(
+        healthy_id,
+        "automation_definition",
+        "server:1",
+        {"action": "resume", "server_definition_id": "srv-def-healthy"},
+    )
+    server_client = _empty_reminders_client()
+    server_client.pause_automation_definition.side_effect = ServerClientValidationError(
+        "scheduled_task_lifecycle_transition_invalid"
+    )
+    server_client.resume_automation_definition.return_value = {
+        "id": "srv-def-healthy",
+        "family": "recurring_question",
+        "name": "Healthy",
+        "lifecycle": "configured",
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    # The healthy resume went through despite the poisoned pause ahead of it.
+    assert db.get_automation_definition(healthy_id)["lifecycle"] == "configured"
+    # And the poisoned one is settled, not left to jam the queue forever.
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    errors = (db.get_sync_state("server:1") or {}).get("sync_errors") or []
+    assert any("lifecycle_transition_invalid" in error["message"] for error in errors)
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_lifecycle_retryable_error_retains_mutation(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Daily digest", server_id="srv-def-1"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {"action": "pause", "server_definition_id": "srv-def-1"},
+    )
+    server_client = _empty_reminders_client()
+    server_client.pause_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "error"
+    assert "offline" in (outcome.error or "")
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1, "the mutation must be left queued for retry"
+    assert db.get_automation_definition(local_id)["lifecycle"] == "configured"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_lifecycle_without_server_id_drops_mutation(tmp_path):
+    """A lifecycle action can't apply to a definition the server has never
+    seen -- unlike `update`, there is no create to convert this into, so an
+    (unreachable via the current queuing path, but defensively guarded)
+    missing `server_definition_id` just drops the mutation rather than
+    retrying forever."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Offline draft"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {"action": "pause", "server_definition_id": None},
+    )
+    server_client = _empty_reminders_client()
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.pause_automation_definition.assert_not_awaited()
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    )
+
+
 @pytest.mark.asyncio
 async def test_sync_now_pulls_and_upserts_definitions(tmp_path):
     db = ScheduledTasksDB(tmp_path / "db.db")

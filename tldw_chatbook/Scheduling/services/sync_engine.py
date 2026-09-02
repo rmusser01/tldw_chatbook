@@ -545,6 +545,10 @@ class SyncEngine:
                 return await self._push_definition_create(
                     local_id, mutation_id, owner_id, definition_payload
                 )
+            if action in ("pause", "resume", "archive"):
+                return await self._push_definition_lifecycle(
+                    local_id, mutation_id, owner_id, action, server_definition_id
+                )
         except ServerClientPolicyError:
             raise
         except ServerClientValidationError as exc:
@@ -661,6 +665,60 @@ class SyncEngine:
         self.db.adopt_server_definition_identity(local_id, updated)
         self.db.delete_pending_mutation(mutation_id)
         return "updated"
+
+    async def _push_definition_lifecycle(
+        self,
+        local_id: str,
+        mutation_id: int,
+        owner_id: str,
+        action: str,
+        server_definition_id: str | None,
+    ) -> str:
+        """Replay one pending pause/resume/archive lifecycle mutation.
+
+        A direct endpoint call -- no preview, unlike create/update, since a
+        lifecycle transition is not a payload edit. A missing
+        `server_definition_id` means the definition was never synced, so a
+        lifecycle action can't apply to it; unlike `update`, there is no
+        create to convert this into, so the mutation is just dropped.
+
+        `ServerClientNotFoundError` (the server definition was deleted
+        between queueing and replay) clears the mutation with an info log
+        rather than a sync error -- there is nothing left server-side to
+        transition, and no local edit to preserve by converting to a
+        create the way the update leg does.
+
+        A `ServerClientValidationError` (e.g. a 409
+        `scheduled_task_lifecycle_transition_invalid`) is left to
+        propagate: the caller (`_push_definition_mutation`) already
+        settles it via the same per-mutation rejection path create/update
+        use, so one poisoned lifecycle mutation never blocks the rest of
+        the queue either.
+        """
+        if not server_definition_id:
+            logger.warning(
+                f"Pending {action!r} automation_definition mutation for local "
+                f"{local_id} has no server_definition_id (never synced); dropping"
+            )
+            self.db.delete_pending_mutation(mutation_id)
+            return "unsynced"
+
+        assert self.server_client is not None
+        method = getattr(self.server_client, f"{action}_automation_definition")
+        try:
+            response = await method(server_definition_id)
+        except ServerClientNotFoundError:
+            logger.info(
+                f"Automation definition {server_definition_id} ({action}) not "
+                f"found server-side; dropping its pending lifecycle mutation"
+            )
+            self.db.delete_pending_mutation(mutation_id)
+            return f"{action}_not_found"
+
+        response = response if isinstance(response, dict) else {}
+        self.db.upsert_automation_definitions_from_server(owner_id, [response])
+        self.db.delete_pending_mutation(mutation_id)
+        return action
 
     def _reject_definition_mutation(
         self,

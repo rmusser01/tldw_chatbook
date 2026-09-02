@@ -79,6 +79,18 @@ class AutomationAuthoringNotificationsService:
             "preview_id": preview_id,
         }
 
+    async def pause_scheduled_automation_definition(self, definition_id):
+        self.calls.append(("pause", definition_id))
+        return {"id": definition_id, "family": "recurring_question", "lifecycle": "paused"}
+
+    async def resume_scheduled_automation_definition(self, definition_id):
+        self.calls.append(("resume", definition_id))
+        return {"id": definition_id, "family": "recurring_question", "lifecycle": "configured"}
+
+    async def archive_scheduled_automation_definition(self, definition_id):
+        self.calls.append(("archive", definition_id))
+        return {"id": definition_id, "family": "recurring_question", "lifecycle": "archived"}
+
 
 @pytest.mark.asyncio
 async def test_preview_automation_definition_passes_payload_through():
@@ -225,6 +237,142 @@ async def test_automation_authoring_policy_denial_maps_to_policy_error():
     client = SchedulingServerClient(DenyingService())
     with pytest.raises(ServerClientPolicyError):
         await client.preview_automation_definition(_PREVIEW_REQUEST)
+
+
+@pytest.mark.asyncio
+async def test_pause_automation_definition_passes_definition_id():
+    inner = AutomationAuthoringNotificationsService()
+    client = SchedulingServerClient(inner)
+
+    result = await client.pause_automation_definition("def-1")
+
+    assert result["lifecycle"] == "paused"
+    assert inner.calls == [("pause", "def-1")]
+
+
+@pytest.mark.asyncio
+async def test_resume_automation_definition_passes_definition_id():
+    inner = AutomationAuthoringNotificationsService()
+    client = SchedulingServerClient(inner)
+
+    result = await client.resume_automation_definition("def-1")
+
+    assert result["lifecycle"] == "configured"
+    assert inner.calls == [("resume", "def-1")]
+
+
+@pytest.mark.asyncio
+async def test_archive_automation_definition_passes_definition_id():
+    inner = AutomationAuthoringNotificationsService()
+    client = SchedulingServerClient(inner)
+
+    result = await client.archive_automation_definition("def-1")
+
+    assert result["lifecycle"] == "archived"
+    assert inner.calls == [("archive", "def-1")]
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_seams_are_retried_on_server_error():
+    # Lifecycle transitions are idempotent by nature -- pausing an
+    # already-paused definition is a no-op server-side -- so, unlike
+    # run-now/update, these keep the default retry behavior.
+    attempts = {"pause": 0}
+
+    class FlakyThenOk:
+        async def pause_scheduled_automation_definition(self, definition_id):
+            attempts["pause"] += 1
+            if attempts["pause"] < 2:
+                raise ServerClientServerError("boom")
+            return {"id": definition_id, "lifecycle": "paused"}
+
+    client = SchedulingServerClient(
+        FlakyThenOk(), config=ServerClientConfig(retry_delay=0.0)
+    )
+
+    result = await client.pause_automation_definition("def-1")
+
+    assert attempts["pause"] == 2
+    assert result["lifecycle"] == "paused"
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_seam_not_found_maps_to_typed_error():
+    class DeletedService:
+        async def archive_scheduled_automation_definition(self, definition_id):
+            raise ServerClientNotFoundError("gone")
+
+    client = SchedulingServerClient(DeletedService())
+    with pytest.raises(ServerClientNotFoundError):
+        await client.archive_automation_definition("def-1")
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_seams_require_a_connected_server():
+    client = SchedulingServerClient(None)
+    with pytest.raises(ServerUnavailableError):
+        await client.pause_automation_definition("def-1")
+    with pytest.raises(ServerUnavailableError):
+        await client.resume_automation_definition("def-1")
+    with pytest.raises(ServerUnavailableError):
+        await client.archive_automation_definition("def-1")
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_seam_policy_denial_maps_to_policy_error():
+    class DenyingService(AutomationAuthoringNotificationsService):
+        async def pause_scheduled_automation_definition(self, definition_id):
+            raise PolicyDeniedError(
+                action_id="scheduler.automations.configure.server",
+                reason_code="server_mode_required",
+                user_message="scheduler.automations.configure.server requires server mode.",
+                effective_source="local",
+                authority_owner="server",
+            )
+
+    client = SchedulingServerClient(DenyingService())
+    with pytest.raises(ServerClientPolicyError):
+        await client.pause_automation_definition("def-1")
+
+
+@pytest.mark.asyncio
+async def test_notifications_service_gates_lifecycle_seams_under_configure_action():
+    inner = Mock()
+
+    async def _pause(definition_id):
+        inner.pause_args = definition_id
+        return _FakeResponse({"id": definition_id, "lifecycle": "paused"})
+
+    async def _resume(definition_id):
+        inner.resume_args = definition_id
+        return _FakeResponse({"id": definition_id, "lifecycle": "configured"})
+
+    async def _archive(definition_id):
+        inner.archive_args = definition_id
+        return _FakeResponse({"id": definition_id, "lifecycle": "archived"})
+
+    inner.pause_scheduled_task_definition = _pause
+    inner.resume_scheduled_task_definition = _resume
+    inner.archive_scheduled_task_definition = _archive
+
+    policy = Mock()
+    service = ServerNotificationsService(client=inner, policy_enforcer=policy)
+
+    paused = await service.pause_scheduled_automation_definition("def-1")
+    resumed = await service.resume_scheduled_automation_definition("def-1")
+    archived = await service.archive_scheduled_automation_definition("def-1")
+
+    assert paused["lifecycle"] == "paused"
+    assert resumed["lifecycle"] == "configured"
+    assert archived["lifecycle"] == "archived"
+    assert [c.kwargs["action_id"] for c in policy.require_allowed.call_args_list] == [
+        "scheduler.automations.configure.server",
+        "scheduler.automations.configure.server",
+        "scheduler.automations.configure.server",
+    ]
+    assert inner.pause_args == "def-1"
+    assert inner.resume_args == "def-1"
+    assert inner.archive_args == "def-1"
 
 
 @pytest.mark.asyncio
