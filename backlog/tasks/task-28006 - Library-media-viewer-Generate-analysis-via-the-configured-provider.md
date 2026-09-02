@@ -1,9 +1,10 @@
 ---
 id: TASK-28006
 title: Library media viewer - Generate analysis via the configured provider
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-02 04:10'
+updated_date: '2026-09-02 06:28'
 labels:
   - library
   - media-ux
@@ -22,8 +23,14 @@ Re-verified 2026-09-02 live on dev tip (worktree media-ux-fixes @ b7e89b6de, tmu
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 An item without an analysis offers a Generate action when an analysis provider is ready
-- [ ] #2 Generation persists the result as an analysis version visible in the viewer
-- [ ] #3 With no ready provider, the action communicates the same reason language as the ingest hint instead of silently failing
-- [ ] #4 Generation runs off the UI thread with visible progress
+- [x] #1 An item without an analysis offers a Generate action when an analysis provider is ready
+- [x] #2 Generation persists the result as an analysis version visible in the viewer
+- [x] #3 With no ready provider, the action communicates the same reason language as the ingest hint instead of silently failing
+- [x] #4 Generation runs off the UI thread with visible progress
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Adds a Generate/Regenerate action to the Reader's Analysis tab (Widgets/Library/library_media_viewer.py _compose_analysis, wrapped with Edit in a ds-toolbar Horizontal). Handler handle_library_media_analysis_generate resolves the provider via the canonical resolve_ingest_analysis_provider seam (same as ingest, so promise/receipt cannot disagree): not-ready surfaces resolution.hint (the exact ingest language) via notify and does NOT dispatch; ready sets _library_media_generating_analysis, syncs (shows 'Generating analysis...'), and runs a worker. _dispatch_library_media_analysis calls chat_api_call off-thread (asyncio.to_thread) with the resolution's dispatch_name/api_key/model/sampling + api_key_resolved=True, and reuses extract_response_content (Chat_Functions) for the reply. Persists via the existing _save_library_media_analysis path (save_analysis_version + detail refresh). Design note: the button is always OFFERED (discoverable) and readiness is checked at press time with an honest reason (AC#3), rather than hidden when unready. Empty-content items get a 'no content to analyze' notice. Tests: test_library_media_generate_analysis_dispatches_and_persists, test_library_media_generate_analysis_without_provider_notifies_and_skips (patch resolve_ingest_analysis_provider + chat_api_call in the screen module). Files: library_media_viewer.py, library_screen.py, Tests/UI/test_library_shell.py.
+<!-- SECTION:NOTES:END -->
