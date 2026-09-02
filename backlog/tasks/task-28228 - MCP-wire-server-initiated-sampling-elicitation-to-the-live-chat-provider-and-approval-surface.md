@@ -1,5 +1,5 @@
 ---
-id: TASK-27019
+id: TASK-28228
 title: >-
   MCP: wire server-initiated sampling/elicitation to the live chat provider and
   approval surface
@@ -30,12 +30,20 @@ TASK-26029 shipped the protocol-correct handler + connection dispatch for server
 
 ## Renumbering provenance
 
-This task previously held id TASK-26042, colliding with the
-"Console-Workspace-Files-read-only-inspector" task that arrived on origin/dev first (dev max was 27018 at
-renumber time, 2026-09-02; range swept across all remote branches and local
-worktrees). Per the owner rule decided 2026-08-21 in TASK-19601 (**older id
-keeps it; the younger task renumbers with a provenance note, regardless of
-status**), it renumbered to TASK-27019. Citations to TASK-26042 in this
-branch's commit messages or implementation notes written before 2026-09-02
-refer to THIS task; the dev-resident TASK-26042 holder is the Workspace
-Files task.
+This task originally held id TASK-26042, colliding with the
+"Console-Workspace-Files-read-only-inspector" task that arrived on origin/dev
+first. It renumbered to TASK-27019 on 2026-09-02 after a sweep whose maximum was
+27018.
+
+TASK-27019 then collided with the older "Document Personal Context Profile for
+Chatbook users and developers" task (created 2026-09-01 14:45); this MCP task
+was created later, at 2026-09-01 23:28. Per the owner rule decided 2026-08-21
+in TASK-19601 (**older id keeps it; the younger task renumbers with a provenance
+note, regardless of status**), this task renumbered again to TASK-28228 after a
+fresh sweep across the current tree, all refs, and all registered worktrees
+found a maximum id of 28227 and no TASK-28228 claim.
+
+Citations to TASK-26042 before the first renumber, or TASK-27019 between the two
+renumbers, refer to THIS MCP task. The dev-resident TASK-26042 holder remains
+the Workspace Files task; TASK-27019 remains the Personal Context documentation
+task.

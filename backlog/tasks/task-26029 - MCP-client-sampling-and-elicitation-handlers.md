@@ -38,7 +38,7 @@ Server-initiated MCP requests are all refused. Verified on origin/dev: MCP/clien
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Protocol-correct, fail-closed handler + connection dispatch shipped and tested. Production injection of the LIVE chat provider + approval surface is split to TASK-27019 (app-context, not headless-verifiable), so this stays In Progress with ACs #1/#4 pending that wiring.
+Protocol-correct, fail-closed handler + connection dispatch shipped and tested. Production injection of the LIVE chat provider + approval surface is split to TASK-28228 (app-context, not headless-verifiable), so this stays In Progress with ACs #1/#4 pending that wiring.
 
 Shipped (MCP/server_request_handlers.py, new):
 - evaluate_sampling_request: pure gate (deny unless explicitly allowed - AC#2) + rate cap + token budget (AC#3).
@@ -48,7 +48,7 @@ Shipped (MCP/server_request_handlers.py, new):
 
 Tested (Tests/MCP/test_server_request_handlers.py, 16): gate/rate/budget, secret refusal (prompt + schema), dispatcher fulfill/refuse/decline/timeout, and connection-level routing (wired -> reply, unwired -> -32601). Existing MCP client suite kept green after adding the new optional kwarg to 9 test-double Session constructors.
 
-Remaining (TASK-27019): construct the dispatcher with chat_api_call (complete_fn) and the approval-store round-trip (elicit_fn), source SamplingPolicy from config, and set client._server_request_dispatcher at MCP/local_control_service.py:778.
+Remaining (TASK-28228): construct the dispatcher with chat_api_call (complete_fn) and the approval-store round-trip (elicit_fn), source SamplingPolicy from config, and set client._server_request_dispatcher at MCP/local_control_service.py:778.
 
 Files: tldw_chatbook/MCP/server_request_handlers.py (new), tldw_chatbook/MCP/client.py, Tests/MCP/test_server_request_handlers.py, Tests/MCP/test_client_catalog_pagination.py (test-double signature).
 <!-- SECTION:NOTES:END -->

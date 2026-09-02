@@ -1,7 +1,7 @@
 # Personal Context Profile Documentation Design
 
 - **Date:** 2026-08-31
-- **Status:** Approved design; shipped-behavior correction pending review
+- **Status:** Approved design; shipped-behavior correction reviewed and merged
 - **Last corrected:** 2026-09-02
 - **Repositories:** `tldw_chatbook`, `tldw_server`
 
