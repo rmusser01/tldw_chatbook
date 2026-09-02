@@ -98,7 +98,16 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # real, full-body methods on `LibraryScreen`, which is why this
     # measurement is a smaller shrink than a 46-method move would have
     # produced.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 44060, 1300),
+    # Raised again in the same task's review fix round: 44060 -> 44084 --
+    # a review caught the class-level `_safe_text` rebinding silently
+    # destroying the controller's own `_safe_text` property (a plain
+    # class-attribute assignment always overwrites a same-named class
+    # member, including a property descriptor); the fix removed the dead
+    # property/constructor-param/backing-attribute from the controller
+    # module and added an explanatory comment at the rebinding site plus
+    # one net wiring-call line removed here -- net +24 lines of
+    # documentation, no logic change, method count unchanged.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 44084, 1300),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

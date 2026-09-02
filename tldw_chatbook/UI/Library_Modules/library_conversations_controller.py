@@ -115,14 +115,29 @@ subsystem). Byte-for-byte canon keeps these three as ``@classmethod``\\ s
 (their screen delegators keep the ``@classmethod`` decorator too, per this
 task's correction to task 7's minor -- see ``__init__``'s docstring), which
 means ``cls`` is this controller class, not an instance -- the usual
-per-instance constructor-dependency lambda (binding kind 2 below) has no
-instance to attach to when ``cls`` is the class object itself. Resolved
-with ONE class-level rebinding, done from ``library_screen.py`` after both
+per-instance constructor-dependency lambda (binding kind 2 below) has NO
+instance to attach to when ``cls`` is the class object itself, so
+``_safe_text`` is bound differently from every other name in this module:
+ONE class-level rebinding, done from ``library_screen.py`` after both
 classes are fully defined (avoiding the circular import a controller-side
 ``from ..Screens.library_screen import LibraryScreen`` would create):
 ``LibraryConversationsController._safe_text = staticmethod(LibraryScreen._safe_text)``.
 See ``library_screen.py``'s own trailing module-level code, next to the
-generated state-shim block, for that one line.
+generated state-shim block, for that one line. This ALSO serves the
+cluster's three regular (non-classmethod) ``self._safe_text(...)`` call
+sites -- there is deliberately no separate instance-level ``@property``/
+constructor-dependency for ``_safe_text`` (an earlier version of this
+module carried one; a review proved a class-level assignment always wins
+over a same-named property already on the class, which made that
+property, its constructor parameter, and its backing attribute dead code
+that documented a per-instance injection seam the code did not actually
+provide -- see the class-level assignment's own comment in
+``library_screen.py`` for the full incident). Since ``_safe_text`` is a
+plain ``@staticmethod`` with no ``self``/``cls`` parameter of its own,
+reaching it through an instance (``self._safe_text(...)``) or through the
+class (``cls._safe_text(...)``) is identical Python attribute-lookup
+behavior either way -- one class-level binding legitimately covers both
+calling shapes.
 
 Two binding kinds only (moved method bodies are never edited -- every name
 they reference that is not this controller's own state is rebound under
@@ -149,12 +164,14 @@ controller in this same series):
    ``self`` is never a "free name" needing an import -- see the task
    report's "a real bug found and fixed" section.
 2. **Everything else** the cluster depends on that is not its own state is
-   a NAMED constructor dependency. This cluster's dependencies fall into
-   four groups: (a) general Library-wide screen helpers the moved bodies
-   call with explicit arguments (``_acknowledge_library_destination_change``,
+   a NAMED constructor dependency -- EXCEPT ``_safe_text``, which is a
+   class-level binding, not a constructor dependency; see above. This
+   cluster's dependencies fall into four groups: (a) general Library-wide
+   screen helpers the moved bodies call with explicit arguments
+   (``_acknowledge_library_destination_change``,
    ``_library_workspace_depth_state``, ``_open_library_export_canvas``,
    ``_open_library_item_by_id``, ``_run_library_service_call``,
-   ``_safe_text``, ``_source_record_id``, ``_source_title``); (b) three
+   ``_source_record_id``, ``_source_title``); (b) three
    cross-controller calls INTO the sibling reader controller (task 7) --
    ``_ensure_library_conversation_reader_selection``,
    ``_start_library_conversation_reader_selection``,
@@ -274,7 +291,6 @@ class LibraryConversationsController:
         open_library_export_canvas: Callable[..., Awaitable[Any]],
         open_library_item_by_id: Callable[..., Awaitable[Any]],
         run_library_service_call: Callable[..., Awaitable[Any]],
-        safe_text: Callable[..., str],
         source_record_id: Callable[[Mapping[str, Any]], str | None],
         source_title: Callable[[str, Mapping[str, Any]], str],
         # -- stays on LibraryScreen (see module docstring's "fake-self unit
@@ -404,15 +420,6 @@ class LibraryConversationsController:
                 service-call wrapper every Library subsystem's list/detail
                 fetch goes through. SAME binding shape as the reader
                 controller's own (task 7).
-            safe_text: ``LibraryScreen._safe_text`` -- the general,
-                ~36-call-site Library-wide input-sanitizing staticmethod.
-                Bound as an INSTANCE-level dependency for this cluster's
-                three regular (non-classmethod) call sites; see the module
-                docstring's class-level rebinding note for the two
-                CLASSMETHOD call sites, which this constructor parameter
-                does not cover (a classmethod dispatches via ``cls``, not
-                an instance, so it cannot reach a per-instance injected
-                callable).
             source_record_id: ``LibraryScreen._source_record_id`` -- the
                 general, cross-subsystem record-id resolver (also used by
                 Media, Notes, etc.), not itself Conversations-owned.
@@ -481,7 +488,6 @@ class LibraryConversationsController:
         self._open_library_export_canvas_fn = open_library_export_canvas
         self._open_library_item_by_id_fn = open_library_item_by_id
         self._run_library_service_call_fn = run_library_service_call
-        self._safe_text_fn = safe_text
         self._source_record_id_fn = source_record_id
         self._source_title_fn = source_title
         self._library_conversation_loaded_preview_selected_fn = (
@@ -672,12 +678,28 @@ class LibraryConversationsController:
         docstring."""
         return self._run_library_service_call_fn
 
-    @property
-    def _safe_text(self) -> Any:
-        """The injected ``safe_text``. Instance-level uses only -- see the
-        module docstring's class-level rebinding note for this cluster's
-        two classmethod call sites."""
-        return self._safe_text_fn
+    # `_safe_text` is deliberately NOT a property/named-constructor-
+    # dependency here. It is bound as a single CLASS-level attribute from
+    # `library_screen.py`, after both classes are fully defined:
+    # `LibraryConversationsController._safe_text = staticmethod(LibraryScreen._safe_text)`.
+    # See that assignment's own comment, and this module's docstring, for
+    # the full reasoning -- in short: two of this cluster's moved
+    # `@classmethod` bodies read `cls._safe_text(...)`, and a classmethod
+    # dispatches via the class object, never an instance, so an
+    # instance-level injected dependency (a `@property` reading
+    # `self._safe_text_fn`) cannot be reached from `cls.`. An earlier
+    # version of this controller carried BOTH a `@property` here and the
+    # class-level assignment; the class-level assignment always wins
+    # (`ClassName.attr = value` overwrites whatever attribute -- including
+    # a property descriptor -- previously lived there), so the property,
+    # its `safe_text` constructor parameter, and `self._safe_text_fn` were
+    # unreachable dead code that documented a seam (per-instance
+    # dependency injection) the code did not actually provide. A review
+    # caught this (task-8-report.md's fix-round section) before it could
+    # cause real confusion: a future test constructing this controller
+    # with a custom `safe_text=` callable, expecting `self._safe_text(...)`
+    # to use it, would have silently gotten the real
+    # `LibraryScreen._safe_text` instead.
 
     @property
     def _source_record_id(self) -> Any:

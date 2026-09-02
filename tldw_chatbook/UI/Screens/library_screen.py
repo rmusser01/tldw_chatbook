@@ -2264,7 +2264,6 @@ class LibraryScreen(BaseAppScreen):
                     *args, **kwargs
                 )
             ),
-            safe_text=lambda *a, **k: self._safe_text(*a, **k),
             source_record_id=lambda record: self._source_record_id(record),
             source_title=(
                 lambda source_type, record: self._source_title(source_type, record)
@@ -44057,4 +44056,29 @@ del _cs_field, _cs_prefix
 # import a controller-side `from ..Screens.library_screen import
 # LibraryScreen` would create (the controller module is imported by this
 # one, before `LibraryScreen` itself is defined).
+#
+# This is the CONTROLLER'S ONLY BINDING for `_safe_text` -- there is no
+# `@property`/constructor parameter for it, deliberately. This line is a
+# plain class-attribute assignment (`ClassName.attr = value`), which
+# REPLACES whatever was previously on the class under that name; a
+# `@property` of the same name defined in the class body would be
+# silently overwritten (not merged with, not consulted by) this
+# assignment the instant this module is imported -- which is why an
+# earlier version of this controller carrying BOTH a `_safe_text`
+# `@property` (reading an injected `safe_text` constructor callable) AND
+# this line was reviewed and found to have dead code: the property/
+# parameter/backing attribute could never run, because by the time any
+# `LibraryConversationsController` instance exists, `LibraryScreen` (and
+# hence this line) has necessarily already been imported and has already
+# overwritten the property. Since `_safe_text` is a plain `@staticmethod`
+# (no `self`/`cls` of its own), the SAME class-level callable correctly
+# serves both call shapes in the cluster's moved bodies:
+# `self._safe_text(...)` (3 regular-method sites) and `cls._safe_text(...)`
+# (2 classmethod sites) -- one binding, not two. A test constructing
+# `LibraryConversationsController` directly without ever importing
+# `library_screen` will not have this class attribute at all (an
+# `AttributeError`, not a working injected stub) -- an accepted
+# consequence of the class-level-only design, not a bug to route around;
+# production code always imports `library_screen` before any instance of
+# this controller can exist.
 LibraryConversationsController._safe_text = staticmethod(LibraryScreen._safe_text)
