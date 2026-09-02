@@ -1021,6 +1021,34 @@ async def test_save_definition_local_create(db):
 
 
 @pytest.mark.asyncio
+async def test_save_definition_local_create_strips_derived_resolved_sources(db):
+    """Task 6 E2E finding: a default (`all_searchable_library`) scope's
+    preview-normalized form injects a `resolved_sources` projection that
+    `normalize_recurring_question_scope` itself does not accept as input
+    (`SUPPORTED_SCOPE_FIELDS` has no such field). Persisting it verbatim
+    made every later re-normalization of this row's stored scope --
+    `automation_execution.py`'s dispatch, `automation_health.py`'s
+    sources-readable check -- report a spurious "unsupported field" error
+    and degrade every scheduled run. The stored row must not carry it."""
+    from tldw_chatbook.Scheduling.recurring_question_scope import (
+        normalize_recurring_question_scope,
+    )
+
+    svc = SchedulingService(db=db, runtime_source="local")
+
+    outcome = await svc.save_definition(_definition_payload(), "local")
+
+    row = db.get_automation_definition(outcome.definition_id)
+    stored_scope = row["config"]["scope"]
+    assert "resolved_sources" not in stored_scope
+    assert stored_scope["mode"] == "all_searchable_library"
+    # And the stored value must be safe to re-normalize, the way a real
+    # scheduled dispatch or health check does.
+    _normalized, errors, _warnings = normalize_recurring_question_scope(stored_scope)
+    assert errors == []
+
+
+@pytest.mark.asyncio
 async def test_save_definition_local_edit(db):
     svc = SchedulingService(db=db, runtime_source="local")
     created = await svc.save_definition(_definition_payload(), "local")

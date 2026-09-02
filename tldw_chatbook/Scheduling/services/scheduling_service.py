@@ -1067,17 +1067,33 @@ class SchedulingService:
         `ScheduledTaskDefinitionResponse` shape) rather than `normalized_
         config["visibility_policy"]`, which Task 1's preview deliberately
         leaves as the flat mode string.
+
+        `config.scope.resolved_sources` (task 6 E2E finding) is stripped
+        before storage: `normalize_recurring_question_scope`'s
+        `"all_searchable_library"` branch (`recurring_question_scope.py`)
+        computes that key fresh on every call as an OUTPUT projection, not
+        an accepted input field (`SUPPORTED_SCOPE_FIELDS` has no such
+        entry). Persisting it verbatim made every later re-normalization of
+        this stored scope -- `automation_execution.py`'s own dispatch,
+        `automation_health.py`'s sources-readable check -- report a
+        spurious "unsupported field" error, degrading every scheduled run
+        of a default-scope (the common case) definition. It is always
+        recomputed on read, so dropping it here loses nothing.
         """
         from tldw_chatbook.Scheduling.schedule_compute import compute_next_run_at
 
         normalized = preview.normalized_config or {}
         schedule = normalized.get("schedule") or {}
+        config = dict(normalized.get("config") or {})
+        scope = config.get("scope")
+        if isinstance(scope, dict) and "resolved_sources" in scope:
+            config["scope"] = {k: v for k, v in scope.items() if k != "resolved_sources"}
         return {
             "name": normalized.get("name"),
             "description": normalized.get("description"),
             "schedule": schedule,
             "input": normalized.get("input") or {},
-            "config": normalized.get("config") or {},
+            "config": config,
             "visibility_policy": preview.visibility_policy or {},
             "notification_policy": normalized.get("notification_policy") or {},
             "approval_policy": normalized.get("approval_policy") or {},
