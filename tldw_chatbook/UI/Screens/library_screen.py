@@ -153,6 +153,7 @@ from ...Library.library_export_state import (
 from ...Widgets.Library.library_export_canvas import (
     apply_library_export_submit_gate,
 )
+from ...Chat.Chat_Functions import chat_api_call, extract_response_content
 from ...Library.ingest_analysis import resolve_ingest_analysis_provider
 from ...Library.ingest_capabilities import (
     capabilities_for_backend,
@@ -3935,6 +3936,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_confirming_delete: bool = False
         self._library_media_highlights: list[dict[str, Any]] = []
         self._library_media_editing_analysis: bool = False
+        # task-28006: an LLM analysis generation is in flight for the open item.
+        self._library_media_generating_analysis: bool = False
         self._library_media_content_query: str = ""
         self._library_media_content_match_index: int = 0
         # task-22209: in-content match list for the open item, memoized on
@@ -42158,6 +42161,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_media_highlights
             ),
             editing_analysis=self._library_media_editing_analysis,
+            generating_analysis=self._library_media_generating_analysis,
             content_query=self._library_media_content_query,
             content_match_index=self._library_media_content_match_index,
             content_mode=self._library_media_content_mode,
@@ -42439,6 +42443,7 @@ class LibraryScreen(BaseAppScreen):
             viewer.confirming_delete = self._library_media_confirming_delete
             viewer.highlights = highlights
             viewer.editing_analysis = self._library_media_editing_analysis
+            viewer.generating_analysis = self._library_media_generating_analysis
             viewer.content_query = self._library_media_content_query
             viewer.content_match_index = self._library_media_content_match_index
             viewer.content_mode = self._library_media_content_mode
@@ -43172,6 +43177,124 @@ class LibraryScreen(BaseAppScreen):
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             notify(message, severity="warning")
+
+    @on(Button.Pressed, "#library-media-analysis-generate")
+    def handle_library_media_analysis_generate(self, event: Button.Pressed) -> None:
+        """Generate an analysis for the open item via the configured provider.
+
+        task-28006: resolves the provider through the same seam the ingest
+        path uses (``resolve_ingest_analysis_provider``), so the promise
+        made here and the ingest receipt can never disagree. Not-ready
+        surfaces the resolver's own honest reason instead of dispatching;
+        ready flips the section into its "Generating analysis…" state and
+        hands the call to a worker.
+
+        Args:
+            event: Button press event from the Analysis section's Generate
+                action.
+        """
+        event.stop()
+        if self._library_media_generating_analysis:
+            return
+        media_id = self._selected_media_id
+        if not media_id:
+            return
+        resolution = resolve_ingest_analysis_provider(self.app_instance.app_config)
+        if not resolution.ready:
+            self._notify_library_media_analysis_warning(
+                resolution.hint
+                or f"Analysis provider not ready: {resolution.short_reason}"
+            )
+            return
+        detail = (
+            self._library_media_detail
+            if isinstance(self._library_media_detail, Mapping)
+            else {}
+        )
+        content = str(detail.get("content") or "")
+        if not content.strip():
+            self._notify_library_media_analysis_warning(
+                "This item has no content to analyze."
+            )
+            return
+        self._library_media_generating_analysis = True
+        self._sync_library_media_viewer_or_recompose()
+        self.run_worker(
+            self._generate_library_media_analysis(
+                media_id, content=content, resolution=resolution
+            ),
+            group="library_media_analysis_generate",
+        )
+
+    async def _generate_library_media_analysis(
+        self, media_id: str, *, content: str, resolution: Any
+    ) -> None:
+        """Dispatch the analysis LLM call off-thread, then persist the result.
+
+        Always clears the generating flag and re-fetches detail so the
+        viewer never sticks in the progress state. On any failure the flag
+        is cleared and a quiet warning is surfaced; nothing is persisted.
+
+        Args:
+            media_id: The open Library media item id.
+            content: The document content to analyze.
+            resolution: The ready ``IngestAnalysisResolution`` describing the
+                provider, credential, and sampling parameters.
+        """
+        try:
+            analysis_text = await asyncio.to_thread(
+                self._dispatch_library_media_analysis, content, resolution
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Analysis generation failed for {media_id!r}."
+            )
+            analysis_text = ""
+        analysis_text = (analysis_text or "").strip()
+        self._library_media_generating_analysis = False
+        if not analysis_text:
+            self._notify_library_media_analysis_warning(
+                "Analysis generation returned nothing; the item is unchanged."
+            )
+            self._sync_library_media_viewer_or_recompose()
+            return
+        await self._save_library_media_analysis(
+            media_id, content=content, analysis_content=analysis_text
+        )
+
+    def _dispatch_library_media_analysis(self, content: str, resolution: Any) -> str:
+        """Call the resolved provider once and return the analysis text.
+
+        Runs on a worker thread (``chat_api_call`` is synchronous). The
+        credential is already resolved by the provider seam, so
+        ``api_key_resolved=True`` bypasses a second lookup.
+
+        Args:
+            content: The document content to analyze.
+            resolution: The ready ``IngestAnalysisResolution``.
+
+        Returns:
+            The extracted analysis text, or ``""`` when the response carried
+            none.
+        """
+        user_prompt = (
+            "Analyze and summarize the following content.\n\n"
+            f"---\n\n{content}"
+        )
+        response = chat_api_call(
+            api_endpoint=resolution.dispatch_name,
+            messages_payload=[{"role": "user", "content": user_prompt}],
+            api_key=resolution.api_key,
+            temp=resolution.temperature,
+            system_message=resolution.system_prompt,
+            streaming=False,
+            minp=resolution.min_p,
+            topp=resolution.top_p,
+            model=resolution.model,
+            max_tokens=resolution.max_tokens,
+            api_key_resolved=True,
+        )
+        return extract_response_content(response)
 
     @on(Button.Pressed, "#library-media-open")
     def handle_library_media_open(self, event: Button.Pressed) -> None:
