@@ -86,9 +86,10 @@ from .sql_validation import (
 from .sql_logging import preview_params
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
 from .base_db import (
-    SQLiteConnectionQuiescenceRegistry,
+    _QuiescentSQLiteConnection,
     _SemanticMutationAuthorization,
     register_semantic_mutation_guard,
+    sqlite_connection_quiescence_registry,
 )
 from .transaction_observer import (
     begin_managed_transaction,
@@ -3224,7 +3225,9 @@ UPDATE db_schema_version
             f"[Client ID: {self.client_id}]"
         )
         self._local = threading.local()
-        self._connection_quiescence = SQLiteConnectionQuiescenceRegistry()
+        self._connection_quiescence = sqlite_connection_quiescence_registry(
+            None if self.is_memory_db else self.db_path_str
+        )
         try:
             self._initialize_schema()
 
@@ -3333,7 +3336,11 @@ UPDATE db_schema_version
                         detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
                         check_same_thread=False,  # Required for threading.local approach
                         timeout=15,  # Maybe slightly increase timeout?
+                        factory=_QuiescentSQLiteConnection,
                     )
+                    if not isinstance(conn, _QuiescentSQLiteConnection):
+                        raise RuntimeError("quiescent_connection_factory")
+                    conn.attach_quiescence_registry(self._connection_quiescence)
                     conn.row_factory = sqlite3.Row
                     if not self.is_memory_db:
                         conn.execute("PRAGMA journal_mode=WAL;")
@@ -3394,12 +3401,21 @@ UPDATE db_schema_version
         return self._get_thread_connection()
 
     def registered_connection_count(self) -> int:
-        """Return the number of live thread-owned handles."""
+        """Return the number of live same-file thread-owned handles.
+
+        Returns:
+            The bounded count visible to the shared process-local barrier.
+        """
 
         return self._connection_quiescence.connection_count()
 
     def get_console_trace_compaction_status(self) -> dict[str, object]:
-        """Return content-free physical trace-maintenance status and byte metrics."""
+        """Return content-free physical trace-maintenance status and metrics.
+
+        Returns:
+            Bounded status, progress, retry, and byte metrics, or an empty
+            mapping when the singleton is unavailable.
+        """
 
         with self.transaction() as cursor:
             row = cursor.execute(
@@ -3429,7 +3445,19 @@ UPDATE db_schema_version
 
     @contextlib.contextmanager
     def quiesce_connections(self, *, timeout_seconds: float):
-        """Close all thread-owned handles and reject acquisition until exit."""
+        """Drain and close all same-file handles until the caller exits.
+
+        Args:
+            timeout_seconds: Maximum time to wait for acquisitions, managed
+                transactions, and direct cursor consumption to finish.
+
+        Yields:
+            Control while ordinary same-file acquisition remains blocked.
+
+        Raises:
+            TimeoutError: If active SQLite use does not drain in time.
+            RuntimeError: If another process-local barrier is already active.
+        """
 
         token = self._connection_quiescence.begin_quiescence(
             timeout_seconds=timeout_seconds
@@ -22687,6 +22715,7 @@ class TransactionContextManager:
         self.borrows_native_transaction = False
         self.transaction_observer_token: object | None = None
         self.connection_use_token: object | None = None
+        self.cursor: sqlite3.Cursor | None = None
         # RESERVED up front (``BEGIN IMMEDIATE``) for read-then-write
         # transactions: a DEFERRED begin that reads (e.g. MAX(seq)) before
         # writing can hit SQLite's non-retryable snapshot/upgrade deadlock
@@ -22724,7 +22753,8 @@ class TransactionContextManager:
             logger.debug(
                 f"Entered nested transaction level {self.db._local.transaction_depth} on thread {threading.get_ident()}."
             )
-            return self.conn.cursor()
+            self.cursor = self.conn.cursor()
+            return self.cursor
         else:
             # This is the outermost transaction
             self.conn = self.db.get_connection()
@@ -22739,7 +22769,8 @@ class TransactionContextManager:
                 logger.debug(
                     f"Borrowed caller-owned SQLite transaction on thread {threading.get_ident()}."
                 )
-                return self.conn.cursor()
+                self.cursor = self.conn.cursor()
+                return self.cursor
 
             # Set depth only after BEGIN succeeds so a failed BEGIN cannot corrupt it.
             self.conn.execute("BEGIN IMMEDIATE" if self.immediate else "BEGIN")
@@ -22753,7 +22784,8 @@ class TransactionContextManager:
             logger.debug(
                 f"Started outermost transaction on thread {threading.get_ident()}."
             )
-            return self.conn.cursor()
+            self.cursor = self.conn.cursor()
+            return self.cursor
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Finish SQLite work before releasing the maintenance reservation."""
@@ -22761,9 +22793,14 @@ class TransactionContextManager:
         try:
             return self._exit_transaction(exc_type, exc_val, exc_tb)
         finally:
-            if self.connection_use_token is not None:
-                self.db._connection_quiescence.end_use(self.connection_use_token)
-                self.connection_use_token = None
+            try:
+                if self.cursor is not None:
+                    self.cursor.close()
+                    self.cursor = None
+            finally:
+                if self.connection_use_token is not None:
+                    self.db._connection_quiescence.end_use(self.connection_use_token)
+                    self.connection_use_token = None
 
     def _exit_transaction(self, exc_type, exc_val, exc_tb):
         """

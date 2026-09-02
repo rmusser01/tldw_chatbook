@@ -178,6 +178,9 @@ TRACE_PHYSICAL_MAINTENANCE_RETRYABLE_REASONS = frozenset(
         "vacuum_failed",
         "sqlite_failure",
         "compaction_failure",
+        "database_threshold",
+        "freelist_threshold",
+        "freelist_ratio_threshold",
     }
 )
 

@@ -166,10 +166,17 @@ database when every configured gate is met. The defaults require an allocated
 database of at least 64 MiB, at least 16 MiB and 20% reclaimable free pages, 30
 seconds without provider activity, and no active retry delay or other database
 maintenance. Console pauses new provider dispatch, waits briefly for active
-database work, closes its database handles, checkpoints the WAL, verifies free
-disk space, and runs same-file SQLite maintenance outside any write
-transaction. Ordinary work resumes from a guaranteed cleanup path whether the
-attempt succeeds, is cancelled, or fails.
+database work—including direct reads that still have results to consume—across
+every in-process connection to that database file, closes those handles,
+checkpoints the WAL, verifies free disk space, and runs same-file SQLite
+maintenance outside any write transaction. Ordinary work resumes from a
+guaranteed cleanup path whether the attempt succeeds, is cancelled, or fails.
+
+Database-size and reclaimable-page thresholds are rechecked from current SQLite
+metrics on later maintenance polls. If unrelated activity grows or frees enough
+pages after logical collection, Console can reuse that exact completed
+collection result; it does not create duplicate collection records merely to
+reconsider physical compaction.
 
 **F9 > Privacy & Security** reports content-free physical-maintenance state,
 bounded progress, retry reason, and allocated/free byte totals before and after

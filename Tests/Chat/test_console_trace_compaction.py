@@ -148,49 +148,27 @@ def _permissive_policy() -> TraceCompactionPolicy:
 def test_vacuum_progress_never_queries_the_active_vacuum_connection(
     tmp_path: Path,
 ) -> None:
+    path = tmp_path / "progress.sqlite"
+    connection = sqlite3.connect(path)
+    connection.execute("CREATE TABLE payload(value BLOB NOT NULL)")
+    connection.executemany(
+        "INSERT INTO payload(value) VALUES (?)",
+        ((b"x" * 4096,) for _ in range(512)),
+    )
+    connection.execute("DELETE FROM payload")
+    connection.commit()
     events: list[object] = []
     compactor = PhysicalTraceCompactor(
-        type("Database", (), {"db_path_str": str(tmp_path / "fixture.sqlite")})(),
+        type("Database", (), {"db_path_str": str(path)})(),
         progress=events.append,
     )
     compactor._PROGRESS_VM_STEPS = 1
-
-    class Cursor:
-        def __init__(self, value: int) -> None:
-            self.value = value
-
-        def fetchone(self) -> tuple[int]:
-            return (self.value,)
-
-    class Connection:
-        callback = None
-        in_vacuum = False
-
-        def set_progress_handler(self, callback, _steps: int) -> None:
-            self.callback = callback
-
-        def execute(self, statement: str):
-            if self.in_vacuum:
-                raise AssertionError("progress handler queried active VACUUM connection")
-            if statement == "PRAGMA page_size":
-                return Cursor(4096)
-            if statement == "PRAGMA page_count":
-                return Cursor(1024)
-            if statement == "PRAGMA freelist_count":
-                return Cursor(512)
-            assert statement == "VACUUM"
-            self.in_vacuum = True
-            try:
-                assert self.callback is not None
-                for _ in range(64):
-                    assert self.callback() == 0
-            finally:
-                self.in_vacuum = False
-            return Cursor(0)
-
-    compactor._vacuum(Connection())  # type: ignore[arg-type]
-
-    assert events
+    try:
+        compactor._vacuum(connection)
+        assert events
+        assert connection.execute("PRAGMA quick_check(1)").fetchone()[0] == "ok"
+    finally:
+        connection.close()
 
 
 def test_vacuum_shrinks_file_and_preserves_shared_fork_after_reopen(

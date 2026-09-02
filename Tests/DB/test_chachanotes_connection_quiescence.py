@@ -162,3 +162,46 @@ def test_quiescence_refuses_to_begin_inside_the_callers_transaction(
                     pass
     finally:
         database.close_connection()
+
+
+def test_quiescence_waits_for_a_direct_read_cursor_to_finish(tmp_path: Path) -> None:
+    database = CharactersRAGDB(tmp_path / "direct-read.sqlite", "direct-read")
+    cursor = database.get_connection().execute(
+        "WITH RECURSIVE rows(value) AS ("
+        "SELECT 1 UNION ALL SELECT value + 1 FROM rows WHERE value < 100"
+        ") SELECT value FROM rows"
+    )
+    try:
+        assert cursor.fetchone()[0] == 1
+        with pytest.raises(TimeoutError, match="connection_quiescence_timeout"):
+            with database.quiesce_connections(timeout_seconds=0.01):
+                pass
+        assert cursor.fetchone()[0] == 2
+    finally:
+        cursor.close()
+
+    with database.quiesce_connections(timeout_seconds=0.5):
+        assert database.registered_connection_count() == 0
+    database.close_connection()
+
+
+def test_quiescence_coordinates_separate_instances_for_the_same_file(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "shared.sqlite"
+    first = CharactersRAGDB(path, "shared-first")
+    second = CharactersRAGDB(path, "shared-second")
+    second_connection = second.get_connection()
+
+    with first.quiesce_connections(timeout_seconds=0.5):
+        assert first.registered_connection_count() == 0
+        with pytest.raises(CharactersRAGDBError, match="maintenance_in_progress"):
+            second.get_connection()
+
+    reopened = second.get_connection()
+    assert reopened is not second_connection
+    assert reopened.execute("SELECT 1").fetchone()[0] == 1
+    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+        second_connection.execute("SELECT 1")
+    first.close_connection()
+    second.close_connection()

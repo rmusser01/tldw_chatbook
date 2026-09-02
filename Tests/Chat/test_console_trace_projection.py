@@ -1181,6 +1181,80 @@ async def test_runtime_runs_gc_then_physical_maintenance_after_normalization(
 
 
 @pytest.mark.asyncio
+async def test_runtime_rechecks_thresholds_without_creating_another_gc_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    class _Maintenance:
+        def __init__(self, _database: object, **_kwargs: object) -> None:
+            pass
+
+        def run_batch(self) -> SimpleNamespace:
+            return SimpleNamespace(logical_complete=True, admitted=True)
+
+    class _Collector:
+        def __init__(self, _database: object) -> None:
+            pass
+
+        def current_graph_epoch(self) -> int:
+            return 11
+
+        def collect(self, *, request_id: str) -> object:
+            assert request_id.startswith("auto-")
+            events.append("gc")
+            return SimpleNamespace(marked_epoch=11)
+
+    class _Compactor:
+        def __init__(self, _database: object, **_kwargs: object) -> None:
+            pass
+
+        def run_after_gc(self, _result: object) -> SimpleNamespace:
+            events.append("threshold-check")
+            if events.count("threshold-check") == 1:
+                return SimpleNamespace(
+                    completed=False,
+                    reason_code="database_threshold",
+                )
+            return SimpleNamespace(completed=True, reason_code="complete")
+
+    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
+    module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
+    module.TraceGarbageCollector = _Collector  # type: ignore[attr-defined]
+    module.PhysicalTraceCompactor = _Compactor  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    monkeypatch.setattr(
+        "tldw_chatbook.config.resolve_trace_compaction_policy",
+        lambda _config: object(),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_runtime."
+        "LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS",
+        0.0,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_runtime."
+        "TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS",
+        0.0,
+    )
+    runtime = ConsoleRuntime(
+        SimpleNamespace(
+            _ui_ready=True,
+            persona_buddy_controller=None,
+            app_config={"console": {}},
+        )
+    )
+    runtime._chat_controller = SimpleNamespace(_active_stream_tasks={})
+
+    runtime._schedule_legacy_trace_maintenance(object(), object)
+    await asyncio.sleep(2.1)
+
+    assert events.count("gc") == 1
+    assert events.count("threshold-check") >= 2
+    await runtime.dispose()
+
+
+@pytest.mark.asyncio
 async def test_runtime_retries_legacy_maintenance_after_unexpected_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

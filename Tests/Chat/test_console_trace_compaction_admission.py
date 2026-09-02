@@ -150,6 +150,37 @@ def test_admission_defers_for_activity_and_size_thresholds(
     assert state["reason_code"] == "freelist_threshold"
 
 
+def test_admission_rechecks_live_storage_thresholds_for_the_same_gc_result(
+    db: CharactersRAGDB,
+) -> None:
+    gc_result = _completed_gc(db)
+    compactor = PhysicalTraceCompactor(
+        db,
+        policy=_policy(
+            min_database_bytes=gc_result.allocated_bytes_after + 512 * 1024,
+            min_freelist_bytes=256 * 1024,
+        ),
+    )
+
+    first = compactor.run_after_gc(gc_result)
+    assert first.reason_code == "database_threshold"
+
+    with db.transaction(immediate=True) as cursor:
+        cursor.execute("CREATE TABLE threshold_payload(value BLOB NOT NULL)")
+        cursor.execute(
+            "INSERT INTO threshold_payload(value) VALUES (zeroblob(?))",
+            (2 * 1024 * 1024,),
+        )
+        cursor.execute("DELETE FROM threshold_payload")
+
+    second = compactor.run_after_gc(gc_result)
+
+    assert second.completed is True
+    assert second.reason_code == "complete"
+    assert second.allocated_bytes_before >= gc_result.allocated_bytes_after + 512 * 1024
+    assert second.freelist_bytes_before >= 256 * 1024
+
+
 def test_admission_defers_when_another_maintenance_owner_holds_the_lease(
     db: CharactersRAGDB,
 ) -> None:

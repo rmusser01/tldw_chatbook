@@ -22,7 +22,23 @@ using a connection in the middle of a statement.
 **What to do.** Treat SQLite progress, authorizer, collation, and scalar-function
 callbacks as non-reentrant unless the API explicitly guarantees otherwise. Read
 needed metrics before the long statement, keep callbacks bounded and in-memory,
-and add a test double that fails if the callback executes SQL on its owner.
+and verify the behavior against a real file-backed SQLite database.
+
+## SQLite quiescence must cover result consumption and database identity
+
+**TASK-23113.11, 2026-09-02.** Review of the first physical-compaction barrier
+found two holes that transaction-only tests did not expose. A direct SELECT was
+no longer in a native transaction after `execute()` returned, even though its
+cursor still had unread rows, so the barrier could close that live connection.
+Separately, two `CharactersRAGDB` objects for the same file owned independent
+registries, allowing one object to open a handle while the other compacted.
+Real cursor and same-file-instance tests reproduced both races.
+
+**What to do.** Key process-local SQLite maintenance coordination by canonical
+database identity, not wrapper-object identity. Track synchronous operations
+and cursor result consumption through exhaustion or explicit close; acquisition
+and transaction boundaries alone are insufficient evidence that a handle is
+idle.
 
 ## Periodic maintenance must deduplicate work by the state it processed
 
@@ -32,13 +48,15 @@ Because completed GC request rows are durable idempotency records, an unchanged
 database would have accumulated a new result row on every poll. An accelerated
 runtime test observed two collections for the same graph epoch. Caching the
 processed epoch and retaining a retryable completed result reduced unchanged
-epochs to one durable collection while still retrying interrupted compaction.
+epochs to one durable collection while still retrying interrupted compaction
+and rechecking size/free-page thresholds against live SQLite metrics.
 
 **What to do.** A recurring maintenance timer is only a wake-up signal. Before
 creating a new durable request, compare the source's monotonic change token (or
 equivalent exact state identity) with the last processed token. Reuse the exact
 successful prerequisite while a downstream retry is pending, and clear it only
-after success or a terminal threshold decision.
+after success or a genuinely terminal decision. Thresholds based on mutable
+storage metrics are retryable, not terminal.
 
 ---
 

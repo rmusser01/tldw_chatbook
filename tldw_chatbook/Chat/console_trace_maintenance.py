@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
@@ -166,6 +167,19 @@ class _TraceCompactionFailure(RuntimeError):
     """Internal stage failure carrying one bounded operational reason code."""
 
 
+@contextmanager
+def _maintenance_transaction(
+    connection: sqlite3.Connection,
+) -> Iterator[sqlite3.Connection]:
+    """Own one transaction on the private connection used while quiesced."""
+
+    if connection.in_transaction:
+        raise RuntimeError("maintenance_transaction_already_active")
+    connection.execute("BEGIN IMMEDIATE")
+    with connection:
+        yield connection
+
+
 class PhysicalTraceCompactor:
     """Run an admitted same-file VACUUM under the durable maintenance lease."""
 
@@ -198,12 +212,21 @@ class PhysicalTraceCompactor:
         self.progress = progress or (lambda _event: None)
 
     def run_after_gc(self, gc_result: TraceGCResult) -> TraceCompactionOutcome:
-        """Compact only after the exact durable successful logical GC result."""
+        """Compact only after the exact durable successful logical GC result.
+
+        Args:
+            gc_result: Completed durable collection result authorizing physical
+                reclamation of pages that are no longer logically reachable.
+
+        Returns:
+            A content-free admission, completion, and byte-metric outcome.
+        """
 
         if not isinstance(gc_result, TraceGCResult) or gc_result.status != "completed":
             return self._deferred(gc_result, "logical_gc_incomplete")
         if self.db.is_memory_db:
             return self._deferred(gc_result, "memory_database")
+        gc_result = self._refresh_storage_observation(gc_result)
         eligibility = self._eligibility_reason(gc_result)
         if eligibility is not None:
             return self._deferred(gc_result, eligibility)
@@ -251,6 +274,30 @@ class PhysicalTraceCompactor:
         if retry is not None and bool(retry[0]):
             return "retry_backoff"
         return None
+
+    def _refresh_storage_observation(self, result: TraceGCResult) -> TraceGCResult:
+        with self.db.transaction() as cursor:
+            page_size = int(cursor.execute("PRAGMA page_size").fetchone()[0])
+            allocated_pages = int(
+                cursor.execute("PRAGMA page_count").fetchone()[0]
+            )
+            freelist_pages = int(
+                cursor.execute("PRAGMA freelist_count").fetchone()[0]
+            )
+        wal_path = Path(f"{self.db.db_path_str}-wal")
+        try:
+            wal_bytes = max(0, wal_path.stat().st_size)
+        except OSError:
+            wal_bytes = 0
+        return replace(
+            result,
+            page_size_bytes=page_size,
+            allocated_pages_after=allocated_pages,
+            allocated_bytes_after=allocated_pages * page_size,
+            freelist_pages_after=freelist_pages,
+            freelist_bytes_after=freelist_pages * page_size,
+            wal_bytes=wal_bytes,
+        )
 
     def _acquire_lease(self, result: TraceGCResult, attempt_id: str) -> bool:
         with self.db.transaction(immediate=True) as cursor:
@@ -492,8 +539,7 @@ class PhysicalTraceCompactor:
         attempt_id: str,
         after: tuple[int, int, int],
     ) -> None:
-        connection.execute("BEGIN IMMEDIATE")
-        try:
+        with _maintenance_transaction(connection):
             if not self._lease_current(connection, attempt_id):
                 raise _TraceCompactionFailure("lease_lost")
             connection.execute(
@@ -516,10 +562,6 @@ class PhysicalTraceCompactor:
             )
             if connection.execute("SELECT changes()").fetchone()[0] != 1:
                 raise _TraceCompactionFailure("lease_lost")
-            connection.commit()
-        except BaseException:
-            connection.rollback()
-            raise
 
     def _store_pending_best_effort(
         self,
@@ -532,42 +574,42 @@ class PhysicalTraceCompactor:
         try:
             connection = self._open_maintenance_connection()
             try:
-                row = connection.execute(
-                    "SELECT retry_count FROM console_trace_compaction_state "
-                    "WHERE singleton_id = 1"
-                ).fetchone()
-                retry_count = min(32, (int(row[0]) if row else 0) + 1)
-                delay = min(
-                    self.policy.retry_max_seconds,
-                    self.policy.retry_initial_seconds * (2 ** max(0, retry_count - 1)),
-                )
-                retry_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
-                connection.execute("BEGIN IMMEDIATE")
-                connection.execute(
-                    "UPDATE console_trace_compaction_state SET status = 'pending', "
-                    "reason_code = ?, last_gc_request_id = ?, retry_count = ?, "
-                    "next_retry_at = ?, progress_basis_points = 0, "
-                    "updated_at = CURRENT_TIMESTAMP WHERE singleton_id = 1 "
-                    "AND attempt_id = ?",
-                    (
-                        reason_code,
-                        result.request_id,
-                        retry_count,
-                        retry_at.isoformat(),
-                        attempt_id,
-                    ),
-                )
-                if connection.execute("SELECT changes()").fetchone()[0] != 1:
-                    connection.rollback()
-                    return
-                connection.execute(
-                    "UPDATE console_trace_maintenance_state SET state = 'idle', "
-                    "lease_id = NULL, lease_owner = NULL, lease_expires_at = NULL, "
-                    "marked_epoch = NULL, updated_at = CURRENT_TIMESTAMP "
-                    "WHERE singleton_id = 1 AND state = 'compacting' AND lease_id = ?",
-                    (attempt_id,),
-                )
-                connection.commit()
+                with _maintenance_transaction(connection):
+                    row = connection.execute(
+                        "SELECT retry_count FROM console_trace_compaction_state "
+                        "WHERE singleton_id = 1"
+                    ).fetchone()
+                    retry_count = min(32, (int(row[0]) if row else 0) + 1)
+                    delay = min(
+                        self.policy.retry_max_seconds,
+                        self.policy.retry_initial_seconds
+                        * (2 ** max(0, retry_count - 1)),
+                    )
+                    retry_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
+                    connection.execute(
+                        "UPDATE console_trace_compaction_state SET status = 'pending', "
+                        "reason_code = ?, last_gc_request_id = ?, retry_count = ?, "
+                        "next_retry_at = ?, progress_basis_points = 0, "
+                        "updated_at = CURRENT_TIMESTAMP WHERE singleton_id = 1 "
+                        "AND attempt_id = ?",
+                        (
+                            reason_code,
+                            result.request_id,
+                            retry_count,
+                            retry_at.isoformat(),
+                            attempt_id,
+                        ),
+                    )
+                    if connection.execute("SELECT changes()").fetchone()[0] != 1:
+                        return
+                    connection.execute(
+                        "UPDATE console_trace_maintenance_state SET state = 'idle', "
+                        "lease_id = NULL, lease_owner = NULL, "
+                        "lease_expires_at = NULL, marked_epoch = NULL, "
+                        "updated_at = CURRENT_TIMESTAMP WHERE singleton_id = 1 "
+                        "AND state = 'compacting' AND lease_id = ?",
+                        (attempt_id,),
+                    )
             finally:
                 connection.close()
         except Exception:
@@ -819,7 +861,11 @@ class TraceGarbageCollector:
         self.db = db
 
     def current_graph_epoch(self) -> int:
-        """Return the current durable graph epoch for automatic-run deduplication."""
+        """Return the current durable graph epoch for automatic-run deduplication.
+
+        Returns:
+            The monotonically increasing trace-graph mutation epoch.
+        """
 
         with self.db.transaction() as cursor:
             return self._graph_epoch(cursor)

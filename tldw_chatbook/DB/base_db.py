@@ -14,12 +14,13 @@ This ensures consistent behavior across all DB classes for:
 """
 
 import sqlite3
-from collections.abc import Collection, Iterator
+from collections.abc import Callable, Collection, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 import threading
 import time
 from typing import Union
+from weakref import WeakValueDictionary
 from abc import ABC, abstractmethod
 from loguru import logger
 
@@ -47,7 +48,11 @@ class SQLiteConnectionQuiescenceRegistry:
         self._quiescence_token: object | None = None
 
     def begin_acquisition(self) -> None:
-        """Reserve one connection lookup/create operation or reject maintenance."""
+        """Reserve one connection lookup/create operation.
+
+        Raises:
+            RuntimeError: If exclusive maintenance is already active.
+        """
 
         with self._condition:
             if self._quiescence_token is not None:
@@ -55,7 +60,11 @@ class SQLiteConnectionQuiescenceRegistry:
             self._active_acquisitions += 1
 
     def finish_acquisition(self) -> None:
-        """Release one lookup/create reservation."""
+        """Release one lookup/create reservation.
+
+        Raises:
+            RuntimeError: If no matching acquisition is active.
+        """
 
         with self._condition:
             if self._active_acquisitions <= 0:
@@ -64,7 +73,14 @@ class SQLiteConnectionQuiescenceRegistry:
             self._condition.notify_all()
 
     def register(self, connection: sqlite3.Connection) -> None:
-        """Register a newly opened thread-owned connection."""
+        """Register a newly opened thread-owned connection.
+
+        Args:
+            connection: Native handle opened under an acquisition reservation.
+
+        Raises:
+            RuntimeError: If maintenance is active without a reserved opener.
+        """
 
         with self._condition:
             # An acquisition reserved before quiescence may finish opening its
@@ -75,7 +91,11 @@ class SQLiteConnectionQuiescenceRegistry:
             self._connections[id(connection)] = connection
 
     def unregister(self, connection: sqlite3.Connection) -> None:
-        """Forget an explicitly closed connection."""
+        """Forget an explicitly closed connection.
+
+        Args:
+            connection: Exact registered native handle to forget.
+        """
 
         with self._condition:
             current = self._connections.get(id(connection))
@@ -84,13 +104,27 @@ class SQLiteConnectionQuiescenceRegistry:
             self._condition.notify_all()
 
     def is_registered(self, connection: sqlite3.Connection) -> bool:
-        """Return whether ``connection`` remains a live registered handle."""
+        """Return whether a handle remains registered.
+
+        Args:
+            connection: Exact native handle identity to inspect.
+
+        Returns:
+            Whether the registry still owns that handle identity.
+        """
 
         with self._condition:
             return self._connections.get(id(connection)) is connection
 
     def begin_use(self) -> object:
-        """Reserve one managed transaction across a quiescence boundary."""
+        """Reserve one managed transaction or cursor across a barrier.
+
+        Returns:
+            An opaque exact-use token.
+
+        Raises:
+            RuntimeError: If exclusive maintenance is already active.
+        """
 
         with self._condition:
             if self._quiescence_token is not None:
@@ -100,7 +134,14 @@ class SQLiteConnectionQuiescenceRegistry:
             return token
 
     def end_use(self, token: object) -> None:
-        """Release the exact managed-transaction reservation."""
+        """Release the exact managed-transaction or cursor reservation.
+
+        Args:
+            token: Exact opaque token returned by :meth:`begin_use`.
+
+        Raises:
+            RuntimeError: If the token is unknown or already released.
+        """
 
         with self._condition:
             if token not in self._active_uses:
@@ -109,7 +150,19 @@ class SQLiteConnectionQuiescenceRegistry:
             self._condition.notify_all()
 
     def begin_quiescence(self, *, timeout_seconds: float) -> object:
-        """Reject new work and wait for connection acquisition/write use to drain."""
+        """Reject new work and wait for acquisitions and SQL use to drain.
+
+        Args:
+            timeout_seconds: Maximum non-negative drain duration.
+
+        Returns:
+            The exact opaque token controlling the admitted barrier.
+
+        Raises:
+            ValueError: If ``timeout_seconds`` is invalid.
+            RuntimeError: If another barrier is already active.
+            TimeoutError: If active work does not drain before the deadline.
+        """
 
         if type(timeout_seconds) not in {int, float} or float(timeout_seconds) < 0:
             raise ValueError("timeout_seconds")
@@ -129,7 +182,15 @@ class SQLiteConnectionQuiescenceRegistry:
             return token
 
     def close_registered(self, token: object) -> None:
-        """Close every registered handle while the exact barrier is held."""
+        """Close every registered handle while the exact barrier is held.
+
+        Args:
+            token: Exact opaque token returned by :meth:`begin_quiescence`.
+
+        Raises:
+            RuntimeError: If the barrier identity is wrong or a native
+                transaction remains active after tracked work drained.
+        """
 
         with self._condition:
             if self._quiescence_token is not token:
@@ -147,7 +208,14 @@ class SQLiteConnectionQuiescenceRegistry:
             self.unregister(connection)
 
     def end_quiescence(self, token: object) -> None:
-        """Resume ordinary acquisition after the exact maintenance window."""
+        """Resume ordinary acquisition after the exact maintenance window.
+
+        Args:
+            token: Exact opaque token returned by :meth:`begin_quiescence`.
+
+        Raises:
+            RuntimeError: If the barrier identity is wrong or stale.
+        """
 
         with self._condition:
             if self._quiescence_token is not token:
@@ -156,10 +224,269 @@ class SQLiteConnectionQuiescenceRegistry:
             self._condition.notify_all()
 
     def connection_count(self) -> int:
-        """Return the bounded count of registered handles for diagnostics/tests."""
+        """Return the bounded count of registered handles.
+
+        Returns:
+            Number of live handles across every same-file database instance.
+        """
 
         with self._condition:
             return len(self._connections)
+
+
+_QUIESCENCE_REGISTRIES: WeakValueDictionary[
+    str, SQLiteConnectionQuiescenceRegistry
+] = WeakValueDictionary()
+_QUIESCENCE_REGISTRIES_LOCK = threading.Lock()
+
+
+def sqlite_connection_quiescence_registry(
+    database_identity: str | None,
+) -> SQLiteConnectionQuiescenceRegistry:
+    """Return one process-local barrier for a canonical SQLite identity.
+
+    Args:
+        database_identity: Canonical file identity, or ``None`` for an isolated
+            in-memory database.
+
+    Returns:
+        The shared live registry for a file, or a fresh isolated registry.
+    """
+
+    if database_identity is None:
+        return SQLiteConnectionQuiescenceRegistry()
+    with _QUIESCENCE_REGISTRIES_LOCK:
+        registry = _QUIESCENCE_REGISTRIES.get(database_identity)
+        if registry is None:
+            registry = SQLiteConnectionQuiescenceRegistry()
+            _QUIESCENCE_REGISTRIES[database_identity] = registry
+        return registry
+
+
+class _QuiescentSQLiteConnection(sqlite3.Connection):
+    """SQLite connection whose cursors hold quiescence-use reservations."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self._quiescence_registry: SQLiteConnectionQuiescenceRegistry | None = None
+        self._quiescence_tokens: set[object] = set()
+        self._quiescence_tokens_lock = threading.RLock()
+
+    def attach_quiescence_registry(
+        self, registry: SQLiteConnectionQuiescenceRegistry
+    ) -> None:
+        """Attach the registry before exposing this connection to callers.
+
+        Args:
+            registry: Shared barrier for the connection's database identity.
+        """
+
+        with self._quiescence_tokens_lock:
+            if (
+                self._quiescence_registry is not None
+                and self._quiescence_registry is not registry
+            ):
+                raise RuntimeError("connection_quiescence_registry_identity")
+            self._quiescence_registry = registry
+
+    def _begin_cursor_use(self) -> object | None:
+        registry = self._quiescence_registry
+        if registry is None:
+            return None
+        token = registry.begin_use()
+        with self._quiescence_tokens_lock:
+            self._quiescence_tokens.add(token)
+        return token
+
+    def _end_cursor_use(self, token: object | None) -> None:
+        if token is None:
+            return
+        with self._quiescence_tokens_lock:
+            if token not in self._quiescence_tokens:
+                return
+            self._quiescence_tokens.remove(token)
+            registry = self._quiescence_registry
+        if registry is not None:
+            registry.end_use(token)
+
+    def cursor(  # type: ignore[override]
+        self,
+        factory: type[sqlite3.Cursor] | None = None,
+    ) -> sqlite3.Cursor:
+        """Create a cursor that tracks its complete execute/fetch lifetime."""
+
+        return super().cursor(factory or _QuiescentSQLiteCursor)
+
+    def execute(  # type: ignore[override]
+        self,
+        sql: str,
+        parameters: object = (),
+    ) -> sqlite3.Cursor:
+        """Execute SQL through a tracked cursor."""
+
+        return self.cursor().execute(sql, parameters)
+
+    def executemany(  # type: ignore[override]
+        self,
+        sql: str,
+        seq_of_parameters: object,
+    ) -> sqlite3.Cursor:
+        """Execute repeated SQL through a tracked cursor."""
+
+        return self.cursor().executemany(sql, seq_of_parameters)
+
+    def executescript(self, sql_script: str) -> sqlite3.Cursor:  # type: ignore[override]
+        """Execute a script through a tracked cursor."""
+
+        return self.cursor().executescript(sql_script)
+
+    def backup(  # type: ignore[override]
+        self,
+        target: sqlite3.Connection,
+        *,
+        pages: int = -1,
+        progress: Callable[[int, int, int], None] | None = None,
+        name: str = "main",
+        sleep: float = 0.250,
+    ) -> None:
+        """Keep a reservation for the complete synchronous backup."""
+
+        token = self._begin_cursor_use()
+        try:
+            super().backup(
+                target,
+                pages=pages,
+                progress=progress,
+                name=name,
+                sleep=sleep,
+            )
+        finally:
+            self._end_cursor_use(token)
+
+    def close(self) -> None:
+        """Release any cursor reservations before closing the native handle."""
+
+        with self._quiescence_tokens_lock:
+            tokens = tuple(self._quiescence_tokens)
+        for token in tokens:
+            self._end_cursor_use(token)
+        super().close()
+
+
+class _QuiescentSQLiteCursor(sqlite3.Cursor):
+    """Cursor that keeps a read reservation until results are consumed."""
+
+    def __init__(self, connection: _QuiescentSQLiteConnection) -> None:
+        super().__init__(connection)
+        self._quiescent_connection = connection
+        self._quiescence_token: object | None = None
+
+    def _begin_use(self) -> None:
+        self._release_use()
+        self._quiescence_token = self._quiescent_connection._begin_cursor_use()
+
+    def _release_use(self) -> None:
+        token = self._quiescence_token
+        self._quiescence_token = None
+        self._quiescent_connection._end_cursor_use(token)
+
+    def _release_if_no_results(self) -> None:
+        if self.description is None:
+            self._release_use()
+
+    def execute(self, sql: str, parameters: object = ()) -> sqlite3.Cursor:
+        """Hold one use reservation through result consumption."""
+
+        self._begin_use()
+        try:
+            result = super().execute(sql, parameters)
+        except BaseException:
+            self._release_use()
+            raise
+        self._release_if_no_results()
+        return result
+
+    def executemany(self, sql: str, seq_of_parameters: object) -> sqlite3.Cursor:
+        """Hold one use reservation through repeated execution."""
+
+        self._begin_use()
+        try:
+            result = super().executemany(sql, seq_of_parameters)
+        except BaseException:
+            self._release_use()
+            raise
+        self._release_if_no_results()
+        return result
+
+    def executescript(self, sql_script: str) -> sqlite3.Cursor:
+        """Hold one use reservation through script execution."""
+
+        self._begin_use()
+        try:
+            result = super().executescript(sql_script)
+        except BaseException:
+            self._release_use()
+            raise
+        self._release_if_no_results()
+        return result
+
+    def fetchone(self) -> sqlite3.Row | tuple[object, ...] | None:
+        """Release the reservation after the result set is exhausted."""
+
+        try:
+            row = super().fetchone()
+        except BaseException:
+            self._release_use()
+            raise
+        if row is None:
+            self._release_use()
+        return row
+
+    def fetchmany(self, size: int | None = None) -> list[object]:
+        """Release the reservation when a batch proves exhaustion."""
+
+        requested = self.arraysize if size is None else size
+        try:
+            rows = super().fetchmany(requested)
+        except BaseException:
+            self._release_use()
+            raise
+        if not rows or (requested > 0 and len(rows) < requested):
+            self._release_use()
+        return rows
+
+    def fetchall(self) -> list[object]:
+        """Release the reservation after consuming every remaining row."""
+
+        try:
+            return super().fetchall()
+        finally:
+            self._release_use()
+
+    def __next__(self) -> object:
+        try:
+            return super().__next__()
+        except StopIteration:
+            self._release_use()
+            raise
+        except BaseException:
+            self._release_use()
+            raise
+
+    def close(self) -> None:
+        """Release the reservation even if native close reports an error."""
+
+        try:
+            super().close()
+        finally:
+            self._release_use()
+
+    def __del__(self) -> None:
+        connection = getattr(self, "_quiescent_connection", None)
+        token = getattr(self, "_quiescence_token", None)
+        if connection is not None:
+            self._quiescence_token = None
+            connection._end_cursor_use(token)
 
 
 class _SemanticMutationAuthorization:
