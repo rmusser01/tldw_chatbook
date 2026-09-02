@@ -247,6 +247,39 @@ double execution — one owner, one executor). Pressing **r** on one refuses
 with a toast saying so. This is the single-owner execution rule the
 server-offload design is built on; local-owner reminders are unaffected.
 
+## Moving a task between this device and the server
+
+A reminder's detail pane offers **Move to server** (on a local task) or
+**Move to local** (on a server-owned mirror), plus **Cancel transfer**
+once a move is in flight and **Retry transfer** after one fails. Each
+button is visible whenever it could apply and disabled with a stated
+reason otherwise — no server connection, no server identity, a transfer
+already running, or, moving a `recurring_question` mirror to this
+device, the same local-health reason the Automations tab already
+surfaces.
+
+Clicking Move opens a confirmation listing anything worth knowing before
+you commit: an imminent or already-passed one-time run time ("server
+behavior this close to run time is unverified"), and, for a reminder,
+that its per-run timeout is local-only and will not transfer. Confirming
+a **local → server** move only queues it — the task keeps running on
+this device until the server actually accepts the transfer, the toast
+says so, and the queue row shows "(Moving to server…)" for as long as
+that stays true. A **server → local** move creates a dormant local copy
+immediately (shown as "(Waiting for server release)"); it stays inert
+until the server's release is acknowledged, at which point it arms and
+starts running here.
+
+**Cancel transfer** is available on any in-flight state except one
+already sent to the server (too late by then — the button says so and
+suggests moving it back once it lands). Cancelling an unattempted
+local → server queue, a failed one, or an unpushed server → local
+release all undo cleanly with no server-side effect.
+
+**Retry transfer** appears only alongside a local → server move the
+server definitively rejected; the stored reason is shown beside the
+button, and retrying resubmits the same task.
+
 ## Creating a recurring question
 
 A recurring question runs a scoped search on a schedule and reports what
@@ -331,9 +364,12 @@ The default bound is `handler_timeout_seconds` under `[scheduling]` in
 bound entirely — every handler may then run as long as it likes, and a
 wedged handler will wedge the scheduler, which is why the default is on.
 
-*Verified against working tree — 2026-09-01 (schedules-handoff PR-4 task 5
-+ final fix round: recurring-question create/edit form, the Queue tab's
-New/Reminder/Recurring-question chooser, the Automations tab's own New
-button, the "Runs on" selector on both forms, the merged local+server
-Automations listing including not-yet-synced server-owned rows, and its
-local run-now/edit routing).*
+*Verified against working tree — 2026-09-02 (schedules-handoff PR-5 task 7:
+the detail pane's Move to server/Move to local/Cancel transfer/Retry
+transfer buttons, the confirm dialog and its warnings, honest transfer
+toasts, and the queue row's transfer-state suffix; supersedes the
+2026-09-01 stamp, which covered recurring-question create/edit form, the
+Queue tab's New/Reminder/Recurring-question chooser, the Automations tab's
+own New button, the "Runs on" selector on both forms, the merged
+local+server Automations listing including not-yet-synced server-owned
+rows, and its local run-now/edit routing).*

@@ -67,6 +67,12 @@ class MockSchedulingDB:
                 return dict(row)
         return None
 
+    def get_pending_mutations(self, owner_id: str, primitive: str | None = None):
+        """Stub: no pending mutations (schedules-handoff PR-5 task 7 --
+        the detail pane's retry-errors lookup calls this for a
+        `to_server_failed` row; unused otherwise)."""
+        return []
+
     def upsert_automation_definitions_from_server(self, owner_id: str, items: list[dict]):
         inserted = 0
         updated = 0
@@ -113,6 +119,53 @@ class MockSchedulingServiceMixin:
 
     async def sync_now(self, owner_id: str | None = None):
         return None
+
+    # -- transfer machine facade (schedules-handoff PR-5 task 7) -----------
+    #
+    # `SchedulesWorkbench._update_transfer_actions` calls `transfer_refusal`
+    # on EVERY row selection, so every existing scheduling-service stub
+    # needs these even when a test never touches a transfer button.
+    # Mirrors the real facade's first gate honestly: no `notifications_
+    # service` wired reads as "no server connection is configured" --
+    # every button renders disabled-with-reason but nothing crashes. A
+    # test that wants transfer buttons enabled overrides this (or wires a
+    # `server_client` whose `notifications_service` is not None and
+    # overrides `transfer_refusal` to return ``None``).
+
+    def transfer_refusal(self, row: dict, direction: str) -> str | None:
+        if getattr(self.server_client, "notifications_service", None) is None:
+            return "No server connection is configured."
+        return None
+
+    def transfer_warnings(self, row: dict, direction: str) -> list[str]:
+        return []
+
+    async def begin_transfer_to_server(self, table_kind: str, row_id: str):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            status="refused",
+            reason="Stub scheduling service: transfer not implemented.",
+            row_id=None,
+        )
+
+    async def begin_transfer_to_local(self, table_kind: str, row_id: str):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            status="refused",
+            reason="Stub scheduling service: transfer not implemented.",
+            row_id=None,
+        )
+
+    async def cancel_transfer(self, table_kind: str, row_id: str):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            status="refused",
+            reason="Stub scheduling service: transfer not implemented.",
+            row_id=None,
+        )
 
 
 # --- compositor paint oracles ---------------------------------------------

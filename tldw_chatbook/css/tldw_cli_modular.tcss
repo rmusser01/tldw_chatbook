@@ -13766,6 +13766,16 @@ SchedulesWorkbench.schedules-workbench-compact #scheduling-inspector-pane {
     margin: 0 1 0 0;
 }
 
+/* Transfer action row (schedules-handoff spec §6, PR-5 task 7) */
+#scheduling-task-detail-transfer {
+    height: auto;
+    padding: 0 0 1 0;
+}
+
+#scheduling-task-detail-transfer Button {
+    margin: 0 1 0 0;
+}
+
 /* Follow-in-Console prominence */
 #schedules-follow-in-console {
     margin-top: 1;
