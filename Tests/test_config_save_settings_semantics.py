@@ -475,6 +475,50 @@ def test_versioned_viewer_and_pii_choices_restore_independently(monkeypatch) -> 
     assert policy.viewer_profile == "full"
 
 
+def test_runtime_capture_policy_freezes_valid_custom_pii_rules(monkeypatch) -> None:
+    secret_pattern = r"private-prefix-\d{8}"
+    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 621)
+    monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)
+    monkeypatch.setattr(
+        config_module,
+        "_published_runtime_config_snapshot",
+        lambda: config_module.RuntimeConfigSnapshot(
+            621,
+            {
+                "console": {
+                    "exchange_capture_pii_redaction": True,
+                    "trace_custom_pii_rules": {
+                        "version": 1,
+                        "revision_id": "11111111-1111-4111-8111-111111111111",
+                        "rules": [
+                            {
+                                "id": "customer-id",
+                                "label": "Customer ID",
+                                "category": "customer_id",
+                                "pattern": secret_pattern,
+                                "flags": [],
+                                "enabled": True,
+                                "priority": 10,
+                            }
+                        ],
+                    },
+                }
+            },
+        ),
+    )
+
+    policy = config_module.runtime_capture_policy()
+
+    assert policy.custom_pii_ruleset is not None
+    assert policy.custom_pii_ruleset.revision_id == (
+        "11111111-1111-4111-8111-111111111111"
+    )
+    assert [rule.rule_id for rule in policy.custom_pii_ruleset.runnable_rules] == [
+        "customer-id"
+    ]
+    assert secret_pattern not in repr(policy)
+
+
 def test_malformed_privacy_config_falls_back_to_all_safe_defaults(monkeypatch) -> None:
     monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 63)
     monkeypatch.setattr(config_module, "_RUNTIME_CAPTURE_POLICY", None)

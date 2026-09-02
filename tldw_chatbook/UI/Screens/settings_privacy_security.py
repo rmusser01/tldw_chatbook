@@ -75,6 +75,9 @@ class SettingsPrivacyPosture:
     trace_normalized_writes_enabled: bool = True
     trace_normalized_reads_enabled: bool = True
     trace_legacy_writes_enabled: bool = False
+    trace_custom_pii_enabled_rules: int = 0
+    trace_custom_pii_disabled_rules: int = 0
+    trace_custom_pii_diagnostics: tuple[str, ...] = ()
 
 
 def build_settings_privacy_posture(
@@ -120,6 +123,14 @@ def build_settings_privacy_posture(
     )
 
     rollout = resolve_trace_rollout_settings(console, environ=env)
+    from tldw_chatbook.Chat.console_trace_custom_pii import (
+        validate_custom_pii_rules_config,
+    )
+
+    custom_pii = validate_custom_pii_rules_config(
+        console.get("trace_custom_pii_rules")
+    )
+    custom_rules = () if custom_pii.ruleset is None else custom_pii.ruleset.rules
 
     return SettingsPrivacyPosture(
         encryption_enabled=encryption_enabled,
@@ -145,6 +156,11 @@ def build_settings_privacy_posture(
         trace_normalized_writes_enabled=rollout.normalized_writes_enabled,
         trace_normalized_reads_enabled=rollout.normalized_reads_enabled,
         trace_legacy_writes_enabled=rollout.legacy_writes_enabled,
+        trace_custom_pii_enabled_rules=sum(rule.enabled for rule in custom_rules),
+        trace_custom_pii_disabled_rules=sum(not rule.enabled for rule in custom_rules),
+        trace_custom_pii_diagnostics=tuple(
+            item.display for item in custom_pii.diagnostics
+        ),
     )
 
 
@@ -224,6 +240,12 @@ def build_privacy_posture_rows(posture: SettingsPrivacyPosture) -> tuple[str, ..
             if posture.trace_pii_masking_enabled
             else "Trace PII masking: Off"
         ),
+        _custom_pii_rules_row(posture),
+        *(
+            ("Custom PII diagnostics: " + ", ".join(posture.trace_custom_pii_diagnostics),)
+            if posture.trace_custom_pii_diagnostics
+            else ()
+        ),
         f"Trace viewer: {posture.trace_viewer_profile.title()} disclosure profile",
         _trace_storage_row(posture),
         (
@@ -245,6 +267,17 @@ def _trace_storage_row(posture: SettingsPrivacyPosture) -> str:
     if posture.trace_legacy_writes_enabled:
         return "Trace storage: legacy compatibility copies"
     return "Trace storage: new trace writes paused"
+
+
+def _custom_pii_rules_row(posture: SettingsPrivacyPosture) -> str:
+    enabled = posture.trace_custom_pii_enabled_rules
+    disabled = posture.trace_custom_pii_disabled_rules
+    invalid = len(posture.trace_custom_pii_diagnostics)
+    if enabled == disabled == invalid == 0:
+        return "Custom PII rules: none configured"
+    return (
+        f"Custom PII rules: {enabled} enabled, {disabled} disabled, {invalid} invalid"
+    )
 
 
 def _safe_skill_trust_status(value: object) -> str:
