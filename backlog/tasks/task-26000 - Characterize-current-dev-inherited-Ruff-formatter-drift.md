@@ -201,7 +201,8 @@ Current post-failure/Task 7 materializer and allocator hashes are
   `task26000_final_origin_dev_ancestry=fast_forward_descendant`. The first successful
   canonical `raw/allocation-closeout-rescan.json` is retained under
   `/tmp/task26000.b0z8M0/` through review and integration, has empty captured stderr,
-  preserves all 83 IDs, and is the final remote observation; no fetch followed it.
+  preserves all 83 IDs, and was the final remote observation through the TASK-26000
+  closeout commit; later integration rebases do not replace this point-in-time audit.
 - Final point-in-time manifest replay passed with 83 cleanup records, 83 batches,
   1,966 current failures, category counts `M/B/C/H=99/64/77/61`, and zero blockers.
   `Tests/CI/test_backlog_task_id_uniqueness.py` passed all three targeted tests; the
