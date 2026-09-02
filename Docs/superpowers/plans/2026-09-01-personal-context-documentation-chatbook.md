@@ -892,13 +892,13 @@ git commit -m "docs: add Chatbook Personal Context developer guide"
 - Modify: `Docs/Development/Developer_Guide.md`
 - Inspect: `Docs/User_Guide/settings.md`
 
-- [ ] **Step 1: Add the how-to row**
+- [x] **Step 1: Add the how-to row**
 
 ```markdown
 | [Set up and manage your Personal Context Profile](settings/personal-context-profile.md) | Optional interviews, global/workspace context, agent proposals, synchronization boundaries, export, and removal. |
 ```
 
-- [ ] **Step 2: Add the focused developer pointer**
+- [x] **Step 2: Add the focused developer pointer**
 
 Near the top of `Docs/Development/Developer_Guide.md`, add this exact pointer and do not add a second architecture summary:
 
@@ -906,7 +906,7 @@ Near the top of `Docs/Development/Developer_Guide.md`, add this exact pointer an
 For Personal Context internals and extension work, see [Personal Context Profile](personal-context-profile.md).
 ```
 
-- [ ] **Step 3: Confirm Settings already links the page**
+- [x] **Step 3: Confirm Settings already links the page**
 
 Run:
 
@@ -920,7 +920,7 @@ rg -Fq '| Data & Privacy | **My Profile** → [own page](settings/personal-conte
 
 Expected: both existing Settings links are present independently; leave `settings.md` unchanged.
 
-- [ ] **Step 4: Validate discovery links, record Task 4 execution, and commit**
+- [x] **Step 4: Validate discovery links, record Task 4 execution, and commit**
 
 After Steps 1-3 have run successfully, mark every Task 4 step through this commit step `[x]`. Commit that execution record with the discovery indexes.
 

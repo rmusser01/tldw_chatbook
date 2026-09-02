@@ -25,7 +25,7 @@ Publish accurate, discoverable Chatbook documentation for using and extending th
 <!-- AC:BEGIN -->
 - [ ] #1 The canonical user guide includes a quick start, task-oriented workflows, the corrected first-link-only publication boundary, and the eleven shipped troubleshooting states.
 - [ ] #2 A developer guide maps Shared Core, encrypted local storage, interviews, agent authority, exact bounded context ordering, Sync-v2 integration, current limitations, separate full-local-first and API-only extension responsibilities, and targeted tests.
-- [ ] #3 User and developer indexes link to the guides, and stable links connect to merged server documentation.
+- [x] #3 User and developer indexes link to the guides, and stable links connect to merged server documentation.
 - [ ] #4 Documentation does not advertise an ongoing Personal Context sync caller or status surface, Manual Sync support, server REST publication, recovery import, delete-everywhere, purge acknowledgement, or a dedicated post-link conflict resolver; adaptive-interview disclosure, TLS behavior, first-link review, and local-removal residual state—including separate interview and link-key custody—match shipped code.
 - [ ] #5 Targeted UI, interview, TLS, Console, first-link, dispatcher, client, removal/export, contract, link, and diff checks pass after the final rebase.
 <!-- AC:END -->
@@ -64,6 +64,10 @@ PR #2310 corrected the approved specification after the first documentation pass
 - The five-step quick start separates manual **Add**/**Edit** > **Save** from interview review > **Save only**/**Save and use with agents**, and the workflow and boundary tables keep complete claims in compact user-facing form.
 
 The stable server guide URLs temporarily retain the older continuous-sync wording. Final cross-repository parity verification depends on merging the already-approved server documentation correction; Chatbook uses the corrected PR #2310 specification now. TASK-27019 remains **In Progress** through that ordered merge and final verification.
+
+## Execution Evidence
+
+- Task 4: added one user how-to entry and one developer-guide pointer, confirmed the existing Settings links, resolved both relative targets, and verified the linked Personal Context guides retain stable server `dev` URLs and the corrected first-link-only shared contract.
 
 ## Review correction scope and evidence
 
