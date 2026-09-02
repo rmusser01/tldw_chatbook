@@ -7109,6 +7109,40 @@ class ConsoleChatController:
             )
         if validation_error is not None:
             return self._block(session.id, validation_error)
+        # TASK-27021: expand @-references (files/folders/diff) into the text
+        # the PROVIDER sees, before the one preparation construction below.
+        # The user echo keeps the RAW draft; a compact system row records what
+        # expanded/refused (26020 AC#6). Expansion failures never block the
+        # send -- the raw draft goes through with a note. AGENT_WAKE drafts
+        # are machine-composed and never expanded.
+        executed_draft_text = clean_draft
+        reference_records: tuple = ()
+        if origin is not ConsoleSubmissionOrigin.AGENT_WAKE:
+            try:
+                from tldw_chatbook.Chat.console_references import (
+                    build_console_reference_resolver,
+                    expand_references,
+                    find_reference_candidates,
+                    run_git_reference,
+                )
+
+                if find_reference_candidates(clean_draft):
+                    def _expand() -> object:
+                        return expand_references(
+                            clean_draft,
+                            resolve=build_console_reference_resolver(),
+                            git_runner=run_git_reference,
+                        )
+
+                    expansion = await asyncio.to_thread(_expand)
+                    executed_draft_text = expansion.expanded_text
+                    reference_records = tuple(expansion.records)
+            except Exception:  # noqa: BLE001 - references must never block a send
+                logger.opt(exception=True).warning(
+                    "@-reference expansion failed; sending the raw draft"
+                )
+                executed_draft_text = clean_draft
+                reference_records = ()
         configuration = (
             resumed_preparation.execution_context.configuration
             if resumed_preparation is not None
@@ -7478,13 +7512,25 @@ class ConsoleChatController:
                 staged_evidence,
                 staged_evidence_release,
             ) = self._snapshot_staged_evidence()
+            if reference_records:
+                # TASK-27021 / 26020 AC#6: one compact row naming what was
+                # actually sent (or refused) -- adjacent to the raw user echo.
+                summary_lines = []
+                for record in reference_records:
+                    mark = "included" if record.ok else "REFUSED"
+                    summary_lines.append(f"{record.raw}: {mark} — {record.detail}")
+                self.store.append_message(
+                    session.id,
+                    role=ConsoleMessageRole.SYSTEM,
+                    content="@-references:\n" + "\n".join(summary_lines),
+                )
             preparation = ConsoleTurnPreparation(
                 preparation_id=str(uuid4()),
                 attempt_id=library_authority.attempt_id,
                 session_id=session.id,
                 origin=origin.value,
                 queue_entry_id=queue_entry_id,
-                executed_draft=clean_draft,
+                executed_draft=executed_draft_text,
                 execution_context=turn_context,
                 transient_user_message_id=(
                     echoed_user.id if echoed_user is not None else None
@@ -7686,6 +7732,21 @@ class ConsoleChatController:
                     provider_messages,
                     citation_context,
                 )
+            if reference_records and executed_draft_text != clean_draft:
+                # TASK-27021: the store echo keeps the RAW draft; the payload
+                # carries the @-reference expansion. Swap the just-echoed last
+                # user message. Runs BEFORE dictionaries/world-info -- the
+                # expanded text is the user's composed message; note the
+                # accepted hazard that dictionary keywords inside included
+                # file content will also match.
+                for _i in range(len(provider_messages) - 1, -1, -1):
+                    if provider_messages[_i].get("role") == "user":
+                        provider_messages = (
+                            provider_messages[:_i]
+                            + [{**provider_messages[_i], "content": executed_draft_text}]
+                            + provider_messages[_i + 1 :]
+                        )
+                        break
             provider_messages = await self._apply_chat_dictionaries(
                 provider_messages, session.id
             )

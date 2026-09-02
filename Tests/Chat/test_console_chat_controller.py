@@ -8924,3 +8924,84 @@ def test_empty_summary_never_alters_the_copy():
         ConsoleChatController._without_duplicated_summary(copy, "", "anything")
         == copy
     )
+
+
+# --- TASK-27021: @-reference expansion at the submit seam ---
+
+
+class _PayloadCapturingGateway(StreamingGateway):
+    def __init__(self):
+        self.messages = None
+
+    async def stream_chat(self, resolution, messages, **kwargs):
+        self.messages = messages
+        for chunk in ("ok",):
+            yield chunk
+
+
+@pytest.mark.asyncio
+async def test_reference_expansion_reaches_provider_but_echo_stays_raw(monkeypatch):
+    """27021 AC#1 + 26020 AC#6: the provider sees the expanded text; the user
+    echo keeps the raw draft; a compact system row records the expansion."""
+    from tldw_chatbook.Chat import console_references as refs
+
+    monkeypatch.setattr(
+        refs, "build_console_reference_resolver",
+        lambda: (lambda token: ("file", "FILE-CONTENT-MARKER", None) if token == "a.py" else None),
+    )
+    monkeypatch.setattr(refs, "run_git_reference", lambda kind, **k: "")
+
+    store = ConsoleChatStore()
+    gateway = _PayloadCapturingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    result = await controller.submit_draft("see @a.py please")
+    assert result.accepted is True
+
+    sent_user = [m for m in (gateway.messages or []) if m.get("role") == "user"]
+    assert sent_user, "provider payload missing user message"
+    assert "FILE-CONTENT-MARKER" in sent_user[-1]["content"]
+
+    rows = store.messages_for_session(store.active_session_id)
+    user_rows = [m for m in rows if m.role.value == "user"]
+    assert user_rows[-1].content == "see @a.py please", "echo must stay raw"
+    system_rows = [m for m in rows if m.role.value == "system" and "@-references" in m.content]
+    assert system_rows and "included" in system_rows[-1].content
+
+
+@pytest.mark.asyncio
+async def test_email_at_sign_is_not_expanded(monkeypatch):
+    from tldw_chatbook.Chat import console_references as refs
+
+    def _explode():
+        raise AssertionError("resolver must not be built for a non-reference draft")
+    monkeypatch.setattr(refs, "build_console_reference_resolver", _explode)
+
+    store = ConsoleChatStore()
+    gateway = _PayloadCapturingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    result = await controller.submit_draft("mail bob@example.com about it")
+    assert result.accepted is True
+    sent_user = [m for m in (gateway.messages or []) if m.get("role") == "user"]
+    assert sent_user[-1]["content"] == "mail bob@example.com about it"
+    rows = store.messages_for_session(store.active_session_id)
+    assert not [m for m in rows if m.role.value == "system" and "@-references" in m.content]
+
+
+@pytest.mark.asyncio
+async def test_expansion_failure_sends_raw_draft(monkeypatch):
+    from tldw_chatbook.Chat import console_references as refs
+
+    def _boom():
+        raise RuntimeError("resolver construction exploded")
+    monkeypatch.setattr(refs, "build_console_reference_resolver", _boom)
+
+    store = ConsoleChatStore()
+    gateway = _PayloadCapturingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    result = await controller.submit_draft("see @a.py please")
+    assert result.accepted is True, "expansion failure must never block the send"
+    sent_user = [m for m in (gateway.messages or []) if m.get("role") == "user"]
+    assert sent_user[-1]["content"] == "see @a.py please"
