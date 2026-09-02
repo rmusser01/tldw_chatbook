@@ -97,6 +97,7 @@ from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.Tool_Packs.binding import ToolProfileLifecycleCoordinator
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
@@ -242,6 +243,70 @@ class CharacterEmoteStreamingGateway(StreamingGateway):
         self.messages_seen = messages
         for chunk in self.chunks:
             yield chunk
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raises", [False, True])
+async def test_console_holds_captured_tool_profile_lease_through_run_outcome(
+    raises: bool,
+) -> None:
+    store = ConsoleChatStore()
+    session = store.create_session(title="Lease test")
+    assistant, context = _begin_controller_disclosure(store, session.id)
+    context = ConsoleTurnExecutionContext(
+        configuration=replace(
+            context.configuration,
+            tool_policy_profile_id="research",
+        ),
+        library_authority=context.library_authority,
+        resolved_destination=context.resolved_destination,
+    )
+    lifecycle = ToolProfileLifecycleCoordinator()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=StreamingGateway(),
+    )
+    controller.tool_profile_lifecycle = lifecycle
+    expected = object()
+
+    async def run_inner(**_kwargs):
+        assert lifecycle.active_lease_count("research") == 1
+        assert lifecycle.active_lease_count("default") == 0
+        if raises:
+            raise RuntimeError("run failed")
+        return expected
+
+    controller._stream_assistant_response_inner = run_inner
+    arguments = {
+        "resolution": object(),
+        "provider_messages": [],
+        "assistant_message_id": assistant.id,
+        "route": ConsoleRequestRoute.FRESH,
+        "turn_context": context,
+    }
+
+    if raises:
+        with pytest.raises(RuntimeError, match="run failed"):
+            await controller._stream_assistant_response(**arguments)
+    else:
+        assert await controller._stream_assistant_response(**arguments) is expected
+
+    assert lifecycle.active_lease_count("research") == 0
+
+
+def test_console_captured_profile_lease_scope_supports_recovery_runs() -> None:
+    lifecycle = ToolProfileLifecycleCoordinator()
+    controller = ConsoleChatController(
+        store=ConsoleChatStore(),
+        provider_gateway=StreamingGateway(),
+    )
+    controller.tool_profile_lifecycle = lifecycle
+    turn_context = SimpleNamespace(tool_policy_profile_id="research")
+
+    with controller_module._captured_tool_profile_lease(controller, turn_context):
+        assert lifecycle.active_lease_count("research") == 1
+
+    assert lifecycle.active_lease_count("research") == 0
 
 
 def _activate_character_emote_pack(

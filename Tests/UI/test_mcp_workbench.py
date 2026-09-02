@@ -26,6 +26,7 @@ from textual.widgets import (
     Static,
     TextArea,
 )
+from textual.worker import Worker, WorkerState
 
 import tldw_chatbook
 import tldw_chatbook.MCP.local_server_tools as local_server_tools_module
@@ -59,6 +60,7 @@ from tldw_chatbook.MCP.unified_control_plane_service import (
     MCPServerSourceDisplayOnlyError,
     UnifiedMCPControlPlaneService,
 )
+from tldw_chatbook.Tool_Packs.binding import ToolProfileLifecycleCoordinator
 from tldw_chatbook.UI.MCP_Modules.mcp_audit_mode import MCPAuditMode
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
     MCPInspector,
@@ -3532,6 +3534,8 @@ class ToolTestHubService(FakeHubService):
         self.active_calls: list[tuple[str, str]] = []
         self._preview_count = 0
         self.next_prepared_outcome: Any | None = None
+        self.lease_observer = None
+        self.lease_observations: list[int] = []
 
     def gate_tool_test(self, tool: Any) -> EffectiveToolState:
         self.gate_calls.append((tool.server_key, tool.name))
@@ -3659,6 +3663,8 @@ class ToolTestHubService(FakeHubService):
     async def execute_prepared_hub_test(
         self, nonce: str, intent: str, arguments: dict[str, Any]
     ) -> Any:
+        if self.lease_observer is not None:
+            self.lease_observations.append(self.lease_observer())
         preview = self._previews.pop(nonce, None)
         if preview is None:
             return ToolTestAdmissionStale(reason="preview_unavailable")
@@ -3750,6 +3756,95 @@ class BuiltinToolTestApp(ToolTestApp):
     def __init__(self) -> None:
         super().__init__()
         self.unified_mcp_service = BuiltinToolTestHubService()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raises", [False, True])
+async def test_prepared_tool_test_holds_captured_profile_lease_through_service(
+    raises: bool,
+) -> None:
+    app = ToolTestApp()
+    lifecycle = ToolProfileLifecycleCoordinator()
+    app.unified_mcp_service.lease_observer = lambda: lifecycle.active_lease_count(
+        "research"
+    )
+    if raises:
+        app.unified_mcp_service.raise_error = RuntimeError("tool failed")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.tool_profile_lifecycle = lifecycle
+        workbench._tool_policy_profile_id = "research"
+        tool = next(tool for tool in workbench._last_hub_tools if tool.name == "fetch")
+        event = _prepared_test_event(app.unified_mcp_service, tool, {})
+        workbench.on_mcp_inspector_tool_test_requested(event)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+    assert app.unified_mcp_service.lease_observations == [1]
+    assert lifecycle.active_lease_count("research") == 0
+
+
+@pytest.mark.asyncio
+async def test_denied_prepared_tool_test_releases_captured_profile_lease() -> None:
+    app = ToolTestApp()
+    app.unified_mcp_service.gate_state = "deny"
+    lifecycle = ToolProfileLifecycleCoordinator()
+    app.unified_mcp_service.lease_observer = lambda: lifecycle.active_lease_count(
+        "research"
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.tool_profile_lifecycle = lifecycle
+        workbench._tool_policy_profile_id = "research"
+        tool = next(tool for tool in workbench._last_hub_tools if tool.name == "fetch")
+        event = _prepared_test_event(app.unified_mcp_service, tool, {})
+        workbench.on_mcp_inspector_tool_test_requested(event)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+    assert app.unified_mcp_service.lease_observations == [1]
+    assert app.unified_mcp_service.test_calls == []
+    assert lifecycle.active_lease_count("research") == 0
+
+
+@pytest.mark.asyncio
+async def test_cancelled_before_start_prepared_test_releases_profile_lease(
+    monkeypatch,
+) -> None:
+    app = ToolTestApp()
+    lifecycle = ToolProfileLifecycleCoordinator()
+    captured: dict[str, object] = {}
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.tool_profile_lifecycle = lifecycle
+        workbench._tool_policy_profile_id = "research"
+        tool = next(tool for tool in workbench._last_hub_tools if tool.name == "fetch")
+        event = _prepared_test_event(app.unified_mcp_service, tool, {})
+        worker = Worker(workbench, lambda: None)
+
+        def capture_worker(work, **_kwargs):
+            captured["work"] = work
+            return worker
+
+        monkeypatch.setattr(workbench, "run_worker", capture_worker)
+        workbench.on_mcp_inspector_tool_test_requested(event)
+
+        assert lifecycle.active_lease_count("research") == 1
+        try:
+            workbench.on_worker_state_changed(
+                Worker.StateChanged(worker, WorkerState.CANCELLED)
+            )
+            assert lifecycle.active_lease_count("research") == 0
+        finally:
+            captured_work = captured.get("work")
+            if captured_work is not None:
+                captured_work.close()
 
 
 async def _select_tools_mode_row(app: App, pilot, row: int) -> None:

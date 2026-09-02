@@ -166,6 +166,14 @@ _LEASE_CONDITION = threading.Condition(_LIFECYCLE_LOCK)
 _ACTIVE_LEASES: dict[str, int] = {}
 
 
+@dataclass(frozen=True, slots=True)
+class ToolProfileLease:
+    """Immutable identity for one exact-profile runtime use."""
+
+    profile_id: str
+    lease_id: str
+
+
 class ToolProfileLifecycleCoordinator:
     """Process-wide mutation ordering and exact-profile runtime leases."""
 
@@ -176,14 +184,19 @@ class ToolProfileLifecycleCoordinator:
             yield
 
     @contextmanager
-    def lease(self, profile_id: str) -> Iterator[None]:
+    def lease(self, profile_id: str) -> Iterator[ToolProfileLease]:
         """Hold one runtime lease for the exact captured profile id."""
-        if not profile_id:
-            raise ValueError("profile_id must not be empty")
+        if (
+            type(profile_id) is not str
+            or not profile_id
+            or profile_id != profile_id.strip()
+        ):
+            raise ValueError("profile_id must be a non-empty normalized string")
+        lease = ToolProfileLease(profile_id, token_urlsafe(24))
         with _LEASE_CONDITION:
             _ACTIVE_LEASES[profile_id] = _ACTIVE_LEASES.get(profile_id, 0) + 1
         try:
-            yield
+            yield lease
         finally:
             with _LEASE_CONDITION:
                 remaining = _ACTIVE_LEASES.get(profile_id, 0) - 1

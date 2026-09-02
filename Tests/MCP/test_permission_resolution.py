@@ -137,14 +137,23 @@ def test_invalid_lifecycle_resolves_deny(profile, origin):
     ) == EffectiveToolState("deny", origin)
 
 
-def test_tombstone_short_circuits_named_inheritance():
+def test_tombstone_short_circuits_all_named_resolver_paths():
     """A valid tombstone remains Deny even when default would allow."""
     payload = _tombstone_payload(default_global="allow")
+    expected = EffectiveToolState("deny", "tombstone")
 
-    assert (
-        resolve_builtin_state(payload, _builtin(), profile_id="portable").state
-        == "deny"
-    )
+    assert resolve_effective_state(
+        payload, _tool(), profile_id="portable"
+    ) == expected
+    assert resolve_builtin_state(
+        payload, _builtin(), profile_id="portable"
+    ) == expected
+    assert resolve_effective_state_by_key(
+        payload,
+        "unseen:server",
+        "future-tool",
+        profile_id="portable",
+    ) == expected
 
 
 def test_lifecycle_disposition_requires_the_exact_tombstone_variant():

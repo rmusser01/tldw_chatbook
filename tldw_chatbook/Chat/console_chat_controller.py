@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+from contextlib import contextmanager
 from contextvars import ContextVar
 import functools
 import hashlib
@@ -15,7 +16,7 @@ import stat
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -2827,6 +2828,34 @@ def _compose_profile_tool_provider(
     )
 
 
+@contextmanager
+def _captured_tool_profile_lease(
+    controller: object,
+    turn_context: object,
+) -> Iterator[None]:
+    """Hold an attached lifecycle lease for one captured Console turn."""
+    profile_id = getattr(turn_context, "tool_policy_profile_id", "default")
+    lifecycle = getattr(controller, "tool_profile_lifecycle", None)
+    lease = getattr(lifecycle, "lease", None)
+    if not callable(lease):
+        yield
+        return
+    with lease(profile_id):
+        yield
+
+
+def _lease_captured_tool_profile(method: Callable[..., Any]):
+    """Apply the captured-profile lease to one whole Console run method."""
+
+    @functools.wraps(method)
+    async def wrapped(self, *args, **kwargs):
+        turn_context = kwargs.get("turn_context")
+        with _captured_tool_profile_lease(self, turn_context):
+            return await method(self, *args, **kwargs)
+
+    return wrapped
+
+
 class ConsoleChatController:
     """Coordinate native Console chat state between store and provider gateway."""
 
@@ -5466,25 +5495,26 @@ class ConsoleChatController:
         )
         recovery_task = asyncio.current_task()
         try:
-            await self._run_agent_reply(
-                resolution=resolution,
-                provider_messages=self._provider_messages_for_session(
-                    session_id,
-                    before_message_id=message.id,
-                    annotate_ids=bool(prior_sidecar),
+            with _captured_tool_profile_lease(self, turn_context):
+                await self._run_agent_reply(
+                    resolution=resolution,
+                    provider_messages=self._provider_messages_for_session(
+                        session_id,
+                        before_message_id=message.id,
+                        annotate_ids=bool(prior_sidecar),
+                        turn_context=turn_context,
+                    ),
+                    assistant_message_id=message.id,
+                    prepare_retry=False,
+                    variant_mode=False,
+                    restore_provider_continuation=checkpoint,
+                    restore_provider_target=target,
+                    expand_provider_continuation=translator,
+                    resume_provider_continuation=True,
+                    continuation_sidecar=prior_sidecar,
+                    continuation_history_target=prior_target,
                     turn_context=turn_context,
-                ),
-                assistant_message_id=message.id,
-                prepare_retry=False,
-                variant_mode=False,
-                restore_provider_continuation=checkpoint,
-                restore_provider_target=target,
-                expand_provider_continuation=translator,
-                resume_provider_continuation=True,
-                continuation_sidecar=prior_sidecar,
-                continuation_history_target=prior_target,
-                turn_context=turn_context,
-            )
+                )
         finally:
             if (
                 self._active_stream_tasks.get(session_id) is recovery_task
@@ -19521,6 +19551,7 @@ class ConsoleChatController:
         )
         return provider_messages, result
 
+    @_lease_captured_tool_profile
     async def _stream_assistant_response(
         self,
         *,

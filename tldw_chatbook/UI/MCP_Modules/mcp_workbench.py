@@ -20,7 +20,7 @@ from textual.css.query import QueryError
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import ContentSwitcher
-from textual.worker import Worker
+from textual.worker import Worker, WorkerState
 
 from tldw_chatbook.Agents.builtin_tool_gate import (
     LOCAL_TOOLS_DEFAULT_ENABLED,
@@ -103,6 +103,24 @@ from tldw_chatbook.Utils.path_validation import is_safe_path, validate_path
 _UNSET: Any = object()
 _TOOL_TEST_ACTIVE_POLL_SECONDS = 0.3
 _TOOL_TEST_BLOCKED_UNKNOWN_TEXT = f"Blocked — {PERMISSION_STATE_UNRESOLVED_CLAUSE}."
+
+
+class _ToolProfileLeaseHandoff:
+    """Release one entered profile lease exactly once across worker exits."""
+
+    __slots__ = ("_scope",)
+
+    def __init__(self, scope: object) -> None:
+        self._scope: object | None = scope
+
+    def release(self) -> None:
+        scope, self._scope = self._scope, None
+        if scope is None:
+            return
+        try:
+            scope.__exit__(None, None, None)
+        except Exception as exc:
+            logger.warning(f"Tool profile lease release failed: {exc}")
 
 
 def _target_id_from_server_key(key: str | None) -> str | None:
@@ -689,6 +707,13 @@ class MCPWorkbench(Container):
         # Reclamation must outlive the cancelled Textual worker which minted
         # the nonce. Retain each cleanup until its result has been observed.
         self._tool_test_reclaim_tasks: set[asyncio.Task[None]] = set()
+        # Tool Profile removal must wait for accepted Test Tool requests, even
+        # when Textual cancels the worker before its coroutine starts.
+        self.tool_profile_lifecycle: object | None = None
+        self._tool_policy_profile_id = "default"
+        self._tool_test_profile_leases: dict[
+            Worker[Any], _ToolProfileLeaseHandoff
+        ] = {}
         # T7: the batch `EffectiveToolState` resolution `_sync_permissions_
         # mode()` most recently computed (via `service.effective_tool_
         # states()`), keyed the same as that method's own return value --
@@ -4006,19 +4031,73 @@ class MCPWorkbench(Container):
             )
             return
         generation = self._tool_test_generation
-        self.run_worker(
-            self._run_prepared_tool_test(
-                tool,
-                event.preview_nonce,
-                event.intent,
-                dict(event.arguments),
-                generation,
-            ),
-            name="mcp-tool-test-execute",
-            group="mcp-tool-test-execute",
-            exclusive=False,
+        lifecycle = self.tool_profile_lifecycle
+        lease_factory = getattr(lifecycle, "lease", None)
+        lease_scope = (
+            lease_factory(self._tool_policy_profile_id)
+            if callable(lease_factory)
+            else None
         )
+        lease_handoff = None
+        if lease_scope is not None:
+            lease_scope.__enter__()
+            lease_handoff = _ToolProfileLeaseHandoff(lease_scope)
+        handed_off = False
+        try:
+            worker = self.run_worker(
+                self._run_prepared_tool_test_with_profile_lease(
+                    tool,
+                    event.preview_nonce,
+                    event.intent,
+                    dict(event.arguments),
+                    generation,
+                    lease_handoff,
+                ),
+                name="mcp-tool-test-execute",
+                group="mcp-tool-test-execute",
+                exclusive=False,
+            )
+            if lease_handoff is not None:
+                self._tool_test_profile_leases[worker] = lease_handoff
+            handed_off = True
+        finally:
+            if lease_handoff is not None and not handed_off:
+                lease_handoff.release()
         return
+
+    async def _run_prepared_tool_test_with_profile_lease(
+        self,
+        tool: HubTool,
+        nonce: str,
+        intent: str,
+        arguments: dict[str, Any],
+        generation: int,
+        lease_handoff: _ToolProfileLeaseHandoff | None,
+    ) -> None:
+        """Keep the captured Tool Profile live through final result handling."""
+        try:
+            await self._run_prepared_tool_test(
+                tool,
+                nonce,
+                intent,
+                arguments,
+                generation,
+            )
+        finally:
+            if lease_handoff is not None:
+                lease_handoff.release()
+
+    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        """Release leases when a Test Tool worker never starts its coroutine."""
+        if event.state not in {
+            WorkerState.CANCELLED,
+            WorkerState.ERROR,
+            WorkerState.SUCCESS,
+        }:
+            return
+        lease_handoff = self._tool_test_profile_leases.pop(event.worker, None)
+        if lease_handoff is not None:
+            lease_handoff.release()
 
     async def _run_prepared_tool_test(
         self,
