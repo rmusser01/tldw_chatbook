@@ -16,7 +16,17 @@ from zoneinfo import ZoneInfo
 from croniter import croniter
 from loguru import logger
 
-# ADR-097 boot ratchet: deferred off the boot path (loads on first use). (automation_health imports at its read site.)
+# ADR-097 boot ratchet: automation_health loads on first use. A thin module-
+# level proxy (not a plain deferred import) keeps `compute_local_health`
+# patchable as an attribute of THIS module -- Tests/Scheduling/test_run_now.py
+# stubs it here, and a function-local import would silently bypass the stub.
+def compute_local_health(app, row):
+    from tldw_chatbook.Scheduling.automation_health import (
+        compute_local_health as _impl,
+    )
+
+    return _impl(app, row)
+
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.models import (
     ReminderTask,
@@ -486,10 +496,6 @@ class SchedulingService:
             return None
 
         app = self.app_getter() if self.app_getter is not None else None
-        from tldw_chatbook.Scheduling.automation_health import (  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
-            compute_local_health,
-        )
-
         health, reason = compute_local_health(app, row)
         if health != "ready":
             logger.warning(
