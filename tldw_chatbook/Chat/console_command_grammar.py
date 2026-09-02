@@ -97,6 +97,9 @@ RESEARCH_COMMAND_HANDLER_ID = "research"
 HELP_COMMAND_NAME = "help"
 HELP_COMMAND_ARGUMENT_HINT = "[command]"
 HELP_COMMAND_HANDLER_ID = "help"
+DOCTOR_COMMAND_NAME = "doctor"
+DOCTOR_COMMAND_ARGUMENT_HINT = "[network]"
+DOCTOR_COMMAND_HANDLER_ID = "doctor"
 
 # TASK-25909: existing Console actions given a typed slash route. All share
 # one handler_id; the screen maps each name to the action method that already
@@ -339,6 +342,13 @@ def default_console_registry() -> ConsoleCommandRegistry:
             name=HELP_COMMAND_NAME,
             argument_hint=HELP_COMMAND_ARGUMENT_HINT,
             handler_id=HELP_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=DOCTOR_COMMAND_NAME,
+            argument_hint=DOCTOR_COMMAND_ARGUMENT_HINT,
+            handler_id=DOCTOR_COMMAND_HANDLER_ID,
         )
     )
     for _action_name, _action_hint in CONSOLE_ACTION_COMMANDS:

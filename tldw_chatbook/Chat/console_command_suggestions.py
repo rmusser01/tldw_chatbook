@@ -46,6 +46,7 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "rewind": "Rewind the session to an earlier user prompt",
     "research": "Run deep research in the background; the report is delivered into this conversation",
     "help": "List the console commands, or /help <command> for one command's detail",
+    "doctor": "Run local health checks (config, deps, DB, providers, paths)",
     "model": "Change provider/model/temperature (Alt+M)",
     "sessions": "Switch to another conversation (Ctrl+K)",
     "workspace": "Switch the active Console workspace (Alt+W)",

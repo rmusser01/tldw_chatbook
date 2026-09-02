@@ -38,6 +38,7 @@ COMMANDS = [
     "/rewind",
     "/research",
     "/help",
+    "/doctor",
     "/model",
     "/sessions",
     "/workspace",

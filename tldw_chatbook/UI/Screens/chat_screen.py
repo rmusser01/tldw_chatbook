@@ -255,6 +255,8 @@ from ...Chat.console_command_grammar import (
     HELP_COMMAND_NAME,
     CONSOLE_ACTION_COMMAND_HANDLER_ID,
     CONSOLE_ACTION_COMMANDS,
+    DOCTOR_COMMAND_HANDLER_ID,
+    DOCTOR_COMMAND_NAME,
     REWIND_COMMAND_HANDLER_ID,
     EMERGENCY_STOP_COMMAND_HANDLER_ID,
     EMERGENCY_STOP_COMMAND_NAME,
@@ -15061,6 +15063,7 @@ class ChatScreen(BaseAppScreen):
         EMERGENCY_STOP_COMMAND_NAME: EMERGENCY_STOP_COMMAND_HANDLER_ID,
         RESEARCH_COMMAND_NAME: RESEARCH_COMMAND_HANDLER_ID,
         HELP_COMMAND_NAME: HELP_COMMAND_HANDLER_ID,
+        DOCTOR_COMMAND_NAME: DOCTOR_COMMAND_HANDLER_ID,
         **{
             _name: CONSOLE_ACTION_COMMAND_HANDLER_ID
             for _name, _hint in CONSOLE_ACTION_COMMANDS
@@ -15128,6 +15131,7 @@ class ChatScreen(BaseAppScreen):
             EMERGENCY_STOP_COMMAND_HANDLER_ID: self._console_command_emergency_stop,
             RESEARCH_COMMAND_HANDLER_ID: self._console_command_research,
             HELP_COMMAND_HANDLER_ID: self._console_command_help,
+            DOCTOR_COMMAND_HANDLER_ID: self._console_command_doctor,
             CONSOLE_ACTION_COMMAND_HANDLER_ID: self._console_command_run_action,
         }
         handler = dispatch_map.get(handler_id)
@@ -15158,6 +15162,24 @@ class ChatScreen(BaseAppScreen):
                 commands, _COMMAND_DESCRIPTIONS, availability_fn=_availability
             )
         await self._append_native_console_system_message(text)
+
+    async def _console_command_doctor(self, parse: CommandParse) -> None:
+        """TASK-25906: run the aggregate health checks and print the report.
+
+        The DB integrity PRAGMA can be slow, so the checks run off the event
+        loop. Network probes are opt-in via `/doctor network`.
+        """
+        import asyncio as _asyncio
+
+        from ...Utils.doctor import run_doctor, format_doctor_report
+
+        include_network = "network" in (parse.args or "").lower()
+        try:
+            checks = await _asyncio.to_thread(run_doctor, include_network=include_network)
+            report = format_doctor_report(checks)
+        except Exception as exc:  # noqa: BLE001 - a command must not crash the screen
+            report = f"Doctor could not complete: {exc}"
+        await self._append_native_console_system_message(report)
 
     async def _console_command_run_action(self, parse: CommandParse) -> None:
         """TASK-25909: dispatch a typed action command to the existing screen
