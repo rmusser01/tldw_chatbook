@@ -10859,7 +10859,6 @@ contracts. When optimizing a Textual subtree that begins hidden, keep a
 production-hierarchy first-open paint test and do not infer layout readiness from
 precomposition alone. Prefer reusing a subtree after one successful visible
 mount unless its hidden ancestors already have deterministic geometry.
-
 ## SQLite cursor wrappers invalidate exact-type ownership guards
 
 **TASK-23113.11, 2026-09-02.** Quiescence tracking correctly moved the primary
@@ -10876,3 +10875,26 @@ subclass, ownership checks must accept `isinstance(cursor, sqlite3.Cursor)` and
 prove authority with connection identity and active transaction state. Exercise
 at least one real startup or domain write through the wrapped factory; isolated
 wrapper tests cannot expose an exact-type guard in a distant repository method.
+
+## A pre-replace identity check cannot prove post-replace destination truth
+
+**TASK-27038, 2026-09-01.** The first Tool Pack publication implementation
+captured the parent and target inode, revalidated both immediately before an
+atomic descriptor-relative replace, and reconciled parent-fsync failures. Review
+still found two deterministic authorization/truth gaps. An incumbent could be
+rewritten in place without changing its inode, so an old overwrite token remained
+accepted; and a parent rename performed inside the replacement boundary published
+through the still-valid old directory descriptor but returned ordinary success for
+a pathname that no longer named the result. The same review also found that the
+capability gate checked directory-descriptor support on `os.rename` while the code
+actually called `os.replace`.
+
+**What to do.** At every overwrite revalidation, compare both the captured inode
+and a descriptor-read digest. Probe the exact callable and exact parameters that
+the mutation path will invoke. After any point where replacement may have occurred,
+keep the authenticated parent descriptor open and reconcile the currently named
+parent, target identity, and content digest before claiming ordinary success; a
+named-parent mismatch is an uncertain committed state, not proof the old file
+survived. Tests must inject the in-place rewrite and the parent rename at the
+replacement call itself—checking only the phase before it leaves the decisive race
+untested.
