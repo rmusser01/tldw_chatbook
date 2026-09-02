@@ -1665,3 +1665,35 @@ errors — each for a DIFFERENT environmental reason that read like a product bu
 `$HOME`, redirect every `[database]` pin, copy DBs via the backup API, and
 integrity-check the copies. When a scratch boot shows "everything restored
 except one subsystem", suspect per-service path resolution before the code.
+
+## A green header test hid a feature that never worked end to end (TASK-26022 AC#7, 2026-09-02)
+
+**What happened.** The Claude-subscription credential borrow shipped with six
+green ACs and 16 passing tests — including one asserting the subscription path
+sends `authorization: Bearer …` and no `x-api-key`. AC#7 ("verified against a
+real account") was the only one left. Running a single real send against the
+owner's Max account exposed that the feature was **non-functional end to end**
+for two reasons no header-shape test could catch:
+
+1. **The credential wasn't where the code read it.** On macOS Claude Code stores
+   its OAuth credential in the login Keychain (`security find-generic-password
+   -s "Claude Code-credentials"`), NOT in `~/.claude/.credentials.json`. The
+   file-only reader returned `None`, so the subscription path never even
+   engaged on the primary dev platform.
+2. **The token is gated to the Claude Code identity.** With the credential
+   supplied by hand, the send still failed: the OAuth token is rejected — as a
+   *misleading* `429 rate_limit_error`, not an auth error — unless the request's
+   `system` leads with "You are Claude Code, Anthropic's official CLI for
+   Claude." Deterministic: that identity → 200; no system or any other system →
+   429 (a Claude-Code request immediately after succeeded, ruling out real rate
+   limiting). The shipped code set headers but never sent the identity.
+
+**What to do.** For any feature that borrows a real, externally-minted
+credential, the header-shape unit test is necessary but proves almost nothing —
+credentials carry constraints (where they're stored per-OS, what identity/scopes
+the token is bound to, what the server demands beyond auth) that only a live
+send reveals. Do the one real call before closing the task, and read the failure
+body literally: a `rate_limit_error` here was really "this token is Claude-Code
+only." Corollary: a misleading upstream error code (429 for an identity
+rejection) will send you chasing the wrong fix unless you test the discriminating
+cases (identity present vs absent vs other) rather than trusting the label.
