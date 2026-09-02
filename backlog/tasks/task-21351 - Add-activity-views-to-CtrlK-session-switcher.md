@@ -4,7 +4,7 @@ title: Add activity views to Ctrl+K session switcher
 status: In Progress
 assignee: []
 created_date: '2026-08-23 22:37'
-updated_date: '2026-09-02 08:23'
+updated_date: '2026-09-02 14:31'
 labels: []
 dependencies:
   - TASK-20937
@@ -42,10 +42,10 @@ separately releasable later phase.
 - [x] #5 Ordinary inactive-session and post-turn FLEET outcomes persist as idempotent, revisioned receipts across restart; effective corrections supersede obsolete revisions, in-turn FLEET children do not duplicate ordinary outcomes, and pre-migration terminal history does not create an upgrade flood.
 - [x] #6 Successful outcomes are acknowledged only after the exact destination and receipt-keyed notice visibly load, except that a vanished session-only destination can clear only through its receipt-keyed Session unavailable / Mark seen action; failed, stuck, stopped, and cancelled outcomes require an explicit Mark seen action, and newer outcomes arriving during navigation remain unseen.
 - [x] #7 Activity and compatibility-mark publication is race-safe and never interrupts direct-run, queue-chain, or FLEET execution settlement; migration/read failure fails closed without deleting or rebuilding AgentRunsDB, while orphan reconciliation rolls status and receipt forward atomically or not at all.
-- [x] #8 Ordering, focus retention, paging, async-result rejection, F2 rename scope, keyboard/pointer activation, literal-safe two-row labels, narrow-width omission, and the unconditional Cancel action are deterministic and accessible; the complete modal never exceeds 35 terminal rows.
+- [x] #8 Ordering, focus retention, paging, async-result rejection, F2 rename scope, keyboard/pointer activation, literal-safe two-row labels, narrow-width omission, and the unconditional Cancel action are deterministic and accessible; scope/current/destination are unambiguous, rows are left-aligned and theme-semantic, and the content-sized modal never exceeds 35 terminal rows.
 - [x] #9 Opening Ctrl+K or changing local modes performs no network request, mounts at most 50 conversation/unavailable result rows plus bounded modal controls, does not reconstruct transcripts, and leaves Console Context/Inspector rail projections and ownership unchanged.
 - [ ] #10 Automated model, migration, producer, race, production-path activation, and production-stylesheet compositor tests cover the approved behavior; final evidence includes equal-cell iTerm2 and Windows Terminal parity after TASK-20937.6 is complete.
-- [x] #11 Blank-query Enter targets the MRU other open tab, explicit navigation and nonblank search target the highlighted committed result, and contextual onboarding plus deterministic domain-semantic state/workspace search work without transcript inspection, embeddings, or network calls.
+- [x] #11 Blank-query Enter targets the MRU other open tab, explicit navigation and nonblank search target the highlighted committed result, and contextual onboarding plus plain-language deterministic domain-semantic state/workspace search expose the exact next consequence and distilled metadata without transcript inspection, embeddings, or network calls.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -76,6 +76,7 @@ separately releasable later phase.
 9. Complete the child acceptance criteria, notes, and Done transition first;
    then complete the parent acceptance criteria, notes, and Done transition
    after the child and all parent-level evidence are complete.
+10. Apply the approved Impeccable critique to the existing modal without changing ADR-085 ownership: clarify visible scope and Enter consequence, use adaptive left-aligned semantic-token presentation, simplify search teaching and row metadata, and verify keyboard/pointer Mark seen parity plus page navigation.
 
 Detailed plan:
 `Docs/superpowers/plans/2026-08-23-task-21351-console-session-switcher-activity-views.md`.
@@ -105,4 +106,6 @@ Focused automated and production-shaped verification passes, independent review 
 ADR required: yes. ADR path: backlog/decisions/085-console-activity-receipts-and-switcher-ownership.md.
 
 Remaining closeout gate: parent AC #10 equal-cell iTerm2 and Windows Terminal parity. iTerm2 automation is blocked by macOS Accessibility/TCC permission; Windows Terminal remains blocked by TASK-20937.6. Parent intentionally remains In Progress.
+
+2026-09-02 Impeccable refinement: clarified visible scope and exact Enter consequence; adopted content-sized, left-aligned, theme-semantic rows; distilled update metadata; simplified search guidance; added contextual hints, Home/End/Page navigation, and keyboard/pointer Mark seen confirmation parity. Fresh evidence: 90 targeted switcher/trust UI tests passed, 2 hermetic production/compositor capture tests passed, the Impeccable detector returned no findings, and scoped Ruff plus git diff --check passed. No new ADR was required because these presentation refinements stay within ADR-085. AC #10 remains open solely for equal-cell native terminal parity.
 <!-- SECTION:NOTES:END -->

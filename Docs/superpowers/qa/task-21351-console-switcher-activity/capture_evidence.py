@@ -2,7 +2,13 @@
 
 Run from the repository root with:
 
-    pytest Docs/superpowers/qa/task-21351-console-switcher-activity/capture_evidence.py -q -s
+    pytest -p Tests.conftest \\
+      Docs/superpowers/qa/task-21351-console-switcher-activity/capture_evidence.py \\
+      -q -s
+
+Loading the shared test plugin is required: it redirects app configuration and
+profile writes into a disposable pytest sandbox before this module imports the
+production app.
 """
 
 from __future__ import annotations
@@ -44,8 +50,10 @@ CAPTURES = HERE / "captures"
 
 def _write_frame(app, filename: str, *, title: str) -> None:  # type: ignore[no-untyped-def]
     CAPTURES.mkdir(parents=True, exist_ok=True)
+    svg = app.export_screenshot(title=title, simplify=True)
+    normalized_svg = "\n".join(line.rstrip() for line in svg.splitlines()) + "\n"
     (CAPTURES / filename).write_text(
-        app.export_screenshot(title=title, simplify=True),
+        normalized_svg,
         encoding="utf-8",
     )
 

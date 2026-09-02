@@ -7,8 +7,8 @@
       "input_subjects": 5,
       "modal_open": {
         "samples": 7,
-        "median_ms": 89.662,
-        "p95_ms": 144.113
+        "median_ms": 84.583,
+        "p95_ms": 142.439
       },
       "active_filter_pure": {
         "samples": 200,
@@ -18,33 +18,33 @@
       "modal_operations": {
         "active_filter": {
           "samples": 20,
-          "median_ms": 239.851,
-          "p95_ms": 241.816
+          "median_ms": 239.528,
+          "p95_ms": 243.731
         },
         "zero_match_widening": {
           "samples": 20,
-          "median_ms": 240.578,
-          "p95_ms": 242.925
+          "median_ms": 237.723,
+          "p95_ms": 241.069
         },
         "f3_toggle": {
           "samples": 20,
-          "median_ms": 79.252,
-          "p95_ms": 102.132
+          "median_ms": 97.059,
+          "p95_ms": 97.838
         },
         "mounted_selectable_widgets": 5,
         "modal_rows": 35
       },
       "history_page": {
         "samples": 30,
-        "median_ms": 0.11,
-        "p95_ms": 0.207,
+        "median_ms": 0.073,
+        "p95_ms": 0.136,
         "database_rows_materialized": 5,
         "reported_total": 5
       },
       "receipt_cache_refresh": {
         "samples": 30,
-        "median_ms": 0.006,
-        "p95_ms": 0.01,
+        "median_ms": 0.004,
+        "p95_ms": 0.006,
         "database_rows_materialized": 5
       }
     },
@@ -52,44 +52,44 @@
       "input_subjects": 50,
       "modal_open": {
         "samples": 7,
-        "median_ms": 114.384,
-        "p95_ms": 175.587
+        "median_ms": 110.495,
+        "p95_ms": 176.592
       },
       "active_filter_pure": {
         "samples": 200,
-        "median_ms": 0.082,
-        "p95_ms": 0.093
+        "median_ms": 0.055,
+        "p95_ms": 0.059
       },
       "modal_operations": {
         "active_filter": {
           "samples": 20,
-          "median_ms": 245.434,
-          "p95_ms": 264.095
+          "median_ms": 236.568,
+          "p95_ms": 248.677
         },
         "zero_match_widening": {
           "samples": 20,
-          "median_ms": 265.146,
-          "p95_ms": 268.55
+          "median_ms": 250.308,
+          "p95_ms": 342.331
         },
         "f3_toggle": {
           "samples": 20,
-          "median_ms": 126.922,
-          "p95_ms": 200.008
+          "median_ms": 100.817,
+          "p95_ms": 133.126
         },
         "mounted_selectable_widgets": 50,
         "modal_rows": 35
       },
       "history_page": {
         "samples": 30,
-        "median_ms": 0.383,
-        "p95_ms": 0.481,
+        "median_ms": 0.286,
+        "p95_ms": 0.336,
         "database_rows_materialized": 50,
         "reported_total": 50
       },
       "receipt_cache_refresh": {
         "samples": 30,
-        "median_ms": 0.045,
-        "p95_ms": 0.047,
+        "median_ms": 0.034,
+        "p95_ms": 0.035,
         "database_rows_materialized": 50
       }
     },
@@ -97,44 +97,44 @@
       "input_subjects": 500,
       "modal_open": {
         "samples": 7,
-        "median_ms": 115.157,
-        "p95_ms": 189.013
+        "median_ms": 112.273,
+        "p95_ms": 194.676
       },
       "active_filter_pure": {
         "samples": 200,
-        "median_ms": 0.543,
-        "p95_ms": 0.687
+        "median_ms": 0.544,
+        "p95_ms": 0.597
       },
       "modal_operations": {
         "active_filter": {
           "samples": 20,
-          "median_ms": 263.81,
-          "p95_ms": 344.999
+          "median_ms": 252.72,
+          "p95_ms": 377.779
         },
         "zero_match_widening": {
           "samples": 20,
-          "median_ms": 264.686,
-          "p95_ms": 270.156
+          "median_ms": 253.216,
+          "p95_ms": 348.043
         },
         "f3_toggle": {
           "samples": 20,
-          "median_ms": 106.528,
-          "p95_ms": 129.713
+          "median_ms": 102.135,
+          "p95_ms": 123.622
         },
         "mounted_selectable_widgets": 50,
         "modal_rows": 35
       },
       "history_page": {
         "samples": 30,
-        "median_ms": 0.385,
-        "p95_ms": 0.481,
+        "median_ms": 0.296,
+        "p95_ms": 0.361,
         "database_rows_materialized": 50,
         "reported_total": 500
       },
       "receipt_cache_refresh": {
         "samples": 30,
-        "median_ms": 0.412,
-        "p95_ms": 0.425,
+        "median_ms": 0.334,
+        "p95_ms": 0.369,
         "database_rows_materialized": 500
       }
     }

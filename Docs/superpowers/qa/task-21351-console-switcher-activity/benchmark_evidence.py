@@ -1,8 +1,10 @@
 """Bounded-work benchmark for TASK-21351.
 
-Run with the Tests sentinel first so repository test isolation is active:
+Run with the shared test plugin so repository test isolation is active:
 
-    pytest Tests/UI/test_console_activity_switcher.py::test_modal_opens_on_active_without_loading_history Docs/superpowers/qa/task-21351-console-switcher-activity/benchmark_evidence.py -q -s
+    pytest -p Tests.conftest \\
+      Docs/superpowers/qa/task-21351-console-switcher-activity/benchmark_evidence.py \\
+      -q -s
 """
 
 from __future__ import annotations

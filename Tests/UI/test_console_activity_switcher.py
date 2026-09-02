@@ -376,9 +376,11 @@ async def test_modal_opens_on_active_without_loading_history():
         assert "Live deploy" in str(
             app.screen.query_one(".console-switcher-result", Button).label
         )
-        assert "Active (1) — selected" in str(
-            app.screen.query_one("#console-switcher-active-mode", Button).label
-        )
+        active_mode = app.screen.query_one("#console-switcher-active-mode", Button)
+        history_mode = app.screen.query_one("#console-switcher-history-mode", Button)
+        assert str(active_mode.label) == "Active (1)"
+        assert active_mode.has_class("console-switcher-mode-current")
+        assert not history_mode.has_class("console-switcher-mode-current")
         assert calls == []
 
 
@@ -407,15 +409,126 @@ async def test_zero_active_matches_widens_to_history_and_f3_retains_query():
             app.screen.query_one(".console-switcher-result", Button).label
         )
         status = app.screen.query_one("#console-switcher-status", Static)
-        assert "No active matches — showing History" in str(status.renderable)
+        assert "History matches" in str(status.renderable)
+        assert app.screen.query_one(
+            "#console-switcher-history-mode", Button
+        ).has_class("console-switcher-mode-current")
+        assert not app.screen.query_one(
+            "#console-switcher-active-mode", Button
+        ).has_class("console-switcher-mode-current")
         assert calls == [("migration", 0, 50)]
 
         await pilot.press("f3")
         await pilot.pause()
         assert query.value == "migration"
-        assert "History — selected" in str(
-            app.screen.query_one("#console-switcher-history-mode", Button).label
+        history_mode = app.screen.query_one("#console-switcher-history-mode", Button)
+        assert str(history_mode.label) == "History"
+        assert history_mode.has_class("console-switcher-mode-current")
+
+
+@pytest.mark.asyncio
+async def test_blank_enter_consequence_names_the_exact_mru_destination():
+    app = _ActivitySwitcherApp(
+        active_results=(
+            replace(
+                _active_entry(
+                    "session:current",
+                    "Current design review",
+                    session_id="current",
+                    group=ActivityGroup.CURRENT,
+                ),
+                is_active=True,
+                state_label="CURRENT",
+            ),
+            _active_entry(
+                "session:mru",
+                "Release approval",
+                session_id="mru",
+                group=ActivityGroup.WAITING_FOR_YOU,
+            ),
+        ),
+        preferred_native_session_id="mru",
+    )
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.pause()
+        status = str(
+            app.screen.query_one("#console-switcher-status", Static).renderable
         )
+        assert status == "Enter switches to: Release approval · 2 of 2"
+        assert "F2: rename" in str(
+            app.screen.query_one("#console-switcher-hints", Static).renderable
+        )
+        assert isinstance(app.focused, Input)
+
+
+@pytest.mark.asyncio
+async def test_result_rows_use_left_aligned_state_and_distilled_metadata():
+    entry = replace(
+        _active_entry(
+            "session:finished",
+            "Regression triage",
+            session_id="finished",
+            group=ActivityGroup.NEW_RESULTS,
+        ),
+        state_label="FINISHED · UNSEEN",
+        activity_state="done",
+        workspace_label="Quality",
+        multiplicity=1,
+        subtitle=(
+            "FINISHED · UNSEEN · CONSOLE TAB · Quality · open session · now · +1"
+        ),
+    )
+    app = _ActivitySwitcherApp(
+        active_results=(entry,), preferred_native_session_id="finished"
+    )
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.pause()
+        button = app.screen.query_one(".console-switcher-result", Button)
+        lines = str(button.label).splitlines()
+        assert lines[0].startswith("▸ FINISHED · UNSEEN")
+        assert lines[1].startswith("  Quality · Console tab")
+        assert "2 updates" in lines[1]
+        assert "+1" not in str(button.label)
+        assert button.styles.content_align_horizontal == "left"
+
+
+@pytest.mark.asyncio
+async def test_plain_language_search_guidance_fits_without_filter_grammar():
+    app = _ActivitySwitcherApp(
+        active_results=(_active_entry("session:one", "Live deploy", session_id="one"),)
+    )
+    async with app.run_test(size=(72, 35)) as pilot:
+        await pilot.pause()
+        query = app.screen.query_one("#console-switcher-query", Input)
+        assert "waiting" in query.placeholder
+        assert "running" in query.placeholder
+        assert "is:" not in query.placeholder
+        assert "workspace:<" not in query.placeholder
+
+
+@pytest.mark.asyncio
+async def test_single_result_switchboard_sizes_to_content_below_ceiling():
+    app = _ActivitySwitcherApp(
+        active_results=(_active_entry("session:one", "Live deploy", session_id="one"),)
+    )
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+        modal = app.screen.query_one("#console-switcher-modal")
+        assert modal.region.height < 25
+
+
+@pytest.mark.asyncio
+async def test_switchboard_surface_follows_terminal_theme():
+    app = _ActivitySwitcherApp(
+        active_results=(_active_entry("session:one", "Live deploy", session_id="one"),)
+    )
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.pause()
+        modal = app.screen.query_one("#console-switcher-modal")
+        dark_background = modal.styles.background
+        app.theme = "textual-light"
+        await pilot.pause()
+        assert modal.styles.background != dark_background
 
 
 @pytest.mark.asyncio
@@ -465,6 +578,65 @@ async def test_unavailable_search_result_requires_two_enter_presses():
     assert isinstance(app.result, ConsoleSwitcherChoice)
     assert app.result.kind == "mark_seen"
     assert app.result.entry is notice
+
+
+@pytest.mark.asyncio
+async def test_unavailable_pointer_action_requires_explicit_confirm_button():
+    notice = UnavailableSessionNotice(
+        stable_result_key="unavailable-session:profile-a:gone",
+        profile_authority="profile-a",
+        session_id="gone",
+        group=ActivityGroup.WAITING_FOR_YOU,
+        latest_at=None,
+        receipts=(CapturedReceipt("activity-1", "failed"),),
+        primary_status="failed",
+    )
+    app = _ActivitySwitcherApp(active_results=(notice,))
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.click(".console-switcher-result")
+        await pilot.pause()
+        assert app.result == "unset"
+        assert "again" in str(
+            app.screen.query_one("#console-switcher-status", Static).renderable
+        ).lower()
+        confirm = app.screen.query_one(
+            "#console-switcher-confirm-mark-seen", Button
+        )
+        assert confirm.display
+
+        await pilot.click("#console-switcher-confirm-mark-seen")
+        await pilot.pause()
+    assert isinstance(app.result, ConsoleSwitcherChoice)
+    assert app.result.kind == "mark_seen"
+    assert app.result.entry is notice
+
+
+@pytest.mark.asyncio
+async def test_home_end_and_page_keys_move_the_explicit_candidate():
+    app = _ActivitySwitcherApp(
+        active_results=tuple(
+            _active_entry(
+                f"session:{index}", f"Agent {index}", session_id=str(index)
+            )
+            for index in range(20)
+        )
+    )
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.press("end")
+        await pilot.pause()
+        assert app.screen._candidate_index == 19
+
+        await pilot.press("home")
+        await pilot.pause()
+        assert app.screen._candidate_index == 0
+
+        await pilot.press("pagedown")
+        await pilot.pause()
+        assert app.screen._candidate_index > 0
+
+        await pilot.press("pageup")
+        await pilot.pause()
+        assert app.screen._candidate_index == 0
 
 
 @pytest.mark.asyncio
@@ -794,9 +966,9 @@ async def test_open_modal_polls_and_reconciles_controller_projection_changes():
 
         labels = [str(button.label) for button in app.screen._result_buttons()]
         assert any("Agent two" in label for label in labels)
-        assert "Active (2) — selected" in str(
-            app.screen.query_one("#console-switcher-active-mode", Button).label
-        )
+        active_mode = app.screen.query_one("#console-switcher-active-mode", Button)
+        assert str(active_mode.label) == "Active (2)"
+        assert active_mode.has_class("console-switcher-mode-current")
 
 
 @pytest.mark.asyncio
@@ -917,7 +1089,7 @@ async def test_switchboard_chrome_and_literal_state_fit_terminal(size):
         assert modal.region.x >= 0 and modal.region.right <= app.size.width
         assert modal.region.y >= 0 and modal.region.bottom <= app.size.height
         assert cancel.region.bottom <= modal.content_region.bottom
-        assert "Active (20) — selected" in str(
+        assert str(
             app.screen.query_one("#console-switcher-active-mode", Button).label
-        )
-        assert "Selection:" in str(status.renderable)
+        ) == "Active (20)"
+        assert "Enter switches to:" in str(status.renderable)

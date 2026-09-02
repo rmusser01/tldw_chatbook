@@ -8,8 +8,8 @@ claim that the feature is faster than an earlier version.
 ## Automated behavior
 
 - Focused receipt/marks/FLEET/switcher/outcome suites: passing.
-- Production-shaped capture harness: 3 passed.
-- Bounded-work benchmark harness: 2 passed.
+- Production-shaped capture harness: 2 passed.
+- Bounded-work benchmark harness: 1 passed.
 - Scoped Ruff and `git diff --check`: passing.
 - The larger reachable feature rail completed with 766 passed and 36 failed.
   Every reported failure was outside the switcher/receipt test modules, but the
@@ -28,13 +28,11 @@ Reproduction commands:
   Tests/UI/test_console_activity_outcome_notice.py \
   -q --timeout=60
 
-PYTHONPATH=. ../../.venv/bin/pytest \
-  Tests/UI/test_console_activity_switcher.py::test_modal_opens_on_active_without_loading_history \
+PYTHONPATH=. ../../.venv/bin/pytest -p Tests.conftest \
   Docs/superpowers/qa/task-21351-console-switcher-activity/capture_evidence.py \
   -q -s --timeout=60
 
-PYTHONPATH=. ../../.venv/bin/pytest \
-  Tests/UI/test_console_activity_switcher.py::test_modal_opens_on_active_without_loading_history \
+PYTHONPATH=. ../../.venv/bin/pytest -p Tests.conftest \
   Docs/superpowers/qa/task-21351-console-switcher-activity/benchmark_evidence.py \
   -q -s --timeout=60
 ```
@@ -53,7 +51,10 @@ PYTHONPATH=. ../../.venv/bin/pytest \
   its explicit Mark seen consequence.
 
 The capture assertions additionally enforce a maximum 35-row modal and at most
-50 mounted selectable results.
+50 mounted selectable results. The refreshed frames also cover explicit
+Active/History scope, consequence-first Enter copy, left-aligned state/title
+rows, distilled update counts, theme-semantic accents, and content sizing at
+wide and narrow terminal widths.
 
 ## Bounded-work measurements
 
@@ -61,12 +62,12 @@ The current machine-local results are in `performance.json`. Key medians:
 
 | Subjects | Modal open | Pure Active filter | Mounted results | Modal rows |
 | ---: | ---: | ---: | ---: | ---: |
-| 5 | 89.662 ms | 0.006 ms | 5 | 35 |
-| 50 | 114.384 ms | 0.082 ms | 50 | 35 |
-| 500 | 115.157 ms | 0.543 ms | 50 | 35 |
+| 5 | 84.583 ms | 0.006 ms | 5 | 35 |
+| 50 | 110.495 ms | 0.055 ms | 50 | 35 |
+| 500 | 112.273 ms | 0.544 ms | 50 | 35 |
 
 At 500 subjects, History materialized 50 of 500 reported rows and receipt-cache
-refresh materialized the 500 safe receipt records in a median 0.412 ms. Modal
+refresh materialized the 500 safe receipt records in a median 0.334 ms. Modal
 filter timings include the deliberate 200 ms debounce and Textual repaint.
 
 ## Native terminal parity status

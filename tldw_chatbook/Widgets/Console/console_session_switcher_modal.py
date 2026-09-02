@@ -15,7 +15,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
-from textual.events import DescendantFocus
+from textual.events import DescendantFocus, Resize
 from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widgets import Button, Input, Static
@@ -83,40 +83,55 @@ class ConsoleSessionSwitcherModal(
     DEFAULT_CSS = """
     ConsoleSessionSwitcherModal { align: center middle; }
     #console-switcher-modal {
-        width: 76; max-width: 100%; height: 100%; max-height: 35;
-        border: tall gray; background: black; padding: 1 2;
+        width: 76; max-width: 100%; height: auto; max-height: 35;
+        border: tall $surface-lighten-1;
+        background: $panel; color: $text; padding: 1 2;
     }
     #console-switcher-mode-controls { height: 1; min-height: 1; }
     .console-switcher-mode {
-        width: auto; min-width: 10; height: 1; min-height: 1;
-        border: none; padding: 0 1;
+        width: 1fr; min-width: 10; height: 1; min-height: 1;
+        border: none; padding: 0 1; background: $panel; color: $text-muted;
+    }
+    .console-switcher-mode-current {
+        background: $surface; color: $text; text-style: bold;
     }
     #console-switcher-mode-divider { width: 1; height: 1; }
     #console-switcher-results {
-        height: 1fr; min-height: 3; margin: 1 0 0 0;
+        height: auto; min-height: 3; max-height: 19; margin: 1 0 0 0;
+        scrollbar-background: $panel; scrollbar-color: $text-muted;
     }
     .console-switcher-section {
-        height: 1; color: gray; text-style: bold;
+        height: 1; color: $text-muted; text-style: bold;
     }
-    #console-switcher-status { height: 1; color: yellow; }
+    #console-switcher-status { height: 1; color: $text; overflow: hidden; }
     #console-switcher-receipt-state {
-        display: none; height: 1; color: yellow;
+        display: none; height: 1; color: $warning;
     }
     #console-switcher-feedback { display: none; }
     #console-switcher-page-controls { height: 3; min-height: 3; }
     #console-switcher-page-status {
-        width: 1fr; height: 1; content-align: center middle; color: gray;
+        width: 1fr; height: 1; content-align: center middle; color: $text-muted;
     }
     #console-switcher-previous-page, #console-switcher-next-page,
-    #console-switcher-cancel {
+    #console-switcher-confirm-mark-seen, #console-switcher-cancel {
         width: 10; min-width: 10; height: 3; min-height: 3;
     }
-    #console-switcher-hints { height: auto; color: gray; }
+    #console-switcher-confirm-mark-seen { display: none; }
+    #console-switcher-hints { height: auto; max-height: 2; color: $text-muted; }
     .console-switcher-result {
         width: 100%; height: 2; min-height: 2; margin: 0;
+        content-align: left middle; text-align: left;
+        border-left: solid $surface-lighten-1;
     }
-    .console-switcher-result-candidate { text-style: bold; }
-    .console-switcher-result-active { text-style: underline; }
+    .console-switcher-result:focus {
+        background: $surface; color: $text; text-style: bold underline;
+    }
+    .console-switcher-result-candidate { background: $surface; text-style: bold; }
+    .console-switcher-result-waiting { border-left: solid $warning; }
+    .console-switcher-result-working { border-left: solid $primary; }
+    .console-switcher-result-new { border-left: solid $success; }
+    .console-switcher-result-current { border-left: solid $accent; }
+    .console-switcher-result-error { border-left: solid $error; }
     """
 
     SAFE_MODAL_CONTENT = "#console-switcher-modal"
@@ -126,6 +141,10 @@ class ConsoleSessionSwitcherModal(
         ("f3", "toggle_mode", "Active / History"),
         Binding("down", "switcher_cursor_down", "Next result", priority=True),
         Binding("up", "switcher_cursor_up", "Previous result", priority=True),
+        Binding("home", "switcher_cursor_home", "First result", priority=True),
+        Binding("end", "switcher_cursor_end", "Last result", priority=True),
+        Binding("pageup", "switcher_page_up", "Previous results", priority=True),
+        Binding("pagedown", "switcher_page_down", "Next results", priority=True),
     ]
 
     def __init__(
@@ -176,6 +195,7 @@ class ConsoleSessionSwitcherModal(
         self._query_pending = False
         self._explicit_navigation = False
         self._selection_feedback = ""
+        self._armed_mark_seen_key = ""
         self._widened_to_history = False
         self._closed = False
         self._query_debounce_timer: Timer | None = None
@@ -187,7 +207,7 @@ class ConsoleSessionSwitcherModal(
             yield Static("Switch Session", classes="console-modal-header")
             with Horizontal(id="console-switcher-mode-controls"):
                 yield Button(
-                    "Active (0) — selected",
+                    "Active (0)",
                     id="console-switcher-active-mode",
                     classes="console-switcher-mode",
                     compact=True,
@@ -200,23 +220,20 @@ class ConsoleSessionSwitcherModal(
                     compact=True,
                 )
             yield Input(
-                placeholder=(
-                    "Search title, workspace:<name>, or is:waiting / "
-                    "is:working / is:new…"
-                ),
+                placeholder="Search sessions, workspaces, waiting, running, or finished…",
                 id="console-switcher-query",
             )
             yield VerticalScroll(id="console-switcher-results")
             yield Static("", id="console-switcher-receipt-state", markup=False)
             yield Static("", id="console-switcher-status", markup=False)
             yield Static("", id="console-switcher-feedback", markup=False)
+            yield Button("Mark seen", id="console-switcher-confirm-mark-seen")
             with Horizontal(id="console-switcher-page-controls"):
                 yield Button("Previous", id="console-switcher-previous-page")
                 yield Static("", id="console-switcher-page-status", markup=False)
                 yield Button("Next", id="console-switcher-next-page")
             yield Static(
-                "Enter: open/mark seen  |  F2: rename focused tab  |  "
-                "F3: Active/History  |  Up/Down: navigate  |  Esc: close",
+                "Enter: switch  ·  ↑↓: move  ·  F3: History  ·  Esc: close",
                 id="console-switcher-hints",
                 markup=False,
             )
@@ -225,6 +242,7 @@ class ConsoleSessionSwitcherModal(
     async def on_mount(self) -> None:  # type: ignore[override]
         """Paint Active immediately and leave History cold."""
         super().on_mount()
+        self._sync_modal_max_height()
         self._update_receipt_status()
         self.query_one("#console-switcher-query", Input).focus()
         await self._refresh_results("")
@@ -233,6 +251,42 @@ class ConsoleSessionSwitcherModal(
                 ACTIVE_PROJECTION_POLL_SECONDS,
                 self._poll_active_projection,
             )
+
+    def on_resize(self, event: Resize) -> None:
+        """Keep the content-sized modal inside the live terminal viewport."""
+        del event
+        self._sync_modal_max_height()
+
+    def _sync_modal_max_height(self) -> None:
+        try:
+            modal = self.query_one("#console-switcher-modal", Vertical)
+            results = self.query_one(
+                "#console-switcher-results", VerticalScroll
+            )
+        except NoMatches:
+            return
+        viewport_cap = min(35, self.app.size.height)
+        section_count = len(
+            {
+                str(getattr(entry, "section", "") or "")
+                for entry in self._entries
+            }
+        )
+        page_rows = 3 if self._page_total > len(self._entries) else 0
+        receipt_rows = 1 if self._activity_receipt_state == "degraded" else 0
+        confirm_rows = 3 if self._armed_mark_seen_key else 0
+        estimated_rows = (
+            15
+            + receipt_rows
+            + confirm_rows
+            + page_rows
+            + section_count
+            + (2 * len(self._entries))
+        )
+        bounded = estimated_rows >= viewport_cap
+        modal.styles.max_height = viewport_cap
+        modal.styles.height = "100%" if bounded else "auto"
+        results.styles.height = "1fr" if bounded else "auto"
 
     def on_unmount(self) -> None:
         """Invalidate late work without remounting into a closed screen."""
@@ -453,6 +507,7 @@ class ConsoleSessionSwitcherModal(
         *,
         page: ConsoleSwitcherHistoryPage | None,
     ) -> None:
+        self._clear_mark_seen_confirmation()
         previous_key = self._candidate_key()
         focused_key = self._focused_result_key()
         retained_key = focused_key or previous_key
@@ -504,7 +559,7 @@ class ConsoleSessionSwitcherModal(
                 button = Button(
                     self._entry_label(index, entry),
                     id=widget_id,
-                    classes="console-switcher-result",
+                    classes=" ".join(self._result_classes(entry)),
                     compact=True,
                 )
                 button.set_class(
@@ -530,7 +585,7 @@ class ConsoleSessionSwitcherModal(
         if page is not None and page.error:
             self._set_status(page.error)
         elif self._widened_to_history:
-            self._set_status("No active matches — showing History")
+            self._update_selection_status(prefix="History matches")
         else:
             self._update_selection_status()
 
@@ -547,6 +602,7 @@ class ConsoleSessionSwitcherModal(
             focused = self._button_for_key(focused_key)
             if focused is not None:
                 focused.focus()
+        self._sync_modal_max_height()
 
     def _empty_copy(self, page: ConsoleSwitcherHistoryPage | None) -> str:
         query = self._rendered_query.strip()
@@ -621,29 +677,101 @@ class ConsoleSessionSwitcherModal(
     def _entry_label(
         self, index: int, entry: ConsoleSwitcherActiveResult
     ) -> Text:
+        available_width = max(20, min(70, self.app.size.width - 8))
+        title_limit = max(8, min(_TITLE_LIMIT, available_width - 22))
         display_title = (
             sanitize_character_display_label(
                 entry.title,
-                max_characters=_TITLE_LIMIT,
+                max_characters=title_limit,
             )
             or "Untitled conversation"
         )
-        display_subtitle = sanitize_character_display_label(
-            entry.subtitle,
-            max_characters=_SUBTITLE_LIMIT,
-        )
         marker = "▸" if index == self._candidate_index else " "
-        action = "Mark seen" if isinstance(entry, UnavailableSessionNotice) else ""
-        title = f"{display_title} — {action}" if action else display_title
-        label = f"{marker} {title}"
-        if display_subtitle:
-            label = f"{label}\n  {display_subtitle}"
+        state = sanitize_character_display_label(
+            str(getattr(entry, "state_label", "") or self._fallback_state(entry)),
+            max_characters=18,
+        )
+        metadata = sanitize_character_display_label(
+            self._entry_metadata(entry), max_characters=_SUBTITLE_LIMIT
+        )
+        label = f"{marker} {state:<18} {display_title}"
+        if metadata:
+            label = f"{label}\n  {metadata}"
         return Text(label)
+
+    @staticmethod
+    def _fallback_state(entry: ConsoleSwitcherActiveResult) -> str:
+        if isinstance(entry, UnavailableSessionNotice):
+            return entry.primary_status.upper()
+        if getattr(entry, "native_session_id", None):
+            return "OPEN AGENT"
+        return "SAVED CHAT"
+
+    @staticmethod
+    def _entry_metadata(entry: ConsoleSwitcherActiveResult) -> str:
+        if isinstance(entry, UnavailableSessionNotice):
+            count = len(entry.receipts)
+            return f"{count} unseen {'update' if count == 1 else 'updates'}"
+
+        parts: list[str] = []
+        workspace = str(getattr(entry, "workspace_label", "") or "").strip()
+        if workspace:
+            parts.append(workspace)
+        parts.append(
+            "Console tab"
+            if getattr(entry, "native_session_id", None)
+            else "Saved chat"
+        )
+
+        recency = ""
+        for candidate in reversed(str(getattr(entry, "subtitle", "") or "").split(" · ")):
+            value = candidate.strip()
+            lowered = value.casefold()
+            if (
+                lowered in {"now", "today", "yesterday", "older", "previous 7 days"}
+                or lowered.endswith(" ago")
+                or (
+                    len(lowered) > 1
+                    and lowered[:-1].isdigit()
+                    and lowered[-1] in "smhdwy"
+                )
+            ):
+                recency = value
+                break
+        if recency:
+            parts.append(recency)
+        multiplicity = int(getattr(entry, "multiplicity", 0) or 0)
+        if multiplicity:
+            parts.append(f"{multiplicity + 1} updates")
+        return " · ".join(parts)
+
+    @staticmethod
+    def _result_classes(entry: ConsoleSwitcherActiveResult) -> tuple[str, ...]:
+        classes = ["console-switcher-result"]
+        state = str(
+            getattr(entry, "activity_state", "")
+            or getattr(entry, "primary_status", "")
+        ).casefold()
+        if state in {"failed", "error", "stuck", "stopped", "cancelled"}:
+            classes.append("console-switcher-result-error")
+            return tuple(classes)
+        group = getattr(entry, "group", None)
+        group_classes = {
+            ActivityGroup.WAITING_FOR_YOU: "console-switcher-result-waiting",
+            ActivityGroup.WORKING: "console-switcher-result-working",
+            ActivityGroup.NEW_RESULTS: "console-switcher-result-new",
+            ActivityGroup.CURRENT: "console-switcher-result-current",
+        }
+        group_class = group_classes.get(group)
+        if group_class:
+            classes.append(group_class)
+        return tuple(classes)
 
     @on(Input.Changed, "#console-switcher-query")
     def _query_changed(self, event: Input.Changed) -> None:
         event.stop()
         self._selection_feedback = ""
+        self._clear_mark_seen_confirmation()
         self._cancel_query_debounce()
         self._query_pending = True
         query = event.value
@@ -683,11 +811,7 @@ class ConsoleSessionSwitcherModal(
         if isinstance(entry, UnavailableSessionNotice):
             button = self._button_for_key(entry.stable_result_key)
             if button is not None:
-                self._explicit_navigation = True
-                button.focus()
-                self._set_feedback(
-                    "Press Enter again to Mark seen, or Esc to keep it unseen."
-                )
+                self._arm_mark_seen(entry, button, input_name="Enter")
             return
         self._activate_choice("activate", entry)
 
@@ -745,6 +869,7 @@ class ConsoleSessionSwitcherModal(
         index = self._focused_result_index()
         self._explicit_navigation = True
         self._selection_feedback = ""
+        self._clear_mark_seen_confirmation()
         if index is None:
             self._candidate_index = 0
         elif index + 1 < len(buttons):
@@ -764,8 +889,46 @@ class ConsoleSessionSwitcherModal(
             return
         self._explicit_navigation = True
         self._selection_feedback = ""
+        self._clear_mark_seen_confirmation()
         self._candidate_index = index - 1
         self._focus_candidate(buttons)
+
+    def action_switcher_cursor_home(self) -> None:
+        self._move_candidate(0)
+
+    def action_switcher_cursor_end(self) -> None:
+        buttons = self._result_buttons()
+        if buttons:
+            self._move_candidate(len(buttons) - 1, buttons=buttons)
+
+    def action_switcher_page_up(self) -> None:
+        self._move_candidate_by_page(-1)
+
+    def action_switcher_page_down(self) -> None:
+        self._move_candidate_by_page(1)
+
+    def _move_candidate_by_page(self, direction: int) -> None:
+        buttons = self._result_buttons()
+        if not buttons:
+            return
+        results = self.query_one("#console-switcher-results", VerticalScroll)
+        step = max(1, results.content_region.height // 2)
+        current = self._focused_result_index()
+        if current is None:
+            current = self._candidate_index
+        self._move_candidate(current + (step * direction), buttons=buttons)
+
+    def _move_candidate(
+        self, index: int, *, buttons: list[Button] | None = None
+    ) -> None:
+        mounted = buttons if buttons is not None else self._result_buttons()
+        if not mounted:
+            return
+        self._explicit_navigation = True
+        self._selection_feedback = ""
+        self._clear_mark_seen_confirmation()
+        self._candidate_index = min(max(0, index), len(mounted) - 1)
+        self._focus_candidate(mounted)
 
     def _focus_candidate(self, buttons: list[Button]) -> None:
         if not 0 <= self._candidate_index < len(buttons):
@@ -802,6 +965,11 @@ class ConsoleSessionSwitcherModal(
         index = self._index_for_key(entry.stable_result_key)
         if index is None:
             return
+        if (
+            self._armed_mark_seen_key
+            and entry.stable_result_key != self._armed_mark_seen_key
+        ):
+            self._clear_mark_seen_confirmation()
         self._explicit_navigation = True
         self._candidate_index = index
         self._update_selection_status()
@@ -812,12 +980,64 @@ class ConsoleSessionSwitcherModal(
         entry = self._payload_by_widget_id.get(event.button.id or "")
         if entry is None:
             return
-        kind = (
-            "mark_seen"
-            if isinstance(entry, UnavailableSessionNotice)
-            else "activate"
-        )
+        if isinstance(entry, UnavailableSessionNotice):
+            if self._armed_mark_seen_key != entry.stable_result_key:
+                self._arm_mark_seen(entry, event.button, input_name="click")
+                return
+            kind = "mark_seen"
+        else:
+            self._clear_mark_seen_confirmation()
+            kind = "activate"
         self._activate_choice(kind, entry)
+
+    def _arm_mark_seen(
+        self,
+        entry: UnavailableSessionNotice,
+        button: Button,
+        *,
+        input_name: str,
+    ) -> None:
+        self._explicit_navigation = True
+        self._armed_mark_seen_key = entry.stable_result_key
+        index = self._index_for_key(entry.stable_result_key)
+        if index is not None:
+            self._candidate_index = index
+        button.focus()
+        self._sync_candidate_labels()
+        try:
+            self.query_one(
+                "#console-switcher-confirm-mark-seen", Button
+            ).display = True
+        except NoMatches:
+            pass
+        self._sync_modal_max_height()
+        self._set_feedback(
+            f"{input_name.capitalize()} again or use Mark seen; Esc keeps it unseen."
+        )
+
+    def _clear_mark_seen_confirmation(self) -> None:
+        self._armed_mark_seen_key = ""
+        try:
+            self.query_one(
+                "#console-switcher-confirm-mark-seen", Button
+            ).display = False
+        except NoMatches:
+            pass
+        self._sync_modal_max_height()
+
+    @on(Button.Pressed, "#console-switcher-confirm-mark-seen")
+    def _confirm_mark_seen(self, event: Button.Pressed) -> None:
+        event.stop()
+        index = self._index_for_key(self._armed_mark_seen_key)
+        if index is None:
+            self._clear_mark_seen_confirmation()
+            self._set_feedback("The unavailable result changed; select it again.")
+            return
+        entry = self._entries[index]
+        if not isinstance(entry, UnavailableSessionNotice):
+            self._clear_mark_seen_confirmation()
+            return
+        self._activate_choice("mark_seen", entry)
 
     def _activate_choice(
         self, kind: str, entry: ConsoleSwitcherActiveResult
@@ -856,6 +1076,7 @@ class ConsoleSessionSwitcherModal(
         self._page_offset = 0
         self._explicit_navigation = False
         self._selection_feedback = ""
+        self._clear_mark_seen_confirmation()
         query = self.query_one("#console-switcher-query", Input).value
         self._update_mode_controls()
         self.run_worker(
@@ -898,15 +1119,16 @@ class ConsoleSessionSwitcherModal(
         except NoMatches:
             return
         count = len(self._active_results)
-        active.label = (
-            f"Active ({count}) — selected"
-            if self._mode is SwitcherMode.ACTIVE
-            else f"Active ({count})"
+        active.label = f"Active ({count})"
+        history.label = "History"
+        history_is_current = (
+            self._mode is SwitcherMode.HISTORY or self._widened_to_history
         )
-        history.label = (
-            "History — selected"
-            if self._mode is SwitcherMode.HISTORY
-            else "History"
+        active.set_class(
+            not history_is_current, "console-switcher-mode-current"
+        )
+        history.set_class(
+            history_is_current, "console-switcher-mode-current"
         )
 
     def _update_page_controls(
@@ -947,7 +1169,7 @@ class ConsoleSessionSwitcherModal(
             else ""
         )
 
-    def _update_selection_status(self) -> None:
+    def _update_selection_status(self, *, prefix: str = "") -> None:
         if self._selection_feedback:
             self._set_status(self._selection_feedback)
             return
@@ -962,8 +1184,40 @@ class ConsoleSessionSwitcherModal(
             self._entries[index].title,
             max_characters=_TITLE_LIMIT,
         )
-        self._set_status(
-            f"Selection: {index + 1} of {len(self._entries)} — {title}"
+        entry = self._entries[index]
+        if isinstance(entry, UnavailableSessionNotice):
+            consequence = "Enter marks seen"
+        elif getattr(entry, "native_session_id", None):
+            consequence = "Enter switches to"
+        else:
+            consequence = "Enter opens"
+        message = f"{consequence}: {title} · {index + 1} of {len(self._entries)}"
+        if prefix:
+            message = f"{prefix} · {message}"
+        self._set_status(message)
+        self._update_hints(entry)
+
+    def _update_hints(self, entry: ConsoleSwitcherActiveResult | None) -> None:
+        try:
+            hints = self.query_one("#console-switcher-hints", Static)
+        except NoMatches:
+            return
+        target_mode = (
+            "Active"
+            if self._mode is SwitcherMode.HISTORY or self._widened_to_history
+            else "History"
+        )
+        if isinstance(entry, UnavailableSessionNotice):
+            primary = "Enter: mark seen"
+        elif entry is not None and getattr(entry, "native_session_id", None):
+            primary = "Enter: switch  ·  F2: rename"
+        elif entry is not None:
+            primary = "Enter: open"
+        else:
+            primary = "No result selected"
+        hints.update(
+            f"{primary}  ·  ↑↓/Home/End/Pg: move  ·  "
+            f"F3: {target_mode}  ·  Esc: close"
         )
 
     async def _perform_safe_cancel(self, *, source: str) -> None:

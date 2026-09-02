@@ -249,11 +249,7 @@ async def test_console_shell_drops_header_at_small_height():
 
 @pytest.mark.asyncio
 async def test_switcher_footer_hints_document_real_accelerators():
-    """DS-08 (TASK-2154.15): the session switcher carries a footer hints
-    line documenting its real keyboard contract (Enter opens, F2 renames,
-    arrows navigate, Esc closes) so first-time users can discover the
-    accelerators without reading the source. Only keys that actually work
-    in the modal may be named here."""
+    """The switcher advertises only actions valid for the current candidate."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -268,5 +264,7 @@ async def test_switcher_footer_hints_document_real_accelerators():
         hints = modal.query_one("#console-switcher-hints", Static)
         text = str(hints.renderable)
         assert "Enter" in text
-        assert "F2" in text
+        assert "F2" not in text  # all rows are saved conversations
+        assert "Home/End/Pg" in text
+        assert "F3" in text
         assert "Esc" in text
