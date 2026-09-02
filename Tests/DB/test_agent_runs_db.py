@@ -7,7 +7,11 @@ import pytest
 
 from tldw_chatbook.Agents.agent_models import AgentDefinition
 from tldw_chatbook.Chat.console_raw_cli import local_command_resume_marker
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB, AgentStepConflictError
+from tldw_chatbook.DB.AgentRuns_DB import (
+    AgentRunsDB,
+    AgentStepConflictError,
+    ConsoleActivityReceiptsUnavailable,
+)
 from tldw_chatbook.Tools.raw_cli_executor import (
     MAX_RAW_COMMAND_BYTES,
     MAX_RAW_PREVIEW_BYTES,
@@ -746,6 +750,63 @@ def test_reconcile_preserves_existing_result(tmp_path):
     assert diagnostics[0]["parent_event_id"] == f"agent-run:{rid}"
 
 
+def test_reconcile_orphaned_run_publishes_failed_fleet_receipt(tmp_path):
+    db_path = tmp_path / "orphan-receipt.db"
+    setup = AgentRunsDB(db_path)
+    run_id = setup.create_run(
+        conversation_id="conversation-orphan",
+        agent_kind="subagent",
+        task="background task",
+        assistant_message_id="assistant-orphan",
+    )
+    setup.close()
+    AgentRunsDB._swept_paths.discard(str(db_path))
+
+    reopened = AgentRunsDB(db_path)
+
+    assert reopened.get_run(run_id)["status"] == "error"
+    receipts = reopened.list_unseen_console_activity()
+    assert len(receipts) == 1
+    assert receipts[0]["origin"] == "fleet_survivor"
+    assert receipts[0]["logical_outcome_id"] == f"fleet-run:{run_id}"
+    assert receipts[0]["status"] == "failed"
+    assert receipts[0]["conversation_id"] == "conversation-orphan"
+    assert receipts[0]["run_id"] == run_id
+    assert receipts[0]["assistant_message_id"] == "assistant-orphan"
+
+
+def test_reconcile_receipt_failure_rolls_back_orphan_repair(tmp_path, monkeypatch):
+    db_path = tmp_path / "orphan-receipt-atomic.db"
+    setup = AgentRunsDB(db_path)
+    run_id = setup.create_run(
+        conversation_id="conversation-atomic",
+        agent_kind="primary",
+    )
+    setup.close()
+    AgentRunsDB._swept_paths.discard(str(db_path))
+
+    real_publish = AgentRunsDB._publish_console_activity_in_transaction
+
+    def fail_receipt(self, conn, **kwargs):
+        raise sqlite3.OperationalError("injected receipt publication failure")
+
+    monkeypatch.setattr(
+        AgentRunsDB, "_publish_console_activity_in_transaction", fail_receipt
+    )
+    degraded = AgentRunsDB(db_path)
+
+    assert degraded.get_run(run_id)["status"] == "running"
+    assert degraded.get_run(run_id)["steps"] == []
+    assert str(db_path) not in AgentRunsDB._swept_paths
+
+    monkeypatch.setattr(
+        AgentRunsDB, "_publish_console_activity_in_transaction", real_publish
+    )
+    assert degraded.reconcile_orphaned_runs() == 1
+    assert degraded.get_run(run_id)["status"] == "error"
+    assert len(degraded.list_unseen_console_activity()) == 1
+
+
 def test_reconcile_local_commands_without_agent_lifecycle_diagnostics(tmp_path):
     db_path = tmp_path / "local-command-reconcile.db"
     setup = AgentRunsDB(db_path)
@@ -1362,7 +1423,7 @@ def test_pre_v14_db_gains_spawn_event_id_and_opens_twice(tmp_path):
         columns = {row[1] for row in conn.execute("PRAGMA table_info(agent_runs)")}
         recorded = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
     assert "spawn_event_id" in columns
-    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 14
+    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 15
     parent = first.create_run(conversation_id="c", agent_kind="primary")
     child = first.create_run(
         conversation_id="c",
@@ -1376,3 +1437,283 @@ def test_pre_v14_db_gains_spawn_event_id_and_opens_twice(tmp_path):
     second = AgentRunsDB(path, client_id="reopen-v14")
     assert second.get_run(child)["spawn_event_id"] == f"agent-step:{parent}:3"
     second.close()
+
+
+def test_fresh_v15_db_has_guarded_console_activity_receipt_shape(tmp_path):
+    database = AgentRunsDB(tmp_path / "fresh-v15.db", client_id="receipt-shape")
+
+    with database.connection() as conn:
+        columns = {
+            row[1]: row
+            for row in conn.execute(
+                "PRAGMA table_info(console_activity_receipts)"
+            ).fetchall()
+        }
+        table_sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'console_activity_receipts'"
+        ).fetchone()[0]
+        indexes = {
+            row[1]
+            for row in conn.execute(
+                "PRAGMA index_list(console_activity_receipts)"
+            ).fetchall()
+        }
+        recorded = conn.execute(
+            "SELECT MAX(version) FROM schema_version"
+        ).fetchone()[0]
+
+    assert tuple(columns) == (
+        "activity_id",
+        "origin",
+        "logical_outcome_id",
+        "transition_revision",
+        "session_id",
+        "conversation_id",
+        "run_id",
+        "assistant_message_id",
+        "status",
+        "created_at",
+        "acknowledged_at",
+        "superseded_at",
+    )
+    assert "CHECK(origin IN ('ordinary', 'fleet_survivor'))" in table_sql
+    assert "CHECK(transition_revision > 0)" in table_sql
+    assert "CHECK(session_id IS NOT NULL OR conversation_id IS NOT NULL)" in table_sql
+    assert "idx_console_activity_receipts_unseen" in indexes
+    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 15
+    assert database.receipt_capability_available is True
+
+
+def test_pre_v15_receipt_migration_preserves_definitions_and_change_notes(tmp_path):
+    path = tmp_path / "pre-v15.db"
+    setup = AgentRunsDB(path, client_id="seed-v14")
+    definition_id = setup.create_agent_definition(_defn())
+    run_id = setup.create_run(conversation_id="conv-v14", agent_kind="primary")
+    setup.set_status(run_id, "done", result="preserved")
+    note_id = setup.add_change_note(
+        run_id=run_id,
+        root="/repo",
+        path="file.py",
+        hunk_index=0,
+        hunk_header="@@ -1 +1 @@",
+        hunk_excerpt="-old\n+new",
+        note="Keep this note",
+    )
+    setup.close()
+
+    raw = sqlite3.connect(path)
+    raw.execute("DROP TABLE IF EXISTS console_activity_receipts")
+    raw.execute("DELETE FROM schema_version WHERE version = 15")
+    raw.commit()
+    assert raw.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+        "AND name = 'console_activity_receipts'"
+    ).fetchone() is None
+    raw.close()
+
+    migrated = AgentRunsDB(path, client_id="migrate-v15")
+    assert migrated.get_agent_definition(definition_id)["name"] == "researcher"
+    assert migrated.notes_for_run(run_id)[0]["id"] == note_id
+    assert migrated.get_run(run_id)["result"] == "preserved"
+    assert migrated.receipt_capability_available is True
+    migrated.close()
+
+    reopened = AgentRunsDB(path, client_id="reopen-v15")
+    assert reopened.get_agent_definition(definition_id)["name"] == "researcher"
+    assert reopened.notes_for_run(run_id)[0]["note"] == "Keep this note"
+    reopened.close()
+
+
+def test_receipt_capability_ddl_failure_keeps_core_database_usable(tmp_path):
+    class ReceiptDDLFailureDB(AgentRunsDB):
+        def _create_console_activity_receipts_schema(self, conn):
+            raise sqlite3.OperationalError("injected receipt DDL failure")
+
+    database = ReceiptDDLFailureDB(
+        tmp_path / "receipt-degraded.db", client_id="receipt-degraded"
+    )
+
+    definition_id = database.create_agent_definition(_defn())
+    run_id = database.create_run(conversation_id="core-still-works", agent_kind="primary")
+    database.set_status(run_id, "done", result="ok")
+
+    assert database.receipt_capability_available is False
+    assert database.get_agent_definition(definition_id)["name"] == "researcher"
+    assert database.get_run(run_id)["result"] == "ok"
+    with database.connection() as conn:
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'console_activity_receipts'"
+        ).fetchone() is None
+        assert conn.execute(
+            "SELECT MAX(version) FROM schema_version"
+        ).fetchone()[0] == 14
+
+
+def test_activity_receipt_identical_restamp_is_idempotent(db):
+    first_id, first_created = db.publish_console_activity(
+        origin="ordinary",
+        logical_outcome_id="turn:42",
+        status="done",
+        session_id="session-1",
+        conversation_id="conversation-1",
+        assistant_message_id="assistant-1",
+    )
+    second_id, second_created = db.publish_console_activity(
+        origin="ordinary",
+        logical_outcome_id="turn:42",
+        status="done",
+        session_id="session-1",
+        conversation_id="conversation-1",
+        assistant_message_id="assistant-1",
+    )
+
+    assert second_id == first_id
+    assert first_created is True
+    assert second_created is False
+    unseen = db.list_unseen_console_activity()
+    assert [row["activity_id"] for row in unseen] == [first_id]
+    assert unseen[0]["transition_revision"] == 1
+
+
+@pytest.mark.parametrize(
+    ("statuses", "expected_revisions"),
+    [
+        (("failed", "done"), (1, 2)),
+        (("done", "failed", "done"), (1, 2, 3)),
+    ],
+)
+def test_activity_receipt_status_corrections_create_revision_chain(
+    db, statuses, expected_revisions
+):
+    activity_ids = []
+    for status in statuses:
+        activity_id, created = db.publish_console_activity(
+            origin="ordinary",
+            logical_outcome_id="turn:correction",
+            status=status,
+            session_id="session-correction",
+            conversation_id="conversation-correction",
+        )
+        activity_ids.append(activity_id)
+        assert created is True
+
+    with db.connection() as conn:
+        rows = conn.execute(
+            "SELECT activity_id, transition_revision, status, superseded_at "
+            "FROM console_activity_receipts "
+            "WHERE logical_outcome_id = ? ORDER BY transition_revision",
+            ("turn:correction",),
+        ).fetchall()
+
+    assert tuple(row["transition_revision"] for row in rows) == expected_revisions
+    assert tuple(row["status"] for row in rows) == statuses
+    assert all(row["superseded_at"] is not None for row in rows[:-1])
+    assert rows[-1]["superseded_at"] is None
+    assert [row["activity_id"] for row in db.list_unseen_console_activity()] == [
+        activity_ids[-1]
+    ]
+
+
+def test_acknowledging_superseded_activity_cannot_acknowledge_new_revision(db):
+    failed_id, _ = db.publish_console_activity(
+        origin="ordinary",
+        logical_outcome_id="turn:race",
+        status="failed",
+        session_id="session-race",
+        conversation_id="conversation-race",
+    )
+    done_id, _ = db.publish_console_activity(
+        origin="ordinary",
+        logical_outcome_id="turn:race",
+        status="done",
+        session_id="session-race",
+        conversation_id="conversation-race",
+    )
+
+    assert db.acknowledge_console_activity((failed_id,)) == 0
+    assert [row["activity_id"] for row in db.list_unseen_console_activity()] == [
+        done_id
+    ]
+
+
+def test_acknowledge_console_activity_updates_only_supplied_exact_ids(db):
+    done_id, _ = db.publish_console_activity(
+        origin="ordinary",
+        logical_outcome_id="turn:done",
+        status="done",
+        session_id="session-done",
+        conversation_id="conversation-mixed",
+    )
+    failed_id, _ = db.publish_console_activity(
+        origin="ordinary",
+        logical_outcome_id="turn:failed",
+        status="failed",
+        session_id="session-failed",
+        conversation_id="conversation-mixed",
+    )
+
+    assert db.acknowledge_console_activity((done_id,)) == 1
+    assert [row["activity_id"] for row in db.list_unseen_console_activity()] == [
+        failed_id
+    ]
+
+
+def test_count_unseen_fleet_activity_excludes_other_receipt_states(db):
+    superseded_id, _ = db.publish_console_activity(
+        origin="fleet_survivor",
+        logical_outcome_id="fleet-run:one",
+        status="failed",
+        session_id=None,
+        conversation_id="conversation-fleet",
+        run_id="one",
+    )
+    current_id, _ = db.publish_console_activity(
+        origin="fleet_survivor",
+        logical_outcome_id="fleet-run:one",
+        status="done",
+        session_id=None,
+        conversation_id="conversation-fleet",
+        run_id="one",
+    )
+    acknowledged_id, _ = db.publish_console_activity(
+        origin="fleet_survivor",
+        logical_outcome_id="fleet-run:two",
+        status="done",
+        session_id=None,
+        conversation_id="conversation-fleet",
+        run_id="two",
+    )
+    db.acknowledge_console_activity((acknowledged_id,))
+    db.publish_console_activity(
+        origin="ordinary",
+        logical_outcome_id="turn:ordinary",
+        status="done",
+        session_id="session-ordinary",
+        conversation_id="conversation-fleet",
+    )
+    db.publish_console_activity(
+        origin="fleet_survivor",
+        logical_outcome_id="fleet-run:other-conversation",
+        status="done",
+        session_id=None,
+        conversation_id="conversation-other",
+        run_id="other-conversation",
+    )
+
+    assert superseded_id != current_id
+    assert db.count_unseen_fleet_activity("conversation-fleet") == 1
+
+
+def test_receipt_operations_raise_focused_error_when_capability_is_unavailable(
+    tmp_path,
+):
+    class ReceiptDDLFailureDB(AgentRunsDB):
+        def _create_console_activity_receipts_schema(self, conn):
+            raise sqlite3.OperationalError("injected receipt DDL failure")
+
+    database = ReceiptDDLFailureDB(tmp_path / "receipt-operation-degraded.db")
+
+    with pytest.raises(ConsoleActivityReceiptsUnavailable):
+        database.list_unseen_console_activity()

@@ -62,6 +62,10 @@ class AgentStepConflictError(ValueError):
     """A durable step index already owns a different canonical payload."""
 
 
+class ConsoleActivityReceiptsUnavailable(RuntimeError):
+    """The optional local Console activity-receipt capability is unavailable."""
+
+
 def _canonical_step_payload(index: int, payload: dict) -> str:
     """Validate and serialize one explicit-index step before locking SQLite."""
     if type(index) is not int:
@@ -101,7 +105,7 @@ class AgentRunsDB(BaseDB):
     trail (nothing branches on it at runtime).
     """
 
-    _CURRENT_SCHEMA_VERSION = 14
+    _CURRENT_SCHEMA_VERSION = 15
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: Liveness-ping gate (mirrors ChaChaNotes/WorkspaceDB, task-261/3011):
@@ -111,6 +115,7 @@ class AgentRunsDB(BaseDB):
 
     def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
         self._thread_local = threading.local()
+        self.receipt_capability_available = False
         super().__init__(db_path, client_id)
         # After super().__init__: the agent_runs table exists (base_db ran
         # _initialize_schema) and self.is_memory_db is set. Reconcile once per
@@ -626,6 +631,238 @@ class AgentRunsDB(BaseDB):
             conn.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (14)"
             )
+            conn.execute("SAVEPOINT console_activity_receipts_v15")
+            try:
+                self._create_console_activity_receipts_schema(conn)
+                conn.execute(
+                    "INSERT OR IGNORE INTO schema_version (version) VALUES (15)"
+                )
+            except sqlite3.Error as exc:
+                conn.execute("ROLLBACK TO SAVEPOINT console_activity_receipts_v15")
+                conn.execute("RELEASE SAVEPOINT console_activity_receipts_v15")
+                logger.warning(
+                    "Console activity receipts are unavailable; "
+                    f"core AgentRunsDB remains usable: {exc}"
+                )
+            else:
+                conn.execute("RELEASE SAVEPOINT console_activity_receipts_v15")
+                self.receipt_capability_available = True
+
+    def _create_console_activity_receipts_schema(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Create the optional v15 receipt schema inside the caller's savepoint."""
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS console_activity_receipts (
+                activity_id TEXT PRIMARY KEY,
+                origin TEXT NOT NULL
+                    CHECK(origin IN ('ordinary', 'fleet_survivor')),
+                logical_outcome_id TEXT NOT NULL,
+                transition_revision INTEGER NOT NULL
+                    CHECK(transition_revision > 0),
+                session_id TEXT,
+                conversation_id TEXT,
+                run_id TEXT,
+                assistant_message_id TEXT,
+                status TEXT NOT NULL CHECK(status IN
+                    ('done', 'failed', 'stuck', 'stopped', 'cancelled')),
+                created_at TEXT NOT NULL,
+                acknowledged_at TEXT,
+                superseded_at TEXT,
+                CHECK(session_id IS NOT NULL OR conversation_id IS NOT NULL),
+                UNIQUE(origin, logical_outcome_id, transition_revision)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_console_activity_receipts_unseen
+                ON console_activity_receipts(conversation_id, created_at)
+                WHERE acknowledged_at IS NULL AND superseded_at IS NULL
+            """
+        )
+
+    def _require_receipt_capability(self) -> None:
+        if not self.receipt_capability_available:
+            raise ConsoleActivityReceiptsUnavailable(
+                "Console activity receipts are unavailable for this database."
+            )
+
+    @staticmethod
+    def _validate_console_activity_fields(
+        *,
+        origin: str,
+        logical_outcome_id: str,
+        status: str,
+        session_id: str | None,
+        conversation_id: str | None,
+        run_id: str | None,
+        assistant_message_id: str | None,
+    ) -> None:
+        if origin not in {"ordinary", "fleet_survivor"}:
+            raise ValueError("Console activity origin is invalid.")
+        if status not in {"done", "failed", "stuck", "stopped", "cancelled"}:
+            raise ValueError("Console activity status is invalid.")
+        if type(logical_outcome_id) is not str or not logical_outcome_id.strip():
+            raise ValueError("Console activity logical outcome id is required.")
+        for field_name, value in (
+            ("session_id", session_id),
+            ("conversation_id", conversation_id),
+            ("run_id", run_id),
+            ("assistant_message_id", assistant_message_id),
+        ):
+            if value is not None and (type(value) is not str or not value.strip()):
+                raise ValueError(f"Console activity {field_name} is invalid.")
+        if session_id is None and conversation_id is None:
+            raise ValueError("Console activity requires a session or conversation.")
+
+    def _publish_console_activity_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        origin: str,
+        logical_outcome_id: str,
+        status: str,
+        session_id: str | None,
+        conversation_id: str | None,
+        run_id: str | None = None,
+        assistant_message_id: str | None = None,
+    ) -> tuple[str, bool]:
+        """Publish one revision using the caller's existing write transaction."""
+        self._require_receipt_capability()
+        self._validate_console_activity_fields(
+            origin=origin,
+            logical_outcome_id=logical_outcome_id,
+            status=status,
+            session_id=session_id,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            assistant_message_id=assistant_message_id,
+        )
+        latest = conn.execute(
+            "SELECT activity_id, transition_revision, status, superseded_at "
+            "FROM console_activity_receipts WHERE origin = ? "
+            "AND logical_outcome_id = ? ORDER BY transition_revision DESC LIMIT 1",
+            (origin, logical_outcome_id),
+        ).fetchone()
+        if latest is not None and latest["status"] == status:
+            return str(latest["activity_id"]), False
+
+        created_at = _now_iso()
+        revision = int(latest["transition_revision"]) + 1 if latest else 1
+        activity_id = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                "tldw-chatbook:console-activity:"
+                f"{origin}:{logical_outcome_id}:{revision}:{status}",
+            )
+        )
+        if latest is not None and latest["superseded_at"] is None:
+            conn.execute(
+                "UPDATE console_activity_receipts SET superseded_at = ? "
+                "WHERE activity_id = ? AND superseded_at IS NULL",
+                (created_at, latest["activity_id"]),
+            )
+        conn.execute(
+            """
+            INSERT INTO console_activity_receipts (
+                activity_id, origin, logical_outcome_id, transition_revision,
+                session_id, conversation_id, run_id, assistant_message_id,
+                status, created_at, acknowledged_at, superseded_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+            """,
+            (
+                activity_id,
+                origin,
+                logical_outcome_id,
+                revision,
+                session_id,
+                conversation_id,
+                run_id,
+                assistant_message_id,
+                status,
+                created_at,
+            ),
+        )
+        return activity_id, True
+
+    def publish_console_activity(
+        self,
+        *,
+        origin: str,
+        logical_outcome_id: str,
+        status: str,
+        session_id: str | None,
+        conversation_id: str | None,
+        run_id: str | None = None,
+        assistant_message_id: str | None = None,
+    ) -> tuple[str, bool]:
+        """Publish an idempotent Console activity receipt revision."""
+        with self.transaction() as conn:
+            return self._publish_console_activity_in_transaction(
+                conn,
+                origin=origin,
+                logical_outcome_id=logical_outcome_id,
+                status=status,
+                session_id=session_id,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                assistant_message_id=assistant_message_id,
+            )
+
+    def list_unseen_console_activity(self) -> tuple[dict, ...]:
+        """Return current unseen, unsuperseded activity newest first."""
+        self._require_receipt_capability()
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM console_activity_receipts "
+                "WHERE acknowledged_at IS NULL AND superseded_at IS NULL "
+                "ORDER BY created_at DESC, activity_id"
+            ).fetchall()
+        return tuple(dict(row) for row in rows)
+
+    def acknowledge_console_activity(self, activity_ids: Sequence[str]) -> int:
+        """Acknowledge only the supplied current receipt revisions."""
+        self._require_receipt_capability()
+        ids: list[str] = []
+        seen: set[str] = set()
+        for activity_id in activity_ids:
+            if type(activity_id) is not str or not activity_id.strip():
+                raise ValueError("Console activity id is invalid.")
+            if activity_id not in seen:
+                ids.append(activity_id)
+                seen.add(activity_id)
+        if not ids:
+            return 0
+        acknowledged_at = _now_iso()
+        updated = 0
+        with self.transaction() as conn:
+            for start in range(0, len(ids), _IN_CLAUSE_CHUNK):
+                chunk = ids[start : start + _IN_CLAUSE_CHUNK]
+                placeholders = ",".join("?" for _ in chunk)
+                cursor = conn.execute(
+                    "UPDATE console_activity_receipts SET acknowledged_at = ? "
+                    f"WHERE activity_id IN ({placeholders}) "
+                    "AND acknowledged_at IS NULL AND superseded_at IS NULL",
+                    (acknowledged_at, *chunk),
+                )
+                updated += int(cursor.rowcount)
+        return updated
+
+    def count_unseen_fleet_activity(self, conversation_id: str) -> int:
+        """Count current unseen FLEET-survivor receipts for one conversation."""
+        self._require_receipt_capability()
+        if type(conversation_id) is not str or not conversation_id.strip():
+            raise ValueError("Console activity conversation id is invalid.")
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM console_activity_receipts "
+                "WHERE origin = 'fleet_survivor' AND conversation_id = ? "
+                "AND acknowledged_at IS NULL AND superseded_at IS NULL",
+                (conversation_id,),
+            ).fetchone()
+        return int(row[0])
 
     def record_change_snapshot(
         self,
@@ -1797,13 +2034,12 @@ class AgentRunsDB(BaseDB):
                     (run_id, index, canonical, observed_at),
                 )
 
-            orphan_ids = [
-                row["id"]
-                for row in conn.execute(
-                    "SELECT id FROM agent_runs WHERE status = 'running' "
-                    "AND agent_kind IN ('primary', 'subagent')"
-                ).fetchall()
-            ]
+            orphan_rows = conn.execute(
+                "SELECT id, conversation_id, assistant_message_id "
+                "FROM agent_runs WHERE status = 'running' "
+                "AND agent_kind IN ('primary', 'subagent')"
+            ).fetchall()
+            orphan_ids = [row["id"] for row in orphan_rows]
             local_orphan_ids = [
                 row["id"]
                 for row in conn.execute(
@@ -1813,7 +2049,18 @@ class AgentRunsDB(BaseDB):
             ]
             observed_at = _now_iso()
             diagnostic_index = AGENT_LIFECYCLE_INDEX_BASE + 500
-            for run_id in orphan_ids:
+            for orphan in orphan_rows:
+                run_id = str(orphan["id"])
+                self._publish_console_activity_in_transaction(
+                    conn,
+                    origin="fleet_survivor",
+                    logical_outcome_id=f"fleet-run:{run_id}",
+                    status="failed",
+                    session_id=None,
+                    conversation_id=str(orphan["conversation_id"]),
+                    run_id=run_id,
+                    assistant_message_id=orphan["assistant_message_id"],
+                )
                 insert_recovery_diagnostic(
                     run_id,
                     diagnostic_index,
