@@ -274,6 +274,7 @@ tldw_chatbook/Personal_Context/interview_coordinator.py|class ProfileInterviewCo
 tldw_chatbook/Personal_Context/interview_draft_repository.py|class InterviewDraftRepository
 tldw_chatbook/Personal_Context/interview_provider.py|class InterviewQuestionProvider
 tldw_chatbook/Personal_Context/link_service.py|class PersonalContextLinkService
+tldw_chatbook/Personal_Context/link_key_custody.py|class KeyringPersonalContextWrappingKeyProvider
 tldw_chatbook/Personal_Context/link_key_custody.py|class PersonalContextLinkKeyCustodian
 tldw_chatbook/Personal_Context/sync_outbox.py|class ProfileSyncOutbox
 tldw_chatbook/Sync_Interop/personal_context_adapter.py|class PersonalContextSyncAdapter
@@ -757,7 +758,7 @@ Include this exact four-bullet block, including both markers and every bullet; m
 Document these exact owners, using repository-root paths:
 
 - `tldw_chatbook/Personal_Context/bootstrap.py` — `bootstrap_personal_context_service`
-- `tldw_chatbook/Personal_Context/key_protector.py` — `ProfileKeyProtector`, the local at-rest key protection and recovery boundary
+- `tldw_chatbook/Personal_Context/key_protector.py` — `ProfileKeyProtector`, the active local `ProfileKeyMaterial` protection, replacement, and recovery boundary
 - `tldw_chatbook/Personal_Context/repository.py` — `PersonalContextRepository`
 - `tldw_chatbook/Personal_Context/service.py` — `PersonalContextService`
 - `tldw_chatbook/Personal_Context/context_service.py` — `ProfileContextService`
@@ -767,7 +768,8 @@ Document these exact owners, using repository-root paths:
 - `tldw_chatbook/Personal_Context/interview_draft_repository.py` — unfinished interview-draft storage
 - `tldw_chatbook/Personal_Context/interview_provider.py` — `InterviewQuestionProvider`, the interview model-provider boundary
 - `tldw_chatbook/Personal_Context/link_service.py` — `PersonalContextLinkService`
-- `tldw_chatbook/Personal_Context/link_key_custody.py` — `PersonalContextLinkKeyCustodian`, the wrapping/integrity-key custody boundary
+- `tldw_chatbook/Personal_Context/link_key_custody.py` — `KeyringPersonalContextWrappingKeyProvider`, the device RSA wrapping-private-key and unwrap boundary
+- `tldw_chatbook/Personal_Context/link_key_custody.py` — `PersonalContextLinkKeyCustodian`, the staged-integrity and dataset-staging custody boundary
 - `tldw_chatbook/Personal_Context/sync_outbox.py` — encrypted `ProfileSyncOutbox` lifecycle boundary
 - `tldw_chatbook/Sync_Interop/personal_context_adapter.py` — `PersonalContextSyncAdapter`
 - `tldw_chatbook/Sync_Interop/personal_context_dispatcher.py` — `PersonalContextOutboxDispatcher`
@@ -875,7 +877,7 @@ git commit -m "docs: add Chatbook Personal Context developer guide"
 
 **Allowed files:** `Docs/Development/personal-context-profile.md`, this plan, `Docs/superpowers/specs/2026-08-31-personal-context-documentation-design.md` review-status metadata, and TASK-27019. Preserve the approved user guide, the TASK-28228 collision correction, and authoritative TASK-27016 unchanged.
 
-**Evidence:** `PersonalContextService.remove_local_profile()` and `finish_secure_removal()`, `PersonalContextRepository.destroy_profile_content()`, `_draft_repository()` and `InterviewDraftRepository`, `KeyringProfileKeyProtector`, the keyring wrapping/link custodians, and `ProfileContextService._ordered_with_workspace_overrides()` plus `_serialize_whole_records()`.
+**Evidence:** `PersonalContextService.remove_local_profile()` and `finish_secure_removal()`, `PersonalContextRepository.destroy_profile_content()` and `apply_reviewed_link()`, `_draft_repository()` and `InterviewDraftRepository`, `KeyringProfileKeyProtector`, `KeyringPersonalContextWrappingKeyProvider`, `PersonalContextLinkKeyCustodian`, and `ProfileContextService._ordered_with_workspace_overrides()` plus `_serialize_whole_records()`. Key ownership is phase-specific: wrapping provider for the device RSA private key and unwrap, link custodian for staged integrity and dataset staging, then `ProfileKeyProtector.replace()` for active `ProfileKeyMaterial`; durable completion deletes the staged integrity copy.
 
 - [x] **Step 1: Govern the review-correction scope before changing specification metadata**
 - [x] **Step 2: Correct removal residuals, exact context ordering, and integrator responsibilities**
@@ -1373,6 +1375,7 @@ component_owners = [
     ("tldw_chatbook/Personal_Context/interview_draft_repository.py", "InterviewDraftRepository"),
     ("tldw_chatbook/Personal_Context/interview_provider.py", "InterviewQuestionProvider"),
     ("tldw_chatbook/Personal_Context/link_service.py", "PersonalContextLinkService"),
+    ("tldw_chatbook/Personal_Context/link_key_custody.py", "KeyringPersonalContextWrappingKeyProvider"),
     ("tldw_chatbook/Personal_Context/link_key_custody.py", "PersonalContextLinkKeyCustodian"),
     ("tldw_chatbook/Personal_Context/sync_outbox.py", "ProfileSyncOutbox"),
     ("tldw_chatbook/Sync_Interop/personal_context_adapter.py", "PersonalContextSyncAdapter"),

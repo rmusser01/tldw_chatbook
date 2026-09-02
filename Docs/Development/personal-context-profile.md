@@ -19,14 +19,14 @@ Chatbook bundles `tldw_profile_core` `0.1.0`; the companion server uses its pinn
 - Each peer retains its own at-rest ciphertext and keys, local database rows, runtime permissions, conflict-review metadata, acknowledgement tracking, and other operational state.
 <!-- shared-personal-context-contract:end -->
 
-At rest, each peer encrypts its own rows with its own keys. During linking, Chatbook registers its public wrapping key and receives a wrapped, server-owned Sync integrity key; `PersonalContextLinkKeyCustodian` keeps that key separate from the local profile-at-rest key. Canonical payload bytes and Sync-v2 envelope bytes are therefore different contracts with different key custody.
+At rest, each peer encrypts its own rows with its own keys. During linking, `KeyringPersonalContextWrappingKeyProvider` owns the device RSA wrapping private key, publishes its public key, and unwraps the server-owned Sync integrity key. `PersonalContextLinkKeyCustodian` holds the unactivated staged integrity-key copy and the dataset-staging key. After the reviewed rebaseline, the active integrity key is part of canonical `ProfileKeyMaterial` persisted through `ProfileKeyProtector.replace()`; after durable link completion, the staged integrity-key copy is deleted. Canonical payload bytes and Sync-v2 envelope bytes are therefore different contracts with distinct custody stages.
 
 The governing decisions are the [unified profile design](../superpowers/specs/2026-08-28-unified-personal-context-profile-design.md) and [ADR-102](../../backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md). Server storage and endpoint details belong in the [server developer guide](https://github.com/rmusser01/tldw_server/blob/dev/Docs/Code_Documentation/Personal_Context_Developer_Guide.md) and [server API guide](https://github.com/rmusser01/tldw_server/blob/dev/Docs/API-related/Personal_Context_API.md), rather than being duplicated here.
 
 ## Component and key-custody map
 
 - `tldw_chatbook/Personal_Context/bootstrap.py` — `bootstrap_personal_context_service` assembles the unlocked service or a fail-closed locked facade.
-- `tldw_chatbook/Personal_Context/key_protector.py` — `ProfileKeyProtector` owns local at-rest key protection, unlock, destruction, and recovery-export key handling.
+- `tldw_chatbook/Personal_Context/key_protector.py` — `ProfileKeyProtector` owns local at-rest `ProfileKeyMaterial`; `replace()` persists the reviewed rebaseline's active integrity key alongside the retained encryption key.
 - `tldw_chatbook/Personal_Context/repository.py` — `PersonalContextRepository` owns the dedicated SQLite schema, encrypted canonical objects, immutable versions, current heads, runtime policy, and atomic commits.
 - `tldw_chatbook/Personal_Context/service.py` — `PersonalContextService` is the authorized canonical mutation boundary for records, scopes, controls, and interview batches.
 - `tldw_chatbook/Personal_Context/context_service.py` — `ProfileContextService` selects and renders the bounded, effective agent context.
@@ -36,7 +36,8 @@ The governing decisions are the [unified profile design](../superpowers/specs/20
 - `tldw_chatbook/Personal_Context/interview_draft_repository.py` — `InterviewDraftRepository` stores encrypted, expiring unfinished interview drafts and transcripts locally.
 - `tldw_chatbook/Personal_Context/interview_provider.py` — `InterviewQuestionProvider` is the interview model-provider boundary.
 - `tldw_chatbook/Personal_Context/link_service.py` — `PersonalContextLinkService` owns capability negotiation, content-free review planning, and reviewed link application.
-- `tldw_chatbook/Personal_Context/link_key_custody.py` — `PersonalContextLinkKeyCustodian` owns device wrapping keys and the staged/active server Sync integrity key.
+- `tldw_chatbook/Personal_Context/link_key_custody.py` — `KeyringPersonalContextWrappingKeyProvider` owns the device RSA wrapping private key and unwraps the wrapped server integrity key.
+- `tldw_chatbook/Personal_Context/link_key_custody.py` — `PersonalContextLinkKeyCustodian` holds the staged integrity-key copy and dataset-staging key; it does not own the active post-rebaseline key.
 - `tldw_chatbook/Personal_Context/sync_outbox.py` — encrypted `ProfileSyncOutbox` is the canonical repository's source journal for eligible local mutations.
 - `tldw_chatbook/Sync_Interop/personal_context_adapter.py` — `PersonalContextSyncAdapter` validates canonical payloads and maps them to separate Sync-v2 envelopes.
 - `tldw_chatbook/Sync_Interop/personal_context_dispatcher.py` — `PersonalContextOutboxDispatcher` stages source entries into SyncState and acknowledges/shreds the source copy.
@@ -56,7 +57,7 @@ UI, agent, and transport code must use the owning service/repository boundary an
 
 **Shipped.** `PersonalContextRepository` stores encrypted canonical versions and current heads in a dedicated database. Its `BEGIN IMMEDIATE` transaction boundary rolls back on failure. `PersonalContextService` uses compound repository commits so a record and manifest compare-and-swap, optional Undo snapshot, and eligible encrypted source-outbox entry succeed or fail together. Interview batches do the same for all approved records. Proposal acceptance atomically commits the accepted proposal, resulting record and manifest, eligible outbox item, and terminal content-free receipt.
 
-Runtime enablement and scope-to-workspace mappings are peer-local policy, not canonical profile objects. Interview draft deletion and optional runtime enablement happen after the canonical interview batch commits, so retry and recovery code must not pretend they share the canonical transaction. Reviewed first-link rebaselining is atomic inside local SQLite; activating staged key custody is a separate recoverable step.
+Runtime enablement and scope-to-workspace mappings are peer-local policy, not canonical profile objects. Interview draft deletion and optional runtime enablement happen after the canonical interview batch commits, so retry and recovery code must not pretend they share the canonical transaction. Reviewed first-link rebaselining is atomic inside local SQLite. Persisting the new active `ProfileKeyMaterial` through `ProfileKeyProtector.replace()` is the following cross-store activation step; the separately staged integrity-key copy is retained for recovery until durable link completion deletes it.
 
 Record controls are independent:
 
@@ -110,7 +111,7 @@ The Console builds one snapshot for an agent dispatch, appends it to the system 
 
 Before approval, bootstrap negotiates authentication and capabilities, registers the device and public wrapping key, exchanges display/client version, schema/quota, purge-generation, cursor, dataset, authority, and key metadata, and downloads the server's eligible canonical manifest, scopes, records, and proposals. Remote record/proposal content exists transiently in memory to compute the plan. Durable pre-approval state and the visible plan remain content-free: identifiers, versions, counts, outcomes, and keep-device/keep-server choices. No local profile record or proposal content is uploaded before approval.
 
-On approval, Chatbook unwraps and stages the server-owned Sync integrity key, atomically applies the reviewed reconciliation locally, completes the link on the server, then runs `PersonalContextFirstLinkSync` over only the reviewed lineage. Completion verifies the expected heads and cursor, producing one matching eligible snapshot on both peers.
+On approval, the wrapping-key provider unwraps the server-owned Sync integrity key and the link custodian stages it. Chatbook atomically applies the reviewed reconciliation locally, then `ProfileKeyProtector.replace()` persists that integrity key as active canonical `ProfileKeyMaterial`. It completes the link on the server and runs `PersonalContextFirstLinkSync` over only the reviewed lineage. Completion verifies the expected heads and cursor, produces one matching eligible snapshot on both peers, and deletes the staged integrity-key copy while retaining the dataset-staging key.
 
 **Protocol capability, not ongoing shipped behavior.** Sync V2 and `LocalFirstSyncService` understand manifest, scope, record, proposal, and content-free purge envelopes. No startup, background, Settings, or other production caller currently runs an ongoing Personal Context sync cycle. **Overview > Manual Sync** uses only the Notes and Chat domains. Consequently, later eligible Chatbook mutations remain queued in the encrypted canonical outbox.
 
@@ -188,7 +189,7 @@ Start with the integration mode. A full local-first Sync peer and a server/API-o
 
 ### Full local-first Sync peer
 
-A full peer owns its local canonical repository, migrations, at-rest key custody, explicit syncability controls, encrypted source outbox, device/link bootstrap, capability negotiation, and content-free reconciliation review. If it offers agent use, it also owns runtime authority, workspace mappings, context injection, tools, interviews, proposal review, local removal, and recovery surfaces. To claim ongoing local-first synchronization, it must ship a scheduler or manual caller, queue/status UI, retries, conflict review, and user-visible recovery—not just adapters.
+A full peer owns its local canonical repository, migrations, active at-rest `ProfileKeyMaterial` custody, explicit syncability controls, encrypted source outbox, device/link bootstrap, capability negotiation, and content-free reconciliation review. Its link implementation separately assigns device wrapping/unwrap custody, temporary staged-integrity and dataset-staging custody, and active post-rebaseline integrity-key custody; it deletes the staged copy only after durable completion. If it offers agent use, it also owns runtime authority, workspace mappings, context injection, tools, interviews, proposal review, local removal, and recovery surfaces. To claim ongoing local-first synchronization, it must ship a scheduler or manual caller, queue/status UI, retries, conflict review, and user-visible recovery—not just adapters.
 
 ### Server/API-only client
 
