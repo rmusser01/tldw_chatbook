@@ -1,7 +1,7 @@
 ---
 id: TASK-26070
 title: Add complete Tool Pack inventory and deterministic export
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-01 00:00'
@@ -26,11 +26,11 @@ privacy-safe Tool Pack archives for later publication.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A code-owned registry captures every classified permission namespace, reports excluded categories/counts, and fails closed for unclassified or incomplete namespaces.
-- [ ] #2 Inventory snapshots are immutable and deterministic, cover all V1 builtin/local/external providers, reject exact or case-folded identity duplicates, and contain no workspace roots or admitted aliases.
-- [ ] #3 Export captures each authority once from strict immutable state, rejects invalid/tombstoned lifecycles, safely normalizes reserved source ids, and flattens named inheritance, definition changes, high-risk/raw-shell floors, and unseen fallbacks.
-- [ ] #4 Definitionless Denies remain pending while definitionless Ask/Allow rules are omitted and reported; receipt history, workspace/Persona/config/session gates, and runtime-only data never enter portable output.
-- [ ] #5 The two-member ZIP archive is byte-deterministic with pinned canonical JSON, member order, headers, modes, timestamps, hashes, and privacy exclusions; focused tests and scoped static checks pass.
+- [x] #1 A code-owned registry captures every classified permission namespace, reports excluded categories/counts, and fails closed for unclassified or incomplete namespaces.
+- [x] #2 Inventory snapshots are immutable and deterministic, cover all V1 builtin/local/external providers, reject exact or case-folded identity duplicates, and contain no workspace roots or admitted aliases.
+- [x] #3 Export captures each authority once from strict immutable state, rejects invalid/tombstoned lifecycles, safely normalizes reserved source ids, and flattens named inheritance, definition changes, high-risk/raw-shell floors, and unseen fallbacks.
+- [x] #4 Definitionless Denies remain pending while definitionless Ask/Allow rules are omitted and reported; receipt history, workspace/Persona/config/session gates, and runtime-only data never enter portable output.
+- [x] #5 The two-member ZIP archive is byte-deterministic with pinned canonical JSON, member order, headers, modes, timestamps, hashes, and privacy exclusions; focused tests and scoped static checks pass.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -48,3 +48,31 @@ ADR path: backlog/decisions/107-portable-tool-use-packs.md
 Reason: ADR-107 already fixes the inventory boundary, policy-only export semantics, canonical archive contract, privacy exclusions, and Windows separation.
 <!-- SECTION:PLAN:END -->
 
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+- Added immutable permission inventory snapshots with explicit namespace
+  completeness, deterministic portable fingerprints/digests, strict raw provider
+  validation, and named nonportable category counts.
+- Added a sealed V1 capture boundary that owns builtin, built-in MCP,
+  local/raw-shell, Virtual CLI, and external local-profile assembly while binding
+  the existing local control service inventory sources. Generic or subclassed
+  registries cannot feed production export.
+- Added strict one-snapshot profile flattening with stable errors, lifecycle and
+  tombstone rejection, safe reserved-id handling, resolver floors, pending Denies,
+  omitted definitionless grants, and fallbacks for explicit zero-tool namespaces.
+- Added the deterministic two-member `ZIP_STORED` writer and checked-in canonical
+  golden archive/digest with pinned headers, modes, ordering, privacy exclusions,
+  and sink-error coverage.
+- Independent review required two fix rounds: the first added the fixed V1
+  provider assembly and stable profile-id validation; the second removed the
+  overridable export seam and retained zero-tool namespace fallbacks. The scoped
+  re-review passed with no new findings.
+- Verification: 117 targeted contract/inventory/export tests passed with one
+  pre-existing Requests dependency warning; scoped Ruff, `git diff --check`, ZIP
+  integrity, and the golden SHA-256 comparison passed. Per repository policy, the
+  full suite was not run.
+- ADR required: no new ADR. ADR-107 remains the governing decision.
+- No broadly reusable testing or implementation trap beyond the existing lessons
+  was discovered, so no lessons document was added.
+<!-- SECTION:NOTES:END -->
