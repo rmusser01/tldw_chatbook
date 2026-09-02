@@ -602,6 +602,9 @@ from ..Library_Modules.library_collections_capture_controller import (
     CollectionsCaptureControllerState,
     LibraryCollectionsCaptureController,
 )
+from ..Library_Modules.library_conversation_reader_controller import (
+    LibraryConversationReaderController,
+)
 from ..Library_Modules.library_conversations_state import LibraryConversationsState
 from ..Library_Modules.library_note_import_controller import (
     LibraryNoteImportController,
@@ -2172,6 +2175,32 @@ class LibraryScreen(BaseAppScreen):
         ) = None
         self._library_navigation_context_generation: int = 0
         self._conversations_state = LibraryConversationsState()
+        self._conversation_reader_controller = LibraryConversationReaderController(
+            self,
+            conversations_state_accessor=lambda: self._conversations_state,
+            build_conversations_state=lambda: self._build_library_conversations_state(),
+            adaptive_reader_allocation_is_current=(
+                lambda reader: self._library_adaptive_reader_allocation_is_current(
+                    reader
+                )
+            ),
+            run_library_service_call=(
+                lambda *args, **kwargs: self._run_library_service_call(
+                    *args, **kwargs
+                )
+            ),
+            conversation_records=lambda: self._conversation_records(),
+            conversation_record_id=(
+                lambda record, index: self._conversation_record_id(record, index)
+            ),
+            library_loaded_accessor=lambda: self._library_loaded,
+            library_lookup_error_accessor=lambda: self._library_lookup_error,
+            notes_focus_intent_generation_accessor=(
+                lambda: self._library_notes_focus_intent_generation
+            ),
+            selected_row_id_accessor=lambda: self._library_selected_row_id,
+            selected_conversation_id_accessor=lambda: self._selected_conversation_id,
+        )
         (
             self._library_reader_shared_preferences,
             self._library_media_reader_preferences,
@@ -6798,33 +6827,9 @@ class LibraryScreen(BaseAppScreen):
         self,
         priority: Literal["library", "items"] | None = None,
     ) -> None:
-        """Resolve the settled Conversations shell and patch it in place."""
-        try:
-            shell = self.query_one(
-                "#library-conversations-reader-shell", LibraryAdaptiveReaderShell
-            )
-        except (NoMatches, QueryError):
-            return
-        width = shell.region.width
-        if not self._library_adaptive_reader_allocation_is_current(shell):
-            return
-        previous = self._library_conversation_reader_layout
-        if (
-            previous.reader_width == 0
-            and previous.library_width == 0
-            and previous.items_width == 0
-        ):
-            previous = None
-        layout = resolve_adaptive_reader_layout(
-            width,
-            self._library_conversation_reader_preferences,
-            LIBRARY_CONVERSATION_READER_PROFILE,
-            previous=previous,
-            priority=priority,
+        return self._conversation_reader_controller._sync_library_conversation_reader_layout_from_shell(
+            priority
         )
-        shell.sync_layout(layout)
-        self._library_conversation_reader_layout = layout
-        self._sync_library_conversation_reader()
 
     def _sync_library_collections_reader_layout_from_shell(
         self,
@@ -6862,20 +6867,9 @@ class LibraryScreen(BaseAppScreen):
         key: Literal["library_open", "items_open"],
         value: bool,
     ) -> None:
-        """Mirror one optimistic Conversations pane choice into app config."""
-        app_config = getattr(self.app_instance, "app_config", None)
-        if not isinstance(app_config, dict):
-            return
-        library_config = app_config.setdefault("library", {})
-        if not isinstance(library_config, dict):
-            library_config = {}
-            app_config["library"] = library_config
-        section_name = "reader" if key == "library_open" else "conversations_reader"
-        section = library_config.setdefault(section_name, {})
-        if not isinstance(section, dict):
-            section = {}
-            library_config[section_name] = section
-        section[key] = value
+        return self._conversation_reader_controller._mirror_library_conversation_reader_preference(
+            key, value
+        )
 
     def _mirror_library_collections_reader_preference(
         self,
@@ -15286,106 +15280,35 @@ class LibraryScreen(BaseAppScreen):
     def _conversation_reader_record(
         self, conversation_id: str
     ) -> Mapping[str, Any] | None:
-        """Return the exact retained list record for one conversation id."""
-        for index, record in enumerate(self._conversation_records()):
-            if self._conversation_record_id(record, index) == conversation_id:
-                return record
-        return None
+        return self._conversation_reader_controller._conversation_reader_record(
+            conversation_id
+        )
 
     def _conversation_reader_list_summary(self) -> str:
-        """Summarize a collapsed Items pane inside protected work status."""
-        state = self._build_library_conversations_state()
-        pager = state.pager
-        count = pager.title_count if pager is not None else None
-        heading = "Conversations" if count is None else f"Conversations ({count})"
-        titles = [
-            str(record.get("title") or "").strip()
-            for record in self._conversation_records()[:2]
-        ]
-        visible_titles = [title for title in titles if title]
-        return " · ".join((heading, *visible_titles))
+        return self._conversation_reader_controller._conversation_reader_list_summary()
 
-    @staticmethod
     def _conversation_reader_record_version(
-        record: Mapping[str, Any] | None,
+        self, record: Mapping[str, Any] | None
     ) -> int | None:
-        """Read an authoritative optimistic-lock version without inventing one."""
-        value = record.get("version") if record is not None else None
-        return value if type(value) is int and value >= 0 else None
+        return self._conversation_reader_controller._conversation_reader_record_version(
+            record
+        )
 
     def _sync_library_conversation_reader(self) -> bool:
-        """Patch the mounted work pane from controller-owned pure state."""
-        try:
-            reader = self.query_one(
-                "#library-conversation-reader", LibraryConversationReader
-            )
-        except (NoMatches, QueryError):
-            return False
-        metadata = dict(self._library_conversation_reader_loaded_metadata)
-        if not self._library_loaded and not self._library_lookup_error:
-            metadata["_list_status"] = "Loading local Library sources…"
-        elif self._library_lookup_error:
-            metadata["_list_status"] = self._library_lookup_error
-        if not self._library_conversation_reader_layout.items_open:
-            metadata["_list_summary"] = self._conversation_reader_list_summary()
-        reader.sync_state(
-            self._library_conversation_reader_state,
-            loaded_metadata=metadata,
-            selected_metadata=self._library_conversation_reader_selected_metadata,
-        )
-        self._finish_library_conversation_find_focus()
-        return True
+        return self._conversation_reader_controller._sync_library_conversation_reader()
 
     def _finish_library_conversation_find_focus(self) -> None:
-        """Reveal a deferred Find match only while its user intent is current."""
-        intent = self._library_conversation_find_focus_intent
-        state = self._library_conversation_reader_state
-        if intent is None or not state.find_complete or not state.find_matches:
-            return
-        generation, focus_generation, query = intent
-        if (
-            self._library_selected_row_id != LIBRARY_ROW_BROWSE_CONVERSATIONS
-            or generation != state.generation
-            or query != state.find_query
-            or focus_generation != self._library_notes_focus_intent_generation
-        ):
-            self._library_conversation_find_focus_intent = None
-            return
-        try:
-            reader = self.query_one(
-                "#library-conversation-reader", LibraryConversationReader
-            )
-        except (NoMatches, QueryError):
-            return
-        if reader.state.generation != generation or reader.state.find_query != query:
-            self._library_conversation_find_focus_intent = None
-            return
-        if reader.focus_find_match(state.find_matches[0].message_id):
-            self._library_conversation_find_focus_intent = None
+        return self._conversation_reader_controller._finish_library_conversation_find_focus()
 
     def _conversation_reader_request_is_current(
         self, request: ConversationReaderRequest
     ) -> bool:
-        """Check the complete destination/id/version/generation request fence."""
-        state = self._library_conversation_reader_state
-        return (
-            self._library_conversation_reader_mounted_authority
-            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
-            and request.destination == "conversations"
-            and request.conversation_id == state.selected_id
-            and request.version == state.selected_version
-            and request.generation == state.generation
+        return self._conversation_reader_controller._conversation_reader_request_is_current(
+            request
         )
 
     def _invalidate_library_conversation_reader_authority(self) -> None:
-        """Revoke every page/continuation and loaded-action generation."""
-        state = self._library_conversation_reader_state
-        self._library_conversation_reader_state = dataclasses.replace(
-            state,
-            generation=state.generation + 1,
-            loading=False,
-        )
-        self._library_conversation_find_focus_intent = None
+        return self._conversation_reader_controller._invalidate_library_conversation_reader_authority()
 
     def _set_library_destination_with_conversation_fence(self, row_id: str) -> None:
         """Set one admitted Library destination and revoke a Conversations read."""
@@ -15403,153 +15326,23 @@ class LibraryScreen(BaseAppScreen):
         self._library_selected_row_id = row_id
 
     def _conversation_reader_service(self) -> Any | None:
-        """Return the existing local conversation detail authority."""
-        direct = getattr(self.app_instance, "local_chat_conversation_service", None)
-        if callable(getattr(direct, "get_library_conversation_messages", None)):
-            return direct
-        scope = getattr(self.app_instance, "chat_conversation_scope_service", None)
-        local = getattr(scope, "local_service", None)
-        if callable(getattr(local, "get_library_conversation_messages", None)):
-            return local
-        return None
+        return self._conversation_reader_controller._conversation_reader_service()
 
     def _ensure_library_conversation_reader_selection(self) -> None:
-        """Start the initial selected-row read once the permanent pane mounts."""
-        conversation_id = self._selected_conversation_id
-        if not conversation_id or self._library_conversations_select_mode:
-            return
-        state = self._library_conversation_reader_state
-        record_version = self._conversation_reader_record_version(
-            self._conversation_reader_record(conversation_id)
-        )
-        if state.selected_id == conversation_id and (
-            (
-                state.loading
-                and (record_version is None or state.selected_version == record_version)
-            )
-            or (
-                state.loaded_actions_eligible
-                and (record_version is None or state.loaded_version == record_version)
-            )
-        ):
-            return
-        self._start_library_conversation_reader_selection(conversation_id)
+        return self._conversation_reader_controller._ensure_library_conversation_reader_selection()
 
     def _start_library_conversation_reader_selection(
         self, conversation_id: str
     ) -> None:
-        """Select one list record and launch its fenced progressive reader."""
-        self._library_conversation_deleted_selection_id = ""
-        record = self._conversation_reader_record(conversation_id)
-        if record is not None:
-            self._library_conversation_reader_selected_metadata = dict(record)
-        version = self._conversation_reader_record_version(record)
-        if version is None:
-            state = self._library_conversation_reader_state
-            generation = state.generation + 1
-            self._library_conversation_reader_state = dataclasses.replace(
-                state,
-                selected_id=conversation_id,
-                selected_version=None,
-                generation=generation,
-                mode=state.mode if conversation_id == state.loaded_id else "read",
-                error=None,
-                loading=True,
-                unavailable=False,
-                bulk_active=False,
-                bulk_selected_count=0,
-                bulk_loaded_preview_selected=None,
-            )
-            self._sync_library_conversation_reader()
-            self.run_worker(
-                self._bootstrap_library_conversation_reader(
-                    conversation_id, generation
-                ),
-                exclusive=True,
-                group="library_conversation_reader",
-            )
-            return
-        state, request = select_conversation(
-            self._library_conversation_reader_state,
-            conversation_id,
-            version=version,
-        )
-        self._library_conversation_reader_state = state
-        self._sync_library_conversation_reader()
-        self.run_worker(
-            self._load_library_conversation_reader(request),
-            exclusive=True,
-            group="library_conversation_reader",
+        return self._conversation_reader_controller._start_library_conversation_reader_selection(
+            conversation_id
         )
 
     async def _bootstrap_library_conversation_reader(
         self, conversation_id: str, bootstrap_generation: int
     ) -> None:
-        """Obtain a missing real version from the authoritative detail envelope."""
-        service = self._conversation_reader_service()
-        read = getattr(service, "get_library_conversation_messages", None)
-        if not callable(read):
-            state = self._library_conversation_reader_state
-            if self._conversation_reader_bootstrap_is_current(
-                conversation_id, bootstrap_generation
-            ):
-                self._library_conversation_reader_state = dataclasses.replace(
-                    state,
-                    error="Conversation detail is unavailable.",
-                    loading=False,
-                    unavailable=False,
-                )
-                self._sync_library_conversation_reader()
-            return
-        try:
-            response = await self._run_library_service_call(
-                read,
-                conversation_id,
-                message_offset=0,
-                message_limit=LIBRARY_CONVERSATION_PAGE_SIZE,
-                max_chars=LIBRARY_CONVERSATION_READER_MAX_CHARS,
-            )
-        except Exception:
-            if self._conversation_reader_bootstrap_is_current(
-                conversation_id, bootstrap_generation
-            ):
-                state = self._library_conversation_reader_state
-                self._library_conversation_reader_state = dataclasses.replace(
-                    state,
-                    error="Couldn't load this conversation. Try again.",
-                    loading=False,
-                    unavailable=False,
-                )
-                self._sync_library_conversation_reader()
-            return
-        if not self._conversation_reader_bootstrap_is_current(
+        return await self._conversation_reader_controller._bootstrap_library_conversation_reader(
             conversation_id, bootstrap_generation
-        ):
-            return
-        state = self._library_conversation_reader_state
-        if response is None:
-            self._library_conversation_reader_state = dataclasses.replace(
-                state,
-                error="Conversation unavailable.",
-                loading=False,
-                unavailable=True,
-            )
-            self._sync_library_conversation_reader()
-            return
-        version = response.get("version") if isinstance(response, Mapping) else None
-        if type(version) is not int or version < 0:
-            self._library_conversation_reader_state = dataclasses.replace(
-                state,
-                error="Conversation detail returned no authoritative version.",
-                loading=False,
-            )
-            self._sync_library_conversation_reader()
-            return
-        selected, request = select_conversation(state, conversation_id, version=version)
-        self._library_conversation_reader_state = selected
-        await self._load_library_conversation_reader(
-            request,
-            initial_response=response,
         )
 
     def _conversation_reader_bootstrap_is_current(
@@ -15557,14 +15350,8 @@ class LibraryScreen(BaseAppScreen):
         conversation_id: str,
         bootstrap_generation: int,
     ) -> bool:
-        """Fence a version bootstrap to its mounted Conversations selection."""
-        state = self._library_conversation_reader_state
-        return (
-            self._library_conversation_reader_mounted_authority
-            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
-            and state.selected_id == conversation_id
-            and state.selected_version is None
-            and state.generation == bootstrap_generation
+        return self._conversation_reader_controller._conversation_reader_bootstrap_is_current(
+            conversation_id, bootstrap_generation
         )
 
     async def _load_library_conversation_reader(
@@ -15573,164 +15360,9 @@ class LibraryScreen(BaseAppScreen):
         *,
         initial_response: Mapping[str, Any] | None = None,
     ) -> None:
-        """Settle bounded pages and body continuations incrementally off-loop."""
-        service = self._conversation_reader_service()
-        read = getattr(service, "get_library_conversation_messages", None)
-        if not callable(read):
-            self._library_conversation_reader_state = settle_conversation_error(
-                self._library_conversation_reader_state,
-                request,
-                "Conversation detail is unavailable.",
-            )
-            self._sync_library_conversation_reader()
-            return
-
-        response = initial_response
-        while self._conversation_reader_request_is_current(request):
-            try:
-                if response is None:
-                    response = await self._run_library_service_call(
-                        read,
-                        request.conversation_id,
-                        message_offset=request.message_offset,
-                        message_limit=request.message_limit,
-                        max_chars=LIBRARY_CONVERSATION_READER_MAX_CHARS,
-                    )
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                response = None
-                if self._conversation_reader_request_is_current(request):
-                    self._library_conversation_reader_state = settle_conversation_error(
-                        self._library_conversation_reader_state,
-                        request,
-                        "Couldn't load this conversation. Try again.",
-                    )
-                    self._sync_library_conversation_reader()
-                return
-            if not self._conversation_reader_request_is_current(request):
-                return
-            if response is None:
-                self._library_conversation_reader_state = (
-                    settle_conversation_unavailable(
-                        self._library_conversation_reader_state, request
-                    )
-                )
-                self._sync_library_conversation_reader()
-                return
-            try:
-                before_settle = self._library_conversation_reader_state
-                previous_loaded_generation = before_settle.loaded_generation
-                settled = settle_conversation_page(
-                    before_settle,
-                    request,
-                    response,
-                )
-            except (TypeError, ValueError):
-                before_settle = self._library_conversation_reader_state
-                settled = settle_conversation_error(
-                    before_settle,
-                    request,
-                    "Conversation detail was invalid. Try again.",
-                )
-            self._library_conversation_reader_state = settled
-            request_content_loaded = (
-                settled.loaded_id == request.conversation_id
-                and settled.loaded_generation == request.generation
-            )
-            if (
-                settled is not before_settle
-                and settled.error is None
-                and request_content_loaded
-            ):
-                metadata = dict(
-                    self._library_conversation_reader_selected_metadata
-                    if previous_loaded_generation != request.generation
-                    else self._library_conversation_reader_loaded_metadata
-                )
-                title = response.get("title")
-                if isinstance(title, str) and title.strip():
-                    metadata["title"] = title.strip()
-                metadata["version"] = request.version
-                self._library_conversation_reader_loaded_metadata = metadata
-            self._sync_library_conversation_reader()
-            await asyncio.sleep(0)
-            if settled.error:
-                return
-
-            for message in tuple(settled.messages):
-                while (
-                    not message.complete
-                    and self._conversation_reader_request_is_current(request)
-                ):
-                    try:
-                        continuation = await self._run_library_service_call(
-                            read,
-                            request.conversation_id,
-                            message_offset=request.message_offset,
-                            message_limit=request.message_limit,
-                            max_chars=LIBRARY_CONVERSATION_READER_MAX_CHARS,
-                            message_id=message.message_id,
-                            char_start=len(message.text),
-                        )
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception:
-                        self._library_conversation_reader_state = (
-                            settle_conversation_error(
-                                self._library_conversation_reader_state,
-                                request,
-                                "Couldn't finish loading a saved message. Try again.",
-                            )
-                        )
-                        self._sync_library_conversation_reader()
-                        return
-                    before = self._library_conversation_reader_state
-                    if continuation is None:
-                        self._library_conversation_reader_state = (
-                            settle_conversation_unavailable(before, request)
-                        )
-                        self._sync_library_conversation_reader()
-                        return
-                    self._library_conversation_reader_state = (
-                        settle_conversation_continuation(
-                            before,
-                            request,
-                            continuation,
-                        )
-                    )
-                    if self._library_conversation_reader_state is before:
-                        self._library_conversation_reader_state = (
-                            settle_conversation_error(
-                                before,
-                                request,
-                                "Saved message continuation was invalid. Try again.",
-                            )
-                        )
-                        self._sync_library_conversation_reader()
-                        return
-                    self._sync_library_conversation_reader()
-                    await asyncio.sleep(0)
-                    message = next(
-                        candidate
-                        for candidate in self._library_conversation_reader_state.messages
-                        if candidate.message_id == message.message_id
-                    )
-
-            state = self._library_conversation_reader_state
-            if state.complete:
-                return
-            next_offset = len(state.messages)
-            if next_offset <= request.message_offset:
-                self._library_conversation_reader_state = settle_conversation_error(
-                    state,
-                    request,
-                    "Conversation loading made no progress. Try again.",
-                )
-                self._sync_library_conversation_reader()
-                return
-            request = dataclasses.replace(request, message_offset=next_offset)
-            response = None
+        return await self._conversation_reader_controller._load_library_conversation_reader(
+            request, initial_response=initial_response
+        )
 
     def _build_library_conversations_state(self):
         """Build the conversations canvas display state from local records."""
@@ -25045,90 +24677,39 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-conversation-reader-read")
     def show_library_conversation_reader_read(self, event: Button.Pressed) -> None:
-        """Show the retained saved transcript."""
-        event.stop()
-        self._library_conversation_reader_state = set_conversation_reader_mode(
-            self._library_conversation_reader_state, "read"
+        return self._conversation_reader_controller.show_library_conversation_reader_read(
+            event
         )
-        self._sync_library_conversation_reader()
 
     @on(Button.Pressed, "#library-conversation-reader-info")
     def show_library_conversation_reader_info(self, event: Button.Pressed) -> None:
-        """Show truthful local conversation metadata."""
-        event.stop()
-        self._library_conversation_reader_state = set_conversation_reader_mode(
-            self._library_conversation_reader_state, "info"
+        return self._conversation_reader_controller.show_library_conversation_reader_info(
+            event
         )
-        self._sync_library_conversation_reader()
 
     @on(Input.Submitted, "#library-conversation-reader-find")
     def find_in_library_conversation(self, event: Input.Submitted) -> None:
-        """Find only after every saved message body is fully hydrated."""
-        event.stop()
-        self._library_conversation_reader_state = set_conversation_find_query(
-            self._library_conversation_reader_state,
-            event.value,
+        return self._conversation_reader_controller.find_in_library_conversation(
+            event
         )
-        self._sync_library_conversation_reader()
-        state = self._library_conversation_reader_state
-        if not state.loading and not state.complete and state.selected_id:
-            self._retry_library_conversation_reader()
-            state = self._library_conversation_reader_state
-        self._library_conversation_find_focus_intent = (
-            (
-                state.generation,
-                self._library_notes_focus_intent_generation,
-                state.find_query,
-            )
-            if state.find_query
-            else None
-        )
-        if state.find_complete and state.find_matches:
-            self._finish_library_conversation_find_focus()
 
     @on(LibraryConversationReader.MessagesSynced)
     def library_conversation_reader_messages_synced(
         self,
         event: LibraryConversationReader.MessagesSynced,
     ) -> None:
-        """Revalidate deferred Find focus after current transcript rows mount."""
-        event.stop()
-        state = self._library_conversation_reader_state
-        if (
-            event.reader_generation != state.generation
-            or event.find_query != state.find_query
-        ):
-            self._library_conversation_find_focus_intent = None
-            return
-        self._finish_library_conversation_find_focus()
+        return self._conversation_reader_controller.library_conversation_reader_messages_synced(
+            event
+        )
 
     @on(Button.Pressed, "#library-conversation-reader-retry")
     def retry_library_conversation_reader(self, event: Button.Pressed) -> None:
-        """Retry the selected detail with a fresh pure-state generation."""
-        event.stop()
-        self._retry_library_conversation_reader()
+        return self._conversation_reader_controller.retry_library_conversation_reader(
+            event
+        )
 
     def _retry_library_conversation_reader(self) -> None:
-        """Start one generation-fenced reader retry when selection is known."""
-        if (
-            self._library_conversations_select_mode
-            or self._library_conversation_reader_state.bulk_active
-        ):
-            return
-        try:
-            state, request = retry_conversation(self._library_conversation_reader_state)
-        except ValueError:
-            selected = self._library_conversation_reader_state.selected_id
-            if selected:
-                self._start_library_conversation_reader_selection(selected)
-            return
-        self._library_conversation_reader_state = state
-        self._sync_library_conversation_reader()
-        self.run_worker(
-            self._load_library_conversation_reader(request),
-            exclusive=True,
-            group="library_conversation_reader",
-        )
+        return self._conversation_reader_controller._retry_library_conversation_reader()
 
     def _library_conversation_loaded_preview_selected(self) -> bool | None:
         """Return whether the retained transcript is in the checked-row set."""
