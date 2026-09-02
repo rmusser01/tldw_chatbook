@@ -282,6 +282,12 @@ class ToolPackExportService:
     def capture(
         self, *, profile_id: str, display_name: str, suggested_id: str
     ) -> ToolPackExportReview:
+        if (
+            type(profile_id) is not str
+            or not profile_id
+            or profile_id != profile_id.strip()
+        ):
+            raise ToolPackError("export", "profile_invalid")
         try:
             store = self._permission_store.read_snapshot_strict()
         except Exception:
@@ -295,7 +301,12 @@ class ToolPackExportService:
             raise ToolPackError("export", "profile_unavailable")
         if profile_lifecycle_disposition(profile) in {"invalid", "tombstone"}:
             raise ToolPackError("export", "profile_invalid")
-        inventory = self._inventory.capture()
+        try:
+            inventory = self._inventory.capture_for_export()
+        except ToolPackError:
+            raise
+        except Exception:
+            raise ToolPackError("export", "inventory_incomplete") from None
         try:
             return self._flatten(
                 payload,

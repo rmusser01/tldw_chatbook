@@ -6,21 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tldw_chatbook.Agents.builtin_tool_gate import tool_ref
-from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
-from tldw_chatbook.Agents.raw_shell_tool_provider import RawShellToolProvider
-from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
-from tldw_chatbook.Agents.tool_catalog import (
-    BuiltinToolProvider,
-    build_gateable_tool,
-    gateable_builtin_tools,
-)
-from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
-from tldw_chatbook.MCP.hub_tool_catalog import (
-    HubTool,
-    builtin_tools_from_inventory,
-    local_tools_from_record,
-)
+from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.Tool_Packs.catalog_snapshot import (
     PermissionInventoryAdapter,
     PermissionInventoryRegistry,
@@ -35,6 +21,7 @@ from tldw_chatbook.Tool_Packs.contracts import (
 
 class _BuiltinAdapter(PermissionInventoryAdapter):
     namespace = "agent:builtin"
+    complete = True
 
     def snapshot(self) -> tuple[HubTool, ...]:
         return ()
@@ -155,6 +142,22 @@ def test_incomplete_or_raising_inventory_adapter_fails_closed() -> None:
             registry.capture()
 
 
+def test_empty_adapter_without_explicit_completeness_fails_closed() -> None:
+    class ImplicitlyEmpty:
+        namespace = "local:docs"
+
+        def snapshot(self) -> tuple[HubTool, ...]:
+            return ()
+
+    registry = PermissionInventoryRegistry(
+        current_permission_namespaces=lambda: {"local:docs"}
+    )
+    registry.register(ImplicitlyEmpty())  # type: ignore[arg-type]
+
+    with pytest.raises(ToolPackError, match=r"inventory_incomplete$"):
+        registry.capture()
+
+
 def test_invalid_definition_and_casefolded_empty_namespaces_fail_closed() -> None:
     invalid_definition = PermissionInventoryRegistry(
         current_permission_namespaces=lambda: {"local:docs"}
@@ -190,90 +193,44 @@ def _hub(name: str, *, server_key: str = "local:docs") -> HubTool:
     )
 
 
-def _all_builtin_hubs() -> tuple[HubTool, ...]:
-    provider = BuiltinToolProvider()
-    tools = {
-        entry.name: provider.tool_for(entry.name)
-        for entry in provider.list_catalog()
-    }
-    for entry in gateable_builtin_tools():
-        tools.setdefault(entry.tool_name, build_gateable_tool(entry))
-    hubs: list[HubTool] = []
-    for name, tool in tools.items():
-        assert tool is not None
-        ref = tool_ref(tool)
-        hubs.append(
-            HubTool(
-                server_key=ref.server_key,
-                server_label="Built-in tools",
-                source="builtin",
-                name=name,
-                description=ref.description,
-                input_schema=ref.input_schema,
-                tags=ref.tags,
-                stale=False,
-                executable=True,
-            )
-        )
-    return tuple(hubs)
-
-
 def test_concrete_v1_provider_inventory_is_complete_unbound_and_path_private(
     tmp_path: Path,
 ) -> None:
     sentinel_root = tmp_path / "private-workspace-sentinel"
     sentinel_root.mkdir()
-    builtin_mcp = tuple(
-        builtin_tools_from_inventory(
+    builtin_inventory = {
+        "tools": [
             {
+                "name": "search_media",
+                "description": "Search local media.",
+                "inputSchema": {"type": "object", "properties": {}},
+            }
+        ]
+    }
+    external_catalog = [
+        {
+            "profile_id": "docs",
+            "is_connected": False,
+            "discovery_snapshot": {
                 "tools": [
                     {
-                        "name": "search_media",
-                        "description": "Search local media.",
+                        "name": "search",
+                        "description": "Search cached docs.",
                         "inputSchema": {"type": "object", "properties": {}},
                     }
                 ]
-            }
-        )
-    )
-    external = tuple(
-        local_tools_from_record(
-            {
-                "profile_id": "docs",
-                "is_connected": False,
-                "discovery_snapshot": {
-                    "tools": [
-                        {
-                            "name": "search",
-                            "description": "Search cached docs.",
-                            "inputSchema": {"type": "object", "properties": {}},
-                        }
-                    ]
-                },
-            }
-        )
-    )
-    local_provider = LocalToolProvider(
-        workspace_root=sentinel_root,
-        admitted_roots=None,
-        todo_store=SessionTodoStore(),
-    )
-    local = tuple(local_provider.hub_tools()) + (RawShellToolProvider.hub_tool(),)
-    virtual = tuple(
-        VirtualCliProvider(
-            workspace_root=sentinel_root,
-            admitted_roots=None,
-        ).hub_tools()
-    )
-    tools_by_namespace = {
-        "agent:builtin": _all_builtin_hubs(),
-        "builtin:tldw_chatbook": builtin_mcp,
-        "local:__local__": local,
-        "local:__virtual_cli__": virtual,
-        "local:docs": external,
-    }
-    registry = PermissionInventoryRegistry(
-        current_permission_namespaces=lambda: set(tools_by_namespace),
+            },
+        },
+        {
+            "profile_id": "empty",
+            "is_connected": True,
+            "discovery_snapshot": {"tools": []},
+        },
+    ]
+    registry = PermissionInventoryRegistry.v1(
+        fallback_root=sentinel_root,
+        builtin_mcp_inventory=lambda: builtin_inventory,
+        external_catalog=lambda: external_catalog,
         excluded_counts=lambda: {
             "display_only_server_source": 3,
             "library_capability": 2,
@@ -282,10 +239,7 @@ def test_concrete_v1_provider_inventory_is_complete_unbound_and_path_private(
             "skills": 5,
         },
     )
-    for namespace, tools in tools_by_namespace.items():
-        registry.register(_ToolsAdapter(namespace, tools))
-
-    snapshot = registry.capture()
+    snapshot = registry.capture_for_export()
     identities = {item.identity for item in snapshot.tools}
     assert ("builtin", "agent:builtin", "calculator") in identities
     assert ("mcp", "builtin:tldw_chatbook", "search_media") in identities
@@ -293,6 +247,7 @@ def test_concrete_v1_provider_inventory_is_complete_unbound_and_path_private(
     assert ("mcp", "local:__local__", "todo_create") in identities
     assert ("mcp", "local:__virtual_cli__", "ls") in identities
     assert ("mcp", "local:docs", "search") in identities
+    assert ("mcp", "local:empty") in snapshot.namespaces
     assert dict(snapshot.excluded_counts)["runtime_orchestration"] == 4
 
     schema_bytes = canonical_json_bytes(
@@ -304,3 +259,66 @@ def test_concrete_v1_provider_inventory_is_complete_unbound_and_path_private(
     )
     assert str(sentinel_root).encode() not in schema_bytes
     assert b"root_alias" not in schema_bytes
+
+
+@pytest.mark.parametrize(
+    ("builtin_inventory", "external_catalog"),
+    [
+        ({}, []),
+        (
+            {
+                "tools": [
+                    {
+                        "name": "search_media",
+                        "description": "Search local media.",
+                    }
+                ]
+            },
+            [],
+        ),
+        ({"tools": []}, [{"profile_id": "docs", "is_connected": False}]),
+        (
+            {"tools": []},
+            [
+                {
+                    "profile_id": "docs",
+                    "is_connected": False,
+                    "discovery_snapshot": {
+                        "tools": [
+                            {"name": "search"},
+                            {"name": "SEARCH"},
+                        ]
+                    },
+                }
+            ],
+        ),
+        (
+            {"tools": []},
+            [
+                {
+                    "profile_id": "docs",
+                    "is_connected": False,
+                    "discovery_snapshot": {"tools": []},
+                },
+                {
+                    "profile_id": "DOCS",
+                    "is_connected": False,
+                    "discovery_snapshot": {"tools": []},
+                },
+            ],
+        ),
+    ],
+)
+def test_v1_registry_rejects_missing_or_partial_raw_provider_inventory(
+    tmp_path: Path,
+    builtin_inventory: dict[str, object],
+    external_catalog: list[dict[str, object]],
+) -> None:
+    registry = PermissionInventoryRegistry.v1(
+        fallback_root=tmp_path,
+        builtin_mcp_inventory=lambda: builtin_inventory,
+        external_catalog=lambda: external_catalog,
+    )
+
+    with pytest.raises(ToolPackError, match=r"inventory_incomplete$"):
+        registry.capture_for_export()

@@ -77,6 +77,7 @@ class PermissionInventoryAdapter(Protocol):
     """One code-owned, complete definition source for a governed namespace."""
 
     namespace: str
+    complete: bool
 
     def snapshot(self) -> tuple[HubTool, ...]:
         """Return every currently defined tool for ``namespace``."""
@@ -100,6 +101,7 @@ class PermissionInventorySnapshot:
     """The deterministic complete inventory used by exactly one export capture."""
 
     tools: tuple[PermissionInventoryTool, ...]
+    namespaces: tuple[tuple[PermissionAuthority, str], ...]
     excluded_counts: tuple[tuple[str, int], ...]
     digest: str
 
@@ -150,7 +152,7 @@ class PermissionInventoryRegistry:
         inventory: list[PermissionInventoryTool] = []
         for namespace in sorted(namespaces):
             adapter = self._adapters[namespace]
-            if getattr(adapter, "complete", True) is not True:
+            if getattr(adapter, "complete", None) is not True:
                 raise ToolPackError("export", "inventory_incomplete")
             try:
                 tools = adapter.snapshot()
@@ -201,6 +203,7 @@ class PermissionInventoryRegistry:
                             }
                             for item in inventory
                         ],
+                        "namespaces": [list(item) for item in sorted(("builtin" if name == "agent:builtin" else "mcp", name) for name in namespaces)],
                         "excluded_counts": dict(excluded_items),
                     },
                     operation="export",
@@ -208,7 +211,158 @@ class PermissionInventoryRegistry:
             ).hexdigest()
         except ToolPackError:
             raise ToolPackError("export", "inventory_incomplete") from None
-        return PermissionInventorySnapshot(tuple(inventory), excluded_items, digest)
+        snapshot_namespaces = tuple(
+            sorted(
+                ("builtin" if name == "agent:builtin" else "mcp", name)
+                for name in namespaces
+            )
+        )
+        return PermissionInventorySnapshot(
+            tuple(inventory), snapshot_namespaces, excluded_items, digest
+        )
+
+    def capture_for_export(self) -> PermissionInventorySnapshot:
+        """Reject generic assembly at the production export boundary."""
+        raise ToolPackError("export", "inventory_incomplete")
+
+    @classmethod
+    def v1(
+        cls,
+        *,
+        fallback_root: object,
+        builtin_mcp_inventory: Callable[[], object],
+        external_catalog: Callable[[], object],
+        excluded_counts: Callable[[], dict[str, int]] | None = None,
+    ) -> "_V1PermissionInventoryRegistry":
+        return _V1PermissionInventoryRegistry(
+            fallback_root=fallback_root,
+            builtin_mcp_inventory=builtin_mcp_inventory,
+            external_catalog=external_catalog,
+            excluded_counts=excluded_counts,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _SnapshotAdapter:
+    namespace: str
+    tools: tuple[HubTool, ...]
+    complete: bool = True
+
+    def snapshot(self) -> tuple[HubTool, ...]:
+        return self.tools
+
+
+def _strict_raw_tools(raw: object, *, namespace: str, label: str) -> tuple[HubTool, ...]:
+    if type(raw) is not list:
+        raise ToolPackError("export", "inventory_incomplete")
+    names: set[str] = set()
+    tools: list[HubTool] = []
+    for item in raw:
+        if not isinstance(item, Mapping):
+            raise ToolPackError("export", "inventory_incomplete")
+        name = item.get("name")
+        description = item.get("description")
+        schema = item.get("inputSchema")
+        if (
+            type(name) is not str
+            or not name
+            or name != name.strip()
+            or type(description) is not str
+            or not description
+            or "inputSchema" not in item
+            or type(schema) is not dict
+            or name.casefold() in names
+        ):
+            raise ToolPackError("export", "inventory_incomplete")
+        names.add(name.casefold())
+        tools.append(
+            HubTool(namespace, label, "builtin" if namespace.startswith("builtin:") else "local", name, description, schema, (), False, True)
+        )
+    return tuple(tools)
+
+
+class _V1PermissionInventoryRegistry(PermissionInventoryRegistry):
+    """The only production assembly for all classified V1 authorities."""
+
+    def __init__(
+        self,
+        *,
+        fallback_root: object,
+        builtin_mcp_inventory: Callable[[], object],
+        external_catalog: Callable[[], object],
+        excluded_counts: Callable[[], dict[str, int]] | None,
+    ) -> None:
+        self._fallback_root = fallback_root
+        self._builtin_mcp_inventory = builtin_mcp_inventory
+        self._external_catalog = external_catalog
+        self._v1_excluded_counts = excluded_counts
+
+    def capture_for_export(self) -> PermissionInventorySnapshot:
+        try:
+            from tldw_chatbook.Agents.builtin_tool_gate import tool_ref
+            from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+            from tldw_chatbook.Agents.raw_shell_tool_provider import RawShellToolProvider
+            from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
+            from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, build_gateable_tool, gateable_builtin_tools
+            from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
+
+            builtin_tools: dict[str, HubTool] = {}
+            provider = BuiltinToolProvider()
+            for entry in provider.list_catalog():
+                tool = provider.tool_for(entry.name)
+                if tool is not None:
+                    ref = tool_ref(tool)
+                    builtin_tools[tool.name] = HubTool(ref.server_key, "Built-in tools", "builtin", tool.name, ref.description, ref.input_schema, ref.tags, False, True)
+            for entry in gateable_builtin_tools():
+                tool = build_gateable_tool(entry)
+                ref = tool_ref(tool)
+                builtin_tools.setdefault(tool.name, HubTool(ref.server_key, "Built-in tools", "builtin", tool.name, ref.description, ref.input_schema, ref.tags, False, True))
+
+            builtin_raw = self._builtin_mcp_inventory()
+            if not isinstance(builtin_raw, Mapping):
+                raise ToolPackError("export", "inventory_incomplete")
+            builtin_mcp = _strict_raw_tools(builtin_raw.get("tools"), namespace="builtin:tldw_chatbook", label="tldw_chatbook")
+            local = tuple(LocalToolProvider(workspace_root=self._fallback_root, admitted_roots=None, todo_store=SessionTodoStore()).hub_tools()) + (RawShellToolProvider.hub_tool(),)
+            virtual = tuple(VirtualCliProvider(workspace_root=self._fallback_root, admitted_roots=None).hub_tools())
+            catalog = self._external_catalog()
+            if type(catalog) is not list:
+                raise ToolPackError("export", "inventory_incomplete")
+            external: list[_SnapshotAdapter] = []
+            profile_ids: set[str] = set()
+            for record in catalog:
+                if not isinstance(record, Mapping):
+                    raise ToolPackError("export", "inventory_incomplete")
+                profile_id = record.get("profile_id")
+                snapshot = record.get("discovery_snapshot")
+                if (
+                    type(profile_id) is not str
+                    or not profile_id
+                    or profile_id != profile_id.strip()
+                    or any(char.isspace() or char == ":" for char in profile_id)
+                    or profile_id.casefold() in profile_ids
+                    or not isinstance(snapshot, Mapping)
+                ):
+                    raise ToolPackError("export", "inventory_incomplete")
+                profile_ids.add(profile_id.casefold())
+                external.append(_SnapshotAdapter(f"local:{profile_id}", _strict_raw_tools(snapshot.get("tools"), namespace=f"local:{profile_id}", label=profile_id)))
+            adapters = (
+                _SnapshotAdapter("agent:builtin", tuple(builtin_tools.values())),
+                _SnapshotAdapter("builtin:tldw_chatbook", builtin_mcp),
+                _SnapshotAdapter("local:__local__", local),
+                _SnapshotAdapter("local:__virtual_cli__", virtual),
+                *external,
+            )
+            registry = PermissionInventoryRegistry(
+                current_permission_namespaces=lambda: {adapter.namespace for adapter in adapters},
+                excluded_counts=self._v1_excluded_counts,
+            )
+            for adapter in adapters:
+                registry.register(adapter)
+            return registry.capture()
+        except ToolPackError:
+            raise
+        except Exception:
+            raise ToolPackError("export", "inventory_incomplete") from None
 
 
 __all__ = [

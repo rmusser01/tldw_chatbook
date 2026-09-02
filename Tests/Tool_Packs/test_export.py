@@ -41,12 +41,20 @@ def _tool(*, server_key: str = "local:docs", name: str = "search") -> HubTool:
 class _Adapter(PermissionInventoryAdapter):
     def __init__(self, namespace: str, tools: tuple[HubTool, ...]) -> None:
         self.namespace = namespace
+        self.complete = True
         self._tools = tools
         self.calls = 0
 
     def snapshot(self) -> tuple[HubTool, ...]:
         self.calls += 1
         return self._tools
+
+
+class _ExportRegistry(PermissionInventoryRegistry):
+    """Test-only low-level adapter assembly; production must use ``v1``."""
+
+    def capture_for_export(self):
+        return self.capture()
 
 
 class _Store:
@@ -63,11 +71,32 @@ class _Store:
         )
 
 
+def test_generic_registry_cannot_export_even_when_its_inventory_is_complete() -> None:
+    registry = PermissionInventoryRegistry(
+        current_permission_namespaces=lambda: {"local:docs"}
+    )
+    registry.register(_Adapter("local:docs", (_tool(),)))
+    service = ToolPackExportService(
+        _Store(
+            {
+                "schema_version": 1,
+                "profiles": {"default": {"global_default": "deny", "servers": {}}},
+            }
+        ),
+        registry,
+    )
+
+    with pytest.raises(ToolPackError, match=r"^tool_pack\.export\.inventory_incomplete$"):
+        service.capture(
+            profile_id="default", display_name="Default", suggested_id="default"
+        )
+
+
 def test_capture_flattens_one_strict_snapshot_into_safe_portable_policy() -> None:
     """Removing the strict snapshot or resolver flattening makes this export unsafe."""
     search = _tool()
     builtin = _tool(server_key="agent:builtin", name="calculator")
-    registry = PermissionInventoryRegistry(
+    registry = _ExportRegistry(
         current_permission_namespaces=lambda: {"agent:builtin", "local:docs"}
     )
     builtin_adapter = _Adapter("agent:builtin", (builtin,))
@@ -117,7 +146,7 @@ def test_capture_flattens_one_strict_snapshot_into_safe_portable_policy() -> Non
 
 
 def test_pending_deny_gets_a_safe_fallback_while_missing_ask_is_reported() -> None:
-    registry = PermissionInventoryRegistry(current_permission_namespaces=lambda: set())
+    registry = _ExportRegistry(current_permission_namespaces=lambda: set())
     store = _Store(
         {
             "schema_version": 1,
@@ -160,7 +189,7 @@ def test_pending_deny_gets_a_safe_fallback_while_missing_ask_is_reported() -> No
 
 
 def test_shadowed_default_deny_is_not_serialized_as_a_named_pending_rule() -> None:
-    registry = PermissionInventoryRegistry(current_permission_namespaces=lambda: set())
+    registry = _ExportRegistry(current_permission_namespaces=lambda: set())
     review = ToolPackExportService(
         _Store(
             {
@@ -190,7 +219,7 @@ def test_shadowed_default_deny_is_not_serialized_as_a_named_pending_rule() -> No
 
 
 def test_casefold_collision_between_live_and_pending_rules_is_export_invalid() -> None:
-    registry = PermissionInventoryRegistry(
+    registry = _ExportRegistry(
         current_permission_namespaces=lambda: {"local:docs"}
     )
     registry.register(_Adapter("local:docs", (_tool(),)))
@@ -218,7 +247,7 @@ def test_casefold_collision_between_live_and_pending_rules_is_export_invalid() -
 
 def test_fallback_probe_cannot_hit_a_stored_sentinel_named_tool() -> None:
     tool = _tool()
-    registry = PermissionInventoryRegistry(
+    registry = _ExportRegistry(
         current_permission_namespaces=lambda: {"local:docs"}
     )
     registry.register(_Adapter("local:docs", (tool,)))
@@ -268,7 +297,7 @@ def test_global_fallback_ignores_a_literal_star_server_entry() -> None:
                 },
             }
         ),
-        PermissionInventoryRegistry(current_permission_namespaces=lambda: set()),
+        _ExportRegistry(current_permission_namespaces=lambda: set()),
     ).capture(profile_id="default", display_name="Default", suggested_id="default")
 
     assert ("mcp", "*", "deny") in [
@@ -281,7 +310,7 @@ def test_flattening_applies_config_high_risk_and_raw_shell_floors() -> None:
     changed = _tool(name="changed")
     risky = replace(_tool(name="risky"), tags=("process",))
     shell = _tool(server_key="local:__local__", name="shell_exec")
-    registry = PermissionInventoryRegistry(
+    registry = _ExportRegistry(
         current_permission_namespaces=lambda: {"local:__local__", "local:docs"}
     )
     registry.register(_Adapter("local:docs", (changed, risky)))
@@ -387,7 +416,7 @@ def test_tombstone_or_invalid_lifecycle_profile_cannot_export(profile) -> None:
     with pytest.raises(ToolPackError, match=r"profile_invalid$"):
         ToolPackExportService(
             store,
-            PermissionInventoryRegistry(current_permission_namespaces=lambda: set()),
+            _ExportRegistry(current_permission_namespaces=lambda: set()),
         ).capture(
             profile_id="research", display_name="Research", suggested_id="research"
         )
@@ -404,7 +433,7 @@ def test_nonstring_suggested_id_uses_the_stable_export_error() -> None:
                 },
             }
         ),
-        PermissionInventoryRegistry(current_permission_namespaces=lambda: set()),
+        _ExportRegistry(current_permission_namespaces=lambda: set()),
     )
 
     with pytest.raises(ToolPackError, match=r"^tool_pack\.export\.profile_invalid$"):
@@ -412,6 +441,48 @@ def test_nonstring_suggested_id_uses_the_stable_export_error() -> None:
             profile_id="research",
             display_name="Research",
             suggested_id=None,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize("profile_id", ["", " ", "\tinvalid"])
+def test_invalid_profile_id_uses_the_stable_export_error(profile_id: str) -> None:
+    service = ToolPackExportService(
+        _Store(
+            {
+                "schema_version": 1,
+                "profiles": {
+                    "default": {"global_default": "deny", "servers": {}},
+                    profile_id: {"servers": {}},
+                },
+            }
+        ),
+        _ExportRegistry(current_permission_namespaces=lambda: set()),
+    )
+
+    with pytest.raises(ToolPackError, match=r"^tool_pack\.export\.profile_invalid$"):
+        service.capture(
+            profile_id=profile_id,
+            display_name="Research",
+            suggested_id="research",
+        )
+
+
+def test_unhashable_profile_id_uses_the_stable_export_error() -> None:
+    service = ToolPackExportService(
+        _Store(
+            {
+                "schema_version": 1,
+                "profiles": {"default": {"global_default": "deny", "servers": {}}},
+            }
+        ),
+        _ExportRegistry(current_permission_namespaces=lambda: set()),
+    )
+
+    with pytest.raises(ToolPackError, match=r"^tool_pack\.export\.profile_invalid$"):
+        service.capture(
+            profile_id=[],  # type: ignore[arg-type]
+            display_name="Research",
+            suggested_id="research",
         )
 
 
@@ -429,7 +500,7 @@ def test_reserved_workspace_source_uses_generic_id_and_omits_receipt_history() -
                 },
             }
         ),
-        PermissionInventoryRegistry(current_permission_namespaces=lambda: set()),
+        _ExportRegistry(current_permission_namespaces=lambda: set()),
     ).capture(
         profile_id="ws-private-workspace-sentinel",
         display_name="Portable policy",
@@ -451,7 +522,7 @@ def test_reserved_workspace_source_uses_generic_id_and_omits_receipt_history() -
 def test_archive_has_pinned_two_member_zip_headers_and_bytes() -> None:
     """Changing ZIP defaults, order, or metadata must change this observable archive."""
     tool = _tool()
-    registry = PermissionInventoryRegistry(
+    registry = _ExportRegistry(
         current_permission_namespaces=lambda: {"local:docs"}
     )
     registry.register(_Adapter("local:docs", (tool,)))
@@ -494,7 +565,7 @@ def test_archive_has_pinned_two_member_zip_headers_and_bytes() -> None:
 
 def test_archive_writer_rejects_mismatched_snapshot_and_short_or_failed_sink() -> None:
     tool = _tool()
-    registry = PermissionInventoryRegistry(
+    registry = _ExportRegistry(
         current_permission_namespaces=lambda: {"local:docs"}
     )
     registry.register(_Adapter("local:docs", (tool,)))
@@ -552,7 +623,7 @@ def test_minimal_archive_matches_the_checked_in_golden_bytes() -> None:
     expected = (fixture_root / "minimal-tool-pack.bytes").read_bytes()
     expected_digest = (fixture_root / "minimal-tool-pack.sha256").read_text().strip()
     tool = _tool()
-    registry = PermissionInventoryRegistry(
+    registry = _ExportRegistry(
         current_permission_namespaces=lambda: {"local:docs"}
     )
     registry.register(_Adapter("local:docs", (tool,)))
