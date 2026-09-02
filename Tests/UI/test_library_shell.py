@@ -10701,6 +10701,38 @@ async def test_library_shell_media_content_search_shows_match_count():
 
 
 @pytest.mark.asyncio
+async def test_library_shell_media_content_search_enter_advances_to_next_match():
+    """task-28011: re-pressing Enter on the same query walks to the next match."""
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), media=_media_item_with_multiline_content()
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
+        assert screen._library_media_content_match_index == 0
+
+        # Same query, Enter again -> advance (find-bar convention).
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_media_content_match_index == 1
+        assert str(
+            screen.query_one("#library-media-content-search-status").renderable
+        ) == "Match 2 of 2 matches"
+
+        # Wraps back to the first match.
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_media_content_match_index == 0
+
+
+@pytest.mark.asyncio
 async def test_library_shell_media_content_search_highlights_matches_in_body():
     """While searching, each query occurrence in the content body is styled."""
     app = _build_test_app()

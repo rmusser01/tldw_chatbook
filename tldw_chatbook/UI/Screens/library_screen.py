@@ -4915,6 +4915,13 @@ class LibraryScreen(BaseAppScreen):
                     ("/", "focus search"),
                     ("F6", "next pane"),
                 ]
+                # task-28011: while a content search with matches is active,
+                # Enter walks to the next match (find-bar convention).
+                if (
+                    self._library_media_content_query
+                    and self._library_media_content_matches()
+                ):
+                    shortcuts.append(("enter", "next match"))
                 # task-28005: advertise Prev/Next only when there IS a
                 # neighbour that way, so the footer stops teaching a key
                 # that no-ops at the list ends.
@@ -42082,6 +42089,9 @@ class LibraryScreen(BaseAppScreen):
         # and prev/next navigation all search the exact same needle.
         submitted = event.value.strip()
         if submitted == self._library_media_content_query:
+            # task-28011: re-pressing Enter on the same query walks to the
+            # next match (find-bar convention) instead of no-opping.
+            self._advance_library_media_content_match(1)
             return
         self._library_media_content_query = submitted
         self._library_media_content_match_index = 0
