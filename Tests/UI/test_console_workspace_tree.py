@@ -18,6 +18,7 @@ from tldw_chatbook.Widgets.Console.console_workspace_tree import (
     WorkspaceTreeConversationSelected,
     WorkspaceTreeFocusRecoveryRequested,
     WorkspaceTreeLoadMoreRequested,
+    WorkspaceTreeMenuRequested,
     WorkspaceTreeNodeData,
     WorkspaceTreeRetryRequested,
     WorkspaceTreeStarRequested,
@@ -103,6 +104,11 @@ class _TreeHarness(App[None]):
     ) -> None:
         self.messages.append(event)
 
+    def on_workspace_tree_menu_requested(
+        self, event: WorkspaceTreeMenuRequested
+    ) -> None:
+        self.messages.append(event)
+
 
 def _tree() -> ConsoleWorkspaceTree:
     tree = ConsoleWorkspaceTree(id="console-workspace-tree")
@@ -128,7 +134,7 @@ def test_native_configuration_and_literal_unicode_labels() -> None:
     assert isinstance(tree, Tree)
     assert tree.show_root is False
     assert tree.auto_expand is False
-    assert tree.guide_depth == 2
+    assert tree.guide_depth == 4
     assert tree.root.is_expanded is True
     assert tree.root.allow_expand is False
     assert tree.ICON_NODE and tree.ICON_NODE_EXPANDED
@@ -137,6 +143,51 @@ def test_native_configuration_and_literal_unicode_labels() -> None:
     assert tree.conversation_nodes["c"].label.plain.endswith("[red]会話 🧪")
     assert isinstance(tree.workspace_nodes["w"].label, Text)
     assert tree.workspace_nodes["w"].data.raw_label == raw_workspace
+
+
+@pytest.mark.asyncio
+async def test_workspace_and_chat_action_markers_share_the_right_edge() -> None:
+    tree = _tree()
+    app = _TreeHarness(tree)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        edge = tree.scrollable_content_region.width
+        workspace = tree.workspace_nodes["w1"]
+        conversation = tree.conversation_nodes["c1"]
+
+        assert tree._menu_zones[workspace.data.key] == (edge - 2, edge)
+        assert tree._menu_zones[conversation.data.key] == (edge - 2, edge)
+        assert tree.render_line(int(workspace._line)).text[edge - 1] == "@"
+        assert tree.render_line(int(conversation._line)).text[edge - 1] == "*"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("line", "kind"),
+    [
+        (0, WorkspaceTreeMenuRequested.KIND_WORKSPACE),
+        (1, WorkspaceTreeMenuRequested.KIND_CONVERSATION),
+    ],
+)
+async def test_right_edge_marker_opens_the_matching_row_menu(
+    line: int,
+    kind: str,
+) -> None:
+    tree = _tree()
+    app = _TreeHarness(tree)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        edge = tree.scrollable_content_region.width - 1
+
+        assert await pilot.click(tree, offset=(edge, line))
+        await pilot.pause()
+
+        requests = [
+            message
+            for message in app.messages
+            if isinstance(message, WorkspaceTreeMenuRequested)
+        ]
+        assert [request.kind for request in requests] == [kind]
 
 
 def test_failed_page_offers_retry_without_a_competing_load_more_action() -> None:
@@ -466,8 +517,13 @@ async def test_tooltip_boundary_matches_compositor_painted_viewport(
         guide_cells = tree.guide_depth if nested else 0
         disclosure_cells = 0 if nested else 2
         marker_cells = 2
+        action_cells = 2
         exact_raw = "x" * (
-            viewport_cells - guide_cells - disclosure_cells - marker_cells
+            viewport_cells
+            - guide_cells
+            - disclosure_cells
+            - marker_cells
+            - action_cells
         )
         over_raw = exact_raw + "x"
 
@@ -521,7 +577,7 @@ async def test_fitting_collapsed_workspace_disclosure_has_no_tooltip() -> None:
     )
     app = _TreeHarness(tree)
     async with app.run_test(size=(40, 12)) as pilot:
-        tree.styles.width = 10
+        tree.styles.width = 12
         await pilot.pause()
         tree.move_cursor(tree.workspace_nodes["w"])
         await pilot.pause()
