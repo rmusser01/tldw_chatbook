@@ -103,5 +103,7 @@ Reason: TASK-18919 changes durable Collections storage, source authority, migrat
 legacy-data boundaries.
 
 The cross-repository prerequisite landed in tldw_server PR #2851 at merge commit
-`8140c679f3ea0334cea2dc1be32feb5b80e22ebe`; TASK-18919 is complete.
+`8140c679f3ea0334cea2dc1be32feb5b80e22ebe`. Final verification also hardened the
+mounted action test to wait for the Notes mode to remount after highlight-save recomposition;
+the focused client gate then passed 58 tests. TASK-18919 is complete.
 <!-- SECTION:NOTES:END -->

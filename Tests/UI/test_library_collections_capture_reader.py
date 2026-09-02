@@ -713,6 +713,7 @@ async def test_real_local_capture_actions_persist_reader_results() -> None:
             message="Highlight was not persisted",
         )
 
+        await _wait_for_selector(screen, pilot, "#library-collections-mode-notes")
         screen.query_one("#library-collections-mode-notes", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-freeform-note")
         screen.query_one("#library-collections-freeform-note", TextArea).text = (

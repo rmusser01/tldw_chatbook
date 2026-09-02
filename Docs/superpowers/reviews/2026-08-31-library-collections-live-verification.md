@@ -94,6 +94,9 @@ The run verified:
 8. Background reader recomposition could erase text already entered into Quick Capture. Input and
    note changes now update the retained draft immediately, with a mounted regression covering all
    fields.
+9. Final verification found the action-persistence test could observe highlight state before the
+   reader's scheduled recomposition remounted its mode controls. The test now waits for the Notes
+   control to return before pressing it, matching the user-visible boundary.
 
 ## Automated evidence
 
@@ -101,6 +104,7 @@ The run verified:
 - Complete capture feature and Local live gate: **206 passed**.
 - Production-shaped cross-reader closeout after the final save-recovery hardening: **490 passed**.
 - Final Local/Server service, configuration, mounted-reader, and enabled live gate: **61 passed**.
+- Post-prerequisite-merge focused client gate after the remount-wait hardening: **58 passed**.
 - tldw_server snapshot, docs-info, and schema-memo regression gate: **51 passed**.
 - Static validation covers the edited Python modules, CSS regeneration, bytecode compilation, and
   whitespace/error checks.
