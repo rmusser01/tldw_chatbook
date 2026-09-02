@@ -11,13 +11,14 @@ governance suite pattern (``test_schedules_ux_fixes.py``).
 from __future__ import annotations
 
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import DataTable, Input, Static
+from textual.widgets.data_table import RowDoesNotExist
 
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
@@ -187,6 +188,52 @@ def many_records_snapshot(record_count: int):
     return derive_trajectory(messages, {}, [], [], [])
 
 
+def repeated_turn_segments_snapshot(
+    first_turn_id: str = "t1",
+) -> TrajectorySnapshot:
+    """One logical turn split around another turn: t1 -> t2 -> t1."""
+
+    snapshot = base_snapshot()
+    first, second = snapshot.turns
+    first_records = tuple(
+        replace(record, turn_id=first_turn_id) for record in first.records
+    )
+    return TrajectorySnapshot(
+        (
+            TrajectoryTurn(first_turn_id, first_records[:1]),
+            second,
+            TrajectoryTurn(first_turn_id, first_records[1:]),
+        )
+    )
+
+
+def repeated_turn_segments_with_live_tail() -> TrajectorySnapshot:
+    """Repeated colon-bearing turn followed by enough events to paginate it."""
+
+    snapshot = repeated_turn_segments_snapshot("thread:t1")
+    tail_records = tuple(
+        TrajectoryRecord(
+            seq=seq,
+            kind="assistant",
+            turn_id="tail",
+            message_id=f"tail-{seq}",
+            content_preview=f"tail event {seq}",
+            usage=None,
+            step_started_at=None,
+            first_token_at=None,
+            completed_at=None,
+            model=None,
+            provider=None,
+            payload=None,
+            variants=(),
+            depth=0,
+            event_id=f"tail:{seq}",
+        )
+        for seq in range(7, PAGE_SIZE + 8)
+    )
+    return TrajectorySnapshot(snapshot.turns + (TrajectoryTurn("tail", tail_records),))
+
+
 class _Harness(App[None]):
     """Minimal host so the screen can be pushed like the Console would."""
 
@@ -247,6 +294,82 @@ async def test_mount_renders_one_row_per_record_plus_turn_headers() -> None:
         # Tool rows are present and nested under the assistant step.
         tool_row = table.get_row(_record_key_for_seq(screen, 3))
         assert "Tool call" in str(tool_row[1])
+
+
+@pytest.mark.asyncio
+async def test_mount_renders_repeated_turn_segments_with_unique_headers() -> None:
+    async with _mounted(repeated_turn_segments_snapshot()) as (app, pilot, screen):
+        table = screen.query_one("#trajectory-table", DataTable)
+
+        assert table.row_count == 9
+        header_keys = list(screen._row_turn_ids)
+        assert len(header_keys) == 3
+        assert len(set(header_keys)) == 3
+        assert [screen._row_turn_ids[key] for key in header_keys] == ["t1", "t2", "t1"]
+        assert header_keys[0] == "turn:t1"
+        for seq in range(1, 7):
+            assert table.get_row_index(_record_key_for_seq(screen, seq)) is not None
+
+
+@pytest.mark.asyncio
+async def test_repeated_turn_segment_actions_use_logical_turn() -> None:
+    async with _mounted(repeated_turn_segments_snapshot()) as (app, pilot, screen):
+        table = screen.query_one("#trajectory-table", DataTable)
+        t1_headers = [
+            key for key, turn_id in screen._row_turn_ids.items() if turn_id == "t1"
+        ]
+
+        assert len(t1_headers) == 2
+        for key in t1_headers:
+            row = table.get_row(key)
+            assert "Turn 1" in str(row[2])
+
+        table.move_cursor(row=table.get_row_index(t1_headers[1]))
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert "Turn 1 · 4 events · expanded · id t1" in str(
+            _inspector_content(screen).render()
+        )
+
+        await pilot.press("t")
+        await pilot.pause()
+        assert table.row_count == 5
+        for key in t1_headers:
+            assert table.get_row_index(key) is not None
+        for seq in range(1, 5):
+            with pytest.raises(RowDoesNotExist):
+                table.get_row_index(_record_key_for_seq(screen, seq))
+
+
+@pytest.mark.asyncio
+async def test_live_snapshot_preserves_first_repeated_turn_header_cursor() -> None:
+    async with _mounted(base_snapshot()) as (app, pilot, screen):
+        table = screen.query_one("#trajectory-table", DataTable)
+        table.move_cursor(row=table.get_row_index("turn:t1"))
+        await pilot.pause()
+
+        screen._apply_live_snapshot(repeated_turn_segments_snapshot())
+        await pilot.pause()
+
+        assert screen._cursor_key() == "turn:t1"
+
+
+@pytest.mark.asyncio
+async def test_live_snapshot_pages_selected_repeated_header_back_into_view() -> None:
+    initial = repeated_turn_segments_snapshot("thread:t1")
+    async with _mounted(initial) as (app, pilot, screen):
+        table = screen.query_one("#trajectory-table", DataTable)
+        selected_key = "turn:thread:t1"
+        table.move_cursor(row=table.get_row_index(selected_key))
+        screen._follow = False
+        await pilot.pause()
+
+        screen._apply_live_snapshot(repeated_turn_segments_with_live_tail())
+        await pilot.pause()
+
+        assert screen._cursor_key() == selected_key
+        assert table.get_row_index(selected_key) is not None
 
 
 @pytest.mark.asyncio
