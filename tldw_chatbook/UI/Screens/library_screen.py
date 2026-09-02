@@ -2443,6 +2443,13 @@ class LibraryScreen(BaseAppScreen):
             "Toggle selection",
             show=False,
         ),
+        # task-28027: Reader action-row accelerators. check_action gates them
+        # to a plain media Reader (l/t are local-only, c works for server
+        # items too); a focused Input consumes the printable key first, so
+        # they still type in the search/filter boxes.
+        Binding("l", "library_media_read_later", "Read later", show=False),
+        Binding("c", "library_media_use_in_console", "Use in Console", show=False),
+        Binding("t", "library_media_move_to_trash", "Move to trash", show=False),
     ]
 
     #: task-4023 AC#7: which canvas's "Export…" action opened the Export
@@ -30535,6 +30542,16 @@ class LibraryScreen(BaseAppScreen):
         F1 contamination this task closes. Every action reachable from
         ``BINDINGS`` now has an explicit branch here; see
         ``test_library_screen_bindings_are_all_gated_or_universal``.
+
+        Args:
+            action: The binding's action name Textual is resolving.
+            parameters: The action's positional parameters (unused here;
+                every gated binding is parameterless).
+
+        Returns:
+            ``False`` to deactivate the binding in the current context,
+            ``True`` to force-activate it, or ``None`` to defer to Textual's
+            default resolution.
         """
         if action in {
             "library_notes_new",
@@ -30717,6 +30734,35 @@ class LibraryScreen(BaseAppScreen):
                 return False
             direction = 1 if action == "library_media_next_item" else -1
             return self._library_media_adjacent_row(direction) is not None
+        if action in (
+            "library_media_read_later",
+            "library_media_use_in_console",
+            "library_media_move_to_trash",
+        ):
+            # task-28027: Reader action-row accelerators. Only in a plain
+            # media Reader (no edit/confirm/analysis-edit sub-state). Read-
+            # later and Move-to-trash are local-only (mirroring the buttons,
+            # which are hidden for external/server detail); Use-in-Console
+            # works for server items too.
+            session = self._library_media_reader_session
+            if (
+                self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
+                or self._library_media_view != "viewer"
+                or self._library_media_viewer_substate_active()
+            ):
+                return False
+            # Qodo #2317: while a detail request is pending, the selected id
+            # and the displayed detail differ (e.g. mid-traversal), so these
+            # actions would combine the new id with stale detail. Gate them
+            # off until the displayed detail is the settled selected item.
+            if (
+                session.pending_request is not None
+                or session.loaded_id != self._selected_media_id
+            ):
+                return False
+            if action == "library_media_use_in_console":
+                return True
+            return not session.external_detail
         if action == "focus_previous_workbench_pane":
             return bool(self._library_selected_row_id)
         return True
@@ -43219,6 +43265,14 @@ class LibraryScreen(BaseAppScreen):
                 later" / "Remove from read-it-later" action.
         """
         event.stop()
+        self._start_library_media_read_later_toggle()
+
+    def _start_library_media_read_later_toggle(self) -> None:
+        """Kick the read-it-later toggle worker for the open item (task-28027).
+
+        Shared by the "Read later" button and the ``l`` accelerator so both
+        read the last-fetched saved state and dispatch the same worker.
+        """
         media_id = self._selected_media_id
         if not media_id:
             return
@@ -43233,6 +43287,24 @@ class LibraryScreen(BaseAppScreen):
                 media_id, currently_saved=currently_saved
             )
         )
+
+    def action_library_media_read_later(self) -> None:
+        """Keyboard 'l': toggle read-it-later for the open item (task-28027)."""
+        self._start_library_media_read_later_toggle()
+
+    def action_library_media_use_in_console(self) -> None:
+        """Keyboard 'c': hand the open item to Console (task-28027)."""
+        self._open_selected_media_handoff()
+
+    def action_library_media_move_to_trash(self) -> None:
+        """Keyboard 't': arm the inline delete confirmation (task-28027).
+
+        Mirrors ``handle_library_media_delete`` -- arming only; the actual
+        trash write still needs the confirm affordance.
+        """
+        self._library_media_confirming_delete = True
+        self._library_media_delete_receipt_ids = ()
+        self._sync_library_media_viewer_or_recompose()
 
     async def _toggle_library_media_read_later(
         self, media_id: str, *, currently_saved: bool
