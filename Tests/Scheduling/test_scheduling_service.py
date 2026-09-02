@@ -11,7 +11,10 @@ from tldw_chatbook.Scheduling.models import ReminderTask, ScheduledTask, TaskSta
 from tldw_chatbook.Scheduling.scheduler.queue import PriorityQueue
 from tldw_chatbook.Scheduling.services import SchedulingServerClient, SchedulingService
 from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
-from tldw_chatbook.Scheduling.services.server_client import ServerUnavailableError
+from tldw_chatbook.Scheduling.services.server_client import (
+    ServerClientPolicyError,
+    ServerUnavailableError,
+)
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 
@@ -1316,3 +1319,124 @@ async def test_save_definition_missing_family_rejected_not_crashed(db):
     assert outcome.status == "invalid"
     assert outcome.errors[0]["field"] == "family"
     assert db.list_automation_definitions(owner_id="local") == []
+
+
+# ----------------------------------------------------------------------
+# preview_definition / save_definition fix round 1: ServerClientPolicyError
+# handling + stale-mutation clearing on a successful online save
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_preview_definition_server_owner_policy_denied_uses_policy_wording(db):
+    """review finding 3: a deterministic policy refusal must not be
+    reported with connectivity wording ("could not reach the server")
+    since retrying will never change the outcome."""
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerClientPolicyError(
+        "automation authoring is disabled for this account"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    preview = await svc.preview_definition(_definition_payload(), "server:1")
+
+    assert preview.status == "valid"  # local validation still runs offline
+    warning = next(w for w in preview.warnings if w["field"] == "_owner")
+    assert warning["code"] == "policy_denied"
+    assert "could not reach" not in warning["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_preview_policy_denied_returns_error(db):
+    """review finding 1: a policy refusal on the preview call must report
+    status="error" and write nothing -- NOT fall back to the offline
+    queue, since a replay would hit the identical refusal and SyncEngine
+    swallows it silently (the save would be "queued" forever)."""
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = ServerClientPolicyError(
+        "automation authoring is disabled for this account"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(_definition_payload(), "server:1")
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["code"] == "policy_denied"
+    assert db.list_automation_definitions(owner_id="server:1") == []
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+
+
+@pytest.mark.asyncio
+async def test_save_definition_server_owner_commit_policy_denied_returns_error(db):
+    """Same as above, but the refusal happens on the commit call (preview
+    was valid) rather than the preview call itself."""
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.create_automation_definition.side_effect = ServerClientPolicyError(
+        "automation authoring is disabled for this account"
+    )
+    svc = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+
+    outcome = await svc.save_definition(_definition_payload(), "server:1")
+
+    assert outcome.status == "error"
+    assert outcome.errors[0]["code"] == "policy_denied"
+    assert db.list_automation_definitions(owner_id="server:1") == []
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+
+
+@pytest.mark.asyncio
+async def test_save_definition_online_success_clears_stale_offline_mutation(db):
+    """review finding 2: a successful ONLINE save must clear any pending
+    `automation_definition` mutation left queued by an earlier offline
+    save on the same row -- otherwise the next sync replays the stale
+    mutation, creating a duplicate server-side definition (never-synced
+    row) or silently reverting this save's newer edit (already-synced
+    row)."""
+    offline_client = AsyncMock()
+    offline_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    svc = SchedulingService(
+        db=db, server_client=offline_client, runtime_source="server:1"
+    )
+
+    queued = await svc.save_definition(_definition_payload(), "server:1")
+    assert queued.status == "queued"
+    assert (
+        len(db.get_pending_mutations("server:1", primitive="automation_definition"))
+        == 1
+    )
+
+    online_client = AsyncMock()
+    online_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    online_client.create_automation_definition.return_value = _server_definition_echo()
+    svc.server_client = online_client
+
+    outcome = await svc.save_definition(
+        _definition_payload(name="Updated standup question"),
+        "server:1",
+        definition_id=queued.definition_id,
+    )
+
+    assert outcome.status == "saved"
+    assert outcome.definition_id == queued.definition_id
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    # No duplicate row: the online save adopted the SAME local row.
+    rows = db.list_automation_definitions(owner_id="server:1")
+    assert len(rows) == 1
+    assert rows[0]["server_id"] == "srv-def-1"

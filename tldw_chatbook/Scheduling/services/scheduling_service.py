@@ -36,6 +36,7 @@ from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjec
 from tldw_chatbook.Scheduling.services.server_client import (
     SchedulingServerClient,
     ServerClientError,
+    ServerClientPolicyError,
     ServerUnavailableError,
 )
 from tldw_chatbook.Scheduling.services.sync_engine import SyncEngine
@@ -108,15 +109,28 @@ class SaveDefinitionOutcome:
     definition_id: str | None = None
 
 
-def _server_unreachable_warning(exc: Exception) -> dict[str, str]:
-    """Build the ``_owner``/``server_unreachable`` warning `preview_definition` appends.
+def _seam_failure_warning(exc: Exception) -> dict[str, str]:
+    """Build the ``_owner`` warning `preview_definition` appends on a seam failure.
 
     Not a `field_error` (those are validation errors, not warnings) --
     same ``{"field", "code", "message"}`` shape as `automation_preview.
     py`'s own warning entries, addressed to the pseudo-field ``"_owner"``
-    since the failure is about the owner's server connectivity, not any
-    one authoring field.
+    since the failure is about the owner's server connection/permissions,
+    not any one authoring field. `ServerClientPolicyError` (a deterministic,
+    pre-network refusal) gets its own code/wording -- review round 1 finding
+    3: telling a permanently-refused user "showing local validation only"
+    with no other context reads as "try again once you're back online",
+    which retrying will never fix.
     """
+    if isinstance(exc, ServerClientPolicyError):
+        return {
+            "field": "_owner",
+            "code": "policy_denied",
+            "message": (
+                f"The server refused this automation ({exc}); showing local "
+                "validation only -- this will not resolve by retrying."
+            ),
+        }
     return {
         "field": "_owner",
         "code": "server_unreachable",
@@ -125,6 +139,33 @@ def _server_unreachable_warning(exc: Exception) -> dict[str, str]:
             "showing local validation only."
         ),
     }
+
+
+def _policy_denied_outcome(
+    exc: Exception, definition_id: str | None
+) -> SaveDefinitionOutcome:
+    """Build the `SaveDefinitionOutcome` for a `ServerClientPolicyError` refusal.
+
+    A deterministic, pre-network policy refusal must NOT fall back to the
+    offline queue path (review round 1 finding 1): `SyncEngine._push_
+    definition_create`/`_push_definition_update` would replay the identical
+    preview request and hit the identical refusal, and `_run_phase` treats
+    `ServerClientPolicyError` as "not applicable" and swallows it silently
+    -- no sync error recorded, mutation never cleared, never surfaced. A
+    save this facade knows can never succeed must be reported as failed
+    now, not queued as if it will eventually sync.
+    """
+    return SaveDefinitionOutcome(
+        status="error",
+        errors=[
+            field_error(
+                "_owner",
+                "policy_denied",
+                f"The server refused this automation: {exc}",
+            )
+        ],
+        definition_id=definition_id,
+    )
 
 
 class SchedulingService:
@@ -652,8 +693,12 @@ class SchedulingService:
         preview_automation_definition`; when that round trip fails for
         ANY reason (offline, timeout, 5xx, policy refusal), this falls
         back to the same local pure preview with an extra warning
-        (``field="_owner"``, ``code="server_unreachable"``) appended, so
-        the modal still shows schedule feedback instead of a dead form.
+        (``field="_owner"``) appended, so the modal still shows schedule
+        feedback instead of a dead form -- the warning's ``code``/
+        ``message`` distinguish a deterministic policy refusal
+        (``"policy_denied"``) from an actual connectivity failure
+        (``"server_unreachable"``), since only one of those is worth
+        retrying (review round 1 finding 3).
 
         v1 scope guard: `family` other than `"recurring_question"` is
         rejected before any preview runs (`_reject_unsupported_family`) --
@@ -681,7 +726,7 @@ class SchedulingService:
                 exc=exc,
             )
             local_preview = preview_automation_definition(payload)
-            warnings = [*(local_preview.warnings or []), _server_unreachable_warning(exc)]
+            warnings = [*(local_preview.warnings or []), _seam_failure_warning(exc)]
             return local_preview.model_copy(update={"warnings": warnings})
         return self._server_preview_to_model(response)
 
@@ -722,6 +767,14 @@ class SchedulingService:
         pending mutation is recorded atomically with it (same transaction,
         `create_automation_definition`/`update_automation_definition`'s
         `pending_mutation` kwarg) for `SyncEngine` to replay later.
+
+        Server owner, policy-refused (`ServerClientPolicyError` -- a
+        deterministic, pre-network refusal, not a transport failure):
+        returns `status="error"` and writes nothing. NOT queued -- a
+        replay would hit the identical refusal and `SyncEngine._run_phase`
+        swallows that error as "not applicable" (never surfaced, mutation
+        never cleared), so queuing here would report "queued" for a save
+        that can never sync (review round 1 finding 1).
         """
         guard = self._reject_unsupported_family(payload)
         if guard is not None:
@@ -784,6 +837,8 @@ class SchedulingService:
         assert self.server_client is not None
         try:
             response = await self.server_client.preview_automation_definition(request)
+        except ServerClientPolicyError as exc:
+            return _policy_denied_outcome(exc, definition_id)
         except ServerClientError as exc:
             return await self._save_definition_offline(
                 request, owner_id, local_row, definition_id, server_mode, exc
@@ -807,6 +862,8 @@ class SchedulingService:
                 committed = await self.server_client.create_automation_definition(
                     preview_id
                 )
+        except ServerClientPolicyError as exc:
+            return _policy_denied_outcome(exc, definition_id)
         except ServerClientError as exc:
             return await self._save_definition_offline(
                 request, owner_id, local_row, definition_id, server_mode, exc
@@ -925,23 +982,44 @@ class SchedulingService:
         (`upsert_automation_definitions_from_server`), then looked up by
         its new server id -- that upsert reports only insert/update
         counts, not the generated id.
+
+        Either way, any pending `automation_definition` mutation left over
+        from an earlier offline save on this row is cleared once this
+        online save actually lands -- same precedent as
+        `_persist_server_reminder_response`'s `delete_pending_mutation_
+        for_record` call. Without this, a stale queued mutation survives a
+        later successful online save and the next sync replays it: for a
+        never-synced row that just got its first server identity via
+        create, that means a SECOND server-side definition and an orphaned
+        adopt; for an already-synced row, it means the OLDER queued
+        payload silently overwriting this save's newer edit (review round
+        1 finding 2).
         """
         if local_row is not None:
             await asyncio.to_thread(
                 self.db.adopt_server_definition_identity, definition_id, server_item
             )
-            return definition_id
+            saved_id: str | None = definition_id
+        else:
+            await asyncio.to_thread(
+                self.db.upsert_automation_definitions_from_server, owner_id, [server_item]
+            )
+            server_id = server_item.get("id")
+            if server_id is None:
+                return None
+            mirrored = await asyncio.to_thread(
+                self.db.get_automation_definition_by_server_id, owner_id, server_id
+            )
+            saved_id = mirrored.get("id") if mirrored else None
 
-        await asyncio.to_thread(
-            self.db.upsert_automation_definitions_from_server, owner_id, [server_item]
-        )
-        server_id = server_item.get("id")
-        if server_id is None:
-            return None
-        mirrored = await asyncio.to_thread(
-            self.db.get_automation_definition_by_server_id, owner_id, server_id
-        )
-        return mirrored.get("id") if mirrored else None
+        if saved_id is not None:
+            await asyncio.to_thread(
+                self.db.delete_pending_mutation_for_record,
+                saved_id,
+                _DEFINITION_PRIMITIVE,
+                owner_id,
+            )
+        return saved_id
 
     @staticmethod
     def _build_definition_request(
