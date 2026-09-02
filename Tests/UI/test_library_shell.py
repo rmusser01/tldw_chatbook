@@ -10637,6 +10637,79 @@ async def _open_media_viewer(screen, pilot):
     await _wait_for_selector(screen, pilot, "#library-media-content-search")
 
 
+@pytest.mark.asyncio
+async def test_library_media_sort_chooser_applies_the_selected_order():
+    """task-28013: the media sort chooser re-fetches page one under the new order."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-sort")
+        service = app.media_reading_scope_service
+
+        # Open the sort chooser; its direct-pick strip replaces the toolbar.
+        screen.query_one("#library-media-sort", Button).press()
+        await _wait_for_selector(screen, pilot, ".library-media-sort-choice")
+        assert screen._library_media_sort_choices_visible is True
+
+        # Pick "Title A-Z" -> the strip closes and a page-one fetch runs
+        # under sort_by=title_asc.
+        screen.query_one("#library-media-sort-title_asc", Button).press()
+        for _ in range(150):
+            if service.search_calls and service.search_calls[-1].get(
+                "sort_by"
+            ) == "title_asc":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                f"Sort was never applied. Calls: {service.search_calls[-3:]}"
+            )
+        assert screen._library_media_sort_choices_visible is False
+        last = service.search_calls[-1]
+        assert last["sort_by"] == "title_asc"
+        assert last.get("page", 1) == 1
+
+
+@pytest.mark.asyncio
+async def test_library_media_sort_and_type_choosers_are_mutually_exclusive():
+    """task-28013: opening one chooser closes the other; Escape closes the strip."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-sort")
+
+        # Open the type chooser, then the sort chooser: only sort stays open.
+        screen.query_one("#library-media-type-filter", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-type-choices")
+        screen.query_one("#library-media-sort", Button).press()
+        await _wait_for_selector(screen, pilot, ".library-media-sort-choice")
+        assert screen._library_media_sort_choices_visible is True
+        assert screen._library_media_type_choices_visible is False
+
+        # The open strip advertises its own footer keys through the shared seam.
+        footer = screen._library_footer_shortcuts_for_current_state()
+        assert ("enter", "choose sort") in footer
+        assert ("esc", "cancel") in footer
+
+        # Escape closes the strip.
+        await pilot.press("escape")
+        await pilot.pause()
+        assert screen._library_media_sort_choices_visible is False
+        assert not screen.query(".library-media-sort-choice")
+
+
 async def _submit_content_search_query(screen, pilot, query):
     """Type ``query`` into the open viewer's content search box and press Enter."""
     search_input = screen.query_one("#library-media-content-search", Input)

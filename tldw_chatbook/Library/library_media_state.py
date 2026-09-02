@@ -50,6 +50,18 @@ _MEDIA_BROWSE_SORTS = frozenset(
         "relevance",
     }
 )
+
+#: task-28013: the sort values the media browse chooser offers, in display
+#: order, each mapped to its user-facing label. A deliberate subset of
+#: ``_MEDIA_BROWSE_SORTS`` -- "relevance" is query-only (the scope validator
+#: downgrades it without a query) so it is not a manual pick, and the
+#: date_* pair duplicates last_modified_* for this local source.
+MEDIA_SORT_CHOICES = (
+    ("last_modified_desc", "Newest"),
+    ("last_modified_asc", "Oldest"),
+    ("title_asc", "Title A-Z"),
+    ("title_desc", "Title Z-A"),
+)
 _MEDIA_SUMMARY_KEYS = frozenset(
     {"id", "backing_media_id", "title", "media_type", "updated_at"}
 )
@@ -757,6 +769,12 @@ class LibraryMediaCanvasState:
     # the browse toolbar row (the Notes Sort choice-strip pattern).
     type_choices_visible: bool = False
     query: str = ""
+    # task-28013: the browse sort chooser -- ``sort_by`` is the active
+    # MediaBrowseScope sort, ``sort_choices_visible`` is True while its
+    # direct-pick strip replaces the toolbar row (same choice-strip pattern
+    # as the type chooser and the Prompts/Notes sort choosers).
+    sort_by: str = "last_modified_desc"
+    sort_choices_visible: bool = False
 
 
 @dataclass(frozen=True)
@@ -922,6 +940,7 @@ def build_library_media_browse_state(
     confirming_bulk_delete: bool = False,
     delete_receipt_count: int = 0,
     type_choices_visible: bool = False,
+    sort_choices_visible: bool = False,
     loading_id: str = "",
     loaded_id: str = "",
 ) -> LibraryMediaCanvasState:
@@ -1000,6 +1019,8 @@ def build_library_media_browse_state(
         delete_receipt_count=max(0, delete_receipt_count),
         type_choices_visible=type_choices_visible,
         query=result.scope.query,
+        sort_by=result.scope.sort_by,
+        sort_choices_visible=sort_choices_visible,
     )
 
 

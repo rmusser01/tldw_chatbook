@@ -704,6 +704,7 @@ async def test_media_toolbar_actions_fit_the_items_panel_at_wide_width() -> None
 
         for selector in (
             "#library-media-type-filter",
+            "#library-media-sort",
             "#library-media-export",
             "#library-media-trash-open",
             "#library-media-select-toggle",

@@ -195,6 +195,7 @@ from ...Library.library_ingest_state import (
 from ...Library.library_media_state import (
     LibraryMediaCanvasState,
     LibraryMediaTrashState,
+    MEDIA_SORT_CHOICES,
     MediaBrowseScope,
     MediaTrashBrowseState,
     MediaTrashScope,
@@ -3941,6 +3942,8 @@ class LibraryScreen(BaseAppScreen):
         # task-14902: True while the media type chooser's direct-pick strip
         # replaces the browse toolbar row (the Notes Sort strip pattern).
         self._library_media_type_choices_visible: bool = False
+        # task-28013: the browse sort chooser's direct-pick strip visibility.
+        self._library_media_sort_choices_visible: bool = False
         # Trash owns an independent source scope. Draft and semantic focus
         # remain screen concerns because Task 5 renders their controls; page
         # authority lives exclusively in ``_library_media_trash_browse_controller``.
@@ -17756,6 +17759,7 @@ class LibraryScreen(BaseAppScreen):
             confirming_bulk_delete=self._library_media_confirming_bulk_delete,
             delete_receipt_count=len(self._library_media_delete_receipt_ids),
             type_choices_visible=self._library_media_type_choices_visible,
+            sort_choices_visible=self._library_media_sort_choices_visible,
             loading_id=(
                 (self._library_media_reader_session.selected_id or "")
                 if self._library_media_reader_session.pending_request is not None
@@ -17824,6 +17828,7 @@ class LibraryScreen(BaseAppScreen):
                 self._library_media_lifecycle_generation
             )
             self._library_media_type_choices_visible = False
+            self._library_media_sort_choices_visible = False
             self._sync_library_media_browse_state(None)
             self._sync_library_media_viewer_mutation_gate()
         return self._library_media_mutation_scope
@@ -26773,6 +26778,9 @@ class LibraryScreen(BaseAppScreen):
             or self._library_media_confirming_bulk_delete
         ):
             return
+        # Mutually exclusive with the sort chooser (task-28013): one strip
+        # replaces the toolbar row at a time.
+        self._library_media_sort_choices_visible = False
         self._library_media_type_choices_visible = (
             not self._library_media_type_choices_visible
         )
@@ -26821,6 +26829,75 @@ class LibraryScreen(BaseAppScreen):
             self,
             "media",
             then=lambda: self._focus_library_control("#library-media-type-filter"),
+        )
+
+    @on(Button.Pressed, "#library-media-sort")
+    def handle_library_media_sort(self, event: Button.Pressed) -> None:
+        """Open (or close) the media browse sort chooser's direct-pick strip.
+
+        task-28013: mirrors the type chooser and the Prompts/Notes sort
+        choosers -- Sort is one control family across the list canvases. Inert
+        while a bulk delete is armed or in flight (task-2853 AC3: nothing may
+        drift the list state under an armed confirm).
+        """
+        event.stop()
+        if (
+            self._library_media_bulk_delete_in_flight
+            or self._library_media_confirming_bulk_delete
+        ):
+            return
+        # Mutually exclusive with the type chooser: only one strip at a time.
+        self._library_media_type_choices_visible = False
+        self._library_media_sort_choices_visible = (
+            not self._library_media_sort_choices_visible
+        )
+        _sync_library_canvas(self, "media")
+        if self._library_media_sort_choices_visible:
+            current = self._library_media_browse_controller.mutation_refresh_scope.sort_by
+            self.call_after_refresh(
+                self._focus_library_choice_strip_active,
+                ".library-media-sort-choice",
+                current,
+            )
+        else:
+            self.call_after_refresh(
+                self._focus_library_control, "#library-media-sort"
+            )
+
+    @on(Button.Pressed, ".library-media-sort-choice")
+    def handle_library_media_sort_choice(self, event: Button.Pressed) -> None:
+        """Apply the exact sort value carried by one strip choice (task-28013).
+
+        Picking the already-active sort only closes the strip -- no service
+        request. Any other value re-fetches page one under the new order.
+        """
+        event.stop()
+        if self._library_media_bulk_delete_in_flight:
+            return
+        requested = str(getattr(event.button, "choice_value", "") or "")
+        self._library_media_sort_choices_visible = False
+        current = self._library_media_browse_controller.mutation_refresh_scope.sort_by
+        valid = {value for value, _ in MEDIA_SORT_CHOICES}
+        if requested not in valid or requested == current:
+            _sync_library_canvas(
+                self,
+                "media",
+                then=lambda: self._focus_library_control("#library-media-sort"),
+            )
+            return
+        self._request_library_media_sort(
+            requested, focus_identity="#library-media-sort"
+        )
+
+    def _request_library_media_sort(
+        self, sort_by: str, *, focus_identity: str | None
+    ) -> Any | None:
+        """Request page one after changing only the applied Media sort order."""
+        self._clear_library_media_selection_for_scope_change()
+        applied = self._library_media_browse_controller.mutation_refresh_scope
+        return self._request_library_media_browse(
+            dataclasses.replace(applied, sort_by=sort_by, page=1),
+            focus_identity=focus_identity,
         )
 
     @on(Button.Pressed, "#library-media-empty-import")
@@ -34435,6 +34512,16 @@ class LibraryScreen(BaseAppScreen):
                 "_library_media_type_choices_visible",
             )
         if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+            and self._library_media_view == "list"
+            and self._library_media_sort_choices_visible
+        ):
+            return (
+                "sort",
+                "#library-media-sort",
+                "_library_media_sort_choices_visible",
+            )
+        if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
             and self._library_prompts_view == "list"
             and self._library_prompts_sort_choices_visible
@@ -34480,6 +34567,7 @@ class LibraryScreen(BaseAppScreen):
         self._sync_library_emergency_guard_presentation()
         canvas_kind = {
             "_library_media_type_choices_visible": "media",
+            "_library_media_sort_choices_visible": "media",
             "_library_prompts_sort_choices_visible": "prompts",
             "_library_skills_sort_choices_visible": "skills",
             "_library_export_quality_choices_visible": "export",

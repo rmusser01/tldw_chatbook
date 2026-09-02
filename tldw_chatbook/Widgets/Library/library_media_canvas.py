@@ -16,7 +16,13 @@ from textual.widgets import Button, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 from tldw_chatbook.Library.library_pager_state import LibraryPagerDisplay
-from tldw_chatbook.Library.library_media_state import LibraryMediaCanvasState
+from tldw_chatbook.Library.library_media_state import (
+    LibraryMediaCanvasState,
+    MEDIA_SORT_CHOICES,
+)
+from tldw_chatbook.Widgets.Library.library_choice_strip import (
+    compose_library_choice_strip,
+)
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_DELETE_SELECTED_TOOLTIP,
@@ -350,7 +356,10 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # toolbar row (the Notes Sort precedent -- browse actions hide while
         # the chooser is showing), keeping the vertical budget flat.
         type_choices_visible = getattr(self.canvas, "type_choices_visible", False)
-        toolbar.display = not type_choices_visible
+        sort_choices_visible = getattr(self.canvas, "sort_choices_visible", False)
+        toolbar.display = not (type_choices_visible or sort_choices_visible)
+        sort_labels = dict(MEDIA_SORT_CHOICES)
+        current_sort = getattr(self.canvas, "sort_by", "last_modified_desc")
         with toolbar:
             type_filter = Button(
                 # task-14902: a chooser-opener, no longer a cycler -- press
@@ -373,6 +382,21 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 ),
             )
             yield self._gate_mutation_action(type_filter, str(type_filter.label))
+            # task-28013: sort chooser opener -- hidden in select mode like
+            # Export/Trash (Select's toolbar acts on the selection).
+            sort_btn = Button(
+                library_choice_label(
+                    "sort", sort_labels.get(current_sort, "Newest")
+                ),
+                id="library-media-sort",
+                classes="library-canvas-action",
+                compact=True,
+                tooltip=library_choice_tooltip(
+                    "the sort order", tuple(label for _, label in MEDIA_SORT_CHOICES)
+                ),
+            )
+            sort_btn.display = not select_mode
+            yield self._gate_stale_action(sort_btn, str(sort_btn.label))
             export_btn = Button(
                 "Export…",
                 id="library-media-export",
@@ -442,6 +466,18 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             choices.highlighted = highlighted
             choices.styles.height = min(8, max(1, len(options)))
             yield choices
+        if sort_choices_visible:
+            # task-28013: the sort chooser's direct-pick strip, replacing the
+            # toolbar row exactly like the type chooser (shared helper).
+            yield from compose_library_choice_strip(
+                strip_id="library-media-sort-choices",
+                choice_class="library-media-sort-choice",
+                options=tuple(
+                    (f"library-media-sort-{value}", value, label)
+                    for value, label in MEDIA_SORT_CHOICES
+                ),
+                active_value=current_sort,
+            )
         confirming_bulk_delete = getattr(self.canvas, "confirming_bulk_delete", False)
         if select_mode:
             if confirming_bulk_delete:
