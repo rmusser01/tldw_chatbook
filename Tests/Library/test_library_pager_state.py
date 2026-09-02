@@ -86,6 +86,47 @@ def test_one_row_page_has_both_visible_boundary_reasons():
     assert display.next_reason == "No more results."
 
 
+def test_single_page_fresh_result_is_flagged_single_page():
+    # task-28016: one full page (total <= page_size) is a single page, so the
+    # media canvas can drop the "Page 1 of 1" / boundary-reason chrome.
+    display = _fresh_display(applied_page=1, requested_page=1, total=3, row_count=3)
+
+    assert display.single_page is True
+    assert display.page_copy == "Page 1 of 1"
+
+
+def test_empty_fresh_result_is_flagged_single_page():
+    display = _fresh_display(applied_page=1, requested_page=1, total=0, row_count=0)
+
+    assert display.single_page is True
+
+
+def test_multi_page_result_is_not_single_page():
+    # _fresh_display defaults to 45 rows over a 20-row page (3 pages).
+    assert _fresh_display().single_page is False
+
+
+def test_loading_single_page_is_not_flagged_single_page():
+    display = _fresh_display(
+        applied_page=1, requested_page=2, total=3, row_count=3, loading=True
+    )
+
+    assert display.single_page is False
+
+
+def test_uninitialized_state_is_not_flagged_single_page():
+    display = build_library_pager_display(
+        applied_page=None,
+        requested_page=1,
+        page_size=20,
+        row_count=0,
+        total=None,
+        freshness="uninitialized",
+    )
+
+    assert display.single_page is False
+
+
 def test_successfully_empty_collection_is_not_uninitialized():
     display = _fresh_display(
         applied_page=1,
