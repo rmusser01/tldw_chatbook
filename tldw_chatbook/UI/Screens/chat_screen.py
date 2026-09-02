@@ -5038,7 +5038,7 @@ class ChatScreen(BaseAppScreen):
         screen_x: int,
         screen_y: int,
     ) -> None:
-        """Anchor the workspace action menu at the pressed tree asterisk.
+        """Anchor the workspace action menu at the pressed tree ``@``.
 
         Args:
             workspace_id: Registry id of the workspace row.
@@ -5183,7 +5183,7 @@ class ChatScreen(BaseAppScreen):
     def on_workspace_tree_menu_requested(
         self, event: "WorkspaceTreeMenuRequested"
     ) -> None:
-        """Mount the row menu a Workspaces-tree asterisk asked for.
+        """Mount the row menu a Workspaces-tree action marker asked for.
 
         Dispatched by handler-name convention (ADR-097 lazy-import rule).
         """
