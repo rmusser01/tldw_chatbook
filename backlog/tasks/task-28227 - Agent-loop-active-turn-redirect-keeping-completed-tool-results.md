@@ -1,5 +1,5 @@
 ---
-id: TASK-26000
+id: TASK-28227
 title: 'Agent loop: active-turn redirect keeping completed tool results'
 status: Done
 assignee:
@@ -18,6 +18,14 @@ priority: high
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Correcting a running agent costs the user every completed tool result. Verified on origin/dev: Stop is terminal - Chat/console_chat_controller.py:13048-13126 settles the stream as "Response stopped." and Agents/agent_runtime.py:1352-1362 returns RUN_CANCELLED, so a correction becomes a fresh turn and work already done in that turn is discarded. Hermes aborts only the in-flight model request, keeps completed messages and tool results, records displayed partial reasoning as assistant context, appends the correction as a real user message and re-runs the same turn. Distinct from task-25903 (steering), which injects guidance without cancelling the current model call; redirect is for when the current call is already wrong.
 <!-- SECTION:DESCRIPTION:END -->
+
+## Renumbering provenance
+
+Renumbered from `TASK-26000` to `TASK-28227` on 2026-09-02 under the
+TASK-19601 older-arrival rule. The formatter characterization task was created on
+2026-08-30 at 15:39; this redirect task was created on 2026-08-31 at 15:43, so the
+older formatter task keeps `TASK-26000`. Historical commits may still cite the old
+ID; current task, code, test, and documentation references use `TASK-28227`.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->

@@ -2220,7 +2220,7 @@ class ConsoleComposerBar(Horizontal):
         stop_button.set_class(not run_active, "console-stop-idle")
         stop_button.set_class(not run_active, "console-action-disabled")
         stop_button.styles.display = "block" if run_active else "none"
-        # TASK-26000: Redirect shares Stop's visibility exactly -- present
+        # TASK-28227: Redirect shares Stop's visibility exactly -- present
         # while (and only while) this tab's run is active.
         try:
             redirect_button = self.query_one("#console-redirect-generation", Button)
@@ -6089,7 +6089,7 @@ class ConsoleComposerBar(Horizontal):
                     width=10,
                     id="console-redirect-generation",
                     classes="destination-action-button console-redirect-button",
-                    # TASK-26000: conditional like Stop -- costs nothing at
+                    # TASK-28227: conditional like Stop -- costs nothing at
                     # rest, time-critical when a run is going wrong. Takes
                     # the composer draft as the correction.
                     tooltip=(

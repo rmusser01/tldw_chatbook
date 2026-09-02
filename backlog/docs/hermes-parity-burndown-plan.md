@@ -1,7 +1,8 @@
 # Hermes parity: burn-down plan
 
 Execution ordering for the 56 tasks filed from the 2026-08-31 parity report
-(**TASK-25900–25914** and **TASK-26000–26040**). Companion to
+(**TASK-25900–25914**, **TASK-26001–26040**, and **TASK-28227**—formerly
+TASK-26000). Companion to
 [hermes-parity-deferred-items.md](hermes-parity-deferred-items.md), which covers what was *not* filed, and to
 `qa/hermes-parity-2026-08-31/report.md`, which carries the evidence.
 
@@ -54,7 +55,7 @@ Ten tasks serialized on `Agents/agent_runtime.py`. This lane is the schedule dri
 largest interaction changes. Ordered small-to-large so the risky ones land on a warm lane.
 
 `26005` arg coercion → `25913` timeout clamp → `25901` retry → `25902` fallback → `26002` empty-response →
-`26001` graceful wrap-up → `26010` post-tool hook → `25903` mid-run steering → `26000` active-turn redirect
+`26001` graceful wrap-up → `26010` post-tool hook → `25903` mid-run steering → `28227` active-turn redirect (formerly `26000`)
 
 **Peels off:** `26003` stall watchdog touches `console_provider_gateway.py` / `console_agent_bridge.py`, not
 `agent_runtime.py` — run it beside the lane, not inside it.

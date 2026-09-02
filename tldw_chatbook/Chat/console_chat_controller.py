@@ -3334,7 +3334,7 @@ class ConsoleChatController:
         #: entry is harmless -- the service refuses once the mailbox is
         #: unregistered -- so this map is hygiene, not the safety boundary.
         self._active_steer_hooks: dict[str, Callable[[str], str | None]] = {}
-        #: TASK-26000: same lifecycle as _active_steer_hooks, but the hook
+        #: TASK-28227: same lifecycle as _active_steer_hooks, but the hook
         #: cuts the in-flight model response and re-runs the turn.
         self._active_redirect_hooks: dict[str, Callable[[str], str | None]] = {}
         #: TASK-26019: the LAST prepared request's token accounting per
@@ -13592,7 +13592,7 @@ class ConsoleChatController:
         """Cut off the ACTIVE session's current model response and re-run the
         turn with ``text`` as a plain user correction.
 
-        TASK-26000. Unlike ``steer_active_run`` (which lets the current
+        TASK-28227. Unlike ``steer_active_run`` (which lets the current
         response finish), this aborts the in-flight model request; completed
         tool results and the partial the user watched stream are retained.
         Plain Stop is untouched and remains terminal.

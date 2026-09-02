@@ -8,7 +8,7 @@ Structure: 9 blocked behind filed work · 21 recommended for closing with reason
 
 - Source: `qa/hermes-parity-2026-08-31/report.md` (hermes `origin/main` a0a63a1bc2 vs chatbook `origin/dev`),
   full candidate list with evidence in `qa/hermes-parity-2026-08-31/gap-candidates.md`.
-- Filed instead: **TASK-25900–25914** and **TASK-26000–26040** (56 tasks); their execution ordering is in [hermes-parity-burndown-plan.md](hermes-parity-burndown-plan.md).
+- Filed instead: **TASK-25900–25914**, **TASK-26001–26040**, and **TASK-28227** (formerly TASK-26000; 56 tasks total); their execution ordering is in [hermes-parity-burndown-plan.md](hermes-parity-burndown-plan.md).
 - **Review these after that burn-down**, not before — several are blocked behind filed work, and a few will be
   answered by it rather than needing their own task.
 

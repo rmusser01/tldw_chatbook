@@ -1734,7 +1734,7 @@ class AgentService:
         on_primary_steer_ready: (
             Callable[[Callable[[str], str | None]], None] | None
         ) = None,
-        # TASK-26000: fired at primary-mailbox registration with
+        # TASK-28227: fired at primary-mailbox registration with
         # (redirect_fn, abort_probe). redirect_fn posts a plain-user
         # correction AND raises the run's abort flag; abort_probe is what the
         # bridge ORs into its STREAM-cancel predicate only -- never into
@@ -1840,7 +1840,7 @@ class AgentService:
         self.on_primary_redirect_ready = on_primary_redirect_ready
         self._primary_steering_lock = threading.Lock()
         self._primary_mailboxes: dict[str, list[tuple[str, str]]] = {}
-        # TASK-26000: per-run abort flag, raised by redirect_primary and
+        # TASK-28227: per-run abort flag, raised by redirect_primary and
         # cleared by the drain that consumes the redirect entry -- one lock,
         # one source of truth for both the stream predicate and the loop's
         # has_pending_redirect probe.
@@ -2811,7 +2811,7 @@ class AgentService:
     def redirect_primary(self, run_id: str, text: str) -> str | None:
         """Cut off a LIVE primary run's current model response and re-ask.
 
-        TASK-26000. Same mailbox and validation as `steer_primary`, plus the
+        TASK-28227. Same mailbox and validation as `steer_primary`, plus the
         abort flag: the bridge's stream predicate sees it and returns the
         partial early; the loop's redirect branch then keeps completed tool
         results and the visible partial, appends this text as a PLAIN user
@@ -2855,7 +2855,7 @@ class AgentService:
                 if not mailbox:
                     return []
                 drained, mailbox[:] = list(mailbox), []
-                # TASK-26000: a consumed redirect lowers the abort flag --
+                # TASK-28227: a consumed redirect lowers the abort flag --
                 # the NEXT model call must not be cut by a correction that
                 # was already delivered. Same lock as the post, so no gap.
                 if any(
@@ -6536,7 +6536,7 @@ class AgentService:
             call_model=call_model,
             call_model_with_continuation=call_model,
             fallback=fallback_runtime,
-            # TASK-26000: primary runs only -- children have no redirect
+            # TASK-28227: primary runs only -- children have no redirect
             # producer (the Console redirects the run it is watching).
             has_pending_redirect=(
                 (lambda: self._primary_redirect_pending(run_id))

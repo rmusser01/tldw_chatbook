@@ -96,7 +96,7 @@ ToolOutcome: TypeAlias = Literal["success", "failed", "blocked", "timeout", "can
 # below -- prepended by the mechanism, never trusted from input.
 STEERING_SOURCE_SUPERVISOR = "supervisor"
 STEERING_SOURCE_USER = "user"
-# TASK-26000: an active-turn redirect. Unlike the two steering sources it is
+# TASK-28227: an active-turn redirect. Unlike the two steering sources it is
 # rendered PLAIN (a real user reply, no "[Steering from ...]" wrapper) -- the
 # loop branches on it before format_steering_message is ever called.
 STEERING_SOURCE_REDIRECT = "redirect"
