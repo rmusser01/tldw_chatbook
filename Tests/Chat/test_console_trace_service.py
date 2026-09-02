@@ -2912,6 +2912,218 @@ def test_saved_continuation_value_mismatch_rejects_before_any_trace_write(
     )
 
 
+def test_current_surface_delta_preserves_distinct_logical_message_projection(
+    db: CharactersRAGDB,
+    repository: ConsoleTraceRepository,
+) -> None:
+    owner_id, segment_id = _owned_segment(db, repository)
+    policy = _policy()
+    logical_message = ProviderArtifactTraceProvenance(
+        TraceProvenanceSource.MANDATORY_CONTEXT,
+        policy,
+    )
+    first_wire = ProviderArtifactTraceProvenance(
+        TraceProvenanceSource.ACTIVE_REQUEST,
+        policy,
+    )
+    second_wire = ProviderArtifactTraceProvenance(
+        TraceProvenanceSource.ACTIVE_REQUEST,
+        policy,
+    )
+    initial_provenance = ProviderRequestProvenance(
+        messages=(logical_message,),
+        messages_payload=(first_wire,),
+        metadata=(request_route_provenance(ConsoleRequestRoute.FRESH),),
+    )
+    service = ConsoleTraceService(repository)
+    with db.transaction() as cursor:
+        _persist(
+            service,
+            cursor,
+            owner_id=owner_id,
+            segment_id=segment_id,
+            provenance=initial_provenance,
+            bundle=_available_bundle(
+                initial_provenance,
+                messages=[{"role": "user", "content": "first"}],
+            ),
+        )
+        extended_provenance = replace(
+            initial_provenance,
+            messages_payload=(first_wire, second_wire),
+        )
+        _admission, boundary = service.prepare_current_surface_delta(
+            cursor,
+            owner_id=owner_id,
+            segment_id=segment_id,
+            route_identity=ConsoleRequestRoute.FRESH.value,
+            preparation_identity=new_opaque_id(),
+            provenance=extended_provenance,
+            values=(
+                {"role": "user", "content": "first"},
+                {"role": "user", "content": "second"},
+            ),
+        )
+
+    assert boundary.provenance.messages == (logical_message,)
+
+
+def test_current_surface_delta_appends_message_before_unchanged_continuation(
+    db: CharactersRAGDB,
+    repository: ConsoleTraceRepository,
+) -> None:
+    owner_id, segment_id = _owned_segment(db, repository)
+    policy = _policy()
+    first_message = ProviderArtifactTraceProvenance(
+        TraceProvenanceSource.ACTIVE_REQUEST,
+        policy,
+    )
+    second_message = ProviderArtifactTraceProvenance(
+        TraceProvenanceSource.ACTIVE_REQUEST,
+        policy,
+    )
+    third_message = ProviderArtifactTraceProvenance(
+        TraceProvenanceSource.ACTIVE_REQUEST,
+        policy,
+    )
+    continuation = ProviderArtifactTraceProvenance(
+        TraceProvenanceSource.CONTINUATION,
+        policy,
+    )
+    first_value = {"role": "user", "content": "first"}
+    second_value = {"role": "user", "content": "second"}
+    third_value = {"role": "user", "content": "third"}
+    continuation_value = _continuation_value("unchanged")
+    initial_provenance = ProviderRequestProvenance(
+        messages=(first_message,),
+        messages_payload=(first_message,),
+        continuations=(continuation,),
+        metadata=(request_route_provenance(ConsoleRequestRoute.FRESH),),
+    )
+    service = ConsoleTraceService(repository)
+
+    with db.transaction() as cursor:
+        initial = _persist(
+            service,
+            cursor,
+            owner_id=owner_id,
+            segment_id=segment_id,
+            provenance=initial_provenance,
+            bundle=_available_bundle(
+                initial_provenance,
+                messages=[first_value],
+                continuations=[continuation_value],
+            ),
+        )
+        extended_provenance = replace(
+            initial_provenance,
+            messages=(first_message, second_message),
+            messages_payload=(first_message, second_message),
+        )
+        bundle = _available_bundle(
+            extended_provenance,
+            messages=[first_value, second_value],
+            continuations=[continuation_value],
+        )
+        admission, boundary = service.prepare_current_surface_delta(
+            cursor,
+            owner_id=owner_id,
+            segment_id=segment_id,
+            route_identity=ConsoleRequestRoute.FRESH.value,
+            preparation_identity=bundle.preparation_identity or "missing",
+            provenance=extended_provenance,
+            values=(first_value, second_value, continuation_value),
+        )
+        actual = dict(bundle.boundary_kwargs)
+        actual.update(boundary._provider_request_surface_values())
+        bound_bundle = verify_provider_request_shadow(
+            actual_kwargs=actual,
+            expected_kwargs=dict(actual),
+            provenance=boundary.provenance,
+            project_handler_kwargs=lambda kwargs: kwargs,
+            endpoint_identity=bundle.endpoint_identity,
+            preparation_identity=bundle.preparation_identity,
+            surface_boundary=boundary,
+        )
+        second_persisted = service.persist_request(
+            cursor,
+            owner_id=owner_id,
+            segment_id=segment_id,
+            provenance=boundary.provenance,
+            bundle=bound_bundle,
+            surface_delta=build_verified_surface_delta(
+                boundary.provenance,
+                bound_bundle,
+                admission=admission,
+            ),
+        )
+        third_provenance = replace(
+            initial_provenance,
+            messages=(first_message, second_message, third_message),
+            messages_payload=(first_message, second_message, third_message),
+        )
+        third_bundle = _available_bundle(
+            third_provenance,
+            messages=[first_value, second_value, third_value],
+            continuations=[continuation_value],
+        )
+        third_admission, third_boundary = service.prepare_current_surface_delta(
+            cursor,
+            owner_id=owner_id,
+            segment_id=segment_id,
+            route_identity=ConsoleRequestRoute.FRESH.value,
+            preparation_identity=third_bundle.preparation_identity or "missing",
+            provenance=third_provenance,
+            values=(first_value, second_value, third_value, continuation_value),
+        )
+        actual = dict(third_bundle.boundary_kwargs)
+        actual.update(third_boundary._provider_request_surface_values())
+        bound_third_bundle = verify_provider_request_shadow(
+            actual_kwargs=actual,
+            expected_kwargs=dict(actual),
+            provenance=third_boundary.provenance,
+            project_handler_kwargs=lambda kwargs: kwargs,
+            endpoint_identity=third_bundle.endpoint_identity,
+            preparation_identity=third_bundle.preparation_identity,
+            surface_boundary=third_boundary,
+        )
+        third_persisted = service.persist_request(
+            cursor,
+            owner_id=owner_id,
+            segment_id=segment_id,
+            provenance=third_boundary.provenance,
+            bundle=bound_third_bundle,
+            surface_delta=build_verified_surface_delta(
+                third_boundary.provenance,
+                bound_third_bundle,
+                admission=third_admission,
+            ),
+        )
+
+    assert admission.predecessor_surface_head_id == initial.surface_head_id
+    assert admission.descriptors == (second_message,)
+    assert admission.replacement_range is None
+    assert tuple(boundary.provenance.messages_payload) == (
+        first_message,
+        second_message,
+    )
+    assert tuple(boundary.provenance.continuations) == (continuation,)
+    assert [node.component_kind for node in second_persisted.appended_nodes] == [
+        "active_request"
+    ]
+    assert third_admission.descriptors == (third_message,)
+    assert third_admission.replacement_range is None
+    assert tuple(third_boundary.provenance.messages_payload) == (
+        first_message,
+        second_message,
+        third_message,
+    )
+    assert tuple(third_boundary.provenance.continuations) == (continuation,)
+    assert [node.component_kind for node in third_persisted.appended_nodes] == [
+        "active_request"
+    ]
+
+
 def test_interleaved_domains_reopen_and_replace_continuation_by_local_ordinal(
     db: CharactersRAGDB,
     repository: ConsoleTraceRepository,

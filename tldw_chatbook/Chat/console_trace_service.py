@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
+import json
+import sqlite3
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-import json
-import sqlite3
 from types import MappingProxyType
 from typing import Generic, Literal, TypeAlias, TypeVar, cast, overload
 from weakref import ReferenceType, ref
 
 from tldw_chatbook.Chat.console_prepared_request import freeze_json
+from tldw_chatbook.Chat.console_semantic_revision import (
+    project_semantic_revision_provider_continuations,
+    project_semantic_revision_provider_message,
+    project_semantic_revision_provider_messages,
+)
 from tldw_chatbook.Chat.console_trace_final_values import (
+    _SURFACE_VERIFICATION_ISSUER,
     FinalValueBinding,
     ProviderCredentialSource,
     ProviderOverlayProvenance,
@@ -22,22 +28,17 @@ from tldw_chatbook.Chat.console_trace_final_values import (
     VerifiedSurfaceDelta,
     VerifiedSurfaceDeltaItem,
     VerifiedSurfaceReplacement,
-    _SURFACE_VERIFICATION_ISSUER,
+    VerifiedSurfaceReplacementRange,
     build_verified_surface_delta,
 )
 from tldw_chatbook.Chat.console_trace_models import (
-    FrozenTracePolicy,
     MAX_SURFACE_REPLACEMENT_SPAN,
+    FrozenTracePolicy,
     SemanticRevisionRef,
     SurfaceReplacement,
     TraceCallState,
     TraceContentRef,
     TraceOmission,
-)
-from tldw_chatbook.Chat.console_trace_redaction import (
-    PII_DETECTOR_UNAVAILABLE,
-    PIIRedactionSpan,
-    redact_pii_value,
 )
 from tldw_chatbook.Chat.console_trace_provenance import (
     DerivedTraceProvenance,
@@ -52,6 +53,11 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     TraceTransformKind,
     _project_verified_provider_request_provenance,
 )
+from tldw_chatbook.Chat.console_trace_redaction import (
+    PII_DETECTOR_UNAVAILABLE,
+    PIIRedactionSpan,
+    redact_pii_value,
+)
 from tldw_chatbook.Chat.console_trace_repository import (
     ConsoleTraceRepository,
     HeaderComponentRef,
@@ -61,16 +67,10 @@ from tldw_chatbook.Chat.console_trace_repository import (
     TraceCallRecord,
     TraceEventType,
 )
-from tldw_chatbook.Chat.console_semantic_revision import (
-    project_semantic_revision_provider_message,
-    project_semantic_revision_provider_continuations,
-    project_semantic_revision_provider_messages,
-)
 from tldw_chatbook.DB.transaction_observer import (
     current_managed_transaction,
     register_transaction_completion,
 )
-
 
 TRACE_VALUE_NORMALIZATION_VERSION = "canonical-json-v1"
 TRACE_VALUE_MEDIA_TYPE = "application/json"
@@ -187,7 +187,7 @@ class ConsoleTraceCallBoundary:
     admission: SurfaceDeltaAdmission
     occurred_at_factory: Callable[[], str] = field(repr=False)
     surface_boundary: object | None = field(default=None, repr=False)
-    _reserved: TraceCallRecord | None = field(default=None, init=False, repr=False)
+    _reserved: TraceCallRecord | None = field(default=None, repr=False)
     _started: TraceCallRecord | None = field(default=None, init=False, repr=False)
     _unknown: TraceCallRecord | None = field(default=None, init=False, repr=False)
     _response_started_at: str | None = field(default=None, init=False, repr=False)
@@ -201,6 +201,10 @@ class ConsoleTraceCallBoundary:
     _reservation_status: TraceCallReservationStatus = field(
         default="unknown", init=False, repr=False
     )
+
+    def __post_init__(self) -> None:
+        if self._reserved is not None:
+            self._reservation_status = "established"
 
     @property
     def reservation_status(self) -> TraceCallReservationStatus:
@@ -1630,7 +1634,7 @@ class ConsoleTraceService:
         ):
             raise ValueError("surface_delta_identity")
         self._validate_owner(cursor, owner_id=owner_id, segment_id=segment_id)
-        tail = self.repository.get_surface_tail(cursor, segment_id)
+        tail = self._effective_surface_tail(cursor, segment_id)
         expected_predecessor = None if tail is None else tail.node_id
         for key, child in tuple(self._child_capabilities.items()):
             if (
@@ -2042,16 +2046,235 @@ class ConsoleTraceService:
         return tuple(ordered)
 
     def current_surface_checkpoint(
-        self, segment_id: str, *, expected_head_id: str | None = None
+        self,
+        segment_id: str,
+        *,
+        expected_head_id: str | None = None,
+        expected_route: str | None = None,
     ) -> object | None:
-        """Return the transient checkpoint for the service's current segment head."""
+        """Return the transient checkpoint for the current head and route.
+
+        Args:
+            segment_id: Segment whose in-process checkpoint is requested.
+            expected_head_id: Optional durable head the checkpoint must match.
+            expected_route: Optional provider route the checkpoint must match.
+
+        Returns:
+            The matching opaque checkpoint, or ``None`` when reconstruction is
+            required for the requested head or route.
+        """
 
         projection = self._surface_ref_cache.get(segment_id)
         if projection is None or (
             expected_head_id is not None and projection.head_id != expected_head_id
         ):
             return None
-        return projection.checkpoint
+        checkpoint = projection.checkpoint
+        parent = self._parent_capabilities.get(id(checkpoint))
+        if expected_route is not None and (
+            parent is None or parent.route != expected_route
+        ):
+            return None
+        return checkpoint
+
+    def prepare_current_surface_delta(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        owner_id: str,
+        segment_id: str,
+        route_identity: str,
+        preparation_identity: str,
+        provenance: ProviderRequestProvenance,
+        values: tuple[object, ...],
+    ) -> tuple[SurfaceDeltaAdmission, object]:
+        """Plan an append, no-op, or one-item bounded surface replacement.
+
+        The comparison resolves prior references inside the caller transaction;
+        no transcript-sized value is copied into the admission or call row.
+
+        Args:
+            cursor: Cursor for the caller-owned transaction.
+            owner_id: Trace owner whose durable references may be resolved.
+            segment_id: Segment containing the current surface.
+            route_identity: Frozen route identity for the provider call.
+            preparation_identity: Identity of the prepared provider request.
+            provenance: Descriptors aligned with the complete provider surface.
+            values: Provider values aligned with message and continuation
+                descriptors.
+
+        Returns:
+            The admitted surface delta and its verification boundary.
+
+        Raises:
+            ValueError: If provenance is misaligned or the surface change is
+                outside the supported append or bounded-replacement shapes.
+        """
+
+        descriptors = tuple(provenance.messages_payload) + tuple(
+            provenance.continuations
+        )
+        if len(descriptors) != len(values):
+            raise ValueError("surface_provenance_mismatch")
+        domains = ("messages_payload",) * len(provenance.messages_payload) + (
+            "provider_continuations",
+        ) * len(provenance.continuations)
+        tail = self._effective_surface_tail(cursor, segment_id)
+        projection = self._surface_projection(cursor, segment_id, tail)
+        physical_active = projection.entries
+        # Surface nodes stay physically append-only, so later messages can
+        # follow older continuation nodes. Compare in provider domain order
+        # while retaining physical ordinals for replacement validation.
+        active = tuple(
+            (physical_ordinal, sequence, key)
+            for domain in ("messages_payload", "provider_continuations")
+            for physical_ordinal, (sequence, key) in enumerate(physical_active)
+            if _surface_reference_domain(key) == domain
+        )
+        durable_keys = tuple(
+            key for _, _, key in active if key[1] in {"artifact", "revision"}
+        )
+        durable_values = self._resolve_reference_values(
+            cursor,
+            durable_keys,
+            owner_id=owner_id,
+        )
+
+        def matches(active_index: int, incoming_index: int) -> bool:
+            key = active[active_index][2]
+            return (
+                _surface_reference_domain(key) == domains[incoming_index]
+                and self._durable_reference_matches(
+                    cursor,
+                    descriptors[incoming_index],
+                    values[incoming_index],
+                    key,
+                    durable_values,
+                )
+            )
+
+        prefix = 0
+        while prefix < min(len(active), len(descriptors)) and matches(prefix, prefix):
+            prefix += 1
+
+        replacement_range: VerifiedSurfaceReplacementRange | None = None
+        admitted_from = prefix
+        admitted_to = len(descriptors)
+        if prefix < len(active):
+            suffix = 0
+            while (
+                suffix < len(active) - prefix
+                and suffix < len(descriptors) - prefix
+                and matches(len(active) - 1 - suffix, len(descriptors) - 1 - suffix)
+            ):
+                suffix += 1
+            incoming_changed = len(descriptors) - prefix - suffix
+            active_changed = len(active) - prefix - suffix
+            if incoming_changed == 1 and active_changed == 0:
+                # A later turn adds a message before an unchanged provider
+                # continuation. Append only that message: descriptor domains
+                # reconstruct provider order without rewriting the suffix.
+                admitted_to = prefix + 1
+            elif incoming_changed != 1 or not 1 <= active_changed <= MAX_SURFACE_REPLACEMENT_SPAN:
+                raise ValueError("unsupported_surface_change")
+            else:
+                changed_entries = active[prefix : len(active) - suffix]
+                changed_sequences = {
+                    sequence for _ordinal, sequence, _key in changed_entries
+                }
+                start_sequence = min(changed_sequences)
+                end_sequence = max(changed_sequences)
+                if any(
+                    start_sequence <= sequence <= end_sequence
+                    and sequence not in changed_sequences
+                    for sequence, _key in physical_active
+                ):
+                    raise ValueError("unsupported_surface_change")
+                anchors = self.repository.read_lineage_surface_nodes(
+                    cursor,
+                    segment_id=segment_id,
+                    start_sequence=start_sequence,
+                    end_sequence=end_sequence,
+                )
+                nodes_by_sequence = {node.sequence: node for node in anchors}
+                start = nodes_by_sequence.get(start_sequence)
+                end = nodes_by_sequence.get(end_sequence)
+                if start is None or end is None or tail is None:
+                    raise ValueError("surface_replacement_target_unavailable")
+                replacement_range = VerifiedSurfaceReplacementRange(
+                    predecessor_head_id=tail.node_id,
+                    start_node_id=start.node_id,
+                    end_node_id=end.node_id,
+                    start_sequence=start_sequence,
+                    end_sequence=end_sequence,
+                    current_ordinal=min(
+                        ordinal for ordinal, _sequence, _key in changed_entries
+                    ),
+                    component_name=domains[prefix],
+                    component_ordinal=sum(
+                        domain == domains[prefix] for domain in domains[:prefix]
+                    ),
+                )
+                admitted_to = prefix + 1
+
+        predecessor = None if tail is None else tail.node_id
+        checkpoint = self.current_surface_checkpoint(
+            segment_id,
+            expected_head_id=predecessor,
+            expected_route=route_identity,
+        )
+        bootstrap = checkpoint is None and predecessor is not None
+        admitted = descriptors[admitted_from:admitted_to]
+        admission = SurfaceDeltaAdmission(
+            owner_id=owner_id,
+            segment_id=segment_id,
+            predecessor_surface_head_id=predecessor,
+            route_identity=route_identity,
+            preparation_identity=preparation_identity,
+            descriptors=admitted,
+            projection_checkpoint=checkpoint,
+            replacement_range=replacement_range,
+        )
+        if replacement_range is not None and bootstrap:
+            raise ValueError("surface_replacement_checkpoint_unavailable")
+        if bootstrap:
+            delta_provenance = provenance
+            delta_values = values
+        else:
+            message_delta = tuple(
+                descriptor
+                for index, descriptor in enumerate(descriptors[admitted_from:admitted_to], admitted_from)
+                if domains[index] == "messages_payload"
+            )
+            continuation_delta = tuple(
+                descriptor
+                for index, descriptor in enumerate(descriptors[admitted_from:admitted_to], admitted_from)
+                if domains[index] == "provider_continuations"
+            )
+            delta_provenance = replace(
+                provenance,
+                messages=(
+                    message_delta
+                    if provenance.messages == provenance.messages_payload
+                    else provenance.messages
+                ),
+                messages_payload=message_delta,
+                continuations=continuation_delta,
+                tool_loop=tuple(
+                    index - admitted_from
+                    for index in provenance.tool_loop
+                    if admitted_from <= index < admitted_to
+                ),
+            )
+            delta_values = values[admitted_from:admitted_to]
+        boundary = self.prepare_surface_provenance(
+            cursor,
+            checkpoint,
+            provenance=delta_provenance,
+            admission=admission,
+            values=delta_values,
+        )
+        return admission, boundary
 
     def _bootstrap_surface_parent(
         self,
@@ -2191,7 +2414,7 @@ class ConsoleTraceService:
                 owner_id=owner_id,
                 segment_id=segment_id,
             )
-            tail = self.repository.get_surface_tail(cursor, segment_id)
+            tail = self._effective_surface_tail(cursor, segment_id)
             expected_head = None if tail is None else tail.node_id
             if getattr(admission, "predecessor_surface_head_id", None) != expected_head:
                 raise ValueError("surface_predecessor_mismatch")
@@ -2263,7 +2486,7 @@ class ConsoleTraceService:
             self._validate_replacement_range(
                 cursor,
                 segment_id=parent.segment_id,
-                tail=self.repository.get_surface_tail(cursor, parent.segment_id),
+                tail=self._effective_surface_tail(cursor, parent.segment_id),
                 plan=VerifiedSurfaceReplacement(
                     predecessor_head_id=replacement_range.predecessor_head_id,
                     start_node_id=replacement_range.start_node_id,
@@ -2786,12 +3009,54 @@ class ConsoleTraceService:
         )
         return capability
 
+    def _effective_surface_tail(
+        self,
+        cursor: sqlite3.Cursor,
+        segment_id: str,
+    ) -> SurfaceNodeRecord | None:
+        """Return the segment-local tail or its immutable inherited head."""
+
+        tail = self.repository.get_surface_tail(cursor, segment_id)
+        if tail is not None:
+            return tail
+        segment = self.repository.get_segment(cursor, segment_id)
+        if segment is None or segment.inherited_surface_head_id is None:
+            return None
+        inherited = self.repository.get_surface_node(
+            cursor,
+            segment.inherited_surface_head_id,
+        )
+        if inherited is None:
+            raise ValueError("inherited_surface_head_unavailable")
+        return inherited
+
     def _surface_projection(
         self,
         cursor: sqlite3.Cursor,
         segment_id: str,
         tail: SurfaceNodeRecord | None,
     ) -> _SurfaceProjection:
+        segment = self.repository.get_segment(cursor, segment_id)
+        if segment is None:
+            raise ValueError("surface_segment_unavailable")
+        inherited_projection: _SurfaceProjection | None = None
+        if (
+            segment.parent_segment_id is not None
+            and segment.inherited_surface_head_id is not None
+        ):
+            inherited_head = self.repository.get_surface_node(
+                cursor,
+                segment.inherited_surface_head_id,
+            )
+            if inherited_head is None:
+                raise ValueError("inherited_surface_head_unavailable")
+            inherited_projection = self._surface_projection(
+                cursor,
+                segment.parent_segment_id,
+                inherited_head,
+            )
+            if tail is None:
+                tail = inherited_head
         head_id = None if tail is None else tail.node_id
         cached = self._surface_ref_cache.get(segment_id)
         if cached is not None and cached.head_id == head_id:
@@ -2808,12 +3073,27 @@ class ConsoleTraceService:
             if page.next_cursor is None:
                 break
             continuation = page.next_cursor
-        replacements = self.repository.read_surface_replacements(cursor, segment_id)
+        if tail is not None:
+            nodes = [node for node in nodes if node.sequence <= tail.sequence]
+        local_node_ids = {node.node_id for node in nodes}
+        replacements = tuple(
+            record
+            for record in self.repository.read_surface_replacements(
+                cursor,
+                segment_id,
+            )
+            if record.replacement.replacement_node_id in local_node_ids
+        )
         replacement_ids = {
             item.replacement.replacement_node_id for item in replacements
         }
         root_node: _SequenceNode | None = None
         active: dict[int, _SequenceNode] = {}
+        if inherited_projection is not None:
+            for sequence, key in inherited_projection.entries:
+                sequence_node = _SequenceNode(sequence, key)
+                root_node = _sequence_merge(root_node, sequence_node)
+                active[sequence] = sequence_node
         for node in nodes:
             if node.node_id in replacement_ids:
                 continue
@@ -2856,10 +3136,16 @@ class ConsoleTraceService:
             active[node.sequence] = sequence_node
         entries = _sequence_entries(root_node)
         root = _ProjectionRoot(None, base=tuple(entries))
+        inherited_lineage = (
+            ()
+            if inherited_projection is None
+            else inherited_projection.lineage_domains
+        )
         projection = _SurfaceProjection(
             head_id,
             root,
-            lineage_domains=tuple(
+            lineage_domains=inherited_lineage
+            + tuple(
                 (
                     node.sequence,
                     _surface_reference_domain(self._node_reference_key(node)),
@@ -3114,19 +3400,20 @@ class ConsoleTraceService:
                 raise ValueError("surface_value_unavailable") from exc
         if reference_kind != "revision":
             raise ValueError("surface_value_unavailable")
-        owner = self.repository.get_owner(cursor, owner_id)
-        if owner is None or owner.conversation_id is None:
+        self._validate_revision_owner(cursor, owner_id, identity)
+        revision = self.repository.get_semantic_revision(cursor, identity)
+        if revision is None:
             raise ValueError("revision_owner_mismatch")
         if key[0] == "continuation":
             return project_semantic_revision_provider_continuations(
                 cursor,
                 revision_ids=(identity,),
-                expected_conversation_id=owner.conversation_id,
+                expected_conversation_id=revision.source_conversation_id,
             )[identity]
         return project_semantic_revision_provider_message(
             cursor,
             revision_id=identity,
-            expected_conversation_id=owner.conversation_id,
+            expected_conversation_id=revision.source_conversation_id,
         )
 
     def _resolve_reference_values(
@@ -3172,12 +3459,19 @@ class ConsoleTraceService:
                     resolved[key] = json.loads(raw)
                 except (TypeError, ValueError, UnicodeDecodeError) as exc:
                     raise ValueError("surface_value_unavailable") from exc
-        if revision_keys:
-            owner = self.repository.get_owner(cursor, owner_id)
-            if owner is None or owner.conversation_id is None:
+        revision_keys_by_conversation: dict[str, list[SurfaceReferenceKey]] = {}
+        for key in revision_keys:
+            self._validate_revision_owner(cursor, owner_id, key[2])
+            revision = self.repository.get_semantic_revision(cursor, key[2])
+            if revision is None:
                 raise ValueError("revision_owner_mismatch")
-            for offset in range(0, len(revision_keys), 256):
-                chunk = revision_keys[offset : offset + 256]
+            revision_keys_by_conversation.setdefault(
+                revision.source_conversation_id,
+                [],
+            ).append(key)
+        for conversation_id, conversation_keys in revision_keys_by_conversation.items():
+            for offset in range(0, len(conversation_keys), 256):
+                chunk = conversation_keys[offset : offset + 256]
                 message_chunk = tuple(key for key in chunk if key[0] != "continuation")
                 continuation_chunk = tuple(
                     key for key in chunk if key[0] == "continuation"
@@ -3186,7 +3480,7 @@ class ConsoleTraceService:
                     projected = project_semantic_revision_provider_messages(
                         cursor,
                         revision_ids=tuple(key[2] for key in message_chunk),
-                        expected_conversation_id=owner.conversation_id,
+                        expected_conversation_id=conversation_id,
                     )
                     resolved.update((key, projected[key[2]]) for key in message_chunk)
                 if continuation_chunk:
@@ -3194,7 +3488,7 @@ class ConsoleTraceService:
                         project_semantic_revision_provider_continuations(
                             cursor,
                             revision_ids=tuple(key[2] for key in continuation_chunk),
-                            expected_conversation_id=owner.conversation_id,
+                            expected_conversation_id=conversation_id,
                         )
                     )
                     resolved.update(
@@ -3562,11 +3856,30 @@ class ConsoleTraceService:
     ) -> None:
         owner = self.repository.get_owner(cursor, owner_id)
         revision = self.repository.get_semantic_revision(cursor, revision_id)
-        if (
-            owner is None
-            or owner.conversation_id is None
-            or revision is None
-            or revision.source_conversation_id != owner.conversation_id
+        if owner is None or owner.conversation_id is None or revision is None:
+            raise ValueError("revision_owner_mismatch")
+        if revision.source_conversation_id == owner.conversation_id:
+            return
+        segment = self.repository.get_segment(cursor, owner.root_segment_id)
+        inherited_head = (
+            None if segment is None else segment.inherited_surface_head_id
+        )
+        head = (
+            None
+            if inherited_head is None
+            else self.repository.get_surface_node(cursor, inherited_head)
+        )
+        if head is None:
+            raise ValueError("revision_owner_mismatch")
+        assert segment is not None and segment.parent_segment_id is not None
+        inherited = self._surface_projection(
+            cursor,
+            segment.parent_segment_id,
+            head,
+        )
+        if not any(
+            key[1] == "revision" and key[2] == revision_id
+            for _sequence, key in inherited.entries
         ):
             raise ValueError("revision_owner_mismatch")
 
@@ -3710,23 +4023,27 @@ class ConsoleTraceService:
             raise ValueError("replacement_range_order")
         if descriptor_count != 1:
             raise ValueError("replacement_value")
-        start = self.repository.get_surface_node(cursor, plan.start_node_id)
-        end = self.repository.get_surface_node(cursor, plan.end_node_id)
+        nodes = self.repository.read_lineage_surface_nodes(
+            cursor,
+            segment_id=segment_id,
+            start_sequence=plan.start_sequence,
+            end_sequence=plan.end_sequence,
+        )
+        nodes_by_sequence = {node.sequence: node for node in nodes}
+        start = nodes_by_sequence.get(plan.start_sequence)
+        end = nodes_by_sequence.get(plan.end_sequence)
         if (
             start is None
             or end is None
-            or start.segment_id != segment_id
-            or end.segment_id != segment_id
+            or start.node_id != plan.start_node_id
+            or end.node_id != plan.end_node_id
             or start.sequence != plan.start_sequence
             or end.sequence != plan.end_sequence
         ):
             raise ValueError("replacement_range_mismatch")
-        count = cursor.execute(
-            """SELECT COUNT(*) FROM console_trace_surface_nodes
-                 WHERE segment_id = ? AND sequence BETWEEN ? AND ?""",
-            (segment_id, plan.start_sequence, plan.end_sequence),
-        ).fetchone()[0]
-        if count != plan.end_sequence - plan.start_sequence + 1:
+        if len(nodes_by_sequence) != len(nodes) or (
+            len(nodes) != plan.end_sequence - plan.start_sequence + 1
+        ):
             raise ValueError("replacement_range_noncontiguous")
 
     def _persist_header(

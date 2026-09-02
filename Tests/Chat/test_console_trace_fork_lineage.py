@@ -198,6 +198,68 @@ def test_fork_attaches_shared_boundary_without_copying_trace_payload_rows(
         ] == [source_call]
 
 
+def test_fork_surface_lineage_stops_at_inherited_surface_head(
+    db: CharactersRAGDB,
+) -> None:
+    repository = ConsoleTraceRepository()
+    source_id, source_owner_id, source_segment_id, policy_id, source_head_id = (
+        _root_with_surface(db, repository)
+    )
+    child_id, _ = _conversation(db, "child")
+
+    with db.transaction(immediate=True) as cursor:
+        _reserve_call(
+            cursor,
+            repository,
+            owner_id=source_owner_id,
+            segment_id=source_segment_id,
+            policy_id=policy_id,
+            turn_id="turn-1",
+            event_sequence=1,
+            call_sequence=0,
+        )
+        boundary = repository.capture_fork_boundary(
+            cursor,
+            conversation_id=source_id,
+            included_turn_ids=("turn-1",),
+        )
+        assert boundary is not None
+        child_owner = repository.attach_fork_owner(
+            cursor,
+            conversation_id=child_id,
+            boundary=boundary,
+        )
+        revision_id = cursor.execute(
+            """SELECT revision_id FROM console_trace_semantic_revisions
+                 WHERE source_conversation_id = ? LIMIT 1""",
+            (source_id,),
+        ).fetchone()[0]
+        source_suffix = repository.append_surface_node(
+            cursor,
+            segment_id=source_segment_id,
+            sequence=1,
+            predecessor_node_id=source_head_id,
+            component_kind="message",
+            reference=SemanticRevisionRef(str(revision_id)),
+        )
+        repository.append_event(
+            cursor,
+            segment_id=source_segment_id,
+            sequence=2,
+            event_type="surface_append",
+            surface_node_id=source_suffix.node_id,
+        )
+
+        visible = repository.read_lineage_surface_nodes(
+            cursor,
+            segment_id=child_owner.root_segment_id,
+            start_sequence=0,
+            end_sequence=1,
+        )
+
+    assert [node.node_id for node in visible] == [source_head_id]
+
+
 def test_fork_lineage_is_stable_across_divergence_and_nested_forks(
     db: CharactersRAGDB,
 ) -> None:

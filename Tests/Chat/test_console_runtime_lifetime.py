@@ -22,8 +22,11 @@ split was wired -- see the lifetime report.
 from __future__ import annotations
 
 import asyncio
+import subprocess
+import sys
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -38,6 +41,42 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
 )
 from tldw_chatbook.Chat.console_prompt_queue import QueueMutationStatus
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+
+@pytest.mark.unit
+def test_trace_rollout_modules_stay_off_the_ui_ready_import_path() -> None:
+    """Metrics and write planning load only when a trace actually uses them."""
+
+    probe = """
+import asyncio
+import sys
+from types import SimpleNamespace
+
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+class Database:
+    def transaction(self):
+        raise AssertionError("the lazy factory must not touch storage")
+
+runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=Database()))
+runtime._chat_store = SimpleNamespace(
+    persistence=SimpleNamespace(console_trace_repository=object())
+)
+gateway = runtime.ensure_provider_gateway()
+assert "tldw_chatbook.Chat.console_trace_metrics" not in sys.modules
+assert "tldw_chatbook.Chat.console_trace_runtime" not in sys.modules
+asyncio.run(gateway.aclose())
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 class ConsoleChatStore(_ConsoleChatStore):
@@ -450,6 +489,38 @@ async def test_dispose_orders_change_review_before_db_and_gateway_close():
         "publisher-db",
         "runtime-db",
         "gateway",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_dispose_publishes_content_free_trace_compatibility_totals():
+    snapshots: list[dict[str, int]] = []
+
+    class _Metrics:
+        def snapshot(self):
+            snapshot = {
+                "normalized_write": 4,
+                "normalized_read": 3,
+                "legacy_read": 2,
+                "fallback_read": 1,
+                "incomplete": 0,
+            }
+            snapshots.append(snapshot)
+            return snapshot
+
+    runtime = ConsoleRuntime(app=None)
+    runtime.trace_compatibility_metrics = _Metrics()
+
+    await runtime.dispose()
+
+    assert snapshots == [
+        {
+            "normalized_write": 4,
+            "normalized_read": 3,
+            "legacy_read": 2,
+            "fallback_read": 1,
+            "incomplete": 0,
+        }
     ]
 
 

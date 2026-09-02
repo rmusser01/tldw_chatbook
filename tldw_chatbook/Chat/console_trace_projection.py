@@ -1,10 +1,4 @@
-"""Read-only normalized-first projection for Console Inspector calls.
-
-The normalized reader is deliberately injected and disabled by default.  This
-foundation therefore changes no writer behavior and keeps the shipping path on
-the existing ``message_exchanges`` rows until a later rollout enables verified
-normalized reconstruction.
-"""
+"""Normalized-first Console Inspector projection with independent gates."""
 
 from __future__ import annotations
 
@@ -12,7 +6,7 @@ import json
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, TypeVar
 
 from loguru import logger
 
@@ -21,10 +15,23 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     ExchangeCapture,
     capture_from_storage,
 )
+
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
 else:
     TraceViewerProfile = Any
+
+
+class TraceCompatibilityRecorder(Protocol):
+    """Content-free metric sink used by normalized/legacy read selection."""
+
+    def record(self, path: str, count: int = 1) -> None:
+        """Increment one compatibility path.
+
+        Args:
+            path: Fixed compatibility-path identifier.
+            count: Number of observations to add.
+        """
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +73,7 @@ class LegacyExchangeCall:
 ProjectedTraceCall: TypeAlias = NormalizedTraceCall | LegacyExchangeCall
 NormalizedCallReader: TypeAlias = Callable[[str], Sequence[NormalizedTraceCall]]
 LegacyExchangeReader: TypeAlias = Callable[[str], Sequence[Mapping[str, object]]]
+RolloutGate: TypeAlias = bool | Callable[[], bool]
 _TraceCallT = TypeVar("_TraceCallT", NormalizedTraceCall, LegacyExchangeCall)
 _VALID_CAPTURE_STATUSES = frozenset({"complete", "stopped", "error"})
 _USAGE_COUNT_FIELDS = frozenset(
@@ -339,23 +347,46 @@ class ConsoleTraceProjection:
         *,
         legacy_reader: LegacyExchangeReader,
         normalized_reader: NormalizedCallReader | None = None,
-        normalized_reads_enabled: bool = False,
+        normalized_reads_enabled: RolloutGate = False,
+        normalized_writes_enabled: RolloutGate = False,
+        compatibility_metrics: TraceCompatibilityRecorder | None = None,
     ) -> None:
         self._legacy_reader = legacy_reader
         self._normalized_reader = normalized_reader
-        self._normalized_reads_enabled = bool(normalized_reads_enabled)
+        self._normalized_reads_enabled = normalized_reads_enabled
+        self._normalized_writes_enabled = normalized_writes_enabled
+        self._compatibility_metrics = compatibility_metrics
+
+    def _record_metric(self, path: str) -> None:
+        metrics = self._compatibility_metrics
+        if metrics is not None:
+            metrics.record(path)
+
+    @staticmethod
+    def _gate_enabled(gate: RolloutGate) -> bool:
+        return bool(gate() if callable(gate) else gate)
 
     @property
-    def normalized_writes_enabled(self) -> Literal[False]:
-        """Return the hard-off writer state for this rollout foundation."""
+    def normalized_writes_enabled(self) -> bool:
+        """Whether new calls are admitted to the normalized ledger.
 
-        return False
+        Returns:
+            True when normalized writes are enabled.
+        """
+
+        return self._gate_enabled(self._normalized_writes_enabled)
 
     @property
     def normalized_reads_enabled(self) -> bool:
-        """Whether the injected normalized reader participates in reads."""
+        """Whether the injected normalized reader participates in reads.
 
-        return self._normalized_reads_enabled and self._normalized_reader is not None
+        Returns:
+            True when normalized reads are enabled and a reader is available.
+        """
+
+        return self._gate_enabled(
+            self._normalized_reads_enabled
+        ) and self._normalized_reader is not None
 
     def read_calls(self, message_id: str) -> tuple[ProjectedTraceCall, ...]:
         """Return normalized-first calls for one persisted assistant message."""
@@ -368,14 +399,18 @@ class ConsoleTraceProjection:
             legacy = self._decode_legacy_row(row)
             if legacy is not None:
                 _append_unique_claim(legacy_by_key, legacy)
+            else:
+                self._record_metric("incomplete")
 
         normalized_by_key: dict[tuple[str, int], list[NormalizedTraceCall]] = {}
-        if self.normalized_reads_enabled:
+        normalized_reads_enabled = self.normalized_reads_enabled
+        if normalized_reads_enabled:
             assert self._normalized_reader is not None
             for call in self._normalized_reader(message_id):
                 error = _normalized_validation_error(call)
                 if error is not None:
                     _warn_rejected(source="normalized", reason=error)
+                    self._record_metric("incomplete")
                     continue
                 assert isinstance(call, NormalizedTraceCall)
                 _append_unique_claim(normalized_by_key, call)
@@ -386,18 +421,30 @@ class ConsoleTraceProjection:
             legacy_claims = legacy_by_key.get(key, [])
             if len(normalized_claims) == 1 and normalized_claims[0].verified:
                 selected.append(normalized_claims[0])
+                self._record_metric("normalized_read")
                 continue
+            if len(normalized_claims) == 1:
+                self._record_metric("incomplete")
             if len(normalized_claims) > 1:
                 _warn_ambiguous(source="normalized")
                 if len(legacy_claims) == 1:
                     selected.append(legacy_claims[0])
+                    self._record_metric("legacy_read")
+                    self._record_metric("fallback_read")
                 elif len(legacy_claims) > 1:
                     _warn_ambiguous(source="legacy")
+                    self._record_metric("incomplete")
+                else:
+                    self._record_metric("incomplete")
                 continue
             if len(legacy_claims) == 1:
                 selected.append(legacy_claims[0])
+                self._record_metric("legacy_read")
+                if normalized_reads_enabled:
+                    self._record_metric("fallback_read")
             elif len(legacy_claims) > 1:
                 _warn_ambiguous(source="legacy")
+                self._record_metric("incomplete")
 
         return tuple(sorted(selected, key=_semantic_order))
 

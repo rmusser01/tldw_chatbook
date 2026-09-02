@@ -65,17 +65,9 @@ from .console_staged_context import (
     ConsoleStagedSourceOpenRequested,
 )
 from .console_staged_evidence_strip import ConsoleStagedEvidenceStrip
-from .console_terminal_session_modal import (
-    ConsoleTerminalSessionModal,
-    TerminalSessionFormResult,
-    build_default_terminal_name,
-)
-from .console_terminal_workspace import (
+from .console_terminal_messages import (
     ConsoleTerminalActionRequested,
     ConsoleTerminalInputRequested,
-    ConsoleTerminalWorkspace,
-    TerminalViewport,
-    terminal_key_bytes,
 )
 from .console_transcript import ConsoleTranscript
 from .console_workbench_state import build_console_workbench_state
@@ -96,6 +88,29 @@ from .console_workspace_switcher_modal import (
     ConsoleWorkspaceRenameModal,
     ConsoleWorkspaceSwitcherModal,
 )
+
+
+def __getattr__(name: str):
+    """Load Terminal-only widgets when their public export is first used."""
+    if name in {
+        "ConsoleTerminalSessionModal",
+        "TerminalSessionFormResult",
+        "build_default_terminal_name",
+    }:
+        from . import console_terminal_session_modal as terminal_modal
+
+        return getattr(terminal_modal, name)
+    if name in {
+        "ConsoleTerminalWorkspace",
+        "TerminalViewport",
+        "terminal_key_bytes",
+    }:
+        from . import console_terminal_workspace as terminal_workspace
+
+        return getattr(terminal_workspace, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 __all__ = [
     "build_console_workbench_state",
     "ConsoleActivityActivated",

@@ -191,6 +191,47 @@ def _capture_on_prepared_request(
     )
 
 
+@pytest.mark.asyncio
+async def test_compatibility_metric_failure_does_not_orphan_reserved_boundary() -> None:
+    class Boundary:
+        def __init__(self) -> None:
+            self.reserved = False
+
+        def reserve(self) -> None:
+            self.reserved = True
+
+    class Metrics:
+        def record(self, _path: str) -> None:
+            raise RuntimeError("metrics unavailable")
+
+    boundary = Boundary()
+    gateway = ConsoleProviderGateway(
+        trace_call_boundary_factory=lambda _request, _resolution, _route: boundary,
+        trace_compatibility_metrics=Metrics(),
+    )
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        streaming=False,
+    )
+    try:
+        prepared = _capture_on_prepared_request(gateway, resolution)
+
+        result = gateway._reserve_trace_call(
+            prepared,
+            resolution,
+            ConsoleRequestRoute.FRESH,
+        )
+
+        assert result is boundary
+        assert boundary.reserved is True
+    finally:
+        await gateway.aclose()
+
+
 def _prepared_request_with_continuation(
     gateway: ConsoleProviderGateway,
     resolution: ConsoleProviderResolution,
@@ -4788,6 +4829,7 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
         "run_tag",
         "exchange_capture_enabled",
         "capture_detail",
+        "pii_redaction_enabled",
         "completed_exchanges",
         "_active_exchanges",
         "_exchange_lock",
@@ -4805,6 +4847,7 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
         "run_tag",
         "exchange_capture_enabled",
         "capture_detail",
+        "pii_redaction_enabled",
         "completed_exchanges",
         "_active_exchanges",
         "_exchange_lock",

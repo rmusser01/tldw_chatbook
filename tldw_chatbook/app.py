@@ -220,7 +220,6 @@ from tldw_chatbook.Chat.console_settings_defaults import ConsoleDefaultDurabilit
 from tldw_chatbook.Chat.server_chat_conversation_service import (
     ServerChatConversationService,
 )
-from tldw_chatbook.Terminal.session_manager import TerminalSessionManager  # noqa: E402
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import (
     DatabaseError as MediaDatabaseError,
@@ -779,6 +778,7 @@ if TYPE_CHECKING:
         ExternalReferenceAvailability,
     )
     from tldw_chatbook.Terminal.backend import TerminalBackend
+    from tldw_chatbook.Terminal.session_manager import TerminalSessionManager
     from tldw_chatbook.Model_Artifacts.service import ArtifactRef
     from tldw_chatbook.LLM_Provider_Catalog.model_discovery_disk_cache import (
         ModelCatalogDiskStore,
@@ -797,9 +797,10 @@ DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
 #: caller enters Collections before this timer fires.
 DEFERRED_COLLECTIONS_CAPTURE_WIRING_DELAY_SECONDS = 0.1
 #: Notes organization composition is not needed for the first interactive
-#: frame. Keep its repository, validator, and agent-lesson seed imports beyond
-#: the ADR-097 UI-ready module census.
-DEFERRED_NOTES_ORGANIZATION_WIRING_DELAY_SECONDS = 0.1
+#: frame. Give it the same explicit post-startup window as other idle
+#: maintenance: a 0.1 s timer could expire while synchronous post-ready setup
+#: was still running and race the ADR-097 UI-ready module census.
+DEFERRED_NOTES_ORGANIZATION_WIRING_DELAY_SECONDS = 5.0
 #: Workspace agent provisioning (task-8) deferral: after `_ui_ready` so
 #: `Workspaces.agent_provisioning` stays out of the UI-ready census
 #: (ADR-097); same 0.1-0.2 s non-essential-startup window as audio.
@@ -6886,6 +6887,125 @@ def _build_notes_scope_service(
     )
 
 
+def _active_notes_sync_server_profile_id(app: Any) -> str:
+    """Return the authoritative server profile eligible for Notes Sync.
+
+    Args:
+        app: Application composition owner.
+
+    Returns:
+        Active server profile identity, or an empty string for local runtime.
+    """
+
+    runtime_state = getattr(getattr(app, "runtime_policy", None), "state", None)
+    server_is_authoritative = runtime_state is None or (
+        getattr(runtime_state, "active_source", None) == "server"
+    )
+    if not server_is_authoritative:
+        return ""
+    return str(
+        getattr(app, "active_server_id", None)
+        or getattr(runtime_state, "active_server_id", None)
+        or ""
+    ).strip()
+
+
+class _DeferredNotesSyncFacade:
+    """Load deferred Notes organization wiring on first real collaborator use.
+
+    Args:
+        app: Application composition owner.
+        target_path: Attribute path to the real collaborator after wiring.
+        lock: Shared re-entrant lock for the facade group.
+    """
+
+    def __init__(
+        self,
+        app: Any,
+        target_path: tuple[str, ...],
+        lock: Any,
+    ) -> None:
+        self._app = app
+        self._target_path = target_path
+        self._lock = lock
+
+    def _target(self) -> Any:
+        with self._lock:
+            _wire_notes_sync_services(self._app)
+            target = self._app
+            for attribute in self._target_path:
+                target = getattr(target, attribute, None)
+            if target is None or target is self:
+                raise RuntimeError("notes_organization_sync_unavailable")
+            return target
+
+    def __getattr__(self, attribute: str) -> Any:
+        return getattr(self._target(), attribute)
+
+
+def _install_deferred_notes_sync_facades(app: Any) -> bool:
+    """Protect the post-ready delay with first-use Notes Sync wiring.
+
+    Args:
+        app: Application composition owner whose collaborators are deferred.
+
+    Returns:
+        True when deferred facades are installed or already active.
+    """
+
+    if not _active_notes_sync_server_profile_id(app):
+        return False
+    notes_scope_service = getattr(app, "notes_scope_service", None)
+    if (
+        getattr(app, "chachanotes_db", None) is None
+        or getattr(app, "sync_state_repository", None) is None
+        or notes_scope_service is None
+    ):
+        return False
+    current = getattr(app, "notes_organization_sync_service", None)
+    if current is not None:
+        return isinstance(current, _DeferredNotesSyncFacade)
+
+    lock = threading.RLock()
+    repository = _DeferredNotesSyncFacade(
+        app,
+        ("notes_organization_repository",),
+        lock,
+    )
+    service = _DeferredNotesSyncFacade(
+        app,
+        ("notes_organization_sync_service",),
+        lock,
+    )
+    producer = _DeferredNotesSyncFacade(
+        app,
+        ("notes_scope_service", "sync_v2_notes_producer"),
+        lock,
+    )
+    app.notes_organization_repository = repository
+    app.notes_organization_sync_service = service
+    notes_scope_service.sync_v2_notes_producer = producer
+    notes_scope_service.organization_sync_service = service
+    local_notes = getattr(notes_scope_service, "local_notes_service", None)
+    if local_notes is not None:
+        local_notes.organization_sync_service = service
+    local_chat = getattr(app, "local_chat_conversation_service", None)
+    if local_chat is not None:
+        local_chat.organization_sync_service = service
+    local_first = getattr(app, "local_first_sync_service", None)
+    if local_first is not None:
+        local_first.notes_organization_repository = repository
+        local_first.notes_organization_sync_service = service
+    restore = getattr(app, "sync_restore_service", None)
+    if restore is not None:
+        restore.notes_organization_repository = repository
+    manual = getattr(app, "manual_sync_control_service", None)
+    if manual is not None:
+        manual.notes_organization_sync_service = service
+        manual.notes_repository = repository
+    return True
+
+
 def _wire_notes_sync_services(app: Any) -> None:
     """Finish Notes Sync composition after both SQLite owners exist."""
 
@@ -6903,19 +7023,7 @@ def _wire_notes_sync_services(app: Any) -> None:
     notes_db = getattr(app, "chachanotes_db", None)
     state_repository = getattr(app, "sync_state_repository", None)
     notes_scope_service = getattr(app, "notes_scope_service", None)
-    runtime_state = getattr(getattr(app, "runtime_policy", None), "state", None)
-    server_is_authoritative = runtime_state is None or (
-        getattr(runtime_state, "active_source", None) == "server"
-    )
-    active_server_profile_id = (
-        str(
-            getattr(app, "active_server_id", None)
-            or getattr(runtime_state, "active_server_id", None)
-            or ""
-        ).strip()
-        if server_is_authoritative
-        else ""
-    )
+    active_server_profile_id = _active_notes_sync_server_profile_id(app)
     if not active_server_profile_id:
         app.notes_organization_repository = None
         app.notes_organization_sync_service = None
@@ -6949,6 +7057,8 @@ def _wire_notes_sync_services(app: Any) -> None:
     if notes_db is None or state_repository is None or notes_scope_service is None:
         return
     repository = getattr(app, "notes_organization_repository", None)
+    if isinstance(repository, _DeferredNotesSyncFacade):
+        repository = None
     if (
         repository is None
         or getattr(repository, "db", None) is not notes_db
@@ -7455,10 +7565,10 @@ class TldwCli(
         self.app_config = load_settings()
         self.raw_cli_runtime = RawCliRuntime(lambda: _read_app_raw_cli_permitted(self))
         self._raw_cli_runtime_shutdown_task: asyncio.Task[Any] | None = None
-        self.terminal_session_manager = TerminalSessionManager(
-            lambda: _read_app_raw_cli_permitted(self),
-            _build_terminal_backend,
-        )
+        # App-owned, but first-use: importing Terminal here spent three
+        # first-paint modules before a user opened or armed a session.
+        self._terminal_session_manager: "TerminalSessionManager | None" = None
+        self._terminal_session_manager_lock = threading.Lock()
         self._terminal_session_manager_shutdown_task: asyncio.Task[None] | None = None
         # Default-save failures belong to the application lifetime rather
         # than whichever Console screen happens to be mounted.  New-chat
@@ -7937,6 +8047,41 @@ class TldwCli(
 
         # Final memory check
         log_resource_usage()
+
+    @property
+    def terminal_session_manager(self) -> "TerminalSessionManager":
+        """Return the single app-owned Terminal manager, creating it on use.
+
+        Returns:
+            The app-owned terminal session manager.
+        """
+
+        manager = self._terminal_session_manager
+        if manager is not None:
+            return manager
+        with self._terminal_session_manager_lock:
+            manager = self._terminal_session_manager
+            if manager is None:
+                from tldw_chatbook.Terminal.session_manager import (
+                    TerminalSessionManager,
+                )
+
+                manager = TerminalSessionManager(
+                    lambda: _read_app_raw_cli_permitted(self),
+                    _build_terminal_backend,
+                )
+                self._terminal_session_manager = manager
+        return manager
+
+    @terminal_session_manager.setter
+    def terminal_session_manager(self, manager: Any) -> None:
+        """Replace the app-owned manager for lifecycle tests and adapters.
+
+        Args:
+            manager: Replacement terminal session manager.
+        """
+
+        self._terminal_session_manager = manager
 
     def _timed_init_task(self, task_name: str, func: Callable[..., Any], *args: Any):
         """Run one phase-3 initializer and record how long IT took.
@@ -15223,10 +15368,6 @@ class TldwCli(
             DEFERRED_COLLECTIONS_CAPTURE_WIRING_DELAY_SECONDS,
             self._deferred_wire_collections_capture_services,
         )
-        self.set_timer(
-            DEFERRED_NOTES_ORGANIZATION_WIRING_DELAY_SECONDS,
-            self._deferred_wire_notes_sync_services,
-        )
         # Workspace agent provisioning (task-8): best-effort hook attach +
         # startup backfill, deferred past `_ui_ready` so the provisioning
         # module stays out of the UI-ready module census (ADR-097).
@@ -15264,6 +15405,15 @@ class TldwCli(
                 name="deferred_legacy_citation_migration",
             )
         self._schedule_launch_wake()
+        # Schedule Notes/Sync last.  Earlier placement let the nominal 0.1 s
+        # delay expire while the remaining synchronous setup below it was
+        # still running, so its import graph could win the race against the
+        # first-interactive-frame census on slower starts.
+        _install_deferred_notes_sync_facades(self)
+        self.set_timer(
+            DEFERRED_NOTES_ORGANIZATION_WIRING_DELAY_SECONDS,
+            self._deferred_wire_notes_sync_services,
+        )
 
     # ------------------------------------------------------------------
     # TASK-22215: the staggered boot-worker fleet
@@ -16485,7 +16635,8 @@ class TldwCli(
 
     async def _run_terminal_session_manager_shutdown(self) -> None:
         """Drain Terminal once, then close remaining parent-owned handles."""
-        manager = getattr(self, "terminal_session_manager", None)
+        # Do not instantiate an unused first-use owner merely to shut it down.
+        manager = getattr(self, "_terminal_session_manager", None)
         if manager is None:
             return
         try:

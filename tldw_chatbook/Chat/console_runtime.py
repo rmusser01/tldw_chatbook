@@ -123,6 +123,7 @@ import asyncio
 from datetime import datetime, timezone
 import inspect
 from dataclasses import dataclass
+from threading import Lock
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 from loguru import logger
@@ -135,7 +136,7 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.Chat.thinking_blocks import normalize_thinking_history_policy
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
-from tldw_chatbook.config import coerce_bool_setting
+from tldw_chatbook.config import coerce_bool_setting, runtime_capture_policy
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
@@ -156,6 +157,72 @@ _VIEW_RUNTIME_FALLBACK_ATTR = "_console_runtime_fallback"
 # delay: legacy normalization is idle maintenance, never readiness work.
 LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS = 5.0
 LEGACY_TRACE_MAINTENANCE_RETRY_DELAY_SECONDS = 1.0
+
+
+class _LazyTraceCompatibilityMetrics:
+    """Load the rollout counter implementation on its first actual use."""
+
+    def __init__(self) -> None:
+        self._delegate: Any | None = None
+        self._lock = Lock()
+
+    def _get_delegate(self) -> Any:
+        delegate = self._delegate
+        if delegate is not None:
+            return delegate
+        with self._lock:
+            delegate = self._delegate
+            if delegate is None:
+                from tldw_chatbook.Chat.console_trace_metrics import (
+                    TraceCompatibilityMetrics,
+                )
+
+                delegate = TraceCompatibilityMetrics()
+                self._delegate = delegate
+        return delegate
+
+    def record(self, path: str, count: int = 1) -> None:
+        """Record a content-free compatibility path."""
+
+        self._get_delegate().record(path, count)
+
+    def snapshot(self) -> Mapping[str, int]:
+        """Return the current immutable compatibility counts."""
+
+        return self._get_delegate().snapshot()
+
+
+class _LazyTraceBoundaryFactory:
+    """Load normalized write planning only when a provider call reserves."""
+
+    def __init__(self, database: Any, repository: Any | None) -> None:
+        self._database = database
+        self._repository = repository
+        self._delegate: Any | None = None
+        self._lock = Lock()
+
+    def _get_delegate(self) -> Any:
+        delegate = self._delegate
+        if delegate is not None:
+            return delegate
+        with self._lock:
+            delegate = self._delegate
+            if delegate is None:
+                from tldw_chatbook.Chat.console_trace_runtime import (
+                    ConsoleTraceBoundaryFactory,
+                )
+
+                delegate = ConsoleTraceBoundaryFactory(
+                    self._database,
+                    repository=self._repository,
+                )
+                self._delegate = delegate
+        return delegate
+
+    def __call__(self, request: Any, resolution: Any, route: Any) -> object:
+        """Create one provider-call boundary through the shared delegate."""
+
+        return self._get_delegate()(request, resolution, route)
 
 
 def recover_console_trace_calls(
@@ -584,6 +651,7 @@ class ConsoleRuntime:
         self._change_review_coordinator: Any | None = None
         self._chat_controller: Any | None = None
         self._legacy_trace_maintenance_task: asyncio.Task[None] | None = None
+        self.trace_compatibility_metrics = _LazyTraceCompatibilityMetrics()
         self._scratch_spaces = ConsoleScratchSpaceManager()
         self._raw_cli_refusal_stash_bank: dict[str, list[Any]] = {}
         self._persona_buddy_sink = PersonaBuddyConsoleAdapter(
@@ -652,6 +720,15 @@ class ConsoleRuntime:
     def accepts_raw_cli_refusal_callbacks(self) -> bool:
         """Whether raw CLI completion callbacks may still mutate UI state."""
         return not self._disposed
+
+    def trace_compatibility_snapshot(self) -> Mapping[str, int]:
+        """Return the runtime's content-free semantic-trace rollout totals.
+
+        Returns:
+            A fixed-key snapshot containing only compatibility event counts.
+        """
+
+        return self.trace_compatibility_metrics.snapshot()
 
     @property
     def persona_buddy_sink(self) -> PersonaBuddyConsoleAdapter:
@@ -749,6 +826,7 @@ class ConsoleRuntime:
                 getattr(db, "transaction", None)
             )
             legacy_normalizer: Any | None = None
+            native_reader: Any | None = None
 
             def get_legacy_normalizer() -> Any:
                 """Build the legacy adapter only after first paint or first use."""
@@ -762,8 +840,28 @@ class ConsoleRuntime:
                     legacy_normalizer = LegacyTraceNormalizer(db)
                 return legacy_normalizer
 
-            def read_normalized_legacy_calls(message_id: str) -> Any:
-                return get_legacy_normalizer().read_calls(message_id)
+            def get_native_reader() -> Any:
+                """Build the native ledger reader only on first trace inspection."""
+
+                nonlocal native_reader
+                if native_reader is None:
+                    from tldw_chatbook.Chat.console_trace_native_reader import (
+                        ConsoleTraceNativeReader,
+                    )
+
+                    native_reader = ConsoleTraceNativeReader(
+                        db,
+                        repository=persistence.console_trace_repository,
+                    )
+                return native_reader
+
+            def read_normalized_calls(message_id: str) -> Any:
+                """Read native calls first, followed by migrated legacy snapshots."""
+
+                return (
+                    *get_native_reader().read_calls(message_id),
+                    *get_legacy_normalizer().read_calls(message_id),
+                )
         else:
             legacy_normalization_enabled = False
         self._chat_store = ConsoleChatStore(
@@ -773,11 +871,17 @@ class ConsoleRuntime:
                 ConsoleTraceProjection(
                     legacy_reader=db.get_message_exchanges,
                     normalized_reader=(
-                        read_normalized_legacy_calls
+                        read_normalized_calls
                         if legacy_normalization_enabled
                         else None
                     ),
-                    normalized_reads_enabled=legacy_normalization_enabled,
+                    normalized_reads_enabled=lambda: (
+                        runtime_capture_policy().normalized_reads_enabled
+                    ),
+                    normalized_writes_enabled=lambda: (
+                        runtime_capture_policy().normalized_writes_enabled
+                    ),
+                    compatibility_metrics=self.trace_compatibility_metrics,
                 )
                 if db is not None
                 else None
@@ -894,9 +998,30 @@ class ConsoleRuntime:
                 ConsoleProviderGateway,
             )
 
+            if trace_call_boundary_factory is None:
+                database = getattr(self._app, "chachanotes_db", None)
+                if database is not None and callable(
+                    getattr(database, "transaction", None)
+                ):
+                    chat_store = self.ensure_chat_store()
+                    persistence = getattr(chat_store, "persistence", None)
+                    repository = getattr(
+                        persistence,
+                        "console_trace_repository",
+                        None,
+                    )
+                    trace_call_boundary_factory = _LazyTraceBoundaryFactory(
+                        database,
+                        repository=repository,
+                    )
+
             self._provider_gateway = ConsoleProviderGateway(
                 config_provider=config_provider,
                 trace_call_boundary_factory=trace_call_boundary_factory,
+                normalized_writes_enabled=lambda: (
+                    runtime_capture_policy().normalized_writes_enabled
+                ),
+                trace_compatibility_metrics=self.trace_compatibility_metrics,
             )
         return self._provider_gateway
 
@@ -1361,6 +1486,22 @@ class ConsoleRuntime:
                 logger.opt(exception=True).warning(
                     "Console runtime: provider gateway close failed at dispose."
                 )
+        try:
+            totals = self.trace_compatibility_snapshot()
+            logger.info(
+                "Console trace compatibility totals: normalized_write={} "
+                "normalized_read={} legacy_read={} fallback_read={} incomplete={}",
+                totals.get("normalized_write", 0),
+                totals.get("normalized_read", 0),
+                totals.get("legacy_read", 0),
+                totals.get("fallback_read", 0),
+                totals.get("incomplete", 0),
+            )
+        except Exception as exc:  # noqa: BLE001 - shutdown metrics are best effort
+            logger.warning(
+                "Console trace compatibility totals unavailable: error_type={}",
+                type(exc).__name__,
+            )
 
 
 def _attach(app: Any, runtime: ConsoleRuntime | None) -> None:

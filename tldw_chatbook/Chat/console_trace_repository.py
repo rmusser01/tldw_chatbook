@@ -6,13 +6,13 @@ completes a transaction, so trace writes compose with the caller's Chat mutation
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
 import hashlib
 import json
 import math
 import re
 import sqlite3
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal, TypeAlias, cast
 
@@ -29,13 +29,14 @@ from tldw_chatbook.Chat.console_trace_models import (
 )
 from tldw_chatbook.Chat.console_trace_redaction import (
     CREDENTIAL_SANITIZER_UNAVAILABLE,
-    PIIRedactionSpan,
     CredentialSanitizer,
+    PIIRedactionSpan,
     merge_pii_spans,
 )
 
 _TOKEN = re.compile(r"[a-z][a-z0-9]*(?:[_-][a-z0-9]+)*\Z", re.ASCII)
 _TOKEN_MAX = 64
+MESSAGE_CALL_LINEAGE_BATCH_SIZE = 128
 TraceEventType: TypeAlias = Literal[
     "turn_boundary",
     "call_boundary",
@@ -746,6 +747,99 @@ class ConsoleTraceRepository:
                 calls.append(call)
         return tuple(calls)
 
+    def iter_message_call_lineage(
+        self,
+        cursor: sqlite3.Cursor,
+        conversation_id: str,
+        message_id: str,
+        *,
+        turn_id: str | None = None,
+    ) -> Iterator[TraceCallRecord]:
+        """Yield only calls associated with one message in bounded SQL pages.
+
+        Args:
+            cursor: Caller-owned transaction cursor.
+            conversation_id: Durable conversation whose attached lineage is read.
+            message_id: Selected request or response message identity.
+            turn_id: Durable user-turn identity associated with the selected
+                message, when it differs from ``message_id``.
+
+        Yields:
+            Matching trace calls in root-to-leaf event order.
+
+        Raises:
+            RuntimeError: If a referenced lineage call cannot be reconstructed.
+        """
+
+        associated_turn_id = message_id if turn_id is None else turn_id
+        _nonempty(associated_turn_id, "turn_id")
+        owner_row = cursor.execute(
+            """SELECT owner_id, conversation_id, root_segment_id, attached,
+                      detached_at FROM console_trace_owners
+                 WHERE conversation_id = ? AND attached = 1""",
+            (conversation_id,),
+        ).fetchone()
+        if owner_row is None:
+            return
+        owner = self._owner(owner_row)
+        for segment_id, through_sequence in self._segment_lineage(
+            cursor,
+            owner.root_segment_id,
+        ):
+            last_sequence = -1
+            last_call_id = ""
+            while True:
+                params: list[object] = [
+                    segment_id,
+                    message_id,
+                    associated_turn_id,
+                    message_id,
+                    last_sequence,
+                    last_sequence,
+                    last_call_id,
+                ]
+                boundary_clause = ""
+                if through_sequence is not None:
+                    boundary_clause = " AND first_sequence <= ?"
+                    params.append(through_sequence)
+                params.append(MESSAGE_CALL_LINEAGE_BATCH_SIZE)
+                rows = cursor.execute(
+                    """WITH matching AS (
+                           SELECT call.call_id,
+                                  MIN(event.sequence) AS first_sequence
+                             FROM console_trace_calls AS call
+                             JOIN console_trace_events AS event
+                               ON event.call_id = call.call_id
+                        LEFT JOIN console_trace_response_links AS response
+                               ON response.call_id = call.call_id
+                        LEFT JOIN console_trace_semantic_revisions AS revision
+                               ON revision.revision_id = response.semantic_revision_id
+                            WHERE call.segment_id = ?
+                              AND (call.turn_id = ?
+                                   OR call.turn_id = ?
+                                   OR revision.source_message_id = ?)
+                         GROUP BY call.call_id
+                       )
+                       SELECT call_id, first_sequence
+                         FROM matching
+                        WHERE (first_sequence > ?
+                               OR (first_sequence = ? AND call_id > ?))"""
+                    + boundary_clause
+                    + " ORDER BY first_sequence, call_id LIMIT ?",
+                    tuple(params),
+                ).fetchall()
+                if not rows:
+                    break
+                for row in rows:
+                    call = self.get_call(cursor, row[0])
+                    if call is None:
+                        raise RuntimeError("trace_lineage_call_unavailable")
+                    yield call
+                if len(rows) < MESSAGE_CALL_LINEAGE_BATCH_SIZE:
+                    break
+                last_call_id = str(rows[-1][0])
+                last_sequence = int(rows[-1][1])
+
     def _segment_lineage(
         self,
         cursor: sqlite3.Cursor,
@@ -816,6 +910,30 @@ class ConsoleTraceRepository:
             """SELECT owner_id, conversation_id, root_segment_id, attached, detached_at
                  FROM console_trace_owners WHERE owner_id = ?""",
             (owner_id,),
+        ).fetchone()
+        return None if row is None else self._owner(row)
+
+    def get_attached_owner_by_conversation(
+        self,
+        cursor: sqlite3.Cursor,
+        conversation_id: str,
+    ) -> TraceOwnerRecord | None:
+        """Return the conversation's currently attached trace owner, if any.
+
+        Args:
+            cursor: Cursor for the caller-owned transaction.
+            conversation_id: Conversation whose attached owner is requested.
+
+        Returns:
+            The attached owner record, or None when the conversation has none.
+        """
+
+        _nonempty(conversation_id, "conversation_id")
+        row = cursor.execute(
+            """SELECT owner_id, conversation_id, root_segment_id, attached,
+                      detached_at FROM console_trace_owners
+                 WHERE conversation_id = ? AND attached = 1""",
+            (conversation_id,),
         ).fetchone()
         return None if row is None else self._owner(row)
 
@@ -1372,6 +1490,117 @@ class ConsoleTraceRepository:
             (node_id,),
         ).fetchone()
         return None if row is None else SurfaceNodeRecord(*row)
+
+    def read_lineage_surface_nodes(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        segment_id: str,
+        start_sequence: int,
+        end_sequence: int,
+    ) -> tuple[SurfaceNodeRecord, ...]:
+        """Read physical nodes in one bounded fork-lineage range.
+
+        Args:
+            cursor: Caller-owned SQLite cursor.
+            segment_id: Leaf segment whose immutable ancestry is counted.
+            start_sequence: Inclusive range start.
+            end_sequence: Inclusive range end.
+
+        Returns:
+            Lineage-visible physical nodes ordered by sequence.
+
+        Raises:
+            ValueError: If the segment or range is malformed.
+        """
+
+        _nonempty(segment_id, "segment_id")
+        if (
+            type(start_sequence) is not int
+            or type(end_sequence) is not int
+            or start_sequence < 0
+            or end_sequence < start_sequence
+        ):
+            raise ValueError("sequence_range")
+        nodes: list[SurfaceNodeRecord] = []
+        for lineage_segment_id, through_sequence in self._surface_segment_lineage(
+            cursor, segment_id
+        ):
+            upper_bound = (
+                end_sequence
+                if through_sequence is None
+                else min(end_sequence, through_sequence)
+            )
+            if upper_bound < start_sequence:
+                continue
+            rows = cursor.execute(
+                """SELECT node_id, segment_id, sequence, predecessor_node_id,
+                          component_kind, reference_kind, semantic_revision_id,
+                          artifact_id, omission_reason_code
+                     FROM console_trace_surface_nodes
+                    WHERE segment_id = ? AND sequence BETWEEN ? AND ?
+                    ORDER BY sequence""",
+                (lineage_segment_id, start_sequence, upper_bound),
+            ).fetchall()
+            nodes.extend(SurfaceNodeRecord(*row) for row in rows)
+        return tuple(sorted(nodes, key=lambda node: node.sequence))
+
+    def _surface_segment_lineage(
+        self,
+        cursor: sqlite3.Cursor,
+        root_segment_id: str,
+    ) -> list[tuple[str, int | None]]:
+        """Return root-to-leaf segments bounded by inherited surface heads."""
+
+        lineage: list[tuple[str, int | None]] = []
+        segment = self.get_segment(cursor, root_segment_id)
+        upper_bound: int | None = None
+        while segment is not None:
+            lineage.append((segment.segment_id, upper_bound))
+            if segment.parent_segment_id is None:
+                break
+            inherited_head_id = segment.inherited_surface_head_id
+            if inherited_head_id is None:
+                inherited_bound = -1
+            else:
+                inherited_head = self.get_surface_node(cursor, inherited_head_id)
+                if inherited_head is None:
+                    raise RuntimeError("inherited_surface_head_unavailable")
+                inherited_bound = inherited_head.sequence
+            upper_bound = (
+                inherited_bound
+                if upper_bound is None
+                else min(upper_bound, inherited_bound)
+            )
+            segment = self.get_segment(cursor, segment.parent_segment_id)
+        lineage.reverse()
+        return lineage
+
+    def read_next_call_sequence(self, cursor: sqlite3.Cursor, run_id: str) -> int:
+        """Return the first unused durable sequence for one provider-call chain.
+
+        Args:
+            cursor: Cursor for the caller-owned transaction.
+            run_id: Durable provider-call chain identity.
+
+        Returns:
+            Zero for a new chain, otherwise one past its greatest sequence.
+
+        Raises:
+            RuntimeError: If a stored call sequence is invalid.
+        """
+
+        _nonempty(run_id, "run_id")
+        row = cursor.execute(
+            "SELECT MAX(call_sequence) FROM console_trace_calls WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        current = None if row is None else row[0]
+        if current is None:
+            return 0
+        if type(current) is not int or current < 0:
+            raise RuntimeError("call_sequence_unavailable")
+        return current + 1
 
     def get_surface_tail(
         self,

@@ -4393,7 +4393,11 @@ class SettingsScreen(BaseAppScreen):
         return "Save unlock first", True
 
     def _terminal_runtime(self) -> Any | None:
-        """Return the app-owned launch-local Terminal manager, when available."""
+        """Return an already-created Terminal manager without constructing one."""
+        return getattr(self.app_instance, "_terminal_session_manager", None)
+
+    def _ensure_terminal_runtime(self) -> Any | None:
+        """Return the app-owned Terminal manager, constructing it when requested."""
         return getattr(self.app_instance, "terminal_session_manager", None)
 
     def _terminal_is_armed(self) -> bool:
@@ -14160,8 +14164,9 @@ class SettingsScreen(BaseAppScreen):
             yield Static(
                 "Capture, PII masking, and viewing are separate. PII masking is "
                 "irreversible for provider-only trace data but never rewrites the "
-                "saved conversation. Safe and Full view the same trace; credentials "
-                "stay blocked in both.",
+                "saved conversation. New traces reference saved messages instead of "
+                "copying the transcript. Safe and Full view the same trace; credentials "
+                "stay blocked in both, and older trace formats remain readable.",
                 id="settings-console-exchange-capture-help",
                 classes="settings-help-copy",
             )
@@ -23548,7 +23553,7 @@ class SettingsScreen(BaseAppScreen):
                 "Terminal confirmation is already open.", severity="warning"
             )
             return
-        runtime = self._terminal_runtime()
+        runtime = self._ensure_terminal_runtime()
         if runtime is None:
             self.app.notify("Terminal runtime is unavailable.", severity="error")
             return
