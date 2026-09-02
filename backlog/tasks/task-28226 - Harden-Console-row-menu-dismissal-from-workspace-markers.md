@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@Codex'
 created_date: '2026-09-02 05:41'
-updated_date: '2026-09-02 06:25'
+updated_date: '2026-09-02 06:42'
 labels: []
 dependencies: []
 ---
@@ -41,8 +41,8 @@ contract, including priority hands-free key routing.
 4. Run the two row-menu suites, seam-adjacent hands-free tests, Ruff, and diff
    checks; record implementation evidence and complete the acceptance criteria.
 5. Reproduce the live-UAT focus-outline clipping in a two-row tree, add a
-   computed-style regression, and keep the existing cursor cue while removing
-   the overpainting outline.
+   computed-style regression, and replace the overpainting outline with a
+   focus-specific high-contrast cursor cue.
 
 ADR required: no
 ADR path: `backlog/decisions/068-console-text-selection-and-annotations.md`
@@ -70,15 +70,18 @@ boundary.
 - UAT exposed the global four-sided focus outline overpainting both rows of a
   compact workspace tree after Escape restored focus. Added a production-style
   two-row rendering regression and disabled that outline while retaining the
-  tree's existing focus background and cursor cues; regenerated the canonical
-  Console CSS bundle.
-- Verified the two row-menu suites plus Console popup etiquette (42 tests),
-  Ruff on the touched Python files, the CSS generator, and `git diff --check`.
-  The only warning is the repository environment's pre-existing Requests
-  dependency warning. A broader 173-test check produced 171 passes and two
-  failures proven unchanged on `origin/dev`: a stale inspector-handle CSS
-  expectation and an integer-CSS helper that rejects existing `!important`
-  declarations.
+  tree's focus tint; regenerated the canonical Console CSS bundle.
+- Addressed all three Qodo review findings: added direct empty/live/pruning
+  registry-state coverage, named the menu-settlement delay used throughout the
+  suite, and reused File Notes' `$ds-focus-bg`/`$ds-focus-fg` focused-cursor
+  contract so keyboard focus is distinct without consuming compact tree rows.
+- Verified the two row-menu suites plus Console popup etiquette (46 tests), 11
+  focused CSS generation/partition/parsing checks, Ruff on the touched Python
+  files, the CSS generator, and `git diff --check`. The only warning is the
+  repository environment's pre-existing Requests dependency warning. A broader
+  173-test check before review remediation produced 171 passes and two failures
+  proven unchanged on `origin/dev`: a stale inspector-handle CSS expectation
+  and an integer-CSS helper that rejects existing `!important` declarations.
 - ADR required: no. The implementation follows
   `backlog/decisions/068-console-text-selection-and-annotations.md`; no new
   storage, ownership, security, or interface decision was introduced.
