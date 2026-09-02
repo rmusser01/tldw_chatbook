@@ -730,9 +730,9 @@ git commit -m "docs: clarify Chatbook Personal Context workflows"
 
 - Create: `Docs/Development/personal-context-profile.md`
 
-- [ ] **Step 1: Write contract and ownership sections**
+- [x] **Step 1: Write contract and ownership sections**
 
-Cover Shared Core `0.1.0`, separate Sync-v2 envelopes, post-link identity convergence, peer-local at-rest keys/ciphertext, and wrapped server-owned Sync integrity-key bootstrap. Link relatively to:
+Cover Shared Core `0.1.0`, separate Sync-v2 envelopes, reviewed first-link snapshot convergence, the absent ongoing Personal Context sync caller, peer-local at-rest keys/ciphertext, and wrapped server-owned Sync integrity-key bootstrap. Link relatively to:
 
 - `../superpowers/specs/2026-08-28-unified-personal-context-profile-design.md`
 - `../../backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md`
@@ -745,13 +745,13 @@ Include this exact four-bullet block, including both markers and every bullet; m
 ```markdown
 <!-- shared-personal-context-contract:start -->
 - `tldw_profile_core` defines the versioned canonical profile object models, exact canonical bytes, interview/tool contracts, serialization, and validation used by both peers. Sync-v2 transport envelopes are a separate contract.
-- After a successful reviewed link, Chatbook and tldw_server converge on the same canonical manifest, scope, record, proposal, and version identities and bytes for eligible shared objects.
-- Sync V2 defines the `personal_context.manifest`, `personal_context.scope`, `personal_context.record`, `personal_context.proposal`, and content-free `personal_context.purge` domains. The current linked flow publishes eligible Chatbook-originated manifest, scope, record, and proposal changes; purge production and distribution are not wired end to end.
+- After successful reviewed first linking, Chatbook and tldw_server converge on the same canonical manifest, scope, record, proposal, and version identities and bytes for the eligible snapshot resulting from the user-approved content-free reconciliation plan.
+- Sync V2 defines the `personal_context.manifest`, `personal_context.scope`, `personal_context.record`, `personal_context.proposal`, and content-free `personal_context.purge` domains. Reviewed first linking publishes the eligible snapshot resulting from the user-approved content-free reconciliation plan. Later syncable Chatbook mutations create encrypted local outbox entries, but the current shipped app does not run an ongoing Personal Context sync cycle, so those post-link changes remain queued locally. Purge production and distribution are not wired end to end.
 - Each peer retains its own at-rest ciphertext and keys, local database rows, runtime permissions, conflict-review metadata, acknowledgement tracking, and other operational state.
 <!-- shared-personal-context-contract:end -->
 ```
 
-- [ ] **Step 2: Add the component map**
+- [x] **Step 2: Add the component map**
 
 Document these exact owners, using repository-root paths:
 
@@ -782,7 +782,7 @@ Document these exact owners, using repository-root paths:
 
 State exactly: `UI, agent, and transport code must use the owning service/repository boundary and must not access profile tables directly.`
 
-- [ ] **Step 3: Document read/write lifecycles and current gaps**
+- [x] **Step 3: Document read/write lifecycles and current gaps**
 
 Use these exact lifecycle headings and cover the named behavior under each:
 
@@ -800,18 +800,18 @@ Include these exact current-limit sentences so final verification can fail close
 
 Repeat the full boundary matrix in developer terms, wrapped in `<!-- personal-context-boundary-matrix:start -->` and `<!-- personal-context-boundary-matrix:end -->`, so every shared and peer-local category is explicit:
 
-| Shared through the current linked flow when eligible | Remains peer-local or is not currently published |
+| Published at reviewed first link when eligible | Not published afterward or peer-local |
 | --- | --- |
-| Canonical manifest after successful reviewed linking | Peer-local at-rest encryption and recovery keys |
-| Required global and linked-workspace scope objects | Raw interview answers and unfinished drafts |
-| Records and tombstones whose controls permit synchronization | Runtime agent authority grants and tool availability |
-| Eligible proposals and their canonical review state | Device-only records or records marked non-syncable |
-| Exact canonical object identities, versions, and bytes for eligible shared objects | Local undo history, caches, ciphertext, database row identities, and other operational metadata |
-| — | Conflict-review objects and acknowledgement tracking |
+| Approved eligible canonical manifest | Later syncable Chatbook mutations, which remain queued locally |
+| Required global and linked-workspace scopes | Ordinary server REST mutations |
+| Controls-eligible record heads and tombstones; eligible proposals and canonical review state; approved interview answers after they are saved as records | Device-only or non-syncable records |
+| Exact canonical IDs, versions, and bytes | Runtime agent authority, tool availability, workspace mappings, and enablement |
+| — | At-rest and recovery keys; local undo, caches, ciphertext, database row IDs, conflict-review objects, acknowledgement tracking, and operational metadata |
+| — | Interview draft and transcript objects; adaptive requests still send prior raw answers to the provider |
 
 Include this exact privacy prohibition: `Never log profile plaintext, ciphertext, wrapped keys, or raw cryptographic errors.`
 
-- [ ] **Step 4: Add the complete extension checklist and test map**
+- [x] **Step 4: Add the complete extension checklist and test map**
 
 Wrap exactly these ten numbered items in `<!-- personal-context-extension-checklist:start -->` and `<!-- personal-context-extension-checklist:end -->`:
 
@@ -837,7 +837,7 @@ Map:
 - `Tests/UI/test_personal_context_*.py`
 - `Tests/tldw_api/test_personal_context_sync_client.py`
 
-- [ ] **Step 5: Validate referenced paths and Markdown**
+- [x] **Step 5: Validate referenced paths and Markdown**
 
 Run:
 
@@ -855,7 +855,7 @@ test -f tldw_chatbook/Agents/profile_tool_provider.py
 git diff --check -- Docs/Development/personal-context-profile.md
 ```
 
-- [ ] **Step 6: Record Task 3 execution and commit the developer guide**
+- [x] **Step 6: Record Task 3 execution and commit the developer guide**
 
 After Steps 1-5 have run successfully, mark every Task 3 step through this commit step `[x]`. Commit that execution record with the guide.
 
