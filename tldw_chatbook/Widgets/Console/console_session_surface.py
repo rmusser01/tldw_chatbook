@@ -29,6 +29,9 @@ from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from tldw_chatbook.Widgets.Console.console_background_effect import (
     ConsoleTranscriptSurface,
 )
+from tldw_chatbook.Widgets.Console.console_activity_outcome_notice import (
+    ConsoleActivityOutcomeNotice,
+)
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 
@@ -194,6 +197,7 @@ class ConsoleSessionSurface(Vertical):
             yield self._build_new_tab_button()
         yield self._build_fleet_coachmark()
         yield ChatTaskCards(id="console-task-surface")
+        yield ConsoleActivityOutcomeNotice(id="console-activity-outcome-notice")
         yield ConsoleTranscriptSurface(
             self._transcript_background_effect_settings(
                 self.background_effect_settings

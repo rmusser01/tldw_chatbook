@@ -10362,6 +10362,7 @@ async def test_switcher_rename_choice_chains_to_rename_modal():
         await _wait_for_selector(console, pilot, "#console-native-composer")
         await pilot.press("ctrl+k")
         await pilot.pause(0.2)
+        await pilot.press("down")
         await pilot.press("f2")
         await pilot.pause(0.3)
         assert host.screen_stack[-1].__class__.__name__ == "ConsoleRenameSessionModal"

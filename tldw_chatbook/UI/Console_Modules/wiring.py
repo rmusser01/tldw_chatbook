@@ -1178,6 +1178,11 @@ def build_console_controllers(
                 session
             )
         ),
+        session_surface_accessor=lambda: screen.console_session_surface,
+        switcher_authority_accessor=(
+            lambda: screen._workspace._console_switcher_authority()
+        ),
+        console_runtime_accessor=lambda: screen._console_runtime(),
         # Session<->workspace seam (design spec: "a named callable
         # between them; design it deliberately, never a back-door
         # through the screen"). `self._workspace` was constructed just
