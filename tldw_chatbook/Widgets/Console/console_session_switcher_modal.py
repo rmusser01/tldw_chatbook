@@ -31,6 +31,10 @@ from tldw_chatbook.Chat.console_switcher_state import (
     filter_console_active_results,
 )
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Utils.input_validation import (
+    CONSOLE_SWITCHER_QUERY_MAX_LENGTH,
+    validate_console_switcher_query,
+)
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
@@ -167,9 +171,7 @@ class ConsoleSessionSwitcherModal(
         self._rows = rows
         self._legacy_rows = active_results is None
         self._active_results = (
-            build_console_switcher_entries(
-                rows, limit=CONSOLE_SWITCHER_PAGE_LIMIT
-            )
+            build_console_switcher_entries(rows, limit=CONSOLE_SWITCHER_PAGE_LIMIT)
             if active_results is None
             else tuple(active_results)
         )
@@ -222,6 +224,7 @@ class ConsoleSessionSwitcherModal(
             yield Input(
                 placeholder="Search sessions, workspaces, waiting, running, or finished…",
                 id="console-switcher-query",
+                max_length=CONSOLE_SWITCHER_QUERY_MAX_LENGTH,
             )
             yield VerticalScroll(id="console-switcher-results")
             yield Static("", id="console-switcher-receipt-state", markup=False)
@@ -260,17 +263,12 @@ class ConsoleSessionSwitcherModal(
     def _sync_modal_max_height(self) -> None:
         try:
             modal = self.query_one("#console-switcher-modal", Vertical)
-            results = self.query_one(
-                "#console-switcher-results", VerticalScroll
-            )
+            results = self.query_one("#console-switcher-results", VerticalScroll)
         except NoMatches:
             return
         viewport_cap = min(35, self.app.size.height)
         section_count = len(
-            {
-                str(getattr(entry, "section", "") or "")
-                for entry in self._entries
-            }
+            {str(getattr(entry, "section", "") or "") for entry in self._entries}
         )
         page_rows = 3 if self._page_total > len(self._entries) else 0
         receipt_rows = 1 if self._activity_receipt_state == "degraded" else 0
@@ -386,6 +384,9 @@ class ConsoleSessionSwitcherModal(
 
     async def _refresh_results(self, query: str, *, reset_page: bool = False) -> bool:
         """Resolve one view and commit only when all captured fences match."""
+        query = self._validated_query(query)
+        if query is None:
+            return False
         if reset_page:
             self._page_offset = 0
         self._request_generation += 1
@@ -512,9 +513,7 @@ class ConsoleSessionSwitcherModal(
         focused_key = self._focused_result_key()
         retained_key = focused_key or previous_key
         previous_index = (
-            self._focused_result_index()
-            if focused_key
-            else self._candidate_index
+            self._focused_result_index() if focused_key else self._candidate_index
         )
         had_previous_entries = bool(self._entries)
         self._entries = entries[:CONSOLE_SWITCHER_PAGE_LIMIT]
@@ -666,17 +665,13 @@ class ConsoleSessionSwitcherModal(
         retained = self._index_for_key(retained_key)
         return retained if retained is not None else 0
 
-    def _result_widget_id(
-        self, index: int, entry: ConsoleSwitcherActiveResult
-    ) -> str:
+    def _result_widget_id(self, index: int, entry: ConsoleSwitcherActiveResult) -> str:
         if self._legacy_rows:
             return f"console-switcher-result-{index}"
         digest = sha1(entry.stable_result_key.encode("utf-8")).hexdigest()[:16]
         return f"console-switcher-result-{digest}"
 
-    def _entry_label(
-        self, index: int, entry: ConsoleSwitcherActiveResult
-    ) -> Text:
+    def _entry_label(self, index: int, entry: ConsoleSwitcherActiveResult) -> Text:
         available_width = max(20, min(70, self.app.size.width - 8))
         title_limit = max(8, min(_TITLE_LIMIT, available_width - 22))
         display_title = (
@@ -718,13 +713,13 @@ class ConsoleSessionSwitcherModal(
         if workspace:
             parts.append(workspace)
         parts.append(
-            "Console tab"
-            if getattr(entry, "native_session_id", None)
-            else "Saved chat"
+            "Console tab" if getattr(entry, "native_session_id", None) else "Saved chat"
         )
 
         recency = ""
-        for candidate in reversed(str(getattr(entry, "subtitle", "") or "").split(" · ")):
+        for candidate in reversed(
+            str(getattr(entry, "subtitle", "") or "").split(" · ")
+        ):
             value = candidate.strip()
             lowered = value.casefold()
             if (
@@ -749,8 +744,7 @@ class ConsoleSessionSwitcherModal(
     def _result_classes(entry: ConsoleSwitcherActiveResult) -> tuple[str, ...]:
         classes = ["console-switcher-result"]
         state = str(
-            getattr(entry, "activity_state", "")
-            or getattr(entry, "primary_status", "")
+            getattr(entry, "activity_state", "") or getattr(entry, "primary_status", "")
         ).casefold()
         if state in {"failed", "error", "stuck", "stopped", "cancelled"}:
             classes.append("console-switcher-result-error")
@@ -774,7 +768,9 @@ class ConsoleSessionSwitcherModal(
         self._clear_mark_seen_confirmation()
         self._cancel_query_debounce()
         self._query_pending = True
-        query = event.value
+        query = self._validated_query(event.value)
+        if query is None:
+            return
         self._query_debounce_timer = self.set_timer(
             SEARCH_DEBOUNCE_SECONDS,
             lambda: self.run_worker(
@@ -789,19 +785,33 @@ class ConsoleSessionSwitcherModal(
             self._query_debounce_timer.stop()
             self._query_debounce_timer = None
 
+    def _validated_query(self, value: object) -> str | None:
+        """Validate one UI query and expose bounded recovery copy."""
+        try:
+            return validate_console_switcher_query(value)
+        except ValueError:
+            self._query_pending = False
+            self._set_feedback(
+                f"Search is limited to {CONSOLE_SWITCHER_QUERY_MAX_LENGTH} characters."
+            )
+            return None
+
     @on(Input.Submitted, "#console-switcher-query")
     async def _query_submitted(self, event: Input.Submitted) -> None:
         """Commit the exact query before applying its explicit candidate."""
         event.stop()
         self._cancel_query_debounce()
-        if event.value != self._rendered_query or self._query_pending:
-            committed = await self._refresh_results(event.value, reset_page=True)
+        query = self._validated_query(event.value)
+        if query is None:
+            return
+        if query != self._rendered_query or self._query_pending:
+            committed = await self._refresh_results(query, reset_page=True)
             if not committed:
                 return
         if not self._entries:
             return
         index = self._candidate_index
-        if not event.value.strip() and not self._explicit_navigation:
+        if not query.strip() and not self._explicit_navigation:
             index = self._choose_candidate(self._candidate_key())
             self._candidate_index = index
             self._sync_candidate_labels()
@@ -1005,9 +1015,7 @@ class ConsoleSessionSwitcherModal(
         button.focus()
         self._sync_candidate_labels()
         try:
-            self.query_one(
-                "#console-switcher-confirm-mark-seen", Button
-            ).display = True
+            self.query_one("#console-switcher-confirm-mark-seen", Button).display = True
         except NoMatches:
             pass
         self._sync_modal_max_height()
@@ -1039,13 +1047,9 @@ class ConsoleSessionSwitcherModal(
             return
         self._activate_choice("mark_seen", entry)
 
-    def _activate_choice(
-        self, kind: str, entry: ConsoleSwitcherActiveResult
-    ) -> None:
+    def _activate_choice(self, kind: str, entry: ConsoleSwitcherActiveResult) -> None:
         if kind == "activate" and not bool(getattr(entry, "openable", False)):
-            self._set_feedback(
-                "This conversation is unavailable and cannot be opened."
-            )
+            self._set_feedback("This conversation is unavailable and cannot be opened.")
             return
         self._request_generation += 1
         self._cancel_query_debounce()
@@ -1090,9 +1094,7 @@ class ConsoleSessionSwitcherModal(
         event.stop()
         if self._page_offset <= 0:
             return
-        self._page_offset = max(
-            0, self._page_offset - CONSOLE_SWITCHER_PAGE_LIMIT
-        )
+        self._page_offset = max(0, self._page_offset - CONSOLE_SWITCHER_PAGE_LIMIT)
         self._load_current_page()
 
     @on(Button.Pressed, "#console-switcher-next-page")
@@ -1124,20 +1126,12 @@ class ConsoleSessionSwitcherModal(
         history_is_current = (
             self._mode is SwitcherMode.HISTORY or self._widened_to_history
         )
-        active.set_class(
-            not history_is_current, "console-switcher-mode-current"
-        )
-        history.set_class(
-            history_is_current, "console-switcher-mode-current"
-        )
+        active.set_class(not history_is_current, "console-switcher-mode-current")
+        history.set_class(history_is_current, "console-switcher-mode-current")
 
-    def _update_page_controls(
-        self, page: ConsoleSwitcherHistoryPage | None
-    ) -> None:
+    def _update_page_controls(self, page: ConsoleSwitcherHistoryPage | None) -> None:
         try:
-            controls = self.query_one(
-                "#console-switcher-page-controls", Horizontal
-            )
+            controls = self.query_one("#console-switcher-page-controls", Horizontal)
             previous = self.query_one("#console-switcher-previous-page", Button)
             following = self.query_one("#console-switcher-next-page", Button)
             status = self.query_one("#console-switcher-page-status", Static)
@@ -1174,9 +1168,7 @@ class ConsoleSessionSwitcherModal(
             self._set_status(self._selection_feedback)
             return
         if not self._entries:
-            mode = (
-                "Active" if self._mode is SwitcherMode.ACTIVE else "History"
-            )
+            mode = "Active" if self._mode is SwitcherMode.ACTIVE else "History"
             self._set_status(f"{mode}: no results")
             return
         index = min(self._candidate_index, len(self._entries) - 1)
@@ -1216,8 +1208,7 @@ class ConsoleSessionSwitcherModal(
         else:
             primary = "No result selected"
         hints.update(
-            f"{primary}  ·  ↑↓/Home/End/Pg: move  ·  "
-            f"F3: {target_mode}  ·  Esc: close"
+            f"{primary}  ·  ↑↓/Home/End/Pg: move  ·  F3: {target_mode}  ·  Esc: close"
         )
 
     async def _perform_safe_cancel(self, *, source: str) -> None:
@@ -1244,9 +1235,7 @@ class ConsoleSessionSwitcherModal(
             self._set_feedback("Focus an open agent result to rename it.")
             return
         if not entry.native_session_id:
-            self._set_feedback(
-                "Saved chats cannot be renamed here; open one first."
-            )
+            self._set_feedback("Saved chats cannot be renamed here; open one first.")
             return
         self._activate_choice("rename", entry)
 

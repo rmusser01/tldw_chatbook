@@ -116,7 +116,21 @@ class ConsoleActivityReceiptService:
 
     def _reload_locked(self) -> bool:
         try:
-            rows = self._db.list_unseen_console_activity()
+            rows: list[Mapping[str, Any]] = []
+            cursor: tuple[str, str] | None = None
+            while True:
+                page = (
+                    self._db.list_unseen_console_activity(cursor=cursor)
+                    if cursor is not None
+                    else self._db.list_unseen_console_activity()
+                )
+                rows.extend(page)
+                next_cursor = getattr(page, "next_cursor", None)
+                if next_cursor is None:
+                    break
+                if next_cursor == cursor:
+                    raise RuntimeError("Console activity cursor did not advance.")
+                cursor = next_cursor
         except Exception as exc:  # noqa: BLE001 - live receipt paths degrade, never settle
             self._set_degraded("read", exc)
             return False
@@ -129,18 +143,14 @@ class ConsoleActivityReceiptService:
         mark = getattr(self._marks, "FLEET_UNSEEN", None)
         if mark is None:
             return True
-        fallback_mark = getattr(
-            self._marks, "FLEET_RECEIPT_FALLBACK", None
-        )
+        fallback_mark = getattr(self._marks, "FLEET_RECEIPT_FALLBACK", None)
         try:
             if fallback_mark is not None:
                 durable_fallback = set(
                     self._marks.list_marked_conversation_ids(fallback_mark)
                 )
                 if not self._fleet_marks_seeded:
-                    self._fleet_fallback_debt.update(
-                        durable_fallback
-                    )
+                    self._fleet_fallback_debt.update(durable_fallback)
                 for conversation_id in sorted(
                     self._fleet_fallback_debt - durable_fallback
                 ):

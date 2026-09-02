@@ -2693,9 +2693,7 @@ class ConsoleSessionController:
         if choice is None:
             return
         entry = choice.entry
-        if choice.kind == "mark_seen" and isinstance(
-            entry, UnavailableSessionNotice
-        ):
+        if choice.kind == "mark_seen" and isinstance(entry, UnavailableSessionNotice):
             await self._mark_unavailable_switcher_notice_seen(entry)
             return
         if not isinstance(entry, ConsoleSwitcherEntry) or entry.target is None:
@@ -2768,8 +2766,7 @@ class ConsoleSessionController:
         except Exception:  # noqa: BLE001 - stale selection must fail closed
             return False
         return bool(
-            target.profile_authority == profile
-            and target.authority_token == token
+            target.profile_authority == profile and target.authority_token == token
         )
 
     def _native_switcher_destination_exists(self, session_id: str | None) -> bool:
@@ -2858,15 +2855,12 @@ class ConsoleSessionController:
             presentation.profile_authority != profile
             or presentation.authority_token != token
             or not presentation.session_id
-            or not self._native_switcher_destination_is_current(
-                presentation.session_id
-            )
+            or not self._native_switcher_destination_is_current(presentation.session_id)
         ):
             return False
         return bool(
             presentation.conversation_id is None
-            or self._current_console_conversation_id()
-            == presentation.conversation_id
+            or self._current_console_conversation_id() == presentation.conversation_id
         )
 
     def _acknowledge_painted_console_activity(
@@ -2947,9 +2941,7 @@ class ConsoleSessionController:
         try:
             updated = await asyncio.to_thread(service.acknowledge, activity_ids)
         except Exception:  # noqa: BLE001 - explicit retry stays visible
-            logger.opt(exception=True).warning(
-                "Failed to mark Console activity seen"
-            )
+            logger.opt(exception=True).warning("Failed to mark Console activity seen")
             return False
         current_notice = self._console_activity_notice()
         if (
@@ -2967,13 +2959,13 @@ class ConsoleSessionController:
     async def _mark_unavailable_switcher_notice_seen(
         self, notice: UnavailableSessionNotice
     ) -> None:
-        """Acknowledge one vanished session's frozen receipts without navigation."""
+        """Acknowledge one unavailable destination's receipts without navigation."""
         try:
-            profile, _token = self._switcher_authority_accessor()
+            profile, token = self._switcher_authority_accessor()
         except Exception:  # noqa: BLE001 - stale action must fail closed
             self._notify_stale_switcher_target()
             return
-        if notice.profile_authority != profile:
+        if notice.profile_authority != profile or notice.authority_token != token:
             self._notify_stale_switcher_target()
             return
         service = getattr(self._console_runtime_accessor(), "activity_receipts", None)
@@ -2993,15 +2985,15 @@ class ConsoleSessionController:
             )
             return
         try:
-            current_profile, _token = self._switcher_authority_accessor()
+            current_profile, current_token = self._switcher_authority_accessor()
         except Exception:  # noqa: BLE001 - no stale post-write UI
             return
-        if current_profile != notice.profile_authority:
-            return
         if (
-            updated < len(activity_ids)
-            or bool(getattr(service, "degraded", False))
+            current_profile != notice.profile_authority
+            or current_token != notice.authority_token
         ):
+            return
+        if updated < len(activity_ids) or bool(getattr(service, "degraded", False)):
             self.app_instance.notify(
                 "Activity could not be marked seen. Reopen Ctrl+K and retry.",
                 severity="warning",

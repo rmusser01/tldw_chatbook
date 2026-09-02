@@ -159,6 +159,29 @@ def test_cold_hydration_rebuilds_snapshot_and_reconciles_marks(tmp_path):
     assert marks.marked == {"conversation-hydrated"}
 
 
+def test_unseen_receipt_reads_are_bounded_and_expose_continuation(tmp_path):
+    database = AgentRunsDB(tmp_path / "runs.db")
+    for index in range(201):
+        database.publish_console_activity(
+            origin="ordinary",
+            logical_outcome_id=f"turn:{index}",
+            status="done",
+            session_id=f"session-{index}",
+            conversation_id=None,
+        )
+
+    first = database.list_unseen_console_activity()
+
+    assert len(first) == 200
+    assert first.next_cursor is not None
+    second = database.list_unseen_console_activity(cursor=first.next_cursor)
+    assert len(second) == 1
+    assert second.next_cursor is None
+    assert {row["activity_id"] for row in (*first, *second)} == {
+        row["activity_id"] for row in database.list_unseen_console_activity(limit=201)
+    }
+
+
 def test_cold_or_degraded_clear_request_preserves_coarse_mark(tmp_path, monkeypatch):
     database = AgentRunsDB(tmp_path / "runs.db")
     marks = RecordingMarks()
@@ -389,9 +412,9 @@ def test_failed_fleet_publication_debt_survives_recovery_until_explicit_visit(
     )
     assert result.complete is False
     assert marks.marked == {"conversation-1"}
-    assert marks.list_marked_conversation_ids(
-        marks.FLEET_RECEIPT_FALLBACK
-    ) == ("conversation-1",)
+    assert marks.list_marked_conversation_ids(marks.FLEET_RECEIPT_FALLBACK) == (
+        "conversation-1",
+    )
 
     monkeypatch.setattr(database, "publish_console_activity", real_publish)
     recovered = ConsoleActivityReceiptService(database, marks)
@@ -407,9 +430,7 @@ def test_failed_fleet_publication_debt_survives_recovery_until_explicit_visit(
     assert "conversation-1" in marks.marked
     assert recovered.clear_fleet_mark_if_seen("conversation-1") is True
     assert "conversation-1" not in marks.marked
-    assert marks.list_marked_conversation_ids(
-        marks.FLEET_RECEIPT_FALLBACK
-    ) == ()
+    assert marks.list_marked_conversation_ids(marks.FLEET_RECEIPT_FALLBACK) == ()
 
 
 def test_acknowledge_retry_confirms_ids_absent_after_post_write_reload_failure(
@@ -465,9 +486,7 @@ def test_complete_fleet_replay_replaces_fallback_debt_with_exact_receipt(
     replay = service.publish_fleet_drain(event)
 
     assert replay.complete is True
-    assert marks.list_marked_conversation_ids(
-        marks.FLEET_RECEIPT_FALLBACK
-    ) == ()
+    assert marks.list_marked_conversation_ids(marks.FLEET_RECEIPT_FALLBACK) == ()
     assert marks.marked == {"conversation-1"}
     assert [receipt.activity_id for receipt in service.unseen_snapshot()] == list(
         replay.activity_ids
@@ -497,24 +516,25 @@ def test_transient_fallback_mark_failure_is_repaired_before_ready_and_restart(
         lambda **_kwargs: (_ for _ in ()).throw(sqlite3.OperationalError("private")),
     )
 
-    assert service.publish_fleet_drain(
-        FleetDrained(
-            conversation_id="conversation-1",
-            children=(_child("done", run_id="run-one"),),
-            drain_id="drain-one",
-        )
-    ).complete is False
+    assert (
+        service.publish_fleet_drain(
+            FleetDrained(
+                conversation_id="conversation-1",
+                children=(_child("done", run_id="run-one"),),
+                drain_id="drain-one",
+            )
+        ).complete
+        is False
+    )
     assert service.hydration_state() == "degraded"
     assert marks.marked == {"conversation-1"}
-    assert marks.list_marked_conversation_ids(
-        marks.FLEET_RECEIPT_FALLBACK
-    ) == ()
+    assert marks.list_marked_conversation_ids(marks.FLEET_RECEIPT_FALLBACK) == ()
 
     assert service.hydrate_from_storage() == 0
     assert service.hydration_state() == "ready"
-    assert marks.list_marked_conversation_ids(
-        marks.FLEET_RECEIPT_FALLBACK
-    ) == ("conversation-1",)
+    assert marks.list_marked_conversation_ids(marks.FLEET_RECEIPT_FALLBACK) == (
+        "conversation-1",
+    )
 
     restarted = ConsoleActivityReceiptService(database, marks)
     assert restarted.hydrate_from_storage() == 0

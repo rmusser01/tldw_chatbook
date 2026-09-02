@@ -91,9 +91,7 @@ async def test_active_is_immediate_while_bounded_history_is_blocked():
     controller = _projection_controller(app)
 
     history = asyncio.create_task(
-        controller.load_console_session_switcher_history(
-            query="", offset=0, limit=50
-        )
+        controller.load_console_session_switcher_history(query="", offset=0, limit=50)
     )
     assert await asyncio.to_thread(entered.wait, 5)
 
@@ -115,9 +113,9 @@ def test_active_projection_never_calls_full_workspace_membership_lister():
         )
     )
     controller = _projection_controller(app)
-    controller._membership_console_browser_rows = lambda _current=None: (_ for _ in ()).throw(
-        AssertionError("Active must not scan every workspace membership")
-    )
+    controller._membership_console_browser_rows = lambda _current=None: (
+        _ for _ in ()
+    ).throw(AssertionError("Active must not scan every workspace membership"))
 
     active = controller.console_session_switcher_active_entries()
 
@@ -140,6 +138,7 @@ def test_active_projection_reads_open_sessions_without_any_persistence_reader():
             activity_receipts=_ReceiptSnapshot(),
         )
     )
+
     def persistence_forbidden(*_args, **_kwargs):
         raise AssertionError("Active projection must stay memory-only")
 
@@ -208,7 +207,9 @@ async def test_history_uses_one_all_local_bounded_page_with_explicit_targets():
         }
     ]
     assert all(entry.target is not None for entry in page.entries)
-    assert all(entry.row_key.startswith("conversation:profile-a:") for entry in page.entries)
+    assert all(
+        entry.row_key.startswith("conversation:profile-a:") for entry in page.entries
+    )
 
 
 @pytest.mark.asyncio
@@ -410,9 +411,9 @@ async def test_zero_active_matches_widens_to_history_and_f3_retains_query():
         )
         status = app.screen.query_one("#console-switcher-status", Static)
         assert "History matches" in str(status.renderable)
-        assert app.screen.query_one(
-            "#console-switcher-history-mode", Button
-        ).has_class("console-switcher-mode-current")
+        assert app.screen.query_one("#console-switcher-history-mode", Button).has_class(
+            "console-switcher-mode-current"
+        )
         assert not app.screen.query_one(
             "#console-switcher-active-mode", Button
         ).has_class("console-switcher-mode-current")
@@ -424,6 +425,26 @@ async def test_zero_active_matches_widens_to_history_and_f3_retains_query():
         history_mode = app.screen.query_one("#console-switcher-history-mode", Button)
         assert str(history_mode.label) == "History"
         assert history_mode.has_class("console-switcher-mode-current")
+
+
+@pytest.mark.asyncio
+async def test_oversized_query_is_rejected_before_history_search():
+    calls: list[str] = []
+
+    async def load_history(*, query: str, offset: int, limit: int):
+        calls.append(query)
+        return ConsoleSwitcherHistoryPage((), offset, limit, 0)
+
+    app = _ActivitySwitcherApp(history_loader=load_history)
+    async with app.run_test(size=(90, 30)) as pilot:
+        committed = await app.screen._refresh_results("x" * 513, reset_page=True)
+        await pilot.pause()
+
+        assert committed is False
+        assert calls == []
+        assert "512 characters" in str(
+            app.screen.query_one("#console-switcher-feedback", Static).renderable
+        )
 
 
 @pytest.mark.asyncio
@@ -557,10 +578,11 @@ async def test_unavailable_search_result_requires_two_enter_presses():
     notice = UnavailableSessionNotice(
         stable_result_key="unavailable-session:profile-a:gone",
         profile_authority="profile-a",
+        authority_token="runtime-a",
         session_id="gone",
         group=ActivityGroup.WAITING_FOR_YOU,
         latest_at=None,
-        receipts=(CapturedReceipt("activity-1", "failed"),),
+        receipts=(CapturedReceipt(activity_id="activity-1", status="failed"),),
         primary_status="failed",
     )
     app = _ActivitySwitcherApp(active_results=(notice,))
@@ -585,10 +607,11 @@ async def test_unavailable_pointer_action_requires_explicit_confirm_button():
     notice = UnavailableSessionNotice(
         stable_result_key="unavailable-session:profile-a:gone",
         profile_authority="profile-a",
+        authority_token="runtime-a",
         session_id="gone",
         group=ActivityGroup.WAITING_FOR_YOU,
         latest_at=None,
-        receipts=(CapturedReceipt("activity-1", "failed"),),
+        receipts=(CapturedReceipt(activity_id="activity-1", status="failed"),),
         primary_status="failed",
     )
     app = _ActivitySwitcherApp(active_results=(notice,))
@@ -596,12 +619,13 @@ async def test_unavailable_pointer_action_requires_explicit_confirm_button():
         await pilot.click(".console-switcher-result")
         await pilot.pause()
         assert app.result == "unset"
-        assert "again" in str(
-            app.screen.query_one("#console-switcher-status", Static).renderable
-        ).lower()
-        confirm = app.screen.query_one(
-            "#console-switcher-confirm-mark-seen", Button
+        assert (
+            "again"
+            in str(
+                app.screen.query_one("#console-switcher-status", Static).renderable
+            ).lower()
         )
+        confirm = app.screen.query_one("#console-switcher-confirm-mark-seen", Button)
         assert confirm.display
 
         await pilot.click("#console-switcher-confirm-mark-seen")
@@ -615,9 +639,7 @@ async def test_unavailable_pointer_action_requires_explicit_confirm_button():
 async def test_home_end_and_page_keys_move_the_explicit_candidate():
     app = _ActivitySwitcherApp(
         active_results=tuple(
-            _active_entry(
-                f"session:{index}", f"Agent {index}", session_id=str(index)
-            )
+            _active_entry(f"session:{index}", f"Agent {index}", session_id=str(index))
             for index in range(20)
         )
     )
@@ -674,16 +696,15 @@ async def test_active_page_buttons_reach_rows_beyond_first_fifty():
     unavailable = UnavailableSessionNotice(
         stable_result_key="unavailable-session:profile-a:gone",
         profile_authority="profile-a",
+        authority_token="runtime-a",
         session_id="gone",
         group=ActivityGroup.OTHER_OPEN,
         latest_at=None,
-        receipts=(CapturedReceipt("activity-gone", "failed"),),
+        receipts=(CapturedReceipt(activity_id="activity-gone", status="failed"),),
         primary_status="failed",
     )
     active = tuple(
-        _active_entry(
-            f"session:{index}", f"Agent {index}", session_id=str(index)
-        )
+        _active_entry(f"session:{index}", f"Agent {index}", session_id=str(index))
         for index in range(50)
     ) + (unavailable,)
     app = _ActivitySwitcherApp(active_results=active)
@@ -705,9 +726,7 @@ async def test_active_page_buttons_reach_rows_beyond_first_fifty():
 @pytest.mark.asyncio
 async def test_active_reconcile_moves_to_page_containing_still_focused_result():
     original = tuple(
-        _active_entry(
-            f"session:{index}", f"Agent {index}", session_id=str(index)
-        )
+        _active_entry(f"session:{index}", f"Agent {index}", session_id=str(index))
         for index in range(60)
     )
     app = _ActivitySwitcherApp(active_results=original)
@@ -750,9 +769,7 @@ async def test_active_reconcile_returns_to_first_page_when_focused_result_disapp
     monkeypatch,
 ):
     original = tuple(
-        _active_entry(
-            f"session:{index}", f"Agent {index}", session_id=str(index)
-        )
+        _active_entry(f"session:{index}", f"Agent {index}", session_id=str(index))
         for index in range(60)
     )
     app = _ActivitySwitcherApp(active_results=original)
@@ -781,7 +798,9 @@ async def test_active_reconcile_returns_to_first_page_when_focused_result_disapp
             app.screen.query_one("#console-switcher-status", Static).renderable
         )
         assert app.screen._page_offset == 0
-        assert feedback == "The selected result is no longer available — selection moved."
+        assert (
+            feedback == "The selected result is no longer available — selection moved."
+        )
         assert notices == [feedback]
 
 
@@ -809,9 +828,7 @@ async def test_degraded_activity_status_is_visible_and_clears_after_retry():
 
 def test_semantic_aliases_share_predicates_and_current_is_destination_identity():
     current_running = replace(
-        _active_entry(
-            "session:current", "Current runner", session_id="current"
-        ),
+        _active_entry("session:current", "Current runner", session_id="current"),
         is_active=True,
         group=ActivityGroup.WORKING,
         activity_state="running",
@@ -832,17 +849,25 @@ def test_semantic_aliases_share_predicates_and_current_is_destination_identity()
     unavailable = UnavailableSessionNotice(
         stable_result_key="unavailable-session:profile-a:gone",
         profile_authority="profile-a",
+        authority_token="runtime-a",
         session_id="gone",
         group=ActivityGroup.WAITING_FOR_YOU,
         latest_at=None,
-        receipts=(CapturedReceipt("activity-gone", "failed"),),
+        receipts=(CapturedReceipt(activity_id="activity-gone", status="failed"),),
         primary_status="failed",
     )
     results = (current_running, queued, saved, saved_open, unavailable)
 
     for query in ("current", "is:current"):
         assert filter_console_active_results(results, query) == (current_running,)
-    for query in ("working", "is:working", "running", "is:running", "queued", "is:queued"):
+    for query in (
+        "working",
+        "is:working",
+        "running",
+        "is:running",
+        "queued",
+        "is:queued",
+    ):
         assert filter_console_active_results(results, query) == (
             current_running,
             queued,
@@ -1035,15 +1060,18 @@ async def test_reconcile_moves_focus_when_selected_result_disappears(
     unavailable = UnavailableSessionNotice(
         stable_result_key="unavailable-session:profile-a:gone",
         profile_authority="profile-a",
+        authority_token="runtime-a",
         session_id="gone",
         group=ActivityGroup.OTHER_OPEN,
         latest_at=None,
-        receipts=(CapturedReceipt("activity-gone", "failed"),),
+        receipts=(CapturedReceipt(activity_id="activity-gone", status="failed"),),
         primary_status="failed",
     )
     third = _active_entry("session:three", "Agent three", session_id="three")
-    middle = unavailable if remove_unavailable else _active_entry(
-        "session:two", "Agent two", session_id="two"
+    middle = (
+        unavailable
+        if remove_unavailable
+        else _active_entry("session:two", "Agent two", session_id="two")
     )
     app = _ActivitySwitcherApp(active_results=(first, middle, third))
 
@@ -1089,7 +1117,8 @@ async def test_switchboard_chrome_and_literal_state_fit_terminal(size):
         assert modal.region.x >= 0 and modal.region.right <= app.size.width
         assert modal.region.y >= 0 and modal.region.bottom <= app.size.height
         assert cancel.region.bottom <= modal.content_region.bottom
-        assert str(
-            app.screen.query_one("#console-switcher-active-mode", Button).label
-        ) == "Active (20)"
+        assert (
+            str(app.screen.query_one("#console-switcher-active-mode", Button).label)
+            == "Active (20)"
+        )
         assert "Enter switches to:" in str(status.renderable)

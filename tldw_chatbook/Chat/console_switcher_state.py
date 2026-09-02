@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Literal, Sequence
 from zoneinfo import ZoneInfo
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
@@ -43,23 +45,17 @@ class SwitcherTargetKind(str, Enum):
     PERSISTED_CONVERSATION = "console_persisted_conversation"
 
 
-_RECEIPT_STATUSES = frozenset(
-    {"done", "failed", "stuck", "stopped", "cancelled"}
-)
-
-
-@dataclass(frozen=True)
-class CapturedReceipt:
+class CapturedReceipt(BaseModel):
     """Exact immutable receipt evidence captured by one switcher result."""
 
-    activity_id: str
-    status: str
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    def __post_init__(self) -> None:
-        if not str(self.activity_id or "").strip():
-            raise ValueError("Captured receipt activity_id is required.")
-        if self.status not in _RECEIPT_STATUSES:
-            raise ValueError("Captured receipt status is invalid.")
+    activity_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r".*\S.*",
+    )
+    status: Literal["done", "failed", "stuck", "stopped", "cancelled"]
 
 
 @dataclass(frozen=True)
@@ -145,21 +141,31 @@ class ConsoleSwitcherEntry:
 
 @dataclass(frozen=True)
 class UnavailableSessionNotice:
-    """Receipt-keyed action for a vanished unbound native session."""
+    """Receipt-keyed action for a vanished session or saved conversation."""
 
     stable_result_key: str
     profile_authority: str
-    session_id: str
+    authority_token: str
     group: ActivityGroup
     latest_at: datetime | None
     receipts: tuple[CapturedReceipt, ...]
     primary_status: str
+    session_id: str | None = None
+    conversation_id: str | None = None
     all_statuses: tuple[str, ...] = ()
     title: str = "Session unavailable"
 
     def __post_init__(self) -> None:
-        if not self.profile_authority or not self.session_id or not self.receipts:
-            raise ValueError("Unavailable session notices require identity and receipts.")
+        if (
+            not self.profile_authority
+            or not self.authority_token
+            or not self.receipts
+            or bool(self.session_id) == bool(self.conversation_id)
+        ):
+            raise ValueError(
+                "Unavailable activity notices require authority, destination, "
+                "and receipts."
+            )
 
     @property
     def subtitle(self) -> str:
@@ -549,6 +555,17 @@ def build_console_active_results(
 
     The function consumes only normalized presentation metadata.  It never
     accepts or inspects transcript/message bodies.
+
+    Args:
+        rows: Safe local conversation and open-session presentation rows.
+        receipts: Loosely sourced unseen receipt projections to validate.
+        controller_signals: Content-free live controller activity signals.
+        profile_authority: Profile identity owning every projected result.
+        authority_token: App-lifetime token fencing stale result actions.
+        now: Optional deterministic clock used for relative-age labels.
+
+    Returns:
+        Canonical Active results ordered by action priority and recency.
     """
     profile = str(profile_authority or "").strip()
     token = str(authority_token or "").strip()
@@ -557,9 +574,7 @@ def build_console_active_results(
     reference_now = now or datetime.now(timezone.utc)
     row_tuple = tuple(rows)
     rows_by_session = {
-        str(row.native_session_id): row
-        for row in row_tuple
-        if row.native_session_id
+        str(row.native_session_id): row for row in row_tuple if row.native_session_id
     }
     rows_by_conversation: dict[str, list[ConsoleConversationBrowserInputRow]] = {}
     for row in row_tuple:
@@ -589,9 +604,7 @@ def build_console_active_results(
             conversation_id=conversation_id,
         )
         target_key = (
-            f"native:{session_id}"
-            if session_id
-            else f"conversation:{conversation_id}"
+            f"native:{session_id}" if session_id else f"conversation:{conversation_id}"
         )
         contributions.append(
             _ActiveContribution(
@@ -663,29 +676,45 @@ def build_console_active_results(
             source_kind="controller",
         )
 
-    unavailable: dict[str, list[tuple[CapturedReceipt, datetime | None]]] = {}
+    unavailable: dict[
+        tuple[str, str], list[tuple[CapturedReceipt, datetime | None]]
+    ] = {}
     for raw in receipts:
         try:
-            captured = CapturedReceipt(
-                activity_id=str(getattr(raw, "activity_id")),
-                status=str(getattr(raw, "status")),
+            captured = CapturedReceipt.model_validate(
+                {
+                    "activity_id": getattr(raw, "activity_id"),
+                    "status": getattr(raw, "status"),
+                }
             )
-        except (AttributeError, TypeError, ValueError):
+        except (AttributeError, ValidationError):
             continue
         session_id = str(getattr(raw, "session_id", "") or "").strip() or None
-        conversation_id = (
-            str(getattr(raw, "conversation_id", "") or "").strip() or None
-        )
+        conversation_id = str(getattr(raw, "conversation_id", "") or "").strip() or None
         instant = _parse_instant(getattr(raw, "created_at", None))
         row = rows_by_session.get(session_id or "")
         if row is not None:
             conversation_id = conversation_id or row.conversation_id
         if session_id and session_id not in open_sessions and not conversation_id:
-            unavailable.setdefault(session_id, []).append((captured, instant))
+            unavailable.setdefault(("session", session_id), []).append(
+                (captured, instant)
+            )
             continue
         metadata_rows = rows_by_conversation.get(conversation_id or "", [])
         metadata_row = row or (metadata_rows[0] if metadata_rows else None)
         exact_session = session_id if session_id in open_sessions else None
+        if (
+            exact_session is None
+            and conversation_id
+            and (
+                metadata_row is None
+                or not bool(getattr(metadata_row, "openable", True))
+            )
+        ):
+            unavailable.setdefault(("conversation", conversation_id), []).append(
+                (captured, instant)
+            )
+            continue
         add(
             state=captured.status,
             source_key=f"receipt:{captured.activity_id}",
@@ -724,7 +753,7 @@ def build_console_active_results(
             reduced.append((winner, captured, len(target_items)))
 
         def target_rank(
-            value: tuple[_ActiveContribution, tuple[CapturedReceipt, ...], int]
+            value: tuple[_ActiveContribution, tuple[CapturedReceipt, ...], int],
         ) -> tuple[Any, ...]:
             winner, captured, _count = value
             instant = winner.occurred_at
@@ -766,15 +795,12 @@ def build_console_active_results(
         workspace_label = str(getattr(row, "workspace_label", "") or "")
         lifecycle = str(getattr(row, "status", "") or "")
         state_label = _STATE_COPY[winner.state]
-        recency = (
-            str(getattr(row, "updated_label", "") or "").strip()
-            or (
-                format_console_relative_age(
-                    winner.occurred_at.isoformat(), now=reference_now
-                )
-                if winner.occurred_at is not None
-                else ""
+        recency = str(getattr(row, "updated_label", "") or "").strip() or (
+            format_console_relative_age(
+                winner.occurred_at.isoformat(), now=reference_now
             )
+            if winner.occurred_at is not None
+            else ""
         )
         multiplicity = max(0, len({item.source_key for item in subject_items}) - 1)
         subtitle = " · ".join(
@@ -798,7 +824,9 @@ def build_console_active_results(
                 conversation_id=conversation_id,
                 scope_type=str(getattr(row, "scope_type", "") or ""),
                 workspace_id=getattr(row, "workspace_id", None),
-                is_active=any(bool(getattr(item.row, "selected", False)) for item in subject_items),
+                is_active=any(
+                    bool(getattr(item.row, "selected", False)) for item in subject_items
+                ),
                 section=winner.group.value,
                 state_label=state_label,
                 openable=bool(getattr(row, "openable", True)),
@@ -806,16 +834,21 @@ def build_console_active_results(
                 group=winner.group,
                 activity_state=winner.state,
                 latest_at=winner.occurred_at,
-                starred=any(bool(getattr(item.row, "starred", False)) for item in subject_items),
+                starred=any(
+                    bool(getattr(item.row, "starred", False)) for item in subject_items
+                ),
                 multiplicity=multiplicity,
                 workspace_label=workspace_label,
                 lifecycle=lifecycle,
             )
         )
 
-    for session_id, receipt_rows in unavailable.items():
+    for (destination_kind, destination_id), receipt_rows in unavailable.items():
         receipts_only = tuple(
-            sorted((receipt for receipt, _instant in receipt_rows), key=lambda item: item.activity_id)
+            sorted(
+                (receipt for receipt, _instant in receipt_rows),
+                key=lambda item: item.activity_id,
+            )
         )
         states = tuple(sorted({receipt.status for receipt in receipts_only}))
         group = min((_STATE_GROUP[state] for state in states), key=_GROUP_ORDER.get)
@@ -835,14 +868,25 @@ def build_console_active_results(
         )
         results.append(
             UnavailableSessionNotice(
-                stable_result_key=f"unavailable-session:{profile}:{session_id}",
+                stable_result_key=(
+                    f"unavailable-{destination_kind}:{profile}:{destination_id}"
+                ),
                 profile_authority=profile,
-                session_id=session_id,
+                authority_token=token,
                 group=group,
                 latest_at=instant,
                 receipts=receipts_only,
                 primary_status=primary.status,
+                session_id=(destination_id if destination_kind == "session" else None),
+                conversation_id=(
+                    destination_id if destination_kind == "conversation" else None
+                ),
                 all_statuses=states,
+                title=(
+                    "Session unavailable"
+                    if destination_kind == "session"
+                    else "Conversation unavailable"
+                ),
             )
         )
     return tuple(sorted(results, key=_result_sort_key))
@@ -865,8 +909,7 @@ def _active_result_predicates(
     """Return the shared semantic vocabulary for plain and ``is:`` terms."""
     group = result.group
     state = str(
-        getattr(result, "activity_state", "")
-        or getattr(result, "primary_status", "")
+        getattr(result, "activity_state", "") or getattr(result, "primary_status", "")
     )
     is_unavailable = isinstance(result, UnavailableSessionNotice)
     return {
@@ -876,8 +919,7 @@ def _active_result_predicates(
         # Current is destination identity, independent of the winning
         # activity group (a current tab may simultaneously be running).
         "current": bool(getattr(result, "is_active", False)),
-        "open": bool(getattr(result, "native_session_id", None))
-        and not is_unavailable,
+        "open": bool(getattr(result, "native_session_id", None)) and not is_unavailable,
         # Persistence and openness overlap: a resumed saved conversation is
         # both saved and open, so neither alias hides the other identity.
         "saved": bool(getattr(result, "conversation_id", None)),
@@ -908,7 +950,10 @@ def filter_console_active_results(
 
     def matches(result: ConsoleSwitcherActiveResult) -> bool:
         group = result.group
-        state = str(getattr(result, "activity_state", "") or getattr(result, "primary_status", ""))
+        state = str(
+            getattr(result, "activity_state", "")
+            or getattr(result, "primary_status", "")
+        )
         workspace = str(getattr(result, "workspace_label", "") or "").casefold()
         predicates = _active_result_predicates(result)
         haystack = " ".join(
@@ -988,4 +1033,13 @@ def group_console_history_entries(
         )
         for entry in entries
     ]
-    return tuple(sorted(grouped, key=lambda entry: (order[entry.section], entry.title.casefold(), entry.row_key)))
+    return tuple(
+        sorted(
+            grouped,
+            key=lambda entry: (
+                order[entry.section],
+                entry.title.casefold(),
+                entry.row_key,
+            ),
+        )
+    )

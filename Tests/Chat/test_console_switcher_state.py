@@ -181,6 +181,42 @@ def test_session_only_receipts_aggregate_into_explicit_unavailable_notice():
     assert "+1" in result.subtitle
 
 
+def test_missing_persisted_receipt_destination_becomes_mark_seen_notice():
+    result = _active(
+        (),
+        receipts=(
+            _receipt(
+                activity_id="missing-conversation",
+                conversation_id="deleted-conversation",
+                session_id=None,
+                status="failed",
+            ),
+        ),
+    )[0]
+
+    assert isinstance(result, UnavailableSessionNotice)
+    assert result.conversation_id == "deleted-conversation"
+    assert result.session_id is None
+    assert result.title == "Conversation unavailable"
+    assert result.openable is False
+
+
+def test_malformed_receipt_identity_is_excluded_from_open_result_evidence():
+    result = _active(
+        (_row(native_session_id="session-1"),),
+        receipts=(
+            _receipt(
+                activity_id=None,
+                session_id="session-1",
+                conversation_id="conv-1",
+            ),
+        ),
+    )[0]
+
+    assert result.target is not None
+    assert result.target.receipts == ()
+
+
 def test_domain_semantic_search_uses_safe_metadata_and_filters():
     rows = (
         _row(
@@ -202,12 +238,15 @@ def test_domain_semantic_search_uses_safe_metadata_and_filters():
     )
     results = _active(rows)
 
-    assert [item.title for item in filter_console_active_results(results, "waiting on me")] == [
-        "Release review"
-    ]
-    assert [item.title for item in filter_console_active_results(results, "is:working workspace:research")] == [
-        "Indexer"
-    ]
+    assert [
+        item.title for item in filter_console_active_results(results, "waiting on me")
+    ] == ["Release review"]
+    assert [
+        item.title
+        for item in filter_console_active_results(
+            results, "is:working workspace:research"
+        )
+    ] == ["Indexer"]
     assert filter_console_active_results(results, "is:invented") == ()
 
 
@@ -232,19 +271,33 @@ def test_history_calendar_sections_obey_local_dates_dst_and_invalid_values():
     zone = ZoneInfo("America/Los_Angeles")
     now = datetime(2026, 3, 9, 0, 30, tzinfo=zone)
 
-    assert console_history_section(
-        "2026-03-09T06:45:00+00:00", now=now, local_timezone=zone
-    ) == "Yesterday"
-    assert console_history_section(
-        "2026-03-09T08:45:00+00:00", now=now, local_timezone=zone
-    ) == "Today"
-    assert console_history_section(
-        "2026-03-12T08:45:00+00:00", now=now, local_timezone=zone
-    ) == "Today"
-    assert console_history_section(
-        "2026-03-03T12:00:00+00:00", now=now, local_timezone=zone
-    ) == "Previous 7 days"
-    assert console_history_section("not-a-time", now=now, local_timezone=zone) == "Older"
+    assert (
+        console_history_section(
+            "2026-03-09T06:45:00+00:00", now=now, local_timezone=zone
+        )
+        == "Yesterday"
+    )
+    assert (
+        console_history_section(
+            "2026-03-09T08:45:00+00:00", now=now, local_timezone=zone
+        )
+        == "Today"
+    )
+    assert (
+        console_history_section(
+            "2026-03-12T08:45:00+00:00", now=now, local_timezone=zone
+        )
+        == "Today"
+    )
+    assert (
+        console_history_section(
+            "2026-03-03T12:00:00+00:00", now=now, local_timezone=zone
+        )
+        == "Previous 7 days"
+    )
+    assert (
+        console_history_section("not-a-time", now=now, local_timezone=zone) == "Older"
+    )
 
 
 def test_entries_are_recent_first_with_active_pinned():

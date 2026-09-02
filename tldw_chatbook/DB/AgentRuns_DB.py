@@ -14,9 +14,10 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, Mapping, Sequence, Union
+from typing import Any, Iterator, Mapping, Sequence, Union, overload
 
 from loguru import logger
 
@@ -39,6 +40,8 @@ def _now_iso() -> str:
 # is Python 3.11, which can ship either. 900 is under the OLD ceiling, so the
 # chunked read is correct on every build rather than on the newest one.
 _IN_CLAUSE_CHUNK = 900
+CONSOLE_ACTIVITY_RECEIPT_PAGE_LIMIT = 200
+CONSOLE_ACTIVITY_RECEIPT_MAX_PAGE_LIMIT = 500
 
 # JSON text can expand each live UTF-8 byte to a six-byte escape. These caps
 # bound Python allocation while accommodating every valid raw-CLI field.
@@ -64,6 +67,31 @@ class AgentStepConflictError(ValueError):
 
 class ConsoleActivityReceiptsUnavailable(RuntimeError):
     """The optional local Console activity-receipt capability is unavailable."""
+
+
+@dataclass(frozen=True)
+class ConsoleActivityReceiptPage:
+    """One bounded keyset page of current unseen activity receipts."""
+
+    rows: tuple[dict[str, Any], ...]
+    next_cursor: tuple[str, str] | None
+
+    def __iter__(self) -> Iterator[dict[str, Any]]:
+        return iter(self.rows)
+
+    def __len__(self) -> int:
+        return len(self.rows)
+
+    @overload
+    def __getitem__(self, index: int) -> dict[str, Any]: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> tuple[dict[str, Any], ...]: ...
+
+    def __getitem__(
+        self, index: int | slice
+    ) -> dict[str, Any] | tuple[dict[str, Any], ...]:
+        return self.rows[index]
 
 
 def _canonical_step_payload(index: int, payload: dict) -> str:
@@ -176,8 +204,7 @@ class AgentRunsDB(BaseDB):
             last_used = getattr(self._thread_local, "conn_last_used", None)
             if (
                 last_used is None
-                or (time.monotonic() - last_used)
-                >= self._LIVENESS_PING_IDLE_SECONDS
+                or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS
             ):
                 try:
                     conn.execute("SELECT 1")
@@ -472,9 +499,7 @@ class AgentRunsDB(BaseDB):
             # v4->v5 (fleet spec §4): definition audit identity on runs --
             # same idempotent-ALTER mechanism as above.
             if "agent_definition" not in existing_columns:
-                conn.execute(
-                    "ALTER TABLE agent_runs ADD COLUMN agent_definition TEXT"
-                )
+                conn.execute("ALTER TABLE agent_runs ADD COLUMN agent_definition TEXT")
             if "definition_fingerprint" not in existing_columns:
                 conn.execute(
                     "ALTER TABLE agent_runs ADD COLUMN definition_fingerprint TEXT"
@@ -490,9 +515,7 @@ class AgentRunsDB(BaseDB):
             # (so no timestamp rule against the mark can recover which runs
             # a wake already delivered).
             if "wake_delivered_at" not in existing_columns:
-                conn.execute(
-                    "ALTER TABLE agent_runs ADD COLUMN wake_delivered_at TEXT"
-                )
+                conn.execute("ALTER TABLE agent_runs ADD COLUMN wake_delivered_at TEXT")
             # v10->v11 (fleet PR3b Task 4): continuation lineage -- the
             # run a resumed sub-agent was seeded from. Same idempotent-
             # ALTER mechanism as every column above; NULL (no DEFAULT) is
@@ -505,9 +528,7 @@ class AgentRunsDB(BaseDB):
             # v13->v14 (ADR-080): precise spawn causality. NULL is the
             # honest migration value for every historical run.
             if "spawn_event_id" not in existing_columns:
-                conn.execute(
-                    "ALTER TABLE agent_runs ADD COLUMN spawn_event_id TEXT"
-                )
+                conn.execute("ALTER TABLE agent_runs ADD COLUMN spawn_event_id TEXT")
             # v3->v4 (TASK-1975): oversize disclosure count on snapshot
             # rows -- same idempotent-ALTER migration mechanism as above.
             snapshot_columns = {
@@ -543,9 +564,7 @@ class AgentRunsDB(BaseDB):
             # re-derivation is built to handle.
             note_columns = {
                 row[1]
-                for row in conn.execute(
-                    "PRAGMA table_info(change_notes)"
-                ).fetchall()
+                for row in conn.execute("PRAGMA table_info(change_notes)").fetchall()
             }
             if "delivered_by_run_id" not in note_columns:
                 conn.execute(
@@ -559,9 +578,7 @@ class AgentRunsDB(BaseDB):
             # the legacy hunk_index+hunk_header fallback the card's
             # matching is built to handle.
             if "snapshot_id" not in note_columns:
-                conn.execute(
-                    "ALTER TABLE change_notes ADD COLUMN snapshot_id INTEGER"
-                )
+                conn.execute("ALTER TABLE change_notes ADD COLUMN snapshot_id INTEGER")
             # v10->v11 (TASK-18060 Task 1, review-rail spec §4): a file
             # created while change_notes existed but before the anchor-kind
             # extension did keeps its old 12-column table -- same
@@ -581,56 +598,32 @@ class AgentRunsDB(BaseDB):
                     "ALTER TABLE change_notes ADD COLUMN diff_line_index INTEGER"
                 )
             if "diff_line_text" not in note_columns:
-                conn.execute(
-                    "ALTER TABLE change_notes ADD COLUMN diff_line_text TEXT"
-                )
+                conn.execute("ALTER TABLE change_notes ADD COLUMN diff_line_text TEXT")
             # Keep the (write-only, audit) version table in step with the
             # DDL -- append-per-version, matching the INSERT OR IGNORE
             # convention above (UPDATE would collide on the UNIQUE column
             # when older version rows exist).
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version) VALUES (4)"
-            )
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version) VALUES (5)"
-            )
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version) VALUES (6)"
-            )
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version) VALUES (7)"
-            )
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version) VALUES (8)"
-            )
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version) VALUES (9)"
-            )
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version) VALUES (10)"
-            )
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (4)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (5)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (6)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (7)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (8)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (9)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (10)")
             # v11 is ALSO where _CURRENT_SCHEMA_VERSION was re-synced to
             # the version table (task-15669; see the class docstring for
             # the from-now-on contract).
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version) VALUES (11)"
-            )
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (11)")
             # v12: change_notes anchor kinds (TASK-18060 Task 1) --
             # renumbered from 11 at rebase time: task-15669 minted v11 on
             # dev concurrently, and the from-now-on contract requires each
             # migration to own a fresh number AND bump the constant.
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version) VALUES (12)"
-            )
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (12)")
             # v13 (task-18601 part A): agent_run_steps child table -- see
             # the CREATE TABLE comment above for the full rationale.
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version) VALUES (13)"
-            )
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (13)")
             # v14 (ADR-080): agent_runs.spawn_event_id.
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version) VALUES (14)"
-            )
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (14)")
             conn.execute("SAVEPOINT console_activity_receipts_v15")
             try:
                 self._create_console_activity_receipts_schema(conn)
@@ -642,7 +635,8 @@ class AgentRunsDB(BaseDB):
                 conn.execute("RELEASE SAVEPOINT console_activity_receipts_v15")
                 logger.warning(
                     "Console activity receipts are unavailable; "
-                    f"core AgentRunsDB remains usable: {exc}"
+                    "core AgentRunsDB remains usable (exception_type={})",
+                    type(exc).__name__,
                 )
             else:
                 conn.execute("RELEASE SAVEPOINT console_activity_receipts_v15")
@@ -678,7 +672,7 @@ class AgentRunsDB(BaseDB):
         conn.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_console_activity_receipts_unseen
-                ON console_activity_receipts(conversation_id, created_at)
+                ON console_activity_receipts(created_at DESC, activity_id)
                 WHERE acknowledged_at IS NULL AND superseded_at IS NULL
             """
         )
@@ -811,16 +805,59 @@ class AgentRunsDB(BaseDB):
                 assistant_message_id=assistant_message_id,
             )
 
-    def list_unseen_console_activity(self) -> tuple[dict, ...]:
-        """Return current unseen, unsuperseded activity newest first."""
+    def list_unseen_console_activity(
+        self,
+        *,
+        limit: int = CONSOLE_ACTIVITY_RECEIPT_PAGE_LIMIT,
+        cursor: tuple[str, str] | None = None,
+    ) -> ConsoleActivityReceiptPage:
+        """Return one bounded keyset page of current unseen activity.
+
+        Args:
+            limit: Maximum receipts to return, capped by the repository limit.
+            cursor: Optional ``(created_at, activity_id)`` key from the prior page.
+
+        Returns:
+            The bounded rows and a continuation cursor when more rows exist.
+
+        Raises:
+            ValueError: If the limit or cursor is invalid.
+        """
         self._require_receipt_capability()
+        if (
+            type(limit) is not int
+            or limit < 1
+            or limit > CONSOLE_ACTIVITY_RECEIPT_MAX_PAGE_LIMIT
+        ):
+            raise ValueError(
+                "Console activity page limit must be between 1 and "
+                f"{CONSOLE_ACTIVITY_RECEIPT_MAX_PAGE_LIMIT}."
+            )
+        if cursor is not None and (
+            type(cursor) is not tuple
+            or len(cursor) != 2
+            or any(type(value) is not str or not value for value in cursor)
+        ):
+            raise ValueError("Console activity cursor is invalid.")
+        query = (
+            "SELECT * FROM console_activity_receipts "
+            "WHERE acknowledged_at IS NULL AND superseded_at IS NULL "
+        )
+        params: list[Any] = []
+        if cursor is not None:
+            created_at, activity_id = cursor
+            query += "AND (created_at < ? OR (created_at = ? AND activity_id > ?)) "
+            params.extend((created_at, created_at, activity_id))
+        query += "ORDER BY created_at DESC, activity_id LIMIT ?"
+        params.append(limit + 1)
         with self.connection() as conn:
-            rows = conn.execute(
-                "SELECT * FROM console_activity_receipts "
-                "WHERE acknowledged_at IS NULL AND superseded_at IS NULL "
-                "ORDER BY created_at DESC, activity_id"
-            ).fetchall()
-        return tuple(dict(row) for row in rows)
+            rows = conn.execute(query, params).fetchall()
+        visible = tuple(dict(row) for row in rows[:limit])
+        next_cursor = None
+        if len(rows) > limit and visible:
+            last = visible[-1]
+            next_cursor = (str(last["created_at"]), str(last["activity_id"]))
+        return ConsoleActivityReceiptPage(visible, next_cursor)
 
     def acknowledge_console_activity(self, activity_ids: Sequence[str]) -> int:
         """Acknowledge only the supplied current receipt revisions."""
@@ -981,9 +1018,7 @@ class AgentRunsDB(BaseDB):
             The distinct ``root`` values across all remaining rows.
         """
         with self.connection() as conn:
-            rows = conn.execute(
-                "SELECT DISTINCT root FROM change_snapshots"
-            ).fetchall()
+            rows = conn.execute("SELECT DISTINCT root FROM change_snapshots").fetchall()
         return {str(row[0]) for row in rows}
 
     def update_change_snapshot_reverted(
@@ -1002,7 +1037,11 @@ class AgentRunsDB(BaseDB):
                 "SELECT reverted FROM change_snapshots WHERE id = ?",
                 (row_id,),
             ).fetchone()
-            existing = json.loads(current["reverted"]) if current and current["reverted"] else []
+            existing = (
+                json.loads(current["reverted"])
+                if current and current["reverted"]
+                else []
+            )
             merged = list(dict.fromkeys([*existing, *reverted_paths]))
             conn.execute(
                 "UPDATE change_snapshots SET reverted = ? WHERE id = ?",
@@ -1279,8 +1318,7 @@ class AgentRunsDB(BaseDB):
                 (conversation_id,),
             ).fetchall()
         return {
-            (str(row["root"]), str(row["path"])): int(row["note_count"])
-            for row in rows
+            (str(row["root"]), str(row["path"])): int(row["note_count"]) for row in rows
         }
 
     def delivered_notes_for_conversation(self, conversation_id: str) -> list[dict]:
@@ -1435,9 +1473,7 @@ class AgentRunsDB(BaseDB):
                 chunk,
             ).fetchall()
             for row in rows:
-                grouped.setdefault(row["run_id"], []).append(
-                    json.loads(row["payload"])
-                )
+                grouped.setdefault(row["run_id"], []).append(json.loads(row["payload"]))
         return grouped
 
     def _rows_to_dicts(
@@ -1621,9 +1657,7 @@ class AgentRunsDB(BaseDB):
                     ),
                 )
         except sqlite3.IntegrityError as exc:
-            raise ValueError(
-                f"an agent named '{defn.name}' already exists"
-            ) from exc
+            raise ValueError(f"an agent named '{defn.name}' already exists") from exc
         return definition_id
 
     def update_agent_definition(
@@ -1661,19 +1695,14 @@ class AgentRunsDB(BaseDB):
                     ),
                 )
                 if cursor.rowcount == 0:
-                    raise ValueError(
-                        f"agent definition not found: {definition_id}"
-                    )
+                    raise ValueError(f"agent definition not found: {definition_id}")
         except sqlite3.IntegrityError as exc:
-            raise ValueError(
-                f"an agent named '{defn.name}' already exists"
-            ) from exc
+            raise ValueError(f"an agent named '{defn.name}' already exists") from exc
 
     def soft_delete_agent_definition(self, definition_id: str) -> None:
         with self.transaction() as conn:
             conn.execute(
-                "UPDATE agent_definitions SET deleted = 1, updated_at = ? "
-                "WHERE id = ?",
+                "UPDATE agent_definitions SET deleted = 1, updated_at = ? WHERE id = ?",
                 (_now_iso(), definition_id),
             )
 
@@ -1751,8 +1780,7 @@ class AgentRunsDB(BaseDB):
                 raise KeyError(f"Unknown run id: {run_id}")
             if steps:
                 max_row = conn.execute(
-                    "SELECT MAX(seq) AS max_seq FROM agent_run_steps "
-                    "WHERE run_id = ?",
+                    "SELECT MAX(seq) AS max_seq FROM agent_run_steps WHERE run_id = ?",
                     (run_id,),
                 ).fetchone()
                 next_seq = (
@@ -1813,8 +1841,7 @@ class AgentRunsDB(BaseDB):
                 raise KeyError(f"Unknown run id: {run_id}")
             for index, canonical in prepared.items():
                 existing = conn.execute(
-                    "SELECT payload FROM agent_run_steps "
-                    "WHERE run_id = ? AND seq = ?",
+                    "SELECT payload FROM agent_run_steps WHERE run_id = ? AND seq = ?",
                     (run_id, index),
                 ).fetchone()
                 if existing is not None:
@@ -1976,6 +2003,7 @@ class AgentRunsDB(BaseDB):
         if self.is_memory_db or self.db_path_str in self._swept_paths:
             return 0
         with self.transaction() as conn:
+
             def run_observations(run_id: str) -> tuple[list[dict], int, str]:
                 parsed: list[dict] = []
                 for step_row in conn.execute(

@@ -273,9 +273,9 @@ def test_local_command_resume_projection_bounds_raw_rows_before_json_projection(
 
     statements: list[str] = []
     db._held_connection().set_trace_callback(statements.append)
-    assert [row["id"] for row in db.local_command_resume_records(
-        "local-projection-shape"
-    )] == [run_id]
+    assert [
+        row["id"] for row in db.local_command_resume_records("local-projection-shape")
+    ] == [run_id]
 
     query = next(
         statement
@@ -457,9 +457,9 @@ def test_supersede_run_tree_leaves_parented_local_command_resumable(db):
     assert db.get_run(parent)["status"] == "superseded"
     assert db.get_run(child)["status"] == "superseded"
     assert db.get_run(local_command)["status"] == "done"
-    assert [
-        row["id"] for row in db.local_command_resume_records("c")
-    ] == [local_command]
+    assert [row["id"] for row in db.local_command_resume_records("c")] == [
+        local_command
+    ]
 
 
 def test_supersede_run_tree_leaves_live_child_untouched(db):
@@ -844,12 +844,14 @@ def test_reconcile_local_commands_without_agent_lifecycle_diagnostics(tmp_path):
     assert running["status"] == "error"
     assert running["result"] is None
     assert [step["kind"] for step in running["steps"]] == ["tool_call"]
-    assert [
-        record["id"] for record in reopened.local_command_resume_records("c")
-    ] == [completed_id]
+    assert [record["id"] for record in reopened.local_command_resume_records("c")] == [
+        completed_id
+    ]
 
 
-def test_terminal_status_and_lifecycle_insert_are_atomic_on_fault(tmp_path, monkeypatch):
+def test_terminal_status_and_lifecycle_insert_are_atomic_on_fault(
+    tmp_path, monkeypatch
+):
     db = AgentRunsDB(tmp_path / "atomic-terminal.db")
     run_id = db.create_run(conversation_id="c", agent_kind="primary")
     step = {
@@ -971,7 +973,9 @@ def test_reconcile_skips_memory_db():
     assert ":memory:" not in AgentRunsDB._swept_paths
 
 
-def test_reconcile_failed_sweep_leaves_path_unregistered_for_retry(tmp_path, monkeypatch):
+def test_reconcile_failed_sweep_leaves_path_unregistered_for_retry(
+    tmp_path, monkeypatch
+):
     """A transient failure (e.g. a locked DB) during the sweep must NOT
     register the path -- otherwise no later AgentRunsDB(path) construction
     in this process ever retries, silently defeating AC#2's crash-recovery
@@ -1245,8 +1249,7 @@ def test_agent_runs_columns_backfilled_on_old_file(tmp_path):
     db = AgentRunsDB(path, client_id="test")  # open runs the ALTER guards
     with db.connection() as conn:
         columns = {
-            row[1]
-            for row in conn.execute("PRAGMA table_info(agent_runs)").fetchall()
+            row[1] for row in conn.execute("PRAGMA table_info(agent_runs)").fetchall()
         }
     assert {"agent_definition", "definition_fingerprint"} <= columns
 
@@ -1322,9 +1325,7 @@ def test_schema_version_constant_agrees_with_the_version_table(tmp_path):
     this test fails if the two ever diverge again."""
     db = AgentRunsDB(tmp_path / "fresh.db", client_id="test")
     with db.connection() as conn:
-        recorded = conn.execute(
-            "SELECT MAX(version) FROM schema_version"
-        ).fetchone()[0]
+        recorded = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
     assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION
 
 
@@ -1356,16 +1357,13 @@ def test_pre_v11_db_gains_resumed_from_run_id_and_opens_twice(tmp_path):
     assert first.get_run(run_id)["resumed_from_run_id"] == "prior-run"
     with first.connection() as conn:
         versions = {
-            row[0]
-            for row in conn.execute("SELECT version FROM schema_version")
+            row[0] for row in conn.execute("SELECT version FROM schema_version")
         }
     assert 11 in versions
 
     # Open TWICE (the plan's wording): the guarded ALTER must be a no-op.
     second = AgentRunsDB(path, client_id="test")
-    second_id = second.create_run(
-        conversation_id="c", agent_kind="subagent", task="t2"
-    )
+    second_id = second.create_run(conversation_id="c", agent_kind="subagent", task="t2")
     assert second.get_run(second_id)["resumed_from_run_id"] is None
     assert second.get_run(run_id)["resumed_from_run_id"] == "prior-run"
 
@@ -1459,9 +1457,7 @@ def test_fresh_v15_db_has_guarded_console_activity_receipt_shape(tmp_path):
                 "PRAGMA index_list(console_activity_receipts)"
             ).fetchall()
         }
-        recorded = conn.execute(
-            "SELECT MAX(version) FROM schema_version"
-        ).fetchone()[0]
+        recorded = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
 
     assert tuple(columns) == (
         "activity_id",
@@ -1485,6 +1481,32 @@ def test_fresh_v15_db_has_guarded_console_activity_receipt_shape(tmp_path):
     assert database.receipt_capability_available is True
 
 
+def test_unseen_console_activity_query_uses_stats_free_keyset_index(tmp_path):
+    database = AgentRunsDB(tmp_path / "receipt-plan.db", client_id="receipt-plan")
+
+    with database.connection() as conn:
+        assert (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'sqlite_stat1'"
+            ).fetchone()
+            is None
+        )
+        plan = " | ".join(
+            row["detail"]
+            for row in conn.execute(
+                "EXPLAIN QUERY PLAN "
+                "SELECT * FROM console_activity_receipts "
+                "WHERE acknowledged_at IS NULL AND superseded_at IS NULL "
+                "ORDER BY created_at DESC, activity_id LIMIT ?",
+                (201,),
+            )
+        )
+
+    assert "idx_console_activity_receipts_unseen" in plan
+    assert "TEMP B-TREE" not in plan
+
+
 def test_pre_v15_receipt_migration_preserves_definitions_and_change_notes(tmp_path):
     path = tmp_path / "pre-v15.db"
     setup = AgentRunsDB(path, client_id="seed-v14")
@@ -1506,10 +1528,13 @@ def test_pre_v15_receipt_migration_preserves_definitions_and_change_notes(tmp_pa
     raw.execute("DROP TABLE IF EXISTS console_activity_receipts")
     raw.execute("DELETE FROM schema_version WHERE version = 15")
     raw.commit()
-    assert raw.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' "
-        "AND name = 'console_activity_receipts'"
-    ).fetchone() is None
+    assert (
+        raw.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'console_activity_receipts'"
+        ).fetchone()
+        is None
+    )
     raw.close()
 
     migrated = AgentRunsDB(path, client_id="migrate-v15")
@@ -1535,20 +1560,25 @@ def test_receipt_capability_ddl_failure_keeps_core_database_usable(tmp_path):
     )
 
     definition_id = database.create_agent_definition(_defn())
-    run_id = database.create_run(conversation_id="core-still-works", agent_kind="primary")
+    run_id = database.create_run(
+        conversation_id="core-still-works", agent_kind="primary"
+    )
     database.set_status(run_id, "done", result="ok")
 
     assert database.receipt_capability_available is False
     assert database.get_agent_definition(definition_id)["name"] == "researcher"
     assert database.get_run(run_id)["result"] == "ok"
     with database.connection() as conn:
-        assert conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
-            "AND name = 'console_activity_receipts'"
-        ).fetchone() is None
-        assert conn.execute(
-            "SELECT MAX(version) FROM schema_version"
-        ).fetchone()[0] == 14
+        assert (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'console_activity_receipts'"
+            ).fetchone()
+            is None
+        )
+        assert (
+            conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 14
+        )
 
 
 def test_activity_receipt_identical_restamp_is_idempotent(db):

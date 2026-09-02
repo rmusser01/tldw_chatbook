@@ -45,7 +45,7 @@ def _presentation(*statuses: str) -> ConsoleActivityOutcomePresentation:
         session_id="session-a",
         conversation_id="conversation-a",
         receipts=tuple(
-            CapturedReceipt(f"activity-{index}", status)
+            CapturedReceipt(activity_id=f"activity-{index}", status=status)
             for index, status in enumerate(statuses, start=1)
         ),
     )
@@ -87,9 +87,7 @@ async def test_notice_is_hidden_until_literal_safe_presentation_is_shown():
         assert isinstance(content.renderable, Text)
         assert "Agent [release] result" in content.renderable.plain
         assert "FAILED" in content.renderable.plain
-        assert notice.query_one(
-            "#console-activity-outcome-mark-seen", Button
-        ).display
+        assert notice.query_one("#console-activity-outcome-mark-seen", Button).display
 
 
 @pytest.mark.asyncio
@@ -141,9 +139,11 @@ async def test_session_surface_always_mounts_hidden_notice_between_work_and_tran
         notice = surface.query_one(ConsoleActivityOutcomeNotice)
         child_ids = [child.id for child in surface.children]
         assert notice.display is False
-        assert child_ids.index("console-task-surface") < child_ids.index(
-            "console-activity-outcome-notice"
-        ) < child_ids.index("console-transcript-surface")
+        assert (
+            child_ids.index("console-task-surface")
+            < child_ids.index("console-activity-outcome-notice")
+            < child_ids.index("console-transcript-surface")
+        )
 
 
 class _RecordingReceiptService:
@@ -224,7 +224,7 @@ async def test_success_receipt_acknowledges_only_after_destination_notice_paints
                 session_id=target_id,
                 profile=profile,
                 token=token,
-                receipts=(CapturedReceipt("done-1", "done"),),
+                receipts=(CapturedReceipt(activity_id="done-1", status="done"),),
             )
         )
         assert service.calls == []
@@ -258,7 +258,7 @@ async def test_failed_receipt_waits_for_explicit_mark_seen():
                 session_id=target_id,
                 profile=profile,
                 token=token,
-                receipts=(CapturedReceipt("failed-1", "failed"),),
+                receipts=(CapturedReceipt(activity_id="failed-1", status="failed"),),
             )
         )
         await pilot.pause()
@@ -288,8 +288,8 @@ async def test_mixed_receipts_auto_ack_only_done_then_mark_only_failure():
                 profile=profile,
                 token=token,
                 receipts=(
-                    CapturedReceipt("done-captured", "done"),
-                    CapturedReceipt("failed-captured", "failed"),
+                    CapturedReceipt(activity_id="done-captured", status="done"),
+                    CapturedReceipt(activity_id="failed-captured", status="failed"),
                 ),
             )
         )
@@ -313,7 +313,7 @@ async def test_new_receipt_during_navigation_is_not_inferred_or_acknowledged():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         service = _RecordingReceiptService()
-        service.new_arrival = CapturedReceipt("done-newer", "done")
+        service.new_arrival = CapturedReceipt(activity_id="done-newer", status="done")
         console._console_runtime()._activity_receipts = service
         store = console._console_chat_store
         profile, token = console._workspace._console_switcher_authority()
@@ -323,7 +323,7 @@ async def test_new_receipt_during_navigation_is_not_inferred_or_acknowledged():
                 session_id=store.active_session_id,
                 profile=profile,
                 token=token,
-                receipts=(CapturedReceipt("done-selected", "done"),),
+                receipts=(CapturedReceipt(activity_id="done-selected", status="done"),),
             )
         )
         await pilot.pause()
@@ -350,7 +350,7 @@ async def test_missing_native_target_never_falls_back_or_acknowledges():
                 session_id="vanished-session",
                 profile=profile,
                 token=token,
-                receipts=(CapturedReceipt("done-vanished", "done"),),
+                receipts=(CapturedReceipt(activity_id="done-vanished", status="done"),),
             )
         )
         await pilot.pause()
@@ -372,14 +372,14 @@ async def test_authority_mismatch_never_navigates_or_acknowledges():
         console._console_runtime()._activity_receipts = service
         store = console._console_chat_store
         active_id = store.active_session_id
-        profile, _token = console._workspace._console_switcher_authority()
+        profile, token = console._workspace._console_switcher_authority()
 
         await console._session._apply_console_switcher_choice(
             _native_choice(
                 session_id=active_id,
                 profile=profile,
                 token="replaced-runtime",
-                receipts=(CapturedReceipt("done-stale", "done"),),
+                receipts=(CapturedReceipt(activity_id="done-stale", status="done"),),
             )
         )
         await pilot.pause()
@@ -420,7 +420,7 @@ async def test_switch_away_before_deferred_paint_invalidates_acknowledgement(
                 session_id=target_id,
                 profile=profile,
                 token=token,
-                receipts=(CapturedReceipt("done-deferred", "done"),),
+                receipts=(CapturedReceipt(activity_id="done-deferred", status="done"),),
             )
         )
         assert service.calls == []
@@ -471,7 +471,7 @@ async def test_failed_ack_completion_revalidates_notice_after_switch_away():
                 session_id=target_id,
                 profile=profile,
                 token=token,
-                receipts=(CapturedReceipt("done-blocked", "done"),),
+                receipts=(CapturedReceipt(activity_id="done-blocked", status="done"),),
             )
         )
         await pilot.pause()
@@ -506,13 +506,11 @@ async def test_failed_auto_ack_exposes_exact_retry_and_recovers():
                 session_id=store.active_session_id,
                 profile=profile,
                 token=token,
-                receipts=(CapturedReceipt("done-retry", "done"),),
+                receipts=(CapturedReceipt(activity_id="done-retry", status="done"),),
             )
         )
         await pilot.pause()
-        button = console.query_one(
-            "#console-activity-outcome-mark-seen", Button
-        )
+        button = console.query_one("#console-activity-outcome-mark-seen", Button)
         assert service.calls == [("done-retry",)]
         assert button.display
 
@@ -558,7 +556,7 @@ async def test_persisted_target_resumes_exact_conversation_before_acknowledgemen
             conversation_id=conversation_id,
             scope_type="workspace",
             workspace_id=workspace_id,
-            receipts=(CapturedReceipt("done-saved", "done"),),
+            receipts=(CapturedReceipt(activity_id="done-saved", status="done"),),
         )
         choice = ConsoleSwitcherChoice(
             "activate",
@@ -598,18 +596,17 @@ async def test_unavailable_result_marks_only_its_frozen_receipts_without_switchi
         console._console_runtime()._activity_receipts = service
         store = console._console_chat_store
         active_id = store.active_session_id
-        profile, _token = console._workspace._console_switcher_authority()
+        profile, token = console._workspace._console_switcher_authority()
         unavailable = UnavailableSessionNotice(
-            stable_result_key=(
-                f"unavailable-session:{profile}:gone-native-session"
-            ),
+            stable_result_key=(f"unavailable-session:{profile}:gone-native-session"),
             profile_authority=profile,
+            authority_token=token,
             session_id="gone-native-session",
             group=ActivityGroup.WAITING_FOR_YOU,
             latest_at=None,
             receipts=(
-                CapturedReceipt("failed-gone", "failed"),
-                CapturedReceipt("done-gone", "done"),
+                CapturedReceipt(activity_id="failed-gone", status="failed"),
+                CapturedReceipt(activity_id="done-gone", status="done"),
             ),
             primary_status="failed",
             all_statuses=("failed", "done"),
@@ -622,6 +619,29 @@ async def test_unavailable_result_marks_only_its_frozen_receipts_without_switchi
 
         assert store.active_session_id == active_id
         assert service.calls == [("failed-gone", "done-gone")]
+
+
+@pytest.mark.asyncio
+async def test_stale_unavailable_notice_token_cannot_acknowledge_receipts():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        service = _RecordingReceiptService()
+        console._console_runtime()._activity_receipts = service
+        profile, _token = console._workspace._console_switcher_authority()
+        stale_notice = SimpleNamespace(
+            profile_authority=profile,
+            authority_token="replaced-runtime-token",
+            receipts=(CapturedReceipt(activity_id="stale-receipt", status="failed"),),
+        )
+
+        await console._session._mark_unavailable_switcher_notice_seen(stale_notice)
+        await pilot.pause()
+
+        assert service.calls == []
 
 
 @pytest.mark.asyncio
@@ -648,7 +668,9 @@ async def test_notice_remount_invalidates_deferred_callback(monkeypatch):
                 session_id=store.active_session_id,
                 profile=profile,
                 token=token,
-                receipts=(CapturedReceipt("done-before-remount", "done"),),
+                receipts=(
+                    CapturedReceipt(activity_id="done-before-remount", status="done"),
+                ),
             )
         )
         assert deferred

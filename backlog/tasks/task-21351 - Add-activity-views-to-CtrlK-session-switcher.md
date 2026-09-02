@@ -4,7 +4,7 @@ title: Add activity views to Ctrl+K session switcher
 status: In Progress
 assignee: []
 created_date: '2026-08-23 22:37'
-updated_date: '2026-09-02 14:31'
+updated_date: '2026-09-02 15:24'
 labels: []
 dependencies:
   - TASK-20937
@@ -108,4 +108,6 @@ ADR required: yes. ADR path: backlog/decisions/085-console-activity-receipts-and
 Remaining closeout gate: parent AC #10 equal-cell iTerm2 and Windows Terminal parity. iTerm2 automation is blocked by macOS Accessibility/TCC permission; Windows Terminal remains blocked by TASK-20937.6. Parent intentionally remains In Progress.
 
 2026-09-02 Impeccable refinement: clarified visible scope and exact Enter consequence; adopted content-sized, left-aligned, theme-semantic rows; distilled update metadata; simplified search guidance; added contextual hints, Home/End/Page navigation, and keyboard/pointer Mark seen confirmation parity. Fresh evidence: 90 targeted switcher/trust UI tests passed, 2 hermetic production/compositor capture tests passed, the Impeccable detector returned no findings, and scoped Ruff plus git diff --check passed. No new ADR was required because these presentation refinements stay within ADR-085. AC #10 remains open solely for equal-cell native terminal parity.
+
+2026-09-02 PR review follow-up: rebased onto dev 25478303e and addressed Qodo findings with bounded keyset receipt pagination, a stats-free plan-pinned unseen index, strict Pydantic receipt/query boundaries, explicit Mark seen handling for missing persisted destinations, authority-token fencing for unavailable notices, and complete public API documentation. Kept the read on AgentRunsDB.connection() because transaction() issues BEGIN IMMEDIATE and is intentionally reserved for writes. Rebuilt generated CSS and the reviewed persistent-diagnostic inventory. Verification: 12 receipt DB tests, 177 Chat projection/receipt tests, 50 activity switcher/outcome UI tests, 58 switcher trust/keyboard/rail tests, and all 23 PR performance guards pass; CSS, index-plan, diagnostic, profile-path, backlog-ID, schema-allowlist, Ruff, Impeccable, and diff checks pass. No new ADR is required; these review corrections remain within ADR-085. Native-terminal parity remains the sole closeout gate.
 <!-- SECTION:NOTES:END -->
