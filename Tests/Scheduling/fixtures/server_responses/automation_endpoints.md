@@ -260,3 +260,17 @@ Common automation error codes mapped by the server:
 - Date-time filters (`created_from`, `created_to`) must include a timezone; the server normalizes to UTC.
 - Mutating endpoints accept an optional `Idempotency-Key` request header.
 - The `capabilities` endpoint is synchronous (`def`, not `async def`) and returns the current server-side capability matrix.
+
+## Fixtures
+
+- `automation_preview_response.json` (task-1, schedules-handoff PR-4) holds
+  hand-assembled `ScheduledTaskPreviewCreateRequest`/`ScheduledTaskPreviewResponse`
+  pairs for `tldw_chatbook.Scheduling.automation_preview.preview_automation_definition`
+  (a pure local port of the server's preview-assembly logic above — no
+  server round trip). Two cases: a valid `recurring_question` create-preview,
+  and one with an unsupported `schedule.kind`. Each case pins a `now` value
+  so its `schedule_preview.next_occurrences` is deterministic —
+  `next_occurrences` is a **local addition**, not part of the server's
+  response (the server's `schedule_preview` is just the bare normalized
+  `schedule` dict; see `_create_preview`'s `schedule_preview=normalized["schedule"]`
+  in `scheduled_task_automation_service.py`).

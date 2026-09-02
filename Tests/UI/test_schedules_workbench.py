@@ -11,7 +11,7 @@ import pytest
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.containers import Horizontal
-from textual.widgets import Button, DataTable, Input, Static
+from textual.widgets import Button, DataTable, Input, Select, Static
 
 from tldw_chatbook.Scheduling.events import (
     DeleteTaskRequested,
@@ -71,6 +71,10 @@ class MockSchedulingService(_MockSchedulingServiceMixin):
         self.updated: list[tuple[str, dict]] = []
         self.created: list[dict] = []
         self.deleted_ids: list[str] = []
+        # Mirrors the real signature's threaded owner (never a `set_owner`
+        # flip), so a cross-owner save is observable here.
+        self.created_owners: list[str | None] = []
+        self.updated_owners: list[str | None] = []
 
     async def list_reminders(self):
         return [
@@ -86,12 +90,16 @@ class MockSchedulingService(_MockSchedulingServiceMixin):
     async def list_tasks(self):
         return await self.list_reminders()
 
-    async def create_reminder(self, payload: dict):
+    async def create_reminder(self, payload: dict, *, owner_id: str | None = None):
         self.created.append(payload)
+        self.created_owners.append(owner_id)
         return ReminderTask(**payload)
 
-    async def update_reminder(self, task_id: str, fields: dict):
+    async def update_reminder(
+        self, task_id: str, fields: dict, *, owner_id: str | None = None
+    ):
         self.updated.append((task_id, fields))
+        self.updated_owners.append(owner_id)
         reminders = await self.list_reminders()
         task = reminders[0]
         for key, value in fields.items():
@@ -941,7 +949,10 @@ async def test_create_reminder_action_saves_new_reminder():
         assert len(service.created) == 1
         assert service.created[0]["title"] == "New reminder"
         assert service.created[0]["schedule_kind"] == "one_time"
+        # Owner threaded through the call, never a `set_owner` flip.
+        assert service.created_owners == [service.owner_id]
         notifications = list(pilot.app._notifications)
+        # Same-owner save: the plain toast, no "switch owner" hint.
         assert any(n.message == "Scheduled task created." for n in notifications)
 
 
@@ -974,6 +985,88 @@ async def test_edit_reminder_action_updates_existing_reminder():
         assert service.updated[0][1]["title"] == "Updated title"
         notifications = list(pilot.app._notifications)
         assert any(n.message == "Scheduled task updated." for n in notifications)
+
+
+@pytest.mark.asyncio
+async def test_create_reminder_for_a_different_runs_on_owner_queues_a_mutation(
+    tmp_path,
+):
+    """task-5: picking a non-default "Runs on" owner in the create form
+    rides the EXISTING `create_reminder` server-fallback/mutation path
+    (no new persistence code) -- and the service's shared `owner_id` is
+    never repointed at the owner that was only meant for this one save
+    (Qodo HIGH: the owner is threaded through the call, so no concurrent
+    worker can observe a temporary flip).
+
+    The toast is also checked here (Qodo MEDIUM): this list is owner-scoped,
+    so a reminder created for another owner cannot appear in it -- a bare
+    "Scheduled task created." reads as a lost save."""
+    from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+    from tldw_chatbook.Scheduling.services.scheduling_service import SchedulingService
+    from tldw_chatbook.Scheduling.services.server_client import ServerUnavailableError
+
+    db = ScheduledTasksDB(tmp_path / "scheduled_tasks.db")
+    server_client = AsyncMock()
+    server_client.notifications_service = object()
+    server_client.create_reminder.side_effect = ServerUnavailableError("offline")
+    # A "server available" app also triggers the (unrelated) Automations-tab
+    # load on mount; give it a real return value so it settles cleanly
+    # instead of leaving an un-awaited AsyncMock coroutine at teardown.
+    server_client.list_automation_definitions = AsyncMock(
+        return_value={"items": [], "total": 0}
+    )
+    service = SchedulingService(db=db, server_client=server_client, runtime_source="local")
+
+    app = WorkbenchTestApp()
+    app.scheduling_service = service
+    app.runtime_policy = SimpleNamespace(
+        state=SimpleNamespace(active_server_id="example.com")
+    )
+    try:
+        async with app.run_test() as pilot:
+            await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+            await pilot.pause()
+
+            pilot.app.screen.action_create_reminder()
+            await pilot.pause()
+            assert isinstance(pilot.app.screen, ReminderForm)
+
+            runs_on = pilot.app.screen.query_one("#reminder-runs-on", Select)
+            option_values = [value for _label, value in runs_on._options]
+            assert option_values == ["local", "server:example.com"]
+            assert runs_on.value == "local"  # default = current screen owner
+            runs_on.value = "server:example.com"
+
+            pilot.app.screen.query_one("#reminder-title", Input).value = "Server reminder"
+            pilot.app.screen.query_one(
+                "#reminder-run-at", Input
+            ).value = "2099-08-28 09:00"
+
+            await pilot.click("#reminder-save")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            toasts = [n.message for n in pilot.app._notifications]
+            assert any(
+                "Server (example.com)" in message
+                and "switch to that owner" in message
+                for message in toasts
+            ), f"the toast must name the owner it was created for; got {toasts}"
+
+        assert service.owner_id == "local"  # never repointed by the save
+        assert service.sync_engine.owner_id == "local"
+        pending = db.get_pending_mutations(
+            "server:example.com", primitive="reminder_task"
+        )
+        assert len(pending) == 1
+        assert pending[0]["payload"]["action"] == "create"
+        rows = db.list_reminder_tasks(owner_id="server:example.com")
+        assert len(rows) == 1
+        assert rows[0]["title"] == "Server reminder"
+        assert db.list_reminder_tasks(owner_id="local") == []
+    finally:
+        db.close()
 
 
 def test_sync_completed_event():

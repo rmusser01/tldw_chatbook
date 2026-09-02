@@ -9,6 +9,8 @@ server identity (``server:<user_id>``).
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
+from dataclasses import field as _dataclass_field
 from datetime import datetime, timezone
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
@@ -27,8 +29,15 @@ def compute_local_health(app, row):
 
     return _impl(app, row)
 
+# ADR-097: automation_preview / automation_validation / schedule_compute are
+# imported function-level in the authoring facade below -- this module is
+# boot-resident and eager imports of the authoring stack breached the
+# ui-ready census (975 > 972).
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.models import (
+    AutomationFamily,
+    AutomationPreview,
+    PreviewStatus,
     ReminderTask,
     ReviewState,
     ScheduleKind,
@@ -37,6 +46,9 @@ from tldw_chatbook.Scheduling.models import (
 from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
 from tldw_chatbook.Scheduling.services.server_client import (
     SchedulingServerClient,
+    ServerClientError,
+    ServerClientPolicyError,
+    ServerClientValidationError,
     ServerUnavailableError,
 )
 from tldw_chatbook.Scheduling.services.sync_engine import SyncEngine
@@ -49,6 +61,16 @@ _REMINDER_PRIMITIVE = "reminder_task"
 #: mirroring how _REMINDER_PRIMITIVE is independently defined in each of
 #: those modules too.
 _RESULT_REVIEW_PRIMITIVE = "automation_result_review"
+
+#: Matches SyncEngine._DEFINITION_PRIMITIVE -- same duplication precedent
+#: as _RESULT_REVIEW_PRIMITIVE above (this module is the producer of these
+#: mutations, SyncEngine the consumer/replayer).
+_DEFINITION_PRIMITIVE = "automation_definition"
+
+#: v1 scope guard (schedules-handoff PR-4, task 4): only this family can be
+#: authored through `preview_definition`/`save_definition`. `agent_task`
+#: authoring rides a follow-up program -- see `_reject_unsupported_family`.
+_SUPPORTED_AUTOMATION_FAMILY = AutomationFamily.RECURRING_QUESTION.value
 
 # Fields that are local-only and should not be sent to the server.
 _LOCAL_ONLY_FIELDS = {
@@ -73,6 +95,106 @@ _REMINDER_SERVER_CREATE_FIELDS = {
     "link_id",
     "link_url",
 }
+
+
+@dataclass(slots=True)
+class SaveDefinitionOutcome:
+    """Result of `SchedulingService.save_definition` (Task 5's modal seam).
+
+    Attributes:
+        status: ``"saved"`` (committed locally, or to the server while
+            online), ``"queued"`` (server owner, seam unreachable -- the
+            local row was written and a mutation queued for the next
+            sync), ``"invalid"`` (the preview rejected the payload;
+            nothing was written), or ``"error"`` (an operational failure
+            unrelated to payload validity, e.g. an unknown
+            ``definition_id``).
+        errors: Field-addressed validation errors (``{"field", "code",
+            "message"}``), populated for ``"invalid"``/``"error"``.
+        definition_id: The local row id, when one exists after the call.
+            ``None`` only for ``"invalid"``/``"error"`` on a create (no
+            row was ever written).
+    """
+
+    status: str
+    errors: list[dict[str, Any]] = _dataclass_field(default_factory=list)
+    definition_id: str | None = None
+
+
+def _seam_failure_warning(exc: Exception) -> dict[str, str]:
+    """Build the ``_owner`` warning `preview_definition` appends on a seam failure.
+
+    Not a `field_error` (those are validation errors, not warnings) --
+    same ``{"field", "code", "message"}`` shape as `automation_preview.
+    py`'s own warning entries, addressed to the pseudo-field ``"_owner"``
+    since the failure is about the owner's server connection/permissions,
+    not any one authoring field. `ServerClientPolicyError` (a deterministic,
+    pre-network refusal) gets its own code/wording -- review round 1 finding
+    3: telling a permanently-refused user "showing local validation only"
+    with no other context reads as "try again once you're back online",
+    which retrying will never fix.
+    """
+    if isinstance(exc, ServerClientPolicyError):
+        return {
+            "field": "_owner",
+            "code": "policy_denied",
+            "message": (
+                f"The server refused this automation ({exc}); showing local "
+                "validation only -- this will not resolve by retrying."
+            ),
+        }
+    return {
+        "field": "_owner",
+        "code": "server_unreachable",
+        "message": (
+            f"Could not reach the server to preview this automation ({exc}); "
+            "showing local validation only."
+        ),
+    }
+
+
+def _server_refused_outcome(
+    exc: Exception, definition_id: str | None
+) -> SaveDefinitionOutcome:
+    """Build the `SaveDefinitionOutcome` for a refusal that replaying cannot fix.
+
+    Covers every `ServerClientValidationError` -- a local pre-network
+    policy refusal (`ServerClientPolicyError`) AND any server-side 4xx
+    (`server_client._call_with_retry` maps 400..499 except 404 to this
+    class and never retries it): 409 `definition_version_conflict`, 409
+    `definition_archived`, 422 `schedule_invalid`, ...
+
+    None of these may fall back to the offline queue path (review round 1
+    finding 1, final review C2): `SyncEngine._push_definition_create`/
+    `_push_definition_update` would replay the identical request and hit
+    the identical refusal forever, and for a policy refusal `_run_phase`
+    even treats it as "not applicable" and swallows it silently -- no sync
+    error recorded, mutation never cleared, never surfaced. A save this
+    facade knows can never succeed must be reported as failed now, not
+    queued as if it will eventually sync.
+
+    Retryable failures (`ServerUnavailableError`/`ServerClientTimeoutError`
+    /`ServerClientServerError`, and a 404 the sync engine converts to a
+    create) still take the offline-queue path.
+    """
+    from tldw_chatbook.Scheduling.automation_validation import field_error
+
+    code = (
+        "policy_denied"
+        if isinstance(exc, ServerClientPolicyError)
+        else "server_rejected"
+    )
+    return SaveDefinitionOutcome(
+        status="error",
+        errors=[
+            field_error(
+                "_owner",
+                code,
+                f"The server refused this automation: {exc}",
+            )
+        ],
+        definition_id=definition_id,
+    )
 
 
 class SchedulingService:
@@ -153,13 +275,28 @@ class SchedulingService:
         self.owner_id = owner_id
         self.sync_engine.owner_id = owner_id
 
-    async def create_reminder(self, payload: dict[str, Any]) -> ReminderTask:
+    async def create_reminder(
+        self, payload: dict[str, Any], *, owner_id: str | None = None
+    ) -> ReminderTask:
         """Create a reminder, preferring the server API when connected.
 
         If the server is unreachable or returns an error, the reminder is stored
         locally and a pending mutation is recorded so the sync engine can push it
         later.
+
+        Args:
+            payload: `ReminderTask` fields to create.
+            owner_id: Write this one reminder under a DIFFERENT owner than
+                the service's active one (the form's "Runs on" selector);
+                defaults to `self.owner_id`, so every existing caller is
+                unchanged. Explicit rather than a `set_owner` flip around
+                the awaited call: `owner_id` is shared mutable state that
+                concurrent workers (sync, refresh, run-now) read, and a
+                flip held across a network round-trip is visible to all of
+                them. Mirrors `_owner_uses_server(owner_id)`, the same
+                precedent `preview_definition`/`save_definition` use.
         """
+        owner_id = owner_id or self.owner_id
         task = ReminderTask(**payload)
         task.next_run_at = self._compute_next_run_at(task)
         server_payload = self._server_create_payload(task)
@@ -174,27 +311,29 @@ class SchedulingService:
             }
         )
 
-        use_server = self._use_server()
+        use_server = self._owner_uses_server(owner_id)
         if use_server:
             assert self.server_client is not None
             try:
                 response = await self.server_client.create_reminder(**server_payload)
-                return await self._persist_server_reminder_response(response)
+                return await self._persist_server_reminder_response(
+                    response, owner_id=owner_id
+                )
             except ServerUnavailableError:
                 logger.warning(
-                    f"Server unavailable while creating reminder for {self.owner_id}"
+                    f"Server unavailable while creating reminder for {owner_id}"
                 )
             except Exception as exc:  # noqa: BLE001 - server errors should fall back
                 logger.exception(
-                    f"Server create_reminder failed for {self.owner_id}: {exc}"
+                    f"Server create_reminder failed for {owner_id}: {exc}"
                 )
 
-        task_id = self.db.create_reminder_task(owner_id=self.owner_id, **db_fields)
+        task_id = self.db.create_reminder_task(owner_id=owner_id, **db_fields)
         if use_server:
             self.db.record_pending_mutation(
                 task_id,
                 _REMINDER_PRIMITIVE,
-                self.owner_id,
+                owner_id,
                 {"action": "create", "fields": server_payload},
             )
         self._notify_queue_changed()
@@ -229,18 +368,27 @@ class SchedulingService:
         return self._row_to_reminder(row)
 
     async def update_reminder(
-        self, task_id: str, payload: dict[str, Any]
+        self, task_id: str, payload: dict[str, Any], *, owner_id: str | None = None
     ) -> ReminderTask | None:
         """Update a reminder, preferring the server API when connected.
 
         Falls back to a local update plus a pending mutation if the server is
         unavailable or returns an error.
+
+        Args:
+            task_id: The local reminder row to update.
+            payload: The fields to change.
+            owner_id: The owner this update belongs to; defaults to
+                `self.owner_id`. Same rationale as `create_reminder`'s --
+                threaded explicitly so a cross-owner save never has to flip
+                the service's shared `owner_id` around an awaited call.
         """
+        owner_id = owner_id or self.owner_id
         row = self.db.get_reminder_task(task_id)
         if row is None:
             return None
 
-        use_server = self._use_server()
+        use_server = self._owner_uses_server(owner_id)
         if use_server:
             assert self.server_client is not None
             server_id = row.get("server_id")
@@ -256,15 +404,15 @@ class SchedulingService:
                         **merged_payload
                     )
                 return await self._persist_server_reminder_response(
-                    response, local_id=task_id
+                    response, local_id=task_id, owner_id=owner_id
                 )
             except ServerUnavailableError:
                 logger.warning(
-                    f"Server unavailable while updating reminder {task_id} for {self.owner_id}"
+                    f"Server unavailable while updating reminder {task_id} for {owner_id}"
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.exception(
-                    f"Server update_reminder failed for {task_id} ({self.owner_id}): {exc}"
+                    f"Server update_reminder failed for {task_id} ({owner_id}): {exc}"
                 )
 
         # Local path: compute next_run_at and clear stale schedule fields
@@ -287,7 +435,7 @@ class SchedulingService:
             self.db.record_pending_mutation(
                 task_id,
                 _REMINDER_PRIMITIVE,
-                self.owner_id,
+                owner_id,
                 {"action": "update", "fields": dict(payload)},
             )
         self._notify_queue_changed()
@@ -587,6 +735,549 @@ class SchedulingService:
         )
         return updated
 
+    async def preview_definition(
+        self, payload: dict[str, Any], owner_id: str
+    ) -> AutomationPreview:
+        """Preview an automation-definition authoring payload (Task 5's live-feedback seam).
+
+        Routes by ``owner_id`` (not ``self.owner_id`` -- the modal can
+        preview for a different owner than the service's current active
+        one): a local owner runs Task 1's pure `preview_automation_
+        definition` directly (no I/O, so no `asyncio.to_thread`). A
+        server owner round-trips through `SchedulingServerClient.
+        preview_automation_definition`; when that round trip fails for
+        ANY reason (offline, timeout, 5xx, policy refusal), this falls
+        back to the same local pure preview with an extra warning
+        (``field="_owner"``) appended, so the modal still shows schedule
+        feedback instead of a dead form -- the warning's ``code``/
+        ``message`` distinguish a deterministic policy refusal
+        (``"policy_denied"``) from an actual connectivity failure
+        (``"server_unreachable"``), since only one of those is worth
+        retrying (review round 1 finding 3).
+
+        v1 scope guard: `family` other than `"recurring_question"` is
+        rejected before any preview runs (`_reject_unsupported_family`) --
+        Task 1's pure preview fabricates a `family: unsupported` error for
+        `agent_task` that is a scope cut, not real server parity, and must
+        never reach a caller through this facade.
+        """
+        from tldw_chatbook.Scheduling.automation_preview import preview_automation_definition
+
+        guard = self._reject_unsupported_family(payload)
+        if guard is not None:
+            return guard
+
+        if not self._owner_uses_server(owner_id):
+            return preview_automation_definition(payload)
+
+        assert self.server_client is not None
+        try:
+            response = await self.server_client.preview_automation_definition(
+                dict(payload)
+            )
+        except ServerClientError as exc:
+            logger.warning(
+                "Server preview unreachable for owner {owner_id} ({exc}); "
+                "falling back to local validation",
+                owner_id=owner_id,
+                exc=exc,
+            )
+            local_preview = preview_automation_definition(payload)
+            warnings = [*(local_preview.warnings or []), _seam_failure_warning(exc)]
+            return local_preview.model_copy(update={"warnings": warnings})
+        return self._server_preview_to_model(response)
+
+    async def save_definition(
+        self,
+        payload: dict[str, Any],
+        owner_id: str,
+        definition_id: str | None = None,
+    ) -> SaveDefinitionOutcome:
+        """Create or update a local `recurring_question` automation definition.
+
+        Always previews first (create/save ruling 3): an invalid payload
+        writes nothing and returns its validation errors. ``definition_id``
+        (the LOCAL row id, ``None`` for a create) is this facade's own
+        source of truth for create-vs-update -- not whatever `payload`
+        happens to carry -- mirroring `SyncEngine`'s replay precedent
+        (Task 3) of overriding `mode`/`definition_id`/`definition_version`
+        on the outgoing request itself rather than trusting the payload.
+
+        Local owner: computes `next_run_at` and writes straight to
+        `ScheduledTasksDB` (`create_automation_definition`/
+        `update_automation_definition`).
+
+        Server owner, reachable: preview -> commit (`create_automation_
+        definition`/`update_automation_definition` on the server client)
+        -> mirror the echo locally. An existing local row is updated in
+        place (`adopt_server_definition_identity`, so an edit never
+        creates a second local row for the same definition); a brand-new
+        definition has no local row to adopt onto, so it goes through the
+        same server-mirror upsert the sync pull uses (`upsert_automation_
+        definitions_from_server`), then the freshly inserted row is
+        looked up by its new server id.
+
+        Server owner, seam unreachable (offline create, or an edit of a
+        row that was never synced): the LOCAL pure preview stands in for
+        the server's verdict (still "invalid -> write nothing"), the
+        local row is written (or updated), and one `automation_definition`
+        pending mutation is recorded atomically with it (same transaction,
+        `create_automation_definition`/`update_automation_definition`'s
+        `pending_mutation` kwarg) for `SyncEngine` to replay later.
+
+        Server owner, refused for good (`ServerClientValidationError` --
+        a deterministic pre-network policy refusal, or any server-side
+        4xx: 409 version conflict, 422 schedule invalid, ...): returns
+        `status="error"` and writes nothing. NOT queued -- a replay would
+        hit the identical refusal forever (review round 1 finding 1,
+        final review C2). See `_server_refused_outcome`.
+
+        Editing (`definition_id` given) MERGES the payload onto the stored
+        row (`_merge_definition_payload`), so a caller that omits a field
+        it does not author keeps that field's stored value instead of
+        wiping it (final review I4).
+        """
+        from tldw_chatbook.Scheduling.automation_preview import preview_automation_definition
+        from tldw_chatbook.Scheduling.automation_validation import field_error
+
+        guard = self._reject_unsupported_family(payload)
+        if guard is not None:
+            return SaveDefinitionOutcome(
+                status="invalid", errors=guard.validation_errors or [], definition_id=definition_id
+            )
+
+        local_row: dict[str, Any] | None = None
+        if definition_id is not None:
+            local_row = await asyncio.to_thread(
+                self.db.get_automation_definition, definition_id
+            )
+            if local_row is None:
+                return SaveDefinitionOutcome(
+                    status="error",
+                    errors=[
+                        field_error(
+                            "_definition",
+                            "not_found",
+                            f"Automation definition {definition_id} was not found.",
+                        )
+                    ],
+                    definition_id=definition_id,
+                )
+            payload = self._merge_definition_payload(payload, local_row)
+
+        if not self._owner_uses_server(owner_id):
+            mode = "update" if local_row is not None else "create"
+            request = self._build_definition_request(
+                payload,
+                mode=mode,
+                definition_id=definition_id if mode == "update" else None,
+                definition_version=local_row.get("version") if local_row else None,
+            )
+            preview = preview_automation_definition(request)
+            if preview.status != PreviewStatus.VALID:
+                return SaveDefinitionOutcome(
+                    status="invalid",
+                    errors=preview.validation_errors or [],
+                    definition_id=definition_id,
+                )
+            saved_id = await self._write_local_definition(
+                preview, owner_id, local_row, definition_id
+            )
+            self._notify_queue_changed()
+            return SaveDefinitionOutcome(status="saved", definition_id=saved_id)
+
+        # Server owner: offline-authored (never synced) rows push as a
+        # server create even when a local row already exists (Task 3's
+        # `_push_definition_mutation` precedent).
+        server_mode = (
+            "create" if local_row is None or not local_row.get("server_id") else "update"
+        )
+        request = self._build_definition_request(
+            payload,
+            mode=server_mode,
+            definition_id=local_row.get("server_id") if local_row else None,
+            definition_version=local_row.get("version") if local_row else None,
+        )
+
+        assert self.server_client is not None
+        try:
+            response = await self.server_client.preview_automation_definition(request)
+        except ServerClientValidationError as exc:
+            return _server_refused_outcome(exc, definition_id)
+        except ServerClientError as exc:
+            return await self._save_definition_offline(
+                request, owner_id, local_row, definition_id, server_mode, exc
+            )
+
+        preview_dict = response if isinstance(response, dict) else {}
+        if preview_dict.get("status") != "valid":
+            return SaveDefinitionOutcome(
+                status="invalid",
+                errors=preview_dict.get("validation_errors") or [],
+                definition_id=definition_id,
+            )
+
+        preview_id = preview_dict.get("id")
+        try:
+            if server_mode == "update":
+                committed = await self.server_client.update_automation_definition(
+                    local_row["server_id"], preview_id
+                )
+            else:
+                committed = await self.server_client.create_automation_definition(
+                    preview_id
+                )
+        except ServerClientValidationError as exc:
+            return _server_refused_outcome(exc, definition_id)
+        except ServerClientError as exc:
+            return await self._save_definition_offline(
+                request, owner_id, local_row, definition_id, server_mode, exc
+            )
+
+        committed = committed if isinstance(committed, dict) else {}
+        saved_id = await self._mirror_server_definition(
+            committed, owner_id, local_row, definition_id
+        )
+        self._notify_queue_changed()
+        return SaveDefinitionOutcome(status="saved", definition_id=saved_id)
+
+    async def _save_definition_offline(
+        self,
+        request: dict[str, Any],
+        owner_id: str,
+        local_row: dict[str, Any] | None,
+        definition_id: str | None,
+        server_mode: str,
+        exc: Exception,
+    ) -> SaveDefinitionOutcome:
+        """Server seam unreachable during save: local-first fallback.
+
+        Ruling 3 ("save always previews") still holds offline: the LOCAL
+        pure preview stands in for the server's verdict, so an invalid
+        payload still writes nothing. A valid one writes the local row
+        and queues exactly one `automation_definition` mutation in the
+        SAME transaction as that write.
+
+        The update branch passes `bump_version=False` (final review C1):
+        a server-owned row's `version` column MIRRORS the server's
+        (`upsert_automation_definitions_from_server`/`adopt_server_
+        definition_identity` copy it verbatim) and the server checks the
+        queued `definition_version` for exact equality. Bumping it locally
+        desynchronizes the mirror, and because `pending_mutations` is
+        `UNIQUE(local_id, primitive, owner_id)` a second offline edit
+        REPLACES the first with one carrying the drifted version -- which
+        the server then rejects (409) forever.
+        """
+        from tldw_chatbook.Scheduling.automation_preview import preview_automation_definition
+
+        logger.warning(
+            "Server unreachable while saving automation definition for "
+            "{owner_id} ({exc}); queuing for later sync",
+            owner_id=owner_id,
+            exc=exc,
+        )
+        local_preview = preview_automation_definition(request)
+        if local_preview.status != PreviewStatus.VALID:
+            return SaveDefinitionOutcome(
+                status="invalid",
+                errors=local_preview.validation_errors or [],
+                definition_id=definition_id,
+            )
+
+        fields = self._definition_db_fields_from_preview(local_preview)
+        mutation_payload = {
+            "action": server_mode,
+            "definition_payload": request,
+            "server_definition_id": local_row.get("server_id") if local_row else None,
+        }
+        pending_mutation = {
+            "primitive": _DEFINITION_PRIMITIVE,
+            "owner_id": owner_id,
+            "payload": mutation_payload,
+        }
+
+        if local_row is not None:
+            await asyncio.to_thread(
+                self.db.update_automation_definition,
+                definition_id,
+                bump_version=False,
+                pending_mutation=pending_mutation,
+                **fields,
+            )
+            saved_id = definition_id
+        else:
+            name = fields.pop("name")
+            saved_id = await asyncio.to_thread(
+                self.db.create_automation_definition,
+                owner_id,
+                _SUPPORTED_AUTOMATION_FAMILY,
+                name,
+                pending_mutation=pending_mutation,
+                **fields,
+            )
+
+        self._notify_queue_changed()
+        return SaveDefinitionOutcome(status="queued", definition_id=saved_id)
+
+    async def _write_local_definition(
+        self,
+        preview: AutomationPreview,
+        owner_id: str,
+        local_row: dict[str, Any] | None,
+        definition_id: str | None,
+    ) -> str:
+        """Write a valid local-owner preview's normalized fields to the DB."""
+        fields = self._definition_db_fields_from_preview(preview)
+        if local_row is not None:
+            await asyncio.to_thread(
+                self.db.update_automation_definition, definition_id, **fields
+            )
+            return definition_id
+
+        name = fields.pop("name")
+        return await asyncio.to_thread(
+            self.db.create_automation_definition,
+            owner_id,
+            _SUPPORTED_AUTOMATION_FAMILY,
+            name,
+            **fields,
+        )
+
+    async def _mirror_server_definition(
+        self,
+        server_item: dict[str, Any],
+        owner_id: str,
+        local_row: dict[str, Any] | None,
+        definition_id: str | None,
+    ) -> str | None:
+        """Mirror a create/update server echo onto the local cache; returns the local id.
+
+        An existing local row (an edit, synced or not) adopts the echoed
+        identity/fields in place (`adopt_server_definition_identity`) so
+        this never creates a second row for the same definition. A
+        brand-new definition has no local row to adopt onto, so it is
+        mirrored via the same server-mirror upsert the sync pull uses
+        (`upsert_automation_definitions_from_server`), then looked up by
+        its new server id -- that upsert reports only insert/update
+        counts, not the generated id.
+
+        Either way, any pending `automation_definition` mutation left over
+        from an earlier offline save on this row is cleared once this
+        online save actually lands -- same precedent as
+        `_persist_server_reminder_response`'s `delete_pending_mutation_
+        for_record` call. Without this, a stale queued mutation survives a
+        later successful online save and the next sync replays it: for a
+        never-synced row that just got its first server identity via
+        create, that means a SECOND server-side definition and an orphaned
+        adopt; for an already-synced row, it means the OLDER queued
+        payload silently overwriting this save's newer edit (review round
+        1 finding 2).
+        """
+        if local_row is not None:
+            await asyncio.to_thread(
+                self.db.adopt_server_definition_identity, definition_id, server_item
+            )
+            saved_id: str | None = definition_id
+        else:
+            await asyncio.to_thread(
+                self.db.upsert_automation_definitions_from_server, owner_id, [server_item]
+            )
+            server_id = server_item.get("id")
+            if server_id is None:
+                return None
+            mirrored = await asyncio.to_thread(
+                self.db.get_automation_definition_by_server_id, owner_id, server_id
+            )
+            saved_id = mirrored.get("id") if mirrored else None
+
+        if saved_id is not None:
+            await asyncio.to_thread(
+                self.db.delete_pending_mutation_for_record,
+                saved_id,
+                _DEFINITION_PRIMITIVE,
+                owner_id,
+            )
+        return saved_id
+
+    @staticmethod
+    def _merge_definition_payload(
+        payload: dict[str, Any], local_row: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Overlay an edit payload onto the stored row's fields (final review I4).
+
+        An authoring payload only carries the fields its author exposes --
+        the v1 modal has no input for `description`, `visibility_policy`,
+        `approval_policy` or `config.retention_policy`, and none for
+        `input.max_tokens` (which `automation_execution` reads). Without
+        this merge those fields are absent from the preview request, so the
+        normalizer defaults them, `_definition_db_fields_from_preview`
+        writes the defaults over the row, AND the server-owned update
+        PATCH sends the defaults too -- four fields silently destroyed by
+        a rename.
+
+        Rule: an OMITTED key keeps its stored value; a key the payload
+        carries wins, including an explicit `None` (so a caller that does
+        expose a field can still clear it). `config`/`input`/
+        `notification_policy` merge one level deep for the same reason,
+        which is why the form emits `provider`/`model` explicitly as
+        `None` when blank rather than omitting them.
+        """
+        merged: dict[str, Any] = {}
+        for key in ("description", "visibility_policy", "approval_policy"):
+            if key in local_row and local_row[key] is not None:
+                merged[key] = local_row[key]
+        merged.update(payload)
+        for key in ("config", "input", "notification_policy"):
+            stored = local_row.get(key)
+            incoming = payload.get(key)
+            if isinstance(stored, dict) and isinstance(incoming, dict):
+                merged[key] = {**stored, **incoming}
+        return merged
+
+    @staticmethod
+    def _build_definition_request(
+        payload: dict[str, Any],
+        *,
+        mode: str,
+        definition_id: str | None,
+        definition_version: int | None,
+    ) -> dict[str, Any]:
+        """Build a server-preview-shaped request from an authoring payload.
+
+        Overrides `mode`/`definition_id`/`definition_version` from the
+        caller's own resolved state rather than trusting whatever the raw
+        payload carries -- this facade is the payload's producer, so it is
+        the authority on which mode a save/preview actually is (mirrors
+        `SyncEngine`'s replay precedent, Task 3).
+        """
+        request = dict(payload)
+        request["family"] = _SUPPORTED_AUTOMATION_FAMILY
+        request["mode"] = mode
+        if mode == "update":
+            request["definition_id"] = definition_id
+            request["definition_version"] = definition_version
+        else:
+            request.pop("definition_id", None)
+            request.pop("definition_version", None)
+        return request
+
+    @staticmethod
+    def _definition_db_fields_from_preview(preview: AutomationPreview) -> dict[str, Any]:
+        """Map a valid preview's normalized config onto automation-definition DB columns.
+
+        `visibility_policy` comes from the preview's own top-level field
+        (already wrapped `{"mode": str}`, matching the DB column's/server's
+        `ScheduledTaskDefinitionResponse` shape) rather than `normalized_
+        config["visibility_policy"]`, which Task 1's preview deliberately
+        leaves as the flat mode string.
+
+        `config.scope.resolved_sources` (task 6 E2E finding) is stripped
+        before storage: `normalize_recurring_question_scope`'s
+        `"all_searchable_library"` branch (`recurring_question_scope.py`)
+        computes that key fresh on every call as an OUTPUT projection, not
+        an accepted input field (`SUPPORTED_SCOPE_FIELDS` has no such
+        entry). Persisting it verbatim made every later re-normalization of
+        this stored scope -- `automation_execution.py`'s own dispatch,
+        `automation_health.py`'s sources-readable check -- report a
+        spurious "unsupported field" error, degrading every scheduled run
+        of a default-scope (the common case) definition. It is always
+        recomputed on read, so dropping it here loses nothing.
+        """
+        from tldw_chatbook.Scheduling.schedule_compute import compute_next_run_at
+
+        normalized = preview.normalized_config or {}
+        schedule = normalized.get("schedule") or {}
+        config = dict(normalized.get("config") or {})
+        scope = config.get("scope")
+        if isinstance(scope, dict) and "resolved_sources" in scope:
+            config["scope"] = {k: v for k, v in scope.items() if k != "resolved_sources"}
+        return {
+            "name": normalized.get("name"),
+            "description": normalized.get("description"),
+            "schedule": schedule,
+            "input": normalized.get("input") or {},
+            "config": config,
+            "visibility_policy": preview.visibility_policy or {},
+            "notification_policy": normalized.get("notification_policy") or {},
+            "approval_policy": normalized.get("approval_policy") or {},
+            # Dedicated DB columns, not merely `config` members: the executor
+            # reads `row["finding_policy"]` (`automation_execution.py`'s
+            # `_resolve_finding_policy`) and the run snapshot copies
+            # `task["finding_policy"]` (`automation_handler.py`), so a policy
+            # left only inside `config` reaches neither -- every locally
+            # authored or offline-queued definition ran with the column
+            # DEFAULT (`balanced_findings`) whatever the author picked.
+            # `retention_policy` has the same column and the same exposure.
+            "finding_policy": config.get("finding_policy") or {},
+            "retention_policy": config.get("retention_policy") or {},
+            "next_run_at": compute_next_run_at(schedule, now=datetime.now(timezone.utc)),
+        }
+
+    def _reject_unsupported_family(
+        self, payload: dict[str, Any]
+    ) -> AutomationPreview | None:
+        """v1 scope guard: only `family="recurring_question"` may be authored here.
+
+        Runs before any preview call so Task 1's local pure preview's
+        fabricated `family: unsupported` error for `agent_task` (a scope
+        cut it documents itself, not real server parity) never reaches a
+        caller through this facade.
+
+        Returns:
+            An already-invalid `AutomationPreview` when `family` is
+            anything other than `recurring_question`; `None` when the
+            guard passes and the caller should proceed to a real preview.
+        """
+        from tldw_chatbook.Scheduling.automation_validation import field_error
+
+        family_value = payload.get("family")
+        if family_value == _SUPPORTED_AUTOMATION_FAMILY:
+            return None
+        try:
+            family_enum = AutomationFamily(family_value)
+        except ValueError:
+            family_enum = AutomationFamily.RECURRING_QUESTION
+        return AutomationPreview(
+            mode=payload.get("mode") or "create",
+            family=family_enum,
+            definition_id=payload.get("definition_id"),
+            definition_version=payload.get("definition_version"),
+            status=PreviewStatus.INVALID,
+            validation_errors=[
+                field_error(
+                    "family",
+                    "unsupported",
+                    "Only recurring_question automations can be authored "
+                    "here (agent_task authoring is not yet available).",
+                )
+            ],
+        )
+
+    def _owner_uses_server(self, owner_id: str) -> bool:
+        """Return True when server operations should be attempted for `owner_id`.
+
+        Same rule as `_use_server`, parameterized: `preview_definition`/
+        `save_definition` take an explicit owner (the modal can target a
+        different owner than the service's current active one), so they
+        cannot use `_use_server`'s `self.owner_id`-bound check.
+        """
+        return self.server_client is not None and owner_id.startswith("server:")
+
+    def _server_preview_to_model(self, response: dict[str, Any]) -> AutomationPreview:
+        """Convert a server `ScheduledTaskPreviewResponse` dict into the model.
+
+        Drops null values before construction, mirroring `_row_to_
+        reminder`'s established idiom: every nullable server field already
+        has a model default (`None`, or `created_at`'s `default_factory`),
+        so a missing/null value falls back cleanly instead of failing
+        Pydantic validation (`created_at` is typed `datetime`, not
+        `datetime | None`).
+        """
+        if not isinstance(response, dict):
+            response = {}
+        fields = {key: value for key, value in response.items() if value is not None}
+        return AutomationPreview(**fields)
+
     def _use_server(self) -> bool:
         """Return True when server operations should be attempted."""
         return self.server_client is not None and self.owner_id.startswith("server:")
@@ -645,8 +1336,16 @@ class SchedulingService:
         self,
         response: dict[str, Any],
         local_id: str | None = None,
+        *,
+        owner_id: str | None = None,
     ) -> ReminderTask:
-        """Insert or update the local cache from a server reminder response."""
+        """Insert or update the local cache from a server reminder response.
+
+        `owner_id` defaults to the service's active owner; `create_reminder`/
+        `update_reminder` pass their own so a cross-owner save lands under
+        the owner it was authored for.
+        """
+        owner_id = owner_id or self.owner_id
         local_fields = self._map_server_response_to_local(response)
         server_id = response.get("id")
 
@@ -656,24 +1355,20 @@ class SchedulingService:
         else:
             existing = None
             if server_id:
-                existing = self.db.get_reminder_task_by_server_id(
-                    self.owner_id, server_id
-                )
+                existing = self.db.get_reminder_task_by_server_id(owner_id, server_id)
             if existing is not None:
                 task_id = existing["id"]
                 self.db.update_reminder_task(task_id, **local_fields)
             else:
                 task_id = self.db.create_reminder_task(
-                    owner_id=self.owner_id, **local_fields
+                    owner_id=owner_id, **local_fields
                 )
 
         if server_id:
-            self.db.set_sync_mapping(
-                task_id, server_id, _REMINDER_PRIMITIVE, self.owner_id
-            )
+            self.db.set_sync_mapping(task_id, server_id, _REMINDER_PRIMITIVE, owner_id)
 
         self.db.delete_pending_mutation_for_record(
-            task_id, _REMINDER_PRIMITIVE, self.owner_id
+            task_id, _REMINDER_PRIMITIVE, owner_id
         )
         self._notify_queue_changed()
 

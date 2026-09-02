@@ -1145,6 +1145,411 @@ async def test_sync_now_skips_review_fields_for_just_pushed_result_this_cycle(tm
     assert refreshed["review_note"] == "handled"
 
 
+# ----------------------------------------------------------------------
+# Definition create/update push replay (schedules-handoff PR-4, task 3)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sync_now_replays_definition_create_and_dedupes_same_cycle_pull(tmp_path):
+    """Task 3 pull-ordering note: a successful create's server_id must land
+    before the same-cycle definitions pull runs, so the pull matches the
+    existing local row by (owner_id, server_id) instead of inserting a
+    duplicate mirror."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Draft"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "create",
+            "definition_payload": {
+                "family": "recurring_question",
+                "name": "Daily digest",
+                "schedule": {"kind": "cron", "expression": "0 9 * * 1-5"},
+            },
+            "server_definition_id": None,
+        },
+    )
+
+    server_client = _empty_reminders_client()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.create_automation_definition.return_value = {
+        "id": "srv-def-1",
+        "family": "recurring_question",
+        "name": "Daily digest",
+        "lifecycle": "configured",
+    }
+    # Same-cycle pull returns the exact row that was just created.
+    server_client.list_automation_definitions.return_value = _definition_page(
+        [{"id": "srv-def-1", "family": "recurring_question", "name": "Daily digest"}]
+    )
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    request = server_client.preview_automation_definition.await_args.args[0]
+    assert request["mode"] == "create"
+    assert "definition_id" not in request
+    server_client.create_automation_definition.assert_awaited_once_with(
+        "prev-1", initial_lifecycle="configured"
+    )
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    )
+    rows = db.list_automation_definitions(owner_id="server:1")
+    assert len(rows) == 1, "create replay + same-cycle pull must yield exactly one row"
+    assert rows[0]["id"] == local_id
+    assert rows[0]["server_id"] == "srv-def-1"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_create_orphan_clears_mutation_and_reports_both_ids(
+    tmp_path,
+):
+    """Qodo MEDIUM: the local row is deleted between queueing the create and
+    replaying it, so `adopt_server_definition_identity` finds nothing to
+    write and the fresh server definition has no local home.
+
+    The mutation is still cleared -- replaying it would create a SECOND
+    server definition, not recover the first -- and a sync error naming BOTH
+    ids makes the orphan discoverable. (Deleting it server-side is a
+    lifecycle action, out of scope here.)"""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Draft"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "create",
+            "definition_payload": {
+                "family": "recurring_question",
+                "name": "Daily digest",
+                "schedule": {"kind": "cron", "expression": "0 9 * * 1-5"},
+            },
+            "server_definition_id": None,
+        },
+    )
+
+    server_client = _empty_reminders_client()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.create_automation_definition.return_value = {
+        "id": "srv-def-9",
+        "family": "recurring_question",
+        "name": "Daily digest",
+        "lifecycle": "configured",
+    }
+    server_client.list_automation_definitions.return_value = _definition_page([])
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    # The row vanishes after the mutation is queued but before the replay.
+    assert db.delete_automation_definition(local_id) is True
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    ), "replaying would create a duplicate server definition"
+    state = db.get_sync_state("server:1")
+    messages = [err["message"] for err in (state["sync_errors"] or [])]
+    assert any(
+        local_id in message and "srv-def-9" in message for message in messages
+    ), f"the orphan error must name both ids; got {messages}"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_create_invalid_preview_clears_and_records_error(
+    tmp_path,
+):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Draft"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "create",
+            "definition_payload": {"family": "recurring_question"},
+            "server_definition_id": None,
+        },
+    )
+    server_client = _empty_reminders_client()
+    server_client.preview_automation_definition.return_value = {
+        "id": None,
+        "status": "invalid",
+        "validation_errors": [
+            {"field": "schedule.kind", "code": "required", "message": "Schedule kind is required."}
+        ],
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.create_automation_definition.assert_not_awaited()
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    ), "a rejected payload will never succeed by retrying -- clear it"
+    state = db.get_sync_state("server:1") or {}
+    errors = state.get("sync_errors") or []
+    assert errors
+    assert "schedule.kind:required" in errors[-1]["message"]
+    row = db.get_automation_definition(local_id)
+    assert row["server_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_sync_now_replays_definition_update(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Old name", server_id="srv-def-2"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "update",
+            "definition_payload": {"family": "recurring_question", "name": "New name"},
+            "server_definition_id": "srv-def-2",
+        },
+    )
+    server_client = _empty_reminders_client()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-2",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.update_automation_definition.return_value = {
+        "id": "srv-def-2",
+        "name": "New name",
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    request = server_client.preview_automation_definition.await_args.args[0]
+    assert request["mode"] == "update"
+    assert request["definition_id"] == "srv-def-2"
+    server_client.update_automation_definition.assert_awaited_once_with(
+        "srv-def-2", "prev-2"
+    )
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    )
+    row = db.get_automation_definition(local_id)
+    assert row["name"] == "New name"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_update_without_server_id_converts_to_create(
+    tmp_path,
+):
+    """Authored offline, never synced -- mirrors `_push_mutation`'s reminder
+    offline-create-conversion precedent."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Offline draft"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "update",
+            "definition_payload": {
+                "family": "recurring_question", "name": "Offline draft"
+            },
+            "server_definition_id": None,
+        },
+    )
+    server_client = _empty_reminders_client()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-3",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.create_automation_definition.return_value = {"id": "srv-def-3"}
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.update_automation_definition.assert_not_awaited()
+    request = server_client.preview_automation_definition.await_args.args[0]
+    assert request["mode"] == "create"
+    server_client.create_automation_definition.assert_awaited_once_with(
+        "prev-3", initial_lifecycle="configured"
+    )
+    row = db.get_automation_definition(local_id)
+    assert row["server_id"] == "srv-def-3"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_update_not_found_converts_to_create(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Stale", server_id="srv-def-deleted"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "update",
+            "definition_payload": {"family": "recurring_question", "name": "Stale"},
+            "server_definition_id": "srv-def-deleted",
+        },
+    )
+    server_client = _empty_reminders_client()
+    server_client.preview_automation_definition.side_effect = [
+        {"id": "prev-4", "status": "valid", "validation_errors": []},  # update preview
+        {"id": "prev-5", "status": "valid", "validation_errors": []},  # create preview
+    ]
+    server_client.update_automation_definition.side_effect = ServerClientNotFoundError(
+        "gone"
+    )
+    server_client.create_automation_definition.return_value = {"id": "srv-def-new"}
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.create_automation_definition.assert_awaited_once_with(
+        "prev-5", initial_lifecycle="configured"
+    )
+    row = db.get_automation_definition(local_id)
+    assert row["server_id"] == "srv-def-new"
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    )
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_create_retryable_error_retains_mutation(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Draft"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "create",
+            "definition_payload": {"family": "recurring_question"},
+            "server_definition_id": None,
+        },
+    )
+    server_client = _empty_reminders_client()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "error"
+    assert "offline" in (outcome.error or "")
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1, "the mutation must be left queued for retry"
+    row = db.get_automation_definition(local_id)
+    assert row["server_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_poisoned_mutation_does_not_block_the_rest(tmp_path):
+    """Final review I3: a non-retryable 4xx on ONE definition mutation used
+    to raise out of the replay loop and abort the whole push phase, so one
+    permanently-rejected payload stopped every other definition mutation
+    for that owner forever. It must settle that mutation (cleared, error
+    recorded) and carry on with the queue."""
+    from tldw_chatbook.Scheduling.services.server_client import (
+        ServerClientValidationError,
+    )
+
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    poisoned_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Poisoned", server_id="srv-def-old"
+    )
+    db.record_pending_mutation(
+        poisoned_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "update",
+            "definition_payload": {
+                "family": "recurring_question",
+                "name": "Poisoned",
+                "definition_version": 2,
+            },
+            "server_definition_id": "srv-def-old",
+        },
+    )
+    healthy_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Healthy"
+    )
+    db.record_pending_mutation(
+        healthy_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "create",
+            "definition_payload": {
+                "family": "recurring_question",
+                "name": "Healthy",
+            },
+            "server_definition_id": None,
+        },
+    )
+
+    server_client = _empty_reminders_client()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.update_automation_definition.side_effect = ServerClientValidationError(
+        "scheduled_task_definition_version_conflict"
+    )
+    server_client.create_automation_definition.return_value = {
+        "id": "srv-def-new",
+        "family": "recurring_question",
+        "name": "Healthy",
+        "lifecycle": "configured",
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    # The healthy create went through despite the poisoned update ahead of it.
+    assert db.get_automation_definition(healthy_id)["server_id"] == "srv-def-new"
+    # And the poisoned one is settled, not left to jam the queue forever.
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    errors = (db.get_sync_state("server:1") or {}).get("sync_errors") or []
+    assert any("version_conflict" in error["message"] for error in errors)
+
+
 @pytest.mark.asyncio
 async def test_sync_now_pulls_and_upserts_definitions(tmp_path):
     db = ScheduledTasksDB(tmp_path / "db.db")

@@ -688,3 +688,124 @@ async def test_footer_survives_wrapped_error_lines_at_45x24():
         run_at.focus()
         await pilot.pause()
         assert _painted_at_own_center(app, run_at)
+
+
+# --- task-5: "Runs on" owner selector --------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_runs_on_defaults_to_the_given_default_owner_when_creating():
+    """Create mode: the selector is enabled and starts on `default_owner`."""
+    app = FormTestApp()
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(
+            ReminderForm(
+                available_owners=[
+                    ("This device", "local"),
+                    ("Server (example.com)", "server:example.com"),
+                ],
+                default_owner="server:example.com",
+            )
+        )
+        await pilot.pause()
+        runs_on = pilot.app.screen.query_one("#reminder-runs-on", Select)
+        assert not runs_on.disabled
+        assert runs_on.value == "server:example.com"
+        option_values = [value for _label, value in runs_on._options]
+        assert option_values == ["local", "server:example.com"]
+
+
+@pytest.mark.asyncio
+async def test_runs_on_is_disabled_when_editing_an_existing_task():
+    """Edit mode: the owner is shown but fixed -- transfer is a separate feature."""
+    task = ReminderTask(
+        id="task-runs-on",
+        title="Existing",
+        schedule_kind=ScheduleKind.ONE_TIME,
+        run_at=datetime(2099, 7, 20, 14, 0, tzinfo=timezone.utc),
+        owner_id="local",
+    )
+    app = FormTestApp()
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(
+            ReminderForm(
+                task,
+                available_owners=[("This device", "local")],
+                default_owner="local",
+            )
+        )
+        await pilot.pause()
+        runs_on = pilot.app.screen.query_one("#reminder-runs-on", Select)
+        assert runs_on.disabled
+        assert runs_on.value == "local"
+
+
+@pytest.mark.asyncio
+async def test_runs_on_appends_a_drifted_task_owner_not_in_the_offered_list():
+    """Review F4 precedent (timezone selector): an edited task's real owner
+    always round-trips, even when the offered choices no longer include it
+    (e.g. the connected server changed since the task was created)."""
+    task = ReminderTask(
+        id="task-drifted-owner",
+        title="Server task",
+        schedule_kind=ScheduleKind.ONE_TIME,
+        run_at=datetime(2099, 7, 20, 14, 0, tzinfo=timezone.utc),
+        owner_id="server:drifted.example",
+    )
+    app = FormTestApp()
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(
+            ReminderForm(
+                task,
+                available_owners=[("This device", "local")],
+                default_owner="local",
+            )
+        )
+        await pilot.pause()
+        runs_on = pilot.app.screen.query_one("#reminder-runs-on", Select)
+        assert runs_on.disabled
+        assert runs_on.value == "server:drifted.example"
+        option_values = [value for _label, value in runs_on._options]
+        assert option_values == ["local", "server:drifted.example"]
+
+
+def test_initial_owner_prefers_the_tasks_own_owner_over_the_default():
+    task = ReminderTask(
+        id="task-owner-pref",
+        title="T",
+        schedule_kind=ScheduleKind.ONE_TIME,
+        run_at=datetime(2099, 7, 20, 14, 0, tzinfo=timezone.utc),
+        owner_id="server:1",
+    )
+    form = ReminderForm(task, default_owner="local")
+    assert form._initial_owner() == "server:1"
+
+
+def test_initial_owner_falls_back_to_default_when_creating():
+    form = ReminderForm(default_owner="server:2")
+    assert form._initial_owner() == "server:2"
+
+
+@pytest.mark.asyncio
+async def test_runs_on_selection_is_included_in_the_submitted_form_data():
+    app = FormTestApp()
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(
+            ReminderForm(
+                available_owners=[
+                    ("This device", "local"),
+                    ("Server (example.com)", "server:example.com"),
+                ],
+                default_owner="local",
+            )
+        )
+        await pilot.pause()
+        form = pilot.app.screen
+        form.query_one("#reminder-title", Input).value = "Owner-routed"
+        form.query_one("#reminder-run-at", Input).value = "2099-08-28 09:00"
+        form.query_one("#reminder-runs-on", Select).value = "server:example.com"
+        await pilot.click("#reminder-save")
+        await pilot.pause()
+
+        assert app.submitted is not None
+        assert app.submitted["owner_id"] == "server:example.com"
