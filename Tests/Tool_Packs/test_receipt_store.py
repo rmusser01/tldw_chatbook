@@ -35,9 +35,7 @@ def _identity(
 
 
 def _import_payload(*, identities: int = 1) -> dict[str, object]:
-    matched = [
-        _identity(f"search-{index:04d}") for index in range(identities)
-    ]
+    matched = [_identity(f"search-{index:04d}") for index in range(identities)]
     return {
         "schema": "tldw.tool-pack-receipt/v1",
         "kind": "import",
@@ -122,11 +120,87 @@ def test_direct_receipt_construction_rejects_unsorted_mapping_alias() -> None:
         )
 
 
+def test_import_receipt_round_trips_without_manual_mappings() -> None:
+    raw = _import_payload()
+    raw["reviewed_mappings"] = []
+
+    receipt = ToolPackReceipt.from_dict(raw)
+
+    assert receipt.reviewed_mappings == ()
+    assert receipt.to_dict() == raw
+    assert ToolPackReceipt.from_dict(receipt.to_dict()) == receipt
+
+
+@pytest.mark.parametrize(
+    ("diagnostic", "action"),
+    [
+        ("changed", "pending_deny"),
+        ("changed", "omitted"),
+        ("missing", "pending_deny"),
+        ("missing", "omitted"),
+    ],
+)
+def test_receipt_round_trips_compatible_exact_identity_overlap(
+    diagnostic: str, action: str
+) -> None:
+    raw = _import_payload()
+    raw["matched"] = []
+    raw[diagnostic] = [_identity()]
+    raw[action] = [_identity()]
+
+    receipt = ToolPackReceipt.from_dict(raw)
+
+    assert receipt.to_dict() == raw
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("matched", "changed"),
+        ("matched", "missing"),
+        ("matched", "pending_deny"),
+        ("matched", "omitted"),
+        ("changed", "missing"),
+        ("pending_deny", "omitted"),
+    ],
+)
+def test_receipt_rejects_incompatible_exact_identity_overlap(
+    first: str, second: str
+) -> None:
+    raw = _import_payload()
+    raw["matched"] = []
+    raw[first] = [_identity()]
+    raw[second] = [_identity()]
+
+    with pytest.raises(ToolPackError, match=r"payload_invalid$"):
+        ToolPackReceipt.from_dict(raw)
+
+
 def test_receipt_rejects_casefolded_identity_collision_across_groups() -> None:
     raw = _import_payload()
     raw["changed"] = [_identity("SEARCH-0000")]
 
     with pytest.raises(ToolPackError, match=r"payload_invalid$"):
+        ToolPackReceipt.from_dict(raw)
+
+
+def test_receipt_capacity_counts_distinct_overlapping_identities() -> None:
+    identities = [_identity(f"search-{index:04d}") for index in range(2_000)]
+    raw = _import_payload()
+    raw["matched"] = []
+    raw["changed"] = identities
+    raw["omitted"] = list(identities)
+
+    receipt = ToolPackReceipt.from_dict(raw)
+
+    assert len(receipt.changed) == 2_000
+    assert receipt.changed == receipt.omitted
+
+
+def test_receipt_rejects_more_than_two_thousand_distinct_identities() -> None:
+    raw = _import_payload(identities=2_001)
+
+    with pytest.raises(ToolPackError, match=r"too_large$"):
         ToolPackReceipt.from_dict(raw)
 
 
@@ -166,10 +240,11 @@ def test_receipt_rejects_privacy_prohibited_or_unknown_fields(path, value) -> No
         lambda raw: raw.update(imported_at="2026-08-31 12:00:00"),
         lambda raw: raw.update(matched=[_identity("z"), _identity("a")]),
         lambda raw: raw.update(matched=[_identity(), _identity()]),
-        lambda raw: raw.update(reviewed_mappings=[]),
     ],
 )
-def test_receipt_rejects_missing_malformed_unsorted_or_mismatched_fields(mutation) -> None:
+def test_receipt_rejects_missing_malformed_unsorted_or_mismatched_fields(
+    mutation,
+) -> None:
     raw = _import_payload()
     mutation(raw)
 
@@ -255,7 +330,9 @@ def test_root_creation_directory_sync_failure_is_activation_failed(
     assert stat.S_IMODE(root.stat().st_mode) == 0o700
 
 
-def test_capacity_enforces_projection_actual_and_committed_files(tmp_path: Path) -> None:
+def test_capacity_enforces_projection_actual_and_committed_files(
+    tmp_path: Path,
+) -> None:
     data = _receipt_bytes()
     store = _store(
         tmp_path / "receipts",
@@ -410,7 +487,9 @@ def test_read_rejects_digest_mismatch_noncanonical_bytes_and_symlink(
         store.read(handle.receipt_id, expected_digest=_ZERO_HASH)
 
     noncanonical = root / ("tp-" + "cd" * 16)
-    noncanonical.write_bytes(_receipt_bytes().replace(b'"archive_digest"', b' "archive_digest"'))
+    noncanonical.write_bytes(
+        _receipt_bytes().replace(b'"archive_digest"', b' "archive_digest"')
+    )
     noncanonical.chmod(0o600)
     with pytest.raises(ToolPackError, match=r"payload_invalid$"):
         store.read(
@@ -471,7 +550,10 @@ def test_reconcile_grace_boundary_is_exactly_twenty_four_hours(tmp_path: Path) -
     exact = root / ("tp-" + "12" * 16)
     before.write_bytes(_receipt_bytes())
     exact.write_bytes(_receipt_bytes())
-    os.utime(before, ((_NOW - timedelta(hours=24) + timedelta(microseconds=1)).timestamp(),) * 2)
+    os.utime(
+        before,
+        ((_NOW - timedelta(hours=24) + timedelta(microseconds=1)).timestamp(),) * 2,
+    )
     os.utime(exact, ((_NOW - timedelta(hours=24)).timestamp(),) * 2)
 
     assert store.reconcile_orphans(set(), set(), now=_NOW) == (exact.name,)

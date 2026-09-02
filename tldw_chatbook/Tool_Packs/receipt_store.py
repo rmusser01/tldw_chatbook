@@ -75,7 +75,11 @@ def _exact_dict(value: object, keys: frozenset[str]) -> dict[str, object]:
 
 
 def _text(value: object, *, max_bytes: int = 512) -> str:
-    if type(value) is not str or not value or unicodedata.normalize("NFC", value) != value:
+    if (
+        type(value) is not str
+        or not value
+        or unicodedata.normalize("NFC", value) != value
+    ):
         raise _fail("payload_invalid")
     try:
         encoded = value.encode("utf-8")
@@ -138,7 +142,7 @@ def _identity_list(raw: object) -> tuple[tuple[str, str, str], ...]:
 
 
 def _mapping_list(raw: object) -> tuple[tuple[str, str], ...]:
-    if type(raw) is not list or not raw or len(raw) > 256:
+    if type(raw) is not list or len(raw) > 256:
         raise _fail("payload_invalid")
     values: list[tuple[str, str]] = []
     for item in raw:
@@ -188,7 +192,6 @@ class ToolPackReceipt:
                 or self.removed_at is not None
                 or self.prior_receipt_digest is not None
                 or type(self.reviewed_mappings) is not tuple
-                or not self.reviewed_mappings
             ):
                 raise _fail("payload_invalid")
             _digest(self.archive_digest)
@@ -208,34 +211,24 @@ class ToolPackReceipt:
                 checked_mappings
             ) != len(set(checked_mappings)):
                 raise _fail("payload_invalid")
-            if sum(
-                len(group)
-                for group in (
-                    self.matched,
-                    self.changed,
-                    self.missing,
-                    self.pending_deny,
-                    self.omitted,
-                )
-            ) > 2_000:
-                raise _fail("too_large")
-            seen: set[tuple[str, str, str]] = set()
-            seen_folded: set[tuple[str, str, str]] = set()
-            for group in (
-                self.matched,
-                self.changed,
-                self.missing,
-                self.pending_deny,
-                self.omitted,
-            ):
-                if type(group) is not tuple or group != tuple(sorted(group)):
+            groups = {
+                "matched": self.matched,
+                "changed": self.changed,
+                "missing": self.missing,
+                "pending_deny": self.pending_deny,
+                "omitted": self.omitted,
+            }
+            memberships: dict[tuple[str, str, str], set[str]] = {}
+            folded_identities: dict[tuple[str, str, str], tuple[str, str, str]] = {}
+            for group_name, group in groups.items():
+                if (
+                    type(group) is not tuple
+                    or group != tuple(sorted(group))
+                    or len(group) != len(set(group))
+                ):
                     raise _fail("payload_invalid")
                 for identity in group:
-                    if (
-                        type(identity) is not tuple
-                        or len(identity) != 3
-                        or identity in seen
-                    ):
+                    if type(identity) is not tuple or len(identity) != 3:
                         raise _fail("payload_invalid")
                     _identity(
                         {
@@ -245,10 +238,24 @@ class ToolPackReceipt:
                         }
                     )
                     folded = tuple(part.casefold() for part in identity)
-                    if folded in seen_folded:
+                    prior = folded_identities.get(folded)
+                    if prior is not None and prior != identity:
                         raise _fail("payload_invalid")
-                    seen.add(identity)
-                    seen_folded.add(folded)
+                    folded_identities[folded] = identity
+                    memberships.setdefault(identity, set()).add(group_name)
+            if len(memberships) > 2_000:
+                raise _fail("too_large")
+            diagnostics = {"changed", "missing"}
+            actions = {"pending_deny", "omitted"}
+            for groups_for_identity in memberships.values():
+                if len(groups_for_identity) == 1:
+                    continue
+                if not (
+                    len(groups_for_identity) == 2
+                    and len(groups_for_identity & diagnostics) == 1
+                    and len(groups_for_identity & actions) == 1
+                ):
+                    raise _fail("payload_invalid")
         elif self.kind == "compact_tombstone":
             if (
                 self.archive_digest is not None
@@ -325,7 +332,9 @@ class ToolPackReceipt:
         assert self.producer is not None
         assert self.imported_at is not None
 
-        def identities(values: tuple[tuple[str, str, str], ...]) -> list[dict[str, str]]:
+        def identities(
+            values: tuple[tuple[str, str, str], ...],
+        ) -> list[dict[str, str]]:
             return [
                 {"authority": authority, "server_key": server, "tool_name": tool}
                 for authority, server, tool in values
@@ -527,7 +536,10 @@ class ToolPackReceiptStore:
             raise
         except OSError:
             raise _fail("payload_invalid") from None
-        if len(data) > self.max_receipt_bytes or hashlib.sha256(data).hexdigest() != digest:
+        if (
+            len(data) > self.max_receipt_bytes
+            or hashlib.sha256(data).hexdigest() != digest
+        ):
             raise _fail("payload_invalid")
         raw = strict_json_object(
             data,
@@ -547,11 +559,7 @@ class ToolPackReceiptStore:
         *,
         now: datetime,
     ) -> tuple[str, ...]:
-        if (
-            type(now) is not datetime
-            or now.tzinfo is None
-            or now.utcoffset() is None
-        ):
+        if type(now) is not datetime or now.tzinfo is None or now.utcoffset() is None:
             raise _fail("payload_invalid")
         protected = set(referenced_ids) | set(live_ids)
         cutoff = (now - ORPHAN_GRACE).timestamp()
@@ -584,10 +592,15 @@ class ToolPackReceiptStore:
     def write_compact_tombstone(
         self, source: ReceiptHandle, *, profile_id: str
     ) -> ReceiptHandle:
-        if type(source) is not ReceiptHandle or source.path != self._path(source.receipt_id):
+        if type(source) is not ReceiptHandle or source.path != self._path(
+            source.receipt_id
+        ):
             raise ToolPackError("remove", "non_removable")
         verified = self.read(source.receipt_id, expected_digest=source.digest)
-        if verified.receipt.kind != "import" or verified.receipt.profile_id != profile_id:
+        if (
+            verified.receipt.kind != "import"
+            or verified.receipt.profile_id != profile_id
+        ):
             raise ToolPackError("remove", "non_removable")
         removed_at = (
             datetime.now(timezone.utc)
@@ -625,9 +638,7 @@ class ToolPackReceiptStore:
             raise _fail("capacity_exceeded") from None
         return total
 
-    def _commit(
-        self, reservation: ReceiptReservation, data: bytes
-    ) -> ReceiptHandle:
+    def _commit(self, reservation: ReceiptReservation, data: bytes) -> ReceiptHandle:
         if type(data) is not bytes or len(data) > reservation._projected_bytes:
             raise _fail("capacity_exceeded")
         if not data or len(data) > self.max_receipt_bytes:
@@ -679,7 +690,9 @@ class ToolPackReceiptStore:
                         pass
                 if isinstance(error, ToolPackError):
                     raise
-                raise _fail("activation_uncertain" if replaced else "activation_failed") from None
+                raise _fail(
+                    "activation_uncertain" if replaced else "activation_failed"
+                ) from None
             digest = hashlib.sha256(data).hexdigest()
             reservation._release_locked()
             return ReceiptHandle(receipt_id, digest, target, len(data))
@@ -693,9 +706,10 @@ class ToolPackReceiptStore:
             if type(value) is not bytes or len(value) != 16:
                 continue
             receipt_id = "tp-" + value.hex()
-            if not (self.root / receipt_id).exists() and not (
-                self.root / receipt_id
-            ).is_symlink():
+            if (
+                not (self.root / receipt_id).exists()
+                and not (self.root / receipt_id).is_symlink()
+            ):
                 return receipt_id
         raise _fail("activation_failed")
 

@@ -132,16 +132,19 @@ def test_invalid_lifecycle_resolves_deny(profile, origin):
     """Removing the lifecycle authority check must fail closed, not inherit."""
     payload = _named_payload("portable", profile)
 
-    assert resolve_effective_state(payload, _tool(), profile_id="portable") == EffectiveToolState(
-        "deny", origin
-    )
+    assert resolve_effective_state(
+        payload, _tool(), profile_id="portable"
+    ) == EffectiveToolState("deny", origin)
 
 
 def test_tombstone_short_circuits_named_inheritance():
     """A valid tombstone remains Deny even when default would allow."""
     payload = _tombstone_payload(default_global="allow")
 
-    assert resolve_builtin_state(payload, _builtin(), profile_id="portable").state == "deny"
+    assert (
+        resolve_builtin_state(payload, _builtin(), profile_id="portable").state
+        == "deny"
+    )
 
 
 def test_lifecycle_disposition_requires_the_exact_tombstone_variant():
@@ -153,8 +156,33 @@ def test_lifecycle_disposition_requires_the_exact_tombstone_variant():
     }
 
     assert profile_lifecycle_disposition(profile) == "tombstone"
-    profile["tool_pack_lifecycle"]["counts"] = {"matched": 0, "omitted": 0, "pending_deny": 0}
+    profile["tool_pack_lifecycle"]["counts"] = {
+        "matched": 0,
+        "omitted": 0,
+        "pending_deny": 0,
+    }
     assert profile_lifecycle_disposition(profile) == "invalid"
+
+
+def test_imported_named_global_fallback_protects_an_unseen_server():
+    profile = {
+        "global_default": "ask",
+        "servers": {BUILTIN_TOOL_SERVER_KEY: {"default": "deny"}},
+        "profile_kind": "tool_pack_imported",
+        "tool_pack_lifecycle": _valid_lifecycle(),
+    }
+    payload = _named_payload("portable", profile)
+    unseen = _tool(server_key="future:server", name="future")
+
+    assert resolve_effective_state(
+        payload, unseen, profile_id="portable"
+    ) == EffectiveToolState("ask", "global_default")
+    assert resolve_effective_state_by_key(
+        payload,
+        unseen.server_key,
+        unseen.name,
+        profile_id="portable",
+    ) == EffectiveToolState("ask", "global_default")
 
 
 # -- definition_hash ---------------------------------------------------------
@@ -220,9 +248,7 @@ def test_ui_label_reads_unknown_not_off_for_a_gate_error_origin():
     not be read -- the same lie PR #1385's round J removed from the
     inspector's permission block one surface at a time. Owning it HERE
     fixes every renderer at once; a genuine deny keeps "Off"."""
-    assert (
-        EffectiveToolState(state="deny", origin="gate_error").ui_label == "Unknown"
-    )
+    assert EffectiveToolState(state="deny", origin="gate_error").ui_label == "Unknown"
     # Genuine denies -- any non-gate_error origin -- keep the honest "Off".
     assert EffectiveToolState(state="deny", origin="tool_override").ui_label == "Off"
     assert EffectiveToolState(state="deny", origin="global_default").ui_label == "Off"
@@ -635,9 +661,7 @@ def test_resolve_by_key_invalid_global_default_falls_back_to_ask():
 
 def test_resolve_by_key_hash_free_server_explicit_allow_is_not_downgraded():
     payload = _payload(
-        servers={
-            "builtin:tldw_chatbook": {"tools": {"calculator": {"state": "allow"}}}
-        }
+        servers={"builtin:tldw_chatbook": {"tools": {"calculator": {"state": "allow"}}}}
     )
 
     result = resolve_effective_state_by_key(
@@ -650,9 +674,7 @@ def test_resolve_by_key_hash_free_server_explicit_allow_is_not_downgraded():
 
 
 def test_resolve_by_key_hash_free_server_inherited_allow_is_not_downgraded():
-    payload = _payload(
-        global_default="allow", servers={"builtin:tldw_chatbook": {}}
-    )
+    payload = _payload(global_default="allow", servers={"builtin:tldw_chatbook": {}})
 
     result = resolve_effective_state_by_key(
         payload, "builtin:tldw_chatbook", "calculator"
@@ -680,7 +702,9 @@ def test_resolve_by_key_non_hash_free_server_allow_still_downgrades():
     the existing "can't verify without a live tool, so ask" collapse -- the
     exemption above must be narrow, scoped to the pinned in-process key,
     not a general relaxation of the by-key rug-pull-safety collapse."""
-    payload = _payload(servers={"local:demo": {"tools": {"search": {"state": "allow"}}}})
+    payload = _payload(
+        servers={"local:demo": {"tools": {"search": {"state": "allow"}}}}
+    )
 
     result = resolve_effective_state_by_key(payload, "local:demo", "search")
 
