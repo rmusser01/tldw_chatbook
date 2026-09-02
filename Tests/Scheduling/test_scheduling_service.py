@@ -2423,3 +2423,147 @@ async def test_recover_inflight_transfers_ignores_non_stuck_rows(db):
 
     assert db.get_reminder_task(pending_id)["transfer_state"] == "to_server_pending"
     assert db.get_reminder_task(armed_id)["transfer_state"] is None
+
+
+# ----------------------------------------------------------------------
+# Fix round 1 (task-6-review.md): retry leg, vanished-row cleanup,
+# refusal check order
+# ----------------------------------------------------------------------
+
+
+def test_transfer_refusal_to_server_failed_is_not_already_in_progress(db):
+    """Obligation (f): a definitively-failed transfer is retry-eligible,
+    not refused as 'already in progress'."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    row = db.get_reminder_task(_make_reminder(db, transfer_state="to_server_failed"))
+    assert svc.transfer_refusal(row, "to_server") is None
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_server_retries_failed_reminder_transfer(db):
+    """Obligation (f): begin on a to_server_failed row CASes back to
+    to_server_pending and replaces the retained mutation, stripping
+    transfer_errors, so a real replay fires again on the fake."""
+    server_client = _connected_server_client()
+    svc = _transfer_service(db, server_client=server_client)
+    reminder_id = _make_reminder(db)
+    db.set_transfer_state(
+        "reminder_task", reminder_id, "to_server_failed", expected=(None,)
+    )
+    db.record_pending_mutation(
+        reminder_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "task_payload": {"title": "stale"},
+            "transfer_errors": ["boom"],
+            "idempotency_key": "old-key",
+        },
+    )
+
+    outcome = await svc.begin_transfer_to_server("reminder_task", reminder_id)
+
+    assert outcome.status == "pending"
+    row = db.get_reminder_task(reminder_id)
+    assert row["transfer_state"] == "to_server_pending"
+    assert row["owner_id"] == "local"
+
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1
+    payload = pending[0]["payload"]
+    assert "transfer_errors" not in payload
+    assert payload["action"] == "transfer_to_server"
+
+    # The row is genuinely eligible for a fresh push, not just re-armed
+    # locally -- drive a real sync_now() against the fake and confirm it
+    # fires.
+    server_client.create_reminder.return_value = {"id": "srv-99", "title": "Reminder"}
+    await svc.sync_now("server:1")
+    server_client.create_reminder.assert_awaited_once()
+    assert db.get_reminder_task(reminder_id)["owner_id"] == "server:1"
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_server_retry_definition(db, monkeypatch):
+    """Same retry leg, definitions side."""
+    _stub_health(monkeypatch, health="ready")
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(db)
+    db.set_transfer_state(
+        "automation_definition", definition_id, "to_server_failed", expected=(None,)
+    )
+    db.record_pending_mutation(
+        definition_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "definition_payload": {},
+            "transfer_errors": ["invalid preview"],
+        },
+    )
+
+    outcome = await svc.begin_transfer_to_server("automation_definition", definition_id)
+
+    assert outcome.status == "pending"
+    assert (
+        db.get_automation_definition(definition_id)["transfer_state"]
+        == "to_server_pending"
+    )
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+    assert "transfer_errors" not in pending[0]["payload"]
+
+
+@pytest.mark.asyncio
+async def test_recover_inflight_transfers_reminder_vanished_still_deletes_mutation(
+    db, monkeypatch
+):
+    """Fix round 1, finding 2: a row that vanished between the scan and
+    the convert call must not leave a dangling mutation behind."""
+    server_client = _connected_server_client()
+    server_client.list_reminders.return_value = {
+        "items": [
+            {
+                "id": "srv-9",
+                "title": "Recovered",
+                "schedule_kind": "one_time",
+                "run_at": "2030-01-01T00:00:00+00:00",
+                "link_type": "chatbook_transfer",
+                "link_id": None,
+            }
+        ]
+    }
+    svc = _transfer_service(db, server_client=server_client)
+    reminder_id = _make_reminder(db, transfer_state="to_server_sent")
+    server_client.list_reminders.return_value["items"][0]["link_id"] = reminder_id
+    db.record_pending_mutation(
+        reminder_id,
+        "reminder_task",
+        "server:1",
+        {"action": "transfer_to_server", "task_payload": {}},
+    )
+    monkeypatch.setattr(db, "convert_row_to_server_mirror", lambda *a, **k: "vanished")
+
+    await svc.recover_inflight_transfers()
+
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+
+
+def test_transfer_refusal_checks_family_health_before_lifecycle(db):
+    """Fix round 1, finding 3: spec §6.4 order -- family/health (target-
+    cannot-execute) is checked before lifecycle, so an archived
+    agent_task mirror reports the family reason when both apply."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(
+        db,
+        owner_id="server:1",
+        server_id="srv-def-1",
+        family="agent_task",
+        lifecycle="archived",
+    )
+    row = db.get_automation_definition(definition_id)
+    reason = svc.transfer_refusal(row, "to_local")
+    assert reason == "Agent-task automations cannot run locally yet."

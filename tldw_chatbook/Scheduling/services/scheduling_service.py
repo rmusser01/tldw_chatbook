@@ -767,19 +767,26 @@ class SchedulingService:
     def transfer_refusal(self, row: dict[str, Any], direction: str) -> str | None:
         """Return why a transfer must be refused, or `None` when allowed.
 
-        Spec §6.4, checked in order: no server connection; ownership
+        Spec §6.4's own priority order, so the ONE reason surfaced when
+        several apply at once (e.g. an archived `agent_task` row) matches
+        what the spec lists first: no server connection; ownership
         doesn't match `direction` (a `to_server` transfer needs a LOCAL
-        row, a `to_local` release needs a server-owned mirror); no server
-        identity resolved (`to_server` only -- a release already knows its
-        destination from the mirror row's own `owner_id`); a transfer
-        already in progress (`row["transfer_state"]` is non-``None`` --
-        keyed off state, never mutation existence, same rule `cancel_
-        transfer` follows); lifecycle outside `{configured, paused}`
-        (``archived``/``solved`` have nothing left to execute); and, for
-        `to_local` only, whether LOCAL can actually run the family --
-        `agent_task` always refuses in v1, `recurring_question` refuses
-        when `compute_local_health` is not ``"ready"``, quoting its
-        reason verbatim.
+        row, a `to_local` release needs a server-owned mirror -- a
+        structural prerequisite the spec's bullets assume, checked here
+        alongside connection/identity since none of the bullets below are
+        meaningful without it); no server identity resolved (`to_server`
+        only -- a release already knows its destination from the mirror
+        row's own `owner_id`); whether LOCAL can actually run the family
+        (`to_local` only) -- `agent_task` always refuses in v1,
+        `recurring_question` refuses when `compute_local_health` is not
+        ``"ready"``, quoting its reason verbatim; a transfer already in
+        progress (`row["transfer_state"]` in `{to_server_pending,
+        to_server_sent, from_server_pending}` -- keyed off state, never
+        mutation existence, same rule `cancel_transfer` follows;
+        `to_server_failed` is deliberately EXCLUDED here --
+        `begin_transfer_to_server` re-begins a failed transfer as a
+        retry, spec obligation (f)); and lifecycle outside `{configured,
+        paused}` (``archived``/``solved`` have nothing left to execute).
         """
         if (
             self.server_client is None
@@ -797,13 +804,6 @@ class SchedulingService:
             if not owner_id.startswith("server:") or not row.get("server_id"):
                 return "This row is not server-owned."
 
-        if row.get("transfer_state") is not None:
-            return "A transfer is already in progress on this row."
-
-        lifecycle = row.get("lifecycle")
-        if lifecycle is not None and lifecycle not in ("configured", "paused"):
-            return f"This automation is {lifecycle} and cannot transfer."
-
         if direction == "to_local":
             family = row.get("family")
             if family == "agent_task":
@@ -813,6 +813,17 @@ class SchedulingService:
                 health, reason = compute_local_health(app, row)
                 if health != "ready":
                     return reason
+
+        if row.get("transfer_state") in (
+            "to_server_pending",
+            "to_server_sent",
+            "from_server_pending",
+        ):
+            return "A transfer is already in progress on this row."
+
+        lifecycle = row.get("lifecycle")
+        if lifecycle is not None and lifecycle not in ("configured", "paused"):
+            return f"This automation is {lifecycle} and cannot transfer."
 
         return None
 
@@ -868,16 +879,27 @@ class SchedulingService:
         return parsed
 
     async def begin_transfer_to_server(self, table_kind: str, row_id: str) -> "TransferOutcome":
-        """Start a local -> server transfer (spec §6.1).
+        """Start (or retry) a local -> server transfer (spec §6.1).
 
         Refuses via `transfer_refusal` first; then CASes `transfer_state`
-        NULL -> `to_server_pending` (Task 1's compare-and-set, guarding
-        against a concurrent second `begin` on the same row) and records
-        a `transfer_to_server` mutation under the DESTINATION server
-        scope (Task 4's finding: never the row's own -- still ``"local"``
-        -- `owner_id`). The row keeps executing locally while merely
-        queued (spec §6.1.1) -- `SyncEngine`'s push disarms it later, only
-        once an actual send attempt starts.
+        `None` OR `to_server_failed` -> `to_server_pending` (Task 1's
+        compare-and-set, guarding against a concurrent second `begin` on
+        the same row) and records a `transfer_to_server` mutation under
+        the DESTINATION server scope (Task 4's finding: never the row's
+        own -- still ``"local"`` -- `owner_id`). The row keeps executing
+        locally while merely queued (spec §6.1.1) -- `SyncEngine`'s push
+        disarms it later, only once an actual send attempt starts.
+
+        `to_server_failed` -> `to_server_pending` is the RETRY leg
+        (obligation (f)): `transfer_refusal` deliberately lets a
+        definitively-failed row reach here, and `record_pending_mutation`
+        is a plain `local_id`/`primitive`/`owner_id`-keyed upsert, so
+        recording a FRESH payload (built the same way a first-time begin
+        builds one, below) atomically replaces the retained mutation --
+        stripping its `transfer_errors` for free rather than editing it
+        in place. `_replay_definition_mutations`/`_network_phase`'s skip
+        checks key off `"transfer_errors" in payload`, so this is what
+        makes the row eligible for replay again.
         """
         row = self._get_transfer_row(table_kind, row_id)
         if row is None:
@@ -894,7 +916,10 @@ class SchedulingService:
             )
 
         armed = self.db.set_transfer_state(
-            table_kind, row_id, "to_server_pending", expected=(None,)
+            table_kind,
+            row_id,
+            "to_server_pending",
+            expected=(None, "to_server_failed"),
         )
         if not armed:
             return TransferOutcome(
@@ -1129,13 +1154,18 @@ class SchedulingService:
             local_id = row["id"]
             matched = by_link_id.get(local_id)
             if matched is not None:
-                result = self.db.convert_row_to_server_mirror(
+                # Delete the mutation regardless of outcome (matches
+                # `SyncEngine._push_reminder_transfer`'s own precedent for
+                # this same DB call) -- a "vanished" row (deleted between
+                # the scan above and this convert) has nothing left to
+                # replay for, so leaving the mutation queued would just
+                # strand it forever.
+                self.db.convert_row_to_server_mirror(
                     _REMINDER_PRIMITIVE, local_id, matched, destination_owner_id
                 )
-                if result != "vanished":
-                    self.db.delete_pending_mutation_for_record(
-                        local_id, _REMINDER_PRIMITIVE, destination_owner_id
-                    )
+                self.db.delete_pending_mutation_for_record(
+                    local_id, _REMINDER_PRIMITIVE, destination_owner_id
+                )
             else:
                 self.db.set_transfer_state(
                     _REMINDER_PRIMITIVE,
