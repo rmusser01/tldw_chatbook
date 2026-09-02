@@ -186,3 +186,34 @@ def test_resolver_refuses_oversized(tmp_path):
 def test_resolver_nonexistent_is_literal(tmp_path):
     """AC#7: a decorator-like token that resolves to nothing -> None (literal)."""
     assert resolve_reference("property", roots=(tmp_path,)) is None
+
+
+# --- lane-8 review C1/M2: dotfile parity with ReadFileTool ---
+
+def test_c1_dotfile_is_refused_not_read(tmp_path):
+    """C1: @.env must be refused like ReadFileTool refuses hidden files, and
+    its content must never be returned for injection."""
+    (tmp_path / ".env").write_text("SECRET_KEY=sk-not-a-real-secret-value-000\n")
+    result = resolve_reference(".env", roots=(tmp_path,))
+    assert result is not None and result[0] == "refused"
+    assert "SECRET_KEY" not in str(result)
+
+
+def test_c1_git_config_is_refused(tmp_path):
+    """C1: @.git/config (a hidden component) is refused, not read."""
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "config").write_text("[remote]\n url = https://u:tok@h/r\n")
+    result = resolve_reference(".git/config", roots=(tmp_path,))
+    assert result is not None and result[0] == "refused"
+    assert "tok@h" not in str(result)
+
+
+def test_m2_folder_listing_hides_dotfiles(tmp_path):
+    """M2: a folder listing must not disclose hidden entry names."""
+    (tmp_path / "visible.py").write_text("x")
+    (tmp_path / ".env").write_text("secret")
+    (tmp_path / ".ssh").mkdir()
+    kind, payload, rng = resolve_reference(".", roots=(tmp_path,))
+    assert kind == "folder"
+    assert "visible.py" in payload
+    assert ".env" not in payload and ".ssh" not in payload

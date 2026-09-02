@@ -137,6 +137,10 @@ def _default_integrity_fn() -> bool:
 
 
 def _path_is_owner_private(path: str) -> bool:
+    # POSIX mode bits are meaningless on Windows (st_mode carries no real
+    # group/other bits there), so don't emit spurious warnings on it (M3).
+    if os.name != "posix":
+        return True
     try:
         mode = os.stat(path).st_mode
     except OSError:

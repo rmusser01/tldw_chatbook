@@ -205,7 +205,9 @@ def _expand_path(path: "Path", line_range, max_bytes: int):
     if path.is_dir():
         try:
             entries = sorted(
-                x.name + ("/" if x.is_dir() else "") for x in path.iterdir()
+                x.name + ("/" if x.is_dir() else "")
+                for x in path.iterdir()
+                if not x.name.startswith(".")  # hidden entries are refused by the tools
             )
         except OSError as exc:
             return ("refused", f"could not list folder: {exc}", None)
@@ -225,57 +227,71 @@ def _expand_path(path: "Path", line_range, max_bytes: int):
     return ("file", data.decode("utf-8", errors="replace"), line_range)
 
 
-def resolve_reference(token, *, roots, sensitive_ctx=None, max_bytes: int = MAX_REFERENCE_BYTES):
-    """Resolve one reference token against the allowed roots (impure).
-
-    Returns None to leave the token literal (nonexistent -> decorator/typo),
-    a ("refused", reason, None) for a real-but-disallowed/binary/oversized
-    target, or ("file"|"folder", payload, line_range) for an allowed one.
-    """
-    from ..Tools.file_operation_tools import is_within
-
-    path_str, line_range = parse_token(token)
+def _exists_under_roots(path_str: str, roots) -> bool:
     p = Path(path_str).expanduser()
-
     for root in roots:
-        candidate = p if p.is_absolute() else (root / path_str)
-        try:
-            allowed = is_within(candidate, root, sensitive_ctx) and candidate.exists()
-        except OSError:
-            allowed = False
-        if allowed:
-            return _expand_path(candidate, line_range, max_bytes)
-
-    # Exists somewhere but not allowed -> honest refusal (AC#3), not silent.
-    for root in roots:
-        candidate = p if p.is_absolute() else (root / path_str)
+        candidate = p if p.is_absolute() else (Path(root) / path_str)
         try:
             if candidate.exists():
-                return ("refused", "outside the allowed workspace roots or a sensitive path", None)
+                return True
         except OSError:
             continue
     try:
-        if p.is_absolute() and p.exists():
-            return ("refused", "outside the allowed workspace roots or a sensitive path", None)
+        return p.is_absolute() and p.exists()
     except OSError:
-        pass
-    return None  # literal
+        return False
+
+
+def resolve_reference(token, *, roots, max_bytes: int = MAX_REFERENCE_BYTES):
+    """Resolve one reference token against the allowed roots (impure).
+
+    Lane-6/8 review C1: resolution goes through the SAME choke point the file
+    tools use -- ``validate_path_multi`` (which enforces allowed-roots
+    containment, traversal + symlink checks, and ``allow_hidden=False``) plus
+    ``is_sensitive_path`` -- so a reference can never read what
+    ``ReadFileTool`` would refuse (e.g. ``.env`` / ``.git/config``).
+
+    Returns None to leave the token literal (nonexistent -> decorator/typo),
+    ("refused", reason, None) for a real-but-disallowed/hidden/sensitive/
+    binary/oversized target, or ("file"|"folder", payload, line_range) for an
+    allowed one.
+    """
+    from ..Utils.path_validation import validate_path_multi
+    from ..Utils.sensitive_paths import is_sensitive_path
+
+    if not roots:
+        return ("refused", "no allowed workspace roots are configured", None) if _exists_under_roots(token, roots) else None
+
+    path_str, line_range = parse_token(token)
+    try:
+        validated = Path(validate_path_multi(path_str, list(roots)))
+    except ValueError:
+        # Disallowed by the file-tool gate (outside roots, traversal, or a
+        # hidden component). Refuse honestly if it actually exists; otherwise
+        # leave it literal (a decorator/typo, AC#7).
+        if _exists_under_roots(path_str, roots):
+            return ("refused", "outside the allowed workspace roots, hidden, or a sensitive path", None)
+        return None
+
+    if is_sensitive_path(validated):
+        return ("refused", "a protected/sensitive path", None)
+    if not validated.exists():
+        return None  # validated but nonexistent -> literal (AC#7)
+    return _expand_path(validated, line_range, max_bytes)
 
 
 def build_console_reference_resolver() -> Resolver:
     """Build a resolver bound to the file tools' allowed roots + sensitive set."""
     from ..Tools.file_operation_tools import _tool_sandbox_root
     from ..Tools.workspace_file_roots import allowed_file_roots
-    from ..Utils.sensitive_paths import resolve_sensitive_context
 
     try:
         roots = allowed_file_roots(write=False, sandbox_root=_tool_sandbox_root())
     except Exception:  # noqa: BLE001 - fail safe to no roots
         roots = ()
-    sensitive_ctx = resolve_sensitive_context()
 
     def _resolve(token: str):
-        return resolve_reference(token, roots=roots, sensitive_ctx=sensitive_ctx)
+        return resolve_reference(token, roots=roots)
 
     return _resolve
 
@@ -288,15 +304,46 @@ def _git_reference_cwd() -> "Path":
         return Path.cwd()
 
 
-def run_git_reference(kind: str, *, timeout: float = 5.0) -> str:
-    """Run ``git diff`` / ``git diff --staged`` in the launch cwd (AC#2)."""
+def _cwd_within_roots(cwd: "Path", roots) -> bool:
+    from ..Tools.file_operation_tools import is_within
+    for root in roots or ():
+        try:
+            if is_within(cwd, Path(root)):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def run_git_reference(kind: str, *, roots=None, timeout: float = 5.0) -> str:
+    """Run ``git diff`` / ``git diff --staged`` for @diff/@staged (AC#2/#3).
+
+    Lane-8 review I1: the diff is confined to a repo INSIDE the allowed roots
+    (so it can't surface a repo the file tools can't reach), and the sensitive
+    -path denylist is spliced in as git ``:(exclude)`` pathspecs -- exactly as
+    ``git_tool_impls`` does -- so a tracked ``.env``/``~/.ssh/*`` never leaks
+    its diff content.
+    """
+    cwd = _git_reference_cwd()
+    if roots is not None and not _cwd_within_roots(cwd, roots):
+        raise RuntimeError("the git repository is outside the allowed workspace roots")
+
+    try:
+        from ..Tools.git_tool_impls import _denylist_pathspecs
+        excludes = list(_denylist_pathspecs(cwd))
+    except Exception:  # noqa: BLE001 - if we can't build excludes, fail closed
+        raise RuntimeError("could not build the sensitive-path exclusion list")
+
     args = ["git", "diff"]
     if kind == "staged":
         args.append("--staged")
+    if excludes:
+        args.append("--")
+        args.extend(excludes)
     try:
         proc = subprocess.run(  # noqa: S603 - fixed argv, no shell
             args,
-            cwd=str(_git_reference_cwd()),
+            cwd=str(cwd),
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -307,3 +354,19 @@ def run_git_reference(kind: str, *, timeout: float = 5.0) -> str:
     if len(out) > MAX_REFERENCE_BYTES:
         out = out[:MAX_REFERENCE_BYTES] + "\n… (diff truncated)"
     return out
+
+
+def build_console_git_runner() -> GitRunner:
+    """Build a git_runner bound to the allowed roots (for the send-path wiring)."""
+    from ..Tools.file_operation_tools import _tool_sandbox_root
+    from ..Tools.workspace_file_roots import allowed_file_roots
+
+    try:
+        roots = allowed_file_roots(write=False, sandbox_root=_tool_sandbox_root())
+    except Exception:  # noqa: BLE001
+        roots = ()
+
+    def _run(kind: str) -> str:
+        return run_git_reference(kind, roots=roots)
+
+    return _run
