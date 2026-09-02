@@ -82,7 +82,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: subsystem's controller file may be created BEFORE its extraction
     #: series to receive new methods. See
     #: Docs/superpowers/specs/2026-09-01-library-screen-decomposition-design.md.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 45134, 1300),
+    #: Lowered at the reader-controller move (exemplar 2/4): 45134/1300 ->
+    #: 44715/1300 -- the recipe's lower-in-the-same-PR contract (§6), not
+    #: deferred to the cleanup task as originally (incorrectly) instructed.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 44715, 1300),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide
