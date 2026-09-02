@@ -24,8 +24,10 @@ from functools import partial
 from types import MappingProxyType
 from typing import Any, Optional, TYPE_CHECKING
 import asyncio
+from datetime import datetime, timezone
 import inspect
 import time
+from zoneinfo import ZoneInfo
 
 from loguru import logger
 from rich.markup import escape as escape_markup
@@ -40,6 +42,17 @@ from ...Chat.console_chat_models import (
 )
 from ...Chat.console_display_state import evidence_bundle_from_launch
 from ...Chat.console_live_work import ConsoleLiveWorkLaunch
+from ...Chat.console_switcher_state import (
+    CONSOLE_SWITCHER_PAGE_LIMIT,
+    ConsoleSwitcherActivitySignal,
+    ConsoleSwitcherEntry,
+    ConsoleSwitcherHistoryPage,
+    ConsoleSwitcherTarget,
+    SwitcherTargetKind,
+    build_console_active_results,
+    group_console_history_entries,
+    parse_console_switcher_instant,
+)
 from ...Chat.console_conversation_hydration import (
     ConversationLoadFailed,
     ConversationServiceUnavailable,
@@ -76,6 +89,10 @@ from ...Workspaces import (
     console_conversation_browser_group_row_limit,
     console_persisted_row_updated_sort,
     overlay_console_conversation_markers,
+)
+from ...Workspaces.conversation_browser_state import (
+    console_conversation_status_detail,
+    format_console_relative_age,
 )
 from ...Workspaces.display_state import (
     CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
@@ -2637,6 +2654,228 @@ class ConsoleWorkspaceController:
                 if not page or total is None or offset >= total:
                     break
         return rows
+
+    def _console_switcher_authority(self) -> tuple[str, str]:
+        """Return stable production authority with a safe harness fallback."""
+        runtime = getattr(self.app_instance, "console_runtime", None)
+        profile = str(getattr(runtime, "profile_authority", "") or "").strip()
+        token = str(getattr(runtime, "authority_token", "") or "").strip()
+        if profile and token:
+            return profile, token
+        store = self._console_chat_store
+        fallback = f"ephemeral:{id(store) if store is not None else id(self)}"
+        return fallback, fallback
+
+    def console_session_switcher_active_entries(self) -> tuple[Any, ...]:
+        """Return the immediate memory-only canonical Active projection."""
+        current_conversation_id = self._current_console_conversation_id()
+        native_rows = self._native_console_browser_rows(current_conversation_id)
+        membership_rows = self._membership_console_browser_rows(
+            current_conversation_id
+        )
+        cached_named_rows = self._merge_console_browser_rows(
+            self._workspace_tree_search.rows,
+            self._workspace_tree_search.settled_rows,
+            *(attempt.rows for attempt in self._workspace_page_attempts.values()),
+            *self._workspace_membership_rows.values(),
+        )
+        rows = self._merge_console_browser_rows(
+            native_rows, membership_rows, cached_named_rows
+        )
+        profile, token = self._console_switcher_authority()
+        runtime = getattr(self.app_instance, "console_runtime", None)
+        receipt_service = getattr(runtime, "activity_receipts", None)
+        receipts = (
+            receipt_service.unseen_snapshot()
+            if receipt_service is not None
+            else ()
+        )
+        controller = self._console_chat_controller
+        signals: list[ConsoleSwitcherActivitySignal] = []
+        if controller is not None:
+            for row in native_rows:
+                session_id = str(row.native_session_id or "").strip()
+                if not session_id:
+                    continue
+                try:
+                    activity = controller.activity_for(session_id)
+                    run_state = controller.run_state_for(session_id)
+                except Exception:  # noqa: BLE001 - open shell remains available
+                    continue
+                state = ""
+                if activity.needs_approval:
+                    state = "approval"
+                elif activity.queue_paused:
+                    state = "paused"
+                elif str(getattr(run_state.status, "value", run_state.status)) not in {
+                    "idle",
+                    "completed",
+                    "failed",
+                    "stopped",
+                }:
+                    state = str(getattr(run_state.status, "value", run_state.status))
+                elif activity.queued_count:
+                    state = "queued"
+                if state:
+                    signals.append(
+                        ConsoleSwitcherActivitySignal(
+                            source_key=f"controller:native:{session_id}:{state}",
+                            state=state,
+                            session_id=session_id,
+                            conversation_id=row.conversation_id,
+                            occurred_at=row.updated_sort,
+                        )
+                    )
+        return build_console_active_results(
+            rows,
+            receipts=receipts,
+            controller_signals=signals,
+            profile_authority=profile,
+            authority_token=token,
+        )
+
+    async def load_console_session_switcher_history(
+        self,
+        *,
+        query: str,
+        offset: int,
+        limit: int,
+    ) -> ConsoleSwitcherHistoryPage:
+        """Load one bounded all-local History page off the event loop."""
+        bounded_limit = min(CONSOLE_SWITCHER_PAGE_LIMIT, max(1, int(limit)))
+        bounded_offset = max(0, int(offset))
+        service = getattr(
+            self.app_instance, "local_chat_conversation_service", None
+        )
+        include_mode = False
+        if service is None:
+            service = getattr(
+                self.app_instance, "chat_conversation_scope_service", None
+            )
+            include_mode = service is not None
+        list_conversations = getattr(service, "list_conversations", None)
+        if not callable(list_conversations):
+            return ConsoleSwitcherHistoryPage(
+                (), bounded_offset, bounded_limit, 0, "History is unavailable."
+            )
+        kwargs: dict[str, Any] = {
+            "query": str(query or ""),
+            "scope_type": "all",
+            "limit": bounded_limit,
+            "offset": bounded_offset,
+        }
+        if include_mode:
+            kwargs["mode"] = "local"
+        try:
+            db = getattr(service, "db", None)
+            if inspect.iscoroutinefunction(list_conversations):
+                payload = await list_conversations(**kwargs)
+            elif bool(getattr(db, "is_memory_db", False)):
+                payload = list_conversations(**kwargs)
+            else:
+                payload = await asyncio.to_thread(list_conversations, **kwargs)
+            if inspect.isawaitable(payload):
+                payload = await payload
+        except Exception as exc:  # noqa: BLE001 - History degrades independently
+            logger.warning(
+                "Console switcher History load failed (exception_type={})",
+                type(exc).__name__,
+            )
+            return ConsoleSwitcherHistoryPage(
+                (), bounded_offset, bounded_limit, 0, "History is unavailable."
+            )
+        if not isinstance(payload, Mapping):
+            payload = {}
+        items = payload.get("items")
+        if not isinstance(items, list):
+            items = []
+        pagination = payload.get("pagination")
+        total_value = (
+            pagination.get("total") if isinstance(pagination, Mapping) else None
+        )
+        if total_value is None:
+            total_value = payload.get("total")
+        try:
+            total = max(len(items), int(total_value))
+        except (TypeError, ValueError):
+            total = len(items)
+        profile, token = self._console_switcher_authority()
+        labels = self._console_browser_workspace_labels()
+        history_now = datetime.now(timezone.utc)
+        entries: list[ConsoleSwitcherEntry] = []
+        for item in items[:bounded_limit]:
+            if not isinstance(item, Mapping):
+                continue
+            conversation_id = str(item.get("id") or "").strip()
+            if not conversation_id:
+                continue
+            scope_type = str(item.get("scope_type") or "workspace")
+            workspace_id = (
+                None
+                if scope_type == "global"
+                else str(item.get("workspace_id") or DEFAULT_WORKSPACE_ID)
+            )
+            updated = parse_console_switcher_instant(
+                console_persisted_row_updated_sort(item)
+            )
+            target = ConsoleSwitcherTarget(
+                kind=SwitcherTargetKind.PERSISTED_CONVERSATION,
+                profile_authority=profile,
+                authority_token=token,
+                session_id=None,
+                conversation_id=conversation_id,
+                scope_type=scope_type,
+                workspace_id=workspace_id,
+            )
+            lifecycle = str(item.get("state") or "workspace-thread")
+            workspace_label = self._console_browser_workspace_label(
+                workspace_id, labels
+            )
+            entries.append(
+                ConsoleSwitcherEntry(
+                    row_key=f"conversation:{profile}:{conversation_id}",
+                    title=str(item.get("title") or "Untitled conversation"),
+                    subtitle=" · ".join(
+                        part
+                        for part in (
+                            workspace_label,
+                            console_conversation_status_detail(lifecycle),
+                            format_console_relative_age(
+                                updated.isoformat() if updated else "",
+                                now=history_now,
+                            ),
+                        )
+                        if part
+                    ),
+                    native_session_id=None,
+                    conversation_id=conversation_id,
+                    scope_type=scope_type,
+                    workspace_id=workspace_id,
+                    is_active=False,
+                    target=target,
+                    latest_at=updated,
+                    workspace_label=workspace_label,
+                    lifecycle=lifecycle,
+                )
+            )
+        timezone_name = str(
+            getattr(self.app_instance, "local_timezone_name", "UTC") or "UTC"
+        )
+        try:
+            local_timezone = ZoneInfo(timezone_name)
+        except (KeyError, ValueError):
+            local_timezone = ZoneInfo("UTC")
+        grouped = group_console_history_entries(
+            entries,
+            now=history_now,
+            local_timezone=local_timezone,
+        )
+        return ConsoleSwitcherHistoryPage(
+            grouped,
+            bounded_offset,
+            bounded_limit,
+            total,
+        )
 
     async def console_session_switcher_rows(
         self,

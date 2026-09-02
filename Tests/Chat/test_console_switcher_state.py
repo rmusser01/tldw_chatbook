@@ -1,8 +1,20 @@
 """Pure Console session-switcher result contracts."""
 
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from zoneinfo import ZoneInfo
+
 from tldw_chatbook.Chat.console_switcher_state import (
+    ActivityGroup,
+    ConsoleSwitcherActivitySignal,
+    ConsoleSwitcherEntry,
+    SwitcherTargetKind,
+    UnavailableSessionNotice,
     _matches,
+    build_console_active_results,
     build_console_switcher_entries,
+    console_history_section,
+    filter_console_active_results,
 )
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
@@ -24,6 +36,215 @@ def _row(**overrides) -> ConsoleConversationBrowserInputRow:
     )
     defaults.update(overrides)
     return ConsoleConversationBrowserInputRow(**defaults)
+
+
+def _receipt(**overrides):
+    defaults = dict(
+        activity_id="activity-1",
+        status="done",
+        session_id=None,
+        conversation_id="conv-1",
+        created_at="2026-07-04T12:00:00+00:00",
+    )
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+def _active(rows, *, receipts=(), signals=()):
+    return build_console_active_results(
+        rows,
+        receipts=receipts,
+        controller_signals=signals,
+        profile_authority="profile-a",
+        authority_token="runtime-a",
+        now=datetime(2026, 7, 4, 13, tzinfo=timezone.utc),
+    )
+
+
+def test_active_merges_duplicate_conversation_tabs_and_prefers_actionable_target():
+    rows = (
+        _row(
+            row_key="conv-1",
+            native_session_id="session-current",
+            selected=True,
+            title="Shared work",
+        ),
+        _row(
+            row_key="conv-1",
+            native_session_id="session-running",
+            selected=False,
+            title="Shared work duplicate",
+            run_marker="[*]",
+            updated_sort="2026-07-04T12:30:00+00:00",
+        ),
+    )
+
+    results = _active(rows)
+
+    assert len(results) == 1
+    entry = results[0]
+    assert isinstance(entry, ConsoleSwitcherEntry)
+    assert entry.stable_result_key == "conversation:profile-a:conv-1"
+    assert entry.group is ActivityGroup.WORKING
+    assert entry.target is not None
+    assert entry.target.kind is SwitcherTargetKind.NATIVE_SESSION
+    assert entry.target.session_id == "session-running"
+    assert entry.multiplicity == 2
+
+
+def test_active_reduces_same_target_receipts_and_shell_without_losing_evidence():
+    row = _row(native_session_id="session-1", selected=False, run_marker="")
+    receipts = (
+        _receipt(activity_id="done-1", session_id="session-1", status="done"),
+        _receipt(
+            activity_id="failed-2",
+            session_id="session-1",
+            status="failed",
+            created_at="2026-07-04T12:05:00+00:00",
+        ),
+    )
+
+    entry = _active((row,), receipts=receipts)[0]
+
+    assert isinstance(entry, ConsoleSwitcherEntry)
+    assert entry.group is ActivityGroup.WAITING_FOR_YOU
+    assert entry.activity_state == "failed"
+    assert entry.target is not None
+    assert [receipt.activity_id for receipt in entry.target.receipts] == [
+        "done-1",
+        "failed-2",
+    ]
+    assert entry.multiplicity == 2
+
+
+def test_active_orders_group_then_existing_star_then_time():
+    rows = (
+        _row(
+            row_key="running-unstarred",
+            conversation_id="running-unstarred",
+            native_session_id="run-u",
+            title="Zulu",
+            run_marker="[*]",
+            starred=False,
+        ),
+        _row(
+            row_key="running-starred",
+            conversation_id="running-starred",
+            native_session_id="run-s",
+            title="Alpha",
+            run_marker="[*]",
+            starred=True,
+            updated_sort="2026-07-01T00:00:00+00:00",
+        ),
+        _row(
+            row_key="approval",
+            conversation_id="approval",
+            native_session_id="approval-s",
+            title="Needs me",
+            run_marker="[!]",
+        ),
+    )
+
+    results = _active(rows)
+
+    assert [result.group for result in results] == [
+        ActivityGroup.WAITING_FOR_YOU,
+        ActivityGroup.WORKING,
+        ActivityGroup.WORKING,
+    ]
+    assert results[1].title == "Alpha"
+
+
+def test_session_only_receipts_aggregate_into_explicit_unavailable_notice():
+    receipts = (
+        _receipt(
+            activity_id="gone-done",
+            conversation_id=None,
+            session_id="gone-session",
+            status="done",
+        ),
+        _receipt(
+            activity_id="gone-stuck",
+            conversation_id=None,
+            session_id="gone-session",
+            status="stuck",
+            created_at="2026-07-04T12:30:00+00:00",
+        ),
+    )
+
+    result = _active((), receipts=receipts)[0]
+
+    assert isinstance(result, UnavailableSessionNotice)
+    assert result.group is ActivityGroup.WAITING_FOR_YOU
+    assert result.primary_status == "stuck"
+    assert result.stable_result_key.endswith(":gone-session")
+    assert "+1" in result.subtitle
+
+
+def test_domain_semantic_search_uses_safe_metadata_and_filters():
+    rows = (
+        _row(
+            row_key="approval",
+            conversation_id="approval",
+            native_session_id="approval-s",
+            title="Release review",
+            workspace_label="Platform",
+            run_marker="[!]",
+        ),
+        _row(
+            row_key="running",
+            conversation_id="running",
+            native_session_id="running-s",
+            title="Indexer",
+            workspace_label="Research",
+            run_marker="[*]",
+        ),
+    )
+    results = _active(rows)
+
+    assert [item.title for item in filter_console_active_results(results, "waiting on me")] == [
+        "Release review"
+    ]
+    assert [item.title for item in filter_console_active_results(results, "is:working workspace:research")] == [
+        "Indexer"
+    ]
+    assert filter_console_active_results(results, "is:invented") == ()
+
+
+def test_controller_signal_is_content_free_and_can_raise_open_shell_priority():
+    rows = (_row(native_session_id="session-1", selected=True),)
+    signals = (
+        ConsoleSwitcherActivitySignal(
+            source_key="controller:native:session-1:paused",
+            state="paused",
+            session_id="session-1",
+            occurred_at="2026-07-04T12:30:00+00:00",
+        ),
+    )
+
+    result = _active(rows, signals=signals)[0]
+
+    assert result.group is ActivityGroup.WAITING_FOR_YOU
+    assert result.activity_state == "paused"
+
+
+def test_history_calendar_sections_obey_local_dates_dst_and_invalid_values():
+    zone = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 3, 9, 0, 30, tzinfo=zone)
+
+    assert console_history_section(
+        "2026-03-09T06:45:00+00:00", now=now, local_timezone=zone
+    ) == "Yesterday"
+    assert console_history_section(
+        "2026-03-09T08:45:00+00:00", now=now, local_timezone=zone
+    ) == "Today"
+    assert console_history_section(
+        "2026-03-12T08:45:00+00:00", now=now, local_timezone=zone
+    ) == "Today"
+    assert console_history_section(
+        "2026-03-03T12:00:00+00:00", now=now, local_timezone=zone
+    ) == "Previous 7 days"
+    assert console_history_section("not-a-time", now=now, local_timezone=zone) == "Older"
 
 
 def test_entries_are_recent_first_with_active_pinned():
