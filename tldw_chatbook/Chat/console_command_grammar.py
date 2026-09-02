@@ -98,6 +98,21 @@ HELP_COMMAND_NAME = "help"
 HELP_COMMAND_ARGUMENT_HINT = "[command]"
 HELP_COMMAND_HANDLER_ID = "help"
 
+# TASK-25909: existing Console actions given a typed slash route. All share
+# one handler_id; the screen maps each name to the action method that already
+# implements it (see ChatScreen._CONSOLE_ACTION_COMMAND_TARGETS). No new
+# capability -- every one maps to a palette entry / key binding that works today.
+CONSOLE_ACTION_COMMAND_HANDLER_ID = "console-action"
+CONSOLE_ACTION_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("model", ""),
+    ("sessions", ""),
+    ("workspace", ""),
+    ("new", ""),
+    ("temp", ""),
+    ("settings", ""),
+    ("context", ""),
+)
+
 
 @dataclass(frozen=True)
 class ConsoleCommand:
@@ -326,4 +341,12 @@ def default_console_registry() -> ConsoleCommandRegistry:
             handler_id=HELP_COMMAND_HANDLER_ID,
         )
     )
+    for _action_name, _action_hint in CONSOLE_ACTION_COMMANDS:
+        registry.register(
+            ConsoleCommand(
+                name=_action_name,
+                argument_hint=_action_hint,
+                handler_id=CONSOLE_ACTION_COMMAND_HANDLER_ID,
+            )
+        )
     return registry

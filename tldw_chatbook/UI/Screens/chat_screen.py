@@ -253,6 +253,8 @@ from ...Chat.console_command_grammar import (
     RESEARCH_COMMAND_NAME,
     HELP_COMMAND_HANDLER_ID,
     HELP_COMMAND_NAME,
+    CONSOLE_ACTION_COMMAND_HANDLER_ID,
+    CONSOLE_ACTION_COMMANDS,
     REWIND_COMMAND_HANDLER_ID,
     EMERGENCY_STOP_COMMAND_HANDLER_ID,
     EMERGENCY_STOP_COMMAND_NAME,
@@ -15030,6 +15032,18 @@ class ChatScreen(BaseAppScreen):
             return
         composer.restore_stashed_draft(stash)
 
+    # TASK-25909: each typed action command -> the existing screen action
+    # method that already implements it (no new capability).
+    _CONSOLE_ACTION_COMMAND_TARGETS = {
+        "model": "action_open_console_model_popover",
+        "sessions": "action_open_console_session_switcher",
+        "workspace": "action_open_console_workspace_switcher",
+        "new": "action_new_console_tab",
+        "temp": "action_new_temporary_console_tab",
+        "settings": "action_open_console_session_settings",
+        "context": "action_view_chat_context",
+    }
+
     _CONSOLE_COMMAND_NAME_TO_HANDLER_ID = {
         PROMPT_COMMAND_NAME: PROMPT_COMMAND_HANDLER_ID,
         SYSTEM_COMMAND_NAME: SYSTEM_COMMAND_HANDLER_ID,
@@ -15047,6 +15061,10 @@ class ChatScreen(BaseAppScreen):
         EMERGENCY_STOP_COMMAND_NAME: EMERGENCY_STOP_COMMAND_HANDLER_ID,
         RESEARCH_COMMAND_NAME: RESEARCH_COMMAND_HANDLER_ID,
         HELP_COMMAND_NAME: HELP_COMMAND_HANDLER_ID,
+        **{
+            _name: CONSOLE_ACTION_COMMAND_HANDLER_ID
+            for _name, _hint in CONSOLE_ACTION_COMMANDS
+        },
     }
 
     def _console_unknown_command_hint(self, name: str) -> str:
@@ -15110,6 +15128,7 @@ class ChatScreen(BaseAppScreen):
             EMERGENCY_STOP_COMMAND_HANDLER_ID: self._console_command_emergency_stop,
             RESEARCH_COMMAND_HANDLER_ID: self._console_command_research,
             HELP_COMMAND_HANDLER_ID: self._console_command_help,
+            CONSOLE_ACTION_COMMAND_HANDLER_ID: self._console_command_run_action,
         }
         handler = dispatch_map.get(handler_id)
         if handler is None:
@@ -15139,6 +15158,29 @@ class ChatScreen(BaseAppScreen):
                 commands, _COMMAND_DESCRIPTIONS, availability_fn=_availability
             )
         await self._append_native_console_system_message(text)
+
+    async def _console_command_run_action(self, parse: CommandParse) -> None:
+        """TASK-25909: dispatch a typed action command to the existing screen
+        action method that already implements it. Refuses honestly when the
+        action is unavailable rather than failing silently (AC#4)."""
+        method_name = self._CONSOLE_ACTION_COMMAND_TARGETS.get(parse.name)
+        method = getattr(self, method_name, None) if method_name else None
+        if method is None:
+            await self._append_native_console_system_message(
+                f"/{parse.name} is not available in this context."
+            )
+            return
+        try:
+            result = method()
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:  # noqa: BLE001 - a command must not crash the screen
+            logger.opt(exception=True).warning(
+                "Console action command /{} failed", parse.name
+            )
+            await self._append_native_console_system_message(
+                f"/{parse.name} could not run: {exc}"
+            )
 
     async def _console_command_insert_prompt(self, parse: CommandParse) -> None:
         """Delegate to `ConsolePromptsController` (wave-3 console decomposition, task 3)."""
