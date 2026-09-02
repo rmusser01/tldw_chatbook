@@ -548,11 +548,24 @@ class SchedulesWorkbench(BaseAppScreen):
         `exit_on_error=False` on the `run_worker` call that invokes this
         coroutine is the backstop against a bug here still crashing the
         app (the established run_worker(exit_on_error) trap).
+
+        Log discipline (fix round 1 -- a sustained failure used to dump a
+        full ERROR-level traceback every ~5s restart, worst in the
+        accepted profile-vanished edge case where `_resolve_server_
+        event_scope` raises synchronously and the inner 5-reconnect
+        absorption in `EventObserver.run()` never even engages): the
+        FIRST failure of a given exception class logs one `warning` with
+        just the exception summary (no traceback); identical-class
+        repeats log at `debug`; a class change re-warns (a
+        `ServerEventScopeRequiredError` outage turning into a genuine
+        network error, say, is worth a fresh heads-up); a subsequent
+        success logs one `info` and clears the remembered class.
         """
         scope_service = getattr(self.app_instance, "notifications_scope_service", None)
         cancel_event = self._notification_cancel_event
         if scope_service is None or cancel_event is None:
             return
+        last_failure_class: type[BaseException] | None = None
         while not cancel_event.is_set():
             try:
                 result = await scope_service.observe_server_feed_events(
@@ -560,13 +573,24 @@ class SchedulesWorkbench(BaseAppScreen):
                     cancel_event=cancel_event,
                     max_reconnects=_NOTIFICATION_OBSERVER_MAX_RECONNECTS,
                 )
-            except Exception:  # noqa: BLE001 - case 4/5 above, never fatal here
-                logger.exception(
-                    "Schedules notification observer connection failed; retrying"
-                )
+            except Exception as exc:  # noqa: BLE001 - case 4/5 above, never fatal here
+                if type(exc) is last_failure_class:
+                    logger.debug(
+                        f"Schedules notification observer still failing "
+                        f"({exc.__class__.__name__}: {exc}); retrying"
+                    )
+                else:
+                    logger.warning(
+                        f"Schedules notification observer connection failed "
+                        f"({exc.__class__.__name__}: {exc}); retrying"
+                    )
+                    last_failure_class = type(exc)
             else:
                 if result.cancelled:
                     return
+                if last_failure_class is not None:
+                    logger.info("Schedules notification observer reconnected")
+                    last_failure_class = None
             if cancel_event.is_set():
                 return
             try:

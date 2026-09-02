@@ -21,6 +21,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from loguru import logger as loguru_logger
 from textual.widgets import DataTable
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
@@ -28,6 +29,7 @@ from Tests.UI.schedules_test_helpers import MockSchedulingServiceMixin
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind
 from tldw_chatbook.Scheduling.services import SchedulingService
+import tldw_chatbook.UI.Screens.scheduling.schedules_workbench as schedules_workbench_module
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     RESULTS_PULL_DEBOUNCE_SECONDS,
     SchedulesWorkbench,
@@ -371,3 +373,105 @@ async def test_pull_failure_surfaces_via_sync_error_path_without_killing_observe
         assert screen._notification_cancel_event is not None
         assert not screen._notification_cancel_event.is_set()
         assert pilot.app.is_running
+
+
+class _ScriptedScopeService:
+    """Fix round 1 log-discipline test double: scripted sequence of
+    connection outcomes for `_run_server_notification_observer`'s outer
+    retry loop --
+
+    1. RuntimeError (first failure -- should WARN)
+    2. RuntimeError (repeat, same class -- should DEBUG)
+    3. RuntimeError (repeat, same class -- should DEBUG)
+    4. clean non-cancelled return (a "success" -- should INFO "reconnected")
+    5. ValueError (a NEW class after a success -- should WARN again)
+    6. blocks on cancel_event (an open connection, ends the script)
+    """
+
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    async def observe_server_feed_events(
+        self, *, handler, cancel_event, max_reconnects=0, **kwargs
+    ):
+        self.call_count += 1
+        if self.call_count <= 3:
+            raise RuntimeError(f"boom {self.call_count}")
+        if self.call_count == 4:
+            return SimpleNamespace(cancelled=False, handled_events=0, reset=None)
+        if self.call_count == 5:
+            raise ValueError("a different failure class")
+        await cancel_event.wait()
+        return SimpleNamespace(cancelled=True, handled_events=0, reset=None)
+
+
+@pytest.mark.asyncio
+async def test_sustained_failure_warns_once_then_debugs_then_info_on_reconnect(
+    notif_db, monkeypatch
+):
+    """Fix round 1 (task-4-review.md Medium): a sustained failure of the
+    SAME exception class must log exactly ONE warning (not an ERROR-level
+    traceback per retry attempt); identical-class repeats log at debug; a
+    successful reconnect logs one info and clears the remembered class,
+    so a later DIFFERENT failure class warns again instead of staying
+    silent at debug forever.
+    """
+    # The 5s cadence between restart attempts is unchanged in production
+    # (see the module constant); shrunk here only so this test does not
+    # take 5+ seconds per scripted attempt.
+    monkeypatch.setattr(
+        schedules_workbench_module,
+        "_NOTIFICATION_OBSERVER_RESTART_DELAY_SECONDS",
+        0.02,
+    )
+
+    server_client = _ConnectedServerClient()
+    scope_service = _ScriptedScopeService()
+    app = NotificationWorkbenchTestApp(
+        notif_db, server_client=server_client, scope_service=scope_service
+    )
+
+    records: list[tuple[str, str]] = []
+    sink_id = loguru_logger.add(
+        lambda message: records.append(
+            (message.record["level"].name, message.record["message"])
+        ),
+        level="DEBUG",
+    )
+    try:
+        async with app.run_test() as pilot:
+            screen = SchedulesWorkbench(app_instance=pilot.app)
+            await pilot.app.push_screen(screen)
+            await _wait_until(
+                pilot, lambda: scope_service.call_count >= 6, timeout=5.0
+            )
+
+            observer_records = [
+                (level, msg) for level, msg in records if "notification observer" in msg
+            ]
+            warnings = [r for r in observer_records if r[0] == "WARNING"]
+            debugs = [r for r in observer_records if r[0] == "DEBUG"]
+            infos = [r for r in observer_records if r[0] == "INFO"]
+            errors = [r for r in observer_records if r[0] == "ERROR"]
+
+            # Exactly one warning per distinct failure class (RuntimeError,
+            # then ValueError after the reconnect reset the memory) --
+            # class-change re-warns.
+            assert len(warnings) == 2, warnings
+            assert "RuntimeError" in warnings[0][1]
+            assert "ValueError" in warnings[1][1]
+            # The two REPEAT RuntimeError failures (attempts 2 and 3) log
+            # at debug, not warning.
+            assert len(debugs) == 2, debugs
+            # Exactly one reconnect info, once the run finally succeeds.
+            assert infos == [
+                ("INFO", "Schedules notification observer reconnected")
+            ]
+            # Never a full-traceback ERROR dump per retry -- the bug this
+            # fix round exists to close.
+            assert errors == []
+
+            await pilot.app.pop_screen()
+            await pilot.pause()
+    finally:
+        loguru_logger.remove(sink_id)
