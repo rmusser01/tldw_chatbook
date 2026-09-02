@@ -9,6 +9,45 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## POSIX availability does not prove a memory limit is enforceable
+
+**TASK-23113.10, 2026-09-01.** The custom-PII worker initially treated Python's
+`resource` module as evidence that its memory cap was active on every POSIX
+host. Real-process tests on macOS showed that `RLIMIT_RSS`, `RLIMIT_DATA`, and
+`RLIMIT_AS` were present, but every attempt to lower their effectively-unlimited
+values failed with `ValueError: current limit exceeds maximum limit`. CPU and
+output-file limits were enforceable there; the address-space limit was
+enforceable in the Linux qualification path. Reporting the memory cap merely
+because the constants existed would have made the security evidence false.
+
+**What to do.** Treat an OS resource bound as enforced only after the child
+successfully applies it, return content-free metadata naming the limits that
+actually took effect, and assert platform capabilities in a real child process.
+Keep parent-enforced deadline and byte/count ceilings on every platform; qualify
+memory enforcement only where the host proves it can apply the limit.
+
+---
+
+## Durable masking evidence must remove the detector before every read path
+
+**TASK-23113.10 review, 2026-09-01.** Custom-PII tests proved that ordinary
+message revisions and generic provider artifacts retained irreversible masks,
+but a saved provider-continuation sidecar still used a revision reference. The
+native viewer reran the process-local custom ruleset when reconstructing that
+sidecar. After a restart or registry eviction, the trace therefore omitted a
+continuation that had been successfully captured, even though the surrounding
+message remained readable. The domain-specific read path escaped tests that
+covered the same policy at a different storage owner.
+
+**What to do.** For every privacy transform claimed to be durable, enumerate
+each persisted source domain—not just messages versus artifacts, but their
+sidecars—and read it after the detector, key, registry, or worker has been
+removed. Viewer, copy, and export must consume the stored masked projection;
+they may fail closed when that durable projection is absent, but must not rerun
+an ephemeral detector to recreate it.
+
+---
+
 ## Current-version repair hooks must gate on the schema that introduced their columns
 
 **TASK-23113.8, 2026-08-31.** The trace-GC migration matrix reopened a genuine

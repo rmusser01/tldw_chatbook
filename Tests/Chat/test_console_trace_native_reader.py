@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
+
 import pytest
 
 from tldw_chatbook.Chat.console_trace_models import (
@@ -11,6 +14,10 @@ from tldw_chatbook.Chat.console_trace_models import (
 )
 from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
 from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
+from tldw_chatbook.Chat.provider_continuation import (
+    dump_provider_continuation_json,
+    parse_provider_continuation_json,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
@@ -271,3 +278,90 @@ def test_native_reader_ignores_legacy_snapshot_routes(
     database: CharactersRAGDB,
 ) -> None:
     assert ConsoleTraceNativeReader(database).read_calls("missing-message") == ()
+
+
+def test_native_continuation_uses_durable_policy_binding_without_regex_registry(
+    database: CharactersRAGDB,
+) -> None:
+    repository = ConsoleTraceRepository()
+    conversation_id = database.add_conversation({"title": "durable continuation"})
+    assert conversation_id is not None
+    checkpoint = parse_provider_continuation_json(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "moonshot",
+            "protocol": "chat_completions",
+            "model": "kimi-k3",
+            "api_base_url": "https://api.moonshot.ai/v1",
+            "state": "complete",
+            "rounds": [
+                {
+                    "assistant_content": "answer",
+                    "reasoning_blocks": ["customer-ABCDWXYZ"],
+                    "calls": [],
+                }
+            ],
+        }
+    )
+    encoded = dump_provider_continuation_json(checkpoint)
+    assert encoded is not None
+    message_id = database.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "answer",
+            "provider_continuation_json": encoded,
+        }
+    )
+    assert message_id is not None
+    policy = FrozenTracePolicy(
+        new_opaque_id(),
+        "credentials-v1",
+        True,
+        "44444444-4444-4444-8444-444444444444",
+    )
+
+    with database.transaction(immediate=True) as cursor:
+        revision_row = cursor.execute(
+            """SELECT revision_id FROM console_trace_semantic_revisions
+                 WHERE source_message_id = ?""",
+            (message_id,),
+        ).fetchone()
+        assert revision_row is not None
+        revision_id = str(revision_row[0])
+        repository.ensure_policy(cursor, policy)
+        masked = json.loads(encoded)
+        masked["rounds"][0]["reasoning_blocks"] = ["[PII omitted]"]
+        artifact = repository.store_sanitized_artifact(
+            cursor,
+            sanitized_bytes=json.dumps(
+                {
+                    "content": "answer",
+                    "provider_continuation": masked,
+                    "role": "assistant",
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode(),
+            media_type="application/vnd.tldw.semantic-message+json",
+            normalization_version="semantic-envelope-v1",
+        )
+        repository.bind_revision_policy(
+            cursor,
+            revision_id=revision_id,
+            policy_id=policy.policy_id,
+            artifact_id=artifact.artifact_id,
+        )
+        projected = ConsoleTraceNativeReader(
+            database,
+            repository=repository,
+        )._project_continuation(
+            cursor,
+            call=SimpleNamespace(policy_id=policy.policy_id),
+            revision_id=revision_id,
+            expected_conversation_id=conversation_id,
+        )
+
+    assert projected["rounds"][0]["reasoning_blocks"] == ["[PII omitted]"]
+    assert "customer-ABCDWXYZ" not in repr(projected)

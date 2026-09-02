@@ -25,6 +25,13 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
 )
+from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
+from tldw_chatbook.Chat.console_trace_provenance import (
+    DerivedTraceProvenance,
+    ProviderArtifactTraceProvenance,
+    SavedRevisionTraceProvenance,
+    TraceProvenanceSource,
+)
 
 
 def _word_count(messages: list[dict], _model: str) -> int:
@@ -1043,3 +1050,30 @@ def test_rag_context_attributes_only_with_provenance() -> None:
     accounting = with_provenance.accounting
     assert accounting.rag_attributed is True
     assert 0 < accounting.rag_context_tokens < accounting.mandatory_tokens
+
+
+def test_saved_continuation_is_a_policy_owned_provider_artifact() -> None:
+    group = _private_group("a1", call_id="call_1")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    semantic = build_console_request(
+        [
+            {
+                "role": "assistant",
+                "content": "answer",
+                CONTINUATION_OWNER_KEY: "a1",
+            }
+        ],
+        continuation_groups=(group,),
+        message_provenance=(SavedRevisionTraceProvenance(new_opaque_id()),),
+        memory_provenance=(),
+        mandatory_provenance=(),
+        tool_provenance=(),
+        capture_policy=policy,
+    )
+
+    assert semantic.provenance is not None
+    descriptor = semantic.provenance.active_continuations[0]
+    assert isinstance(descriptor, DerivedTraceProvenance)
+    assert isinstance(descriptor.artifact, ProviderArtifactTraceProvenance)
+    assert descriptor.artifact.source is TraceProvenanceSource.CONTINUATION
+    assert descriptor.artifact.policy == policy

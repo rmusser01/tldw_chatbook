@@ -611,7 +611,11 @@ def _validate_derived_shape(descriptor: DerivedTraceProvenance) -> None:
             else TraceProvenanceSource.CONTINUATION
         )
         owner_is_saved = type(descriptor.inputs[0]) is SavedRevisionTraceProvenance
-        if owner_is_saved != (artifact is None) or (
+        artifact_required = (
+            transform is TraceTransformKind.CONTINUATION_ATTACHMENT
+            or not owner_is_saved
+        )
+        if artifact_required == (artifact is None) or (
             artifact is not None and artifact.source is not source
         ):
             raise TraceProvenanceAlignmentError(

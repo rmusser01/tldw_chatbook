@@ -2715,6 +2715,10 @@ def test_continuation_domain_survives_append_and_reopen(
         DerivedTraceProvenance(
             TraceTransformKind.CONTINUATION_ATTACHMENT,
             (SavedRevisionTraceProvenance(str(row[0])),),
+            artifact=ProviderArtifactTraceProvenance(
+                TraceProvenanceSource.CONTINUATION,
+                policy,
+            ),
         ),
         *tuple(
             ProviderArtifactTraceProvenance(
@@ -2853,9 +2857,14 @@ def test_saved_continuation_value_mismatch_rejects_before_any_trace_write(
         .fetchone()
     )
     assert row is not None
+    policy = _policy()
     descriptor = DerivedTraceProvenance(
         TraceTransformKind.CONTINUATION_ATTACHMENT,
         (SavedRevisionTraceProvenance(str(row[0])),),
+        artifact=ProviderArtifactTraceProvenance(
+            TraceProvenanceSource.CONTINUATION,
+            policy,
+        ),
     )
     provenance = ProviderRequestProvenance(
         continuations=(descriptor,),

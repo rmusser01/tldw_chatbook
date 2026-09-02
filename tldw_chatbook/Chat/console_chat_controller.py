@@ -224,6 +224,9 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     frozen_policy_from_provenance,
 )
 from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
+from tldw_chatbook.Chat.console_trace_custom_pii import (
+    redact_pii_value_for_ruleset_revision,
+)
 from tldw_chatbook.Chat.console_trace_redaction import (
     BUILTIN_PII_RULESET_REVISION_ID,
     CREDENTIAL_FILTER_VERSION,
@@ -231,7 +234,6 @@ from tldw_chatbook.Chat.console_trace_redaction import (
     PII_DETECTOR_UNAVAILABLE,
     PIIRedactionSpan,
     CredentialSanitizer,
-    redact_pii_value,
 )
 from tldw_chatbook.Chat.console_visual_transcript import (
     count_semantic_images,
@@ -2540,6 +2542,7 @@ class CapturePolicySnapshot:
     conversation_pii_redaction_enabled: bool | None = None
     global_pii_redaction_enabled: bool = False
     next_privacy_revision: int = 0
+    pii_ruleset_revision_id: str | None = None
 
 
 class CapturePolicyMutationStatus(str, Enum):
@@ -2565,6 +2568,7 @@ class CapturePurgeStatus(str, Enum):
 
 _MISSING_CAPTURE_REVISION = -1
 _UNFROZEN_TRACE_PRIVACY_REVISION = -1
+_UNFROZEN_PII_RULESET_REVISION = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -3623,6 +3627,18 @@ class ConsoleChatController:
             conversation=state.conversation_pii_redaction_enabled,
             next_send=state.next_pii_redaction_enabled,
         )
+        custom_pii_ruleset = getattr(runtime, "custom_pii_ruleset", None)
+        pii_ruleset_revision_id = (
+            custom_pii_ruleset.revision_id
+            if effective_pii_redaction_enabled
+            and custom_pii_ruleset is not None
+            and custom_pii_ruleset.runnable_rules
+            else (
+                BUILTIN_PII_RULESET_REVISION_ID
+                if effective_pii_redaction_enabled
+                else None
+            )
+        )
         queue = self.prompt_queue_registry.snapshot(session_id)
         return CapturePolicySnapshot(
             session_id=session_id,
@@ -3658,6 +3674,7 @@ class ConsoleChatController:
                 getattr(runtime, "pii_redaction_enabled", False)
             ),
             next_privacy_revision=state.next_privacy_revision,
+            pii_ruleset_revision_id=pii_ruleset_revision_id,
         )
 
     def capture_revision(self, session_id: str) -> int:
@@ -4224,6 +4241,9 @@ class ConsoleChatController:
         *,
         frozen_capture_enabled: bool | None = None,
         frozen_pii_redaction_enabled: bool | None = None,
+        frozen_pii_ruleset_revision_id: str | None | object = (
+            _UNFROZEN_PII_RULESET_REVISION
+        ),
         frozen_next_trace_privacy_revision: int | None = (
             _UNFROZEN_TRACE_PRIVACY_REVISION
         ),
@@ -4268,6 +4288,32 @@ class ConsoleChatController:
                 exchange_capture_enabled=False,
                 capture_detail=CaptureDetail.SAFE,
             )
+        pii_redaction_enabled = (
+            frozen_pii_redaction_enabled
+            if frozen_pii_redaction_enabled is not None
+            else resolve_scoped_boolean(
+                global_default=bool(getattr(runtime, "pii_redaction_enabled", False)),
+                conversation=state.conversation_pii_redaction_enabled,
+                next_send=state.next_pii_redaction_enabled,
+                allow_next_send=eligible,
+            )
+        )
+        custom_pii_ruleset = getattr(runtime, "custom_pii_ruleset", None)
+        pii_ruleset_revision_id = (
+            frozen_pii_ruleset_revision_id
+            if pii_redaction_enabled
+            and frozen_pii_ruleset_revision_id is not _UNFROZEN_PII_RULESET_REVISION
+            else (BUILTIN_PII_RULESET_REVISION_ID if pii_redaction_enabled else None)
+        )
+        if (
+            pii_redaction_enabled
+            and frozen_pii_ruleset_revision_id is _UNFROZEN_PII_RULESET_REVISION
+            and custom_pii_ruleset is not None
+            and custom_pii_ruleset.runnable_rules
+        ):
+            pii_ruleset_revision_id = custom_pii_ruleset.revision_id
+        if pii_ruleset_revision_id is not None and type(pii_ruleset_revision_id) is not str:
+            raise TypeError("pii_ruleset_revision_id")
         signals = ConsoleProviderStreamSignals(
             exchange_capture_enabled=(
                 resolution.enabled
@@ -4276,18 +4322,8 @@ class ConsoleChatController:
                 )
             ),
             capture_detail=resolution.detail,
-            pii_redaction_enabled=(
-                frozen_pii_redaction_enabled
-                if frozen_pii_redaction_enabled is not None
-                else resolve_scoped_boolean(
-                    global_default=bool(
-                        getattr(runtime, "pii_redaction_enabled", False)
-                    ),
-                    conversation=state.conversation_pii_redaction_enabled,
-                    next_send=state.next_pii_redaction_enabled,
-                    allow_next_send=eligible,
-                )
-            ),
+            pii_redaction_enabled=pii_redaction_enabled,
+            pii_ruleset_revision_id=pii_ruleset_revision_id,
         )
         if eligible and state.next_detail is not None:
             try:
@@ -7385,8 +7421,8 @@ class ConsoleChatController:
                 and admission_policy.pii_redaction_enabled
             )
             pii_ruleset_revision_id = (
-                BUILTIN_PII_RULESET_REVISION_ID
-                if pii_redaction_enabled
+                admission_policy.pii_ruleset_revision_id
+                if pii_redaction_enabled and admission_policy is not None
                 else None
             )
             next_trace_privacy_revision = (
@@ -7976,6 +8012,9 @@ class ConsoleChatController:
                     preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
                 ),
                 frozen_pii_redaction_enabled=preparation.pii_redaction_enabled,
+                frozen_pii_ruleset_revision_id=(
+                    preparation.pii_ruleset_revision_id
+                ),
                 frozen_next_trace_privacy_revision=(
                     preparation.next_trace_privacy_revision
                 ),
@@ -8363,13 +8402,21 @@ class ConsoleChatController:
                                 ),
                             )
                             continue
-                        redaction = redact_pii_value(credential_projection.value)
+                        if policy.pii_ruleset_revision_id is None:
+                            raise TraceProvenancePersistenceError()
+                        redaction = redact_pii_value_for_ruleset_revision(
+                            credential_projection.value,
+                            policy.pii_ruleset_revision_id,
+                        )
                         if not redaction.available:
                             repository.bind_revision_policy(
                                 cursor,
                                 revision_id=descriptor.revision_id,
                                 policy_id=policy.policy_id,
-                                omission_reason_code=PII_DETECTOR_UNAVAILABLE,
+                                omission_reason_code=(
+                                    redaction.omission_reason_code
+                                    or PII_DETECTOR_UNAVAILABLE
+                                ),
                             )
                             continue
                         by_path: dict[str, list[PIIRedactionSpan]] = {}
@@ -8677,6 +8724,9 @@ class ConsoleChatController:
                     preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
                 ),
                 frozen_pii_redaction_enabled=preparation.pii_redaction_enabled,
+                frozen_pii_ruleset_revision_id=(
+                    preparation.pii_ruleset_revision_id
+                ),
                 frozen_next_trace_privacy_revision=(
                     preparation.next_trace_privacy_revision
                 ),
@@ -19779,14 +19829,23 @@ class ConsoleChatController:
         ``local_tools_enabled`` read a few hundred lines up for the first.
         """
         runtime = runtime_capture_policy()
+        pii_redaction_enabled = bool(getattr(runtime, "pii_redaction_enabled", False))
+        custom_pii_ruleset = getattr(runtime, "custom_pii_ruleset", None)
         return ConsoleProviderStreamSignals(
             exchange_capture_enabled=(
                 runtime.enabled
                 and bool(getattr(runtime, "legacy_writes_enabled", runtime.enabled))
             ),
             capture_detail=CaptureDetail.SAFE,
-            pii_redaction_enabled=bool(
-                getattr(runtime, "pii_redaction_enabled", False)
+            pii_redaction_enabled=pii_redaction_enabled,
+            pii_ruleset_revision_id=(
+                custom_pii_ruleset.revision_id
+                if pii_redaction_enabled
+                and custom_pii_ruleset is not None
+                and custom_pii_ruleset.runnable_rules
+                else (
+                    BUILTIN_PII_RULESET_REVISION_ID if pii_redaction_enabled else None
+                )
             ),
         )
 

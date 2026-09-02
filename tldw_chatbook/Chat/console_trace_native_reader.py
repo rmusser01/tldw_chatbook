@@ -16,6 +16,7 @@ from tldw_chatbook.Chat.console_trace_projection import NormalizedTraceCall
 from tldw_chatbook.Chat.console_trace_provenance import TraceTransformKind
 from tldw_chatbook.Chat.console_trace_redaction import (
     CREDENTIAL_SANITIZER_UNAVAILABLE,
+    PII_DETECTOR_UNAVAILABLE,
     CredentialSanitizer,
 )
 from tldw_chatbook.Chat.console_trace_repository import (
@@ -244,6 +245,34 @@ class ConsoleTraceNativeReader:
         revision_id: str,
         expected_conversation_id: str,
     ) -> object:
+        revision = self.repository.get_semantic_revision(cursor, revision_id)
+        if (
+            revision is None
+            or revision.source_conversation_id != expected_conversation_id
+        ):
+            raise ValueError("revision_owner_mismatch")
+        policy = self.repository.get_policy(cursor, call.policy_id)
+        if policy is None:
+            raise ValueError("trace_policy_unavailable")
+        if policy.pii_redaction_enabled:
+            binding = self.repository.get_revision_policy_binding(
+                cursor,
+                revision_id=revision_id,
+                policy_id=policy.policy_id,
+            )
+            if binding is None:
+                return {"omitted": PII_DETECTOR_UNAVAILABLE}
+            if binding.omission_reason_code is not None:
+                return {"omitted": binding.omission_reason_code}
+            materialized = self._decode_artifact(
+                self.repository.get_artifact(cursor, binding.artifact_id or "")
+            )
+            if not isinstance(materialized, Mapping):
+                raise ValueError("semantic_continuation_unavailable")
+            continuation = materialized.get("provider_continuation")
+            if continuation is None:
+                raise ValueError("semantic_continuation_unavailable")
+            return continuation
         value = project_semantic_revision_provider_continuations(
             cursor,
             revision_ids=(revision_id,),
@@ -252,10 +281,7 @@ class ConsoleTraceNativeReader:
         sanitized = CredentialSanitizer().sanitize(value)
         if not sanitized.available:
             return {"omitted": CREDENTIAL_SANITIZER_UNAVAILABLE}
-        policy = self.repository.get_policy(cursor, call.policy_id)
-        if policy is None:
-            raise ValueError("trace_policy_unavailable")
-        return self.service._pii_projected_value(sanitized.value, policy=policy)
+        return sanitized.value
 
     def _header_request(
         self,

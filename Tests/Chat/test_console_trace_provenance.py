@@ -666,28 +666,34 @@ def test_message_rewrite_rejects_cross_paired_sidecar_artifacts(
         )
 
 
-@pytest.mark.parametrize(
-    ("transform", "artifact_source"),
-    (
-        (TraceTransformKind.THINKING_ATTACHMENT, TraceProvenanceSource.THINKING),
-        (
-            TraceTransformKind.CONTINUATION_ATTACHMENT,
-            TraceProvenanceSource.CONTINUATION,
-        ),
-    ),
-)
-def test_saved_sidecar_attachment_rejects_provider_artifact(
-    transform: TraceTransformKind,
-    artifact_source: TraceProvenanceSource,
-) -> None:
+def test_saved_thinking_attachment_rejects_provider_artifact() -> None:
     revision = SavedRevisionTraceProvenance(new_opaque_id())
 
     with pytest.raises(TraceProvenanceAlignmentError, match="attachment"):
         DerivedTraceProvenance(
-            transform,
+            TraceTransformKind.THINKING_ATTACHMENT,
             (revision,),
-            artifact=_artifact(artifact_source),
+            artifact=_artifact(TraceProvenanceSource.THINKING),
         )
+
+
+def test_saved_continuation_attachment_requires_provider_artifact() -> None:
+    revision = SavedRevisionTraceProvenance(new_opaque_id())
+
+    with pytest.raises(TraceProvenanceAlignmentError, match="attachment"):
+        DerivedTraceProvenance(
+            TraceTransformKind.CONTINUATION_ATTACHMENT,
+            (revision,),
+        )
+
+    descriptor = DerivedTraceProvenance(
+        TraceTransformKind.CONTINUATION_ATTACHMENT,
+        (revision,),
+        artifact=_artifact(TraceProvenanceSource.CONTINUATION),
+    )
+
+    assert descriptor.inputs == (revision,)
+    assert descriptor.artifact is not None
 
 
 def test_message_rewrite_rejects_cross_owner_attachment_at_public_boundary() -> None:
@@ -1127,7 +1133,12 @@ def test_saved_thinking_and_continuation_sidecars_share_owner_revision() -> None
     assert thinking_intent.artifact is None
     assert isinstance(continuation_intent, DerivedTraceProvenance)
     assert continuation_intent.inputs == (owner_revision,)
-    assert continuation_intent.artifact is None
+    assert isinstance(
+        continuation_intent.artifact,
+        ProviderArtifactTraceProvenance,
+    )
+    assert continuation_intent.artifact.source is TraceProvenanceSource.CONTINUATION
+    assert continuation_intent.artifact.policy == policy
 
     prepared = prepare_provider_request(
         semantic,
@@ -1226,7 +1237,11 @@ def test_provider_serialization_rejects_correct_source_for_wrong_sidecar_owner(
     )
     assert semantic.provenance is not None
     unit = semantic.provenance.compactable[0]
-    wrong_attachment = DerivedTraceProvenance(transform, (wrong_owner_revision,))
+    original_attachment = getattr(unit, sidecar_field)[0]
+    wrong_attachment = replace(
+        original_attachment,
+        inputs=(wrong_owner_revision,),
+    )
     corrupted_unit = replace(unit, **{sidecar_field: (wrong_attachment,)})
     corrupted = replace(
         semantic,
