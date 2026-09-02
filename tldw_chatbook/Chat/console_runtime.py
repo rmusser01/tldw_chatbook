@@ -194,6 +194,37 @@ class _LazyTraceCompatibilityMetrics:
         return self._get_delegate().snapshot()
 
 
+class _LazyConsoleActivityReceiptService:
+    """Load receipt coordination on first switcher or settlement use."""
+
+    def __init__(self, runs_db: Any, marks: Any | None) -> None:
+        self._runs_db = runs_db
+        self._marks = marks
+        self._delegate: Any | None = None
+        self._lock = Lock()
+
+    def _get_delegate(self) -> Any:
+        delegate = self._delegate
+        if delegate is not None:
+            return delegate
+        with self._lock:
+            delegate = self._delegate
+            if delegate is None:
+                from tldw_chatbook.Chat.console_activity_receipts import (
+                    ConsoleActivityReceiptService,
+                )
+
+                delegate = ConsoleActivityReceiptService(
+                    self._runs_db,
+                    self._marks,
+                )
+                self._delegate = delegate
+        return delegate
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._get_delegate(), name)
+
+
 class _LazyTraceBoundaryFactory:
     """Load normalized write planning only when a provider call reserves."""
 
@@ -1086,14 +1117,11 @@ class ConsoleRuntime:
             self._agent_bridge = None
             return None
         from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-        from tldw_chatbook.Chat.console_activity_receipts import (
-            ConsoleActivityReceiptService,
-        )
         from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
         runs_db = AgentRunsDB(Path(db_path).parent / "agent_runs.db")
         self._agent_runs_db = runs_db
-        self._activity_receipts = ConsoleActivityReceiptService(
+        self._activity_receipts = _LazyConsoleActivityReceiptService(
             runs_db,
             getattr(self._app, "conversation_local_marks_service", None),
         )
