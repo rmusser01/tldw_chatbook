@@ -993,6 +993,153 @@ def test_convert_row_to_server_mirror_requires_server_item_id(
         db.convert_row_to_server_mirror("automation_definition", def_id, {}, "server:1")
 
 
+# ----------------------------------------------------------------------
+# create_local_copy_from_mirror (schedules-handoff PR-5, task 5) --
+# spec §6.2.1.
+# ----------------------------------------------------------------------
+
+
+def test_create_local_copy_from_mirror_definition_translates_schedule(
+    db: ScheduledTasksDB,
+) -> None:
+    mirror_id = db.create_automation_definition(
+        owner_id="server:1",
+        family="recurring_question",
+        name="Daily digest",
+        description="A digest",
+        server_id="srv-def-1",
+        lifecycle="paused",
+        # Server vocabulary (`every_seconds` -> `seconds`).
+        schedule={"kind": "interval", "seconds": 3600},
+        finding_policy={"mode": "balanced_findings"},
+    )
+
+    copy_id = db.create_local_copy_from_mirror("automation_definition", mirror_id)
+
+    assert copy_id != mirror_id
+    copy_row = db.get_automation_definition(copy_id)
+    assert copy_row["owner_id"] == "local"
+    assert copy_row["server_id"] is None
+    assert copy_row["transfer_state"] == "from_server_pending"
+    assert copy_row["family"] == "recurring_question"
+    assert copy_row["name"] == "Daily digest"
+    assert copy_row["description"] == "A digest"
+    assert copy_row["lifecycle"] == "paused", "the source row's lifecycle is preserved"
+    # Client vocabulary (`seconds` -> `every_seconds`).
+    assert copy_row["schedule"] == {"kind": "interval", "every_seconds": 3600}
+    assert copy_row["finding_policy"] == {"mode": "balanced_findings"}
+    assert copy_row["next_run_at"] is not None, (
+        "next_run_at must be computed fresh, not left null"
+    )
+
+    # The mirror row is untouched.
+    mirror_row = db.get_automation_definition(mirror_id)
+    assert mirror_row["owner_id"] == "server:1"
+    assert mirror_row["server_id"] == "srv-def-1"
+    assert mirror_row["transfer_state"] is None
+
+
+def test_create_local_copy_from_mirror_definition_normalizes_weekday_name(
+    db: ScheduledTasksDB,
+) -> None:
+    """`to_local_schedule` must run BEFORE `next_run_at` is computed: a
+    raw server-vocab ``weekday: "wed"`` makes `compute_next_run_at`
+    silently return ``None`` (schedule_compute.py's `_compute_weekly`
+    requires a plain int), so this also pins the translate-then-compute
+    ordering, not just the stored value."""
+    mirror_id = db.create_automation_definition(
+        owner_id="server:1",
+        family="recurring_question",
+        name="Weekly digest",
+        server_id="srv-def-2",
+        schedule={"kind": "weekly", "at": "09:00", "weekday": "wed"},
+    )
+
+    copy_id = db.create_local_copy_from_mirror("automation_definition", mirror_id)
+
+    copy_row = db.get_automation_definition(copy_id)
+    assert copy_row["schedule"] == {
+        "kind": "weekly",
+        "time_of_day": "09:00",
+        "weekday": 2,
+    }
+    assert copy_row["next_run_at"] is not None
+
+
+def test_create_local_copy_from_mirror_definition_unknown_mirror_raises(
+    db: ScheduledTasksDB,
+) -> None:
+    with pytest.raises(ValueError, match="mirror"):
+        db.create_local_copy_from_mirror("automation_definition", "no-such-id")
+
+
+def test_create_local_copy_from_mirror_unknown_table_kind_raises(
+    db: ScheduledTasksDB,
+) -> None:
+    with pytest.raises(ValueError, match="table_kind"):
+        db.create_local_copy_from_mirror("bogus", "any-id")
+
+
+def test_create_local_copy_from_mirror_reminder_one_time_copies_run_at(
+    db: ScheduledTasksDB,
+) -> None:
+    run_at = _utc(2026, 12, 25, 9, 0)
+    mirror_id = db.create_reminder_task(
+        owner_id="server:1",
+        title="Standup",
+        body="Don't be late",
+        schedule_kind="one_time",
+        run_at=run_at,
+        server_id="srv-rem-1",
+    )
+
+    copy_id = db.create_local_copy_from_mirror("reminder_task", mirror_id)
+
+    assert copy_id != mirror_id
+    copy_row = db.get_reminder_task(copy_id)
+    assert copy_row["owner_id"] == "local"
+    assert copy_row["server_id"] is None
+    assert copy_row["transfer_state"] == "from_server_pending"
+    assert copy_row["title"] == "Standup"
+    assert copy_row["body"] == "Don't be late"
+    assert copy_row["schedule_kind"] == "one_time"
+    assert copy_row["run_at"] == run_at.isoformat()
+    assert copy_row["next_run_at"] == run_at.isoformat(), (
+        "a one_time schedule's next_run_at is the run_at itself"
+    )
+
+    mirror_row = db.get_reminder_task(mirror_id)
+    assert mirror_row["owner_id"] == "server:1"
+    assert mirror_row["transfer_state"] is None
+
+
+def test_create_local_copy_from_mirror_reminder_recurring_computes_next_run(
+    db: ScheduledTasksDB,
+) -> None:
+    mirror_id = db.create_reminder_task(
+        owner_id="server:1",
+        title="Standup",
+        schedule_kind="recurring",
+        cron="0 9 * * *",
+        timezone="UTC",
+        server_id="srv-rem-2",
+    )
+
+    copy_id = db.create_local_copy_from_mirror("reminder_task", mirror_id)
+
+    copy_row = db.get_reminder_task(copy_id)
+    assert copy_row["schedule_kind"] == "recurring"
+    assert copy_row["cron"] == "0 9 * * *"
+    assert copy_row["next_run_at"] is not None
+
+
+def test_create_local_copy_from_mirror_reminder_unknown_mirror_raises(
+    db: ScheduledTasksDB,
+) -> None:
+    with pytest.raises(ValueError, match="mirror"):
+        db.create_local_copy_from_mirror("reminder_task", "no-such-id")
+
+
 def test_update_automation_definition(db: ScheduledTasksDB) -> None:
     schedule = {"kind": "cron", "expression": "0 9 * * *"}
     def_id = db.create_automation_definition(

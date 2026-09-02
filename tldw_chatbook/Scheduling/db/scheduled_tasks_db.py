@@ -21,6 +21,8 @@ from loguru import logger
 
 from tldw_chatbook.DB.base_db import BaseDB
 from tldw_chatbook.DB.sql_validation import validate_identifier
+from tldw_chatbook.Scheduling.schedule_compute import compute_next_run_at
+from tldw_chatbook.Scheduling.schedule_vocabulary import to_local_schedule
 
 #: ``transfer_state`` values that make a row dormant: excluded from every
 #: armable filter (DB-query and ``PriorityQueue.load`` layers, both
@@ -1462,6 +1464,144 @@ class ScheduledTasksDB(BaseDB):
                     conn, local_id, server_id, table_kind, owner_id
                 )
             return "converted"
+
+    def create_local_copy_from_mirror(self, table_kind: str, mirror_id: str) -> str:
+        """Create a dormant local-owner copy of a server-owned mirror row (spec §6.2.1).
+
+        Called when a `release_from_server` transfer starts on a mirror
+        row (``owner_id`` != ``"local"``, ``server_id`` set): a NEW row is
+        created with ``owner_id="local"``, a fresh local id, ``server_id=
+        None``, and ``transfer_state="from_server_pending"`` -- a
+        `DORMANT_TRANSFER_STATES` member, so the copy sits out of every
+        armable-row query (Task 1) until the release replay's ack clears
+        it (`SyncEngine._push_definition_release`/`_push_reminder_
+        release`, Task 5). The mirror row itself is left completely
+        untouched -- it keeps executing server-side until the release
+        actually lands.
+
+        A definition's ``schedule`` is stored in SERVER vocabulary on the
+        mirror (pulled verbatim by `upsert_automation_definitions_from_
+        server`, never translated on the way in) and is translated to
+        CLIENT vocabulary here via `to_local_schedule` before ``next_run_
+        at`` is computed -- Task 3's documented translation direction,
+        and this is that function's first real caller. A reminder's
+        schedule fields (`schedule_kind`/`run_at`/`cron`/`timezone`) use
+        the SAME vocabulary on both sides (no rename table exists for
+        them), so they are copied through unchanged.
+
+        ``next_run_at`` is computed FRESH from the (translated) schedule
+        at "now", the same way a brand-new local row's is
+        (`SchedulingService._definition_db_fields_from_preview`'s
+        `compute_next_run_at` call / `_compute_next_run_at`'s one_time-
+        passthrough-or-next-cron-occurrence split) -- not copied from the
+        mirror's own possibly-stale value, since the mirror may not have
+        pulled the server's latest progress yet.
+
+        ONE transaction: the mirror read and the copy's INSERT are atomic,
+        so a concurrent mirror delete/pull-update can never leave the
+        copy built from half-updated data.
+
+        Args:
+            table_kind: ``"reminder_task"`` or ``"automation_definition"``.
+            mirror_id: The server-owned mirror row's local id.
+
+        Returns:
+            The new copy's local id.
+
+        Raises:
+            ValueError: unknown ``table_kind``, or no row exists at
+                ``mirror_id``.
+        """
+        if table_kind not in self._TRANSFER_STATE_TABLES:
+            raise ValueError(
+                f"Unknown table_kind for create_local_copy_from_mirror: {table_kind!r}"
+            )
+
+        now = datetime.now(timezone.utc)
+        with self.transaction() as conn:
+            if table_kind == "reminder_task":
+                mirror = self._row_to_dict(
+                    conn.execute(
+                        "SELECT * FROM reminder_tasks WHERE id = ?", (mirror_id,)
+                    ).fetchone()
+                )
+                if mirror is None:
+                    raise ValueError(f"No reminder_task mirror row at id {mirror_id!r}")
+
+                schedule_kind = mirror.get("schedule_kind") or "one_time"
+                if schedule_kind == "one_time":
+                    next_run_at = self._parse_utc_iso(mirror.get("run_at"))
+                elif schedule_kind == "recurring" and mirror.get("cron"):
+                    try:
+                        tz: tzinfo = ZoneInfo(mirror.get("timezone") or "UTC")
+                    except Exception:
+                        tz = timezone.utc
+                    next_run_at = (
+                        croniter(mirror["cron"], now.astimezone(tz))
+                        .get_next(datetime)
+                        .astimezone(timezone.utc)
+                    )
+                else:
+                    next_run_at = None
+
+                return self._create_reminder_task_conn(
+                    conn,
+                    "local",
+                    mirror["title"],
+                    body=mirror.get("body"),
+                    schedule_kind=schedule_kind,
+                    run_at=mirror.get("run_at"),
+                    cron=mirror.get("cron"),
+                    timezone=mirror.get("timezone"),
+                    timeout_seconds=mirror.get("timeout_seconds"),
+                    transfer_state="from_server_pending",
+                    next_run_at=next_run_at,
+                )
+
+            mirror = self._row_to_dict(
+                conn.execute(
+                    "SELECT * FROM automation_definitions WHERE id = ?", (mirror_id,)
+                ).fetchone(),
+                json_fields=self._AUTOMATION_JSON_FIELDS,
+            )
+            if mirror is None:
+                raise ValueError(
+                    f"No automation_definition mirror row at id {mirror_id!r}"
+                )
+
+            local_schedule = to_local_schedule(mirror.get("schedule") or {})
+            definition_id = str(uuid.uuid4())
+            fields: dict[str, Any] = {
+                "id": definition_id,
+                "owner_id": "local",
+                "family": mirror["family"],
+                "name": mirror["name"],
+                "description": mirror.get("description"),
+                "lifecycle": mirror.get("lifecycle") or "configured",
+                "health": "execution_unavailable",
+                "schedule": local_schedule,
+                "input": mirror.get("input") or {},
+                "config": mirror.get("config") or {},
+                "visibility_policy": mirror.get("visibility_policy") or {},
+                "notification_policy": mirror.get("notification_policy") or {},
+                "approval_policy": mirror.get("approval_policy") or {},
+                "finding_policy": mirror.get("finding_policy") or {},
+                "retention_policy": mirror.get("retention_policy") or {},
+                "version": 1,
+                "transfer_state": "from_server_pending",
+                "next_run_at": compute_next_run_at(local_schedule, now=now),
+                "created_at": now,
+                "updated_at": now,
+            }
+            serialized = self._serialize_definition_fields(fields)
+            self._validate_sql_identifiers(list(serialized.keys()))
+            columns = ", ".join(serialized.keys())
+            placeholders = ", ".join(["?"] * len(serialized))
+            conn.execute(
+                f"INSERT INTO automation_definitions ({columns}) VALUES ({placeholders})",
+                list(serialized.values()),
+            )
+            return definition_id
 
     # ------------------------------------------------------------------
     # Automation definitions

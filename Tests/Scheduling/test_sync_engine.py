@@ -2488,6 +2488,241 @@ async def test_sync_now_reminder_transfer_poisoned_mutation_does_not_block_the_r
     assert "transfer_errors" in pending[0]["payload"]
 
 
+# ----------------------------------------------------------------------
+# Server -> local release replay (schedules-handoff PR-5, task 5) --
+# spec §6.2. `local_id` on the pending mutation is the SERVER-OWNED
+# MIRROR row the release targets; `payload["local_copy_id"]` is the
+# dormant local-owner copy `create_local_copy_from_mirror` already
+# created, which is what actually arms once the release acks. See
+# `_push_definition_release`/`_push_reminder_release`'s docstrings for
+# the full reasoning.
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_release_archives_and_arms_local_copy(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    mirror_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Daily digest", server_id="srv-def-1"
+    )
+    copy_id = db.create_local_copy_from_mirror("automation_definition", mirror_id)
+    db.record_pending_mutation(
+        mirror_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "release_from_server",
+            "server_definition_id": "srv-def-1",
+            "local_copy_id": copy_id,
+        },
+    )
+    server_client = _empty_reminders_client()
+    server_client.archive_automation_definition.return_value = {
+        "id": "srv-def-1",
+        "family": "recurring_question",
+        "name": "Daily digest",
+        "lifecycle": "archived",
+        "archived_at": "2026-09-01T00:00:00+00:00",
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.archive_automation_definition.assert_awaited_once_with("srv-def-1")
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    )
+    mirror_row = db.get_automation_definition(mirror_id)
+    assert mirror_row["lifecycle"] == "archived", (
+        "the archive echo mirrors onto the server-mirror row"
+    )
+    copy_row = db.get_automation_definition(copy_id)
+    assert copy_row["transfer_state"] is None, "ack arms the local copy"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_release_not_found_treated_as_ack(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    mirror_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Gone", server_id="srv-def-gone"
+    )
+    copy_id = db.create_local_copy_from_mirror("automation_definition", mirror_id)
+    db.record_pending_mutation(
+        mirror_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "release_from_server",
+            "server_definition_id": "srv-def-gone",
+            "local_copy_id": copy_id,
+        },
+    )
+    server_client = _empty_reminders_client()
+    server_client.archive_automation_definition.side_effect = ServerClientNotFoundError(
+        "gone"
+    )
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    ), "the server row is already gone -- settle rather than retry forever"
+    copy_row = db.get_automation_definition(copy_id)
+    assert copy_row["transfer_state"] is None, "a 404 release is treated exactly as an ack"
+    state = db.get_sync_state("server:1") or {}
+    assert not (state.get("sync_errors") or []), "a 404 here is not a user-facing error"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_release_retryable_error_keeps_copy_dormant(
+    tmp_path,
+):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    mirror_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Daily digest", server_id="srv-def-1"
+    )
+    copy_id = db.create_local_copy_from_mirror("automation_definition", mirror_id)
+    db.record_pending_mutation(
+        mirror_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "release_from_server",
+            "server_definition_id": "srv-def-1",
+            "local_copy_id": copy_id,
+        },
+    )
+    server_client = _empty_reminders_client()
+    server_client.archive_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "error"
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1, "the mutation must be left queued for retry"
+    copy_row = db.get_automation_definition(copy_id)
+    assert copy_row["transfer_state"] == "from_server_pending", (
+        "dormant until an actual ack -- a failed release attempt must not arm it"
+    )
+    mirror_row = db.get_automation_definition(mirror_id)
+    assert mirror_row["lifecycle"] == "configured", "the mirror is untouched too"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_reminder_release_deletes_and_arms_local_copy(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    mirror_id = db.create_reminder_task(
+        owner_id="server:1",
+        title="Standup",
+        schedule_kind="one_time",
+        server_id="srv-rem-1",
+    )
+    copy_id = db.create_local_copy_from_mirror("reminder_task", mirror_id)
+    db.record_pending_mutation(
+        mirror_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "release_from_server",
+            "server_task_id": "srv-rem-1",
+            "local_copy_id": copy_id,
+        },
+    )
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.delete_reminder.assert_awaited_once_with("srv-rem-1")
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+    copy_row = db.get_reminder_task(copy_id)
+    assert copy_row["transfer_state"] is None, "ack arms the local copy"
+    # The mirror's own cleanup is the NEXT pull's full-set reconciliation
+    # (`_detect_server_deletions_conn`), not this replay -- it is left in
+    # place here.
+    assert db.get_reminder_task(mirror_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_sync_now_reminder_release_not_found_treated_as_ack(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    mirror_id = db.create_reminder_task(
+        owner_id="server:1",
+        title="Standup",
+        schedule_kind="one_time",
+        server_id="srv-rem-gone",
+    )
+    copy_id = db.create_local_copy_from_mirror("reminder_task", mirror_id)
+    db.record_pending_mutation(
+        mirror_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "release_from_server",
+            "server_task_id": "srv-rem-gone",
+            "local_copy_id": copy_id,
+        },
+    )
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    server_client.delete_reminder.side_effect = ServerClientNotFoundError("gone")
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+    copy_row = db.get_reminder_task(copy_id)
+    assert copy_row["transfer_state"] is None, "a 404 release is treated exactly as an ack"
+    state = db.get_sync_state("server:1") or {}
+    assert not (state.get("sync_errors") or [])
+
+
+@pytest.mark.asyncio
+async def test_sync_now_reminder_release_retryable_error_keeps_copy_dormant(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    mirror_id = db.create_reminder_task(
+        owner_id="server:1",
+        title="Standup",
+        schedule_kind="one_time",
+        server_id="srv-rem-1",
+    )
+    copy_id = db.create_local_copy_from_mirror("reminder_task", mirror_id)
+    db.record_pending_mutation(
+        mirror_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "release_from_server",
+            "server_task_id": "srv-rem-1",
+            "local_copy_id": copy_id,
+        },
+    )
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    server_client.delete_reminder.side_effect = ServerUnavailableError("offline")
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "error"
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1, "the mutation must be left queued for retry"
+    copy_row = db.get_reminder_task(copy_id)
+    assert copy_row["transfer_state"] == "from_server_pending", (
+        "dormant until an actual ack -- a failed release attempt must not arm it"
+    )
+    assert db.get_reminder_task(mirror_id) is not None
+
+
 @pytest.mark.asyncio
 async def test_sync_now_pulls_and_upserts_definitions(tmp_path):
     db = ScheduledTasksDB(tmp_path / "db.db")

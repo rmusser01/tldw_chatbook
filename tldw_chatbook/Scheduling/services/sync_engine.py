@@ -566,6 +566,16 @@ class SyncEngine:
                 return await self._push_definition_transfer(
                     local_id, mutation_id, owner_id, payload
                 )
+            if action == "release_from_server":
+                # Owns its own ServerClientNotFoundError handling internally
+                # (spec §6.2.3: a 404 on release is an ack, not a conflict
+                # or a definitive failure) -- never raises it back out. A
+                # genuine ServerClientValidationError still falls through
+                # to the generic reject-and-clear clause below, same as
+                # every other definition action.
+                return await self._push_definition_release(
+                    local_id, mutation_id, owner_id, payload
+                )
         except ServerClientPolicyError:
             raise
         except ServerClientValidationError as exc:
@@ -757,6 +767,83 @@ class SyncEngine:
         self.db.upsert_automation_definitions_from_server(owner_id, [response])
         self.db.delete_pending_mutation(mutation_id)
         return action
+
+    async def _push_definition_release(
+        self,
+        local_id: str,
+        mutation_id: int,
+        owner_id: str,
+        payload: dict[str, Any],
+    ) -> str:
+        """Replay a pending `release_from_server` automation_definition mutation (spec §6.2).
+
+        ``local_id`` is the SERVER-OWNED MIRROR row this release targets
+        (the row the release was queued against); ``payload["local_copy_
+        id"]`` is the DORMANT local-owner copy `create_local_copy_from_
+        mirror` already created (spec §6.2.1) -- a DIFFERENT row, which is
+        what actually arms once this call acks. There is no disarm-before-
+        send step here the way `_push_definition_transfer` has one: the
+        copy was already dormant from the moment it was created, so there
+        is no double-dispatch window to close by transitioning it first --
+        it only ever moves once, straight to armed, on ack.
+
+        A release IS an archive, just triggered by a transfer rather than
+        a direct user action -- this reuses `_push_definition_lifecycle`'s
+        exact endpoint (`archive_automation_definition`) and its "mirror
+        the echoed response back onto the row" step
+        (`upsert_automation_definitions_from_server`). `ServerClientNot
+        FoundError` (the server definition is already gone) is treated
+        exactly as an ack (spec §6.2.3: nothing left server-side to
+        mirror, but the local copy still arms) -- caught here, not left to
+        the outer `_push_definition_mutation` try/except, which would
+        otherwise have nothing that turns a definition 404 into anything
+        but a definitive-failure reject.
+
+        A `ServerClientValidationError` is NOT caught here -- it
+        propagates to `_push_definition_mutation`'s own generic reject-
+        and-clear clause (`_reject_definition_mutation`), the same
+        settlement every other definitively-failed definition mutation
+        gets; the local copy is left dormant, matching the spec's
+        offline/unacked behavior (there is nothing to arm without a real
+        release). A retryable `ServerClientError` (timeout/5xx/
+        unavailable) is left to propagate so `_run_phase` records one sync
+        error and the mutation stays queued for the next cycle -- the copy
+        stays dormant until an actual ack, pinned by
+        `test_sync_now_definition_release_retryable_error_keeps_copy_
+        dormant`.
+        """
+        server_definition_id = payload.get("server_definition_id")
+        local_copy_id = payload.get("local_copy_id")
+        if not server_definition_id:
+            logger.warning(
+                f"Pending release_from_server automation_definition mutation "
+                f"for local {local_id} has no server_definition_id; dropping"
+            )
+            self.db.delete_pending_mutation(mutation_id)
+            return "unsynced"
+
+        assert self.server_client is not None
+        try:
+            response = await self.server_client.archive_automation_definition(
+                server_definition_id
+            )
+        except ServerClientNotFoundError:
+            logger.info(
+                f"Automation definition {server_definition_id} release: "
+                "already gone server-side; treating as acked"
+            )
+        else:
+            response = response if isinstance(response, dict) else {}
+            self.db.upsert_automation_definitions_from_server(owner_id, [response])
+
+        if local_copy_id:
+            self.db.clear_transfer_state(
+                _DEFINITION_PRIMITIVE,
+                local_copy_id,
+                expected=("from_server_pending",),
+            )
+        self.db.delete_pending_mutation(mutation_id)
+        return "released"
 
     async def _push_definition_transfer(
         self,
@@ -1151,6 +1238,17 @@ class SyncEngine:
                 return await self._push_reminder_transfer(
                     local_id, mutation["id"], owner_id, payload
                 )
+            if action == "release_from_server":
+                # Owns its own ServerClientNotFoundError handling internally
+                # (spec §6.2.3: a 404 on release is an ack, not the
+                # conflict the `except ServerClientNotFoundError` clause
+                # below turns every other action's 404 into) -- never
+                # raises it back out. A genuine retryable ServerClientError
+                # still propagates through it untouched, same as every
+                # other action here.
+                return await self._push_reminder_release(
+                    local_id, mutation["id"], owner_id, payload
+                )
             logger.warning(f"Unknown pending mutation action {action!r}")
             return {"local_id": local_id, "mutation_id": mutation["id"]}
         except ServerClientNotFoundError:
@@ -1248,6 +1346,72 @@ class SyncEngine:
                 "local reminder",
                 owner_id,
             )
+        return {"local_id": local_id}
+
+    async def _push_reminder_release(
+        self,
+        local_id: str,
+        mutation_id: int,
+        owner_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Replay a pending `release_from_server` reminder mutation (spec §6.2).
+
+        ``local_id`` is the server-owned MIRROR reminder this release
+        targets; ``payload["local_copy_id"]`` is the dormant local-owner
+        copy `create_local_copy_from_mirror` already created, which is
+        what actually arms once this call acks. No disarm-before-send
+        step here -- same reasoning as `_push_definition_release`'s
+        docstring: the copy was already dormant from creation, so there is
+        no double-dispatch window to close.
+
+        A release IS a delete, just triggered by a transfer rather than a
+        tombstone -- reuses `_push_tombstone`'s own call
+        (`delete_reminder`). `ServerClientNotFoundError` (the server task
+        is already gone) is treated exactly as an ack (spec §6.2.3),
+        caught here rather than left to the outer `_push_mutation` try/
+        except, which would otherwise turn every reminder action's 404
+        into a conflict.
+
+        Unlike a definition release, there is no upsert-echo to mirror the
+        outcome onto the mirror row here: the server task is now GONE (a
+        delete, not an archive), and the mirror row's own cleanup happens
+        via `_detect_server_deletions_conn` on the NEXT reminders pull's
+        full-set reconciliation (task-5 brief: "the mirror's cleanup
+        happens via the pull's full-set reconciliation -- do NOT hand-
+        delete it here") -- hand-deleting it here would race that
+        reconciliation and duplicate its bookkeeping (sync_mapping/
+        tombstone cleanup) for no benefit.
+
+        Returns a plain ``{"local_id": ...}`` outcome, same shape and same
+        reasoning as `_push_reminder_transfer`'s: this action does its own
+        DB writes immediately, so `_sync_reminders`'s batched apply has
+        nothing left to do with it.
+        """
+        server_task_id = payload.get("server_task_id")
+        local_copy_id = payload.get("local_copy_id")
+        if not server_task_id:
+            logger.warning(
+                f"Pending release_from_server reminder mutation for local "
+                f"{local_id} has no server_task_id; dropping"
+            )
+            self.db.delete_pending_mutation(mutation_id)
+            return {"local_id": local_id}
+
+        assert self.server_client is not None
+        try:
+            await self.server_client.delete_reminder(server_task_id)
+        except ServerClientNotFoundError:
+            logger.info(
+                f"Reminder {server_task_id} release: already gone "
+                "server-side; treating as acked"
+            )
+
+        if local_copy_id:
+            self.db.clear_transfer_state(
+                _REMINDER_PRIMITIVE, local_copy_id, expected=("from_server_pending",)
+            )
+        self.db.delete_pending_mutation(mutation_id)
         return {"local_id": local_id}
 
     async def _push_tombstone(
