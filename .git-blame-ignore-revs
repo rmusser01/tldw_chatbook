@@ -1,0 +1,14 @@
+# Commits listed here are pure code-relocation moves (no logic changes) from
+# the Library screen decomposition (Docs/superpowers/plans/2026-09-01-library-
+# decomposition-foundation.md; Docs/superpowers/specs/2026-09-01-library-
+# screen-decomposition-design.md). `git blame` skips these so authorship
+# resolves to whoever wrote the logic, not whoever last relocated the file.
+#
+# One-time per clone/worktree: `git config blame.ignoreRevsFile .git-blame-ignore-revs`
+# (see backlog/docs/library-decomposition-recipe.md, §9).
+#
+# Every pure-move commit appends its full 40-char hash here, in the SAME PR
+# that makes the move.
+
+# PR 0a: move module-level support layer to Library_Modules (Task 1)
+3960f8ea86a60f72adc93eec9fcf20ceb3f4f205
