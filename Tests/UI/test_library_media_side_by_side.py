@@ -688,6 +688,44 @@ async def test_media_items_and_reader_are_side_by_side_at_wide_width() -> None:
 
 
 @pytest.mark.asyncio
+async def test_media_toolbar_actions_fit_the_items_panel_at_wide_width() -> None:
+    """task-28025: Trash/Select fit the narrow Items panel, not clipped off it."""
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _wait_for_compact_class(screen, pilot, compact=False)
+
+        def _panel_right() -> int:
+            canvas = screen.query_one("#library-media-canvas")
+            return canvas.region.x + canvas.region.width
+
+        for selector in (
+            "#library-media-type-filter",
+            "#library-media-export",
+            "#library-media-trash-open",
+            "#library-media-select-toggle",
+        ):
+            button = screen.query_one(selector, Button)
+            assert button.region.width > 0, selector
+            assert button.region.x + button.region.width <= _panel_right(), selector
+
+        # Select mode's bulk bar must fit the panel too (same overflow class).
+        screen.query_one("#library-media-select-toggle", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-select-all")
+        for selector in (
+            "#library-media-select-all",
+            "#library-media-select-clear",
+            "#library-media-export-selected",
+        ):
+            button = screen.query_one(selector, Button)
+            assert button.region.width > 0, selector
+            assert button.region.x + button.region.width <= _panel_right(), selector
+
+
+@pytest.mark.asyncio
 async def test_media_list_hides_preview_below_breakpoint() -> None:
     """At 100 cols the list owns the canvas and the preview is unpainted."""
     app = _build_media_test_app()

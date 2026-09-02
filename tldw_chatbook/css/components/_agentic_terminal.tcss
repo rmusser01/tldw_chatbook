@@ -3221,6 +3221,24 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin: 0 0 1 0;
 }
 
+/* task-28025: in the 3-column reader layout the Items panel is a narrow
+   fixed column (~38 cols), and the browse/bulk toolbars overflowed it --
+   Trash/Select rendered past the panel border, invisible and unclickable
+   (live 2026-09-02). Mirror the conversations canvas fix: the toolbar
+   fills the panel and its actions share the width (1fr, min-width:0) so
+   every control stays on-screen instead of clipping off the right edge. */
+#library-media-canvas > .ds-toolbar {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+}
+
+#library-media-canvas > .ds-toolbar > .library-canvas-action,
+#library-media-canvas > .ds-toolbar > .library-toolbar-count {
+    width: 1fr;
+    min-width: 0;
+}
+
 /* task-14900: Media list|preview side by side above the screen's one
    measured width regime. The workbench Horizontal (Collections'
    `#library-collections-workbench` grammar) splits its panes 1fr|1fr by
