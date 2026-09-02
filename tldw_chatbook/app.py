@@ -7988,6 +7988,7 @@ class TldwCli(
         self._notes_sync_runtime_owner_lock = threading.Lock()
         self._notes_sync_runtime_start_task: asyncio.Task[None] | None = None
         self._notes_sync_runtime_shutdown_task: asyncio.Task[None] | None = None
+        self._recover_inflight_transfers_task: asyncio.Task[None] | None = None
         # RAG admin trio (server/local/scope) is built lazily on first access
         # (task-254): its legacy UI consumers were deleted and nothing reads
         # these services at startup, so eager construction only added launch
@@ -14226,6 +14227,19 @@ class TldwCli(
             self.loguru_logger.exception(
                 "Failed to reconcile stale automation runs at startup"
             )
+
+        # Transfer-machine startup recovery (spec §6.1.3): a row stuck
+        # `to_server_sent` across a crash/restart is the one case
+        # SyncEngine's own push replay deliberately refuses to touch --
+        # this is its only recovery path. Fire-and-forget: on_mount is not
+        # async, and `recover_inflight_transfers` itself never raises
+        # (each sub-step is independently exception-guarded, same
+        # "must never block the scheduler from starting" discipline as
+        # the stale-run reconciliation just above).
+        self._recover_inflight_transfers_task = asyncio.create_task(
+            self.scheduling_service.recover_inflight_transfers(),
+            name="recover_inflight_transfers",
+        )
 
         # Start the background scheduler loop for reminders and scheduled tasks.
         # A COROUTINE worker, never thread=True: scheduled watchlist checks

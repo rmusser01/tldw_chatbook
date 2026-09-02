@@ -10,6 +10,7 @@ from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.models import ReminderTask, ScheduledTask, TaskStatus
 from tldw_chatbook.Scheduling.scheduler.queue import PriorityQueue
 from tldw_chatbook.Scheduling.services import SchedulingServerClient, SchedulingService
+from tldw_chatbook.Scheduling.services import scheduling_service as scheduling_service_module
 from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
 from tldw_chatbook.Scheduling.services.server_client import (
     ServerClientPolicyError,
@@ -1769,3 +1770,656 @@ async def test_reminder_owner_defaults_to_the_active_owner(db):
     svc = SchedulingService(db=db, runtime_source="local")
     task = await svc.create_reminder(_reminder_payload("Default owner"))
     assert db.get_reminder_task(task.id)["owner_id"] == "local"
+
+
+# ----------------------------------------------------------------------
+# Transfer machine facade (schedules-handoff PR-5, Task 6, spec §6)
+# ----------------------------------------------------------------------
+
+
+class _FakeApp:
+    """Stands in for the app -- only `active_server_id` is read by the
+    transfer facade (`_active_server_owner_id`)."""
+
+    def __init__(self, active_server_id="1"):
+        self.active_server_id = active_server_id
+
+
+def _connected_server_client():
+    """An AsyncMock server client that reads as "a server is connected"
+    (`transfer_refusal`'s `notifications_service is not None` check)."""
+    client = AsyncMock()
+    client.notifications_service = object()
+    return client
+
+
+def _transfer_service(db, *, server_client=None, active_server_id="1", **kwargs):
+    app = _FakeApp(active_server_id) if active_server_id is not None else None
+    kwargs.setdefault("runtime_source", "local")
+    return SchedulingService(
+        db=db,
+        server_client=server_client,
+        app_getter=(lambda: app) if app is not None else None,
+        **kwargs,
+    )
+
+
+def _make_reminder(db, **overrides):
+    kwargs = dict(
+        owner_id="local",
+        title="Reminder",
+        schedule_kind="one_time",
+        run_at="2030-01-01T00:00:00+00:00",
+    )
+    kwargs.update(overrides)
+    return db.create_reminder_task(**kwargs)
+
+
+def _make_definition(db, **overrides):
+    kwargs = dict(
+        owner_id="local",
+        family="recurring_question",
+        name="Daily Q",
+        schedule={"kind": "interval", "every_seconds": 3600},
+        input={"question": "What happened today?"},
+        config={},
+    )
+    kwargs.update(overrides)
+    return db.create_automation_definition(**kwargs)
+
+
+def _stub_health(monkeypatch, health="ready", reason=""):
+    monkeypatch.setattr(
+        scheduling_service_module,
+        "compute_local_health",
+        lambda app, row: (health, reason),
+    )
+
+
+# -- transfer_refusal ----------------------------------------------------
+
+
+def test_transfer_refusal_no_server_connection(db):
+    svc = _transfer_service(db, server_client=None)
+    row = db.get_reminder_task(_make_reminder(db))
+    for direction in ("to_server", "to_local"):
+        reason = svc.transfer_refusal(row, direction)
+        assert reason == "No server connection is configured."
+
+
+def test_transfer_refusal_to_server_already_server_owned(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    row = db.get_reminder_task(_make_reminder(db, owner_id="server:1", server_id="srv-1"))
+    reason = svc.transfer_refusal(row, "to_server")
+    assert reason == "This row already lives on the server."
+
+
+def test_transfer_refusal_to_server_no_active_server_identity(db):
+    svc = _transfer_service(
+        db, server_client=_connected_server_client(), active_server_id=None
+    )
+    row = db.get_reminder_task(_make_reminder(db))
+    reason = svc.transfer_refusal(row, "to_server")
+    assert reason == "No server identity is configured."
+
+
+def test_transfer_refusal_to_local_not_server_owned(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    row = db.get_reminder_task(_make_reminder(db))
+    reason = svc.transfer_refusal(row, "to_local")
+    assert reason == "This row is not server-owned."
+
+
+def test_transfer_refusal_to_local_missing_server_id(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    row = db.get_reminder_task(_make_reminder(db, owner_id="server:1"))
+    reason = svc.transfer_refusal(row, "to_local")
+    assert reason == "This row is not server-owned."
+
+
+@pytest.mark.parametrize("direction", ["to_server", "to_local"])
+def test_transfer_refusal_already_in_progress(db, direction):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    if direction == "to_server":
+        row = db.get_reminder_task(
+            _make_reminder(db, transfer_state="to_server_pending")
+        )
+    else:
+        row = db.get_reminder_task(
+            _make_reminder(
+                db,
+                owner_id="server:1",
+                server_id="srv-1",
+                transfer_state="from_server_pending",
+            )
+        )
+    reason = svc.transfer_refusal(row, direction)
+    assert reason == "A transfer is already in progress on this row."
+
+
+@pytest.mark.parametrize("lifecycle", ["archived", "solved"])
+def test_transfer_refusal_lifecycle_not_transferable(db, lifecycle):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(db, lifecycle=lifecycle)
+    row = db.get_automation_definition(definition_id)
+    reason = svc.transfer_refusal(row, "to_server")
+    assert reason == f"This automation is {lifecycle} and cannot transfer."
+
+
+def test_transfer_refusal_to_local_agent_task_always_refuses(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(
+        db,
+        owner_id="server:1",
+        server_id="srv-def-1",
+        family="agent_task",
+    )
+    row = db.get_automation_definition(definition_id)
+    reason = svc.transfer_refusal(row, "to_local")
+    assert reason == "Agent-task automations cannot run locally yet."
+
+
+def test_transfer_refusal_to_local_recurring_question_quotes_health_reason(
+    db, monkeypatch
+):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    _stub_health(monkeypatch, health="permission_required", reason="No provider configured.")
+    definition_id = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
+    row = db.get_automation_definition(definition_id)
+    reason = svc.transfer_refusal(row, "to_local")
+    assert reason == "No provider configured."
+
+
+def test_transfer_refusal_allows_happy_path_both_directions(db, monkeypatch):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    _stub_health(monkeypatch, health="ready")
+
+    to_server_row = db.get_reminder_task(_make_reminder(db))
+    assert svc.transfer_refusal(to_server_row, "to_server") is None
+
+    to_local_def = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
+    to_local_row = db.get_automation_definition(to_local_def)
+    assert svc.transfer_refusal(to_local_row, "to_local") is None
+
+
+# -- transfer_warnings -----------------------------------------------------
+
+
+def test_transfer_warnings_reminder_imminent_one_time_warns(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    soon = (datetime.now(timezone.utc)).isoformat()
+    row = db.get_reminder_task(
+        _make_reminder(db, schedule_kind="one_time", run_at=soon)
+    )
+    warnings = svc.transfer_warnings(row, "to_server")
+    assert any("5 minutes" in w for w in warnings)
+
+
+def test_transfer_warnings_reminder_distant_one_time_no_warning(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    row = db.get_reminder_task(
+        _make_reminder(db, schedule_kind="one_time", run_at="2099-01-01T00:00:00+00:00")
+    )
+    warnings = svc.transfer_warnings(row, "to_server")
+    assert warnings == []
+
+
+def test_transfer_warnings_reminder_timeout_seconds_warns(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    row = db.get_reminder_task(
+        _make_reminder(
+            db,
+            schedule_kind="one_time",
+            run_at="2099-01-01T00:00:00+00:00",
+            timeout_seconds=30,
+        )
+    )
+    warnings = svc.transfer_warnings(row, "to_server")
+    assert any("timeout_seconds" in w for w in warnings)
+
+
+def test_transfer_warnings_definition_imminent_one_time_warns(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    soon = datetime.now(timezone.utc).isoformat()
+    definition_id = _make_definition(
+        db, schedule={"kind": "one_time", "run_at": soon}
+    )
+    row = db.get_automation_definition(definition_id)
+    warnings = svc.transfer_warnings(row, "to_server")
+    assert any("5 minutes" in w for w in warnings)
+
+
+def test_transfer_warnings_definition_never_names_timeout_seconds(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(db)
+    row = db.get_automation_definition(definition_id)
+    warnings = svc.transfer_warnings(row, "to_server")
+    assert warnings == []
+
+
+# -- begin_transfer_to_server ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_server_not_found(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    outcome = await svc.begin_transfer_to_server("reminder_task", "no-such-id")
+    assert outcome.status == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_server_refused_records_nothing(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    reminder_id = _make_reminder(db, owner_id="server:1", server_id="srv-1")
+
+    outcome = await svc.begin_transfer_to_server("reminder_task", reminder_id)
+
+    assert outcome.status == "refused"
+    assert outcome.reason == "This row already lives on the server."
+    assert db.get_reminder_task(reminder_id)["transfer_state"] is None
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_server_reminder_happy_path(db):
+    notified = []
+    svc = _transfer_service(
+        db,
+        server_client=_connected_server_client(),
+        on_queue_changed=lambda: notified.append(True),
+    )
+    reminder_id = _make_reminder(db, timeout_seconds=45)
+
+    outcome = await svc.begin_transfer_to_server("reminder_task", reminder_id)
+
+    assert outcome.status == "pending"
+    row = db.get_reminder_task(reminder_id)
+    assert row["transfer_state"] == "to_server_pending"
+    assert row["owner_id"] == "local"  # still executes locally while queued
+
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1
+    payload = pending[0]["payload"]
+    assert payload["action"] == "transfer_to_server"
+    # link_type/link_id are injected at push time (SyncEngine), not here.
+    assert "link_type" not in payload["task_payload"]
+    assert "timeout_seconds" not in payload["task_payload"]
+    assert notified == [True]
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_server_definition_happy_path(db, monkeypatch):
+    _stub_health(monkeypatch, health="ready")
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(db)
+
+    outcome = await svc.begin_transfer_to_server("automation_definition", definition_id)
+
+    assert outcome.status == "pending"
+    row = db.get_automation_definition(definition_id)
+    assert row["transfer_state"] == "to_server_pending"
+
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+    payload = pending[0]["payload"]
+    assert payload["action"] == "transfer_to_server"
+    assert payload["definition_payload"]["family"] == "recurring_question"
+    assert payload["definition_payload"]["schedule"] == {
+        "kind": "interval",
+        "every_seconds": 3600,
+    }
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_server_no_active_identity_refuses(db):
+    svc = _transfer_service(
+        db, server_client=_connected_server_client(), active_server_id=None
+    )
+    reminder_id = _make_reminder(db)
+    outcome = await svc.begin_transfer_to_server("reminder_task", reminder_id)
+    assert outcome.status == "refused"
+    assert outcome.reason == "No server identity is configured."
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_server_cas_race_refuses(db):
+    """A concurrent begin (or an already-in-flight state) loses the CAS."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    reminder_id = _make_reminder(db)
+    db.set_transfer_state(
+        "reminder_task", reminder_id, "to_server_pending", expected=(None,)
+    )
+    # transfer_refusal already catches this (transfer_state is set), but
+    # pin the CAS backstop directly too: force the row's state out from
+    # under transfer_refusal's own check by bypassing it.
+    monkey_row = dict(db.get_reminder_task(reminder_id))
+    monkey_row["transfer_state"] = None  # pretend the refusal gate saw a stale read
+    reason = svc.transfer_refusal(monkey_row, "to_server")
+    assert reason is None  # confirms the CAS, not the gate, is what would catch this
+    outcome = await svc.begin_transfer_to_server("reminder_task", reminder_id)
+    assert outcome.status == "refused"
+    assert outcome.reason == "A transfer is already in progress on this row."
+
+
+# -- begin_transfer_to_local ------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_local_not_found(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    outcome = await svc.begin_transfer_to_local("reminder_task", "no-such-id")
+    assert outcome.status == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_local_refused_not_a_mirror(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    reminder_id = _make_reminder(db)
+    outcome = await svc.begin_transfer_to_local("reminder_task", reminder_id)
+    assert outcome.status == "refused"
+    assert outcome.reason == "This row is not server-owned."
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_local_reminder_happy_path(db):
+    notified = []
+    svc = _transfer_service(
+        db,
+        server_client=_connected_server_client(),
+        on_queue_changed=lambda: notified.append(True),
+    )
+    mirror_id = _make_reminder(
+        db, owner_id="server:1", server_id="srv-1", schedule_kind="one_time",
+        run_at="2030-01-01T00:00:00+00:00",
+    )
+
+    outcome = await svc.begin_transfer_to_local("reminder_task", mirror_id)
+
+    assert outcome.status == "pending"
+    copy_id = outcome.row_id
+    assert copy_id is not None and copy_id != mirror_id
+
+    # Mirror untouched, still executing server-side.
+    mirror_row = db.get_reminder_task(mirror_id)
+    assert mirror_row["transfer_state"] is None
+    assert mirror_row["owner_id"] == "server:1"
+
+    copy_row = db.get_reminder_task(copy_id)
+    assert copy_row["owner_id"] == "local"
+    assert copy_row["transfer_state"] == "from_server_pending"
+    assert copy_row["server_id"] is None
+
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1
+    assert pending[0]["local_id"] == mirror_id  # keyed by the MIRROR (obligation 2)
+    payload = pending[0]["payload"]
+    assert payload["action"] == "release_from_server"
+    assert payload["server_task_id"] == "srv-1"
+    assert payload["local_copy_id"] == copy_id
+    assert notified == [True]
+
+
+@pytest.mark.asyncio
+async def test_begin_transfer_to_local_definition_happy_path(db, monkeypatch):
+    _stub_health(monkeypatch, health="ready")
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    mirror_id = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
+
+    outcome = await svc.begin_transfer_to_local("automation_definition", mirror_id)
+
+    assert outcome.status == "pending"
+    copy_row = db.get_automation_definition(outcome.row_id)
+    assert copy_row["owner_id"] == "local"
+    assert copy_row["transfer_state"] == "from_server_pending"
+
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+    assert pending[0]["local_id"] == mirror_id
+    assert pending[0]["payload"]["server_definition_id"] == "srv-def-1"
+    assert pending[0]["payload"]["local_copy_id"] == outcome.row_id
+
+
+# -- cancel_transfer ---------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cancel_transfer_not_found(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    outcome = await svc.cancel_transfer("reminder_task", "no-such-id")
+    assert outcome.status == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_cancel_transfer_unattempted_to_server_pending(db):
+    notified = []
+    svc = _transfer_service(
+        db,
+        server_client=_connected_server_client(),
+        on_queue_changed=lambda: notified.append(True),
+    )
+    reminder_id = _make_reminder(db)
+    begin_outcome = await svc.begin_transfer_to_server("reminder_task", reminder_id)
+    assert begin_outcome.status == "pending"
+    notified.clear()
+
+    outcome = await svc.cancel_transfer("reminder_task", reminder_id)
+
+    assert outcome.status == "cancelled"
+    row = db.get_reminder_task(reminder_id)
+    assert row["transfer_state"] is None
+    assert row["owner_id"] == "local"
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+    assert notified == [True]
+
+
+@pytest.mark.asyncio
+async def test_cancel_transfer_settled_definitive_failure_to_server_failed(db):
+    """A retained, definitively-failed transfer mutation (transfer_errors
+    embedded, SyncEngine's own settlement shape) is still cancelable."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    reminder_id = _make_reminder(db)
+    db.set_transfer_state(
+        "reminder_task", reminder_id, "to_server_failed", expected=(None,)
+    )
+    db.record_pending_mutation(
+        reminder_id,
+        "reminder_task",
+        "server:1",
+        {"action": "transfer_to_server", "task_payload": {}, "transfer_errors": ["boom"]},
+    )
+
+    outcome = await svc.cancel_transfer("reminder_task", reminder_id)
+
+    assert outcome.status == "cancelled"
+    assert db.get_reminder_task(reminder_id)["transfer_state"] is None
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+
+
+@pytest.mark.asyncio
+async def test_cancel_transfer_to_server_sent_too_late(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    reminder_id = _make_reminder(db)
+    db.set_transfer_state(
+        "reminder_task", reminder_id, "to_server_sent", expected=(None,)
+    )
+
+    outcome = await svc.cancel_transfer("reminder_task", reminder_id)
+
+    assert outcome.status == "refused"
+    assert "reverse transfer" in outcome.reason
+    # Untouched -- still sent, not reverted.
+    assert db.get_reminder_task(reminder_id)["transfer_state"] == "to_server_sent"
+
+
+@pytest.mark.asyncio
+async def test_cancel_transfer_no_transfer_in_progress_too_late(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    reminder_id = _make_reminder(db)
+    outcome = await svc.cancel_transfer("reminder_task", reminder_id)
+    assert outcome.status == "refused"
+    assert "reverse transfer" in outcome.reason
+
+
+@pytest.mark.asyncio
+async def test_cancel_transfer_release_unpushed_deletes_copy(db):
+    notified = []
+    svc = _transfer_service(
+        db,
+        server_client=_connected_server_client(),
+        on_queue_changed=lambda: notified.append(True),
+    )
+    mirror_id = _make_reminder(db, owner_id="server:1", server_id="srv-1")
+    begin_outcome = await svc.begin_transfer_to_local("reminder_task", mirror_id)
+    copy_id = begin_outcome.row_id
+    notified.clear()
+
+    outcome = await svc.cancel_transfer("reminder_task", copy_id)
+
+    assert outcome.status == "cancelled"
+    assert db.get_reminder_task(copy_id) is None  # dormant copy deleted
+    assert db.get_reminder_task(mirror_id) is not None  # server unaffected
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+    assert notified == [True]
+
+
+@pytest.mark.asyncio
+async def test_cancel_transfer_release_definitively_failed_no_live_mutation(db):
+    """Obligation 3: a definitively-rejected release leaves `from_server_
+    pending` with NO live mutation (SyncEngine's own reject-and-clear
+    settlement) -- cancel must key off transfer_state, not mutation
+    existence, and still recover the dormant copy."""
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    mirror_id = _make_reminder(db, owner_id="server:1", server_id="srv-1")
+    begin_outcome = await svc.begin_transfer_to_local("reminder_task", mirror_id)
+    copy_id = begin_outcome.row_id
+
+    # Simulate SyncEngine's settlement of a definitive release failure:
+    # the mutation is gone, but the copy stays from_server_pending (no
+    # automatic path back to armed -- Task 5's own documented concern).
+    db.delete_pending_mutation_for_record(mirror_id, "reminder_task", "server:1")
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+    assert db.get_reminder_task(copy_id)["transfer_state"] == "from_server_pending"
+
+    outcome = await svc.cancel_transfer("reminder_task", copy_id)
+
+    assert outcome.status == "cancelled"
+    assert db.get_reminder_task(copy_id) is None
+
+
+# -- recover_inflight_transfers ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_recover_inflight_transfers_definition_cas_back_to_pending(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    definition_id = _make_definition(db, transfer_state="to_server_sent")
+
+    await svc.recover_inflight_transfers()
+
+    assert (
+        db.get_automation_definition(definition_id)["transfer_state"]
+        == "to_server_pending"
+    )
+
+
+@pytest.mark.asyncio
+async def test_recover_inflight_transfers_reminder_found_converts_to_mirror(db):
+    server_client = _connected_server_client()
+    server_client.list_reminders.return_value = {
+        "items": [
+            {
+                "id": "srv-9",
+                "title": "Recovered",
+                "schedule_kind": "one_time",
+                "run_at": "2030-01-01T00:00:00+00:00",
+                "link_type": "chatbook_transfer",
+                "link_id": None,  # filled in below
+            }
+        ]
+    }
+    svc = _transfer_service(db, server_client=server_client)
+    reminder_id = _make_reminder(db, transfer_state="to_server_sent")
+    server_client.list_reminders.return_value["items"][0]["link_id"] = reminder_id
+    db.record_pending_mutation(
+        reminder_id,
+        "reminder_task",
+        "server:1",
+        {"action": "transfer_to_server", "task_payload": {}},
+    )
+
+    await svc.recover_inflight_transfers()
+
+    row = db.get_reminder_task(reminder_id)
+    assert row["owner_id"] == "server:1"
+    assert row["server_id"] == "srv-9"
+    assert row["transfer_state"] is None
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+
+
+@pytest.mark.asyncio
+async def test_recover_inflight_transfers_reminder_absent_cas_back_to_pending(db):
+    server_client = _connected_server_client()
+    server_client.list_reminders.return_value = {"items": []}
+    svc = _transfer_service(db, server_client=server_client)
+    reminder_id = _make_reminder(db, transfer_state="to_server_sent")
+    db.record_pending_mutation(
+        reminder_id,
+        "reminder_task",
+        "server:1",
+        {"action": "transfer_to_server", "task_payload": {}},
+    )
+
+    await svc.recover_inflight_transfers()
+
+    row = db.get_reminder_task(reminder_id)
+    assert row["transfer_state"] == "to_server_pending"
+    # The mutation is left in place for the normal replay to pick up.
+    assert len(db.get_pending_mutations("server:1", primitive="reminder_task")) == 1
+
+
+@pytest.mark.asyncio
+async def test_recover_inflight_transfers_reminder_offline_leaves_row_untouched(db):
+    svc = _transfer_service(db, server_client=None)  # no server connection at all
+    reminder_id = _make_reminder(db, transfer_state="to_server_sent")
+
+    await svc.recover_inflight_transfers()
+
+    assert db.get_reminder_task(reminder_id)["transfer_state"] == "to_server_sent"
+
+
+@pytest.mark.asyncio
+async def test_recover_inflight_transfers_reminder_no_active_identity_leaves_row_untouched(
+    db,
+):
+    svc = _transfer_service(
+        db, server_client=_connected_server_client(), active_server_id=None
+    )
+    reminder_id = _make_reminder(db, transfer_state="to_server_sent")
+
+    await svc.recover_inflight_transfers()
+
+    assert db.get_reminder_task(reminder_id)["transfer_state"] == "to_server_sent"
+
+
+@pytest.mark.asyncio
+async def test_recover_inflight_transfers_reminder_list_error_leaves_row_untouched(db):
+    server_client = _connected_server_client()
+    server_client.list_reminders.side_effect = RuntimeError("offline")
+    svc = _transfer_service(db, server_client=server_client)
+    reminder_id = _make_reminder(db, transfer_state="to_server_sent")
+
+    await svc.recover_inflight_transfers()  # must not raise
+
+    assert db.get_reminder_task(reminder_id)["transfer_state"] == "to_server_sent"
+
+
+@pytest.mark.asyncio
+async def test_recover_inflight_transfers_ignores_non_stuck_rows(db):
+    svc = _transfer_service(db, server_client=_connected_server_client())
+    pending_id = _make_reminder(db, transfer_state="to_server_pending")
+    armed_id = _make_reminder(db)
+
+    await svc.recover_inflight_transfers()
+
+    assert db.get_reminder_task(pending_id)["transfer_state"] == "to_server_pending"
+    assert db.get_reminder_task(armed_id)["transfer_state"] is None

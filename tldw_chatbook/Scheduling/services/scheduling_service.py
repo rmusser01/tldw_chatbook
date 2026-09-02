@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from dataclasses import field as _dataclass_field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
@@ -99,6 +99,13 @@ _REMINDER_SERVER_CREATE_FIELDS = {
     "link_url",
 }
 
+#: spec §6.4: a one-time task whose `run_at` falls inside this window (or
+#: has already passed) gets a `transfer_warnings` entry, not a refusal --
+#: "server behavior on a past run_at is unverified" (flagged for live
+#: verification, spec §10), so both directions of "close to firing" warn
+#: the same way rather than trying to guess which side is safe.
+_TRANSFER_IMMINENT_WINDOW = timedelta(minutes=5)
+
 
 @dataclass(slots=True)
 class SaveDefinitionOutcome:
@@ -122,6 +129,28 @@ class SaveDefinitionOutcome:
     status: str
     errors: list[dict[str, Any]] = _dataclass_field(default_factory=list)
     definition_id: str | None = None
+
+
+@dataclass(slots=True)
+class TransferOutcome:
+    """Result of a transfer-machine facade call (Task 6, spec §6.3/§6.4).
+
+    Attributes:
+        status: ``"pending"`` (armed the machine -- to_server_pending set,
+            or a release's dormant local copy created), ``"cancelled"``
+            (spec §6.3's cancel actually undid something), ``"refused"``
+            (a `transfer_refusal` gate, or a losing CAS race, blocked the
+            call -- see ``reason``), or ``"not_found"`` (``row_id`` does
+            not exist).
+        reason: Human-readable refusal text, populated for ``"refused"``.
+        row_id: The dormant local copy's id, populated only by a
+            successful ``begin_transfer_to_local`` -- Task 7's UI needs it
+            to show/select the new row without a separate lookup.
+    """
+
+    status: str
+    reason: str | None = None
+    row_id: str | None = None
 
 
 def _seam_failure_warning(exc: Exception) -> dict[str, str]:
@@ -674,6 +703,447 @@ class SchedulingService:
         handler = self.automation_handler_getter()
         run_id = await handler.run_now(row)
         return {"run_id": run_id, "deduped": run_id is None}
+
+    # ------------------------------------------------------------------
+    # Transfer machine facade (schedules-handoff PR-5, Task 6, spec §6)
+    # ------------------------------------------------------------------
+
+    def _active_server_owner_id(self) -> str | None:
+        """The single connected server's owner scope (``"server:<id>"``), or
+        ``None`` when no server identity is currently resolved.
+
+        Mirrors the workbench's own ``_active_server_id()``/`_runs_on_
+        options` precedent (`schedules_workbench.py`): the app's
+        `active_server_id` property, NOT ``self.owner_id`` -- `self.
+        owner_id` is a UI-togglable VIEW (the user can flip to "This
+        device" while a server stays connected), so it cannot stand in
+        for "which server this session is connected to" (Task 4's own
+        finding, carried forward here for the transfer machine's
+        destination-owner rule).
+        """
+        app = self.app_getter() if self.app_getter is not None else None
+        active_server_id = getattr(app, "active_server_id", None) if app is not None else None
+        if not active_server_id:
+            return None
+        return f"server:{active_server_id}"
+
+    def _get_transfer_row(self, table_kind: str, row_id: str) -> dict[str, Any] | None:
+        if table_kind == _REMINDER_PRIMITIVE:
+            return self.db.get_reminder_task(row_id)
+        if table_kind == _DEFINITION_PRIMITIVE:
+            return self.db.get_automation_definition(row_id)
+        raise ValueError(f"Unknown table_kind for transfer: {table_kind!r}")
+
+    def _delete_transfer_row(self, table_kind: str, row_id: str) -> bool:
+        if table_kind == _REMINDER_PRIMITIVE:
+            return self.db.delete_reminder_task(row_id)
+        if table_kind == _DEFINITION_PRIMITIVE:
+            return self.db.delete_automation_definition(row_id)
+        raise ValueError(f"Unknown table_kind for transfer: {table_kind!r}")
+
+    @staticmethod
+    def _definition_transfer_payload(row: dict[str, Any]) -> dict[str, Any]:
+        """Build a `transfer_to_server` mutation's `definition_payload`.
+
+        Same CLIENT-vocabulary shape `_build_definition_request` produces
+        for a create (minus `mode`/`definition_id`, which `SyncEngine`'s
+        replay overrides itself) -- sourced straight from the row's own
+        stored fields, the same way `_merge_definition_payload` treats an
+        edit's base state. `SyncEngine._server_vocab_definition_payload`
+        translates `schedule` to server vocabulary once, at push time.
+        """
+        return {
+            "family": row.get("family"),
+            "name": row.get("name"),
+            "description": row.get("description"),
+            "schedule": row.get("schedule") or {},
+            "input": row.get("input") or {},
+            "config": row.get("config") or {},
+            "visibility_policy": row.get("visibility_policy") or {},
+            "notification_policy": row.get("notification_policy") or {},
+            "approval_policy": row.get("approval_policy") or {},
+        }
+
+    def transfer_refusal(self, row: dict[str, Any], direction: str) -> str | None:
+        """Return why a transfer must be refused, or `None` when allowed.
+
+        Spec §6.4, checked in order: no server connection; ownership
+        doesn't match `direction` (a `to_server` transfer needs a LOCAL
+        row, a `to_local` release needs a server-owned mirror); no server
+        identity resolved (`to_server` only -- a release already knows its
+        destination from the mirror row's own `owner_id`); a transfer
+        already in progress (`row["transfer_state"]` is non-``None`` --
+        keyed off state, never mutation existence, same rule `cancel_
+        transfer` follows); lifecycle outside `{configured, paused}`
+        (``archived``/``solved`` have nothing left to execute); and, for
+        `to_local` only, whether LOCAL can actually run the family --
+        `agent_task` always refuses in v1, `recurring_question` refuses
+        when `compute_local_health` is not ``"ready"``, quoting its
+        reason verbatim.
+        """
+        if (
+            self.server_client is None
+            or getattr(self.server_client, "notifications_service", None) is None
+        ):
+            return "No server connection is configured."
+
+        owner_id = str(row.get("owner_id") or "")
+        if direction == "to_server":
+            if owner_id.startswith("server:"):
+                return "This row already lives on the server."
+            if self._active_server_owner_id() is None:
+                return "No server identity is configured."
+        elif direction == "to_local":
+            if not owner_id.startswith("server:") or not row.get("server_id"):
+                return "This row is not server-owned."
+
+        if row.get("transfer_state") is not None:
+            return "A transfer is already in progress on this row."
+
+        lifecycle = row.get("lifecycle")
+        if lifecycle is not None and lifecycle not in ("configured", "paused"):
+            return f"This automation is {lifecycle} and cannot transfer."
+
+        if direction == "to_local":
+            family = row.get("family")
+            if family == "agent_task":
+                return "Agent-task automations cannot run locally yet."
+            if family == "recurring_question":
+                app = self.app_getter() if self.app_getter is not None else None
+                health, reason = compute_local_health(app, row)
+                if health != "ready":
+                    return reason
+
+        return None
+
+    def transfer_warnings(self, row: dict[str, Any], direction: str) -> list[str]:
+        """Non-blocking warnings for a transfer (spec §6.4).
+
+        An imminent (or already past) one-time `run_at` warns rather than
+        refuses -- "the transfer can outlive the moment, and server
+        behavior on a past run_at is unverified". Reminders also warn
+        about `timeout_seconds`, a local-only field that never transfers
+        (definitions have no equivalent: their local-only `next_run_at`
+        is expected to recompute, not silently dropped data).
+        """
+        warnings: list[str] = []
+        is_definition = "family" in row
+
+        run_at_raw: Any = None
+        if is_definition:
+            schedule = row.get("schedule") or {}
+            if isinstance(schedule, dict) and schedule.get("kind") == "one_time":
+                run_at_raw = schedule.get("run_at")
+        elif row.get("schedule_kind") == "one_time":
+            run_at_raw = row.get("run_at")
+
+        run_at = self._parse_transfer_run_at(run_at_raw)
+        if run_at is not None:
+            remaining = run_at - datetime.now(timezone.utc)
+            if remaining <= _TRANSFER_IMMINENT_WINDOW:
+                warnings.append(
+                    "This one-time run fires within the next 5 minutes (or "
+                    "has already passed); server behavior on a transfer "
+                    "this close to run time is unverified."
+                )
+
+        if not is_definition and row.get("timeout_seconds") is not None:
+            warnings.append(
+                "The per-run timeout (timeout_seconds) is local-only and "
+                "will not transfer."
+            )
+
+        return warnings
+
+    @staticmethod
+    def _parse_transfer_run_at(value: Any) -> datetime | None:
+        if not isinstance(value, str) or not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+
+    async def begin_transfer_to_server(self, table_kind: str, row_id: str) -> "TransferOutcome":
+        """Start a local -> server transfer (spec §6.1).
+
+        Refuses via `transfer_refusal` first; then CASes `transfer_state`
+        NULL -> `to_server_pending` (Task 1's compare-and-set, guarding
+        against a concurrent second `begin` on the same row) and records
+        a `transfer_to_server` mutation under the DESTINATION server
+        scope (Task 4's finding: never the row's own -- still ``"local"``
+        -- `owner_id`). The row keeps executing locally while merely
+        queued (spec §6.1.1) -- `SyncEngine`'s push disarms it later, only
+        once an actual send attempt starts.
+        """
+        row = self._get_transfer_row(table_kind, row_id)
+        if row is None:
+            return TransferOutcome(status="not_found", reason="No such row.")
+
+        reason = self.transfer_refusal(row, "to_server")
+        if reason is not None:
+            return TransferOutcome(status="refused", reason=reason)
+
+        destination_owner_id = self._active_server_owner_id()
+        if destination_owner_id is None:
+            return TransferOutcome(
+                status="refused", reason="No server identity is configured."
+            )
+
+        armed = self.db.set_transfer_state(
+            table_kind, row_id, "to_server_pending", expected=(None,)
+        )
+        if not armed:
+            return TransferOutcome(
+                status="refused",
+                reason="A transfer is already in progress on this row.",
+            )
+
+        if table_kind == _DEFINITION_PRIMITIVE:
+            mutation_payload = {
+                "action": "transfer_to_server",
+                "definition_payload": self._definition_transfer_payload(row),
+            }
+        else:
+            mutation_payload = {
+                "action": "transfer_to_server",
+                "task_payload": self._server_create_payload(self._row_to_reminder(row)),
+            }
+        self.db.record_pending_mutation(
+            row_id, table_kind, destination_owner_id, mutation_payload
+        )
+        self._notify_queue_changed()
+        return TransferOutcome(status="pending")
+
+    async def begin_transfer_to_local(self, table_kind: str, row_id: str) -> "TransferOutcome":
+        """Start a server -> local release (spec §6.2).
+
+        Refuses via `transfer_refusal` first (which already confirms
+        ``row`` is a server-owned mirror with a ``server_id``); then
+        creates the dormant local copy (`create_local_copy_from_mirror`,
+        Task 5) and records a `release_from_server` mutation keyed by the
+        MIRROR's own ``local_id`` under the mirror's own ``owner_id`` --
+        Task 5's documented convention, so its replay
+        (`_push_definition_release`/`_push_reminder_release`) finds it.
+        The mirror row itself is untouched and keeps executing
+        server-side until the release actually acks.
+        """
+        row = self._get_transfer_row(table_kind, row_id)
+        if row is None:
+            return TransferOutcome(status="not_found", reason="No such row.")
+
+        reason = self.transfer_refusal(row, "to_local")
+        if reason is not None:
+            return TransferOutcome(status="refused", reason=reason)
+
+        owner_id = row["owner_id"]
+        server_id = row["server_id"]
+        copy_id = self.db.create_local_copy_from_mirror(table_kind, row_id)
+
+        server_field = (
+            "server_definition_id"
+            if table_kind == _DEFINITION_PRIMITIVE
+            else "server_task_id"
+        )
+        mutation_payload = {
+            "action": "release_from_server",
+            server_field: server_id,
+            "local_copy_id": copy_id,
+        }
+        self.db.record_pending_mutation(row_id, table_kind, owner_id, mutation_payload)
+        self._notify_queue_changed()
+        return TransferOutcome(status="pending", row_id=copy_id)
+
+    def _find_release_mutation(
+        self, table_kind: str, owner_id: str, local_copy_id: str
+    ) -> dict[str, Any] | None:
+        """Find a queued `release_from_server` mutation by its `local_copy_id`.
+
+        The mutation's own `local_id` is the MIRROR's id (Task 5's
+        keying convention), not the dormant copy's -- so a cancel called
+        with the COPY's id (the only row that actually carries
+        `from_server_pending`, per `cancel_transfer`'s docstring) has to
+        search by the payload's nested field instead of a direct lookup.
+        """
+        for mutation in self.db.get_pending_mutations(owner_id, primitive=table_kind):
+            payload = mutation.get("payload") or {}
+            if (
+                payload.get("action") == "release_from_server"
+                and payload.get("local_copy_id") == local_copy_id
+            ):
+                return mutation
+        return None
+
+    async def cancel_transfer(self, table_kind: str, row_id: str) -> "TransferOutcome":
+        """Cancel an in-progress transfer (spec §6.3 table, exactly).
+
+        Keyed OFF ``row["transfer_state"]``, never off whether a pending
+        mutation still exists: a release that definitively failed
+        server-side settles by clearing its own mutation (same
+        reject-and-clear every other definitive failure gets) but leaves
+        the dormant copy's `from_server_pending` state untouched -- cancel
+        must still recover that copy, so mutation absence cannot mean
+        "nothing to cancel" here.
+
+        - `to_server_pending` / `to_server_failed` (unattempted, or a
+          settled definitive failure -- both re-armed locally, nothing
+          sent): CAS to ``None``, drop the queued mutation, row stays
+          local. A losing CAS (a concurrent push just disarmed it) is
+          reported the same as `to_server_sent` below -- too late.
+        - `to_server_sent`: too late -- refused, offering a reverse
+          transfer once this one lands.
+        - `from_server_pending` (the dormant COPY row -- unpushed release,
+          or one that definitively failed): delete the copy, drop any
+          live release mutation naming it. Server unaffected.
+        - Anything else (``None`` -- never transferring, or a release
+          that already acked and armed): too late -- refused, offering a
+          reverse transfer.
+        """
+        row = self._get_transfer_row(table_kind, row_id)
+        if row is None:
+            return TransferOutcome(status="not_found", reason="No such row.")
+
+        state = row.get("transfer_state")
+        too_late = TransferOutcome(
+            status="refused",
+            reason="Too late to cancel -- start a reverse transfer instead.",
+        )
+
+        if state in ("to_server_pending", "to_server_failed"):
+            cleared = self.db.clear_transfer_state(
+                table_kind, row_id, expected=("to_server_pending", "to_server_failed")
+            )
+            if not cleared:
+                return too_late
+            owner_id = self._active_server_owner_id()
+            if owner_id is not None:
+                self.db.delete_pending_mutation_for_record(row_id, table_kind, owner_id)
+            self._notify_queue_changed()
+            return TransferOutcome(status="cancelled")
+
+        if state == "from_server_pending":
+            owner_id = self._active_server_owner_id()
+            if owner_id is not None:
+                mutation = self._find_release_mutation(table_kind, owner_id, row_id)
+                if mutation is not None:
+                    self.db.delete_pending_mutation(mutation["id"])
+            self._delete_transfer_row(table_kind, row_id)
+            self._notify_queue_changed()
+            return TransferOutcome(status="cancelled")
+
+        if state == "to_server_sent":
+            return too_late
+
+        return TransferOutcome(
+            status="refused",
+            reason="No transfer in progress on this row -- if it already "
+            "moved, start a reverse transfer instead.",
+        )
+
+    async def recover_inflight_transfers(self) -> None:
+        """Startup recovery for rows stuck `to_server_sent` (spec §6.1.3).
+
+        An ambiguous timeout between a transfer's send and its ack is the
+        ONE scenario this replaces -- `SyncEngine`'s own push replay
+        deliberately refuses to touch a `to_server_sent` row (Task 4/5),
+        so this is the only path that un-sticks one. Mirrors the
+        `reconcile_stale_automation_runs` on_mount precedent: each
+        sub-step is independently exception-guarded, so a broken recovery
+        pass can never block app startup.
+
+        Definitions: CAS straight back to `to_server_pending` -- the
+        server's create is hash-idempotent (ruling 4), so a blind retry
+        is safe. Reminders: list-and-match on `link_id` first (their
+        create is NOT idempotent) -- found means the transfer actually
+        landed (convert to the mirror, clear the mutation); absent means
+        CAS back to `to_server_pending` for a normal retry.
+        """
+        try:
+            self._recover_stuck_definitions()
+        except Exception:
+            logger.exception("Automation definition inflight-transfer recovery failed")
+        try:
+            await self._recover_stuck_reminders()
+        except Exception:
+            logger.exception("Reminder inflight-transfer recovery failed")
+
+    def _recover_stuck_definitions(self) -> None:
+        stuck = [
+            row
+            for row in self.db.list_automation_definitions()
+            if row.get("transfer_state") == "to_server_sent"
+        ]
+        for row in stuck:
+            self.db.set_transfer_state(
+                _DEFINITION_PRIMITIVE,
+                row["id"],
+                "to_server_pending",
+                expected=("to_server_sent",),
+            )
+
+    async def _recover_stuck_reminders(self) -> None:
+        stuck = [
+            row
+            for row in self.db.list_reminder_tasks()
+            if row.get("transfer_state") == "to_server_sent"
+        ]
+        if not stuck:
+            return
+        if (
+            self.server_client is None
+            or getattr(self.server_client, "notifications_service", None) is None
+        ):
+            logger.info(
+                "Skipping reminder inflight-transfer recovery: no server connection"
+            )
+            return
+        destination_owner_id = self._active_server_owner_id()
+        if destination_owner_id is None:
+            logger.info(
+                "Skipping reminder inflight-transfer recovery: no active "
+                "server identity"
+            )
+            return
+
+        try:
+            response = await self.server_client.list_reminders()
+        except Exception as exc:  # noqa: BLE001 - recovery must never crash startup
+            logger.warning(
+                f"Reminder inflight-transfer recovery could not reach the "
+                f"server ({exc}); leaving {len(stuck)} row(s) for the next "
+                "startup"
+            )
+            return
+
+        items = response.get("items", []) if isinstance(response, dict) else []
+        by_link_id = {
+            item.get("link_id"): item
+            for item in items
+            if item.get("link_type") == "chatbook_transfer" and item.get("link_id")
+        }
+
+        for row in stuck:
+            local_id = row["id"]
+            matched = by_link_id.get(local_id)
+            if matched is not None:
+                result = self.db.convert_row_to_server_mirror(
+                    _REMINDER_PRIMITIVE, local_id, matched, destination_owner_id
+                )
+                if result != "vanished":
+                    self.db.delete_pending_mutation_for_record(
+                        local_id, _REMINDER_PRIMITIVE, destination_owner_id
+                    )
+            else:
+                self.db.set_transfer_state(
+                    _REMINDER_PRIMITIVE,
+                    local_id,
+                    "to_server_pending",
+                    expected=("to_server_sent",),
+                )
+        self._notify_queue_changed()
 
     async def review_automation_result(
         self,
