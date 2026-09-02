@@ -30542,6 +30542,16 @@ class LibraryScreen(BaseAppScreen):
         F1 contamination this task closes. Every action reachable from
         ``BINDINGS`` now has an explicit branch here; see
         ``test_library_screen_bindings_are_all_gated_or_universal``.
+
+        Args:
+            action: The binding's action name Textual is resolving.
+            parameters: The action's positional parameters (unused here;
+                every gated binding is parameterless).
+
+        Returns:
+            ``False`` to deactivate the binding in the current context,
+            ``True`` to force-activate it, or ``None`` to defer to Textual's
+            default resolution.
         """
         if action in {
             "library_notes_new",
@@ -30734,15 +30744,25 @@ class LibraryScreen(BaseAppScreen):
             # later and Move-to-trash are local-only (mirroring the buttons,
             # which are hidden for external/server detail); Use-in-Console
             # works for server items too.
+            session = self._library_media_reader_session
             if (
                 self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
                 or self._library_media_view != "viewer"
                 or self._library_media_viewer_substate_active()
             ):
                 return False
+            # Qodo #2317: while a detail request is pending, the selected id
+            # and the displayed detail differ (e.g. mid-traversal), so these
+            # actions would combine the new id with stale detail. Gate them
+            # off until the displayed detail is the settled selected item.
+            if (
+                session.pending_request is not None
+                or session.loaded_id != self._selected_media_id
+            ):
+                return False
             if action == "library_media_use_in_console":
                 return True
-            return not self._library_media_reader_session.external_detail
+            return not session.external_detail
         if action == "focus_previous_workbench_pane":
             return bool(self._library_selected_row_id)
         return True

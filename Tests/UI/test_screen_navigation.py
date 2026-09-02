@@ -2497,19 +2497,32 @@ def test_action_show_workbench_help_lists_reader_action_keys(monkeypatch):
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
     from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
 
+    from tldw_chatbook.Library.library_media_reader_state import (
+        LibraryMediaReaderSessionState,
+    )
+
     app = _build_test_app()
     screen = LibraryScreen(app)
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
     screen._library_media_view = "viewer"
+    # A settled Reader (loaded == selected, no pending request) so the l/c/t
+    # accelerators are genuinely active (task-28027 / Qodo #2317).
+    screen._selected_media_id = "local:media:1"
+    screen._library_media_reader_session = LibraryMediaReaderSessionState(
+        selected_id="local:media:1",
+        selected_backing_id=1,
+        loaded_id="local:media:1",
+        loaded_backing_id=1,
+    )
 
     pushed = []
 
-    class _FakeApp:
+    class FakeHelpApp:
         def push_screen(self, panel):
             pushed.append(panel)
 
     monkeypatch.setattr(
-        LibraryScreen, "app", property(lambda self: _FakeApp()), raising=False
+        LibraryScreen, "app", property(lambda self: FakeHelpApp()), raising=False
     )
 
     screen.action_show_workbench_help()

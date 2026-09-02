@@ -1515,14 +1515,21 @@ async def test_unmount_drains_pending_and_ambiguous_inflight_progress_writes():
 # ---------------------------------------------------------------------------
 
 
-def _reader_key_fake(*, view="viewer", external=False, substate=False):
+def _reader_key_fake(*, view="viewer", external=False, substate=False, pending=False):
     """A minimal screen fake for the Reader action-key check_action gates."""
     from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
 
+    media_id = "local:media:1"
     return SimpleNamespace(
         _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
         _library_media_view=view,
-        _library_media_reader_session=SimpleNamespace(external_detail=external),
+        _selected_media_id=media_id,
+        _library_media_reader_session=SimpleNamespace(
+            external_detail=external,
+            pending_request=object() if pending else None,
+            # A settled Reader has its loaded id == the selected id.
+            loaded_id=None if pending else media_id,
+        ),
         _library_media_viewer_substate_active=lambda: substate,
     )
 
@@ -1560,6 +1567,16 @@ def test_reader_action_keys_gated_to_plain_local_viewer():
         "library_media_move_to_trash",
     ):
         assert LibraryScreen.check_action(listing, action, ()) is False, action
+
+    # Qodo #2317: while a detail request is pending (mid-load/traversal), the
+    # displayed detail is not yet the selected item -> all off.
+    loading = _reader_key_fake(pending=True)
+    for action in (
+        "library_media_read_later",
+        "library_media_use_in_console",
+        "library_media_move_to_trash",
+    ):
+        assert LibraryScreen.check_action(loading, action, ()) is False, action
 
 
 def test_t_key_arms_delete_confirmation():
@@ -1614,5 +1631,50 @@ async def test_t_key_in_reader_arms_delete_confirm_end_to_end():
         await pilot.press("t")
         await _wait_for_selector(screen, pilot, "#library-media-delete-confirm")
         assert screen._library_media_confirming_delete is True
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
+
+
+@pytest.mark.asyncio
+async def test_l_key_in_reader_toggles_read_later_end_to_end():
+    """task-28027 (Qodo #2317): 'l' in the mounted Reader saves read-it-later."""
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _load_row_0(screen, service, pilot)
+
+        screen.query_one("#library-media-reader-find", Button).focus()
+        await pilot.pause()
+        await pilot.press("l")
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(service.read_it_later_calls),
+            message="'l' did not toggle read-it-later.",
+        )
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
+
+
+@pytest.mark.asyncio
+async def test_c_key_in_reader_opens_console_handoff_end_to_end(monkeypatch):
+    """task-28027 (Qodo #2317): 'c' in the mounted Reader routes to the handoff."""
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await _load_row_0(screen, service, pilot)
+
+        calls = []
+        monkeypatch.setattr(
+            screen, "_open_selected_media_handoff", lambda: calls.append(1)
+        )
+        screen.query_one("#library-media-reader-find", Button).focus()
+        await pilot.pause()
+        await pilot.press("c")
+        await pilot.pause()
+        assert calls == [1]
         for media_id in tuple(service.detail_release):
             service.release(media_id)
