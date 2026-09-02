@@ -31,6 +31,7 @@ class MockSchedulingDB:
         sync_state: dict | None = None,
         conflicts: list | None = None,
         automation_definitions: list[dict] | None = None,
+        automation_results: list[dict] | None = None,
     ) -> None:
         self._sync_state = sync_state or {}
         self._conflicts = conflicts or []
@@ -38,6 +39,12 @@ class MockSchedulingDB:
         #: "contains" -- mirrors the real ScheduledTasksDB surface the
         #: Automations tab now reads (list_automation_definitions et al).
         self._automation_definitions = list(automation_definitions or [])
+        #: schedules-handoff PR-6 task 3: `automation_results` rows this DB
+        #: "contains" -- the Results tab's `on_mount` calls `list_
+        #: automation_results`/`count_unread_results` unconditionally, so
+        #: EVERY existing SchedulesWorkbench test built on this fake needs
+        #: these even when a test never touches the Results tab.
+        self._automation_results = list(automation_results or [])
 
     def get_sync_state(self, owner_id: str):
         return dict(self._sync_state)
@@ -80,6 +87,39 @@ class MockSchedulingDB:
         owner-agnostic retry-error lookup for a `to_server_failed` row;
         unused otherwise)."""
         return None
+
+    def list_automation_results(
+        self,
+        owner_id: str | None,
+        review_state: str | None = None,
+        definition_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ):
+        """Stub: mirrors the real `list_automation_results` filter set
+        (schedules-handoff PR-6 task 3) -- `owner_id=None` spans every
+        owner, matching Task 1's all-owners extension."""
+        rows = [
+            dict(row)
+            for row in self._automation_results
+            if (owner_id is None or row.get("owner_id") == owner_id)
+            and (review_state is None or row.get("review_state") == review_state)
+            and (definition_id is None or row.get("definition_id") == definition_id)
+        ]
+        rows.sort(key=lambda row: row.get("created_at") or "", reverse=True)
+        return rows[offset : offset + limit]
+
+    def count_unread_results(self, owner_id: str | None) -> int:
+        """Stub: mirrors the real `count_unread_results` (Results tab
+        badge, schedules-handoff PR-6 task 3)."""
+        return len(
+            [
+                row
+                for row in self._automation_results
+                if row.get("review_state") == "unread"
+                and (owner_id is None or row.get("owner_id") == owner_id)
+            ]
+        )
 
     def upsert_automation_definitions_from_server(self, owner_id: str, items: list[dict]):
         inserted = 0

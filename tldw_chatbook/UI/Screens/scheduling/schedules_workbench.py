@@ -48,6 +48,7 @@ from ....Scheduling.services.server_client import (
     ServerClientValidationError,
 )
 from ....UI.Screens.scheduling.conflicts_tab import ConflictsTab
+from ....UI.Screens.scheduling.results_tab import ResultsTab, solved_eligibility
 from ....UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
 from ....Widgets.confirmation_dialog import ConfirmationDialog
 from .forms.automation_definition_form import AutomationDefinitionForm
@@ -210,6 +211,14 @@ class SchedulesWorkbench(BaseAppScreen):
         Binding("M", "move_automation_to_server", "Move to server"),
         Binding("y", "retry_automation_transfer", "Retry transfer"),
         Binding("k", "cancel_automation_transfer", "Cancel transfer"),
+        # Results-tab-only (schedules-handoff PR-6 task 3): read/dismiss
+        # reuse r/d via the SAME active-tab routing action_run_task_now/
+        # action_delete already do for Automations -- r=Read and d=Dismiss
+        # are natural readings of those same keys on this tab. Mark
+        # solved/Mark all read have no existing-key mnemonic to reuse, so
+        # they get fresh letters (o/a), guarded the same way m/M/y/k are.
+        Binding("o", "mark_result_solved", "Mark solved"),
+        Binding("a", "mark_all_results_read", "Mark all read"),
     ]
 
     # Footer hints must stay 1:1 with BINDINGS and only advertise implemented
@@ -227,6 +236,8 @@ class SchedulesWorkbench(BaseAppScreen):
         ("M", "move to server"),
         ("y", "retry transfer"),
         ("k", "cancel transfer"),
+        ("o", "mark solved"),
+        ("a", "mark all read"),
     )
 
     def __init__(
@@ -385,6 +396,8 @@ class SchedulesWorkbench(BaseAppScreen):
                         id="scheduling-conflicts",
                         sync_engine=service.sync_engine if service else None,
                     )
+                with TabPane("Results", id="scheduling-results-tab"):
+                    yield ResultsTab(id="scheduling-results")
 
     def _service(self) -> "SchedulingService | None":
         """Return the app's scheduling service, if available."""
@@ -403,6 +416,7 @@ class SchedulesWorkbench(BaseAppScreen):
         self._register_footer_shortcuts()
         self._refresh_owner_select()
         self._refresh_conflicts_tab()
+        self._refresh_results_tab()
         table = self.query_one("#scheduling-task-table", DataTable)
         table.add_columns("Title", "Type", "Status", "Next Run")
         automations_table = self.query_one("#scheduling-automations-table", DataTable)
@@ -1424,8 +1438,11 @@ class SchedulesWorkbench(BaseAppScreen):
         """Run the highlighted task immediately (``r`` key).
 
         Routes by active tab: the Automations tab's ``r`` dispatches a
-        server-side run (ADR-077 -- the server owns execution); everywhere
-        else it is the local reminder Run-now (task-18938).
+        server-side run (ADR-077 -- the server owns execution); the
+        Results tab's ``r`` marks the selected result read instead
+        (schedules-handoff PR-6 task 3 -- a natural reading of the same
+        key); everywhere else it is the local reminder Run-now
+        (task-18938).
         """
         try:
             active_pane = self.query_one("#scheduling-tabs", TabbedContent).active
@@ -1435,6 +1452,9 @@ class SchedulesWorkbench(BaseAppScreen):
             definition = self._selected_automation()
             if definition is not None:
                 self._run_automation_now(definition)
+            return
+        if active_pane == "scheduling-results-tab":
+            self._review_selected_result("read")
             return
         task = self._selected_reminder_task()
         if task is not None:
@@ -2328,6 +2348,151 @@ class SchedulesWorkbench(BaseAppScreen):
             group="schedules-automation-transfer",
         )  # type: ignore[arg-type]
 
+    # -- Results-tab actions (schedules-handoff PR-6 task 3) ---------------
+    #
+    # Read/dismiss reuse r/d via action_run_task_now/action_delete's own
+    # tab routing above. Mark-solved/Mark-all-read get fresh keys (o/a),
+    # guarded the same way m/M/y/k refuse off the Automations tab.
+
+    def _is_results_tab_active(self) -> bool:
+        try:
+            return (
+                self.query_one("#scheduling-tabs", TabbedContent).active
+                == "scheduling-results-tab"
+            )
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _review_selected_result(self, review_state: str) -> None:
+        """r/d on the Results tab: read/dismiss the selected result.
+
+        `SchedulingService.review_automation_result` writes the local row
+        and, for a server mirror, queues the PR-3 pushback mutation in the
+        SAME DB transaction -- nothing extra to do here for that half.
+        """
+        service = self._service()
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable.", severity="warning"
+            )
+            return
+        results_tab = self.query_one("#scheduling-results", ResultsTab)
+        result = results_tab.selected_result()
+        if result is None:
+            self.app_instance.notify("Select a result first.", severity="warning")
+            return
+
+        async def _review() -> None:
+            updated = await service.review_automation_result(
+                result["id"], review_state
+            )
+            if not updated:
+                self.app_instance.notify(
+                    "Could not update this result — see the log.",
+                    severity="error",
+                )
+            self._refresh_results_tab()
+
+        self.run_worker(
+            _review, exclusive=True, group="schedules-review-result"
+        )  # type: ignore[arg-type]
+
+    def action_mark_result_solved(self) -> None:
+        """o key: mark the selected finding's definition solved (Task 2's
+        facade), Results-tab only. Refused client-side for a row `solved_
+        eligibility` already rules out (wrong kind, already solved, or an
+        unknown definition); a still-eligible row can still be refused by
+        the facade itself (transfer lock, offline+server-owned -- UX-073),
+        surfaced from `ResolveOutcome.reason`.
+        """
+        if not self._is_results_tab_active():
+            self.app_instance.notify(
+                "Switch to the Results tab to mark a result solved.",
+                severity="warning",
+            )
+            return
+        service = self._service()
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable.", severity="warning"
+            )
+            return
+        results_tab = self.query_one("#scheduling-results", ResultsTab)
+        result = results_tab.selected_result()
+        if result is None:
+            self.app_instance.notify("Select a result first.", severity="warning")
+            return
+        eligible, reason = solved_eligibility(result, results_tab.definitions_by_id)
+        if not eligible:
+            self.app_instance.notify(
+                reason or "This result cannot be marked solved.",
+                severity="warning",
+            )
+            return
+
+        async def _mark_solved() -> None:
+            outcome = await service.resolve_definition(
+                result["definition_id"], solved=True, result_id=result["id"]
+            )
+            if outcome.status == "saved":
+                self.app_instance.notify("Marked solved.", severity="information")
+            else:
+                self.app_instance.notify(
+                    outcome.reason or "Could not mark this result solved.",
+                    severity="warning",
+                )
+            self._refresh_results_tab()
+
+        self.run_worker(
+            _mark_solved, exclusive=True, group="schedules-mark-solved"
+        )  # type: ignore[arg-type]
+
+    def action_mark_all_results_read(self) -> None:
+        """a key: mark every currently-loaded unread result read,
+        Results-tab only. Per-row `review_automation_result` calls -- there
+        is no bulk DB primitive for this (spec's documented fan-out),
+        mirroring `_on_bulk_delete_confirmed`'s loop-and-count shape.
+        """
+        if not self._is_results_tab_active():
+            self.app_instance.notify(
+                "Switch to the Results tab to mark all results read.",
+                severity="warning",
+            )
+            return
+        service = self._service()
+        if service is None:
+            self.app_instance.notify(
+                "Scheduling service is unavailable.", severity="warning"
+            )
+            return
+        results_tab = self.query_one("#scheduling-results", ResultsTab)
+        unread_ids = [
+            result["id"]
+            for result in results_tab.results()
+            if result.get("review_state") == "unread"
+        ]
+        if not unread_ids:
+            self.app_instance.notify("Nothing unread.", severity="information")
+            return
+
+        async def _mark_all() -> None:
+            errors = 0
+            for result_id in unread_ids:
+                if not await service.review_automation_result(result_id, "read"):
+                    errors += 1
+            count = len(unread_ids) - errors
+            self.app_instance.notify(
+                f"Marked {count} result{'s' if count != 1 else ''} read"
+                + (f" ({errors} failed)" if errors else "")
+                + ".",
+                severity="information" if not errors else "warning",
+            )
+            self._refresh_results_tab()
+
+        self.run_worker(
+            _mark_all, exclusive=True, group="schedules-mark-all-read"
+        )  # type: ignore[arg-type]
+
     def _set_reminder_enabled(self, task: ReminderTask, enabled: bool) -> None:
         """Update a reminder's enabled state and refresh the queue."""
         service = self._scheduling_service
@@ -2538,6 +2703,7 @@ class SchedulesWorkbench(BaseAppScreen):
         self._request_tasks_refresh()
         self._request_automations_refresh()
         self._refresh_conflicts_tab()
+        self._refresh_results_tab()
 
     @on(SyncFailed)
     def _on_sync_failed(self, event: SyncFailed) -> None:
@@ -2547,6 +2713,7 @@ class SchedulesWorkbench(BaseAppScreen):
         self._request_tasks_refresh()
         self._request_automations_refresh()
         self._refresh_conflicts_tab()
+        self._refresh_results_tab()
 
     @on(ConflictsTab.ConflictResolved)
     def _on_conflict_resolved(self, event: ConflictsTab.ConflictResolved) -> None:
@@ -2569,13 +2736,50 @@ class SchedulesWorkbench(BaseAppScreen):
         except Exception:  # noqa: BLE001 - pane not mounted
             pass
 
+    def _refresh_results_tab(self) -> None:
+        """Reload the Results tab and its unread badge (schedules-handoff
+        PR-6 task 3). Mirrors `_refresh_conflicts_tab`'s shape: direct
+        `service.db.*` calls (list_automation_results/count_unread_
+        results span every owner -- Task 1), no worker -- this is a local
+        DB-only read, same cost class as `get_conflicts`. Also called
+        after Task 4's notification-triggered pull and after every
+        read/dismiss/mark-solved/mark-all-read action below.
+        """
+        service = self._service()
+        if service is None:
+            return
+        results_tab = self.query_one("#scheduling-results", ResultsTab)
+        results = service.db.list_automation_results(owner_id=None)
+        unread = service.db.count_unread_results(owner_id=None)
+        definitions_by_id = {
+            row["id"]: row
+            for row in service.db.list_automation_definitions(owner_id=None)
+        }
+        results_tab.populate(results, definitions_by_id)
+        # Surface the unread count on the tab label itself (spec §4's
+        # inbox badge, same UX-063 idiom as the Conflicts tab above).
+        try:
+            pane = self.query_one("#scheduling-results-tab", TabPane)
+            pane.label = f"Results ({unread})" if unread else "Results"
+        except Exception:  # noqa: BLE001 - pane not mounted
+            pass
+
     def action_delete(self) -> None:
         """Delete marked tasks in bulk, else the selected one (confirmed).
 
         While ANY mark exists, d never falls through to the highlighted,
         unmarked row (task-23107 review F1): acting on a row the user
-        never marked is worse than refusing.
+        never marked is worse than refusing. On the Results tab, ``d``
+        dismisses the selected result instead (schedules-handoff PR-6
+        task 3) -- same key, the tab-appropriate "remove from view" verb.
         """
+        try:
+            active_pane = self.query_one("#scheduling-tabs", TabbedContent).active
+        except Exception:  # noqa: BLE001
+            active_pane = None
+        if active_pane == "scheduling-results-tab":
+            self._review_selected_result("dismissed")
+            return
         if self._marked_ids:
             marked = self._marked_reminder_tasks()
             if not marked:

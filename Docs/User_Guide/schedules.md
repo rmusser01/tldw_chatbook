@@ -26,8 +26,8 @@ If creation is accepted but no completed briefing appears, inspect the exact bri
 
 Schedules controls when jobs, watchlists, and workflows run. The screen
 has no single on-screen title; it opens on a sync status bar (Local /
-Server, last pull/push) above **Queue**, **Automations**, and
-**Conflicts** tabs, with panels for the Schedule Queue, Task Detail, and
+Server, last pull/push) above **Queue**, **Automations**, **Conflicts**,
+and **Results** tabs, with panels for the Schedule Queue, Task Detail, and
 Inspector.
 
 ## Getting there
@@ -386,6 +386,52 @@ showing an empty server-shaped trail; every execution still leaves its
 trail here for server automations: queued, succeeded, failed, timed out,
 skipped, the same events the server records for reconciliation.
 
+## Results tab — the automation findings inbox
+
+The **Results** tab lists every `automation_results` row a recurring
+question has produced, across **both** owners (this device and any
+connected server) in one inbox, newest first. Its tab label carries an
+unread badge — "Results (3)" — that updates after every sync and after
+every action below; with nothing unread it reads plain "Results".
+
+Each row shows a kind glyph (● for a **finding**, ✕ for a **failure** —
+failure rows are styled distinctly since they are diagnostic, not
+hidden), the result's title (with a "(server: \<id\>)" suffix for a
+server-owned row), how long ago it was created, and its review state
+("● unread" in bold, or plain "read"/"dismissed"). Selecting a row shows
+its answer, evidence (the stored source references), and review
+metadata (who reviewed it and when, plus any review note) in the detail
+pane below the table.
+
+Actions are keys, not buttons — the tab has no per-row detail widget
+here either:
+
+| Key | Action |
+| --- | --- |
+| `r` | Mark the selected result **read** |
+| `d` | **Dismiss** the selected result |
+| `o` | Mark the selected finding's automation **solved** |
+| `a` | Mark **every** currently-listed unread result read |
+
+`r`/`d` are the same keys the Queue tab uses for Run now/Delete —
+reused here because Read/Dismiss are the natural reading of those same
+letters on this tab. A server-owned row's read/dismiss writes locally
+and automatically queues the matching pushback to the server; nothing
+extra to do. `o`/`a` are Results-tab only, the same way the Automations
+tab's `m`/`M`/`y`/`k` are: pressed elsewhere they answer with a "Switch
+to the Results tab…" notice instead of acting on another tab's
+selection.
+
+**Mark solved** only applies to a `finding` whose automation is not
+already solved — a `failure` row, or a finding whose automation was
+already marked solved, refuses with the specific reason instead of
+attempting the call. Marking solved on a server-owned automation
+requires that server connection right now: this repo does not yet queue
+a solved/reopen mutation for later delivery, so an offline attempt
+refuses honestly ("…this action requires a server connection") rather
+than silently queuing something that might already be stale by the time
+it would send.
+
 ## Execution timeouts
 
 A scheduled task's handler is bounded: if it is still running after its
@@ -402,15 +448,19 @@ The default bound is `handler_timeout_seconds` under `[scheduling]` in
 bound entirely — every handler may then run as long as it likes, and a
 wedged handler will wedge the scheduler, which is why the default is on.
 
-*Verified against working tree — 2026-09-02 (schedules-handoff PR-5 final
-fix wave: the Automations tab's M/m/y/k transfer keys and their
-tab-scoping, the read-only-except-cancel rule on in-flight rows, and the
-corrected cancel copy; plus PR-5 task 7's
+*Verified against working tree — 2026-09-02 (schedules-handoff PR-6 task
+3: the new Results tab — unread badge, kind/owner/created/review-state
+columns, failure styling, the answer/evidence/review-metadata detail
+pane, and the r/d/o/a read/dismiss/mark-solved/mark-all-read keys with
+their tab-scoping and refusal reasons; supersedes the earlier same-day
+stamp, which covered PR-5's final fix wave: the Automations tab's
+M/m/y/k transfer keys and their tab-scoping, the read-only-except-cancel
+rule on in-flight rows, and the corrected cancel copy; plus PR-5 task 7's
 the detail pane's Move to server/Move to local/Cancel transfer/Retry
 transfer buttons, the confirm dialog and its warnings, honest transfer
-toasts, and the queue row's transfer-state suffix; supersedes the
-2026-09-01 stamp, which covered recurring-question create/edit form, the
-Queue tab's New/Reminder/Recurring-question chooser, the Automations tab's
-own New button, the "Runs on" selector on both forms, the merged
+toasts, and the queue row's transfer-state suffix; and the 2026-09-01
+stamp before that, which covered recurring-question create/edit form,
+the Queue tab's New/Reminder/Recurring-question chooser, the Automations
+tab's own New button, the "Runs on" selector on both forms, the merged
 local+server Automations listing including not-yet-synced server-owned
 rows, and its local run-now/edit routing).*
