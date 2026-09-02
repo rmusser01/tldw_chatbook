@@ -19,8 +19,10 @@ from croniter import croniter
 from loguru import logger
 
 from tldw_chatbook.Scheduling.automation_health import compute_local_health
-from tldw_chatbook.Scheduling.automation_preview import preview_automation_definition
-from tldw_chatbook.Scheduling.automation_validation import field_error
+# ADR-097: automation_preview / automation_validation / schedule_compute are
+# imported function-level in the authoring facade below -- this module is
+# boot-resident and eager imports of the authoring stack breached the
+# ui-ready census (975 > 972).
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.models import (
     AutomationFamily,
@@ -31,7 +33,6 @@ from tldw_chatbook.Scheduling.models import (
     ScheduleKind,
     ScheduledTask,
 )
-from tldw_chatbook.Scheduling.schedule_compute import compute_next_run_at
 from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
 from tldw_chatbook.Scheduling.services.server_client import (
     SchedulingServerClient,
@@ -155,6 +156,8 @@ def _policy_denied_outcome(
     save this facade knows can never succeed must be reported as failed
     now, not queued as if it will eventually sync.
     """
+    from tldw_chatbook.Scheduling.automation_validation import field_error
+
     return SaveDefinitionOutcome(
         status="error",
         errors=[
@@ -706,6 +709,8 @@ class SchedulingService:
         `agent_task` that is a scope cut, not real server parity, and must
         never reach a caller through this facade.
         """
+        from tldw_chatbook.Scheduling.automation_preview import preview_automation_definition
+
         guard = self._reject_unsupported_family(payload)
         if guard is not None:
             return guard
@@ -776,6 +781,9 @@ class SchedulingService:
         never cleared), so queuing here would report "queued" for a save
         that can never sync (review round 1 finding 1).
         """
+        from tldw_chatbook.Scheduling.automation_preview import preview_automation_definition
+        from tldw_chatbook.Scheduling.automation_validation import field_error
+
         guard = self._reject_unsupported_family(payload)
         if guard is not None:
             return SaveDefinitionOutcome(
@@ -893,6 +901,8 @@ class SchedulingService:
         and queues exactly one `automation_definition` mutation in the
         SAME transaction as that write.
         """
+        from tldw_chatbook.Scheduling.automation_preview import preview_automation_definition
+
         logger.warning(
             "Server unreachable while saving automation definition for "
             "{owner_id} ({exc}); queuing for later sync",
@@ -1058,6 +1068,8 @@ class SchedulingService:
         config["visibility_policy"]`, which Task 1's preview deliberately
         leaves as the flat mode string.
         """
+        from tldw_chatbook.Scheduling.schedule_compute import compute_next_run_at
+
         normalized = preview.normalized_config or {}
         schedule = normalized.get("schedule") or {}
         return {
@@ -1087,6 +1099,8 @@ class SchedulingService:
             anything other than `recurring_question`; `None` when the
             guard passes and the caller should proceed to a real preview.
         """
+        from tldw_chatbook.Scheduling.automation_validation import field_error
+
         family_value = payload.get("family")
         if family_value == _SUPPORTED_AUTOMATION_FAMILY:
             return None
