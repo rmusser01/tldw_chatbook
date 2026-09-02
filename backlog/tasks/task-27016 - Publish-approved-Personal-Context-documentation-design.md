@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-01 15:07'
-updated_date: '2026-09-02 06:27'
+updated_date: '2026-09-02 06:38'
 labels: []
 dependencies: []
 references:
@@ -22,7 +22,7 @@ Publish and maintain an accurate Personal Context documentation design on Chatbo
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 The specification distinguishes reviewed first-link publication from the absent ongoing Personal Context sync caller and labels protocol or future behavior accordingly.
-- [x] #2 The specification accurately documents adaptive-interview egress and disclosure timing, fixed-mode locality, transport/TLS behavior, bootstrap disclosure, local removal/recovery limits, conflict surfaces, and incomplete purge distribution.
+- [x] #2 The specification accurately documents adaptive-interview egress and disclosure timing, fixed-mode no-provider-call behavior, interview-to-record materialization, transport/TLS behavior, bootstrap disclosure, local removal/recovery limits, conflict surfaces, and incomplete purge distribution.
 - [x] #3 Both products can reuse one exact four-bullet shared contract that states first-link convergence, queued later mutations, peer-local state, and the separate Shared Core/Sync V2 boundaries without implying ongoing convergence.
 - [x] #4 Diff, scope, semantic, link, and duplicate-ID verification passes for the specification and this task record without application changes.
 - [x] #5 The task records the existing-ADR disposition, exact verification evidence, implementation notes, and In Progress review handoff before a PR is opened.
@@ -74,7 +74,7 @@ Follow-up verification before closeout on origin/dev `0b17f7f73cad28cdb5089aa5ff
 - The all-ref and all-worktree sweeps found only the same TASK-27016 filename and identity.
 - No application test sweep was run because this follow-up is documentation-only.
 
-Shipped-behavior truth correction prepared from current `origin/dev` `e167d0be2ec254595ecaa100c550d30930e645e7`. The specification now separates ADR-102's intended ongoing-sync architecture from the shipped first-link-only lifecycle. It records the absent ongoing Personal Context caller; Notes/Chat-only Manual Sync; adaptive-interview request contents and delayed provider/model disclosure; fixed-mode locality; HTTP/TLS and Test Connection behavior; pre-approval bootstrap metadata; local removal, recovery-import, and key-cleanup limits; absent status/conflict UI; and incomplete purge distribution. It also supplies the exact four-bullet statement that both products must reuse.
+Shipped-behavior truth correction prepared from current `origin/dev` `e167d0be2ec254595ecaa100c550d30930e645e7`. The specification now separates ADR-102's intended ongoing-sync architecture from the shipped first-link-only lifecycle. It records the absent ongoing Personal Context caller; Notes/Chat-only Manual Sync; adaptive-interview request contents and delayed provider/model disclosure; fixed-mode no-provider-call behavior; HTTP/TLS and Test Connection behavior; pre-approval bootstrap metadata; local removal, recovery-import, and key-cleanup limits; absent status/conflict UI; and incomplete purge distribution. It also supplies the exact four-bullet statement that both products must reuse.
 
 ADR required: no new ADR required; existing ADR applies.
 ADR path: `backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md`.
@@ -87,6 +87,13 @@ Verification evidence before independent review:
 - The all-ref and all-worktree sweeps found TASK-27016 only at the same canonical task filename and identity; no distinct claimant path exists.
 - No application test sweep was run because the correction changes documentation and task metadata only.
 - TASK-27016 remains In Progress for independent specification and quality review. No PR was opened.
+
+Critical spec-review correction: the earlier publication matrix conflated peer-local interview draft/transcript objects with answer content later materialized into canonical profile records. `ProfileInterviewCoordinator._change_for_answer()` places the answer in an ordinary payload and defaults the proposed controls to `syncable` and `agent_visible`; saving reviewed changes commits those records through the normal Personal Context service. The specification now states that draft/transcript objects are not Sync payloads as such, while approved answer content follows normal record visibility and syncability: eligible content can publish in the reviewed first-link snapshot, queue in the encrypted outbox after linking, or remain local when device-only.
+
+Review-fix evidence:
+- Before the wording change, the negative semantic control failed on the matrix's blanket exclusion of both draft objects and raw answer text from profile Sync.
+- After the change, the same control rejects the former blanket draft/answer and whole-mode-local claims while requiring the draft/transcript object boundary, record materialization, first-link publication, later outbox, and device-only outcomes.
+- TASK-27016 remains In Progress for re-review. No PR was opened.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
