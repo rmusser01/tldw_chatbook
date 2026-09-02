@@ -10859,3 +10859,20 @@ contracts. When optimizing a Textual subtree that begins hidden, keep a
 production-hierarchy first-open paint test and do not infer layout readiness from
 precomposition alone. Prefer reusing a subtree after one successful visible
 mount unless its hidden ancestors already have deterministic geometry.
+
+## SQLite cursor wrappers invalidate exact-type ownership guards
+
+**TASK-23113.11, 2026-09-02.** Quiescence tracking correctly moved the primary
+database connection onto a `sqlite3.Connection`/`sqlite3.Cursor` subclass pair,
+but Character insert and update ownership checks still required
+`type(cursor) is sqlite3.Cursor`. Fresh-profile Samira seeding therefore rejected
+the application's own tracked cursor. The ordinary character lifecycle test
+caught the failed insert directly; the warm-start module census caught its less
+obvious consequence, because every later boot retried the missing seed and kept
+three parser modules resident.
+
+**What to do.** When a database boundary intentionally supplies a standard-library
+subclass, ownership checks must accept `isinstance(cursor, sqlite3.Cursor)` and
+prove authority with connection identity and active transaction state. Exercise
+at least one real startup or domain write through the wrapped factory; isolated
+wrapper tests cannot expose an exact-type guard in a distant repository method.

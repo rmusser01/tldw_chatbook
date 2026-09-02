@@ -8412,7 +8412,7 @@ UPDATE db_schema_version
         connection = self.get_connection()
         depth = getattr(self._local, "transaction_depth", 0)
         if (
-            type(cursor) is not sqlite3.Cursor
+            not isinstance(cursor, sqlite3.Cursor)
             or cursor.connection is not connection
             or not connection.in_transaction
             or depth < 1
@@ -8991,7 +8991,7 @@ UPDATE db_schema_version
         connection = self.get_connection()
         depth = getattr(self._local, "transaction_depth", 0)
         if (
-            type(cursor) is not sqlite3.Cursor
+            not isinstance(cursor, sqlite3.Cursor)
             or cursor.connection is not connection
             or not connection.in_transaction
             or depth < 1
