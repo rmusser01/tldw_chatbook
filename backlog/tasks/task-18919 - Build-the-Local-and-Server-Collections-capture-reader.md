@@ -117,7 +117,12 @@ Archive Undo reachable after list removal, and bounded Server highlight and save
 Server update/archive now fail closed unless docs-info explicitly advertises atomic optimistic
 updates; Server hard-delete remains unavailable until an atomic delete contract exists. The review
 regression gate passed 107 tests, import/live verification passed 19 with the isolated Server test
-skipped when unconfigured, and the unchanged 23-test performance workflow passed. No new ADR was
-required because these changes enforce ADR-107's existing authority and fail-closed capability
+skipped when unconfigured, and the unchanged 23-test performance workflow passed. The final
+required-check review confirmed that three removed diagnostics belonged to the retired legacy
+Collections flows, two added service-wiring warnings contain no user content, and the new offline
+store's persistent sinks are limited to validated private bytes and its lifecycle lock; the reviewed
+production-diagnostic inventory was regenerated accordingly. All 12 new Collections indexes are
+now backed by no-statistics `EXPLAIN QUERY PLAN` assertions and recorded as plan-pinned. No new ADR
+was required because these changes enforce ADR-107's existing authority and fail-closed capability
 boundaries. TASK-18919 is complete.
 <!-- SECTION:NOTES:END -->

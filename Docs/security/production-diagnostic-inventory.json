@@ -2519,13 +2519,6 @@
     },
     {
       "call_count": 2,
-      "diagnostic_digest": "2395fe5d97fe13f519d8",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/UI/Library_Modules/library_collections_browse_controller.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
-      "call_count": 2,
       "diagnostic_digest": "a5d9efad9e09d4fd1244",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py",
@@ -2721,8 +2714,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 120,
-      "diagnostic_digest": "9b6675a1b85f33a30984",
+      "call_count": 117,
+      "diagnostic_digest": "f968bfbe9e5c6f38cf8d",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/library_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3848,8 +3841,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 371,
-      "diagnostic_digest": "7565d9f9851d06366879",
+      "call_count": 373,
+      "diagnostic_digest": "fa5591738723e4a2da2f",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -10960,6 +10953,23 @@
       ]
     },
     {
+      "path": "tldw_chatbook/Library/collections_offline_store.py",
+      "sinks": [
+        {
+          "digest": "5b4a8fa045775403",
+          "kind": "atomic_private_write_bytes",
+          "method": "atomic_private_write_bytes",
+          "scope": "CollectionsOfflineStore._ensure_lifecycle_lock"
+        },
+        {
+          "digest": "48694623850980a9",
+          "kind": "atomic_private_write_bytes",
+          "method": "atomic_private_write_bytes",
+          "scope": "CollectionsOfflineStore._save_copy_locked"
+        }
+      ]
+    },
+    {
       "path": "tldw_chatbook/Local_Ingestion/ingest_parse_worker.py",
       "sinks": [
         {
@@ -11152,10 +11162,10 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 554,
+    "owner_files": 553,
     "path_privacy_candidate_calls": 711,
-    "persistent_sink_files": 9,
+    "persistent_sink_files": 10,
     "task_492_calls": 1308,
-    "task_494_calls": 7458
+    "task_494_calls": 7455
   }
 }

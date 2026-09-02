@@ -581,9 +581,38 @@ def test_capture_search_triggers_follow_item_and_tag_changes(tmp_path: Path) -> 
             "ORDER BY updated_at DESC, capture_id DESC LIMIT 20",
             "idx_collection_capture_items_domain_page",
         ),
+        (
+            "SELECT capture_id FROM collection_capture_item_tags "
+            "WHERE authority_key = ? AND tag_id = ? ORDER BY capture_id LIMIT 20",
+            "idx_collection_capture_item_tags_by_tag",
+        ),
+        (
+            "SELECT highlight_id FROM collection_capture_highlights "
+            "WHERE authority_key = ? AND capture_id = ? "
+            "ORDER BY created_at, highlight_id LIMIT 100",
+            "idx_collection_capture_highlights_by_item",
+        ),
+        (
+            "SELECT link_id FROM collection_capture_note_links "
+            "WHERE authority_key = ? AND capture_id = ? "
+            "ORDER BY created_at, link_id LIMIT 100",
+            "idx_collection_capture_note_links_by_item",
+        ),
+        (
+            "SELECT file_id FROM collection_capture_offline_files "
+            "WHERE authority_key = ? AND capture_id = ? "
+            "ORDER BY updated_at, file_id LIMIT 100",
+            "idx_collection_capture_offline_by_item",
+        ),
+        (
+            "SELECT file_id FROM collection_capture_offline_files "
+            "WHERE authority_key = ? AND state = ? "
+            "ORDER BY updated_at, file_id LIMIT 100",
+            "idx_collection_capture_offline_by_state",
+        ),
     ],
 )
-def test_fixed_capture_page_queries_use_bounded_indexes(
+def test_capture_indexes_have_stats_free_query_plans(
     tmp_path: Path,
     query: str,
     expected_index: str,
@@ -596,8 +625,17 @@ def test_fixed_capture_page_queries_use_bounded_indexes(
         params = (*params, 1)
     elif "domain = ?" in query:
         params = (*params, "example.org")
+    elif "tag_id = ?" in query:
+        params = (*params, 1)
+    elif "capture_id = ?" in query:
+        params = (*params, "capture-1")
+    elif "state = ?" in query:
+        params = (*params, "ready")
 
     with database.connection() as connection:
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1'"
+        ).fetchone() is None
         plan = " ".join(
             str(row[3]) for row in connection.execute(f"EXPLAIN QUERY PLAN {query}", params)
         )
