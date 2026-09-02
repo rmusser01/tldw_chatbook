@@ -6180,6 +6180,117 @@ class PermissionsApp(ConsolidatedCSSApp):
         yield MCPWorkbench(app_instance=self, id="mcp-workbench")
 
 
+def _imported_tool_policy_profile() -> dict[str, Any]:
+    profile: dict[str, Any] = {
+        "global_default": "ask",
+        "servers": {},
+        "profile_kind": "tool_pack_imported",
+        "tool_pack_lifecycle": {
+            "schema": "tldw.tool-pack-lifecycle/v1",
+            "origin": "imported",
+            "pack_digest": "a" * 64,
+            "imported_at": "2026-08-31T00:00:00Z",
+            "first_bind_confirmation_required": True,
+            "receipt_id": "tp-" + "b" * 32,
+            "receipt_digest": "c" * 64,
+            "counts": {"matched": 0, "omitted": 0, "pending_deny": 0},
+            "policy_digest": "0" * 64,
+            "revision": 1,
+        },
+    }
+    profile["tool_pack_lifecycle"]["policy_digest"] = profile_policy_digest(profile)
+    return profile
+
+
+@pytest.mark.asyncio
+async def test_settings_deep_link_restores_exact_tool_policy_profile(tmp_path):
+    store_path = tmp_path / "mcp_permissions.json"
+    store = MCPPermissionStore(store_path)
+    payload = store.load()
+    payload["profiles"]["research"] = _imported_tool_policy_profile()
+    store.save(payload)
+    profile = store.load()["profiles"]["research"]
+    lifecycle = profile["tool_pack_lifecycle"]
+    app = PermissionsApp(store_path)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_initial_view_state(
+            {
+                "mode": "permissions",
+                "tool_policy_profile_id": "research",
+                "profile_revision": lifecycle["revision"],
+                "profile_policy_digest": lifecycle["policy_digest"],
+            }
+        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench.active_mode == "permissions"
+        assert workbench._tool_policy_profile_id == "research"
+        assert workbench.get_view_state()["tool_policy_profile_id"] == "research"
+
+
+@pytest.mark.asyncio
+async def test_settings_deep_link_rejects_stale_tool_policy_profile(tmp_path):
+    store_path = tmp_path / "mcp_permissions.json"
+    store = MCPPermissionStore(store_path)
+    payload = store.load()
+    payload["profiles"]["research"] = _imported_tool_policy_profile()
+    store.save(payload)
+    app = PermissionsApp(store_path)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workbench = app.query_one(MCPWorkbench)
+        workbench.set_initial_view_state(
+            {
+                "mode": "permissions",
+                "tool_policy_profile_id": "research",
+                "profile_revision": 999,
+                "profile_policy_digest": "f" * 64,
+            }
+        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert workbench.active_mode == "permissions"
+        assert workbench._tool_policy_profile_id == "default"
+
+
+def test_mcp_screen_accepts_bounded_tool_profile_navigation_context():
+    screen = MCPScreen(SimpleNamespace())
+    screen.apply_navigation_context(
+        {
+            "mode": "permissions",
+            "tool_policy_profile_id": "research",
+            "profile_revision": 7,
+            "profile_policy_digest": "d" * 64,
+        }
+    )
+    assert screen._initial_view_state() == {
+        "mode": "permissions",
+        "tool_policy_profile_id": "research",
+        "profile_revision": 7,
+        "profile_policy_digest": "d" * 64,
+    }
+
+    screen.apply_navigation_context(
+        {"mode": "permissions", "tool_policy_profile_id": "other", "extra": True}
+    )
+    assert screen._initial_view_state()["tool_policy_profile_id"] == "research"
+
+    screen.apply_navigation_context(
+        {
+            "mode": "permissions",
+            "tool_policy_profile_id": "digest-missing",
+            "profile_revision": None,
+            "profile_policy_digest": None,
+        }
+    )
+    assert screen._initial_view_state()["tool_policy_profile_id"] == "research"
+
 def test_profile_scoped_mutation_does_not_retry_an_internal_type_error():
     context = PermissionProfileContext("default", 0, "a" * 64, None)
     calls = 0

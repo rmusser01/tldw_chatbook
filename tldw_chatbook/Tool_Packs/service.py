@@ -214,7 +214,13 @@ class ToolPackService:
         return self._receipt_store.root
 
     def capture_export(
-        self, profile_id: str, *, display_name: str, suggested_id: str
+        self,
+        profile_id: str,
+        *,
+        display_name: str,
+        suggested_id: str,
+        expected_revision: int | None = None,
+        expected_policy_digest: str | None = None,
     ) -> object:
         return self._delegate(
             "export",
@@ -223,6 +229,8 @@ class ToolPackService:
             profile_id=profile_id,
             display_name=display_name,
             suggested_id=suggested_id,
+            expected_revision=expected_revision,
+            expected_policy_digest=expected_policy_digest,
         )
 
     def publish_export(
@@ -231,6 +239,7 @@ class ToolPackService:
         destination: object,
         *,
         overwrite_token: str | None = None,
+        cancelled: Callable[[], bool] = lambda: False,
     ) -> object:
         if type(review) is not ToolPackExportReview:
             raise ToolPackError("export", "publication_failed")
@@ -242,6 +251,7 @@ class ToolPackService:
             destination,
             overwrite=overwrite_token is not None,
             overwrite_token=overwrite_token,
+            cancelled=cancelled,
         )
 
     def inspect_import(
@@ -330,9 +340,17 @@ class ToolPackService:
             disposition = profile_lifecycle_disposition(profile)
             lifecycle = profile.get("tool_pack_lifecycle")
             lifecycle = lifecycle if isinstance(lifecycle, Mapping) else {}
-            lifecycle_valid = disposition != "invalid" and (
-                disposition not in {"imported", "tombstone"}
-                or lifecycle.get("policy_digest") == profile_policy_digest(profile)
+            try:
+                current_policy_digest = profile_policy_digest(profile)
+            except (TypeError, ValueError):
+                current_policy_digest = None
+            lifecycle_valid = (
+                disposition != "invalid"
+                and current_policy_digest is not None
+                and (
+                    disposition not in {"imported", "tombstone"}
+                    or lifecycle.get("policy_digest") == current_policy_digest
+                )
             )
             if disposition == "tombstone" and lifecycle_valid:
                 continue
@@ -365,9 +383,7 @@ class ToolPackService:
                         else None
                     ),
                     policy_digest=(
-                        lifecycle.get("policy_digest")
-                        if type(lifecycle.get("policy_digest")) is str
-                        else None
+                        current_policy_digest if lifecycle_valid else None
                     ),
                 )
             )

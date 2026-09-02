@@ -60,6 +60,8 @@ class ToolProfileBindingSummary:
     ask_count: int
     deny_count: int
     inventory_digest: str
+    effective_asks: tuple[tuple[str, str], ...] = ()
+    effective_denies: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -601,6 +603,8 @@ class ToolProfileBindingGuard:
         }
         unavailable = stored - set(live)
         effective: set[tuple[str, str]] = set()
+        effective_asks: set[tuple[str, str]] = set()
+        effective_denies: set[tuple[str, str]] = set()
         downgraded: set[tuple[str, str]] = set()
         high_risk: set[tuple[str, str]] = set()
         counts = {"allow": 0, "ask": 0, "deny": 0}
@@ -634,8 +638,13 @@ class ToolProfileBindingGuard:
                 high_risk.add(identity)
             if result.state == "allow":
                 effective.add(identity)
-            elif identity in stored:
-                downgraded.add(identity)
+            else:
+                if result.state == "ask":
+                    effective_asks.add(identity)
+                else:
+                    effective_denies.add(identity)
+                if identity in stored:
+                    downgraded.add(identity)
 
         return ToolProfileBindingSummary(
             global_fallback=str(profile.get("global_default") or "ask"),
@@ -650,6 +659,8 @@ class ToolProfileBindingGuard:
             ask_count=counts["ask"],
             deny_count=counts["deny"],
             inventory_digest=inventory.digest,
+            effective_asks=tuple(sorted(effective_asks)),
+            effective_denies=tuple(sorted(effective_denies)),
         )
 
     def _utc_now(self) -> datetime:

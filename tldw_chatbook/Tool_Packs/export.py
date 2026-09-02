@@ -29,6 +29,7 @@ from tldw_chatbook.Tool_Packs.catalog_snapshot import (
     capture_v1_inventory,
     thaw_hub_tool,
 )
+from tldw_chatbook.Tool_Packs.binding import profile_policy_digest
 from tldw_chatbook.Tool_Packs.contracts import (
     PROFILE_PATH,
     TOOL_PACK_SCHEMA,
@@ -46,6 +47,7 @@ from tldw_chatbook.Tool_Packs.contracts import (
 _RAW_SHELL_NAME = "shell_exec"
 _RAW_SHELL_SERVER = "local:__local__"
 _SUGGESTED_ID_WORDS = re.compile(r"[^a-z0-9._-]+")
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,12 +284,30 @@ class ToolPackExportService:
         self._producer_version = producer_version
 
     def capture(
-        self, *, profile_id: str, display_name: str, suggested_id: str
+        self,
+        *,
+        profile_id: str,
+        display_name: str,
+        suggested_id: str,
+        expected_revision: int | None = None,
+        expected_policy_digest: str | None = None,
     ) -> ToolPackExportReview:
         if (
             type(profile_id) is not str
             or not profile_id
             or profile_id != profile_id.strip()
+            or (expected_revision is not None and expected_policy_digest is None)
+            or (
+                expected_revision is not None
+                and (type(expected_revision) is not int or expected_revision < 1)
+            )
+            or (
+                expected_policy_digest is not None
+                and (
+                    type(expected_policy_digest) is not str
+                    or _SHA256.fullmatch(expected_policy_digest) is None
+                )
+            )
         ):
             raise ToolPackError("export", "profile_invalid")
         try:
@@ -301,8 +321,29 @@ class ToolPackExportService:
         profile = profiles.get(profile_id) if isinstance(profiles, Mapping) else None
         if not isinstance(profile, Mapping):
             raise ToolPackError("export", "profile_unavailable")
-        if profile_lifecycle_disposition(profile) in {"invalid", "tombstone"}:
+        disposition = profile_lifecycle_disposition(profile)
+        if disposition in {"invalid", "tombstone"}:
             raise ToolPackError("export", "profile_invalid")
+        try:
+            current_policy_digest = profile_policy_digest(profile)
+        except (TypeError, ValueError):
+            raise ToolPackError("export", "profile_invalid") from None
+        if expected_policy_digest is not None and (
+            current_policy_digest != expected_policy_digest
+        ):
+            raise ToolPackError("export", "profile_invalid")
+        lifecycle = profile.get("tool_pack_lifecycle")
+        if disposition == "imported" and (
+            not isinstance(lifecycle, Mapping)
+            or lifecycle.get("policy_digest") != current_policy_digest
+        ):
+            raise ToolPackError("export", "profile_invalid")
+        if expected_revision is not None:
+            if not isinstance(lifecycle, Mapping) or (
+                lifecycle.get("revision") != expected_revision
+                or lifecycle.get("policy_digest") != expected_policy_digest
+            ):
+                raise ToolPackError("export", "profile_invalid")
         try:
             inventory = capture_v1_inventory(self._inventory)
         except ToolPackError:

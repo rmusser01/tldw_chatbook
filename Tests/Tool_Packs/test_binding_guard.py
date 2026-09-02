@@ -332,6 +332,17 @@ def test_review_recomputes_current_fallback_allow_and_risk_posture(
     assert ("local:docs", "exact") in summary.high_risk_allows
     assert ("local:docs", "stale") in summary.high_risk_allows
     assert ("local:fallback", "inherited") in summary.high_risk_allows
+    assert len(summary.effective_asks) == summary.ask_count
+    assert len(summary.effective_denies) == summary.deny_count
+    assert {
+        *summary.effective_allows,
+        *summary.effective_asks,
+        *summary.effective_denies,
+    } == {
+        ("local:docs", "exact"),
+        ("local:docs", "stale"),
+        ("local:fallback", "inherited"),
+    }
 
 
 def test_abandoned_confirmation_state_is_pruned_and_bounded(tmp_path, monkeypatch):

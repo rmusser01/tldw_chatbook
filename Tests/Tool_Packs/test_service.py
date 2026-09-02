@@ -287,6 +287,99 @@ def test_real_capture_result_can_be_published_by_the_facade(
     assert destination.path.is_file()
 
 
+def test_capture_export_fences_an_imported_profile_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    receipts = ToolPackReceiptStore(tmp_path / "receipts")
+    handle = receipt(receipts, "research")
+    store = MCPPermissionStore(tmp_path / "permissions.json")
+    payload = store.load()
+    payload["profiles"]["research"] = imported(handle)
+    store.save(payload)
+    lifecycle = payload["profiles"]["research"]["tool_pack_lifecycle"]
+    monkeypatch.setattr(
+        export_module, "capture_v1_inventory", lambda _registry: inventory()
+    )
+    service = facade(
+        tmp_path,
+        store=store,
+        receipts=receipts,
+        exporter=ToolPackExportService(store, object()),
+    )
+
+    review = service.capture_export(
+        "research",
+        display_name="Research",
+        suggested_id="research",
+        expected_revision=lifecycle["revision"],
+        expected_policy_digest=lifecycle["policy_digest"],
+    )
+    assert type(review) is ToolPackExportReview
+
+    with pytest.raises(ToolPackError, match=r"profile_invalid$"):
+        service.capture_export(
+            "research",
+            display_name="Research",
+            suggested_id="research",
+            expected_revision=lifecycle["revision"] + 1,
+            expected_policy_digest=lifecycle["policy_digest"],
+        )
+
+
+def test_capture_export_fences_a_local_profile_policy_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = MCPPermissionStore(tmp_path / "permissions.json")
+    payload = store.load()
+    captured_digest = profile_policy_digest(payload["profiles"]["default"])
+    monkeypatch.setattr(
+        export_module, "capture_v1_inventory", lambda _registry: inventory()
+    )
+    service = facade(
+        tmp_path,
+        store=store,
+        exporter=ToolPackExportService(store, object()),
+    )
+
+    review = service.capture_export(
+        "default",
+        display_name="Default",
+        suggested_id="default",
+        expected_policy_digest=captured_digest,
+    )
+    assert type(review) is ToolPackExportReview
+
+    store.set_global_default("deny")
+    with pytest.raises(ToolPackError, match=r"profile_invalid$"):
+        service.capture_export(
+            "default",
+            display_name="Default",
+            suggested_id="default",
+            expected_policy_digest=captured_digest,
+        )
+
+
+def test_publish_export_forwards_the_worker_cancellation_probe(tmp_path: Path) -> None:
+    published: list[object] = []
+
+    def publisher(_snapshot, _destination, **kwargs):
+        published.append(kwargs["cancelled"])
+        return "published"
+
+    service = facade(tmp_path, publisher=publisher)
+    review = ToolPackExportReview(
+        SimpleNamespace(), "i" * 64, (), (), ()  # type: ignore[arg-type]
+    )
+
+    def probe() -> bool:
+        return False
+
+    assert (
+        service.publish_export(review, object(), cancelled=probe) == "published"
+    )
+    assert published == [probe]
+
+
 def test_publish_rejects_values_other_than_the_captured_review(tmp_path: Path) -> None:
     with pytest.raises(ToolPackError, match=r"publication_failed$"):
         facade(tmp_path).publish_export(object(), object())
@@ -358,7 +451,13 @@ def test_listing_is_immutable_current_and_hides_tombstones(
     assert row.receipt_health == "available"
     assert row.removal_eligible is False and row.removal_blocker == "referenced"
     assert listing.by_id("default").origin == "local"
+    assert listing.by_id("default").policy_digest == profile_policy_digest(
+        payload["profiles"]["default"]
+    )
     assert listing.by_id("ws-managed").origin == "workspace-managed"
+    assert listing.by_id("ws-managed").policy_digest == profile_policy_digest(
+        payload["profiles"]["ws-managed"]
+    )
     assert listing.by_id("broken").lifecycle_valid is False
     assert listing.by_id("bad-tombstone").origin == "imported"
     assert listing.by_id("bad-tombstone").lifecycle_valid is False

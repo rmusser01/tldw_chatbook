@@ -33,6 +33,7 @@ from textual.screen import ModalScreen
 from textual.strip import Strip
 from textual.suggester import SuggestFromList
 from textual.validation import ValidationResult, Validator
+from textual.worker import get_current_worker
 from textual.widgets import (
     Button,
     Checkbox,
@@ -263,6 +264,30 @@ from ...Widgets.Settings_Widgets.speech_tts_settings_panel import (
     SpeechTTSPanelDraftSnapshot,
     SpeechTTSSettingsPanel,
 )
+from ...Widgets.Settings_Widgets.tool_profiles_panel import ToolProfilesPanel
+from ...Widgets.Settings_Widgets.tool_pack_import_review import (
+    ToolPackExportReviewModal,
+    ToolPackImportOptions,
+    ToolPackImportOptionsModal,
+    ToolPackImportReviewModal,
+    ToolProfileFirstBindReviewModal,
+)
+from ...Widgets.enhanced_file_picker import EnhancedFileOpen, EnhancedFileSave
+from ...Third_Party.textual_fspicker import Filters
+from ...Tool_Packs.activation import ToolPackActivationResult
+from ...Tool_Packs.binding import (
+    ToolProfileBindingReview,
+    ToolProfileConfirmationRequired,
+)
+from ...Tool_Packs.contracts import ToolPackError
+from ...Tool_Packs.export import ToolPackExportReview
+from ...Tool_Packs.importer import ToolPackImportReview
+from ...Tool_Packs.publication import (
+    CapturedToolPackDestination,
+    ToolPackPublicationResult,
+)
+from ...Tool_Packs.removal import ToolProfileRemovalResult
+from ...Tool_Packs.service import ToolProfileListing
 from ...Model_Artifacts.service import ArtifactRef
 from ...Model_Artifacts.store import managed_service
 from ...TTS.audio_cpp_guided_config import (
@@ -1685,6 +1710,20 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
             "lifecycle and folder bindings apply immediately; there is no draft state here",
         ),
     ),
+    SettingsCategoryId.TOOL_PROFILES: (
+        (
+            "Affected data",
+            "local Tool policy profiles and portable Tool Pack receipts",
+        ),
+        (
+            "Recovery",
+            "re-inspect imports, keep profiles unbound until reviewed, and remove only unreferenced profiles",
+        ),
+        (
+            "Boundary",
+            "profiles contain policy only; MCP owns policy editing and importing never installs tools",
+        ),
+    ),
     SettingsCategoryId.PRIVACY_SECURITY: (
         (
             "Affected config",
@@ -1715,6 +1754,20 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         (
             "Boundary",
             "Settings delegates every read and mutation to PersonalContextService",
+        ),
+    ),
+    SettingsCategoryId.NETWORK: (
+        (
+            "Affected config",
+            "outbound TLS certificate verification and optional CA bundle path",
+        ),
+        (
+            "Recovery",
+            "restore system verification or choose a readable CA bundle, then save",
+        ),
+        (
+            "Boundary",
+            "changes affect newly created clients; open connections keep their current trust policy",
         ),
     ),
     SettingsCategoryId.CONSOLE_BEHAVIOR: (
@@ -2532,6 +2585,11 @@ class SettingsScreen(BaseAppScreen):
         self._raw_cli_unlock_confirmation_pending = False
         self._raw_cli_arm_confirmation_pending = False
         self._terminal_confirmation_pending = False
+        self._tool_profiles_listing = ToolProfileListing(
+            unavailable_category="loading"
+        )
+        self._tool_profiles_listing_generation = 0
+        self._tool_profiles_result = ""
 
         # Network category pending edits. Deliberately NOT a SettingsDraft in
         # _settings_drafts: the category bypasses the draft-staging machinery
@@ -3438,6 +3496,8 @@ class SettingsScreen(BaseAppScreen):
         self.call_after_refresh(self._update_inspector_overflow_hint)
         self.call_after_refresh(self._refresh_provider_picker)
         self.call_after_refresh(self._consume_audio_cpp_model_library_result)
+        if self.active_category == SettingsCategoryId.TOOL_PROFILES.value:
+            self.call_after_refresh(self._request_tool_profiles_listing)
 
     def on_unmount(self) -> None:
         """Fence any late Model Library review before this screen is replaced."""
@@ -3501,6 +3561,11 @@ class SettingsScreen(BaseAppScreen):
             self._queue_sync_rows_refresh()
         self._maybe_refresh_rag_index_status_on_show()
         self._maybe_refresh_workspaces_pane_on_show()
+        if (
+            not mount_already_refreshed
+            and self._active_category_id() is SettingsCategoryId.TOOL_PROFILES
+        ):
+            self._request_tool_profiles_listing()
 
     def _maybe_refresh_rag_index_status_on_show(self) -> None:
         if self._active_category_id() is SettingsCategoryId.LIBRARY_RAG:
@@ -3605,6 +3670,12 @@ class SettingsScreen(BaseAppScreen):
                 SettingsCategoryId.WORKSPACES,
                 "Workspaces",
                 "Create, rename, archive, and bind folders for agent file tools.",
+                "Immediate actions",
+            ),
+            SettingsCategorySummary(
+                SettingsCategoryId.TOOL_PROFILES,
+                "Tool Profiles",
+                "Import, export, review, bind, and remove portable tool permission profiles.",
                 "Immediate actions",
             ),
             SettingsCategorySummary(
@@ -3757,6 +3828,450 @@ class SettingsScreen(BaseAppScreen):
         n = self._get_internal_prompts_customized_count()
         return f"{n} customized" if n else "Defaults"
 
+    def _request_tool_profiles_listing(self) -> None:
+        """Refresh Tool Profiles from the app-owned service off the UI thread."""
+        self._tool_profiles_listing_generation += 1
+        self._load_tool_profiles_worker(self._tool_profiles_listing_generation)
+
+    @work(
+        thread=True,
+        group="settings-tool-profiles-list",
+        exclusive=True,
+        exit_on_error=False,
+    )
+    def _load_tool_profiles_worker(self, generation: int) -> None:
+        """Capture one complete profile listing without blocking Settings."""
+        service = getattr(self.app_instance, "tool_pack_service", None)
+        if service is None:
+            listing = ToolProfileListing(unavailable_category="service_unavailable")
+        else:
+            try:
+                candidate = service.list_profiles()
+                listing = (
+                    candidate
+                    if type(candidate) is ToolProfileListing
+                    else ToolProfileListing(unavailable_category="store_invalid")
+                )
+            except Exception:  # noqa: BLE001 - optional service must not crash UI
+                listing = ToolProfileListing(
+                    unavailable_category="store_invalid"
+                )
+        self.app.call_from_thread(
+            self._apply_tool_profiles_listing,
+            generation,
+            listing,
+        )
+
+    def _apply_tool_profiles_listing(
+        self,
+        generation: int,
+        listing: ToolProfileListing,
+    ) -> None:
+        """Apply only the newest listing to the currently mounted category."""
+        if generation != self._tool_profiles_listing_generation:
+            return
+        self._tool_profiles_listing = listing
+        if self.active_category != SettingsCategoryId.TOOL_PROFILES.value:
+            return
+        try:
+            panel = self.query_one("#settings-tool-profiles-panel", ToolProfilesPanel)
+        except QueryError:
+            return
+        self.run_worker(
+            panel.apply_listing(listing),
+            group="settings-tool-profiles-render",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    def _set_tool_profiles_result(self, text: str) -> None:
+        """Persist and render one bounded, path-free operation outcome."""
+        self._tool_profiles_result = text[:512]
+        try:
+            panel = self.query_one("#settings-tool-profiles-panel", ToolProfilesPanel)
+        except QueryError:
+            return
+        panel.set_result(self._tool_profiles_result)
+
+    def _tool_profile_action_is_current(
+        self,
+        event: ToolProfilesPanel._ProfileRequested,
+        *,
+        removable: bool = False,
+    ) -> bool:
+        """Reject actions whose rendered profile identity is no longer current."""
+        current = self._tool_profiles_listing.by_id(event.profile_id)
+        valid = current is not None and (
+            current.lifecycle_valid
+            and current.revision == event.revision
+            and current.policy_digest == event.policy_digest
+            and (not removable or current.removal_eligible)
+        )
+        if valid:
+            return True
+        self._set_tool_profiles_result("Profile changed · stale")
+        self._request_tool_profiles_listing()
+        return False
+
+    @staticmethod
+    def _tool_pack_failure_copy(operation: str, error: ToolPackError) -> str:
+        """Return bounded recovery copy for one stable Tool Pack error."""
+        if operation == "export" and error.category == "publication_unsupported":
+            if os.name == "nt":
+                return (
+                    "Export unavailable · publication_unsupported. Native Windows "
+                    "Tool Pack publication is not supported yet."
+                )
+            return (
+                "Export unavailable · publication_unsupported. Required safe "
+                "publication primitives are unavailable on this platform."
+            )
+        return f"{operation.title()} failed · {error.category}"
+
+    @on(ToolProfilesPanel.ImportRequested)
+    def _handle_tool_profile_import(
+        self,
+        event: ToolProfilesPanel.ImportRequested,
+    ) -> None:
+        """Start one review-first, unbound Tool Pack import."""
+        event.stop()
+        self._tool_profile_import_flow()
+
+    @work(
+        group="settings-tool-pack-import",
+        exclusive=True,
+        exit_on_error=False,
+    )
+    async def _tool_profile_import_flow(self) -> None:
+        """Inspect and explicitly activate a Tool Pack outside the event loop."""
+        service = getattr(self.app_instance, "tool_pack_service", None)
+        if service is None:
+            self._set_tool_profiles_result("Import failed · service_unavailable")
+            return
+        worker = get_current_worker()
+        selected = await self.app.push_screen_wait(
+            EnhancedFileOpen(
+                title="Import Tool Pack",
+                filters=Filters(
+                    (
+                        "Tool Pack archives",
+                        lambda path: path.suffix.casefold() == ".tldw-tool-pack",
+                    )
+                ),
+                context="tool_pack_import",
+                select_button="Inspect",
+            )
+        )
+        if selected is None or worker.is_cancelled:
+            self._set_tool_profiles_result("Import cancelled")
+            return
+        archive_path = Path(selected)
+        suffix = ".tldw-tool-pack"
+        default_id = (
+            archive_path.name[: -len(suffix)]
+            if archive_path.name.casefold().endswith(suffix)
+            else archive_path.stem
+        )
+        options: ToolPackImportOptions | None = ToolPackImportOptions(
+            default_id or "tool-profile"
+        )
+        try:
+            while options is not None and not worker.is_cancelled:
+                options = await self.app.push_screen_wait(
+                    ToolPackImportOptionsModal(options)
+                )
+                if options is None or worker.is_cancelled:
+                    self._set_tool_profiles_result("Import cancelled")
+                    return
+                candidate = await asyncio.to_thread(
+                    service.inspect_import,
+                    archive_path,
+                    destination_id=options.destination_id,
+                    mappings=options.mappings,
+                )
+                if type(candidate) is not ToolPackImportReview:
+                    raise ToolPackError("import", "archive_invalid")
+                decision = await self.app.push_screen_wait(
+                    ToolPackImportReviewModal(candidate)
+                )
+                if decision == "revise":
+                    continue
+                if decision is not candidate:
+                    self._set_tool_profiles_result("Import cancelled")
+                    return
+                if worker.is_cancelled:
+                    return
+                result = await asyncio.to_thread(service.import_unbound, candidate)
+                if type(result) is not ToolPackActivationResult:
+                    raise ToolPackError("import", "activation_failed")
+                self._set_tool_profiles_result(
+                    f"Imported {result.installed.profile_id} unbound · "
+                    f"revision {result.installed.revision}"
+                )
+                self._request_tool_profiles_listing()
+                return
+        except ToolPackError as exc:
+            self._set_tool_profiles_result(self._tool_pack_failure_copy("import", exc))
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - optional workflow must stay bounded
+            self._set_tool_profiles_result("Import failed · activation_failed")
+
+    @on(ToolProfilesPanel.ExportRequested)
+    def _handle_tool_profile_export(
+        self,
+        event: ToolProfilesPanel.ExportRequested,
+    ) -> None:
+        """Start export for one exact rendered profile identity."""
+        event.stop()
+        if self._tool_profile_action_is_current(event):
+            self._tool_profile_export_flow(
+                event.profile_id,
+                event.revision,
+                event.policy_digest,
+            )
+
+    @work(
+        group="settings-tool-pack-export",
+        exclusive=True,
+        exit_on_error=False,
+    )
+    async def _tool_profile_export_flow(
+        self,
+        profile_id: str,
+        revision: int | None,
+        policy_digest: str | None,
+    ) -> None:
+        """Capture, review, and safely publish one immutable Tool Pack."""
+        service = getattr(self.app_instance, "tool_pack_service", None)
+        if service is None:
+            self._set_tool_profiles_result("Export failed · service_unavailable")
+            return
+        worker = get_current_worker()
+        try:
+            candidate = await asyncio.to_thread(
+                service.capture_export,
+                profile_id,
+                display_name=profile_id,
+                suggested_id=profile_id,
+                expected_revision=revision,
+                expected_policy_digest=policy_digest,
+            )
+            if type(candidate) is not ToolPackExportReview:
+                raise ToolPackError("export", "profile_invalid")
+            confirmed = await self.app.push_screen_wait(
+                ToolPackExportReviewModal(
+                    candidate,
+                    profile_id=profile_id,
+                    revision=revision,
+                    policy_digest=policy_digest,
+                )
+            )
+            if confirmed is not candidate or worker.is_cancelled:
+                self._set_tool_profiles_result("Export cancelled")
+                return
+            selected = await self.app.push_screen_wait(
+                EnhancedFileSave(
+                    title="Export Tool Pack",
+                    filters=Filters(
+                        (
+                            "Tool Pack archives",
+                            lambda path: path.suffix.casefold()
+                            == ".tldw-tool-pack",
+                        )
+                    ),
+                    default_filename=f"{candidate.snapshot.manifest.suggested_id}.tldw-tool-pack",
+                    context="tool_pack_export",
+                )
+            )
+            if selected is None or worker.is_cancelled:
+                self._set_tool_profiles_result("Export cancelled")
+                return
+            destination = await asyncio.to_thread(
+                CapturedToolPackDestination.capture,
+                Path(selected),
+            )
+            overwrite_token = destination.overwrite_token
+            if overwrite_token is not None:
+                overwrite = await self.app.push_screen_wait(
+                    ConfirmationDialog(
+                        title="Replace existing Tool Pack?",
+                        message=(
+                            "The selected destination already contains a regular "
+                            "file. Replace that exact captured file?"
+                        ),
+                        confirm_label="Replace",
+                    )
+                )
+                if overwrite is not True or worker.is_cancelled:
+                    self._set_tool_profiles_result("Export cancelled")
+                    return
+            result = await asyncio.to_thread(
+                service.publish_export,
+                candidate,
+                destination,
+                overwrite_token=overwrite_token,
+                cancelled=lambda: worker.is_cancelled,
+            )
+            if type(result) is not ToolPackPublicationResult:
+                raise ToolPackError("export", "publication_failed")
+            if result.durability_uncertain:
+                self._set_tool_profiles_result(
+                    "Export may have completed · durability_uncertain"
+                )
+            elif result.committed:
+                self._set_tool_profiles_result(
+                    f"Exported Tool Pack · {result.archive_sha256}"
+                )
+            else:
+                raise ToolPackError("export", "publication_failed")
+        except ToolPackError as exc:
+            self._set_tool_profiles_result(self._tool_pack_failure_copy("export", exc))
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - optional workflow must stay bounded
+            self._set_tool_profiles_result("Export failed · publication_failed")
+
+    @on(ToolProfilesPanel.RemoveRequested)
+    def _handle_tool_profile_remove(
+        self,
+        event: ToolProfilesPanel.RemoveRequested,
+    ) -> None:
+        """Start exact-revision removal for one eligible imported profile."""
+        event.stop()
+        if (
+            self._tool_profile_action_is_current(event, removable=True)
+            and type(event.revision) is int
+        ):
+            self._tool_profile_remove_flow(event.profile_id, event.revision)
+
+    @work(
+        group="settings-tool-pack-remove",
+        exclusive=True,
+        exit_on_error=False,
+    )
+    async def _tool_profile_remove_flow(
+        self,
+        profile_id: str,
+        revision: int,
+    ) -> None:
+        """Confirm and replace one eligible profile with its permanent tombstone."""
+        service = getattr(self.app_instance, "tool_pack_service", None)
+        if service is None:
+            self._set_tool_profiles_result("Remove failed · service_unavailable")
+            return
+        worker = get_current_worker()
+        display_profile_id = "".join(
+            character
+            if character >= " " and character != "\x7f"
+            else f"\\u{ord(character):04x}"
+            for character in profile_id
+        )
+        if len(display_profile_id) > 128:
+            display_profile_id = f"{display_profile_id[:127]}…"
+        confirmed = await self.app.push_screen_wait(
+            ConfirmationDialog(
+                title="Remove Tool Profile?",
+                message=(
+                    f"Remove {escape_markup(display_profile_id)}? Its id remains "
+                    "reserved by a permanent Deny tombstone."
+                ),
+                confirm_label="Remove profile",
+            )
+        )
+        if confirmed is not True or worker.is_cancelled:
+            self._set_tool_profiles_result("Remove cancelled")
+            return
+        try:
+            candidate = await asyncio.to_thread(
+                service.remove_profile,
+                profile_id,
+                expected_revision=revision,
+            )
+            if type(candidate) is not ToolProfileRemovalResult:
+                raise ToolPackError("remove", "outcome_uncertain")
+            self._set_tool_profiles_result(
+                f"Removed {candidate.tombstone.profile_id} · id permanently reserved"
+            )
+            self._request_tool_profiles_listing()
+        except ToolPackError as exc:
+            self._set_tool_profiles_result(self._tool_pack_failure_copy("remove", exc))
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - optional workflow must stay bounded
+            self._set_tool_profiles_result("Remove failed · outcome_uncertain")
+
+    @on(ToolProfilesPanel.EditPolicyRequested)
+    def _handle_tool_profile_edit_policy(
+        self,
+        event: ToolProfilesPanel.EditPolicyRequested,
+    ) -> None:
+        """Deep-link one still-current profile into MCP Permissions."""
+        event.stop()
+        current = self._tool_profiles_listing.by_id(event.profile_id)
+        if current is None or (
+            not current.lifecycle_valid
+            or current.revision != event.revision
+            or current.policy_digest != event.policy_digest
+        ):
+            self.app.notify(
+                "Tool profile changed. Refreshing the current profile list.",
+                severity="warning",
+            )
+            self._request_tool_profiles_listing()
+            return
+        self.post_message(
+            NavigateToScreen(
+                "mcp",
+                {
+                    "mode": "permissions",
+                    "tool_policy_profile_id": event.profile_id,
+                    "profile_revision": event.revision,
+                    "profile_policy_digest": event.policy_digest,
+                },
+            )
+        )
+
+    @on(ToolProfilesPanel.BindRequested)
+    def _handle_tool_profile_bind(
+        self,
+        event: ToolProfilesPanel.BindRequested,
+    ) -> None:
+        """Stage a profile in Workspaces; the apply control owns actual binding."""
+        event.stop()
+        if not self._tool_profile_action_is_current(event):
+            return
+        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        try:
+            active = registry.get_active_workspace() if registry is not None else None
+        except WorkspaceRegistryServiceError:
+            active = None
+
+        self._select_category(SettingsCategoryId.WORKSPACES.value)
+        if active is None or active.workspace_id == DEFAULT_WORKSPACE_ID:
+            self._settings_selected_workspace_id = None
+            self._settings_workspace_assistant_pending = None
+            self._settings_workspace_memory_armed = None
+            self._settings_workspaces_result = (
+                "Choose a non-default workspace, then stage the Tool Profile in "
+                "Default assistant."
+            )
+            return
+
+        defaults = active.assistant_defaults
+        self._settings_selected_workspace_id = active.workspace_id
+        self._settings_workspace_assistant_pending = {
+            "workspace_id": active.workspace_id,
+            "persona_id": getattr(defaults, "assistant_id", None),
+            "memory_mode": getattr(defaults, "persona_memory_mode", "read_only"),
+            "profile_id": event.profile_id,
+        }
+        self._settings_workspace_memory_armed = None
+        self._settings_workspaces_result = (
+            "Tool Profile staged — choose a persona and apply."
+        )
+        self.call_after_refresh(self._refresh_settings_workspaces_pane)
+
     def _category_groups(
         self,
     ) -> tuple[tuple[str, tuple[SettingsCategoryId, ...]], ...]:
@@ -3783,6 +4298,7 @@ class SettingsScreen(BaseAppScreen):
                 (
                     SettingsCategoryId.STORAGE,
                     SettingsCategoryId.WORKSPACES,
+                    SettingsCategoryId.TOOL_PROFILES,
                     SettingsCategoryId.PRIVACY_SECURITY,
                     SettingsCategoryId.NETWORK,
                     SettingsCategoryId.PERSONAL_CONTEXT,
@@ -4133,6 +4649,28 @@ class SettingsScreen(BaseAppScreen):
                 ),
                 recovery_copy=(
                     "Quick actions: switch/rename/archive in Console (Alt+W); create in Library."
+                ),
+            ),
+            SettingsOwnershipRecord(
+                category=SettingsCategoryId.TOOL_PROFILES,
+                owns_config_sections=(
+                    "MCP permission-store Tool profiles",
+                    "portable Tool Pack import receipts",
+                ),
+                reads_runtime_state_from=(
+                    "ToolPackService lifecycle",
+                    "workspace profile references",
+                    "MCP permission inventory",
+                ),
+                writes_allowed=True,
+                runtime_owner="ToolPackService (immediate reviewed actions)",
+                boundary_copy=(
+                    "Settings manages profile lifecycle; MCP Permissions owns policy editing. "
+                    "Tool Packs never install tools."
+                ),
+                recovery_copy=(
+                    "Re-inspect stale imports and remove only profiles with no active or "
+                    "archived workspace references."
                 ),
             ),
             SettingsOwnershipRecord(
@@ -6541,6 +7079,11 @@ class SettingsScreen(BaseAppScreen):
                 "Immediate actions: workspace changes apply as you make them; "
                 "there is no draft to save or revert."
             )
+        if category == SettingsCategoryId.TOOL_PROFILES:
+            return (
+                "Reviewed actions: imports stay unbound, exports publish an exact "
+                "snapshot, and policy editing opens MCP Permissions."
+            )
         if category == SettingsCategoryId.AGENTS:
             return (
                 "Applies immediately: agent definitions save/delete as you "
@@ -7211,6 +7754,8 @@ class SettingsScreen(BaseAppScreen):
             return "Auto-saved"
         if category is SettingsCategoryId.WORKSPACES:
             return "Applies immediately"
+        if category is SettingsCategoryId.TOOL_PROFILES:
+            return "Reviewed actions"
         if category is SettingsCategoryId.AGENTS:
             return "Applies immediately"
         if category is SettingsCategoryId.NETWORK:
@@ -7260,6 +7805,11 @@ class SettingsScreen(BaseAppScreen):
             return "Splash changes take effect as you make them."
         if category is SettingsCategoryId.WORKSPACES:
             return "Each action reversible: unarchive, rename again, or set active."
+        if category is SettingsCategoryId.TOOL_PROFILES:
+            return (
+                "Imports stay unbound; MCP owns policy editing; removal permanently "
+                "reserves the profile id."
+            )
         if category is SettingsCategoryId.AGENTS:
             return "agent_runs.db (SQLite) — immediate CRUD, no draft"
         if category is SettingsCategoryId.THEME:
@@ -17086,6 +17636,12 @@ class SettingsScreen(BaseAppScreen):
                 ),
                 id="settings-speech-tts-panel",
             )
+        elif category is SettingsCategoryId.TOOL_PROFILES:
+            yield ToolProfilesPanel(
+                self._tool_profiles_listing,
+                result=self._tool_profiles_result,
+                id="settings-tool-profiles-panel",
+            )
         elif category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             yield Static(
                 "Console Behavior", classes="destination-section settings-column-title"
@@ -19678,6 +20234,8 @@ class SettingsScreen(BaseAppScreen):
             self._queue_sync_rows_refresh()
         if category_value == SettingsCategoryId.LIBRARY_RAG.value:
             self._refresh_library_rag_index_status()
+        if category_value == SettingsCategoryId.TOOL_PROFILES.value:
+            self._after_category_panes(self._request_tool_profiles_listing)
         if category_value == SettingsCategoryId.IMAGE_GENERATION.value:
             # Qodo PR #901 fix 3: entering the category invalidates the
             # cached raw-section baseline (see `_image_gen_raw_section_
@@ -21117,7 +21675,12 @@ class SettingsScreen(BaseAppScreen):
         )
         self._refresh_settings_workspaces_pane()
 
-    def _settings_workspace_apply_assistant_default(
+    @work(
+        group="settings-workspace-assistant-apply",
+        exclusive=True,
+        exit_on_error=False,
+    )
+    async def _settings_workspace_apply_assistant_default(
         self,
         registry: LocalWorkspaceRegistryService,
         workspace_id: str,
@@ -21125,26 +21688,125 @@ class SettingsScreen(BaseAppScreen):
         memory_mode: str,
         profile_id: str | None,
     ) -> None:
-        """Apply the staged default via the registry (never raises)."""
+        """Apply staged defaults, reviewing one imported first bind if required."""
+        intended = WorkspaceAssistantDefaults(
+            assistant_kind="persona",
+            assistant_id=persona_id,
+            persona_memory_mode=memory_mode,
+            tool_policy_profile_id=profile_id or None,
+        )
+        confirm_read_write = memory_mode == "read_write"
         try:
-            registry.set_assistant_defaults(
+            await asyncio.to_thread(
+                registry.set_assistant_defaults,
                 workspace_id,
-                WorkspaceAssistantDefaults(
-                    assistant_kind="persona",
-                    assistant_id=persona_id,
-                    persona_memory_mode=memory_mode,
-                    tool_policy_profile_id=profile_id or None,
-                ),
-                confirm_read_write=(memory_mode == "read_write"),
+                intended,
+                confirm_read_write=confirm_read_write,
             )
+        except ToolProfileConfirmationRequired:
+            service = getattr(self.app_instance, "tool_pack_service", None)
+            if service is None:
+                self._set_settings_workspaces_result(
+                    "Tool Profile bind unavailable · service_unavailable"
+                )
+                return
+            try:
+                record = await asyncio.to_thread(registry.get_workspace, workspace_id)
+                if record is None:
+                    raise ToolPackError("bind", "confirmation_stale")
+                action = "set" if record.assistant_defaults is None else "replace"
+                candidate = await asyncio.to_thread(
+                    service.review_first_bind,
+                    workspace_id,
+                    intended,
+                    action=action,
+                )
+                if type(candidate) is not ToolProfileBindingReview:
+                    raise ToolPackError("bind", "confirmation_invalid")
+                if self._settings_selected_workspace_id != workspace_id:
+                    raise ToolPackError("bind", "confirmation_stale")
+
+                confirmed = await self.app.push_screen_wait(
+                    ToolProfileFirstBindReviewModal(candidate, intended)
+                )
+                if confirmed is not candidate:
+                    self._set_settings_workspaces_result(
+                        "Tool Profile bind cancelled; no assistant defaults changed."
+                    )
+                    return
+                if self._settings_selected_workspace_id != workspace_id:
+                    raise ToolPackError("bind", "confirmation_stale")
+
+                token = await asyncio.to_thread(
+                    service.confirm_first_bind,
+                    candidate,
+                )
+                if type(token) is not str or not token:
+                    raise ToolPackError("bind", "confirmation_invalid")
+                await asyncio.to_thread(
+                    registry.set_assistant_defaults,
+                    workspace_id,
+                    intended,
+                    confirm_read_write=confirm_read_write,
+                    tool_profile_confirmation_token=token,
+                )
+            except ToolPackError as exc:
+                self._set_settings_workspaces_result(
+                    f"Tool Profile bind failed · {exc.category}"
+                )
+                return
+            except WorkspaceRegistryServiceError as exc:
+                self._set_settings_workspaces_result(str(exc))
+                return
+            except Exception:  # noqa: BLE001 - keep optional UI failure bounded
+                self._set_settings_workspaces_result(
+                    "Default assistant apply failed · operation_failed"
+                )
+                return
         except WorkspaceRegistryServiceError as exc:
             self._set_settings_workspaces_result(str(exc))
             return
-        self._settings_workspace_assistant_pending = None
-        self._settings_workspace_memory_armed = None
-        self._set_settings_workspaces_result(
-            f"Default assistant applied (memory: {memory_mode})."
+        except ToolPackError as exc:
+            self._set_settings_workspaces_result(
+                f"Tool Profile bind failed · {exc.category}"
+            )
+            return
+        except Exception:  # noqa: BLE001 - Settings must surface a stable outcome
+            self._set_settings_workspaces_result(
+                "Default assistant apply failed · operation_failed"
+            )
+            return
+        pending = self._settings_workspace_assistant_pending
+        pending_matches = pending is None or (
+            pending.get("workspace_id") == workspace_id
+            and pending.get("persona_id") == persona_id
+            and pending.get("memory_mode") == memory_mode
+            and (pending.get("profile_id") or None) == (profile_id or None)
         )
+        if pending is not None and pending_matches:
+            self._settings_workspace_assistant_pending = None
+        if (
+            pending_matches
+            and self._settings_workspace_memory_armed == workspace_id
+        ):
+            self._settings_workspace_memory_armed = None
+        if self._settings_selected_workspace_id != workspace_id or not pending_matches:
+            return
+        status = f"Default assistant applied (memory: {memory_mode})."
+        service = getattr(self.app_instance, "tool_pack_service", None)
+        if profile_id and service is not None and hasattr(service, "list_profiles"):
+            try:
+                listing = await asyncio.to_thread(service.list_profiles)
+                row = (
+                    listing.by_id(profile_id)
+                    if type(listing) is ToolProfileListing
+                    else None
+                )
+                if row is not None and row.first_bind_confirmation_required:
+                    status += " Saved, but marker cleanup failed; a later use may ask again."
+            except Exception:
+                pass
+        self._set_settings_workspaces_result(status)
         self._refresh_settings_workspaces_pane()
 
     @on(Button.Pressed, "#settings-workspace-memory-toggle")

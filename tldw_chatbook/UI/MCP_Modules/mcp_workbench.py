@@ -1880,6 +1880,7 @@ class MCPWorkbench(Container):
 
     def _tool_policy_inventory(
         self,
+        selected_profile_id: str | None = None,
     ) -> tuple[
         Mapping[str, Any],
         list[ToolPolicyProfileOption],
@@ -1954,7 +1955,9 @@ class MCPWorkbench(Container):
                     policy_digest=digest,
                     revision=revision,
                 )
-        return profiles, options, contexts.get(self._tool_policy_profile_id)
+        return profiles, options, contexts.get(
+            selected_profile_id or self._tool_policy_profile_id
+        )
 
     @staticmethod
     def _fail_closed_tool_states(
@@ -2091,13 +2094,33 @@ class MCPWorkbench(Container):
             return method(*args, **kwargs)
         return method(*args, **scoped)
 
-    async def select_tool_policy_profile(self, profile_id: str) -> bool:
-        """Select one available profile and invalidate all captured child state."""
-        _profiles, options, _context = self._tool_policy_inventory()
+    async def select_tool_policy_profile(
+        self,
+        profile_id: str,
+        *,
+        expected_revision: int | None = None,
+        expected_policy_digest: str | None = None,
+    ) -> bool:
+        """Select one available, optionally exact profile authority."""
+        _profiles, options, desired = self._tool_policy_inventory(profile_id)
         availability = {item.profile_id: item.available for item in options}
-        if not availability.get(profile_id, False):
+        if not availability.get(profile_id, False) or desired is None:
             self.app.notify(
                 _toast("Tool policy profile is unavailable."), severity="warning"
+            )
+            async with self._sync_children_lock:
+                await self._sync_permissions_mode()
+            return False
+        if (
+            expected_revision is not None
+            and desired.revision != expected_revision
+        ) or (
+            expected_policy_digest is not None
+            and desired.policy_digest != expected_policy_digest
+        ):
+            self.app.notify(
+                _toast("Tool policy profile changed. Refresh and try again."),
+                severity="warning",
             )
             async with self._sync_children_lock:
                 await self._sync_permissions_mode()
@@ -3229,6 +3252,7 @@ class MCPWorkbench(Container):
             "selected_server_key": self._selected_server_key,
             "scope": self._scope,
             "scope_ref": self._scope_ref,
+            "tool_policy_profile_id": self._tool_policy_profile_id,
         }
 
     def set_initial_view_state(self, state: dict[str, Any] | None) -> None:
@@ -3264,6 +3288,17 @@ class MCPWorkbench(Container):
         # chip highlight -- set_mode() itself posts ModeChanged on any
         # actual change (single emission point), so no extra post here.
         self.set_mode(str(state.get("mode") or "servers"))
+        profile_id = state.get("tool_policy_profile_id")
+        if self.active_mode == "permissions" and isinstance(profile_id, str):
+            raw_revision = state.get("profile_revision")
+            expected_revision = raw_revision if type(raw_revision) is int else None
+            raw_digest = state.get("profile_policy_digest")
+            expected_digest = raw_digest if type(raw_digest) is str else None
+            await self.select_tool_policy_profile(
+                profile_id,
+                expected_revision=expected_revision,
+                expected_policy_digest=expected_digest,
+            )
         # Distinguish "key absent" (leave the current selection alone --
         # e.g. the F-054 lone-problem preselect) from "key present with
         # value None" (an explicit "All servers" clear from the previous
