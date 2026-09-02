@@ -16,11 +16,10 @@ import uuid
 import webbrowser
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import datetime, timezone
-from enum import Enum
 from functools import partial
 import hashlib
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal
 
 from loguru import logger
 from loguru import logger as loguru_logger
@@ -105,7 +104,6 @@ from ...Library.library_content_evidence import (
 from ...Utils.adaptive_reader_state import (
     AdaptiveReaderEffectiveLayout,
     AdaptiveReaderLayoutPreferences,
-    AdaptiveReaderLayoutProfile,
     PANE_GRIP_WIDTH,
     PaneName,
     normalize_adaptive_reader_preferences,
@@ -120,7 +118,6 @@ from ...Utils.library_rail_width import (
 )
 from ...Library.library_conversation_reader_state import (
     LIBRARY_CONVERSATION_PAGE_SIZE,
-    ConversationReaderRequest,
     project_conversation_multiselect,
 )
 from ...Library.library_export_scope import (
@@ -216,7 +213,6 @@ from ...Library.library_notes_state import (
     LibraryNotesFocusIdentity,
     LibraryNotesListState,
     LibraryNotesOperationState,
-    NormalizedDatabaseNote,
     build_library_note_editor_state,
     build_library_notes_list_state,
     build_note_export_content,
@@ -260,8 +256,6 @@ from ...Notes.note_import_receipts import NoteImportReceiptRepository
 from ...Library.library_notes_session import (
     ConflictAction,
     ConflictOutcomeKind,
-    DatabaseNotePortLoadReply,
-    DatabaseNotePortSaveReply,
     DatabaseNoteSessionCoordinator,
     DestructiveAdmission,
     DestructiveAdmissionOutcomeKind,
@@ -335,12 +329,6 @@ from ...Prompt_Management.prompt_variables import (
 from ...Prompt_Management.prompt_source_capabilities import (
     PromptSourceCapabilities,
     local_prompt_capabilities,
-)
-from ...Prompt_Management.Prompts_Interop import (
-    parse_json_prompts_from_content,
-    parse_markdown_prompts_from_content,
-    parse_txt_prompts_from_content,
-    parse_yaml_prompts_from_content,
 )
 from ...Widgets.Prompts.prompt_block_editor import PromptBlockEditor
 from ...Widgets.Prompts.prompt_block_editor_state import (
@@ -437,11 +425,9 @@ from ...Notes.note_folder_models import (
     NoteFolderMembership,
     NotePlacementRecord,
 )
-from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...runtime_policy.types import PolicyDeniedError
 from ...STT.transcribe_cpp_config import (
     configure_model_path as configure_transcribe_cpp_model_path,
-    is_gguf_file,
 )
 from ...STT.parakeet_sources import (
     ParakeetSourceError,
@@ -449,7 +435,7 @@ from ...STT.parakeet_sources import (
     ParakeetSourceKey,
     PreparedExternalSelection,
 )
-from ...Third_Party.textual_fspicker import FileOpen, FileSave, Filters, SelectDirectory
+from ...Third_Party.textual_fspicker import FileOpen, FileSave, SelectDirectory
 from ...Utils.input_validation import sanitize_string, validate_text_input, validate_url
 from ...Utils.path_validation import validate_path_simple
 from ...Workspaces import (
@@ -552,7 +538,6 @@ from ...Widgets.Library.library_note_folder_dialog import (
     LibraryNoteFolderNameDialog,
     LibraryNoteFolderTargetDialog,
 )
-from ...Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from ...Widgets.Library.library_emergency_return import LibraryEmergencyReturn
 from ...Widgets.Library.library_notes_canvas import (
     LibraryNotePresentationState,

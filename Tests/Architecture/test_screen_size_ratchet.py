@@ -86,27 +86,32 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 44715/1300 -- the recipe's lower-in-the-same-PR contract (§6), not
     #: deferred to the cleanup task as originally (incorrectly) instructed.
     # Lowered at the browse-controller move (exemplar 3/4, task 8):
-    # 44715/1300 -> 44060/1300 -- per the recipe's lower-in-the-same-PR
-    # contract (§6): 40 method bodies moved to
-    # `LibraryConversationsController`, replaced by one-line delegators (a
-    # pure move nets zero methods -- the count is unchanged). 6 more names
-    # were moved and then reverted in this same task after test-suite
-    # evidence caught two distinct test-bypass shapes (5 via
-    # `-k "conversation and library"`'s fake-self `SimpleNamespace` calls;
-    # 1 via the paired-baseline xdist sweep's instance-attribute
-    # monkeypatch -- see that controller module's docstring) -- they stay
-    # real, full-body methods on `LibraryScreen`, which is why this
-    # measurement is a smaller shrink than a 46-method move would have
-    # produced.
-    # Raised again in the same task's review fix round: 44060 -> 44084 --
-    # a review caught the class-level `_safe_text` rebinding silently
-    # destroying the controller's own `_safe_text` property (a plain
-    # class-attribute assignment always overwrites a same-named class
-    # member, including a property descriptor); the fix removed the dead
+    # 44715/1300 -> 44084/1300 -- per the recipe's lower-in-the-same-PR
+    # contract (§6). Framed at the task level, not the intermediate one:
+    # this single PR's net movement is 44715 -> 44084, a lowering, same as
+    # every other entry in this ledger -- there is no raise-precedent here.
+    # Task 8 moved 40 method bodies to `LibraryConversationsController`,
+    # replaced by one-line delegators (a pure move nets zero methods -- the
+    # count is unchanged). 6 more names were moved and then reverted in
+    # this same task after test-suite evidence caught two distinct
+    # test-bypass shapes (5 via `-k "conversation and library"`'s fake-self
+    # `SimpleNamespace` calls; 1 via the paired-baseline xdist sweep's
+    # instance-attribute monkeypatch -- see that controller module's
+    # docstring) -- they stay real, full-body methods on `LibraryScreen`,
+    # which is why this measurement is a smaller shrink than a 46-method
+    # move would have produced. Mid-review, before this PR ever landed,
+    # that method-move alone measured 44060 -- an intra-task fix-round
+    # intermediate that was never intended to land on its own and never
+    # did: the same review round that produced it also caught the
+    # class-level `_safe_text` rebinding silently destroying the
+    # controller's own `_safe_text` property (a plain class-attribute
+    # assignment always overwrites a same-named class member, including a
+    # property descriptor); the fix removed the dead
     # property/constructor-param/backing-attribute from the controller
     # module and added an explanatory comment at the rebinding site plus
     # one net wiring-call line removed here -- net +24 lines of
-    # documentation, no logic change, method count unchanged.
+    # documentation, no logic change, method count unchanged -- landing
+    # this PR's only committed measurement, 44084.
     # Lowered at the cleanup PR (exemplar 4/4, task 9): 44084/1300 ->
     # 43974/1282 -- the conversations state shim block (28 generated
     # properties) is deleted wholesale, every remaining screen-side
@@ -123,12 +128,27 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # `Tests/Architecture/test_library_support_layer_surface.py`), which
     # requires `library_screen.py` to keep re-exporting every name Task 1
     # moved to `Library_Modules/`, whether or not the screen's own logic
-    # still reads it. This is the series' FINAL measurement; the
-    # conversations exemplar (state PR, 2 controller PRs, cleanup PR) is
-    # now complete -- see backlog/docs/library-decomposition-recipe.md's
-    # updated §11 for the full pin trajectory
-    # (45134 -> 44715 -> 44060 -> 44084 -> 43974/1300 -> 1282).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43974, 1282),
+    # still reads it. This is the conversations exemplar series' FINAL
+    # measurement (state PR, 2 controller PRs, cleanup PR complete) -- see
+    # backlog/docs/library-decomposition-recipe.md's updated §11 for the
+    # full pin trajectory, framed at the task level (each entry below is
+    # one PR's single landed measurement; 44060 was an intra-task-8
+    # fix-round intermediate, never itself a landed value, and is omitted
+    # here for that reason):
+    # 45134 -> 44715 -> 44084 -> 43974/1300 -> 1282.
+    # Lowered again at the final-review fix wave (outside the exemplar
+    # series proper): 43974 -> 43965 -- dead-import prune. The final
+    # reviewer AST-verified 15 more dead imports (`Enum`, `TypeAlias`,
+    # `AdaptiveReaderLayoutProfile`, `ConversationReaderRequest`,
+    # `NormalizedDatabaseNote`, `DatabaseNotePortLoadReply`,
+    # `DatabaseNotePortSaveReply`, the four `parse_*_prompts_from_content`
+    # names, `event_principal_id_from_active_context`, `is_gguf_file`,
+    # `Filters`, `PostRecomposeCallback`) that the cleanup PR's own
+    # 12-import ledger missed -- each confirmed single-occurrence (its own
+    # import line only), not pinned by
+    # `test_screen_still_re_exports_every_moved_name`, and not imported by
+    # anything outside this module. Method count unchanged (imports only).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 43965, 1282),
 }
 
 # Task 22507.4 started from this reviewed measurement. The repository-wide

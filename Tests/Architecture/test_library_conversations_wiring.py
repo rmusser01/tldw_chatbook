@@ -398,3 +398,46 @@ def test_reader_controller_exposes_every_state_field() -> None:
     assert not missing, (
         f"no controller shim property found for state field(s): {missing!r}"
     )
+
+
+@pytest.mark.unit
+def test_browse_controller_safe_text_is_bound_via_screen_import() -> None:
+    """Importing `library_screen` installs `_safe_text` on the browse controller.
+
+    Pins the class-level rebinding `library_screen.py` performs as its own
+    trailing module-level statement:
+    ``LibraryConversationsController._safe_text =
+    staticmethod(LibraryScreen._safe_text)`` (see that controller module's
+    docstring, and the comment at the rebinding site in `library_screen.py`,
+    for the full incident this binding shape resolves -- an earlier version
+    of the controller also carried a same-named `@property`, found by
+    review to be dead code, because a plain class-attribute assignment
+    always overwrites a same-named class member, property descriptor
+    included).
+
+    A `LibraryConversationsController` constructed WITHOUT ever importing
+    `library_screen` first has no `_safe_text` at all -- the moment any
+    moved cluster body calls `self._safe_text(...)` or `cls._safe_text(...)`
+    it raises `AttributeError`, previously only surfaced (if at all) via a
+    swallowed exception on some runtime call path rather than at test time.
+    Importing `tldw_chatbook.UI.Screens.library_screen` here -- module
+    import has the side effect of running that trailing rebinding statement
+    -- and then asserting the binding exists turns that failure mode into
+    an explicit, fast assertion instead of a standalone-controller misuse
+    that only shows up later.
+    """
+    import tldw_chatbook.UI.Screens.library_screen  # noqa: F401  (import side effect installs the binding)
+    from tldw_chatbook.UI.Library_Modules.library_conversations_controller import (
+        LibraryConversationsController,
+    )
+
+    bound = LibraryConversationsController.__dict__.get("_safe_text")
+    assert isinstance(bound, staticmethod), (
+        "LibraryConversationsController._safe_text must be the staticmethod "
+        "installed by library_screen.py's trailing class-level rebinding "
+        "(`LibraryConversationsController._safe_text = "
+        f"staticmethod(LibraryScreen._safe_text)`) -- got {type(bound)!r}"
+    )
+    assert callable(LibraryConversationsController._safe_text), (
+        "LibraryConversationsController._safe_text must be callable"
+    )
