@@ -2491,6 +2491,36 @@ def test_library_screen_bindings_are_all_gated_or_universal():
             )
 
 
+def test_action_show_workbench_help_lists_reader_action_keys(monkeypatch):
+    """task-28027: F1 in the media Reader advertises the l/c/t accelerators."""
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+    from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
+
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    screen._library_media_view = "viewer"
+
+    pushed = []
+
+    class _FakeApp:
+        def push_screen(self, panel):
+            pushed.append(panel)
+
+    monkeypatch.setattr(
+        LibraryScreen, "app", property(lambda self: _FakeApp()), raising=False
+    )
+
+    screen.action_show_workbench_help()
+
+    assert len(pushed) == 1
+    panel = pushed[0]
+    assert isinstance(panel, WorkbenchHelpPanel)
+    keys = {key for key, _description in panel.state.shortcuts}
+    assert {"l", "c", "t"} <= keys
+
+
 def test_action_show_workbench_help_filters_bindings_by_check_action(monkeypatch):
     """task-2858 AC#2 (LIB-09): F1 on a non-skills, non-Search canvas must
     NOT advertise the skill editor's or Search/RAG's dead keys -- the
