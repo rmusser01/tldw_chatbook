@@ -190,8 +190,8 @@ def _build(
     clock = _Clock()
     inventory = _inventory(
         _tool("local:docs", "exact", description="exact", tags=("mutates",)),
-        _tool("local:docs", "stale", description="changed"),
-        _tool("local:fallback", "inherited"),
+        _tool("local:docs", "stale", description="changed", tags=("mutates",)),
+        _tool("local:fallback", "inherited", tags=("mutates",)),
     )
     monkeypatch.setattr(
         binding_module,
@@ -330,6 +330,60 @@ def test_review_recomputes_current_fallback_allow_and_risk_posture(
     assert ("local:docs", "stale") in summary.downgraded_allows
     assert ("local:docs", "exact") in summary.effective_allows
     assert ("local:docs", "exact") in summary.high_risk_allows
+    assert ("local:docs", "stale") in summary.high_risk_allows
+    assert ("local:fallback", "inherited") in summary.high_risk_allows
+
+
+def test_abandoned_confirmation_state_is_pruned_and_bounded(tmp_path, monkeypatch):
+    """Cancelled reviews and unspent tokens must not grow for process lifetime."""
+    monkeypatch.setattr(binding_module, "_MAX_PENDING_CONFIRMATIONS", 2)
+    registry, _store, guard, clock = _build(tmp_path, monkeypatch)
+    intended = _defaults()
+
+    first = guard.review("w-1", intended, action="set")
+    second = guard.review("w-1", intended, action="set")
+    third = guard.review("w-1", intended, action="set")
+    assert len(guard._reviews) == 2
+    with pytest.raises(ValueError) as evicted_review:
+        guard.confirm(first)
+    assert _category(evicted_review) == "confirmation_invalid"
+
+    first_token = guard.confirm(second)
+    guard.confirm(third)
+    fourth = guard.review("w-1", intended, action="set")
+    guard.confirm(fourth)
+    assert len(guard._tokens) == 2
+    with pytest.raises(ValueError) as evicted_token:
+        registry.set_assistant_defaults(
+            "w-1", intended, tool_profile_confirmation_token=first_token
+        )
+    assert _category(evicted_token) == "confirmation_invalid"
+
+    abandoned = guard.review("w-1", intended, action="set")
+    abandoned_token = guard.confirm(abandoned)
+    unconfirmed = guard.review("w-1", intended, action="set")
+    clock.value += timedelta(minutes=11)
+    fresh = guard.review("w-1", intended, action="set")
+    assert abandoned_token not in guard._tokens
+    assert id(unconfirmed) not in guard._reviews
+    assert set(guard._reviews) == {id(fresh)}
+
+
+def test_token_ttl_starts_when_confirmation_is_issued(tmp_path, monkeypatch):
+    """A delayed confirmation still grants the full ten-minute token lifetime."""
+    registry, _store, guard, clock = _build(tmp_path, monkeypatch)
+    intended = _defaults()
+    review = guard.review("w-1", intended, action="set")
+    clock.value += timedelta(minutes=9)
+    token = guard.confirm(review)
+    clock.value += timedelta(minutes=2)
+
+    assert (
+        registry.set_assistant_defaults(
+            "w-1", intended, tool_profile_confirmation_token=token
+        ).assistant_defaults
+        == intended
+    )
 
 
 @pytest.mark.parametrize(
@@ -543,6 +597,30 @@ def test_unproven_failed_commit_never_clears_marker(tmp_path, monkeypatch):
         )
     assert _category(uncertain) == "binding_uncertain"
     assert registry.get_workspace("w-1").assistant_defaults is None
+    assert _lifecycle(store)["first_bind_confirmation_required"] is True
+
+
+def test_process_control_exception_propagates_without_marker_clear(
+    tmp_path, monkeypatch
+):
+    """Binding reconciliation must not convert interrupts into domain errors."""
+    registry, store, guard, _clock = _build(tmp_path, monkeypatch)
+    intended = _defaults()
+    token = guard.confirm(guard.review("w-1", intended, action="set"))
+    original = registry.db.transaction
+
+    @contextmanager
+    def interrupted(*, immediate: bool = False):
+        with original(immediate=immediate) as conn:
+            yield conn
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(registry.db, "transaction", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        registry.set_assistant_defaults(
+            "w-1", intended, tool_profile_confirmation_token=token
+        )
+    assert registry.get_workspace("w-1").assistant_defaults == intended
     assert _lifecycle(store)["first_bind_confirmation_required"] is True
 
 

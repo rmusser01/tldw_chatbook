@@ -41,6 +41,7 @@ class ProfileMutationError(ValueError):
 
 BindingAction = Literal["create", "set", "replace"]
 _TOKEN_TTL = timedelta(minutes=10)
+_MAX_PENDING_CONFIRMATIONS = 64
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +93,7 @@ class _ReviewRecord:
 class _TokenRecord:
     review: ToolProfileBindingReview
     current_defaults_digest: str
+    expires_at: datetime
 
 
 def _canonical_json_value(value: Any) -> Any:
@@ -260,6 +262,8 @@ class ToolProfileBindingGuard:
                 self._workspace_defaults_reader(workspace_id)
             )
         with self._token_lock:
+            self._prune_expired_locked(now)
+            self._make_review_room_locked()
             self._reviews[id(review)] = _ReviewRecord(review, current_digest)
         return review
 
@@ -270,6 +274,7 @@ class ToolProfileBindingGuard:
         now = self._utc_now()
         with self._token_lock:
             record = self._reviews.pop(id(review), None)
+            self._prune_expired_locked(now)
             if record is None or record.review is not review:
                 raise ToolPackError("bind", "confirmation_invalid")
             if now >= review.expires_at:
@@ -277,7 +282,10 @@ class ToolProfileBindingGuard:
             token = self._token_factory()
             if type(token) is not str or not token or token in self._tokens:
                 raise ToolPackError("bind", "confirmation_invalid")
-            self._tokens[token] = _TokenRecord(review, record.current_defaults_digest)
+            self._make_token_room_locked()
+            self._tokens[token] = _TokenRecord(
+                review, record.current_defaults_digest, now + _TOKEN_TTL
+            )
         return token
 
     @contextmanager
@@ -340,7 +348,7 @@ class ToolProfileBindingGuard:
 
                 try:
                     yield
-                except BaseException as exc:
+                except Exception as exc:
                     if not needs_marker_clear:
                         raise
                     try:
@@ -399,12 +407,14 @@ class ToolProfileBindingGuard:
     ) -> None:
         if token is None:
             raise ToolProfileConfirmationRequired()
+        now = self._utc_now()
         with self._token_lock:
             record = self._tokens.pop(token, None)
+            self._prune_expired_locked(now)
             if record is None:
                 raise ToolPackError("bind", "confirmation_invalid")
             review = record.review
-            if self._utc_now() >= review.expires_at:
+            if now >= record.expires_at:
                 raise ToolPackError("bind", "confirmation_expired")
             lifecycle = profile["tool_pack_lifecycle"]
             inventory = self._capture_inventory()
@@ -425,6 +435,33 @@ class ToolProfileBindingGuard:
             )
             if stale:
                 raise ToolPackError("bind", "confirmation_stale")
+
+    def _prune_expired_locked(self, now: datetime) -> None:
+        """Drop expired review/token records while holding ``_token_lock``."""
+        for key, record in tuple(self._reviews.items()):
+            if now >= record.review.expires_at:
+                self._reviews.pop(key, None)
+        for key, record in tuple(self._tokens.items()):
+            if now >= record.expires_at:
+                self._tokens.pop(key, None)
+
+    def _make_review_room_locked(self) -> None:
+        """Bound abandoned review state while holding ``_token_lock``."""
+        while len(self._reviews) >= _MAX_PENDING_CONFIRMATIONS:
+            oldest = min(
+                self._reviews,
+                key=lambda key: self._reviews[key].review.expires_at,
+            )
+            self._reviews.pop(oldest, None)
+
+    def _make_token_room_locked(self) -> None:
+        """Bound unspent token state while holding ``_token_lock``."""
+        while len(self._tokens) >= _MAX_PENDING_CONFIRMATIONS:
+            oldest = min(
+                self._tokens,
+                key=lambda key: self._tokens[key].expires_at,
+            )
+            self._tokens.pop(oldest, None)
 
     def _best_effort_clear_marker(
         self,
@@ -577,10 +614,13 @@ class ToolProfileBindingGuard:
                 )
                 risk_tags = HIGH_RISK_TAGS
             counts[result.state] += 1
+            known_high_risk_allow = (
+                identity in stored or result.state == "allow" or result.risk_floored
+            ) and bool(set(tool.tags) & risk_tags)
+            if known_high_risk_allow:
+                high_risk.add(identity)
             if result.state == "allow":
                 effective.add(identity)
-                if set(tool.tags) & risk_tags:
-                    high_risk.add(identity)
             elif identity in stored:
                 downgraded.add(identity)
 
