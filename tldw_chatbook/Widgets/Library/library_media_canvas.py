@@ -794,21 +794,33 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
     def _compose_pager(self, pager: LibraryPagerDisplay) -> ComposeResult:
         """Render the controller-owned Media pager below the row viewport."""
-        disabled_reasons = tuple(
-            dict.fromkeys(
-                reason
-                for disabled, reason in (
-                    (pager.previous_disabled, pager.previous_reason),
-                    (pager.next_disabled, pager.next_reason),
+        # task-28016: a single-page result has nowhere to page to, so the
+        # "Page 1 of 1" counter and the boundary reasons ("Already on the
+        # first page.", "No more results.") are pure noise. Show only the item
+        # range and keep the (disabled) controls; both return the moment a
+        # second page exists.
+        disabled_reasons = (
+            ()
+            if pager.single_page
+            else tuple(
+                dict.fromkeys(
+                    reason
+                    for disabled, reason in (
+                        (pager.previous_disabled, pager.previous_reason),
+                        (pager.next_disabled, pager.next_reason),
+                    )
+                    if disabled and reason
                 )
-                if disabled and reason
             )
+        )
+        status_parts = (
+            (pager.range_copy,)
+            if pager.single_page
+            else (pager.range_copy, pager.page_copy)
         )
         with Vertical(id="library-media-pager", classes="library-source-pager"):
             yield Static(
-                " · ".join(
-                    copy for copy in (pager.range_copy, pager.page_copy) if copy
-                ),
+                " · ".join(copy for copy in status_parts if copy),
                 id="library-media-page-status",
                 classes="library-source-pager-status",
                 markup=False,

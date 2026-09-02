@@ -4,6 +4,7 @@ title: Command palette - near-duplicate Library entries invite off-by-one select
 status: To Do
 assignee: []
 created_date: '2026-09-02 04:11'
+updated_date: '2026-09-02 21:08'
 labels:
   - ux
 dependencies: []
@@ -26,3 +27,9 @@ Also from the 2026-09-02 run: no palette command reaches the media Trash view at
 - [ ] #1 A library query presents visually distinct, deduplicated choices
 - [ ] #2 The most common destination ranks first
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+RECON (not started — cross-provider palette curation): the near-duplicate entries come from 3 providers in app.py: TabNavigationProvider ('Tab Navigation: Switch to Library' + LIBRARY_SUBROUTE_COMMANDS 'Library — Skills'), MediaProvider ('Media & Content: Open Media Library'->TAB_MEDIA, 'Import New Media'->TAB_INGEST, 'Search Transcripts'->TAB_SEARCH), LibraryIngestProvider ('Library: Import…'->ingest). Redundancy: 'Import New Media' and 'Library: Import…' both open the import experience. AC#2 ('most common destination ranks first') needs cross-provider score influence (palette merges hits by score). The second concern ('no palette command reaches media Trash') is a NEW command to ADD, not dedup. Labels are PINNED by Tests/UI/test_command_palette_providers.py (503 'Switch to Library' fuzzy-match, 796-797 MediaProvider labels, 850/861 'Library: Import…'). Own PR.
+<!-- SECTION:NOTES:END -->

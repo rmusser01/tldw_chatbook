@@ -25,6 +25,10 @@ class LibraryPagerDisplay:
     previous_reason: str
     next_reason: str
     retry_visible: bool
+    #: task-28016: a fresh, non-loading result that fits one page. Sources may
+    #: use it to drop pager chrome (Page 1 of 1, boundary reasons) that is pure
+    #: noise when there is nowhere to page to.
+    single_page: bool = False
 
 
 def build_library_pager_display(
@@ -99,6 +103,7 @@ def build_library_pager_display(
     if loading and error_copy:
         raise ValueError("loading and error_copy cannot both be set")
 
+    single_page = False
     if freshness == "fresh":
         if applied_page is None or total is None:
             raise ValueError("fresh state requires applied_page and total")
@@ -107,6 +112,7 @@ def build_library_pager_display(
         if requested_page != applied_page and not (loading or error_copy):
             raise ValueError("idle fresh state requires matching pages")
         total_pages = max(1, (total + page_size - 1) // page_size)
+        single_page = not loading and not error_copy and total_pages == 1
         if applied_page > total_pages:
             raise ValueError("applied_page exceeds the final page")
         expected_rows = min(page_size, max(0, total - (applied_page - 1) * page_size))
@@ -171,4 +177,5 @@ def build_library_pager_display(
         previous_reason=previous_reason,
         next_reason=next_reason,
         retry_visible=not loading and (bool(error_copy) or freshness == "stale"),
+        single_page=single_page,
     )

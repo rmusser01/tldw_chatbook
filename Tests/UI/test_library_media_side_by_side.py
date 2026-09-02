@@ -1289,6 +1289,27 @@ async def test_compact_media_pager_receipt_and_empty_states_remain_contained() -
         assert not empty_screen.query("#library-media-pager")
 
 
+@pytest.mark.asyncio
+async def test_single_page_media_list_drops_pager_boundary_noise() -> None:
+    # task-28016: one page of results has nowhere to page to, so the
+    # "Page 1 of 1" counter and the boundary reasons ("Already on the first
+    # page.", "No more results.") are suppressed; the item range stays and the
+    # (disabled) controls remain so nothing shifts once a second page exists.
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items(3))
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        status = await _wait_for_selector(
+            screen, pilot, "#library-media-page-status"
+        )
+        assert str(status.renderable) == "1-3 of 3"
+        assert not screen.query("#library-media-disabled-reason")
+        assert screen.query_one("#library-media-next", Button).disabled is True
+        assert screen.query_one("#library-media-previous", Button).disabled is True
+
+
 # ---------------------------------------------------------------------------
 # The wide-only detail placeholder (Collections' detail-pane grammar).
 # ---------------------------------------------------------------------------
