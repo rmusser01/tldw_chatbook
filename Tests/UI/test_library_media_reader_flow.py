@@ -185,6 +185,63 @@ async def test_enter_bypasses_selection_settle_window():
 
 
 @pytest.mark.asyncio
+async def test_escape_from_reader_focuses_loaded_row_and_down_advances():
+    """task-28004: Escape from the Reader lands on the loaded ROW, not the filter.
+
+    Live repro (2026-09-02): Escape focused the "Filter media" Input, so
+    the natural next keystrokes were swallowed -- typed characters landed
+    in the filter and Down was inert until a Tab. Landing on the loaded
+    row keeps Escape-then-Down as the sequential-review gesture (Down
+    moves the selection and auto-loads the adjacent item).
+    """
+    app, service = _flow_app(count=3)
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        # Load ROW 0 fully first (the reliable open-and-settle pattern the
+        # sibling traversal test uses): a fully-loaded item is what the
+        # Escape-then-Down selection path needs -- a still-pending selection
+        # is disarmed, not re-selected, when focus moves.
+        row_0 = screen.query_one("#library-media-row-0", Button)
+        row_0_id, backing_id_0, _ = _row_identity(row_0)
+        row_0.press()
+        await _wait_for_detail_call(service, backing_id_0)
+        service.release(backing_id_0)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_id == row_0_id,
+            message="Row 0 never settled in the Reader.",
+        )
+        assert screen._selected_media_id == row_0_id
+
+        # Put focus INSIDE the Reader pane, then Escape outward to Items.
+        screen.query_one("#library-media-reader-find", Button).focus()
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+        focused = screen.focused
+        assert focused is not None
+        assert focused.has_class("library-media-row")
+        assert str(getattr(focused, "media_id", "")) == row_0_id
+
+        # The core fix: because focus is on the ROW (not the filter Input),
+        # Down moves to the sibling row instead of being swallowed. Focus
+        # movement is synchronous and deterministic; the downstream
+        # auto-load-on-arrow is covered by
+        # test_arrow_traversal_updates_selection_immediately_but_loads_only_settled_row.
+        next_row_id = str(
+            screen.query_one("#library-media-row-1", Button).media_id
+        )
+        await pilot.press("down")
+        await pilot.pause()
+        assert str(screen.focused.media_id) == next_row_id
+        for media_id in tuple(service.detail_release):
+            service.release(media_id)
+
+
+@pytest.mark.asyncio
 async def test_reader_defaults_to_read_and_keeps_mode_across_local_items():
     """Reader mode is session state, not a per-detail display default."""
     app, service = _flow_app()
@@ -968,6 +1025,7 @@ def _escape_fake(*, region: str, more_open: bool = False):
         ),
         _sync_library_media_viewer_or_recompose=lambda: calls.append("sync"),
         _focus_library_control=lambda selector: calls.append(("focus", selector)),
+        _focus_library_media_items_pane=lambda: calls.append(("items-pane",)),
         _focus_library_rail_action=lambda selector: calls.append(("rail", selector)),
         _exit_library_media_viewer=lambda: calls.append("back"),
         _register_footer_shortcuts=lambda: calls.append("footer"),
@@ -1011,7 +1069,9 @@ def test_escape_moves_reader_to_items_then_library_then_screen_back():
     """One outward handler graduates through the effective pane hierarchy."""
     fake, calls, shell, _find = _escape_fake(region="reader")
     LibraryScreen.action_library_media_viewer_back(fake)
-    assert calls[:1] == [("focus", "#library-media-filter")]
+    # task-28004: the Items landing is the loaded row (falling back to the
+    # filter only on an empty list), so Escape-then-Down keeps working.
+    assert calls[:1] == [("items-pane",)]
 
     fake.focused = SimpleNamespace(ancestors=(shell.items,))
     calls.clear()

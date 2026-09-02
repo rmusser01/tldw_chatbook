@@ -41323,12 +41323,38 @@ class LibraryScreen(BaseAppScreen):
             self._exit_library_media_viewer()
             return
         if layout.items_open:
-            self._focus_library_control("#library-media-filter")
+            self._focus_library_media_items_pane()
         elif layout.library_open:
             self._focus_library_rail_action("#library-search-input")
         else:
             self._exit_library_media_viewer()
         self._register_footer_shortcuts()
+
+    def _focus_library_media_items_pane(self) -> None:
+        """Focus the Items pane at its most useful control (task-28004).
+
+        Prefers the loaded/selected item's ROW so the very next Down/Up
+        walks the list -- Escape-then-Down is the sequential-review
+        gesture (Down moves selection and auto-loads the adjacent item).
+        Landing on the "Filter media" Input instead swallowed those
+        keystrokes (typed characters fell into the filter, Down was inert
+        until a Tab) -- live-verified 2026-09-02. Falls back to the first
+        row, then to the filter when the list is empty.
+        """
+        rows = list(self.query(".library-media-row"))
+        if rows:
+            selected = str(self._selected_media_id or "")
+            target = next(
+                (
+                    row
+                    for row in rows
+                    if str(getattr(row, "media_id", "") or "") == selected
+                ),
+                rows[0],
+            )
+            self.set_focus(target)
+            return
+        self._focus_library_control("#library-media-filter")
 
     def _library_media_escape_label(self) -> str:
         """Describe the action Escape will take from the current effective role."""
