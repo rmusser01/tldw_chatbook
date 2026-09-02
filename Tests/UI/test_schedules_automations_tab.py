@@ -455,6 +455,38 @@ async def test_merged_list_shows_both_local_and_server_rows_with_owner_prefix():
 
 
 @pytest.mark.asyncio
+async def test_offline_server_owned_row_is_listed_as_pending_sync():
+    """Final review I5: a "Runs on: Server" automation saved while offline
+    is owned by `server:*` but has no `server_id` yet -- it used to fall
+    between the local half (owner-filtered) and the server half (which has
+    never heard of it) and so appeared in NEITHER."""
+    pending_row = _local_definition(
+        id="local-def-pending",
+        owner_id="server:server-1",
+        server_id=None,
+        name="Queued digest",
+    )
+    server_client = AutomationsServerClient()
+    service = AutomationsMockService(server_client, local_definitions=[pending_row])
+    app = AutomationsTestApp(service)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        workbench = pilot.app.screen
+        table = workbench.query_one("#scheduling-automations-table", DataTable)
+
+        names = [table.get_cell_at((i, 0)) for i in range(table.row_count)]
+        assert names[0] == "[server-1 · pending sync] Queued digest"
+        # Its `id` is the LOCAL one; editing must not treat it as a server
+        # id and mirror it back as a second row.
+        listed = workbench._automations[0]
+        assert (
+            await workbench._resolve_local_definition_id(service, listed)
+            == "local-def-pending"
+        )
+
+
+@pytest.mark.asyncio
 async def test_run_now_routes_local_automation_through_the_service_seam():
     """Local AND server rows both present -- selecting the local one must
     route through the local seam and never touch the server client."""

@@ -38,6 +38,7 @@ from tldw_chatbook.Scheduling.services.server_client import (
     SchedulingServerClient,
     ServerClientError,
     ServerClientPolicyError,
+    ServerClientValidationError,
     ServerUnavailableError,
 )
 from tldw_chatbook.Scheduling.services.sync_engine import SyncEngine
@@ -142,28 +143,43 @@ def _seam_failure_warning(exc: Exception) -> dict[str, str]:
     }
 
 
-def _policy_denied_outcome(
+def _server_refused_outcome(
     exc: Exception, definition_id: str | None
 ) -> SaveDefinitionOutcome:
-    """Build the `SaveDefinitionOutcome` for a `ServerClientPolicyError` refusal.
+    """Build the `SaveDefinitionOutcome` for a refusal that replaying cannot fix.
 
-    A deterministic, pre-network policy refusal must NOT fall back to the
-    offline queue path (review round 1 finding 1): `SyncEngine._push_
-    definition_create`/`_push_definition_update` would replay the identical
-    preview request and hit the identical refusal, and `_run_phase` treats
-    `ServerClientPolicyError` as "not applicable" and swallows it silently
-    -- no sync error recorded, mutation never cleared, never surfaced. A
-    save this facade knows can never succeed must be reported as failed
-    now, not queued as if it will eventually sync.
+    Covers every `ServerClientValidationError` -- a local pre-network
+    policy refusal (`ServerClientPolicyError`) AND any server-side 4xx
+    (`server_client._call_with_retry` maps 400..499 except 404 to this
+    class and never retries it): 409 `definition_version_conflict`, 409
+    `definition_archived`, 422 `schedule_invalid`, ...
+
+    None of these may fall back to the offline queue path (review round 1
+    finding 1, final review C2): `SyncEngine._push_definition_create`/
+    `_push_definition_update` would replay the identical request and hit
+    the identical refusal forever, and for a policy refusal `_run_phase`
+    even treats it as "not applicable" and swallows it silently -- no sync
+    error recorded, mutation never cleared, never surfaced. A save this
+    facade knows can never succeed must be reported as failed now, not
+    queued as if it will eventually sync.
+
+    Retryable failures (`ServerUnavailableError`/`ServerClientTimeoutError`
+    /`ServerClientServerError`, and a 404 the sync engine converts to a
+    create) still take the offline-queue path.
     """
     from tldw_chatbook.Scheduling.automation_validation import field_error
 
+    code = (
+        "policy_denied"
+        if isinstance(exc, ServerClientPolicyError)
+        else "server_rejected"
+    )
     return SaveDefinitionOutcome(
         status="error",
         errors=[
             field_error(
                 "_owner",
-                "policy_denied",
+                code,
                 f"The server refused this automation: {exc}",
             )
         ],
@@ -773,13 +789,17 @@ class SchedulingService:
         `create_automation_definition`/`update_automation_definition`'s
         `pending_mutation` kwarg) for `SyncEngine` to replay later.
 
-        Server owner, policy-refused (`ServerClientPolicyError` -- a
-        deterministic, pre-network refusal, not a transport failure):
-        returns `status="error"` and writes nothing. NOT queued -- a
-        replay would hit the identical refusal and `SyncEngine._run_phase`
-        swallows that error as "not applicable" (never surfaced, mutation
-        never cleared), so queuing here would report "queued" for a save
-        that can never sync (review round 1 finding 1).
+        Server owner, refused for good (`ServerClientValidationError` --
+        a deterministic pre-network policy refusal, or any server-side
+        4xx: 409 version conflict, 422 schedule invalid, ...): returns
+        `status="error"` and writes nothing. NOT queued -- a replay would
+        hit the identical refusal forever (review round 1 finding 1,
+        final review C2). See `_server_refused_outcome`.
+
+        Editing (`definition_id` given) MERGES the payload onto the stored
+        row (`_merge_definition_payload`), so a caller that omits a field
+        it does not author keeps that field's stored value instead of
+        wiping it (final review I4).
         """
         from tldw_chatbook.Scheduling.automation_preview import preview_automation_definition
         from tldw_chatbook.Scheduling.automation_validation import field_error
@@ -807,6 +827,7 @@ class SchedulingService:
                     ],
                     definition_id=definition_id,
                 )
+            payload = self._merge_definition_payload(payload, local_row)
 
         if not self._owner_uses_server(owner_id):
             mode = "update" if local_row is not None else "create"
@@ -845,8 +866,8 @@ class SchedulingService:
         assert self.server_client is not None
         try:
             response = await self.server_client.preview_automation_definition(request)
-        except ServerClientPolicyError as exc:
-            return _policy_denied_outcome(exc, definition_id)
+        except ServerClientValidationError as exc:
+            return _server_refused_outcome(exc, definition_id)
         except ServerClientError as exc:
             return await self._save_definition_offline(
                 request, owner_id, local_row, definition_id, server_mode, exc
@@ -870,8 +891,8 @@ class SchedulingService:
                 committed = await self.server_client.create_automation_definition(
                     preview_id
                 )
-        except ServerClientPolicyError as exc:
-            return _policy_denied_outcome(exc, definition_id)
+        except ServerClientValidationError as exc:
+            return _server_refused_outcome(exc, definition_id)
         except ServerClientError as exc:
             return await self._save_definition_offline(
                 request, owner_id, local_row, definition_id, server_mode, exc
@@ -900,6 +921,16 @@ class SchedulingService:
         payload still writes nothing. A valid one writes the local row
         and queues exactly one `automation_definition` mutation in the
         SAME transaction as that write.
+
+        The update branch passes `bump_version=False` (final review C1):
+        a server-owned row's `version` column MIRRORS the server's
+        (`upsert_automation_definitions_from_server`/`adopt_server_
+        definition_identity` copy it verbatim) and the server checks the
+        queued `definition_version` for exact equality. Bumping it locally
+        desynchronizes the mirror, and because `pending_mutations` is
+        `UNIQUE(local_id, primitive, owner_id)` a second offline edit
+        REPLACES the first with one carrying the drifted version -- which
+        the server then rejects (409) forever.
         """
         from tldw_chatbook.Scheduling.automation_preview import preview_automation_definition
 
@@ -933,6 +964,7 @@ class SchedulingService:
             await asyncio.to_thread(
                 self.db.update_automation_definition,
                 definition_id,
+                bump_version=False,
                 pending_mutation=pending_mutation,
                 **fields,
             )
@@ -1030,6 +1062,41 @@ class SchedulingService:
                 owner_id,
             )
         return saved_id
+
+    @staticmethod
+    def _merge_definition_payload(
+        payload: dict[str, Any], local_row: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Overlay an edit payload onto the stored row's fields (final review I4).
+
+        An authoring payload only carries the fields its author exposes --
+        the v1 modal has no input for `description`, `visibility_policy`,
+        `approval_policy` or `config.retention_policy`, and none for
+        `input.max_tokens` (which `automation_execution` reads). Without
+        this merge those fields are absent from the preview request, so the
+        normalizer defaults them, `_definition_db_fields_from_preview`
+        writes the defaults over the row, AND the server-owned update
+        PATCH sends the defaults too -- four fields silently destroyed by
+        a rename.
+
+        Rule: an OMITTED key keeps its stored value; a key the payload
+        carries wins, including an explicit `None` (so a caller that does
+        expose a field can still clear it). `config`/`input`/
+        `notification_policy` merge one level deep for the same reason,
+        which is why the form emits `provider`/`model` explicitly as
+        `None` when blank rather than omitting them.
+        """
+        merged: dict[str, Any] = {}
+        for key in ("description", "visibility_policy", "approval_policy"):
+            if key in local_row and local_row[key] is not None:
+                merged[key] = local_row[key]
+        merged.update(payload)
+        for key in ("config", "input", "notification_policy"):
+            stored = local_row.get(key)
+            incoming = payload.get(key)
+            if isinstance(stored, dict) and isinstance(incoming, dict):
+                merged[key] = {**stored, **incoming}
+        return merged
 
     @staticmethod
     def _build_definition_request(

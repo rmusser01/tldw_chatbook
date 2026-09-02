@@ -14,6 +14,7 @@ from tldw_chatbook.Scheduling.services.server_client import (
     ServerClientError,
     ServerClientNotFoundError,
     ServerClientPolicyError,
+    ServerClientValidationError,
 )
 
 
@@ -483,10 +484,13 @@ class SyncEngine:
         definition was deleted) converts the mutation into a create,
         mirroring `_push_mutation`'s reminder precedent.
 
-        Any other `ServerClientError` (network/retryable) propagates so
-        `_run_phase` records one sync error for the phase and leaves this
-        and any later mutation queued for the next cycle -- same
-        "abort the whole push phase" discipline as `_push_mutation`.
+        A retryable `ServerClientError` (timeout/5xx/unavailable)
+        propagates so `_run_phase` records one sync error for the phase
+        and leaves this and any later mutation queued for the next cycle
+        -- same "abort the whole push phase" discipline as
+        `_push_mutation`. A non-retryable 4xx does NOT abort: it settles
+        that one mutation and the loop continues with the rest (see
+        `_push_definition_mutation`).
 
         Returns:
             Counts of what happened this cycle (``created``/``updated``/
@@ -503,7 +507,22 @@ class SyncEngine:
         return counts
 
     async def _push_definition_mutation(self, mutation: dict, owner_id: str) -> str:
-        """Replay one pending `automation_definition` mutation. Returns what happened."""
+        """Replay one pending `automation_definition` mutation. Returns what happened.
+
+        A server-side 4xx (`ServerClientValidationError`, e.g. a 409
+        `definition_version_conflict` or a 422 `schedule_invalid`) is
+        non-retryable by construction -- `_call_with_retry` raises it
+        immediately without retrying -- so it is settled here exactly like
+        an invalid preview: the mutation is cleared and the reason
+        recorded as a sync error (`_reject_definition_mutation`). Letting
+        it raise instead aborted the whole push phase, so ONE poisoned
+        mutation blocked every other definition mutation for that owner
+        forever (final review I3). Only genuinely retryable errors
+        (timeout/5xx/unavailable) still abort the phase, and a
+        `ServerClientPolicyError` still propagates untouched -- that one is
+        an account-level refusal that may be granted later, so the user's
+        queued work must survive it rather than be discarded.
+        """
         local_id = mutation["local_id"]
         mutation_id = mutation["id"]
         payload = mutation.get("payload") or {}
@@ -511,16 +530,38 @@ class SyncEngine:
         definition_payload = payload.get("definition_payload") or {}
         server_definition_id = payload.get("server_definition_id")
 
-        if action == "update" and server_definition_id:
-            return await self._push_definition_update(
-                local_id, mutation_id, owner_id, server_definition_id, definition_payload
+        try:
+            if action == "update" and server_definition_id:
+                return await self._push_definition_update(
+                    local_id,
+                    mutation_id,
+                    owner_id,
+                    server_definition_id,
+                    definition_payload,
+                )
+            if action in ("create", "update"):
+                # A `create` action, or an `update` authored offline and never
+                # synced (no server_definition_id): both are pushed as a create.
+                return await self._push_definition_create(
+                    local_id, mutation_id, owner_id, definition_payload
+                )
+        except ServerClientPolicyError:
+            raise
+        except ServerClientValidationError as exc:
+            self._reject_definition_mutation(
+                local_id,
+                mutation_id,
+                owner_id,
+                # The server's own error code IS the useful text here, and
+                # `_reject_definition_mutation` records `field:code` pairs
+                # (not messages) -- so put it where the user will see it.
+                {
+                    "validation_errors": [
+                        {"field": "_server", "code": str(exc), "message": str(exc)}
+                    ]
+                },
             )
-        if action in ("create", "update"):
-            # A `create` action, or an `update` authored offline and never
-            # synced (no server_definition_id): both are pushed as a create.
-            return await self._push_definition_create(
-                local_id, mutation_id, owner_id, definition_payload
-            )
+            return "invalid"
 
         logger.warning(
             f"Unknown pending automation_definition mutation action {action!r} "

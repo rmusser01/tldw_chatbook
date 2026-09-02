@@ -626,9 +626,16 @@ class AutomationDefinitionForm(ModalScreen):
         """Build a `ScheduledTaskPreviewCreateRequest`-shaped payload.
 
         `visibility_policy`/`approval_policy`/`retention_policy` are not
-        exposed as v1 fields (spec sec 8) -- omitting them lets the
-        family default (`findings_only`) and the ported normalizers'
-        own defaults apply, matching a payload that never mentioned them.
+        exposed as v1 fields (spec sec 8), so this payload never mentions
+        them: on a CREATE the family default (`findings_only`) and the
+        ported normalizers' own defaults apply, and on an EDIT
+        `save_definition` merges the payload onto the stored row
+        (`SchedulingService._merge_definition_payload`), so an omitted key
+        keeps its stored value instead of being wiped (final review I4).
+        `provider`/`model` are the flip side of that rule: they ARE
+        exposed here, so they are always emitted -- `None` when blank --
+        or clearing them in the form would silently resurrect the stored
+        value through the same merge.
 
         `mode`/`definition_id`/`definition_version` here only drive the
         PREVIEW button's own local-validation presence checks
@@ -636,12 +643,10 @@ class AutomationDefinitionForm(ModalScreen):
         `save_definition`, which always rebuilds these three itself from
         its own `definition_id` parameter -- Task 4's contract, so this
         method's values never affect what actually gets saved). Editing
-        always sends the LOCAL id here, which is correct for a local-owned
-        row but not what a server-owned row's OWN preview endpoint expects
-        (it wants the server's id) -- Preview during a server-owned edit
-        therefore falls back to local-only validation feedback
-        (`preview_definition`'s existing `ServerClientError` catch-all),
-        never a hard failure. Save is unaffected either way.
+        sends the row's SERVER id when it has one (commit `938b03703`), so
+        a server-owned edit's preview reaches the server's own preview
+        endpoint; a local row falls back to its local id, which is what
+        the local preview wants.
         """
         name = self.query_one("#automation-name", Input).value.strip()
         question = self.query_one("#automation-question", TextArea).text.strip()
@@ -649,11 +654,11 @@ class AutomationDefinitionForm(ModalScreen):
         provider = self.query_one("#automation-provider", Input).value.strip()
         model = self.query_one("#automation-model", Input).value.strip()
 
-        input_fields: dict[str, Any] = {"question": question}
-        if provider:
-            input_fields["provider"] = provider
-        if model:
-            input_fields["model"] = model
+        input_fields: dict[str, Any] = {
+            "question": question,
+            "provider": provider or None,
+            "model": model or None,
+        }
 
         payload: dict[str, Any] = {
             "family": _FAMILY,

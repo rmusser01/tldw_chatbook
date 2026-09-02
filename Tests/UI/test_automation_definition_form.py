@@ -219,6 +219,24 @@ async def test_build_payload_optional_provider_model_pin(local_service):
         assert payload["input"]["model"] == "gpt-5"
 
 
+@pytest.mark.asyncio
+async def test_build_payload_emits_blank_provider_model_as_explicit_null(local_service):
+    """Final review I4: `save_definition` merges an edit payload onto the
+    stored row, where an OMITTED key keeps its stored value -- so the two
+    fields this form DOES expose must always be emitted, or clearing them
+    would silently resurrect the old provider/model."""
+    app = _FormHost(local_service)
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        await _fill_minimal_valid_form(screen)
+        await pilot.pause()
+
+        payload = screen._build_payload()
+        assert payload["input"]["provider"] is None
+        assert payload["input"]["model"] is None
+
+
 # --- client-side schedule guard -----------------------------------------------
 
 

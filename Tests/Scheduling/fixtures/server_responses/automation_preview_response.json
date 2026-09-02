@@ -15,7 +15,7 @@
       },
       "input": {"question": "What did you work on yesterday and what is blocking you today?"},
       "schedule": {"kind": "daily", "time_of_day": "09:00", "timezone": "UTC"},
-      "visibility_policy": null,
+      "visibility_policy": {},
       "notification_policy": {"on_success": "silent", "on_failure": "toast"},
       "approval_policy": {"mode": "auto"}
     },
@@ -75,7 +75,7 @@
       },
       "input": {"question": "What did you work on yesterday?"},
       "schedule": {"kind": "monthly", "day_of_month": 1},
-      "visibility_policy": null,
+      "visibility_policy": {},
       "notification_policy": {},
       "approval_policy": {}
     },

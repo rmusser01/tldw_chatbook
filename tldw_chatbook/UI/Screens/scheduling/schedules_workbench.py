@@ -135,7 +135,11 @@ def automation_name_cell(definition: dict[str, Any]) -> str:
 
     Returns:
         `"[This device] <name>"` for a local row, `"[<server id>] <name>"`
-        for a server-scoped one.
+        for a server-scoped one, and `"[<server id> · pending sync]
+        <name>"` for one authored offline that has not reached the server
+        yet (`pending_sync`, stamped by `_load_local_automations`) -- that
+        row is only on this device, and saying "server" flat would claim a
+        definition the server has never heard of (final review I5).
     """
     from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
 
@@ -143,6 +147,8 @@ def automation_name_cell(definition: dict[str, Any]) -> str:
     name = str(definition.get("name") or definition.get("id") or "")
     if is_server_scoped_owner(owner_id):
         label = owner_id.split(":", 1)[1] if ":" in owner_id else owner_id
+        if definition.get("pending_sync"):
+            label = f"{label} · pending sync"
     else:
         label = "This device"
     return f"[{label}] {name}"
@@ -1154,7 +1160,21 @@ class SchedulesWorkbench(BaseAppScreen):
     async def _load_local_automations(
         self, service: "SchedulingService"
     ) -> list[dict[str, Any]]:
-        """This device's own automation definitions, off the event loop.
+        """Every definition that exists ONLY on this device, off the event loop.
+
+        That is not the same as `owner_id="local"`: an automation authored
+        offline with "Runs on: Server" is stored under `owner_id=
+        "server:<id>"` with `server_id IS NULL` until a sync pushes it, so
+        filtering on the local owner hid it from this half while the
+        server half could not know about it either -- it appeared in
+        NEITHER list (final review I5). Any row with no `server_id`
+        belongs here, whoever owns it; rows that HAVE a `server_id` are the
+        server half's by construction, so the two halves cannot duplicate.
+
+        Rows in that pending state are stamped `pending_sync` so the
+        renderer can say so (`automation_name_cell`) and the actions that
+        need a real server id can refuse honestly rather than calling the
+        server with a local uuid.
 
         Health is never persisted (`automation_health.py`'s own docstring)
         -- it is computed fresh here the same way `run_automation_now`
@@ -1162,14 +1182,17 @@ class SchedulesWorkbench(BaseAppScreen):
         create-time placeholder (`execution_unavailable`) as if it were
         live.
         """
+        from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
+
         try:
-            rows = await asyncio.to_thread(
-                service.db.list_automation_definitions, owner_id="local"
-            )
+            all_rows = await asyncio.to_thread(service.db.list_automation_definitions)
         except Exception:  # noqa: BLE001
             logger.exception("Failed to load local automation definitions")
             return []
+        rows = [row for row in all_rows if not row.get("server_id")]
         for row in rows:
+            if is_server_scoped_owner(row.get("owner_id")):
+                row["pending_sync"] = True
             health, _reason = compute_local_health(self.app_instance, row)
             row["health"] = health
         return rows
@@ -1283,6 +1306,16 @@ class SchedulesWorkbench(BaseAppScreen):
         from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
 
         owner_id = (definition or {}).get("owner_id")
+        if (definition or {}).get("pending_sync"):
+            # Never synced: the audit endpoint has no id to look up, and
+            # asking it with a local uuid would render a bare error.
+            table.clear()
+            self._update_static_content(
+                notice,
+                "This automation hasn't synced to the server yet, so it has "
+                "no run history.",
+            )
+            return
         if not is_server_scoped_owner(owner_id):
             # Honest gap (task-5 fix round): local automation runs are not
             # tracked in a durable audit trail yet -- only the server side
@@ -1372,6 +1405,15 @@ class SchedulesWorkbench(BaseAppScreen):
         """
         from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
 
+        if definition.get("pending_sync"):
+            # Server-owned but never pushed: the server has no id for it,
+            # and this side must not run a server-owned definition (§3).
+            self.app_instance.notify(
+                "This automation hasn't synced to the server yet — it will "
+                "run there after the next successful sync.",
+                severity="warning",
+            )
+            return
         if is_server_scoped_owner(definition.get("owner_id")):
             self._run_automation_now_server(definition)
         else:
@@ -1569,7 +1611,11 @@ class SchedulesWorkbench(BaseAppScreen):
         from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
 
         owner_id = str(definition.get("owner_id") or "local")
-        if not is_server_scoped_owner(owner_id):
+        if definition.get("pending_sync") or not is_server_scoped_owner(owner_id):
+            # A `pending_sync` row IS a local row (server-owned, never
+            # synced): its `id` is already the local one, and treating it
+            # as a server id here would mirror it back as a SECOND row
+            # keyed by that uuid.
             local_id = definition.get("id")
             return str(local_id) if local_id else None
 

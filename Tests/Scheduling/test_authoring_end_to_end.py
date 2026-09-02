@@ -46,6 +46,9 @@ from tldw_chatbook.Scheduling.scheduler.handlers.automation_handler import (
 from tldw_chatbook.Scheduling.scheduler.loop import SchedulerLoop
 from tldw_chatbook.Scheduling.services import SchedulingService
 from tldw_chatbook.Scheduling.services.server_client import ServerUnavailableError
+from tldw_chatbook.tldw_api.scheduled_tasks_automation_schemas import (
+    ScheduledTaskPreviewCreateRequest,
+)
 
 _FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "server_responses"
 
@@ -223,6 +226,12 @@ class _ToggleableDefinitionServerClient:
     flipped `up` for the sync replay. `list_reminders`/
     `list_automation_definitions`/`list_automation_results` are the empty
     pull-phase stubs `sync_now` also touches every cycle.
+
+    Every payload handed to `preview_automation_definition` is validated
+    against the real wire schema first (final review M7): a fake seam that
+    accepts anything is exactly how a schema mismatch reaches the server
+    unnoticed (the PR-2 faked-seam lesson) -- and it caught one, the
+    shipped fixture's `visibility_policy: null`.
     """
 
     def __init__(self, preview_response: dict, created_echo: dict):
@@ -242,6 +251,7 @@ class _ToggleableDefinitionServerClient:
         return {"items": [], "total": 0, "has_more": False}
 
     async def preview_automation_definition(self, payload: dict) -> dict:
+        ScheduledTaskPreviewCreateRequest.model_validate(payload)
         self.preview_calls.append(payload)
         if not self.up:
             raise ServerUnavailableError("offline")

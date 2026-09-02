@@ -1415,6 +1415,80 @@ async def test_sync_now_definition_create_retryable_error_retains_mutation(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_sync_now_definition_poisoned_mutation_does_not_block_the_rest(tmp_path):
+    """Final review I3: a non-retryable 4xx on ONE definition mutation used
+    to raise out of the replay loop and abort the whole push phase, so one
+    permanently-rejected payload stopped every other definition mutation
+    for that owner forever. It must settle that mutation (cleared, error
+    recorded) and carry on with the queue."""
+    from tldw_chatbook.Scheduling.services.server_client import (
+        ServerClientValidationError,
+    )
+
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    poisoned_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Poisoned", server_id="srv-def-old"
+    )
+    db.record_pending_mutation(
+        poisoned_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "update",
+            "definition_payload": {
+                "family": "recurring_question",
+                "name": "Poisoned",
+                "definition_version": 2,
+            },
+            "server_definition_id": "srv-def-old",
+        },
+    )
+    healthy_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Healthy"
+    )
+    db.record_pending_mutation(
+        healthy_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "create",
+            "definition_payload": {
+                "family": "recurring_question",
+                "name": "Healthy",
+            },
+            "server_definition_id": None,
+        },
+    )
+
+    server_client = _empty_reminders_client()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.update_automation_definition.side_effect = ServerClientValidationError(
+        "scheduled_task_definition_version_conflict"
+    )
+    server_client.create_automation_definition.return_value = {
+        "id": "srv-def-new",
+        "family": "recurring_question",
+        "name": "Healthy",
+        "lifecycle": "configured",
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    # The healthy create went through despite the poisoned update ahead of it.
+    assert db.get_automation_definition(healthy_id)["server_id"] == "srv-def-new"
+    # And the poisoned one is settled, not left to jam the queue forever.
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    errors = (db.get_sync_state("server:1") or {}).get("sync_errors") or []
+    assert any("version_conflict" in error["message"] for error in errors)
+
+
+@pytest.mark.asyncio
 async def test_sync_now_pulls_and_upserts_definitions(tmp_path):
     db = ScheduledTasksDB(tmp_path / "db.db")
     server_client = _empty_reminders_client()

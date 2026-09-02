@@ -60,9 +60,14 @@ to whatever owner the Schedules screen is currently showing. Choosing the
 server writes the task there directly when the server is reachable, or
 authors it locally and queues it to sync up on the next successful sync
 when it is not (the sync bar and the task's own state say which
-happened). An existing reminder's owner is fixed once created — the
-selector shows it but is not editable — moving a task between owners is
-a separate action, not part of editing.
+happened -- a recurring question in that state is listed on the
+Automations tab as *\[\<server id\> · pending sync\]*, and Run now/run
+history say so rather than asking the server about a task it has never
+seen). If the server refuses the save outright rather than being
+unreachable, the form says so and nothing is queued -- retrying it later
+would only hit the same refusal. An existing reminder's owner is fixed
+once created — the selector shows it but is not editable — moving a task
+between owners is a separate action, not part of editing.
 
 - **One-time**: type a plain local time like `2026-08-28 09:00` — no
   offset needed. It is interpreted in your machine's timezone and the
@@ -280,7 +285,8 @@ bound entirely — every handler may then run as long as it likes, and a
 wedged handler will wedge the scheduler, which is why the default is on.
 
 *Verified against working tree — 2026-09-01 (schedules-handoff PR-4 task 5
-+ fix round: recurring-question create/edit form, the Queue tab's
++ final fix round: recurring-question create/edit form, the Queue tab's
 New/Reminder/Recurring-question chooser, the Automations tab's own New
 button, the "Runs on" selector on both forms, the merged local+server
-Automations listing, and its local run-now/edit routing).*
+Automations listing including not-yet-synced server-owned rows, and its
+local run-now/edit routing).*
