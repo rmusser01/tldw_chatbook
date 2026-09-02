@@ -157,6 +157,31 @@ def test_normalized_capture_does_not_duplicate_legacy_exchange_blobs(monkeypatch
     assert signals.exchange_capture_enabled is False
 
 
+def test_admitted_capture_policy_respects_legacy_writer_gate(monkeypatch):
+    controller = _new_controller()
+    session = controller.store.ensure_session()
+    monkeypatch.setattr(
+        controller_module,
+        "runtime_capture_policy",
+        lambda: SimpleNamespace(
+            enabled=True,
+            detail=CaptureDetail.SAFE,
+            generation=7,
+            normalized_writes_enabled=True,
+            normalized_reads_enabled=True,
+            legacy_writes_enabled=False,
+            pii_redaction_enabled=False,
+        ),
+    )
+
+    signals = controller._admit_capture_policy(
+        session.id,
+        ConsoleSubmissionOrigin.MANUAL,
+    )
+
+    assert signals.exchange_capture_enabled is False
+
+
 def test_legacy_writer_can_be_reenabled_without_disabling_normalized_reads(
     monkeypatch,
 ):
@@ -271,6 +296,7 @@ def test_frozen_next_send_capture_survives_one_shot_consumption(monkeypatch) -> 
             enabled=False,
             detail=CaptureDetail.SAFE,
             generation=8,
+            legacy_writes_enabled=True,
             pii_redaction_enabled=False,
             viewer_profile="safe",
         ),
@@ -308,6 +334,7 @@ def test_frozen_turn_does_not_consume_a_newer_next_send_privacy_choice(
             enabled=False,
             detail=CaptureDetail.SAFE,
             generation=8,
+            legacy_writes_enabled=True,
             pii_redaction_enabled=False,
             viewer_profile="safe",
         ),

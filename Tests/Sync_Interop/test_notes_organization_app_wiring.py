@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from types import SimpleNamespace
 
 import pytest
@@ -167,10 +167,29 @@ async def test_production_shaped_wiring_replaces_none_seam_before_note_mutation(
     assert rows[0]["domain"] == "notes"
 
 
+@pytest.fixture
+def deferred_notes_sync_databases(tmp_path):
+    """Yield the real SQLite owners with deterministic failure-path cleanup."""
+
+    with ExitStack() as cleanup:
+        notes = CharactersRAGDB(
+            tmp_path / "deferred-notes.sqlite",
+            client_id="deferred",
+        )
+        cleanup.callback(notes.close_connection)
+        state = SyncStateRepository(
+            tmp_path / "deferred-sync.sqlite",
+            client_id="deferred",
+        )
+        cleanup.callback(state.close)
+        yield notes, state
+
+
 @pytest.mark.asyncio
-async def test_deferred_notes_sync_facades_wire_on_first_sync_access(tmp_path) -> None:
-    notes = CharactersRAGDB(tmp_path / "deferred-notes.sqlite", client_id="deferred")
-    state = SyncStateRepository(tmp_path / "deferred-sync.sqlite", client_id="deferred")
+async def test_deferred_notes_sync_facades_wire_on_first_sync_access(
+    deferred_notes_sync_databases,
+) -> None:
+    notes, state = deferred_notes_sync_databases
     scope = NotesScopeService(
         local_notes_service=_LocalNotes(notes),
         server_service=object(),
@@ -248,8 +267,6 @@ async def test_deferred_notes_sync_facades_wire_on_first_sync_access(tmp_path) -
     )
     assert len(rows) == 1
     assert rows[0]["domain"] == "notes"
-    state.close()
-    notes.close_connection()
 
 
 def test_notes_organization_wiring_detaches_local_and_rebinds_next_server(tmp_path):

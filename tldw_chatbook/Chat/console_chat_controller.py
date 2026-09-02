@@ -4174,7 +4174,12 @@ class ConsoleChatController:
                 capture_detail=CaptureDetail.SAFE,
             )
         signals = ConsoleProviderStreamSignals(
-            exchange_capture_enabled=resolution.enabled,
+            exchange_capture_enabled=(
+                resolution.enabled
+                and bool(
+                    getattr(runtime, "legacy_writes_enabled", runtime.enabled)
+                )
+            ),
             capture_detail=resolution.detail,
             pii_redaction_enabled=(
                 frozen_pii_redaction_enabled
