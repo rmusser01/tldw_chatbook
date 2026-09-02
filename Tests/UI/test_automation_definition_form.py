@@ -577,3 +577,38 @@ async def test_edit_mode_save_updates_the_existing_row_via_definition_id(
     assert updated_row["version"] == 2
     # No second row was created.
     assert len(db.list_automation_definitions(owner_id="local")) == 1
+
+
+@pytest.mark.asyncio
+async def test_edit_mode_payload_targets_server_definition_id_when_mirrored(
+    local_service, db
+):
+    """A server-mirrored row's preview payload must reference the SERVER's
+    definition id -- the local id means nothing to the server preview seam.
+    Local rows (no server_id) keep the local id."""
+    create_payload = {
+        "family": "recurring_question",
+        "mode": "create",
+        "name": "Mirrored digest",
+        "input": {"question": "Anything new?"},
+        "schedule": {"kind": "interval", "interval_minutes": 60},
+        "config": {"scope": {"mode": "sources", "sources": ["notes"]}},
+        "notification_policy": {"on_success": True, "on_failure": True},
+    }
+    outcome = await local_service.save_definition(create_payload, "local")
+    assert outcome.status == "saved"
+    row = dict(db.get_automation_definition(outcome.definition_id))
+    row["server_id"] = "srv-def-42"
+
+    app = _FormHost(
+        local_service,
+        definition_row=row,
+        definition_id=row["id"],
+        available_owners=[("This device", "local")],
+        default_owner="local",
+    )
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+        payload = app.screen._build_payload()
+        assert payload["definition_id"] == "srv-def-42"
+        assert payload["definition_version"] == row["version"]

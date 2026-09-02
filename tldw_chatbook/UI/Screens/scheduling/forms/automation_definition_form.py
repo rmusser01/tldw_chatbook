@@ -675,8 +675,13 @@ class AutomationDefinitionForm(ModalScreen):
             "notification_policy": {"on_success": notify, "on_failure": notify},
         }
         if self._definition_id is not None:
-            payload["definition_id"] = self._definition_id
-            payload["definition_version"] = (self._definition_row or {}).get("version")
+            row = self._definition_row or {}
+            # A server-owned row's update preview goes to the SERVER seam,
+            # where only the server's own definition id means anything; the
+            # local id is the facade's save-path authority, passed separately
+            # (see the save handler). Local rows have no server_id.
+            payload["definition_id"] = row.get("server_id") or self._definition_id
+            payload["definition_version"] = row.get("version")
         return payload
 
     # -- validation-error rendering -----------------------------------------------
