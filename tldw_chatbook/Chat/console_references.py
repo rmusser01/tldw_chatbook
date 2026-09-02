@@ -18,8 +18,10 @@ Two invariants carry the safety (AC#7 + AC#3):
 from __future__ import annotations
 
 import re
+import subprocess
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional, Tuple
+from pathlib import Path
+from typing import Callable, Iterable, List, Optional, Tuple
 
 # A reference candidate: `@` not preceded by a word char, then a run of
 # non-space characters. The lookbehind excludes emails/handles (AC#7).
@@ -30,8 +32,17 @@ _SPECIAL_TOKENS = ("diff", "staged")
 
 @dataclass(frozen=True)
 class ReferenceCandidate:
-    raw: str      # e.g. "@src/main.py#L10-20"
-    token: str    # e.g. "src/main.py#L10-20"
+    """One ``@`` reference candidate found in composer text.
+
+    Attributes:
+        raw: The candidate as typed, including the sigil (``"@src/main.py#L10-20"``).
+        token: ``raw`` without the sigil (``"src/main.py#L10-20"``).
+        start: Index of the ``@`` in the source text.
+        end: Index one past the candidate's last character.
+    """
+
+    raw: str
+    token: str
     start: int
     end: int
 
@@ -75,7 +86,11 @@ def find_reference_candidates(text: str) -> List[ReferenceCandidate]:
 #:               or ("file",  content:str, line_range:(int,int)|None)
 #:               or ("folder", listing:str, None)
 #:               or ("refused", reason:str, None)
-Resolver = Callable[[str], Optional[Tuple[str, str, Optional[Tuple[int, int]]]]]
+#: One resolved reference: (kind, payload, line_range) — kind is "file"/
+#: "folder"/"refused", payload is content/listing/refusal-reason, and
+#: line_range only applies to files. ``None`` = leave the token literal.
+ResolvedReference = Optional[Tuple[str, str, Optional[Tuple[int, int]]]]
+Resolver = Callable[[str], ResolvedReference]
 GitRunner = Callable[[str], str]
 
 
@@ -168,8 +183,6 @@ def expand_references(
 # --- impure resolver: reuses the file tools' allowed-roots + sensitive-path
 # authority so a reference can never read what the tools cannot (AC#3) --------
 
-import subprocess  # noqa: E402  (kept local to the impure section)
-from pathlib import Path  # noqa: E402
 
 #: Inline size ceiling for a referenced file (AC#4).
 MAX_REFERENCE_BYTES = 256 * 1024
@@ -242,7 +255,12 @@ def _exists_under_roots(path_str: str, roots) -> bool:
         return False
 
 
-def resolve_reference(token, *, roots, max_bytes: int = MAX_REFERENCE_BYTES):
+def resolve_reference(
+    token: str,
+    *,
+    roots: Iterable[Path],
+    max_bytes: int = MAX_REFERENCE_BYTES,
+) -> ResolvedReference:
     """Resolve one reference token against the allowed roots (impure).
 
     Lane-6/8 review C1: resolution goes through the SAME choke point the file

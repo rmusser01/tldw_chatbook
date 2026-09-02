@@ -82,3 +82,13 @@ def test_adapter_surfaces_findings_but_stays_valid(tmp_path):
     assert result.valid is True, "advisory findings must never block startup"
     assert "focus_mode" in result.message
     assert "api_settings" in result.message
+
+
+def test_qodo13_documented_agents_overrides_are_not_flagged():
+    """Qodo #13 (PR #2301): [agents] keys are deliberately absent from the
+    parsed default shape (their defaults live in Agents/agent_service.py to
+    avoid two-homes drift), so documented overrides must not warn."""
+    findings = validate_config_keys(
+        {"agents": {"child_max_wall_seconds": 300.0, "max_live_subagents": 2}}
+    )
+    assert findings == [], findings

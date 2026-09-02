@@ -625,11 +625,25 @@ class SchedulerLoop:
         if not callable(preflight):
             return None
         try:
-            result = preflight(task)
-            if asyncio.iscoroutine(result):
+            if asyncio.iscoroutinefunction(preflight):
                 result = await asyncio.wait_for(
-                    result, timeout=self._PREFLIGHT_TIMEOUT_SECONDS
+                    preflight(task), timeout=self._PREFLIGHT_TIMEOUT_SECONDS
                 )
+            else:
+                # Qodo #6 (PR #2301): a SYNC preflight ran inline on the
+                # scheduler loop, so a blocking one wedged every dispatch and
+                # heartbeat and the timeout could never interrupt it. Run it
+                # off-loop under the same bound. (On timeout the worker
+                # thread finishes in the background; the loop proceeds.)
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(preflight, task),
+                    timeout=self._PREFLIGHT_TIMEOUT_SECONDS,
+                )
+                if asyncio.iscoroutine(result):
+                    # a non-async callable can still return a coroutine
+                    result = await asyncio.wait_for(
+                        result, timeout=self._PREFLIGHT_TIMEOUT_SECONDS
+                    )
         except Exception:  # noqa: BLE001 -- a broken preflight never blocks dispatch
             logger.opt(exception=True).debug("preflight check raised; proceeding")
             return None

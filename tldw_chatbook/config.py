@@ -5185,6 +5185,11 @@ def first_profile_created_this_session() -> bool:
 #: -- only genuinely dynamic-keyed sections -- so real typos elsewhere still
 #: surface. Each entry is a tuple path prefix.
 _FREEFORM_CONFIG_PREFIXES: tuple[tuple[str, ...], ...] = (
+    ("agents",),                # deliberately EMPTY in the default shape: the
+                                # authoritative defaults live in
+                                # Agents/agent_service.py (two-homes drift),
+                                # so documented overrides here would all flag
+                                # as unknown (Qodo #13, PR #2301)
     ("api_settings",),          # provider configs incl. user-added custom providers
     ("providers",),             # provider display sections + model lists
     ("model_capabilities", "models"),    # arbitrary model names

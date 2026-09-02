@@ -231,3 +231,87 @@ def test_agent_service_terminal_seam_fires_completed_and_failed(monkeypatch):
     assert ("completed", "run-done") in captured
     assert ("failed", "run-err") in captured
     assert not any(rid == "run-cancel" for _, rid in captured), "cancelled must not notify"
+
+
+# --- Qodo review round (PR #2301) ---
+
+def test_qodo9_string_false_does_not_enable():
+    """Qodo #9: 'false'/'0' strings must not enable the outbound gate."""
+    for junk in ("false", "0", "no", "off", "FALSE"):
+        cfg = webhook_config_from_settings({"webhooks": {"enabled": junk, "url": "https://h/x", "secret": "s"}})
+        assert cfg.enabled is False, junk
+    cfg = webhook_config_from_settings({"webhooks": {"enabled": "true", "url": "https://h/x", "secret": "s"}})
+    assert cfg.enabled is True
+
+
+def test_qodo10_enabled_without_secret_never_delivers(monkeypatch):
+    """Qodo #10: no signing secret => fail closed, no POST."""
+    from tldw_chatbook.Agents import run_webhooks
+    async def allowed(url, **k):
+        return None
+    monkeypatch.setattr(run_webhooks, "check_url_or_raise_async", allowed)
+    posted = {"n": 0}
+    async def fake_post(url, body, headers, timeout):
+        posted["n"] += 1
+    result = _run(deliver_webhook(
+        WebhookConfig(enabled=True, url="https://h/x", secret="", events=("completed",)),
+        "completed", "run-1", post_fn=fake_post,
+    ))
+    assert result is False and posted["n"] == 0
+
+
+def test_qodo11_timeout_rejects_nan_and_infinity():
+    """Qodo #11: NaN/inf timeouts fall back to a finite bound."""
+    for junk in ("inf", "nan", float("inf"), float("nan"), -5, 1e12):
+        cfg = webhook_config_from_settings(
+            {"webhooks": {"enabled": True, "url": "https://h/x", "secret": "s", "timeout_seconds": junk}}
+        )
+        import math
+        assert math.isfinite(cfg.timeout_seconds), junk
+        assert 0.1 <= cfg.timeout_seconds <= 120.0, (junk, cfg.timeout_seconds)
+
+
+def test_qodo8_http_error_status_is_a_failed_delivery(monkeypatch):
+    """Qodo #8: a 4xx/5xx response is a FAILED delivery, not a success."""
+    from tldw_chatbook.Agents import run_webhooks
+    async def allowed(url, **k):
+        return None
+    monkeypatch.setattr(run_webhooks, "check_url_or_raise_async", allowed)
+
+    class _Resp:
+        status_code = 500
+        def raise_for_status(self):
+            raise RuntimeError("500 Server Error")
+    class _Client:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, content=None, headers=None):
+            return _Resp()
+    import httpx
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+    result = _run(deliver_webhook(
+        WebhookConfig(enabled=True, url="https://h/x", secret="s", events=("completed",)),
+        "completed", "run-1",  # no post_fn: exercise the REAL default transport
+    ))
+    assert result is False
+
+
+def test_qodo12_failure_log_never_contains_full_url(monkeypatch, caplog):
+    """Qodo #12: a failing delivery logs a sanitized origin, never credentials
+    embedded in the URL path/query/userinfo."""
+    from tldw_chatbook.Agents import run_webhooks
+    async def allowed(url, **k):
+        return None
+    monkeypatch.setattr(run_webhooks, "check_url_or_raise_async", allowed)
+    async def boom(url, body, headers, timeout):
+        raise TimeoutError("dead")
+    captured = []
+    monkeypatch.setattr(run_webhooks.logger, "warning", lambda msg, *a, **k: captured.append(msg.format(*a) if a else str(msg)))
+    _run(deliver_webhook(
+        WebhookConfig(enabled=True, url="https://user:tok3n@h.example/hook?apikey=sekret", secret="s", events=("completed",)),
+        "completed", "run-1", post_fn=boom,
+    ))
+    joined = " ".join(captured)
+    assert "tok3n" not in joined and "sekret" not in joined, joined
+    assert "h.example" in joined  # origin still identifiable

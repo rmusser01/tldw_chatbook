@@ -149,3 +149,32 @@ async def test_preflight_failure_does_not_consume_the_occurrence(tmp_path):
     assert marked["called"] is False, (
         "a preflight failure must not consume/advance the occurrence"
     )
+
+
+def test_qodo6_blocking_sync_preflight_cannot_wedge_the_loop(monkeypatch):
+    """Qodo #6 (PR #2301): a SYNC preflight that blocks must be bounded by the
+    preflight timeout (off-loop), not run inline on the scheduler loop."""
+    import asyncio
+    import time as _time
+
+    from tldw_chatbook.Scheduling.scheduler.loop import SchedulerLoop
+
+    class _Handler:
+        def preflight(self, task):
+            _time.sleep(5.0)  # a wedged sync preflight
+            return (False, "should never be seen")
+
+    loop = SchedulerLoop.__new__(SchedulerLoop)
+    monkeypatch.setattr(
+        type(loop), "_PREFLIGHT_TIMEOUT_SECONDS", 0.2, raising=False
+    )
+
+    async def _drive():
+        started = _time.monotonic()
+        result = await loop._run_preflight(_Handler(), {"id": 1})
+        elapsed = _time.monotonic() - started
+        return result, elapsed
+
+    result, elapsed = asyncio.run(_drive())
+    assert result is None, "a timed-out preflight proceeds (never a false block)"
+    assert elapsed < 2.0, f"sync preflight wedged the loop for {elapsed:.1f}s"

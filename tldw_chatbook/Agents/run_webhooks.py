@@ -23,7 +23,9 @@ import asyncio
 import hashlib
 import hmac
 import json
+import math
 import threading
+from urllib.parse import urlsplit
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence, Tuple
 
@@ -42,6 +44,7 @@ WEBHOOK_SIGNATURE_HEADER = "X-Tldw-Signature"
 #: Lifecycle events a webhook may subscribe to.
 WEBHOOK_EVENTS = ("completed", "failed", "needs-approval")
 _DEFAULT_TIMEOUT_SECONDS = 5.0
+_MAX_TIMEOUT_SECONDS = 120.0
 
 PostFn = Callable[[str, bytes, Mapping[str, str], float], Awaitable[None]]
 
@@ -65,16 +68,26 @@ def webhook_config_from_settings(settings: Mapping[str, Any]) -> WebhookConfig:
         events = tuple(str(e).strip() for e in raw_events if str(e).strip())
     else:
         events = WEBHOOK_EVENTS  # subscribe to all when unspecified
+    # Qodo #11 (PR #2301): reject NaN/inf and clamp to a finite band so a
+    # junk value can never leave delivery effectively unbounded.
     try:
         timeout = float(section.get("timeout_seconds", _DEFAULT_TIMEOUT_SECONDS))
     except (TypeError, ValueError):
         timeout = _DEFAULT_TIMEOUT_SECONDS
+    if not math.isfinite(timeout):
+        timeout = _DEFAULT_TIMEOUT_SECONDS
+    timeout = min(max(0.1, timeout), _MAX_TIMEOUT_SECONDS)
+    # Qodo #9 (PR #2301): strict boolean coercion -- "false"/"0"/junk must
+    # not enable an outbound network feature (shared helper, default False).
+    from ..config import coerce_bool_setting
+
+    enabled = bool(coerce_bool_setting(section.get("enabled", False), False))
     return WebhookConfig(
-        enabled=bool(section.get("enabled", False)),
+        enabled=enabled,
         url=str(section.get("url") or "").strip(),
         secret=str(section.get("secret") or ""),
         events=events,
-        timeout_seconds=max(0.1, timeout),
+        timeout_seconds=timeout,
     )
 
 
@@ -114,11 +127,26 @@ def sign_payload(secret: str, body: bytes) -> str:
     return f"sha256={digest}"
 
 
+def _log_safe_origin(url: str) -> str:
+    """Scheme+host(+port) only -- webhook URLs may embed tokens in userinfo,
+    path, or query (Qodo #12, PR #2301)."""
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname or "?"
+        port = f":{parts.port}" if parts.port else ""
+        return f"{parts.scheme}://{host}{port}"
+    except Exception:  # noqa: BLE001 - sanitizer must never raise
+        return "<unparseable-url>"
+
+
 async def _default_post(url: str, body: bytes, headers: Mapping[str, str], timeout: float) -> None:
     import httpx
 
     async with httpx.AsyncClient(timeout=timeout) as client:
-        await client.post(url, content=body, headers=dict(headers))
+        response = await client.post(url, content=body, headers=dict(headers))
+        # Qodo #8 (PR #2301): a 4xx/5xx receiver response is a FAILED
+        # delivery, not a success -- raise so the caller records it as one.
+        response.raise_for_status()
 
 
 async def deliver_webhook(
@@ -139,6 +167,16 @@ async def deliver_webhook(
     bounded timeout; any failure is logged + counted, not raised.
     """
     if not config.enabled or not config.url:
+        return False
+    # Qodo #10 (PR #2301): a signature over an empty key is forgeable by
+    # anyone; enabled-without-secret fails closed rather than emitting
+    # unauthenticatable events.
+    if not config.secret:
+        logger.warning(
+            "Run webhook is enabled but [webhooks] secret is empty; "
+            "refusing to deliver unauthenticated events."
+        )
+        log_counter("run_webhook_blocked", labels={"reason": "no_secret"})
         return False
     if event not in config.events:
         return False
@@ -170,7 +208,7 @@ async def deliver_webhook(
     except Exception as exc:  # noqa: BLE001 - a dead endpoint never fails the run
         logger.warning(
             "Run webhook delivery to {} failed ({}): {!r}",
-            config.url,
+            _log_safe_origin(config.url),
             event,
             exc,
         )

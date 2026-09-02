@@ -270,3 +270,26 @@ def test_i3_omitted_max_tokens_charges_default_not_zero():
     result = _run(d.handle("sampling/createMessage", {"messages": []}))  # no maxTokens
     assert not isinstance(result, JsonRpcError)
     assert budget.tokens_used == _DEFAULT_SAMPLING_MAX_TOKENS, "omitted maxTokens must charge the default"
+
+
+# --- Qodo review round (PR #2301) #1: boundary validation ---
+
+def test_qodo1_non_dict_message_items_are_invalid_params():
+    async def complete_fn(messages, max_tokens, model_hint):
+        raise AssertionError("must not be reached with malformed messages")
+    d = ServerRequestDispatcher(
+        sampling_policy=SamplingPolicy(allowed=True, max_requests_per_minute=10, max_total_tokens=10000),
+        complete_fn=complete_fn,
+    )
+    result = _run(d.handle("sampling/createMessage", {"messages": ["not-a-dict", 42], "maxTokens": 10}))
+    assert isinstance(result, JsonRpcError)
+    assert result.code == -32602
+
+
+def test_qodo1_non_dict_requested_schema_is_invalid_params():
+    async def elicit_fn(message, schema):
+        raise AssertionError("must not be reached with malformed schema")
+    d = ServerRequestDispatcher(elicit_fn=elicit_fn)
+    result = _run(d.handle("elicitation/create", {"message": "hi", "requestedSchema": ["not", "a", "dict"]}))
+    assert isinstance(result, JsonRpcError)
+    assert result.code == -32602

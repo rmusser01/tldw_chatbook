@@ -190,6 +190,13 @@ class ServerRequestDispatcher:
         messages = params.get("messages")
         if not isinstance(messages, list):
             return JsonRpcError(_INVALID_PARAMS, "sampling requires a messages array")
+        # Qodo #1 (PR #2301): server-controlled payloads are validated at the
+        # JSON-RPC boundary before anything crosses into the injected
+        # provider callback -- each message item must be an object.
+        if any(not isinstance(item, dict) for item in messages):
+            return JsonRpcError(
+                _INVALID_PARAMS, "sampling messages must be an array of objects"
+            )
         requested_tokens = params.get("maxTokens")
         try:
             requested_tokens = int(requested_tokens)
@@ -247,6 +254,12 @@ class ServerRequestDispatcher:
 
         message = str(params.get("message") or "")
         schema = params.get("requestedSchema") or {}
+        # Qodo #1 (PR #2301): the schema crosses into the approval surface;
+        # only an object is a valid requestedSchema.
+        if not isinstance(schema, dict):
+            return JsonRpcError(
+                _INVALID_PARAMS, "elicitation requestedSchema must be an object"
+            )
         try:
             response = await self._elicit_fn(message, schema)
         except Exception as exc:

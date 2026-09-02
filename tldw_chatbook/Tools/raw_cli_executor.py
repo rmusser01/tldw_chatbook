@@ -182,6 +182,22 @@ _HARDLINE_WRAPPERS = frozenset(
     {"sudo", "env", "command", "nice", "nohup", "time", "doas", "exec"}
 )
 
+#: Wrapper options that CONSUME the following token (Qodo review, PR #2301):
+#: without arity handling, `sudo -u root rm -rf /` surfaced `root` as the
+#: command word and slipped the floor. Long options in `--opt=value` form are
+#: a single token and need no entry; bare `--opt value` forms are listed.
+_WRAPPER_ARG_OPTIONS: dict[str, frozenset[str]] = {
+    "sudo": frozenset({
+        "-u", "-g", "-p", "-C", "-D", "-h", "-R", "-T", "-U",
+        "--user", "--group", "--prompt", "--chdir", "--chroot", "--host",
+        "--close-from", "--command-timeout", "--other-user",
+    }),
+    "doas": frozenset({"-u"}),
+    "env": frozenset({"-u", "-S", "-C", "-P", "--unset", "--chdir", "--split-string"}),
+    "nice": frozenset({"-n", "--adjustment"}),
+    "time": frozenset({"-f", "-o", "--format", "--output"}),
+}
+
 #: Runtime commands that shut the machine down when in command position.
 _SHUTDOWN_COMMANDS = frozenset({"shutdown", "poweroff", "halt", "reboot"})
 
@@ -250,15 +266,19 @@ def _strip_wrappers(tokens: list[str]) -> list[str]:
         if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", token):
             index += 1
         elif _basename(token) in _HARDLINE_WRAPPERS:
+            arg_options = _WRAPPER_ARG_OPTIONS.get(_basename(token), frozenset())
             index += 1
-            # skip the wrapper's own short options (e.g. `sudo -n`).
-            # ponytail: a wrapper OPTION that takes an argument
-            # (`sudo -u root ...`) leaves that argument as the apparent
-            # command word, so `sudo -u root rm -rf /` slips this floor --
-            # a documented, accepted gap (the approval card is the real
-            # gate; parsing every wrapper's option arity is not worth it).
+            # Skip the wrapper's own options. Options known to CONSUME the
+            # next token (`sudo -u root`, `nice -n 19`, `time -f fmt`) skip
+            # that argument too, so it can never surface as the apparent
+            # command word and hide the real one from the floor (Qodo
+            # review, PR #2301 -- closes the previously documented
+            # `sudo -u root rm -rf /` gap).
             while index < len(tokens) and tokens[index].startswith("-"):
+                option = tokens[index]
                 index += 1
+                if option in arg_options and index < len(tokens):
+                    index += 1
         else:
             break
     return tokens[index:]

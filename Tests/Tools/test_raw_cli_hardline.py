@@ -186,3 +186,28 @@ def test_failure_hint_table_is_data() -> None:
     table = raw_cli_executor.FAILURE_HINT_TABLE
     assert len(table) >= 6
     assert all(len(row) == 2 for row in table)
+
+
+# --- Qodo review round (PR #2301) #2: wrapper option arity ---
+
+@pytest.mark.parametrize("command", [
+    "sudo -u root rm -rf /",
+    "sudo --user root rm -rf /",
+    "doas -u root rm -rf /",
+    "env -u SOMEVAR rm -rf /",
+    "nice -n 19 rm -rf /",
+    "time -f elapsed rm -rf /",
+    "sudo -u root -g wheel rm --recursive --force /",
+])
+def test_wrapper_option_arguments_do_not_hide_the_command(command):
+    assert hardline_violation(command) is not None, command
+
+
+@pytest.mark.parametrize("command", [
+    "sudo -u www-data ls -la /var/www",
+    "env -u DEBUG python -m mymod",
+    "nice -n 10 make build",
+    "sudo --user deploy systemctl status app",
+])
+def test_wrapper_option_arguments_benign_commands_still_pass(command):
+    assert hardline_violation(command) is None, command
