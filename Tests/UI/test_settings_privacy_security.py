@@ -160,6 +160,27 @@ def test_privacy_posture_coerces_string_trace_rollout_settings():
     assert posture.trace_legacy_writes_enabled is True
 
 
+def test_privacy_posture_prefers_trace_rollout_environment_overrides():
+    posture = build_settings_privacy_posture(
+        {
+            "console": {
+                "trace_normalized_writes": True,
+                "trace_normalized_reads": False,
+                "trace_legacy_writes": False,
+            }
+        },
+        environ={
+            "TLDW_CONSOLE_TRACE_NORMALIZED_WRITES": "false",
+            "TLDW_CONSOLE_TRACE_NORMALIZED_READS": "true",
+            "TLDW_CONSOLE_TRACE_LEGACY_WRITES": "true",
+        },
+    )
+
+    assert posture.trace_normalized_writes_enabled is False
+    assert posture.trace_normalized_reads_enabled is True
+    assert posture.trace_legacy_writes_enabled is True
+
+
 def test_privacy_posture_reports_skill_trust_without_leaking_paths():
     posture = build_settings_privacy_posture(
         {"encryption": {"enabled": True}},

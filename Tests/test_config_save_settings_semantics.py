@@ -379,6 +379,25 @@ def test_runtime_capture_policy_prefers_trace_rollout_environment_overrides(
     assert policy.legacy_writes_enabled is True
 
 
+def test_trace_rollout_settings_use_typed_validation_and_field_defaults() -> None:
+    from pydantic import BaseModel
+
+    assert issubclass(config_module.TraceRolloutSettings, BaseModel)
+
+    settings = config_module.resolve_trace_rollout_settings(
+        {
+            "trace_normalized_writes": "invalid",
+            "trace_normalized_reads": "false",
+            "trace_legacy_writes": "invalid",
+        },
+        environ={},
+    )
+
+    assert settings.normalized_writes_enabled is True
+    assert settings.normalized_reads_enabled is False
+    assert settings.legacy_writes_enabled is False
+
+
 def test_runtime_capture_policy_coerces_string_true_capture_and_rollout_gates(
     monkeypatch,
 ) -> None:

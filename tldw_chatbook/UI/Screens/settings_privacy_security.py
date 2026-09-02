@@ -114,7 +114,12 @@ def build_settings_privacy_posture(
     trace_privacy = validate_trace_privacy_config(console)
     # Keep this first-paint helper aligned with the runtime policy without
     # adding config.py to the eager Settings import closure.
-    from tldw_chatbook.config import coerce_bool_setting
+    from tldw_chatbook.config import (
+        coerce_bool_setting,
+        resolve_trace_rollout_settings,
+    )
+
+    rollout = resolve_trace_rollout_settings(console, environ=env)
 
     return SettingsPrivacyPosture(
         encryption_enabled=encryption_enabled,
@@ -137,18 +142,9 @@ def build_settings_privacy_posture(
         ),
         trace_pii_masking_enabled=trace_privacy.exchange_capture_pii_redaction,
         trace_viewer_profile=trace_privacy.effective_viewer_profile,
-        trace_normalized_writes_enabled=coerce_bool_setting(
-            console.get("trace_normalized_writes", True),
-            True,
-        ),
-        trace_normalized_reads_enabled=coerce_bool_setting(
-            console.get("trace_normalized_reads", True),
-            True,
-        ),
-        trace_legacy_writes_enabled=coerce_bool_setting(
-            console.get("trace_legacy_writes", False),
-            False,
-        ),
+        trace_normalized_writes_enabled=rollout.normalized_writes_enabled,
+        trace_normalized_reads_enabled=rollout.normalized_reads_enabled,
+        trace_legacy_writes_enabled=rollout.legacy_writes_enabled,
     )
 
 

@@ -37,6 +37,14 @@ from typing import (
 #
 # Third-Party Imports
 from loguru import logger
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    TypeAdapter,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+)
 
 
 #
@@ -6697,6 +6705,42 @@ class RuntimeCapturePolicy:
     legacy_writes_enabled: bool = False
 
 
+_TRACE_ROLLOUT_BOOLEAN_ADAPTER = TypeAdapter(bool)
+
+
+class TraceRolloutSettings(BaseModel):
+    """Validated effective gates for the semantic trace rollout.
+
+    Attributes:
+        normalized_writes_enabled: Whether normalized calls may be written.
+        normalized_reads_enabled: Whether normalized calls participate in reads.
+        legacy_writes_enabled: Whether compatibility snapshots are also written.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    normalized_writes_enabled: bool = True
+    normalized_reads_enabled: bool = True
+    legacy_writes_enabled: bool = False
+
+    @field_validator(
+        "normalized_writes_enabled",
+        "normalized_reads_enabled",
+        "legacy_writes_enabled",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_boolean(cls, value: object, info: ValidationInfo) -> bool:
+        defaults = {
+            "normalized_writes_enabled": True,
+            "normalized_reads_enabled": True,
+            "legacy_writes_enabled": False,
+        }
+        try:
+            return _TRACE_ROLLOUT_BOOLEAN_ADAPTER.validate_python(value)
+        except ValidationError:
+            return defaults[info.field_name]
+
+
 _RUNTIME_CAPTURE_POLICY_LOCK = _threading.RLock()
 _RUNTIME_CAPTURE_POLICY: RuntimeCapturePolicy | None = None
 _TRACE_ROLLOUT_ENV_NAMES = (
@@ -6717,24 +6761,59 @@ def _trace_rollout_environment() -> tuple[str | None, ...]:
     return tuple(os.environ.get(name) for name in _TRACE_ROLLOUT_ENV_NAMES)
 
 
-def _resolve_trace_rollout_gate(
-    environment_value: str | None,
-    config_value: object,
-    default: bool,
-) -> bool:
-    """Resolve one rollout gate with environment-first precedence.
+def _trace_rollout_environment_mapping(
+    values: tuple[str | None, ...],
+) -> dict[str, str]:
+    """Map one captured rollout environment identity back to present values."""
+
+    return {
+        name: value
+        for name, value in zip(_TRACE_ROLLOUT_ENV_NAMES, values, strict=True)
+        if value is not None
+    }
+
+
+def resolve_trace_rollout_settings(
+    console: object,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> TraceRolloutSettings:
+    """Validate rollout gates with environment-first precedence.
 
     Args:
-        environment_value: Raw environment override, if present.
-        config_value: Raw TOML-derived value.
-        default: Fallback when neither value can be coerced.
+        console: Raw Console configuration mapping.
+        environ: Optional environment mapping. Defaults to ``os.environ``.
 
     Returns:
-        The resolved Boolean gate value.
+        The validated effective rollout settings.
     """
 
-    raw = config_value if environment_value in (None, "") else environment_value
-    return coerce_bool_setting(raw, default)
+    values = console if isinstance(console, Mapping) else {}
+    environment = os.environ if environ is None else environ
+
+    def selected(environment_name: str, config_name: str, default: bool) -> object:
+        override = environment.get(environment_name)
+        return values.get(config_name, default) if override in (None, "") else override
+
+    return TraceRolloutSettings.model_validate(
+        {
+            "normalized_writes_enabled": selected(
+                _TRACE_ROLLOUT_ENV_NAMES[0],
+                "trace_normalized_writes",
+                True,
+            ),
+            "normalized_reads_enabled": selected(
+                _TRACE_ROLLOUT_ENV_NAMES[1],
+                "trace_normalized_reads",
+                True,
+            ),
+            "legacy_writes_enabled": selected(
+                _TRACE_ROLLOUT_ENV_NAMES[2],
+                "trace_legacy_writes",
+                False,
+            ),
+        }
+    )
 
 
 def _publish_runtime_capture_policy(
@@ -6755,21 +6834,23 @@ def _publish_runtime_capture_policy(
     if viewer_profile not in {"safe", "full"}:
         raise ValueError("viewer_profile")
     rollout_environment = _trace_rollout_environment()
+    rollout = resolve_trace_rollout_settings(
+        {
+            "trace_normalized_writes": normalized_writes_enabled,
+            "trace_normalized_reads": normalized_reads_enabled,
+            "trace_legacy_writes": legacy_writes_enabled,
+        },
+        environ=_trace_rollout_environment_mapping(rollout_environment),
+    )
     policy = RuntimeCapturePolicy(
         bool(enabled),
         detail,
         generation,
         bool(pii_redaction_enabled),
         viewer_profile,
-        _resolve_trace_rollout_gate(
-            rollout_environment[0], normalized_writes_enabled, True
-        ),
-        _resolve_trace_rollout_gate(
-            rollout_environment[1], normalized_reads_enabled, True
-        ),
-        _resolve_trace_rollout_gate(
-            rollout_environment[2], legacy_writes_enabled, False
-        ),
+        rollout.normalized_writes_enabled,
+        rollout.normalized_reads_enabled,
+        rollout.legacy_writes_enabled,
     )
     global _RUNTIME_CAPTURE_POLICY, _RUNTIME_CAPTURE_POLICY_ENV
     with _RUNTIME_CAPTURE_POLICY_LOCK:
@@ -6815,27 +6896,19 @@ def runtime_capture_policy() -> RuntimeCapturePolicy:
         privacy = validate_trace_privacy_config(console)
         pii_redaction_enabled = privacy.exchange_capture_pii_redaction
         viewer_profile = privacy.effective_viewer_profile
+        rollout = resolve_trace_rollout_settings(
+            console,
+            environ=_trace_rollout_environment_mapping(rollout_environment),
+        )
         current = RuntimeCapturePolicy(
             coerce_bool_setting(console.get("exchange_capture", True), True),
             detail,
             snapshot.generation,
             pii_redaction_enabled,
             viewer_profile,
-            _resolve_trace_rollout_gate(
-                rollout_environment[0],
-                console.get("trace_normalized_writes", True),
-                True,
-            ),
-            _resolve_trace_rollout_gate(
-                rollout_environment[1],
-                console.get("trace_normalized_reads", True),
-                True,
-            ),
-            _resolve_trace_rollout_gate(
-                rollout_environment[2],
-                console.get("trace_legacy_writes", False),
-                False,
-            ),
+            rollout.normalized_writes_enabled,
+            rollout.normalized_reads_enabled,
+            rollout.legacy_writes_enabled,
         )
         _RUNTIME_CAPTURE_POLICY = current
         _RUNTIME_CAPTURE_POLICY_ENV = rollout_environment
