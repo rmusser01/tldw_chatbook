@@ -104,6 +104,28 @@ def test_overwrite_requires_the_exact_token_for_the_captured_incumbent(
     assert destination.read_bytes() != b"incumbent"
 
 
+def test_overwrite_refuses_an_incumbent_rewritten_in_place_after_capture(
+    tmp_path: Path, snapshot: ToolPackExportSnapshot
+) -> None:
+    """An old overwrite token must not authorize different bytes on the same inode."""
+    destination = tmp_path / "research.tldw-tool-pack"
+    destination.write_bytes(b"incumbent")
+    captured = CapturedToolPackDestination.capture(destination)
+    captured_identity = (destination.stat().st_dev, destination.stat().st_ino)
+    destination.write_bytes(b"rewritten!")
+
+    with pytest.raises(ToolPackError, match=r"^tool_pack\.export\.destination_changed$"):
+        publish_tool_pack(
+            snapshot,
+            captured,
+            overwrite=True,
+            overwrite_token=captured.overwrite_token,
+        )
+
+    assert (destination.stat().st_dev, destination.stat().st_ino) == captured_identity
+    assert destination.read_bytes() == b"rewritten!"
+
+
 @pytest.mark.parametrize("kind", ("symlink", "directory"))
 def test_capture_rejects_nonregular_destinations(tmp_path: Path, kind: str) -> None:
     """Following special targets could write outside the picker-confirmed boundary."""
@@ -234,6 +256,27 @@ def test_missing_secure_primitive_fails_before_any_destination_mutation(
     assert not destination.exists()
 
 
+def test_missing_descriptor_relative_replace_is_unsupported_before_mutation(
+    tmp_path: Path, snapshot: ToolPackExportSnapshot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The actual replace primitive must accept directory descriptors."""
+    destination = tmp_path / "research.tldw-tool-pack"
+    captured = CapturedToolPackDestination.capture(destination)
+
+    def replace_without_directory_descriptors(source: object, target: object) -> None:
+        raise AssertionError(f"unexpected replacement: {source!r}, {target!r}")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Tool_Packs.publication.os.replace",
+        replace_without_directory_descriptors,
+    )
+
+    with pytest.raises(ToolPackError, match=r"^tool_pack\.export\.publication_unsupported$"):
+        publish_tool_pack(snapshot, captured)
+
+    assert not destination.exists()
+
+
 def test_private_temp_has_mode_0600_and_shares_the_destination_parent(
     tmp_path: Path, snapshot: ToolPackExportSnapshot
 ) -> None:
@@ -270,9 +313,20 @@ def test_file_fsync_precedes_replace_and_parent_fsync(
         events.append("fsync")
         real_fsync(descriptor)
 
-    def record_replace(*args: object, **kwargs: object) -> None:
+    def record_replace(
+        source: object,
+        target: object,
+        *,
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+    ) -> None:
         events.append("replace")
-        real_replace(*args, **kwargs)
+        real_replace(
+            source,
+            target,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+        )
 
     monkeypatch.setattr("tldw_chatbook.Tool_Packs.publication.os.fsync", record_fsync)
     monkeypatch.setattr("tldw_chatbook.Tool_Packs.publication.os.replace", record_replace)
@@ -343,7 +397,7 @@ def test_parent_close_error_is_not_exposed_after_a_durable_publication(
     def fail_parent_close(descriptor: int) -> None:
         nonlocal calls
         calls += 1
-        if calls == 2:
+        if calls == 3:
             raise OSError("private parent close failure")
         real_close(descriptor)
 
@@ -388,6 +442,44 @@ def test_post_replace_parent_substitution_is_durability_uncertain(
     assert not destination.exists()
 
 
+def test_parent_substitution_at_replace_boundary_is_durability_uncertain(
+    tmp_path: Path, snapshot: ToolPackExportSnapshot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A successful replace must still attest that the captured pathname names it."""
+    parent = tmp_path / "exports"
+    parent.mkdir()
+    destination = parent / "research.tldw-tool-pack"
+    captured = CapturedToolPackDestination.capture(destination)
+    displaced = tmp_path / "displaced"
+    real_replace = os.replace
+
+    def substitute_parent_then_replace(
+        source: object,
+        target: object,
+        *,
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+    ) -> None:
+        os.rename(parent, displaced)
+        parent.mkdir()
+        real_replace(
+            source,
+            target,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Tool_Packs.publication.os.replace", substitute_parent_then_replace
+    )
+
+    with pytest.raises(ToolPackError, match=r"^tool_pack\.export\.durability_uncertain$"):
+        publish_tool_pack(snapshot, captured)
+
+    assert (displaced / destination.name).is_file()
+    assert not destination.exists()
+
+
 def test_failed_replace_reports_publication_failure_only_when_exact_old_target_remains(
     tmp_path: Path, snapshot: ToolPackExportSnapshot, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -396,7 +488,14 @@ def test_failed_replace_reports_publication_failure_only_when_exact_old_target_r
     destination.write_bytes(b"incumbent")
     captured = CapturedToolPackDestination.capture(destination)
 
-    def fail_replace(*_args: object, **_kwargs: object) -> None:
+    def fail_replace(
+        _source: object,
+        _target: object,
+        *,
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+    ) -> None:
+        del src_dir_fd, dst_dir_fd
         raise OSError("private replace failure")
 
     monkeypatch.setattr("tldw_chatbook.Tool_Packs.publication.os.replace", fail_replace)
@@ -418,8 +517,19 @@ def test_ambiguous_post_replace_state_reports_durability_uncertain(
     captured = CapturedToolPackDestination.capture(destination)
     real_replace = os.replace
 
-    def replace_then_mutate(*args: object, **kwargs: object) -> None:
-        real_replace(*args, **kwargs)
+    def replace_then_mutate(
+        source: object,
+        target: object,
+        *,
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+    ) -> None:
+        real_replace(
+            source,
+            target,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+        )
         destination.write_bytes(b"third state")
         raise OSError("private replace failure")
 
@@ -441,8 +551,19 @@ def test_post_replace_reconciliation_requires_the_replaced_temp_identity(
     real_fsync = os.fsync
     fsync_calls = 0
 
-    def replace_then_substitute(*args: object, **kwargs: object) -> None:
-        real_replace(*args, **kwargs)
+    def replace_then_substitute(
+        source: object,
+        target: object,
+        *,
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+    ) -> None:
+        real_replace(
+            source,
+            target,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+        )
         clone = tmp_path / "same-bytes-clone"
         clone.write_bytes(destination.read_bytes())
         real_replace(clone, destination)

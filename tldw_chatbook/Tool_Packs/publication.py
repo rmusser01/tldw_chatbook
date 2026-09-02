@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import os
 import secrets
 import stat
@@ -22,6 +23,7 @@ class ToolPackPublicationPrimitives:
     nofollow: bool
     directory: bool
     directory_descriptors: bool
+    replacement_directory_descriptors: bool
     nofollow_stat: bool
 
     @classmethod
@@ -32,8 +34,9 @@ class ToolPackPublicationPrimitives:
             directory=getattr(os, "O_DIRECTORY", 0) > 0,
             directory_descriptors=all(
                 operation in os.supports_dir_fd
-                for operation in (os.open, os.stat, os.unlink, os.rename)
+                for operation in (os.open, os.stat, os.unlink)
             ),
+            replacement_directory_descriptors=_replace_supports_directory_descriptors(),
             nofollow_stat=os.stat in os.supports_follow_symlinks,
         )
 
@@ -44,9 +47,18 @@ class ToolPackPublicationPrimitives:
                 self.nofollow,
                 self.directory,
                 self.directory_descriptors,
+                self.replacement_directory_descriptors,
                 self.nofollow_stat,
             )
         )
+
+
+def _replace_supports_directory_descriptors() -> bool:
+    try:
+        parameters = inspect.signature(os.replace).parameters
+    except (TypeError, ValueError):
+        return False
+    return {"src_dir_fd", "dst_dir_fd"}.issubset(parameters)
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,6 +198,9 @@ def publish_tool_pack(
         )
         temporary_name = None
         os.fsync(parent_fd)
+        _reconcile_after_replace(
+            parent_fd, destination, archive_sha256, temporary_identity
+        )
         return ToolPackPublicationResult(archive_sha256, True, False)
     except ToolPackError:
         raise
@@ -256,6 +271,14 @@ def _validate_parent_and_target(
                 raise ValueError
             current_identity = _identity(target)
         if current_identity != destination.target_identity:
+            raise ValueError
+        if (
+            current_identity is not None
+            and _digest_descriptor_relative(
+                parent_fd, destination.path.name, current_identity
+            )
+            != destination._target_digest
+        ):
             raise ValueError
     except (OSError, TypeError, ValueError):
         raise ToolPackError("export", "destination_changed") from None
