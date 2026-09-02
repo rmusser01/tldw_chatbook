@@ -15,6 +15,7 @@ dependencies:
 references:
   - Docs/superpowers/specs/2026-08-30-task-26000-ruff-formatter-debt-design.md
   - Docs/superpowers/specs/2026-09-02-task-26944-ruff-chat-citations-design.md
+  - Docs/superpowers/plans/2026-09-02-task-26944-ruff-chat-citations.md
   - Docs/superpowers/reviews/evidence/task-26000/ruff-formatter-debt.json
 priority: medium
 ---
@@ -50,3 +51,21 @@ Clean the `ruff-chat-citations` Ruff formatter batch at the owner boundary recor
 - [ ] #7 `git diff --check` and `Tests/CI/test_backlog_task_id_uniqueness.py` pass. <!-- TASK-26000-CONTRACT: governance -->
 - [ ] #8 The diff contains no hand-written production behavior change. <!-- TASK-26000-CONTRACT: no-handwritten-behavior -->
 <!-- AC:END -->
+
+## Implementation Plan
+
+ADR required: no
+
+ADR path: N/A
+
+Reason: this is a formatter-only application of the existing TASK-26000 cleanup
+contract and introduces no architectural boundary or durable policy.
+
+1. Fetch and rebase onto current `origin/dev`, reconcile every assigned path, and
+   capture the pre-format AST/comment evidence with the pinned toolchain.
+2. Run Ruff 0.15.22 on only the reconciled owned paths and require identical
+   semantic/comment evidence.
+3. Run the scoped Ruff, focused-test, governance, and diff checks; self-review the
+   layout-only change.
+4. Record exact evidence, check all acceptance criteria, set the task to `Done`,
+   and commit the closeout.
