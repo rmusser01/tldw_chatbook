@@ -203,9 +203,17 @@ test "$("$profile_python" -c 'import sys; print(f"{sys.version_info.major}.{sys.
 import ast
 from pathlib import Path
 
-ROOTS = (Path("tldw_chatbook/Personal_Context"), Path("tldw_chatbook/Sync_Interop"))
+ROOT = Path("tldw_chatbook")
+REPOSITORY = ROOT / "Personal_Context/repository.py"
+ADAPTER = ROOT / "Sync_Interop/personal_context_adapter.py"
 EXPECTED = {"manifest", "scope", "record", "proposal"}
 PRODUCERS = {"_insert_outbox", "commit_outbox_body"}
+EXPECTED_MATERIALIZATION = [
+    ("extend", "scope"),
+    ("extend", "record"),
+    ("extend", "record"),
+    ("extend", "proposal"),
+]
 
 
 def name(call: ast.Call) -> str:
@@ -223,31 +231,130 @@ def literal_types(call: ast.Call) -> set[str]:
     }
 
 
-def purge_calls(source: str) -> list[int]:
+def purge_calls(tree: ast.AST) -> list[int]:
     return [
         node.lineno
-        for node in ast.walk(ast.parse(source))
+        for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and name(node) in PRODUCERS
         and "purge" in literal_types(node)
     ]
 
 
-assert purge_calls("repo._insert_outbox(c, object_type='purge')")
-assert purge_calls("repo.commit_outbox_body(object_type='purge')")
+def targets_materialization(target: ast.AST) -> bool:
+    if isinstance(target, ast.Name):
+        return target.id == "materialization"
+    if isinstance(target, ast.Subscript):
+        return targets_materialization(target.value)
+    if isinstance(target, (ast.List, ast.Tuple)):
+        return any(targets_materialization(item) for item in target.elts)
+    return False
+
+
+def materialization_sequence(function: ast.FunctionDef) -> list[tuple[str, str]]:
+    assignments: list[ast.AST] = []
+    for node in ast.walk(function):
+        if isinstance(node, ast.AnnAssign) and targets_materialization(node.target):
+            assignments.append(node)
+        elif isinstance(node, ast.Assign) and any(
+            targets_materialization(target) for target in node.targets
+        ):
+            assignments.append(node)
+        elif isinstance(node, ast.AugAssign) and targets_materialization(node.target):
+            assignments.append(node)
+        elif isinstance(node, ast.Delete) and any(
+            targets_materialization(target) for target in node.targets
+        ):
+            assignments.append(node)
+    if (
+        len(assignments) != 1
+        or not isinstance(assignments[0], ast.AnnAssign)
+        or not isinstance(assignments[0].value, ast.List)
+        or assignments[0].value.elts
+    ):
+        raise ValueError("materialization initialization or reassignment changed")
+
+    sequence: list[tuple[str, str]] = []
+    calls = sorted(
+        (
+            node
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "materialization"
+        ),
+        key=lambda node: (node.lineno, node.col_offset),
+    )
+    for call in calls:
+        method = call.func.attr
+        if method not in {"extend", "append"} or len(call.args) != 1 or call.keywords:
+            raise ValueError(f"unknown materialization mutator at line {call.lineno}")
+        source = call.args[0]
+        if method == "append":
+            items = [source]
+        elif isinstance(source, (ast.GeneratorExp, ast.ListComp, ast.SetComp)):
+            items = [source.elt]
+        elif isinstance(source, (ast.List, ast.Tuple, ast.Set)):
+            items = list(source.elts)
+        else:
+            raise ValueError(f"dynamic materialization source at line {call.lineno}")
+        for item in items:
+            if (
+                not isinstance(item, ast.Tuple)
+                or not item.elts
+                or not isinstance(item.elts[0], ast.Constant)
+                or not isinstance(item.elts[0].value, str)
+            ):
+                raise ValueError(f"dynamic materialization domain at line {call.lineno}")
+            domain = item.elts[0].value
+            if domain not in EXPECTED:
+                raise ValueError(f"unreviewed materialization domain: {domain}")
+            sequence.append((method, domain))
+    return sequence
+
+
+widget_tree = ast.parse(
+    "def on_click(repository):\n"
+    "    repository.commit_outbox_body(object_type='purge')\n"
+)
+if purge_calls(widget_tree) != [2]:
+    raise SystemExit("Widget-like purge caller negative control was not detected")
+synthetic_function = next(
+    node
+    for node in ast.walk(
+        ast.parse(
+            "def materialize(items):\n"
+            "    materialization: list[tuple] = []\n"
+            "    materialization.extend(('purge', item, item, item) for item in items)\n"
+        )
+    )
+    if isinstance(node, ast.FunctionDef)
+)
+try:
+    materialization_sequence(synthetic_function)
+except ValueError as error:
+    if "purge" not in str(error):
+        raise
+else:
+    raise SystemExit("purge materialization negative control was not rejected")
+
+trees = {
+    path: ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for path in ROOT.rglob("*.py")
+}
 violations: list[str] = []
 literal_producers: set[str] = set()
-dynamic_insertions: set[tuple[str, str]] = set()
+dynamic_insertions: set[tuple[str, str, str]] = set()
 direct_commit_calls: list[str] = []
-for path in (path for root in ROOTS for path in root.rglob("*.py")):
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+for path, tree in trees.items():
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
     for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
         producer = name(call)
         if producer not in PRODUCERS:
             continue
         types = literal_types(call)
-        literal_producers.update(types & (EXPECTED | {"purge"}))
+        literal_producers.update(types)
         if "purge" in types:
             violations.append(f"{path}:{call.lineno}: literal purge producer")
         owner = call
@@ -256,20 +363,39 @@ for path in (path for root in ROOTS for path in root.rglob("*.py")):
         owner_name = owner.name if isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)) else "<module>"
         object_kw = next((kw.value for kw in call.keywords if kw.arg == "object_type"), None)
         if producer == "_insert_outbox" and object_kw is not None and not isinstance(object_kw, ast.Constant):
-            dynamic_insertions.add((owner_name, ast.unparse(object_kw)))
+            dynamic_insertions.add((str(path), owner_name, ast.unparse(object_kw)))
         if producer == "commit_outbox_body":
             direct_commit_calls.append(f"{path}:{call.lineno}")
 
 if literal_producers != EXPECTED:
     violations.append(f"literal producer domains changed: {sorted(literal_producers)}")
-if dynamic_insertions != {("apply_reviewed_link", "object_type"), ("commit_outbox_body", "object_type")}:
+expected_dynamic = {
+    (str(REPOSITORY), "apply_reviewed_link", "object_type"),
+    (str(REPOSITORY), "commit_outbox_body", "object_type"),
+}
+if dynamic_insertions != expected_dynamic:
     violations.append(f"dynamic producer seams changed: {sorted(dynamic_insertions)}")
 if direct_commit_calls:
     violations.append(f"commit_outbox_body gained callers: {direct_commit_calls}")
 
-adapter = ast.parse(
-    Path("tldw_chatbook/Sync_Interop/personal_context_adapter.py").read_text(encoding="utf-8")
-)
+repository = trees[REPOSITORY]
+reviewed_link_functions = [
+    node
+    for node in ast.walk(repository)
+    if isinstance(node, ast.FunctionDef) and node.name == "apply_reviewed_link"
+]
+if len(reviewed_link_functions) != 1:
+    violations.append("PersonalContextRepository.apply_reviewed_link changed or is ambiguous")
+else:
+    try:
+        materialization = materialization_sequence(reviewed_link_functions[0])
+    except ValueError as error:
+        violations.append(str(error))
+    else:
+        if materialization != EXPECTED_MATERIALIZATION:
+            violations.append(f"materialization sources changed: {materialization}")
+
+adapter = trees[ADAPTER]
 model_keys = next(
     {
         key.value
@@ -285,7 +411,7 @@ if model_keys != EXPECTED:
     violations.append(f"adapter publishable model map changed: {sorted(model_keys)}")
 if violations:
     raise SystemExit("\n".join(violations))
-print("No reachable Chatbook purge producer; producer seams remain the reviewed four domains.")
+print(f"Negative controls passed; no production purge caller; materialization: {materialization}")
 PY
 if rg -n -i -e 'personal.context.*post.?link.*resolve' \
   -e 'post.?link.*personal.context.*resolve' \
@@ -295,7 +421,7 @@ if rg -n -i -e 'personal.context.*post.?link.*resolve' \
 fi
 ```
 
-Expected: five protocol domains and reviewed first-link behavior exist; no dedicated post-link resolver or reachable Chatbook purge producer is found.
+Expected: five protocol domains and reviewed first-link behavior exist; no dedicated post-link resolver, literal purge caller anywhere under `tldw_chatbook`, production `commit_outbox_body` caller, or unreviewed first-link materialization source is found.
 
 Executed inventory on rebased Chatbook `dev` `862bfaf9c18795f6a41bcda626ed25e66f8319d2` confirmed the named controls and component paths; all five domains; reviewed first-link reconciliation; encrypted `ProfileSyncOutbox` dispatch; API bootstrap/link completion; generic Sync conflict handling only; and outbox producers for manifest, scope, record, and proposal, with no purge producer. Merged server PR #2858 independently records that ordinary server REST edits are not published to linked clients and that purge distribution/acknowledgement remain incomplete.
 
@@ -732,9 +858,17 @@ test "$("$profile_python" -c 'import sys; print(f"{sys.version_info.major}.{sys.
 import ast
 from pathlib import Path
 
-ROOTS = (Path("tldw_chatbook/Personal_Context"), Path("tldw_chatbook/Sync_Interop"))
+ROOT = Path("tldw_chatbook")
+REPOSITORY = ROOT / "Personal_Context/repository.py"
+ADAPTER = ROOT / "Sync_Interop/personal_context_adapter.py"
 EXPECTED = {"manifest", "scope", "record", "proposal"}
 PRODUCERS = {"_insert_outbox", "commit_outbox_body"}
+EXPECTED_MATERIALIZATION = [
+    ("extend", "scope"),
+    ("extend", "record"),
+    ("extend", "record"),
+    ("extend", "proposal"),
+]
 
 
 def name(call: ast.Call) -> str:
@@ -752,31 +886,130 @@ def literal_types(call: ast.Call) -> set[str]:
     }
 
 
-def purge_calls(source: str) -> list[int]:
+def purge_calls(tree: ast.AST) -> list[int]:
     return [
         node.lineno
-        for node in ast.walk(ast.parse(source))
+        for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and name(node) in PRODUCERS
         and "purge" in literal_types(node)
     ]
 
 
-assert purge_calls("repo._insert_outbox(c, object_type='purge')")
-assert purge_calls("repo.commit_outbox_body(object_type='purge')")
+def targets_materialization(target: ast.AST) -> bool:
+    if isinstance(target, ast.Name):
+        return target.id == "materialization"
+    if isinstance(target, ast.Subscript):
+        return targets_materialization(target.value)
+    if isinstance(target, (ast.List, ast.Tuple)):
+        return any(targets_materialization(item) for item in target.elts)
+    return False
+
+
+def materialization_sequence(function: ast.FunctionDef) -> list[tuple[str, str]]:
+    assignments: list[ast.AST] = []
+    for node in ast.walk(function):
+        if isinstance(node, ast.AnnAssign) and targets_materialization(node.target):
+            assignments.append(node)
+        elif isinstance(node, ast.Assign) and any(
+            targets_materialization(target) for target in node.targets
+        ):
+            assignments.append(node)
+        elif isinstance(node, ast.AugAssign) and targets_materialization(node.target):
+            assignments.append(node)
+        elif isinstance(node, ast.Delete) and any(
+            targets_materialization(target) for target in node.targets
+        ):
+            assignments.append(node)
+    if (
+        len(assignments) != 1
+        or not isinstance(assignments[0], ast.AnnAssign)
+        or not isinstance(assignments[0].value, ast.List)
+        or assignments[0].value.elts
+    ):
+        raise ValueError("materialization initialization or reassignment changed")
+
+    sequence: list[tuple[str, str]] = []
+    calls = sorted(
+        (
+            node
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "materialization"
+        ),
+        key=lambda node: (node.lineno, node.col_offset),
+    )
+    for call in calls:
+        method = call.func.attr
+        if method not in {"extend", "append"} or len(call.args) != 1 or call.keywords:
+            raise ValueError(f"unknown materialization mutator at line {call.lineno}")
+        source = call.args[0]
+        if method == "append":
+            items = [source]
+        elif isinstance(source, (ast.GeneratorExp, ast.ListComp, ast.SetComp)):
+            items = [source.elt]
+        elif isinstance(source, (ast.List, ast.Tuple, ast.Set)):
+            items = list(source.elts)
+        else:
+            raise ValueError(f"dynamic materialization source at line {call.lineno}")
+        for item in items:
+            if (
+                not isinstance(item, ast.Tuple)
+                or not item.elts
+                or not isinstance(item.elts[0], ast.Constant)
+                or not isinstance(item.elts[0].value, str)
+            ):
+                raise ValueError(f"dynamic materialization domain at line {call.lineno}")
+            domain = item.elts[0].value
+            if domain not in EXPECTED:
+                raise ValueError(f"unreviewed materialization domain: {domain}")
+            sequence.append((method, domain))
+    return sequence
+
+
+widget_tree = ast.parse(
+    "def on_click(repository):\n"
+    "    repository.commit_outbox_body(object_type='purge')\n"
+)
+if purge_calls(widget_tree) != [2]:
+    raise SystemExit("Widget-like purge caller negative control was not detected")
+synthetic_function = next(
+    node
+    for node in ast.walk(
+        ast.parse(
+            "def materialize(items):\n"
+            "    materialization: list[tuple] = []\n"
+            "    materialization.extend(('purge', item, item, item) for item in items)\n"
+        )
+    )
+    if isinstance(node, ast.FunctionDef)
+)
+try:
+    materialization_sequence(synthetic_function)
+except ValueError as error:
+    if "purge" not in str(error):
+        raise
+else:
+    raise SystemExit("purge materialization negative control was not rejected")
+
+trees = {
+    path: ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for path in ROOT.rglob("*.py")
+}
 violations: list[str] = []
 literal_producers: set[str] = set()
-dynamic_insertions: set[tuple[str, str]] = set()
+dynamic_insertions: set[tuple[str, str, str]] = set()
 direct_commit_calls: list[str] = []
-for path in (path for root in ROOTS for path in root.rglob("*.py")):
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+for path, tree in trees.items():
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
     for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
         producer = name(call)
         if producer not in PRODUCERS:
             continue
         types = literal_types(call)
-        literal_producers.update(types & (EXPECTED | {"purge"}))
+        literal_producers.update(types)
         if "purge" in types:
             violations.append(f"{path}:{call.lineno}: literal purge producer")
         owner = call
@@ -785,20 +1018,39 @@ for path in (path for root in ROOTS for path in root.rglob("*.py")):
         owner_name = owner.name if isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)) else "<module>"
         object_kw = next((kw.value for kw in call.keywords if kw.arg == "object_type"), None)
         if producer == "_insert_outbox" and object_kw is not None and not isinstance(object_kw, ast.Constant):
-            dynamic_insertions.add((owner_name, ast.unparse(object_kw)))
+            dynamic_insertions.add((str(path), owner_name, ast.unparse(object_kw)))
         if producer == "commit_outbox_body":
             direct_commit_calls.append(f"{path}:{call.lineno}")
 
 if literal_producers != EXPECTED:
     violations.append(f"literal producer domains changed: {sorted(literal_producers)}")
-if dynamic_insertions != {("apply_reviewed_link", "object_type"), ("commit_outbox_body", "object_type")}:
+expected_dynamic = {
+    (str(REPOSITORY), "apply_reviewed_link", "object_type"),
+    (str(REPOSITORY), "commit_outbox_body", "object_type"),
+}
+if dynamic_insertions != expected_dynamic:
     violations.append(f"dynamic producer seams changed: {sorted(dynamic_insertions)}")
 if direct_commit_calls:
     violations.append(f"commit_outbox_body gained callers: {direct_commit_calls}")
 
-adapter = ast.parse(
-    Path("tldw_chatbook/Sync_Interop/personal_context_adapter.py").read_text(encoding="utf-8")
-)
+repository = trees[REPOSITORY]
+reviewed_link_functions = [
+    node
+    for node in ast.walk(repository)
+    if isinstance(node, ast.FunctionDef) and node.name == "apply_reviewed_link"
+]
+if len(reviewed_link_functions) != 1:
+    violations.append("PersonalContextRepository.apply_reviewed_link changed or is ambiguous")
+else:
+    try:
+        materialization = materialization_sequence(reviewed_link_functions[0])
+    except ValueError as error:
+        violations.append(str(error))
+    else:
+        if materialization != EXPECTED_MATERIALIZATION:
+            violations.append(f"materialization sources changed: {materialization}")
+
+adapter = trees[ADAPTER]
 model_keys = next(
     {
         key.value
@@ -814,7 +1066,7 @@ if model_keys != EXPECTED:
     violations.append(f"adapter publishable model map changed: {sorted(model_keys)}")
 if violations:
     raise SystemExit("\n".join(violations))
-print("No reachable Chatbook purge producer; producer seams remain the reviewed four domains.")
+print(f"Negative controls passed; no production purge caller; materialization: {materialization}")
 PY
 if rg -n -i -e 'personal.context.*post.?link.*resolve' \
   -e 'post.?link.*personal.context.*resolve' \
@@ -824,7 +1076,7 @@ if rg -n -i -e 'personal.context.*post.?link.*resolve' \
 fi
 ```
 
-Expected: the branch is based on current `origin/dev`; TASK-27019 resolves uniquely; the current controls, components, five domains, reviewed first-link, outbox/dispatcher/client boundaries, and negative purge/resolver claims still match the guides. Any scanner failure or newly shipped seam stops execution for re-inventory. There must be no later rebase after the task is marked Done.
+Expected: the branch is based on current `origin/dev`; TASK-27019 resolves uniquely; the current controls, components, five domains, reviewed first-link, exact `scope`, `record`, `record`, `proposal` materialization sequence, outbox/dispatcher/client boundaries, and negative purge/resolver claims still match the guides. Any production-tree scanner failure or newly shipped seam stops execution for re-inventory. There must be no later rebase after the task is marked Done.
 
 - [ ] **Step 2: Verify server docs have landed on `dev`**
 
