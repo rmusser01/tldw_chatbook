@@ -1103,6 +1103,84 @@ def test_legacy_trace_maintenance_keeps_a_post_mount_settling_delay() -> None:
 
 
 @pytest.mark.asyncio
+async def test_runtime_runs_gc_then_physical_maintenance_after_normalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    class _Maintenance:
+        def __init__(self, _database: object, **_kwargs: object) -> None:
+            pass
+
+        def run_batch(self) -> SimpleNamespace:
+            return SimpleNamespace(logical_complete=True, admitted=True)
+
+    class _Collector:
+        def __init__(self, _database: object) -> None:
+            pass
+
+        def current_graph_epoch(self) -> int:
+            return 7
+
+        def collect(self, *, request_id: str) -> object:
+            assert request_id.startswith("auto-")
+            events.append("gc")
+            return SimpleNamespace(marked_epoch=7)
+
+    class _Compactor:
+        def __init__(self, _database: object, **kwargs: object) -> None:
+            assert callable(kwargs["pause_dispatch"])
+            assert callable(kwargs["resume_dispatch"])
+            assert kwargs["idle_seconds"]() == 47.0  # type: ignore[operator]
+            events.append("compactor")
+
+        def run_after_gc(self, _result: object) -> SimpleNamespace:
+            events.append("vacuum")
+            return SimpleNamespace(completed=True, reason_code="complete")
+
+    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
+    module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
+    module.TraceGarbageCollector = _Collector  # type: ignore[attr-defined]
+    module.PhysicalTraceCompactor = _Compactor  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    monkeypatch.setattr(
+        "tldw_chatbook.config.resolve_trace_compaction_policy",
+        lambda _config: object(),
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_runtime."
+        "LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS",
+        0.0,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_runtime."
+        "TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS",
+        0.0,
+    )
+    controller = SimpleNamespace(
+        _active_stream_tasks={},
+        pause_trace_maintenance_dispatch=lambda: events.append("pause"),
+        resume_trace_maintenance_dispatch=lambda: events.append("resume"),
+        trace_maintenance_idle_seconds=lambda: 47.0,
+    )
+    runtime = ConsoleRuntime(
+        SimpleNamespace(
+            _ui_ready=True,
+            persona_buddy_controller=None,
+            app_config={"console": {}},
+        )
+    )
+    runtime._chat_controller = controller
+
+    runtime._schedule_legacy_trace_maintenance(object(), object)
+    await asyncio.sleep(1.08)
+
+    assert events[:3] == ["gc", "compactor", "vacuum"]
+    assert events.count("gc") == 1
+    await runtime.dispose()
+
+
+@pytest.mark.asyncio
 async def test_runtime_retries_legacy_maintenance_after_unexpected_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

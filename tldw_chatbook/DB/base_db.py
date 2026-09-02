@@ -17,6 +17,8 @@ import sqlite3
 from collections.abc import Collection, Iterator
 from contextlib import contextmanager
 from pathlib import Path
+import threading
+import time
 from typing import Union
 from abc import ABC, abstractmethod
 from loguru import logger
@@ -27,6 +29,137 @@ from tldw_chatbook.Utils.private_paths import lexical_path
 
 SEMANTIC_MUTATION_GUARD_FUNCTION = "console_semantic_mutation_authorized"
 TRACE_GC_DELETE_GUARD_FUNCTION = "console_trace_gc_delete_authorized"
+
+
+class SQLiteConnectionQuiescenceRegistry:
+    """Coordinate an exclusive maintenance window over held SQLite handles.
+
+    The registry is deliberately process-local. Durable exclusion remains the
+    database maintenance lease; this class closes the gap between that lease and
+    ``CharactersRAGDB``'s thread-local, long-lived connections.
+    """
+
+    def __init__(self) -> None:
+        self._condition = threading.Condition(threading.RLock())
+        self._connections: dict[int, sqlite3.Connection] = {}
+        self._active_uses: set[object] = set()
+        self._active_acquisitions = 0
+        self._quiescence_token: object | None = None
+
+    def begin_acquisition(self) -> None:
+        """Reserve one connection lookup/create operation or reject maintenance."""
+
+        with self._condition:
+            if self._quiescence_token is not None:
+                raise RuntimeError("database_maintenance_in_progress")
+            self._active_acquisitions += 1
+
+    def finish_acquisition(self) -> None:
+        """Release one lookup/create reservation."""
+
+        with self._condition:
+            if self._active_acquisitions <= 0:
+                raise RuntimeError("connection_acquisition_identity")
+            self._active_acquisitions -= 1
+            self._condition.notify_all()
+
+    def register(self, connection: sqlite3.Connection) -> None:
+        """Register a newly opened thread-owned connection."""
+
+        with self._condition:
+            # An acquisition reserved before quiescence may finish opening its
+            # handle; the barrier is already waiting for that reservation and
+            # will close the newly registered handle before it returns.
+            if self._quiescence_token is not None and self._active_acquisitions <= 0:
+                raise RuntimeError("database_maintenance_in_progress")
+            self._connections[id(connection)] = connection
+
+    def unregister(self, connection: sqlite3.Connection) -> None:
+        """Forget an explicitly closed connection."""
+
+        with self._condition:
+            current = self._connections.get(id(connection))
+            if current is connection:
+                self._connections.pop(id(connection), None)
+            self._condition.notify_all()
+
+    def is_registered(self, connection: sqlite3.Connection) -> bool:
+        """Return whether ``connection`` remains a live registered handle."""
+
+        with self._condition:
+            return self._connections.get(id(connection)) is connection
+
+    def begin_use(self) -> object:
+        """Reserve one managed transaction across a quiescence boundary."""
+
+        with self._condition:
+            if self._quiescence_token is not None:
+                raise RuntimeError("database_maintenance_in_progress")
+            token = object()
+            self._active_uses.add(token)
+            return token
+
+    def end_use(self, token: object) -> None:
+        """Release the exact managed-transaction reservation."""
+
+        with self._condition:
+            if token not in self._active_uses:
+                raise RuntimeError("connection_use_identity")
+            self._active_uses.remove(token)
+            self._condition.notify_all()
+
+    def begin_quiescence(self, *, timeout_seconds: float) -> object:
+        """Reject new work and wait for connection acquisition/write use to drain."""
+
+        if type(timeout_seconds) not in {int, float} or float(timeout_seconds) < 0:
+            raise ValueError("timeout_seconds")
+        deadline = time.monotonic() + float(timeout_seconds)
+        with self._condition:
+            if self._quiescence_token is not None:
+                raise RuntimeError("connection_quiescence_already_active")
+            token = object()
+            self._quiescence_token = token
+            while self._active_uses or self._active_acquisitions:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._quiescence_token = None
+                    self._condition.notify_all()
+                    raise TimeoutError("connection_quiescence_timeout")
+                self._condition.wait(remaining)
+            return token
+
+    def close_registered(self, token: object) -> None:
+        """Close every registered handle while the exact barrier is held."""
+
+        with self._condition:
+            if self._quiescence_token is not token:
+                raise RuntimeError("connection_quiescence_identity")
+            connections = tuple(self._connections.values())
+        for connection in connections:
+            try:
+                in_transaction = connection.in_transaction
+            except sqlite3.ProgrammingError:
+                self.unregister(connection)
+                continue
+            if in_transaction:
+                raise RuntimeError("connection_transaction_remained_active")
+            connection.close()
+            self.unregister(connection)
+
+    def end_quiescence(self, token: object) -> None:
+        """Resume ordinary acquisition after the exact maintenance window."""
+
+        with self._condition:
+            if self._quiescence_token is not token:
+                raise RuntimeError("connection_quiescence_identity")
+            self._quiescence_token = None
+            self._condition.notify_all()
+
+    def connection_count(self) -> int:
+        """Return the bounded count of registered handles for diagnostics/tests."""
+
+        with self._condition:
+            return len(self._connections)
 
 
 class _SemanticMutationAuthorization:

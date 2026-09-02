@@ -3200,6 +3200,12 @@ class ConsoleChatController:
         # by the ACTIVE (viewed) session -- see its own docstring.
         self._active_assistant_message_ids: dict[str, str] = {}
         self._active_stream_tasks: dict[str, asyncio.Task] = {}
+        # Physical SQLite maintenance sets this process-local gate before its
+        # final provider-idle check. New runs may prepare normally but cannot
+        # cross either provider-dispatch seam until the compactor's finally
+        # path clears it.
+        self._trace_maintenance_dispatch_paused = threading.Event()
+        self._trace_last_provider_activity = time.monotonic()
         # Exact workspace authority captured for each live provider dispatch.
         # Undo/commit probes run on worker threads, so snapshot reads and the
         # stream-lifecycle writes share this lock.
@@ -3684,6 +3690,27 @@ class ConsoleChatController:
     def capture_revision(self, session_id: str) -> int:
         """Return the authoritative process-local capture revision."""
         return self.store.capture_revision(session_id)
+
+    def pause_trace_maintenance_dispatch(self) -> None:
+        """Prevent new runs from crossing a provider-dispatch boundary."""
+
+        self._trace_maintenance_dispatch_paused.set()
+
+    def resume_trace_maintenance_dispatch(self) -> None:
+        """Release provider dispatch after physical database maintenance."""
+
+        self._trace_maintenance_dispatch_paused.clear()
+
+    async def _wait_for_trace_maintenance_dispatch(self) -> None:
+        """Yield without blocking the UI loop while physical maintenance runs."""
+
+        while self._trace_maintenance_dispatch_paused.is_set():
+            await asyncio.sleep(0.05)
+
+    def trace_maintenance_idle_seconds(self) -> float:
+        """Return elapsed monotonic time since the last provider run finished."""
+
+        return max(0.0, time.monotonic() - self._trace_last_provider_activity)
 
     def capture_purge_availability(self, session_id: str) -> CapturePurgeAvailability:
         """Report the first bounded writer reason preventing quiescence."""
@@ -19847,6 +19874,7 @@ class ConsoleChatController:
                 capture_mode_override=capture_mode_override,
             )
         finally:
+            self._trace_last_provider_activity = time.monotonic()
             if (
                 self._active_stream_tasks.get(owner_id) is active_task
                 and self._active_assistant_message_ids.get(owner_id)
@@ -20570,6 +20598,8 @@ class ConsoleChatController:
             project_thinking(thinking_capture.settle(outcome))
 
         async def enter_provider_dispatch() -> None:
+            await self._wait_for_trace_maintenance_dispatch()
+            self._trace_last_provider_activity = time.monotonic()
             if before_provider_dispatch is not None:
                 await before_provider_dispatch()
                 return
@@ -21664,6 +21694,8 @@ class ConsoleChatController:
             return self._accepted_shutdown_before_dispatch(
                 assistant_message_id, session_id
             )
+        await self._wait_for_trace_maintenance_dispatch()
+        self._trace_last_provider_activity = time.monotonic()
         if before_provider_dispatch is not None:
             await before_provider_dispatch()
         elif preparation_id is not None and not self._transition_preparation(

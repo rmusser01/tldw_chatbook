@@ -85,7 +85,11 @@ from .sql_validation import (
 )
 from .sql_logging import preview_params
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
-from .base_db import _SemanticMutationAuthorization, register_semantic_mutation_guard
+from .base_db import (
+    SQLiteConnectionQuiescenceRegistry,
+    _SemanticMutationAuthorization,
+    register_semantic_mutation_guard,
+)
 from .transaction_observer import (
     begin_managed_transaction,
     complete_managed_transaction,
@@ -108,6 +112,11 @@ DEFAULT_DISCOVERY_OWNER = "general_chat"
 _CONVERSATION_IDENTITY_TEXT_MAX_BYTES = 256
 _SQLITE_POSITIVE_INTEGER_MAX = (1 << 63) - 1
 _UNSET = object()
+_NOTES_ORGANIZATION_SYNC_ID_TABLES = (
+    "keywords",
+    "keyword_collections",
+    "note_folders",
+)
 
 # Sentinel scope for conversation listing that spans every persisted scope
 # ('global' and all workspaces). This is a QUERY-only scope: conversations are
@@ -581,7 +590,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 64  # Auxiliary-attempt ledger accepts 'timed_out' (after v63 trace-graph GC).
+    _CURRENT_SCHEMA_VERSION = 65  # Content-free physical trace-compaction status (after v64 auxiliary timeout).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -3215,6 +3224,7 @@ UPDATE db_schema_version
             f"[Client ID: {self.client_id}]"
         )
         self._local = threading.local()
+        self._connection_quiescence = SQLiteConnectionQuiescenceRegistry()
         try:
             self._initialize_schema()
 
@@ -3283,80 +3293,94 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: If connecting to the database fails.
         """
-        conn = getattr(self._local, "conn", None)
-        if conn:
-            last_used = getattr(self._local, "conn_last_used", None)
-            if (
-                last_used is None
-                or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS
-            ):
-                try:
-                    conn.execute("SELECT 1")  # Check if connection is still alive
-                except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                    logger.warning(
-                        f"Thread-local connection was closed or became unusable; "
-                        f"reopening db_sha256={self._db_diagnostic_ref}."
-                    )
-                    try:
-                        conn.close()
-                    except sqlite3.Error:
-                        # Ignore connection close errors - connection may already be closed
-                        pass
-                    conn = None
-
-        if not conn:
-            try:
-                conn = connect_private_sqlite(
-                    "db.chachanotes.primary",
-                    self.db_path_str,
-                    detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
-                    check_same_thread=False,  # Required for threading.local approach
-                    timeout=15,  # Maybe slightly increase timeout?
-                )
-                conn.row_factory = sqlite3.Row
-                if not self.is_memory_db:
-                    conn.execute("PRAGMA journal_mode=WAL;")
-                # NORMAL is safe under WAL (app-crash-safe; only an OS/power
-                # crash can lose the last commit or two, acceptable for this
-                # local cache) and avoids an fsync on every commit -- the
-                # default FULL was fsyncing the WAL on every commit despite
-                # WAL already being enabled. See Library_Ingest_Jobs_DB.py:
-                # 57-61 for the original template (task-15465).
-                conn.execute("PRAGMA synchronous=NORMAL;")
-
-                conn.execute("PRAGMA foreign_keys = ON;")
-                # task-22224: a HELD connection needs true autocommit (see
-                # Library_Ingest_Jobs_DB.py's module docstring -- the store
-                # template -- for the rule). Under the legacy default, one
-                # bare DML statement auto-BEGINs a DEFERRED transaction that
-                # ``TransactionContextManager`` then silently BORROWS at
-                # depth 0, degrading ``transaction(immediate=True)`` to a
-                # deferred snapshot nothing ever commits. With autocommit,
-                # the manager's explicit BEGIN [IMMEDIATE] is the only
-                # transaction owner; ``commit()``/``rollback()`` outside an
-                # explicit BEGIN are no-ops.
-                conn.isolation_level = None
-                self._local.semantic_mutation_authorization = (
-                    register_semantic_mutation_guard(conn)
-                )
-                self._local.conn = conn
-                logger.debug(
-                    f"Opened/Reopened SQLite connection "
-                    f"db_sha256={self._db_diagnostic_ref} "
-                    f"thread={threading.get_ident()}"
-                )
-            except (sqlite3.Error, PrivatePathError) as exc:
-                logger.error(
-                    f"Failed to connect to database "
-                    f"db_sha256={self._db_diagnostic_ref} "
-                    f"exception_type={type(exc).__name__}"
-                )
+        try:
+            self._connection_quiescence.begin_acquisition()
+        except RuntimeError as exc:
+            raise CharactersRAGDBError(str(exc)) from exc
+        try:
+            conn = getattr(self._local, "conn", None)
+            if conn is not None and not self._connection_quiescence.is_registered(conn):
+                conn = None
                 self._local.conn = None
-                raise CharactersRAGDBError(
-                    f"Failed to connect to database '{self.db_path_str}': {exc}"
-                ) from exc
-        self._local.conn_last_used = time.monotonic()
-        return self._local.conn
+                self._local.semantic_mutation_authorization = None
+            if conn:
+                last_used = getattr(self._local, "conn_last_used", None)
+                if (
+                    last_used is None
+                    or (time.monotonic() - last_used)
+                    >= self._LIVENESS_PING_IDLE_SECONDS
+                ):
+                    try:
+                        conn.execute("SELECT 1")  # Check if connection is still alive
+                    except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+                        logger.warning(
+                            f"Thread-local connection was closed or became unusable; "
+                            f"reopening db_sha256={self._db_diagnostic_ref}."
+                        )
+                        try:
+                            conn.close()
+                        except sqlite3.Error:
+                            # Ignore connection close errors - connection may already be closed
+                            pass
+                        self._connection_quiescence.unregister(conn)
+                        conn = None
+
+            if not conn:
+                try:
+                    conn = connect_private_sqlite(
+                        "db.chachanotes.primary",
+                        self.db_path_str,
+                        detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
+                        check_same_thread=False,  # Required for threading.local approach
+                        timeout=15,  # Maybe slightly increase timeout?
+                    )
+                    conn.row_factory = sqlite3.Row
+                    if not self.is_memory_db:
+                        conn.execute("PRAGMA journal_mode=WAL;")
+                    # NORMAL is safe under WAL (app-crash-safe; only an OS/power
+                    # crash can lose the last commit or two, acceptable for this
+                    # local cache) and avoids an fsync on every commit -- the
+                    # default FULL was fsyncing the WAL on every commit despite
+                    # WAL already being enabled. See Library_Ingest_Jobs_DB.py:
+                    # 57-61 for the original template (task-15465).
+                    conn.execute("PRAGMA synchronous=NORMAL;")
+
+                    conn.execute("PRAGMA foreign_keys = ON;")
+                    # task-22224: a HELD connection needs true autocommit (see
+                    # Library_Ingest_Jobs_DB.py's module docstring -- the store
+                    # template -- for the rule). Under the legacy default, one
+                    # bare DML statement auto-BEGINs a DEFERRED transaction that
+                    # ``TransactionContextManager`` then silently BORROWS at
+                    # depth 0, degrading ``transaction(immediate=True)`` to a
+                    # deferred snapshot nothing ever commits. With autocommit,
+                    # the manager's explicit BEGIN [IMMEDIATE] is the only
+                    # transaction owner; ``commit()``/``rollback()`` outside an
+                    # explicit BEGIN are no-ops.
+                    conn.isolation_level = None
+                    self._local.semantic_mutation_authorization = (
+                        register_semantic_mutation_guard(conn)
+                    )
+                    self._connection_quiescence.register(conn)
+                    self._local.conn = conn
+                    logger.debug(
+                        f"Opened/Reopened SQLite connection "
+                        f"db_sha256={self._db_diagnostic_ref} "
+                        f"thread={threading.get_ident()}"
+                    )
+                except (sqlite3.Error, PrivatePathError) as exc:
+                    logger.error(
+                        f"Failed to connect to database "
+                        f"db_sha256={self._db_diagnostic_ref} "
+                        f"exception_type={type(exc).__name__}"
+                    )
+                    self._local.conn = None
+                    raise CharactersRAGDBError(
+                        f"Failed to connect to database '{self.db_path_str}': {exc}"
+                    ) from exc
+            self._local.conn_last_used = time.monotonic()
+            return self._local.conn
+        finally:
+            self._connection_quiescence.finish_acquisition()
 
     def get_connection(self) -> sqlite3.Connection:
         """
@@ -3368,6 +3392,53 @@ UPDATE db_schema_version
             The active sqlite3.Connection for the current thread.
         """
         return self._get_thread_connection()
+
+    def registered_connection_count(self) -> int:
+        """Return the number of live thread-owned handles."""
+
+        return self._connection_quiescence.connection_count()
+
+    def get_console_trace_compaction_status(self) -> dict[str, object]:
+        """Return content-free physical trace-maintenance status and byte metrics."""
+
+        with self.transaction() as cursor:
+            row = cursor.execute(
+                "SELECT status, reason_code, retry_count, next_retry_at, "
+                "progress_basis_points, allocated_bytes_before, "
+                "allocated_bytes_after, freelist_bytes_before, "
+                "freelist_bytes_after, wal_bytes_before, wal_bytes_after, "
+                "logical_live_bytes FROM console_trace_compaction_state "
+                "WHERE singleton_id = 1"
+            ).fetchone()
+        if row is None:
+            return {}
+        return {
+            "status": str(row[0]),
+            "reason_code": str(row[1]),
+            "retry_count": int(row[2]),
+            "retry_pending": row[3] is not None,
+            "progress_basis_points": int(row[4]),
+            "allocated_bytes_before": int(row[5]),
+            "allocated_bytes_after": int(row[6]),
+            "freelist_bytes_before": int(row[7]),
+            "freelist_bytes_after": int(row[8]),
+            "wal_bytes_before": int(row[9]),
+            "wal_bytes_after": int(row[10]),
+            "logical_live_bytes": int(row[11]),
+        }
+
+    @contextlib.contextmanager
+    def quiesce_connections(self, *, timeout_seconds: float):
+        """Close all thread-owned handles and reject acquisition until exit."""
+
+        token = self._connection_quiescence.begin_quiescence(
+            timeout_seconds=timeout_seconds
+        )
+        try:
+            self._connection_quiescence.close_registered(token)
+            yield
+        finally:
+            self._connection_quiescence.end_quiescence(token)
 
     def _semantic_mutation_authorization_for_coordinator(
         self, connection: sqlite3.Connection
@@ -3514,6 +3585,7 @@ UPDATE db_schema_version
                     f"exception_type={type(exc).__name__}"
                 )
             finally:
+                self._connection_quiescence.unregister(conn)
                 # This ensures that the reference is cleared from threading.local
                 # even if conn.close() itself raised an exception.
                 if hasattr(self._local, "conn"):
@@ -7541,6 +7613,42 @@ UPDATE db_schema_version
                 f"Migration from V63 to V64 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _migrate_from_v64_to_v65(self, conn: sqlite3.Connection) -> None:
+        """Add the content-free physical trace-compaction status singleton."""
+
+        self._require_migration_entry_version(conn, 64, "V64→V65")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v64_to_v65_console_trace_compaction.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V64→V65",
+                )
+                version_cursor = cursor.execute(
+                    "UPDATE db_schema_version SET version = 65 "
+                    "WHERE schema_name = ? AND version = 64",
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V64→V65] Migration version update was not applied"
+                    )
+            if self._get_db_version(conn) != 65:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V64→V65] Migration version check failed"
+                )
+        except SchemaError:
+            raise
+        except Exception as exc:
+            raise SchemaError(
+                f"Migration from V64 to V65 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -7757,6 +7865,7 @@ UPDATE db_schema_version
                     61: self._migrate_from_v61_to_v62,
                     62: self._migrate_from_v62_to_v63,
                     63: self._migrate_from_v63_to_v64,
+                    64: self._migrate_from_v64_to_v65,
                 }
 
                 if current_db_version == 0:
@@ -7846,7 +7955,7 @@ UPDATE db_schema_version
         connection: sqlite3.Connection | sqlite3.Cursor,
     ) -> None:
         """Allocate stable portable UUIDs for organization rows missing them."""
-        for table in ("keywords", "keyword_collections", "note_folders"):
+        for table in _NOTES_ORGANIZATION_SYNC_ID_TABLES:
             rows = connection.execute(
                 f"SELECT id FROM {table} WHERE sync_id IS NULL ORDER BY id"
             ).fetchall()
@@ -22577,6 +22686,7 @@ class TransactionContextManager:
         self.is_outermost_transaction = False
         self.borrows_native_transaction = False
         self.transaction_observer_token: object | None = None
+        self.connection_use_token: object | None = None
         # RESERVED up front (``BEGIN IMMEDIATE``) for read-then-write
         # transactions: a DEFERRED begin that reads (e.g. MAX(seq)) before
         # writing can hit SQLite's non-retryable snapshot/upgrade deadlock
@@ -22589,6 +22699,20 @@ class TransactionContextManager:
         self.immediate = bool(immediate)
 
     def __enter__(self):
+        """Reserve this managed use before entering its SQLite transaction."""
+
+        try:
+            self.connection_use_token = self.db._connection_quiescence.begin_use()
+        except RuntimeError as exc:
+            raise CharactersRAGDBError(str(exc)) from exc
+        try:
+            return self._enter_transaction()
+        except BaseException:
+            self.db._connection_quiescence.end_use(self.connection_use_token)
+            self.connection_use_token = None
+            raise
+
+    def _enter_transaction(self):
         # Ensure transaction_depth is initialized for this thread
         if not hasattr(self.db._local, "transaction_depth"):
             self.db._local.transaction_depth = 0
@@ -22632,6 +22756,16 @@ class TransactionContextManager:
             return self.conn.cursor()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        """Finish SQLite work before releasing the maintenance reservation."""
+
+        try:
+            return self._exit_transaction(exc_type, exc_val, exc_tb)
+        finally:
+            if self.connection_use_token is not None:
+                self.db._connection_quiescence.end_use(self.connection_use_token)
+                self.connection_use_token = None
+
+    def _exit_transaction(self, exc_type, exc_val, exc_tb):
         """
         Handles the exit of the transaction context.
 

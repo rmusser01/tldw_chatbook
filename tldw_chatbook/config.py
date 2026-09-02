@@ -58,6 +58,7 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
+    from tldw_chatbook.Chat.console_trace_maintenance import TraceCompactionPolicy
     from tldw_chatbook.Chat.console_trace_custom_pii import CustomPIIRuleset
 from tldw_chatbook.Utils.adaptive_reader_state import (
     ITEMS_MAX_WIDTH,
@@ -3286,6 +3287,15 @@ exchange_capture = true
 trace_normalized_writes = true
 trace_normalized_reads = true
 trace_legacy_writes = false
+# Same-file VACUUM is admitted only after successful trace GC and every gate.
+trace_compaction_min_database_bytes = 67108864
+trace_compaction_min_freelist_bytes = 16777216
+trace_compaction_min_freelist_ratio = 0.20
+trace_compaction_min_idle_seconds = 30.0
+trace_compaction_retry_initial_seconds = 300.0
+trace_compaction_retry_max_seconds = 3600.0
+trace_compaction_quiesce_timeout_seconds = 5.0
+trace_compaction_disk_safety_margin_bytes = 67108864
 # Retired future-write detail retained only for legacy provenance/migration.
 exchange_capture_detail = "safe"
 # Optional capture-time PII masking is independent of capture and defaults Off.
@@ -7303,6 +7313,63 @@ def resolve_trace_rollout_settings(
                 False,
             ),
         }
+    )
+
+
+def resolve_trace_compaction_policy(console: object) -> "TraceCompactionPolicy":
+    """Resolve bounded physical trace-maintenance thresholds from Console config."""
+
+    from tldw_chatbook.Chat.console_trace_maintenance import TraceCompactionPolicy
+
+    values = console if isinstance(console, Mapping) else {}
+    retry_initial = coerce_float_setting(
+        values.get("trace_compaction_retry_initial_seconds"),
+        300.0,
+        minimum=0.0,
+        maximum=3600.0,
+    )
+    retry_max = coerce_float_setting(
+        values.get("trace_compaction_retry_max_seconds"),
+        3600.0,
+        minimum=retry_initial,
+        maximum=86400.0,
+    )
+    return TraceCompactionPolicy(
+        min_database_bytes=coerce_int_setting(
+            values.get("trace_compaction_min_database_bytes"),
+            64 * 1024 * 1024,
+            minimum=0,
+        ),
+        min_freelist_bytes=coerce_int_setting(
+            values.get("trace_compaction_min_freelist_bytes"),
+            16 * 1024 * 1024,
+            minimum=0,
+        ),
+        min_freelist_ratio=coerce_float_setting(
+            values.get("trace_compaction_min_freelist_ratio"),
+            0.20,
+            minimum=0.0,
+            maximum=1.0,
+        ),
+        min_idle_seconds=coerce_float_setting(
+            values.get("trace_compaction_min_idle_seconds"),
+            30.0,
+            minimum=0.0,
+            maximum=86400.0,
+        ),
+        retry_initial_seconds=retry_initial,
+        retry_max_seconds=retry_max,
+        quiesce_timeout_seconds=coerce_float_setting(
+            values.get("trace_compaction_quiesce_timeout_seconds"),
+            5.0,
+            minimum=0.0,
+            maximum=60.0,
+        ),
+        disk_safety_margin_bytes=coerce_int_setting(
+            values.get("trace_compaction_disk_safety_margin_bytes"),
+            64 * 1024 * 1024,
+            minimum=0,
+        ),
     )
 
 

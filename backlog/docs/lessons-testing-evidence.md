@@ -9,6 +9,39 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## SQLite progress handlers must not query their active connection
+
+**TASK-23113.11, 2026-09-02.** The first physical trace-compaction worker
+queried `page_count` and `freelist_count` on the same connection from SQLite's
+VACUUM progress handler. The small real fixture happened to pass, but a
+connection double that rejected SQL while VACUUM was active reproduced the
+re-entrant call deterministically. Capturing the content-free byte snapshot
+before installing the handler preserved progress reporting without recursively
+using a connection in the middle of a statement.
+
+**What to do.** Treat SQLite progress, authorizer, collation, and scalar-function
+callbacks as non-reentrant unless the API explicitly guarantees otherwise. Read
+needed metrics before the long statement, keep callbacks bounded and in-memory,
+and add a test double that fails if the callback executes SQL on its owner.
+
+## Periodic maintenance must deduplicate work by the state it processed
+
+**TASK-23113.11, 2026-09-02.** The initial automatic compaction loop generated a
+new opaque logical-GC request every minute after legacy normalization completed.
+Because completed GC request rows are durable idempotency records, an unchanged
+database would have accumulated a new result row on every poll. An accelerated
+runtime test observed two collections for the same graph epoch. Caching the
+processed epoch and retaining a retryable completed result reduced unchanged
+epochs to one durable collection while still retrying interrupted compaction.
+
+**What to do.** A recurring maintenance timer is only a wake-up signal. Before
+creating a new durable request, compare the source's monotonic change token (or
+equivalent exact state identity) with the last processed token. Reuse the exact
+successful prerequisite while a downstream retry is pending, and clear it only
+after success or a terminal threshold decision.
+
+---
+
 ## POSIX availability does not prove a memory limit is enforceable
 
 **TASK-23113.10, 2026-09-01.** The custom-PII worker initially treated Python's

@@ -25,6 +25,8 @@ from tldw_chatbook.Sync_Interop.notes_organization import (
 from tldw_chatbook.Sync_Interop.notes_outbox_producer import NotesSyncV2OutboxProducer
 from tldw_chatbook.Sync_Interop.sync_state import is_local_first_sync_profile_mode
 
+_RESOURCE_SYNC_ID_TABLES = ("keywords", "keyword_collections")
+
 
 class NotesOrganizationSyncService:
     """Copy immutable ChaChaNotes organization intents into the general outbox."""
@@ -1689,6 +1691,8 @@ class NotesOrganizationSyncService:
 
     @staticmethod
     def _resource_sync_id(cursor: Any, table: str, item_id: int) -> str:
+        if table not in _RESOURCE_SYNC_ID_TABLES:
+            raise ValueError("unsupported organization resource table")
         row = cursor.execute(
             f"SELECT sync_id FROM {table} WHERE id = ?", (item_id,)
         ).fetchone()

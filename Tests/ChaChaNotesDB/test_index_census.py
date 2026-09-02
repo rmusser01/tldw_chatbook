@@ -186,6 +186,9 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
         False,
         ("semantic_revision_id", "policy_id", "field_path", "start_codepoint"),
     ),
+    "idx_console_trace_retention_expiry": IndexPin(
+        "console_trace_retention_roots", False, (None, "entity_kind", "entity_id")
+    ),
     "idx_console_trace_response_artifact": IndexPin(
         "console_trace_response_links", False, ("artifact_id",)
     ),

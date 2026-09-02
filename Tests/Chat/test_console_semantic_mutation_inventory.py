@@ -69,6 +69,7 @@ DIRECT_SQL_ROUTE_CLASSIFICATION: dict[str, str] = {
         {
             "tldw_chatbook/Chat/library_activity.py::LibraryActivityContribution.write::sql:insert:message_trajectory_metadata",
             "tldw_chatbook/Chat/library_preparation.py::LibraryPreparationContribution.write::sql:insert:message_trajectory_metadata",
+            "tldw_chatbook/Chat/console_trace_maintenance.py::LegacyTraceMaintenance.run_batch::sql:delete:message_exchanges",
             "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.append_message_attachment_with_metadata.append_attachment::sql:insert:message_generation_metadata",
             "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB._set_message_feedback_uncoordinated::sql:update:messages",
             "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.append_message_exchanges_local::sql:insert:message_exchanges",
@@ -378,6 +379,63 @@ _DYNAMIC_TARGET_EVIDENCE: dict[
     "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB._manage_link": (
         _CallTargetEvidence(calls=(_LiteralCallTarget("_manage_link", 0),))
     ),
+    "tldw_chatbook/DB/ChaChaNotes_DB.py::"
+    "CharactersRAGDB._repair_missing_notes_organization_sync_ids": (
+        _ContainerTargetEvidence(
+            symbol="_NOTES_ORGANIZATION_SYNC_ID_TABLES",
+            mode="sequence-values",
+        )
+    ),
+    "tldw_chatbook/Chat/console_trace_maintenance.py::"
+    "TraceGarbageCollector._sweep_unmarked": _ContainerTargetEvidence(
+        symbol="statements",
+        mode="sequence-tuples",
+        tuple_index=0,
+        function_qualname="TraceGarbageCollector._sweep_unmarked",
+    ),
+    "tldw_chatbook/Notes/notes_organization_repository.py::"
+    "NotesOrganizationRepository.apply_resolved_inventory_merge": (
+        _ContainerTargetEvidence(
+            symbol="_RESOURCE_TABLES",
+            mode="mapping-value-tuples",
+            tuple_index=0,
+        )
+    ),
+    "tldw_chatbook/Notes/notes_organization_repository.py::"
+    "NotesOrganizationRepository._materialize_keyword_link": (
+        _ContainerTargetEvidence(
+            symbol="_KEYWORD_LINK_TABLES",
+            mode="mapping-value-tuples",
+            tuple_index=0,
+        )
+    ),
+    "tldw_chatbook/Personal_Context/repository.py::"
+    "PersonalContextRepository._commit_local_body": _CallTargetEvidence(
+        calls=(_LiteralCallTarget("_commit_local_body", 0, "table"),)
+    ),
+    "tldw_chatbook/Personal_Context/repository.py::"
+    "PersonalContextRepository.apply_reviewed_link": _ContainerTargetEvidence(
+        symbol="_REBASELINE_TABLES",
+        mode="sequence-values",
+    ),
+    "tldw_chatbook/Personal_Context/repository.py::"
+    "PersonalContextRepository.destroy_profile_content": _ContainerTargetEvidence(
+        symbol="_PROFILE_CONTENT_TABLES",
+        mode="sequence-values",
+    ),
+    "tldw_chatbook/Sync_Interop/conflict_review.py::"
+    "SyncV2ConflictReviewService._merge_notes_organization_identity": (
+        _ContainerTargetEvidence(
+            symbol="_NOTES_ORGANIZATION_RESOURCE_TABLES",
+            mode="mapping-value-tuples",
+            tuple_index=0,
+        )
+    ),
+    "tldw_chatbook/Sync_Interop/notes_organization_sync_service.py::"
+    "NotesOrganizationSyncService._resource_sync_id": _ContainerTargetEvidence(
+        symbol="_RESOURCE_SYNC_ID_TABLES",
+        mode="sequence-values",
+    ),
     "tldw_chatbook/Notifications/event_state_repository.py::"
     "EventStateRepository._upsert_cursor": _CallTargetEvidence(
         calls=(_LiteralCallTarget("_upsert_cursor", 2, "table"),)
@@ -443,16 +501,52 @@ _DYNAMIC_TARGET_EVIDENCE_FINGERPRINTS = {
         "3784b78922231ed2195c258d8a99038d668e96ffb784ff72449e2298eaf69e67"
     ),
     "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB._add_generic_item": (
-        "2302bcd5997baf4d953328a8adf369601ba3ded1098850539ab87c7b369fe17f"
+        "eef38c50b1451841b8055d50439db6ea284b64c130ab8e034ed2995097ad4c40"
     ),
     "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB._update_generic_item": (
-        "4236cfccd9576b2fb51a3461d957ab17c8e727990302bef2d6d447e78b331ff4"
+        "46ed924903be6042883fc7c86212212c95baad3ef575a11d0ca509eeff3d7f2d"
     ),
     "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB._soft_delete_generic_item": (
-        "e1fba3da015eed5267660b58f3c8d4ca783bb2fbc14a0c36224a8f4f31119c69"
+        "99daab16a932fd45112fe1cc0217514757cf44dea01b68ecbb165cd14ed4d96a"
     ),
     "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB._manage_link": (
-        "c343572c95338f97a7742dc800a7ba4b208b680d0e8e8aed696e3f0a9bff0561"
+        "51d2fdcade4a7cab1583461b9ec3a136432ba36500f9d657ba0072dea6e01f54"
+    ),
+    "tldw_chatbook/DB/ChaChaNotes_DB.py::"
+    "CharactersRAGDB._repair_missing_notes_organization_sync_ids": (
+        "a009e05fc58874191347343d0c26d9a299c03d3d906645b4e02584df60eb7a63"
+    ),
+    "tldw_chatbook/Chat/console_trace_maintenance.py::"
+    "TraceGarbageCollector._sweep_unmarked": (
+        "45c1c48440ae2fbe9927a8e42048df436e47f36effe4c4dc734e983893da5544"
+    ),
+    "tldw_chatbook/Notes/notes_organization_repository.py::"
+    "NotesOrganizationRepository.apply_resolved_inventory_merge": (
+        "25b01efcb85223465ab1223aefe8a0d79648e3e8ecc6aaa0144865898570c5e1"
+    ),
+    "tldw_chatbook/Notes/notes_organization_repository.py::"
+    "NotesOrganizationRepository._materialize_keyword_link": (
+        "584697035ed0463e93b57b5db947e6039b6de113a5dc3603e6122f325ec1e414"
+    ),
+    "tldw_chatbook/Personal_Context/repository.py::"
+    "PersonalContextRepository._commit_local_body": (
+        "642432fe97af07beed72ae9d24c9217f0fc13d3dba5d6a0ede81b7b28670697d"
+    ),
+    "tldw_chatbook/Personal_Context/repository.py::"
+    "PersonalContextRepository.apply_reviewed_link": (
+        "eec077333d68af58bc5dfea02dce73bc5725e2d1a1c7824610fc1eff821526c5"
+    ),
+    "tldw_chatbook/Personal_Context/repository.py::"
+    "PersonalContextRepository.destroy_profile_content": (
+        "3cb3487843269fd2f388279fbe799f492ed2f58200709b3bd588e64754e79100"
+    ),
+    "tldw_chatbook/Sync_Interop/conflict_review.py::"
+    "SyncV2ConflictReviewService._merge_notes_organization_identity": (
+        "558d0bb73c4d9b3ae748a7f8242c5b7950ba9111f3a133f51122aeb4ff3fb9db"
+    ),
+    "tldw_chatbook/Sync_Interop/notes_organization_sync_service.py::"
+    "NotesOrganizationSyncService._resource_sync_id": (
+        "656b61911928f5e97fe9396cf11163222e80a647c9e938f44b3293ab2eaeab5b"
     ),
     "tldw_chatbook/Notifications/event_state_repository.py::"
     "EventStateRepository._upsert_cursor": (
@@ -563,7 +657,7 @@ _PROVEN_NON_SEMANTIC_DYNAMIC_SQL = dict(
             "version = ? AND deleted = 0",
             "query",
             domain="keyword library records",
-            exact_targets=frozenset({"keyword_collections"}),
+            exact_targets=frozenset({"keywords", "keyword_collections"}),
         ),
         _reviewed_dynamic_sql_site(
             "tldw_chatbook/DB/ChaChaNotes_DB.py::"
@@ -592,6 +686,149 @@ _PROVEN_NON_SEMANTIC_DYNAMIC_SQL = dict(
             exact_targets=frozenset(
                 {"conversation_keywords", "collection_keywords", "note_keywords"}
             ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/Chat/console_trace_maintenance.py::"
+            "TraceGarbageCollector._sweep_unmarked",
+            "DELETE FROM {expression} WHERE NOT EXISTS ( SELECT 1 FROM "
+            "console_trace_gc_marks AS mark WHERE mark.request_id = ? AND "
+            "mark.entity_kind = ? AND mark.entity_id = "
+            "{expression}.{expression})",
+            "f'DELETE FROM {table} WHERE NOT EXISTS (\\n SELECT 1 FROM "
+            "console_trace_gc_marks AS mark\\n WHERE mark.request_id = ? AND "
+            "mark.entity_kind = ?\\n AND mark.entity_id = "
+            "{table}.{identity})'",
+            domain="unreachable semantic trace graph rows",
+            exact_targets=frozenset(
+                {
+                    "console_trace_artifacts",
+                    "console_trace_calls",
+                    "console_trace_events",
+                    "console_trace_header_components",
+                    "console_trace_owners",
+                    "console_trace_policies",
+                    "console_trace_redaction_spans",
+                    "console_trace_request_headers",
+                    "console_trace_response_links",
+                    "console_trace_revision_bindings",
+                    "console_trace_segments",
+                    "console_trace_semantic_revisions",
+                    "console_trace_surface_nodes",
+                    "console_trace_surface_replacements",
+                }
+            ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/DB/ChaChaNotes_DB.py::"
+            "CharactersRAGDB._repair_missing_notes_organization_sync_ids",
+            "UPDATE {expression} SET sync_id = ? WHERE id = ? AND sync_id IS NULL",
+            "f'UPDATE {table} SET sync_id = ? WHERE id = ? AND sync_id IS NULL'",
+            domain="notes organization portable identities",
+            exact_targets=frozenset(
+                {"keywords", "keyword_collections", "note_folders"}
+            ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/Notes/notes_organization_repository.py::"
+            "NotesOrganizationRepository.apply_resolved_inventory_merge",
+            "UPDATE {expression} SET sync_id = ? WHERE CAST(id AS TEXT) = ?",
+            "f'UPDATE {table} SET sync_id = ? WHERE CAST(id AS TEXT) = ?'",
+            domain="notes organization portable identities",
+            exact_targets=frozenset(
+                {"keywords", "keyword_collections", "note_folders"}
+            ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/Notes/notes_organization_repository.py::"
+            "NotesOrganizationRepository._materialize_keyword_link",
+            "DELETE FROM {expression} WHERE {expression} = ? AND keyword_id = ?",
+            "f'DELETE FROM {table} WHERE {column} = ? AND keyword_id = ?'",
+            domain="notes organization keyword links",
+            exact_targets=frozenset({"note_keywords", "conversation_keywords"}),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/Notes/notes_organization_repository.py::"
+            "NotesOrganizationRepository._materialize_keyword_link",
+            "INSERT OR IGNORE INTO {expression}({expression}, keyword_id, "
+            "created_at) VALUES (?, ?, ?)",
+            "f'INSERT OR IGNORE INTO {table}({column}, keyword_id, created_at) "
+            "VALUES (?, ?, ?)'",
+            domain="notes organization keyword links",
+            exact_targets=frozenset({"note_keywords", "conversation_keywords"}),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/Personal_Context/repository.py::"
+            "PersonalContextRepository._commit_local_body",
+            "INSERT INTO {expression}(scope_id, {expression}) VALUES (?, ?) ON "
+            "CONFLICT(scope_id) DO UPDATE SET {expression} = "
+            "excluded.{expression}",
+            "f'INSERT INTO {table}(scope_id, {version_column}) VALUES (?, ?) ON "
+            "CONFLICT(scope_id) DO UPDATE SET {version_column} = "
+            "excluded.{version_column}'",
+            domain="Personal Context local metadata heads",
+            exact_targets=frozenset(
+                {"local_runtime_policy", "local_scope_bindings"}
+            ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/Personal_Context/repository.py::"
+            "PersonalContextRepository.apply_reviewed_link",
+            "DELETE FROM {expression}",
+            "f'DELETE FROM {table}'",
+            domain="Personal Context reviewed rebaseline rows",
+            exact_targets=frozenset(
+                {"local_runtime_policy", "local_scope_bindings"}
+            ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/Personal_Context/repository.py::"
+            "PersonalContextRepository.apply_reviewed_link",
+            "INSERT OR REPLACE INTO {expression}({expression}) VALUES "
+            "({expression})",
+            "f\"INSERT OR REPLACE INTO {table}({','.join(columns)}) VALUES "
+            "({','.join(('?' for _ in columns))})\"",
+            domain="Personal Context reviewed rebaseline rows",
+            exact_targets=frozenset(
+                {"local_runtime_policy", "local_scope_bindings"}
+            ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/Personal_Context/repository.py::"
+            "PersonalContextRepository.destroy_profile_content",
+            "DELETE FROM {expression}",
+            "f'DELETE FROM {table}'",
+            domain="Personal Context profile content",
+            exact_targets=frozenset(
+                {
+                    "encrypted_objects",
+                    "encrypted_outbox",
+                    "local_record_links",
+                    "local_runtime_policy",
+                    "local_scope_bindings",
+                    "local_undo",
+                    "local_unlinked_scopes",
+                    "object_heads",
+                    "quarantine",
+                }
+            ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/Sync_Interop/conflict_review.py::"
+            "SyncV2ConflictReviewService._merge_notes_organization_identity",
+            "UPDATE {expression} SET sync_id = ? WHERE id = ?",
+            "f'UPDATE {table} SET sync_id = ? WHERE id = ?'",
+            domain="notes organization portable identities",
+            exact_targets=frozenset(
+                {"keywords", "keyword_collections", "note_folders"}
+            ),
+        ),
+        _reviewed_dynamic_sql_site(
+            "tldw_chatbook/Sync_Interop/notes_organization_sync_service.py::"
+            "NotesOrganizationSyncService._resource_sync_id",
+            "UPDATE {expression} SET sync_id = ? WHERE id = ? AND sync_id IS NULL",
+            "f'UPDATE {table} SET sync_id = ? WHERE id = ? AND sync_id IS NULL'",
+            domain="notes organization portable identities",
+            exact_targets=frozenset({"keywords", "keyword_collections"}),
         ),
         _reviewed_dynamic_sql_site(
             "tldw_chatbook/DB/Client_Media_DB_v2.py::MediaDatabase.soft_delete_media",
@@ -1505,7 +1742,17 @@ def _assert_immutable_container_producer(
                 and isinstance(grandparent, ast.Call)
                 and grandparent.func is parent
             )
-            if not (is_loop_iterator or is_read_subscript or is_read_method_call):
+            is_membership_read = isinstance(parent, ast.Compare) and any(
+                comparator is node
+                and isinstance(parent.ops[index], (ast.In, ast.NotIn))
+                for index, comparator in enumerate(parent.comparators)
+            )
+            if not (
+                is_loop_iterator
+                or is_read_subscript
+                or is_read_method_call
+                or is_membership_read
+            ):
                 raise AssertionError(
                     f"dynamic SQL evidence producer {symbol!r} has an "
                     "unapproved load context"

@@ -13,6 +13,11 @@ RECOVERY_ACTIONS: tuple[str, ...] = (
     "duplicate-fork",
     "defer-later",
 )
+_NOTES_ORGANIZATION_RESOURCE_TABLES = {
+    "notes.keyword": ("keywords",),
+    "notes.keyword_collection": ("keyword_collections",),
+    "notes.folder": ("note_folders",),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,13 +146,10 @@ class SyncV2ConflictReviewService:
         return result.rowcount == 1
 
     def _merge_notes_organization_identity(self, cursor: Any, review: Any) -> None:
-        table = {
-            "notes.keyword": "keywords",
-            "notes.keyword_collection": "keyword_collections",
-            "notes.folder": "note_folders",
-        }.get(str(review["domain"]))
-        if table is None:
+        table_spec = _NOTES_ORGANIZATION_RESOURCE_TABLES.get(str(review["domain"]))
+        if table_spec is None:
             raise ValueError("Unsupported Notes organization resource domain")
+        table = table_spec[0]
         cursor.execute(
             f"UPDATE {table} SET sync_id = ? WHERE id = ?",
             (str(review["remote_object_id"]), review["local_object_id"]),
