@@ -2759,7 +2759,23 @@ class ScheduledTasksDB(BaseDB):
                                 "WHERE owner_id = ? AND server_id = ?",
                                 (owner_id, server_id),
                             ).fetchone()
-                            if raced_row is not None and self._apply_result_review_update(
+                            if raced_row is None:
+                                # Vanishingly narrow window: the row that
+                                # won the race was itself deleted between
+                                # our failed INSERT and this re-SELECT.
+                                # Nothing to update -- count it (reusing
+                                # skipped_dedupe, the nearest "not applied"
+                                # bucket) so the item isn't dropped
+                                # uncounted.
+                                logger.debug(
+                                    "upsert_automation_results_from_server: "
+                                    f"server_id={server_id} lost the insert "
+                                    "race and the winning row vanished "
+                                    "before re-fetch -- skipping"
+                                )
+                                skipped_dedupe += 1
+                                continue
+                            if self._apply_result_review_update(
                                 conn, owner_id, raced_row["id"], server_id, item,
                                 skip_review_server_ids,
                             ):

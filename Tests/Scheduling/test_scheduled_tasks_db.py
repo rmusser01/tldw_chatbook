@@ -2235,6 +2235,82 @@ def test_upsert_results_double_pull_race_falls_into_update_or_skip_not_raise(tmp
     assert rows[0]["reviewed_by"] == "user:42"
 
 
+def test_upsert_results_race_winner_vanished_before_refetch_is_counted_not_dropped(
+    tmp_path,
+):
+    """Extremely narrow window inside the double-pull race recovery: the
+    row that won the race (and made our INSERT fail) is itself deleted
+    before our recovery re-SELECT runs. The item must be counted
+    (``skipped_dedupe``, the nearest "not applied" bucket) rather than
+    silently dropped with no counter incremented at all.
+
+    Both injected statements below run on ``conn`` itself (the same
+    connection ``upsert_automation_results_from_server`` uses), not a
+    second connection: by the time the INSERT has failed, ``conn`` already
+    holds this transaction's write lock for the rest of the call (SQLite
+    keeps a failed statement's transaction open), so a genuinely separate
+    writer connection would block on that lock until the whole call
+    finishes -- the opposite of "vanished before re-fetch". Reentrant
+    ``conn.execute()`` calls from inside its own trace callback are safe
+    here: single-threaded, sequential, no cross-connection lock involved.
+    """
+    db = _mk_db(tmp_path)
+
+    real_get_connection = ScheduledTasksDB._get_connection
+    state = {"step": 0}
+
+    def _get_connection_with_injector(self):
+        conn = real_get_connection(self)
+
+        def _on_statement(sql):
+            if state["step"] == 0 and "INSERT INTO automation_results (" in sql:
+                state["step"] = 1
+                conn.execute(
+                    "INSERT INTO automation_results "
+                    "(id, server_id, owner_id, definition_id, run_id, kind, "
+                    "title, summary, dedupe_key, review_state, answer_mode, "
+                    "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        "raced-in-row", "srv-res-1", "server:42", "srv-def-1",
+                        "srv-run-1", "finding", "Raced title", "Raced summary",
+                        "raced-dedupe-key", "unread", "none",
+                        "2026-08-30T09:00:00+00:00", "2026-08-30T09:00:00+00:00",
+                    ),
+                )
+            elif (
+                state["step"] == 1
+                and "SELECT id FROM automation_results WHERE owner_id" in sql
+            ):
+                # set_trace_callback receives the EXPANDED statement (bound
+                # values substituted, not "?" placeholders), so this
+                # matches on a placeholder-free prefix. This is the
+                # recovery re-SELECT (the second occurrence of this query
+                # text for this item -- the first was the initial
+                # existence check, before the race). Delete the winning
+                # row right before it runs, so the re-SELECT finds
+                # nothing.
+                state["step"] = 2
+                conn.execute(
+                    "DELETE FROM automation_results WHERE id = ?",
+                    ("raced-in-row",),
+                )
+
+        conn.set_trace_callback(_on_statement)
+        return conn
+
+    with mock.patch.object(
+        ScheduledTasksDB, "_get_connection", _get_connection_with_injector
+    ):
+        counts = db.upsert_automation_results_from_server(
+            "server:42",
+            [_result_item(review_state="read", reviewed_by="user:42")],
+        )
+
+    assert state["step"] == 2, "the spy never saw both expected statements -- test setup is stale"
+    assert counts == {"inserted": 0, "updated": 0, "skipped_dedupe": 1}
+    assert db.list_automation_results("server:42") == []
+
+
 def test_list_automation_results_owner_none_spans_all_owners(tmp_path):
     db = _mk_db(tmp_path)
     db.create_automation_result("owner-a", "d1", "r1", "finding", "A", "S", "key-a")

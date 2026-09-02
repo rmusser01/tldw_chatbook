@@ -265,6 +265,53 @@ def test_v7_migration_dedupes_existing_duplicates_keeping_newest_by_updated_at(t
     assert [row["id"] for row in rows] == ["new-row"]
 
 
+def test_v7_migration_dedupe_handles_mixed_offset_updated_at(tmp_path):
+    """Review finding 1: the dedupe tie-break must compare true instants,
+    not raw strings. Seeds two duplicates whose RAW STRING order inverts
+    their REAL chronological order -- a server-mirrored row's
+    ``updated_at`` is copied verbatim from the server payload (unenforced
+    UTC assumption, see ``_serialize_result_fields``), so a ``+05:00``
+    offset can be lexically greater than an actually-later ``+00:00``
+    string. This is a one-time ``DELETE``: picking the wrong "newest" here
+    permanently discards the real newest row, not just a display-order bug.
+    """
+    from tldw_chatbook.Scheduling.db.migrations.v6_to_v7 import migrate, rollback
+
+    db = ScheduledTasksDB(str(tmp_path / "s.db"), client_id="t")
+    rollback(db)
+    assert db.get_schema_version() == 6
+
+    # true-newer: 2026-08-30T09:00:00 UTC -- the real latest instant.
+    # true-older: 2026-08-30T09:00:00+05:00 == 04:00:00 UTC -- genuinely
+    # EARLIER, but its raw string ("+05:00") is lexically GREATER than
+    # true-newer's ("+00:00"), so naive string ORDER BY DESC would rank
+    # it first and the migration would (wrongly) keep it instead.
+    rows = (
+        ("true-newer", "2026-08-30T09:00:00+00:00"),
+        ("true-older", "2026-08-30T09:00:00+05:00"),
+    )
+    with closing(db._get_connection()) as conn:
+        for row_id, updated_at in rows:
+            conn.execute(
+                "INSERT INTO automation_results "
+                "(id, server_id, owner_id, definition_id, run_id, kind, "
+                "title, summary, dedupe_key, review_state, answer_mode, "
+                "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    row_id, "srv-dup", "owner-a", "d1", "r1", "finding",
+                    row_id, "S", f"key-{row_id}", "unread", "none",
+                    updated_at, updated_at,
+                ),
+            )
+        conn.commit()
+
+    migrate(db)
+
+    assert db.get_schema_version() == 7
+    kept = db.list_automation_results("owner-a")
+    assert [row["id"] for row in kept] == ["true-newer"]
+
+
 def test_v7_migrate_then_rollback_round_trips_to_v6(tmp_path):
     from tldw_chatbook.Scheduling.db.migrations.v6_to_v7 import migrate, rollback
 

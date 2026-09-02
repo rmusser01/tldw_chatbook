@@ -28,7 +28,14 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 # Keep exactly one row per (owner_id, server_id): the newest by updated_at
 # (NULLs sort last), tiebroken by created_at then id -- same ROW_NUMBER()
-# dedupe idiom as `prune_task_runs`.
+# dedupe idiom as `prune_task_runs`. updated_at/created_at are wrapped in
+# datetime() rather than compared as raw strings -- the same F7 mixed-offset
+# fix `list_automation_results` applies: a server-mirrored row's timestamp
+# is copied verbatim from the server payload (unenforced UTC assumption,
+# see `_serialize_result_fields`), so a "+05:00"-offset string can be
+# lexically greater than an actually-later "+00:00" string. This is a
+# one-time DELETE -- picking the wrong "newest" here is not a display bug,
+# it permanently discards the real newest row.
 _DEDUPE_DUPLICATE_RESULTS = """
     DELETE FROM automation_results
     WHERE server_id IS NOT NULL
@@ -36,7 +43,7 @@ _DEDUPE_DUPLICATE_RESULTS = """
         SELECT id FROM (
             SELECT id, ROW_NUMBER() OVER (
                 PARTITION BY owner_id, server_id
-                ORDER BY updated_at DESC, created_at DESC, id DESC
+                ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC, id DESC
             ) AS rn
             FROM automation_results
             WHERE server_id IS NOT NULL
