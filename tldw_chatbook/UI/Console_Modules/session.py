@@ -2569,7 +2569,9 @@ class ConsoleSessionController:
         controller = self._ensure_console_chat_controller()
         return ConsoleSessionCloseImpact(
             session_id=session_id,
-            transcript_message_count=len(messages),
+            transcript_message_count=sum(
+                message.persisted_message_id is None for message in messages
+            ),
             lifecycle=controller.lifecycle_impact(session_id=session_id),
         )
 
