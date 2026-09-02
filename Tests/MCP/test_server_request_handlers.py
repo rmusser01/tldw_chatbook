@@ -184,6 +184,9 @@ def test_connection_routes_to_dispatcher_and_replies():
         await conn._handle_server_request(
             {"id": 7, "method": "sampling/createMessage", "params": {"messages": []}}
         )
+        # lane-6 I2: the handler now runs as a task off the read loop; drain it.
+        for t in list(conn._dispatch_tasks):
+            await t
         assert sent and sent[0]["id"] == 7
         assert sent[0]["result"]["content"]["text"] == "ok"
 
@@ -207,3 +210,63 @@ def test_connection_without_dispatcher_is_method_not_found():
         assert sent[0]["error"]["code"] == -32601
 
     asyncio.run(_run())
+
+
+# --- lane-6 review I1: secret-screen over/under-refusal ---
+
+@pytest.mark.parametrize("request_obj", [
+    {"message": "Please paste your API key", "requestedSchema": {}},
+    {"message": "Enter your PIN", "requestedSchema": {}},
+    {"message": "What is your SSN?", "requestedSchema": {}},
+    {"message": "Provide the CVV", "requestedSchema": {}},
+    {"message": "Enter your recovery code", "requestedSchema": {}},
+    {"message": "Type your seed phrase", "requestedSchema": {}},
+])
+def test_i1_underrefusal_now_refused(request_obj):
+    assert screen_elicitation_for_secrets(request_obj) is not None, request_obj
+
+@pytest.mark.parametrize("request_obj", [
+    {"message": "Who is the author?", "requestedSchema": {"properties": {"author": {"type": "string"}}}},
+    {"message": "Do you authorize deleting X?", "requestedSchema": {}},
+    {"message": "Set max_tokens", "requestedSchema": {"properties": {"max_tokens": {"type": "integer"}}}},
+    {"message": "Choose authentication method", "requestedSchema": {}},
+])
+def test_i1_overrefusal_now_allowed(request_obj):
+    assert screen_elicitation_for_secrets(request_obj) is None, request_obj
+
+
+# --- lane-6 review I3: budget reserved before await ---
+
+def test_i3_failing_completion_still_counts_toward_rate():
+    from tldw_chatbook.MCP.server_request_handlers import SamplingBudget
+    budget = SamplingBudget()
+    async def boom(messages, max_tokens, model_hint):
+        raise RuntimeError("provider down")
+    d = ServerRequestDispatcher(
+        sampling_policy=SamplingPolicy(allowed=True, max_requests_per_minute=100, max_total_tokens=100000),
+        sampling_budget=budget,
+        complete_fn=boom,
+        now_fn=lambda: 100.0,
+    )
+    result = _run(d.handle("sampling/createMessage", {"messages": [], "maxTokens": 50}))
+    assert isinstance(result, JsonRpcError)
+    assert len(budget.request_times) == 1, "a failed call must still consume a rate slot"
+    assert budget.tokens_used == 0, "a failed call refunds the token budget"
+
+
+def test_i3_omitted_max_tokens_charges_default_not_zero():
+    from tldw_chatbook.MCP.server_request_handlers import (
+        SamplingBudget, _DEFAULT_SAMPLING_MAX_TOKENS,
+    )
+    budget = SamplingBudget()
+    async def ok(messages, max_tokens, model_hint):
+        assert max_tokens == _DEFAULT_SAMPLING_MAX_TOKENS
+        return "hi"
+    d = ServerRequestDispatcher(
+        sampling_policy=SamplingPolicy(allowed=True, max_requests_per_minute=100, max_total_tokens=100000),
+        sampling_budget=budget,
+        complete_fn=ok,
+    )
+    result = _run(d.handle("sampling/createMessage", {"messages": []}))  # no maxTokens
+    assert not isinstance(result, JsonRpcError)
+    assert budget.tokens_used == _DEFAULT_SAMPLING_MAX_TOKENS, "omitted maxTokens must charge the default"

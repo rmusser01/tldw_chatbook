@@ -28,6 +28,8 @@ _INVALID_PARAMS = -32602
 # Application-defined: a request the client refused by policy.
 _REQUEST_REFUSED = -32001
 _REQUEST_DECLINED = -32002
+# Token cost charged when a sampling request omits maxTokens (lane-6 review I3).
+_DEFAULT_SAMPLING_MAX_TOKENS = 1024
 
 
 @dataclass(frozen=True)
@@ -98,9 +100,17 @@ def evaluate_sampling_request(
 
 
 # Field/prompt shapes that indicate a request for a credential or secret.
+# Letter-boundary lookarounds (letters only, so '_'/'-'/space/digits act as
+# separators) keep 'auth' from matching 'author'/'authorize'/'authentication'
+# and 'token' from matching 'max_tokens', while still catching 'API key' (with
+# a space) and short secrets like PIN/OTP/CVV/SSN (lane-6 review I1).
+_SECRET_KEYWORDS = (
+    r"password|passwd|passphrase|secret|api[ _-]?key|apikey|token|credential"
+    r"|private[ _-]?key|access[ _-]?key|client[ _-]?secret|auth|pin|otp|cvv|ssn"
+    r"|2fa|mfa|mnemonic|seed[ _-]?phrase|recovery[ _-]?code|access[ _-]?token"
+)
 _SECRET_NAME_RE = re.compile(
-    r"(?:password|passwd|secret|api[_-]?key|apikey|token|credential|private[_-]?key"
-    r"|passphrase|access[_-]?key|client[_-]?secret|auth)",
+    r"(?<![a-z])(?:" + _SECRET_KEYWORDS + r")(?![a-z])",
     re.IGNORECASE,
 )
 
@@ -185,10 +195,15 @@ class ServerRequestDispatcher:
             requested_tokens = int(requested_tokens)
         except (TypeError, ValueError):
             requested_tokens = 0
+        # A missing/zero maxTokens must not escape the token budget (lane-6
+        # review I3): charge a configured default instead of 0.
+        effective_tokens = (
+            requested_tokens if requested_tokens > 0 else _DEFAULT_SAMPLING_MAX_TOKENS
+        )
 
         now = self._now()
         decision = evaluate_sampling_request(
-            self.sampling_policy, self.sampling_budget, requested_tokens, now
+            self.sampling_policy, self.sampling_budget, effective_tokens, now
         )
         if not decision.allow:
             return JsonRpcError(_REQUEST_REFUSED, decision.reason)
@@ -200,14 +215,20 @@ class ServerRequestDispatcher:
             if isinstance(hints, list) and hints and isinstance(hints[0], dict):
                 model_hint = hints[0].get("name")
 
-        try:
-            text = await self._complete_fn(messages, requested_tokens, model_hint)
-        except Exception as exc:  # provider failure -> well-formed error, no hang
-            return JsonRpcError(_REQUEST_DECLINED, f"sampling completion failed: {exc}")
-
-        # record usage AFTER a successful call
+        # Reserve the rate slot + token budget BEFORE awaiting the completion
+        # (lane-6 review I3): otherwise a provider that errors every call never
+        # increments the rate counter and a server can drive unbounded attempts.
         self.sampling_budget.request_times.append(now)
-        self.sampling_budget.tokens_used += max(0, requested_tokens)
+        self.sampling_budget.tokens_used += effective_tokens
+        try:
+            text = await self._complete_fn(messages, effective_tokens, model_hint)
+        except Exception as exc:  # provider failure -> well-formed error, no hang
+            # Refund the token budget (no tokens were produced) but KEEP the
+            # rate slot so repeated failures still trip the per-minute cap.
+            self.sampling_budget.tokens_used = max(
+                0, self.sampling_budget.tokens_used - effective_tokens
+            )
+            return JsonRpcError(_REQUEST_DECLINED, f"sampling completion failed: {exc}")
 
         return {
             "role": "assistant",

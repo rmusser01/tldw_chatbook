@@ -3550,7 +3550,9 @@ integrity_check_timeout = 30  # Maximum seconds to wait for integrity check
 # default -- with no url configured, no request is ever made. Payloads carry
 # identifiers + an outcome category only (never message content, tool args, or
 # credentials) and are signed X-Tldw-Signature: sha256=HMAC-SHA256(secret,body).
-# The destination is subject to the SSRF egress policy ([web_security]).
+# The destination is subject to the SSRF egress policy ([web_security]): a
+# localhost/LAN url (e.g. a local dashboard) is blocked by default and needs
+# its host added to [web_security] allowed_hosts to be delivered to.
 enabled = false
 url = ""            # e.g. "https://your-dashboard.example/hooks/tldw"
 secret = ""         # shared secret the receiver uses to verify the signature

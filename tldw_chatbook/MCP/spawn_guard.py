@@ -9,8 +9,14 @@ edited on disk cannot bypass the save-time check.
 
 MCP servers are spawned with ``create_subprocess_exec`` (no shell), so the real
 danger is a shell/interpreter ``-c``/``-e`` payload; the whole command line is
-scanned defensively regardless, since an ordinary stdio server (npx/uvx/
-``python -m``/a plain binary) contains none of these shapes.
+scanned regardless, since an ordinary stdio server (npx/uvx/``python -m``/a
+plain binary) contains none of these shapes.
+
+Scope (lane-6 review M1): this is a heuristic screen for well-known dangerous
+SHAPES, not a sandbox. A plain destructive ``-c`` payload with no remote fetch
+and no encoding marker (e.g. ``python -c "os.system('rm -rf ~')"``) is out of
+scope by design -- the per-tool permission gate remains the authority for
+whether a configured command may run at all.
 """
 
 from __future__ import annotations
@@ -54,20 +60,27 @@ _ENCODED_MARKERS = (
     r"eval\b|exec\b|__import__|Buffer\.from)"
 )
 
+# A pipe/chain/command-substitution connector, optionally followed by wrapper
+# commands and/or an absolute path, then an interpreter basename.
+_INTERP_WRAPPERS = r"(?:sudo|env|nice|xargs|timeout|stdbuf|command|exec|setsid|nohup|bash|sh)"
+_PIPE_TO_INTERPRETER_RE = re.compile(
+    r"[|;&`]\s*(?:\$\()?\s*"                       # | ; & ` or $(
+    r"(?:" + _INTERP_WRAPPERS + r"\s+(?:-\S+\s+)*)*"  # optional wrapper words + flags
+    r"(?:[\w./-]*/)?"                                 # optional path prefix (/bin/, /usr/bin/)
+    + _INTERPRETERS + r"\b",
+    re.IGNORECASE,
+)
+
 
 def _rules(cmdline: str):
     """Yield (rule, reason) for each dangerous shape present in ``cmdline``."""
     low = cmdline.lower()
 
-    # 1. Remote fetch piped/chained into an interpreter.
-    if re.search(_FETCHERS, low) and re.search(
-        _FETCHERS + r".*[|;&`]|\$\(.*" + _FETCHERS, low
-    ) and re.search(r"[|;&]\s*" + _INTERPRETERS + r"\b|" + _INTERPRETERS + r"\s*<", low):
-        yield (
-            "remote-fetch-piped-to-interpreter",
-            "command fetches a remote resource and pipes it into an interpreter",
-        )
-    elif re.search(_FETCHERS, low) and re.search(r"\|\s*" + _INTERPRETERS + r"\b", low):
+    # 1. Remote fetch piped/chained into an interpreter. The interpreter may
+    # sit behind wrapper words (sudo/env/xargs/...) and/or an absolute path
+    # (/bin/sh, /usr/bin/python3) after the pipe/chain -- match it as a
+    # basename anywhere after the connector (lane-6 review C1).
+    if re.search(_FETCHERS, low) and _PIPE_TO_INTERPRETER_RE.search(low):
         yield (
             "remote-fetch-piped-to-interpreter",
             "command fetches a remote resource and pipes it into an interpreter",

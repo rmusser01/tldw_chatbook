@@ -90,6 +90,11 @@ def build_webhook_payload(
 
     Only identifiers and the outcome category are included -- deliberately no
     message content, tool arguments, or credentials.
+
+    CONTRACT (lane-6 review M3): ``extra_ids`` is for additional IDENTIFIERS
+    only (e.g. a parent run id, a workspace id) -- never message content, tool
+    arguments, or secrets. Values are stringified verbatim into the payload
+    that leaves the machine.
     """
     payload: dict[str, Any] = {"event": str(event), "run_id": str(run_id)}
     if agent_id:
