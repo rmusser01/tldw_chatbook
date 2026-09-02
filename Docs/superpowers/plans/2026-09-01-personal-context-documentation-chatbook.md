@@ -132,43 +132,145 @@ rg -Fq 'Remove local profile' tldw_chatbook/Widgets/Settings_Widgets/personal_co
 rg -Fq 'Run interview again' tldw_chatbook/Widgets/Settings_Widgets/personal_context_panel.py
 rg -Fq 'Get to know you' tldw_chatbook/UI/Screens/profile_interview_screen.py
 rg -Fq 'Define project context after creating' tldw_chatbook/Widgets/workspace_create_modal.py
-if rg -n -i -e 'action_delete_everywhere' -e 'delete_everywhere' \
-  -e 'id="[^"]*delete[^"]*everywhere' tldw_chatbook --glob '*.py'; then
-  echo 'Unexpected Delete Everywhere action/control'
-  exit 1
-fi
-for profile_component in \
-  tldw_chatbook/Personal_Context/bootstrap.py \
-  tldw_chatbook/Personal_Context/key_protector.py \
-  tldw_chatbook/Personal_Context/repository.py \
-  tldw_chatbook/Personal_Context/service.py \
-  tldw_chatbook/Personal_Context/context_service.py \
-  tldw_chatbook/Personal_Context/proposal_service.py \
-  tldw_chatbook/Personal_Context/runtime_policy.py \
-  tldw_chatbook/Personal_Context/interview_coordinator.py \
-  tldw_chatbook/Personal_Context/interview_draft_repository.py \
-  tldw_chatbook/Personal_Context/interview_provider.py \
-  tldw_chatbook/Personal_Context/link_service.py \
-  tldw_chatbook/Personal_Context/link_key_custody.py \
-  tldw_chatbook/Personal_Context/sync_outbox.py \
-  tldw_chatbook/Sync_Interop/personal_context_adapter.py \
-  tldw_chatbook/Sync_Interop/personal_context_dispatcher.py \
-  tldw_chatbook/Sync_Interop/personal_context_first_link_sync.py \
-  tldw_chatbook/Agents/profile_tool_provider.py \
-  tldw_chatbook/Chat/console_chat_controller.py \
-  tldw_chatbook/Chat/console_agent_bridge.py \
-  tldw_chatbook/tldw_api/client.py \
-  tldw_chatbook/Widgets/Settings_Widgets/personal_context_panel.py \
-  tldw_chatbook/Widgets/Settings_Widgets/personal_context_link_modal.py \
-  tldw_chatbook/Widgets/Settings_Widgets/personal_context_review_modal.py \
-  tldw_chatbook/UI/Screens/profile_interview_screen.py; do
-  test -f "$profile_component"
+profile_common_dir=$(git rev-parse --path-format=absolute --git-common-dir)
+profile_repo_root=$(dirname "$profile_common_dir")
+profile_python=
+for profile_python_candidate in \
+  "$profile_repo_root/.venv/bin/python" \
+  "${VIRTUAL_ENV:+$VIRTUAL_ENV/bin/python}" \
+  "$PWD/.venv/bin/python"; do
+  if [ -n "$profile_python_candidate" ] && [ -x "$profile_python_candidate" ]; then
+    profile_python=$profile_python_candidate
+    break
+  fi
 done
-rg -n '^(class (PersonalContextService|PersonalContextRepository|ProfileContextService|ProfileProposalService|PersonalContextLinkService|ProfileSyncOutbox|PersonalContextSyncAdapter|PersonalContextOutboxDispatcher|PersonalContextFirstLinkSync|ProfileToolProvider|AgentAuthority|ProfileInterviewCoordinator|InterviewDraftRepository|ConsoleChatController|ConsoleAgentBridge)|def bootstrap_personal_context_service)' \
-  tldw_chatbook/Personal_Context tldw_chatbook/Sync_Interop \
-  tldw_chatbook/Agents/profile_tool_provider.py \
-  tldw_chatbook/Chat/console_chat_controller.py \
-  tldw_chatbook/Chat/console_agent_bridge.py
+test -n "$profile_python"
+"$profile_python" - <<'PY'
+import sys
+
+if not ((3, 11) <= sys.version_info[:2] < (4, 0)):
+    raise SystemExit(f"Unsupported Python: {sys.version.split()[0]}")
+PY
+profile_ui_files=(
+  tldw_chatbook/Widgets/Settings_Widgets/personal_context_panel.py
+  tldw_chatbook/Widgets/Settings_Widgets/personal_context_link_modal.py
+  tldw_chatbook/Widgets/Settings_Widgets/personal_context_review_modal.py
+  tldw_chatbook/UI/Screens/profile_interview_screen.py
+  tldw_chatbook/Widgets/workspace_create_modal.py
+)
+"$profile_python" - "${profile_ui_files[@]}" <<'PY'
+import ast
+import re
+import sys
+from pathlib import Path
+
+CONTROL_CALLS = {"action", "binding", "button", "label", "menuitem"}
+CONTROL_KEYWORDS = {"action", "id", "label", "name", "title"}
+violations: list[str] = []
+
+
+def call_name(call: ast.Call) -> str:
+    if isinstance(call.func, ast.Name):
+        return call.func.id.lower()
+    if isinstance(call.func, ast.Attribute):
+        return call.func.attr.lower()
+    return ""
+
+
+sources: list[tuple[str, ast.AST]] = [
+    (
+        "<negative-control>",
+        ast.parse(
+            "def action_delete_everywhere(self):\n"
+            "    yield Button('Delete everywhere', id='profile-purge')\n"
+        ),
+    )
+]
+sources.extend(
+    (
+        raw_path,
+        ast.parse(
+            Path(raw_path).read_text(encoding="utf-8"), filename=raw_path
+        ),
+    )
+    for raw_path in sys.argv[1:]
+)
+for path, tree in sources:
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            normalized = node.name.lower()
+            if normalized.startswith(("action_", "handle_", "on_")) and re.search(
+                r"(?:delete_?everywhere|purge)", normalized
+            ):
+                violations.append(f"{path}:{node.lineno}: purge/Delete handler")
+        if isinstance(node, (ast.Name, ast.Attribute)):
+            identifier = node.id if isinstance(node, ast.Name) else node.attr
+            if "delete_everywhere" in identifier.lower():
+                violations.append(f"{path}:{node.lineno}: Delete-everywhere identifier")
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if re.fullmatch(r"\s*delete[ _-]*everywhere[.!]?\s*", node.value, re.I):
+                violations.append(f"{path}:{node.lineno}: visible Delete-everywhere label")
+            if node.value.startswith("#") and "purge" in node.value.lower():
+                violations.append(f"{path}:{node.lineno}: purge control selector")
+        if not isinstance(node, ast.Call):
+            continue
+        control = call_name(node) in CONTROL_CALLS
+        values = list(node.args) if control else []
+        values.extend(
+            keyword.value
+            for keyword in node.keywords
+            if keyword.arg in CONTROL_KEYWORDS
+        )
+        for value in values:
+            for child in ast.walk(value):
+                if (
+                    isinstance(child, ast.Constant)
+                    and isinstance(child.value, str)
+                    and re.search(r"(?:delete[ _-]*everywhere|purge)", child.value, re.I)
+                ):
+                    violations.append(f"{path}:{node.lineno}: purge/Delete control")
+negative_violations = [
+    violation for violation in violations if violation.startswith("<negative-control>")
+]
+if len(negative_violations) < 3:
+    raise SystemExit("Personal Context UI negative control was not detected")
+production_violations = [
+    violation for violation in violations if not violation.startswith("<negative-control>")
+]
+if production_violations:
+    raise SystemExit("\n".join(sorted(set(production_violations))))
+print("Negative control passed; no Personal Context Delete-everywhere or purge UI control found.")
+PY
+while IFS='|' read -r profile_component profile_symbol; do
+  test -f "$profile_component"
+  rg -Fq "$profile_symbol" "$profile_component"
+done <<'EOF'
+tldw_chatbook/Personal_Context/bootstrap.py|def bootstrap_personal_context_service
+tldw_chatbook/Personal_Context/key_protector.py|class ProfileKeyProtector
+tldw_chatbook/Personal_Context/repository.py|class PersonalContextRepository
+tldw_chatbook/Personal_Context/service.py|class PersonalContextService
+tldw_chatbook/Personal_Context/context_service.py|class ProfileContextService
+tldw_chatbook/Personal_Context/proposal_service.py|class ProfileProposalService
+tldw_chatbook/Personal_Context/runtime_policy.py|class AgentAuthority
+tldw_chatbook/Personal_Context/interview_coordinator.py|class ProfileInterviewCoordinator
+tldw_chatbook/Personal_Context/interview_draft_repository.py|class InterviewDraftRepository
+tldw_chatbook/Personal_Context/interview_provider.py|class InterviewQuestionProvider
+tldw_chatbook/Personal_Context/link_service.py|class PersonalContextLinkService
+tldw_chatbook/Personal_Context/link_key_custody.py|class PersonalContextLinkKeyCustodian
+tldw_chatbook/Personal_Context/sync_outbox.py|class ProfileSyncOutbox
+tldw_chatbook/Sync_Interop/personal_context_adapter.py|class PersonalContextSyncAdapter
+tldw_chatbook/Sync_Interop/personal_context_dispatcher.py|class PersonalContextOutboxDispatcher
+tldw_chatbook/Sync_Interop/personal_context_first_link_sync.py|class PersonalContextFirstLinkSync
+tldw_chatbook/tldw_api/client.py|async def bootstrap_sync_v2_personal_context
+tldw_chatbook/tldw_api/client.py|async def complete_sync_v2_personal_context_link
+tldw_chatbook/Agents/profile_tool_provider.py|class ProfileToolProvider
+tldw_chatbook/Chat/console_chat_controller.py|class ConsoleChatController
+tldw_chatbook/Chat/console_agent_bridge.py|class ConsoleAgentBridge
+tldw_chatbook/Widgets/Settings_Widgets/personal_context_panel.py|class PersonalContextSettingsPanel
+tldw_chatbook/Widgets/Settings_Widgets/personal_context_link_modal.py|class PersonalContextLinkModal
+tldw_chatbook/Widgets/Settings_Widgets/personal_context_review_modal.py|class PersonalContextReviewModal
+tldw_chatbook/UI/Screens/profile_interview_screen.py|class ProfileInterviewScreen
+EOF
 ```
 
 Expected: removal, interview, and service surfaces exist; no shipped Chatbook **Delete everywhere** control is found.
@@ -193,12 +295,25 @@ rg -Fq 'class PersonalContextOutboxDispatcher' \
   tldw_chatbook/Sync_Interop/personal_context_dispatcher.py
 rg -Fq 'async def bootstrap_sync_v2_personal_context' tldw_chatbook/tldw_api/client.py
 rg -Fq 'async def complete_sync_v2_personal_context_link' tldw_chatbook/tldw_api/client.py
-profile_python=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python
-if [ ! -x "$profile_python" ]; then
-  profile_python=.venv/bin/python
-fi
-test -x "$profile_python"
-test "$("$profile_python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" = '3.12'
+profile_common_dir=$(git rev-parse --path-format=absolute --git-common-dir)
+profile_repo_root=$(dirname "$profile_common_dir")
+profile_python=
+for profile_python_candidate in \
+  "$profile_repo_root/.venv/bin/python" \
+  "${VIRTUAL_ENV:+$VIRTUAL_ENV/bin/python}" \
+  "$PWD/.venv/bin/python"; do
+  if [ -n "$profile_python_candidate" ] && [ -x "$profile_python_candidate" ]; then
+    profile_python=$profile_python_candidate
+    break
+  fi
+done
+test -n "$profile_python"
+"$profile_python" - <<'PY'
+import sys
+
+if not ((3, 11) <= sys.version_info[:2] < (4, 0)):
+    raise SystemExit(f"Unsupported Python: {sys.version.split()[0]}")
+PY
 "$profile_python" - <<'PY'
 import ast
 from pathlib import Path
@@ -455,7 +570,7 @@ git commit -m "docs: plan Chatbook Personal Context guides"
 
 - [ ] **Step 1: Add `In five minutes` after `Getting there`**
 
-The numbered flow must cover:
+Wrap the section in `<!-- personal-context-quick-start:start -->` and `<!-- personal-context-quick-start:end -->`. It must contain exactly five numbered steps covering:
 
 1. Open **F9 > Data & Privacy > My Profile**.
 2. Choose manual entry or optional **Get to know you**; skipping is supported and stores no answers.
@@ -465,7 +580,16 @@ The numbered flow must cover:
 
 - [ ] **Step 2: Add `Common workflows`**
 
-Cover global preferences, workspace goals/conventions, agent proposal review, rerunning global/workspace interviews, reviewed first linking, plaintext/recovery export, and local-copy removal. Use current control names. State that new inferred facts remain proposals; direct write only updates an existing eligible record for an explicit correction evidenced by the current persisted user message.
+Under `### Common workflows`, use these exact subheadings so each workflow is independently verifiable:
+
+- `#### Edit manually`
+- `#### Run or rerun an interview`
+- `#### Review agent proposals`
+- `#### Export plaintext and recovery material`
+- `#### Remove the local copy`
+- `#### Link a home server`
+
+Cover global preferences and workspace goals/conventions across those workflows. Use current control names. State that new inferred facts remain proposals; direct write only updates an existing eligible record for an explicit correction evidenced by the current persisted user message.
 
 - [ ] **Step 3: Add `What currently synchronizes`**
 
@@ -480,7 +604,7 @@ Include this deliberately identical shared-contract block, with the markers reta
 <!-- shared-personal-context-contract:end -->
 ```
 
-Follow it with this full matrix:
+Follow it with this full matrix, wrapped in `<!-- personal-context-boundary-matrix:start -->` and `<!-- personal-context-boundary-matrix:end -->`:
 
 | Shared through the current linked flow when eligible | Remains peer-local or is not currently published |
 | --- | --- |
@@ -506,7 +630,7 @@ Do not tell users that reconnecting devices clears `purge_pending`.
 
 - [ ] **Step 5: Add troubleshooting**
 
-Use these exact seven failure-state labels and give a cause, safe next action, and current product limit for each:
+Under `### Troubleshooting`, add a table wrapped in `<!-- personal-context-troubleshooting:start -->` and `<!-- personal-context-troubleshooting:end -->`. Use the exact header `| State | Cause | Safe next action | Current limit |`. Each of these exact seven bold state labels must have non-empty cells for cause, safe next action, and current product limit:
 
 1. **Profile locked**
 2. **Offline or queued**
@@ -567,6 +691,8 @@ Cover Shared Core `0.1.0`, separate Sync-v2 envelopes, post-link identity conver
 - `../superpowers/specs/2026-08-28-unified-personal-context-profile-design.md`
 - `../../backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md`
 - `Sync-v2-client.md`
+- `https://github.com/rmusser01/tldw_server/blob/dev/Docs/Code_Documentation/Personal_Context_Developer_Guide.md`
+- `https://github.com/rmusser01/tldw_server/blob/dev/Docs/API-related/Personal_Context_API.md`
 
 Include this exact four-bullet block, including both markers and every bullet; marker presence alone is insufficient:
 
@@ -584,7 +710,7 @@ Include this exact four-bullet block, including both markers and every bullet; m
 Document these exact owners, using repository-root paths:
 
 - `tldw_chatbook/Personal_Context/bootstrap.py` — `bootstrap_personal_context_service`
-- `tldw_chatbook/Personal_Context/key_protector.py` — local at-rest key protection and recovery boundary
+- `tldw_chatbook/Personal_Context/key_protector.py` — `ProfileKeyProtector`, the local at-rest key protection and recovery boundary
 - `tldw_chatbook/Personal_Context/repository.py` — `PersonalContextRepository`
 - `tldw_chatbook/Personal_Context/service.py` — `PersonalContextService`
 - `tldw_chatbook/Personal_Context/context_service.py` — `ProfileContextService`
@@ -592,27 +718,33 @@ Document these exact owners, using repository-root paths:
 - `tldw_chatbook/Personal_Context/runtime_policy.py` — `AgentAuthority`
 - `tldw_chatbook/Personal_Context/interview_coordinator.py` — reviewed interview execution
 - `tldw_chatbook/Personal_Context/interview_draft_repository.py` — unfinished interview-draft storage
-- `tldw_chatbook/Personal_Context/interview_provider.py` — interview model-provider boundary
+- `tldw_chatbook/Personal_Context/interview_provider.py` — `InterviewQuestionProvider`, the interview model-provider boundary
 - `tldw_chatbook/Personal_Context/link_service.py` — `PersonalContextLinkService`
-- `tldw_chatbook/Personal_Context/link_key_custody.py` — wrapping/integrity-key custody
+- `tldw_chatbook/Personal_Context/link_key_custody.py` — `PersonalContextLinkKeyCustodian`, the wrapping/integrity-key custody boundary
 - `tldw_chatbook/Personal_Context/sync_outbox.py` — encrypted `ProfileSyncOutbox` lifecycle boundary
 - `tldw_chatbook/Sync_Interop/personal_context_adapter.py` — `PersonalContextSyncAdapter`
 - `tldw_chatbook/Sync_Interop/personal_context_dispatcher.py` — `PersonalContextOutboxDispatcher`
 - `tldw_chatbook/Sync_Interop/personal_context_first_link_sync.py` — `PersonalContextFirstLinkSync`
-- `tldw_chatbook/tldw_api/client.py` — Personal Context bootstrap and reviewed-link completion client methods
+- `tldw_chatbook/tldw_api/client.py` — `bootstrap_sync_v2_personal_context` and `complete_sync_v2_personal_context_link`
 - `tldw_chatbook/Agents/profile_tool_provider.py` — `ProfileToolProvider`
 - `tldw_chatbook/Chat/console_chat_controller.py` — Console snapshot/context injection
 - `tldw_chatbook/Chat/console_agent_bridge.py` — Console agent-tool bridge
-- `tldw_chatbook/Widgets/Settings_Widgets/personal_context_panel.py` — Settings presentation and user actions only
-- `tldw_chatbook/Widgets/Settings_Widgets/personal_context_link_modal.py` — reviewed linking presentation only
-- `tldw_chatbook/Widgets/Settings_Widgets/personal_context_review_modal.py` — proposal/review presentation only
-- `tldw_chatbook/UI/Screens/profile_interview_screen.py` — interview presentation only
+- `tldw_chatbook/Widgets/Settings_Widgets/personal_context_panel.py` — `PersonalContextSettingsPanel`, Settings presentation and user actions only
+- `tldw_chatbook/Widgets/Settings_Widgets/personal_context_link_modal.py` — `PersonalContextLinkModal`, reviewed linking presentation only
+- `tldw_chatbook/Widgets/Settings_Widgets/personal_context_review_modal.py` — `PersonalContextReviewModal`, proposal/review presentation only
+- `tldw_chatbook/UI/Screens/profile_interview_screen.py` — `ProfileInterviewScreen`, interview presentation only
 
-State that UI, agents, and transport use the service/repository boundary; they do not write profile tables directly.
+State exactly: `UI, agent, and transport code must use the owning service/repository boundary and must not access profile tables directly.`
 
 - [ ] **Step 3: Document read/write lifecycles and current gaps**
 
-Cover manual edits, reviewed interview output, proposal/direct-write distinction, immutable encrypted versions, controls/expiry/tombstones/receipts, context selection and **Next Send**, transactional Chatbook outbox, reviewed first linking, generic post-link conflict metadata, and protocol-only purge without end-to-end production/distribution/acknowledgement.
+Use these exact lifecycle headings and cover the named behavior under each:
+
+- `### Manual edits and reviewed interviews` — manual edits, reviewed interview output, immutable encrypted versions, controls, expiry, tombstones, and receipts.
+- `### Proposals and direct writes` — proposals, review, and the narrow explicit-correction direct-write boundary.
+- `### Context injection and Next Send` — context selection, runtime authority, Console injection, and the disposable **Next Send** preview.
+- `### Transactional outbox and reviewed first link` — transactional Chatbook outbox and reviewed first linking.
+- `### Post-link conflicts and purge limits` — generic post-link conflict metadata and protocol-only purge without end-to-end production, distribution, or acknowledgement.
 
 Include these exact current-limit sentences so final verification can fail closed per document:
 
@@ -620,7 +752,7 @@ Include these exact current-limit sentences so final verification can fail close
 - `The Personal Context purge domain is protocol-only in the current linked flow: Chatbook has no producer, and end-to-end distribution and acknowledgement are not wired.`
 - `Post-link conflicts retain generic Sync metadata but have no dedicated Personal Context resolution screen.`
 
-Repeat the full boundary matrix in developer terms so every shared and peer-local category is explicit:
+Repeat the full boundary matrix in developer terms, wrapped in `<!-- personal-context-boundary-matrix:start -->` and `<!-- personal-context-boundary-matrix:end -->`, so every shared and peer-local category is explicit:
 
 | Shared through the current linked flow when eligible | Remains peer-local or is not currently published |
 | --- | --- |
@@ -631,9 +763,11 @@ Repeat the full boundary matrix in developer terms so every shared and peer-loca
 | Exact canonical object identities, versions, and bytes for eligible shared objects | Local undo history, caches, ciphertext, database row identities, and other operational metadata |
 | — | Conflict-review objects and acknowledgement tracking |
 
+Include this exact privacy prohibition: `Never log profile plaintext, ciphertext, wrapped keys, or raw cryptographic errors.`
+
 - [ ] **Step 4: Add the complete extension checklist and test map**
 
-Include all ten checklist items:
+Wrap exactly these ten numbered items in `<!-- personal-context-extension-checklist:start -->` and `<!-- personal-context-extension-checklist:end -->`:
 
 1. Decide whether the change affects the shared contract or only one peer.
 2. Make shared canonical object changes in `tldw_profile_core` first; change Sync transport separately.
@@ -805,276 +939,11 @@ profile_task_matches=$(
 printf '%s\n' "$profile_task_matches"
 test "$profile_task_matches" = "task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md"
 
-# Re-inventory the exact merged product claims after the final rebase.
-rg -Fq 'Remove local profile' tldw_chatbook/Widgets/Settings_Widgets/personal_context_panel.py
-rg -Fq 'Run interview again' tldw_chatbook/Widgets/Settings_Widgets/personal_context_panel.py
-rg -Fq 'Get to know you' tldw_chatbook/UI/Screens/profile_interview_screen.py
-rg -Fq 'Define project context after creating' tldw_chatbook/Widgets/workspace_create_modal.py
-if rg -n -i -e 'action_delete_everywhere' -e 'delete_everywhere' \
-  -e 'id="[^"]*delete[^"]*everywhere' tldw_chatbook --glob '*.py'; then
-  echo 'Unexpected Delete Everywhere action/control'
-  exit 1
-fi
-for profile_component in \
-  tldw_chatbook/Personal_Context/repository.py \
-  tldw_chatbook/Personal_Context/service.py \
-  tldw_chatbook/Personal_Context/context_service.py \
-  tldw_chatbook/Personal_Context/proposal_service.py \
-  tldw_chatbook/Personal_Context/key_protector.py \
-  tldw_chatbook/Personal_Context/interview_coordinator.py \
-  tldw_chatbook/Personal_Context/link_service.py \
-  tldw_chatbook/Personal_Context/link_key_custody.py \
-  tldw_chatbook/Personal_Context/sync_outbox.py \
-  tldw_chatbook/Sync_Interop/personal_context_adapter.py \
-  tldw_chatbook/Sync_Interop/personal_context_dispatcher.py \
-  tldw_chatbook/Sync_Interop/personal_context_first_link_sync.py \
-  tldw_chatbook/Agents/profile_tool_provider.py \
-  tldw_chatbook/Chat/console_chat_controller.py \
-  tldw_chatbook/Chat/console_agent_bridge.py \
-  tldw_chatbook/tldw_api/client.py; do
-  test -f "$profile_component"
-done
-for profile_domain in \
-  personal_context.manifest \
-  personal_context.scope \
-  personal_context.record \
-  personal_context.proposal \
-  personal_context.purge; do
-  rg -Fq "\"$profile_domain\"" tldw_chatbook/Sync_Interop/personal_context_first_link_sync.py
-done
-rg -Fq 'Require explicit review before any canonical profile apply or upload.' \
-  tldw_chatbook/Widgets/Settings_Widgets/personal_context_link_modal.py
-rg -Fq 'class PersonalContextOutboxDispatcher' \
-  tldw_chatbook/Sync_Interop/personal_context_dispatcher.py
-rg -Fq 'async def bootstrap_sync_v2_personal_context' tldw_chatbook/tldw_api/client.py
-rg -Fq 'async def complete_sync_v2_personal_context_link' tldw_chatbook/tldw_api/client.py
-profile_python=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python
-if [ ! -x "$profile_python" ]; then
-  profile_python=.venv/bin/python
-fi
-test -x "$profile_python"
-test "$("$profile_python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" = '3.12'
-"$profile_python" - <<'PY'
-import ast
-from pathlib import Path
-
-ROOT = Path("tldw_chatbook")
-REPOSITORY = ROOT / "Personal_Context/repository.py"
-ADAPTER = ROOT / "Sync_Interop/personal_context_adapter.py"
-EXPECTED = {"manifest", "scope", "record", "proposal"}
-PRODUCERS = {"_insert_outbox", "commit_outbox_body"}
-EXPECTED_MATERIALIZATION = [
-    ("extend", "scope"),
-    ("extend", "record"),
-    ("extend", "record"),
-    ("extend", "proposal"),
-]
-
-
-def name(call: ast.Call) -> str:
-    return call.func.attr if isinstance(call.func, ast.Attribute) else (
-        call.func.id if isinstance(call.func, ast.Name) else ""
-    )
-
-
-def literal_types(call: ast.Call) -> set[str]:
-    values = [*call.args, *(kw.value for kw in call.keywords if kw.arg == "object_type")]
-    return {
-        value.value
-        for value in values
-        if isinstance(value, ast.Constant) and isinstance(value.value, str)
-    }
-
-
-def purge_calls(tree: ast.AST) -> list[int]:
-    return [
-        node.lineno
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and name(node) in PRODUCERS
-        and "purge" in literal_types(node)
-    ]
-
-
-def targets_materialization(target: ast.AST) -> bool:
-    if isinstance(target, ast.Name):
-        return target.id == "materialization"
-    if isinstance(target, ast.Subscript):
-        return targets_materialization(target.value)
-    if isinstance(target, (ast.List, ast.Tuple)):
-        return any(targets_materialization(item) for item in target.elts)
-    return False
-
-
-def materialization_sequence(function: ast.FunctionDef) -> list[tuple[str, str]]:
-    assignments: list[ast.AST] = []
-    for node in ast.walk(function):
-        if isinstance(node, ast.AnnAssign) and targets_materialization(node.target):
-            assignments.append(node)
-        elif isinstance(node, ast.Assign) and any(
-            targets_materialization(target) for target in node.targets
-        ):
-            assignments.append(node)
-        elif isinstance(node, ast.AugAssign) and targets_materialization(node.target):
-            assignments.append(node)
-        elif isinstance(node, ast.Delete) and any(
-            targets_materialization(target) for target in node.targets
-        ):
-            assignments.append(node)
-    if (
-        len(assignments) != 1
-        or not isinstance(assignments[0], ast.AnnAssign)
-        or not isinstance(assignments[0].value, ast.List)
-        or assignments[0].value.elts
-    ):
-        raise ValueError("materialization initialization or reassignment changed")
-
-    sequence: list[tuple[str, str]] = []
-    calls = sorted(
-        (
-            node
-            for node in ast.walk(function)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id == "materialization"
-        ),
-        key=lambda node: (node.lineno, node.col_offset),
-    )
-    for call in calls:
-        method = call.func.attr
-        if method not in {"extend", "append"} or len(call.args) != 1 or call.keywords:
-            raise ValueError(f"unknown materialization mutator at line {call.lineno}")
-        source = call.args[0]
-        if method == "append":
-            items = [source]
-        elif isinstance(source, (ast.GeneratorExp, ast.ListComp, ast.SetComp)):
-            items = [source.elt]
-        elif isinstance(source, (ast.List, ast.Tuple, ast.Set)):
-            items = list(source.elts)
-        else:
-            raise ValueError(f"dynamic materialization source at line {call.lineno}")
-        for item in items:
-            if (
-                not isinstance(item, ast.Tuple)
-                or not item.elts
-                or not isinstance(item.elts[0], ast.Constant)
-                or not isinstance(item.elts[0].value, str)
-            ):
-                raise ValueError(f"dynamic materialization domain at line {call.lineno}")
-            domain = item.elts[0].value
-            if domain not in EXPECTED:
-                raise ValueError(f"unreviewed materialization domain: {domain}")
-            sequence.append((method, domain))
-    return sequence
-
-
-widget_tree = ast.parse(
-    "def on_click(repository):\n"
-    "    repository.commit_outbox_body(object_type='purge')\n"
-)
-if purge_calls(widget_tree) != [2]:
-    raise SystemExit("Widget-like purge caller negative control was not detected")
-synthetic_function = next(
-    node
-    for node in ast.walk(
-        ast.parse(
-            "def materialize(items):\n"
-            "    materialization: list[tuple] = []\n"
-            "    materialization.extend(('purge', item, item, item) for item in items)\n"
-        )
-    )
-    if isinstance(node, ast.FunctionDef)
-)
-try:
-    materialization_sequence(synthetic_function)
-except ValueError as error:
-    if "purge" not in str(error):
-        raise
-else:
-    raise SystemExit("purge materialization negative control was not rejected")
-
-trees = {
-    path: ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    for path in ROOT.rglob("*.py")
-}
-violations: list[str] = []
-literal_producers: set[str] = set()
-dynamic_insertions: set[tuple[str, str, str]] = set()
-direct_commit_calls: list[str] = []
-for path, tree in trees.items():
-    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
-    for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
-        producer = name(call)
-        if producer not in PRODUCERS:
-            continue
-        types = literal_types(call)
-        literal_producers.update(types)
-        if "purge" in types:
-            violations.append(f"{path}:{call.lineno}: literal purge producer")
-        owner = call
-        while owner in parents and not isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            owner = parents[owner]
-        owner_name = owner.name if isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)) else "<module>"
-        object_kw = next((kw.value for kw in call.keywords if kw.arg == "object_type"), None)
-        if producer == "_insert_outbox" and object_kw is not None and not isinstance(object_kw, ast.Constant):
-            dynamic_insertions.add((str(path), owner_name, ast.unparse(object_kw)))
-        if producer == "commit_outbox_body":
-            direct_commit_calls.append(f"{path}:{call.lineno}")
-
-if literal_producers != EXPECTED:
-    violations.append(f"literal producer domains changed: {sorted(literal_producers)}")
-expected_dynamic = {
-    (str(REPOSITORY), "apply_reviewed_link", "object_type"),
-    (str(REPOSITORY), "commit_outbox_body", "object_type"),
-}
-if dynamic_insertions != expected_dynamic:
-    violations.append(f"dynamic producer seams changed: {sorted(dynamic_insertions)}")
-if direct_commit_calls:
-    violations.append(f"commit_outbox_body gained callers: {direct_commit_calls}")
-
-repository = trees[REPOSITORY]
-reviewed_link_functions = [
-    node
-    for node in ast.walk(repository)
-    if isinstance(node, ast.FunctionDef) and node.name == "apply_reviewed_link"
-]
-if len(reviewed_link_functions) != 1:
-    violations.append("PersonalContextRepository.apply_reviewed_link changed or is ambiguous")
-else:
-    try:
-        materialization = materialization_sequence(reviewed_link_functions[0])
-    except ValueError as error:
-        violations.append(str(error))
-    else:
-        if materialization != EXPECTED_MATERIALIZATION:
-            violations.append(f"materialization sources changed: {materialization}")
-
-adapter = trees[ADAPTER]
-model_keys = next(
-    {
-        key.value
-        for key in node.value.keys
-        if isinstance(key, ast.Constant) and isinstance(key.value, str)
-    }
-    for node in ast.walk(adapter)
-    if isinstance(node, ast.Assign)
-    and any(isinstance(target, ast.Name) and target.id == "_MODELS" for target in node.targets)
-    and isinstance(node.value, ast.Dict)
-)
-if model_keys != EXPECTED:
-    violations.append(f"adapter publishable model map changed: {sorted(model_keys)}")
-if violations:
-    raise SystemExit("\n".join(violations))
-print(f"Negative controls passed; no production purge caller; materialization: {materialization}")
-PY
-if rg -n -i -e 'personal.context.*post.?link.*resolve' \
-  -e 'post.?link.*personal.context.*resolve' \
-  tldw_chatbook/Widgets/Settings_Widgets tldw_chatbook/UI/Screens/profile_interview_screen.py; then
-  echo 'Unexpected dedicated Personal Context post-link resolver'
-  exit 1
-fi
+# The exact UI/component and Sync/purge inventories are canonical in Task 1.
+backlog task 27019 --plain | rg -q 'Status:.*In Progress'
 ```
+
+Immediately after this rebase/collision block, rerun the exact Task 1 Step 3 command block and then the exact Task 1 Step 4 command block, unchanged. Those two canonical blocks are the required post-rebase UI/control, per-file symbol, Sync-domain, purge-producer, dynamic-materialization, and resolver inventory; do not substitute an abbreviated copy.
 
 Expected: the branch is based on current `origin/dev`; TASK-27019 resolves uniquely; the current controls, components, five domains, reviewed first-link, exact `scope`, `record`, `record`, `proposal` materialization sequence, outbox/dispatcher/client boundaries, and negative purge/resolver claims still match the guides. Any production-tree scanner failure or newly shipped seam stops execution for re-inventory. There must be no later rebase after the task is marked Done.
 
@@ -1105,36 +974,60 @@ Run:
 
 ```bash
 set -e -o pipefail
-profile_python=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python
-if [ ! -x "$profile_python" ]; then
-  profile_python=.venv/bin/python
-fi
-test -x "$profile_python"
+profile_common_dir=$(git rev-parse --path-format=absolute --git-common-dir)
+profile_repo_root=$(dirname "$profile_common_dir")
+profile_python=
+for profile_python_candidate in \
+  "$profile_repo_root/.venv/bin/python" \
+  "${VIRTUAL_ENV:+$VIRTUAL_ENV/bin/python}" \
+  "$PWD/.venv/bin/python"; do
+  if [ -n "$profile_python_candidate" ] && [ -x "$profile_python_candidate" ]; then
+    profile_python=$profile_python_candidate
+    break
+  fi
+done
+test -n "$profile_python"
+"$profile_python" - <<'PY'
+import sys
+
+if not ((3, 11) <= sys.version_info[:2] < (4, 0)):
+    raise SystemExit(f"Unsupported Python: {sys.version.split()[0]}")
+PY
 profile_parity_dir=$(mktemp -d)
 trap 'rm -r "$profile_parity_dir"' EXIT
 gh api -X GET repos/rmusser01/tldw_server/contents/Docs/User_Guides/Server/Personal_Context_Profile.md \
-  -f ref=dev --jq .content | tr -d '\n' | base64 -D > "$profile_parity_dir/server.md"
+  -f ref=dev --jq .content > "$profile_parity_dir/server.b64"
 "$profile_python" - \
   Docs/User_Guide/settings/personal-context-profile.md \
   Docs/Development/personal-context-profile.md \
-  "$profile_parity_dir/server.md" <<'PY'
+  "$profile_parity_dir/server.b64" <<'PY'
+import base64
 import re
 import sys
 from pathlib import Path
 
 START = "<!-- shared-personal-context-contract:start -->"
 END = "<!-- shared-personal-context-contract:end -->"
+sources = [
+    (raw_path, Path(raw_path).read_text(encoding="utf-8"))
+    for raw_path in sys.argv[1:3]
+]
+server_payload = "".join(Path(sys.argv[3]).read_text(encoding="utf-8").split())
+sources.append(
+    (
+        "tldw_server dev operator guide",
+        base64.b64decode(server_payload, validate=True).decode("utf-8"),
+    )
+)
 normalized: list[tuple[str, str]] = []
-for raw_path in sys.argv[1:]:
-    path = Path(raw_path)
-    text = path.read_text(encoding="utf-8")
+for label, text in sources:
     match = re.search(re.escape(START) + r"(.*?)" + re.escape(END), text, re.DOTALL)
     if match is None:
-        raise SystemExit(f"missing shared-contract block: {path}")
+        raise SystemExit(f"missing shared-contract block: {label}")
     bullets = [line for line in match.group(1).splitlines() if line.startswith("- ")]
     if len(bullets) != 4:
-        raise SystemExit(f"expected four shared-contract bullets in {path}, found {len(bullets)}")
-    normalized.append((str(path), " ".join(match.group(0).split())))
+        raise SystemExit(f"expected four shared-contract bullets in {label}, found {len(bullets)}")
+    normalized.append((label, " ".join(match.group(0).split())))
 baseline_path, baseline = normalized[0]
 if not baseline:
     raise SystemExit(f"empty shared-contract block: {baseline_path}")
@@ -1153,16 +1046,26 @@ Run:
 
 ```bash
 set -e -o pipefail
-profile_python=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python
-if [ ! -x "$profile_python" ]; then
-  profile_python=.venv/bin/python
-fi
-if [ ! -x "$profile_python" ]; then
-  echo 'No executable Chatbook project Python found'
-  exit 1
-fi
-test "$("$profile_python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" = '3.12'
-printf 'Using checked project Python 3.12: %s\n' "$profile_python"
+profile_common_dir=$(git rev-parse --path-format=absolute --git-common-dir)
+profile_repo_root=$(dirname "$profile_common_dir")
+profile_python=
+for profile_python_candidate in \
+  "$profile_repo_root/.venv/bin/python" \
+  "${VIRTUAL_ENV:+$VIRTUAL_ENV/bin/python}" \
+  "$PWD/.venv/bin/python"; do
+  if [ -n "$profile_python_candidate" ] && [ -x "$profile_python_candidate" ]; then
+    profile_python=$profile_python_candidate
+    break
+  fi
+done
+test -n "$profile_python"
+"$profile_python" - <<'PY'
+import sys
+
+if not ((3, 11) <= sys.version_info[:2] < (4, 0)):
+    raise SystemExit(f"Unsupported Python: {sys.version.split()[0]}")
+print(f"Using checked project Python {sys.version.split()[0]}")
+PY
 "$profile_python" -m pytest -q \
   Tests/Packaging/test_profile_core_packaging.py \
   Tests/Sync_Interop/test_personal_context_capabilities.py \
@@ -1176,7 +1079,7 @@ printf 'Using checked project Python 3.12: %s\n' "$profile_python"
   Tests/tldw_api/test_personal_context_sync_client.py
 ```
 
-Expected: the selected tests pass under the checked Chatbook Python 3.12 environment. Results from a different interpreter are not completion evidence.
+Expected: the selected tests pass under a checked shared or active Chatbook project environment using supported Python `>=3.11,<4`. Results from an unsupported or unrelated interpreter are not completion evidence.
 
 - [ ] **Step 5: Run claim, path, and diff guards**
 
@@ -1188,32 +1091,266 @@ profile_user_guide=Docs/User_Guide/settings/personal-context-profile.md
 profile_developer_guide=Docs/Development/personal-context-profile.md
 profile_plan=Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md
 profile_task='backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md'
-for profile_shared_doc in "$profile_user_guide" "$profile_developer_guide"; do
-  rg -Fq '<!-- shared-personal-context-contract:start -->' "$profile_shared_doc"
-  rg -Fq '<!-- shared-personal-context-contract:end -->' "$profile_shared_doc"
+profile_common_dir=$(git rev-parse --path-format=absolute --git-common-dir)
+profile_repo_root=$(dirname "$profile_common_dir")
+profile_python=
+for profile_python_candidate in \
+  "$profile_repo_root/.venv/bin/python" \
+  "${VIRTUAL_ENV:+$VIRTUAL_ENV/bin/python}" \
+  "$PWD/.venv/bin/python"; do
+  if [ -n "$profile_python_candidate" ] && [ -x "$profile_python_candidate" ]; then
+    profile_python=$profile_python_candidate
+    break
+  fi
 done
-rg -Fq 'Chatbook does not currently expose **Delete everywhere**.' "$profile_user_guide"
-rg -Fq 'Ordinary server REST edits are not currently published to linked Chatbook clients.' \
-  "$profile_user_guide"
-rg -Fq 'Chatbook has no producer' "$profile_user_guide"
-rg -Fq 'no dedicated Personal Context resolution screen' "$profile_user_guide"
-rg -Fq 'Ordinary server REST edits are not currently published to linked Chatbook clients.' \
-  "$profile_developer_guide"
-rg -Fq 'Chatbook has no producer' "$profile_developer_guide"
-rg -Fq 'no dedicated Personal Context' "$profile_developer_guide"
-for profile_label in \
-  "Profile locked" \
-  "Offline or queued" \
-  "Capability not negotiated" \
-  "Version conflict" \
-  "First-link semantic collision" \
-  "Post-link semantic collision" \
-  "Purge pending"; do
-  rg -Fq "$profile_label" Docs/User_Guide/settings/personal-context-profile.md || {
-    echo "Missing failure-state label: $profile_label"
-    exit 1
-  }
-done
+test -n "$profile_python"
+"$profile_python" - <<'PY'
+import sys
+
+if not ((3, 11) <= sys.version_info[:2] < (4, 0)):
+    raise SystemExit(f"Unsupported Python: {sys.version.split()[0]}")
+PY
+"$profile_python" - "$profile_user_guide" "$profile_developer_guide" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+user_path, developer_path = map(Path, sys.argv[1:])
+user = user_path.read_text(encoding="utf-8")
+developer = developer_path.read_text(encoding="utf-8")
+
+
+def marked(text: str, name: str, document: Path) -> str:
+    start = f"<!-- {name}:start -->"
+    end = f"<!-- {name}:end -->"
+    if text.count(start) != 1 or text.count(end) != 1:
+        raise SystemExit(f"{document}: expected exactly one {name} marker pair")
+    block = text.split(start, 1)[1].split(end, 1)[0]
+    if not block.strip():
+        raise SystemExit(f"{document}: empty {name} block")
+    return block
+
+
+def require_each(text: str, values: list[str], document: Path, claim: str) -> None:
+    for value in values:
+        if value not in text:
+            raise SystemExit(f"{document}: missing {claim}: {value}")
+
+
+expected_shared_bullets = [
+    "- `tldw_profile_core` defines the versioned canonical profile object models, exact canonical bytes, interview/tool contracts, serialization, and validation used by both peers. Sync-v2 transport envelopes are a separate contract.",
+    "- After a successful reviewed link, Chatbook and tldw_server converge on the same canonical manifest, scope, record, proposal, and version identities and bytes for eligible shared objects.",
+    "- Sync V2 defines the `personal_context.manifest`, `personal_context.scope`, `personal_context.record`, `personal_context.proposal`, and content-free `personal_context.purge` domains. The current linked flow publishes eligible Chatbook-originated manifest, scope, record, and proposal changes; purge production and distribution are not wired end to end.",
+    "- Each peer retains its own at-rest ciphertext and keys, local database rows, runtime permissions, conflict-review metadata, acknowledgement tracking, and other operational state.",
+]
+
+
+def shared_contract(text: str, document: Path) -> None:
+    block = marked(text, "shared-personal-context-contract", document)
+    bullets = [line for line in block.splitlines() if line.startswith("- ")]
+    if bullets != expected_shared_bullets:
+        raise SystemExit(f"{document}: shared-contract bullets are missing or divergent")
+
+
+matrix_categories = [
+    "Canonical manifest after successful reviewed linking",
+    "Required global and linked-workspace scope objects",
+    "Records and tombstones whose controls permit synchronization",
+    "Eligible proposals and their canonical review state",
+    "Exact canonical object identities, versions, and bytes for eligible shared objects",
+    "Peer-local at-rest encryption and recovery keys",
+    "Raw interview answers and unfinished drafts",
+    "Runtime agent authority grants and tool availability",
+    "Device-only records or records marked non-syncable",
+    "Local undo history, caches, ciphertext, database row identities, and other operational metadata",
+    "Conflict-review objects and acknowledgement tracking",
+]
+for text, document in ((user, user_path), (developer, developer_path)):
+    shared_contract(text, document)
+    require_each(
+        marked(text, "personal-context-boundary-matrix", document),
+        matrix_categories,
+        document,
+        "boundary-matrix category",
+    )
+
+quick_start = marked(user, "personal-context-quick-start", user_path)
+quick_steps = [
+    int(number)
+    for number in re.findall(r"(?m)^(\d+)\.\s+", quick_start)
+]
+if quick_steps != [1, 2, 3, 4, 5]:
+    raise SystemExit(f"{user_path}: quick start must contain exactly steps 1-5")
+require_each(
+    quick_start,
+    [
+        "Data & Privacy",
+        "My Profile",
+        "Get to know you",
+        "stores no answers",
+        "visibility",
+        "syncability",
+        "Next Send",
+        "home server",
+    ],
+    user_path,
+    "quick-start claim",
+)
+require_each(
+    user,
+    [
+        "### Common workflows",
+        "#### Edit manually",
+        "#### Run or rerun an interview",
+        "#### Review agent proposals",
+        "#### Export plaintext and recovery material",
+        "#### Remove the local copy",
+        "#### Link a home server",
+    ],
+    user_path,
+    "workflow heading",
+)
+
+troubleshooting = marked(user, "personal-context-troubleshooting", user_path)
+if "| State | Cause | Safe next action | Current limit |" not in troubleshooting:
+    raise SystemExit(f"{user_path}: missing structured troubleshooting header")
+troubleshooting_rows: list[tuple[str, list[str]]] = []
+for line in troubleshooting.splitlines():
+    if not line.startswith("| **"):
+        continue
+    cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+    if len(cells) != 4:
+        raise SystemExit(f"{user_path}: malformed troubleshooting row: {line}")
+    troubleshooting_rows.append((cells[0].strip("*"), cells[1:]))
+expected_states = [
+    "Profile locked",
+    "Offline or queued",
+    "Capability not negotiated",
+    "Version conflict",
+    "First-link semantic collision",
+    "Post-link semantic collision",
+    "Purge pending",
+]
+if [label for label, _fields in troubleshooting_rows] != expected_states:
+    raise SystemExit(f"{user_path}: troubleshooting states must be the exact seven labels")
+for label, fields in troubleshooting_rows:
+    if any(len(field) < 3 or field in {"---", "TBD", "—"} for field in fields):
+        raise SystemExit(f"{user_path}: {label} needs cause, safe action, and current limit")
+
+user_limits = [
+    "Chatbook does not currently expose **Delete everywhere**.",
+    "Ordinary server REST edits are not currently published to linked Chatbook clients.",
+    "Chatbook has no producer",
+    "no dedicated Personal Context resolution screen",
+]
+developer_limits = [
+    "Ordinary server REST edits are not currently published to linked Chatbook clients.",
+    "The Personal Context purge domain is protocol-only in the current linked flow: Chatbook has no producer, and end-to-end distribution and acknowledgement are not wired.",
+    "Post-link conflicts retain generic Sync metadata but have no dedicated Personal Context resolution screen.",
+]
+require_each(user, user_limits, user_path, "current limitation")
+require_each(developer, developer_limits, developer_path, "current limitation")
+
+contradictions = [
+    r"Chatbook\s+(?:currently\s+)?(?:exposes|offers|provides|supports)\s+\*{0,2}Delete everywhere",
+    r"ordinary server REST edits\s+(?:are\s+)?(?:published|synced|synchronized)\s+to linked Chatbook",
+    r"purge[^.\n]{0,100}(?:is|are)\s+(?:fully|end[- ]to[- ]end)\s+(?:wired|distributed|acknowledged)",
+    r"post-link conflicts?[^.\n]{0,100}(?:have|offer|use)\s+a dedicated[^.\n]{0,40}(?:screen|resolver|resolution)",
+]
+for text, document in ((user, user_path), (developer, developer_path)):
+    for pattern in contradictions:
+        if re.search(pattern, text, re.IGNORECASE):
+            raise SystemExit(f"{document}: contradictory shipped claim: {pattern}")
+
+extension = marked(
+    developer, "personal-context-extension-checklist", developer_path
+)
+extension_numbers = [
+    int(number) for number in re.findall(r"(?m)^(\d+)\.\s+", extension)
+]
+if extension_numbers != list(range(1, 11)):
+    raise SystemExit(f"{developer_path}: extension checklist must be exactly 1-10")
+require_each(
+    extension,
+    [
+        "shared contract or only one peer",
+        "`tldw_profile_core` first",
+        "canonical identities and explicit syncability",
+        "owning service; never access profile tables directly",
+        "authority, scope, expiry, visibility, and secret-rejection",
+        "plaintext out of logs, diagnostics, outbox metadata, and unencrypted fixtures",
+        "parity/conformance coverage in both repositories",
+        "peer-specific migration, repository, service, API/UI, and recovery tests",
+        "governing ADR",
+        "both documentation sets",
+    ],
+    developer_path,
+    "extension-checklist requirement",
+)
+
+component_owners = [
+    ("tldw_chatbook/Personal_Context/bootstrap.py", "bootstrap_personal_context_service"),
+    ("tldw_chatbook/Personal_Context/key_protector.py", "ProfileKeyProtector"),
+    ("tldw_chatbook/Personal_Context/repository.py", "PersonalContextRepository"),
+    ("tldw_chatbook/Personal_Context/service.py", "PersonalContextService"),
+    ("tldw_chatbook/Personal_Context/context_service.py", "ProfileContextService"),
+    ("tldw_chatbook/Personal_Context/proposal_service.py", "ProfileProposalService"),
+    ("tldw_chatbook/Personal_Context/runtime_policy.py", "AgentAuthority"),
+    ("tldw_chatbook/Personal_Context/interview_coordinator.py", "ProfileInterviewCoordinator"),
+    ("tldw_chatbook/Personal_Context/interview_draft_repository.py", "InterviewDraftRepository"),
+    ("tldw_chatbook/Personal_Context/interview_provider.py", "InterviewQuestionProvider"),
+    ("tldw_chatbook/Personal_Context/link_service.py", "PersonalContextLinkService"),
+    ("tldw_chatbook/Personal_Context/link_key_custody.py", "PersonalContextLinkKeyCustodian"),
+    ("tldw_chatbook/Personal_Context/sync_outbox.py", "ProfileSyncOutbox"),
+    ("tldw_chatbook/Sync_Interop/personal_context_adapter.py", "PersonalContextSyncAdapter"),
+    ("tldw_chatbook/Sync_Interop/personal_context_dispatcher.py", "PersonalContextOutboxDispatcher"),
+    ("tldw_chatbook/Sync_Interop/personal_context_first_link_sync.py", "PersonalContextFirstLinkSync"),
+    ("tldw_chatbook/tldw_api/client.py", "bootstrap_sync_v2_personal_context"),
+    ("tldw_chatbook/tldw_api/client.py", "complete_sync_v2_personal_context_link"),
+    ("tldw_chatbook/Agents/profile_tool_provider.py", "ProfileToolProvider"),
+    ("tldw_chatbook/Chat/console_chat_controller.py", "ConsoleChatController"),
+    ("tldw_chatbook/Chat/console_agent_bridge.py", "ConsoleAgentBridge"),
+    ("tldw_chatbook/Widgets/Settings_Widgets/personal_context_panel.py", "PersonalContextSettingsPanel"),
+    ("tldw_chatbook/Widgets/Settings_Widgets/personal_context_link_modal.py", "PersonalContextLinkModal"),
+    ("tldw_chatbook/Widgets/Settings_Widgets/personal_context_review_modal.py", "PersonalContextReviewModal"),
+    ("tldw_chatbook/UI/Screens/profile_interview_screen.py", "ProfileInterviewScreen"),
+]
+developer_lines = developer.splitlines()
+for component_path, symbol in component_owners:
+    if not any(component_path in line and symbol in line for line in developer_lines):
+        raise SystemExit(f"{developer_path}: missing owner pair {component_path} / {symbol}")
+
+require_each(
+    developer,
+    [
+        "### Manual edits and reviewed interviews",
+        "### Proposals and direct writes",
+        "### Context injection and Next Send",
+        "### Transactional outbox and reviewed first link",
+        "### Post-link conflicts and purge limits",
+        "Never log profile plaintext, ciphertext, wrapped keys, or raw cryptographic errors.",
+        "UI, agent, and transport code must use the owning service/repository boundary and must not access profile tables directly.",
+    ],
+    developer_path,
+    "lifecycle/privacy claim",
+)
+require_each(
+    developer,
+    [
+        "Tests/Packaging/test_profile_core_packaging.py",
+        "Tests/Personal_Context/",
+        "Tests/Agents/test_personal_context_prompt.py",
+        "Tests/Chat/test_console_personal_context_snapshot.py",
+        "Tests/Sync_Interop/test_personal_context_*.py",
+        "Tests/UI/test_settings_personal_context.py",
+        "Tests/UI/test_personal_context_*.py",
+        "Tests/tldw_api/test_personal_context_sync_client.py",
+    ],
+    developer_path,
+    "targeted test-map entry",
+)
+print("Per-document semantic claims passed independently.")
+PY
 
 # No repository-wide docs-link checker governs these pages. Mirror the local-link
 # existence contract used by Tests/Docs/test_console_library_controls_docs.py with
@@ -1232,6 +1369,10 @@ rg -Fq 'https://github.com/rmusser01/tldw_server/blob/dev/Docs/User_Guides/Serve
   "$profile_user_guide"
 rg -Fq 'https://github.com/rmusser01/tldw_server/blob/dev/Docs/API-related/Personal_Context_API.md' \
   "$profile_user_guide"
+rg -Fq 'https://github.com/rmusser01/tldw_server/blob/dev/Docs/Code_Documentation/Personal_Context_Developer_Guide.md' \
+  "$profile_developer_guide"
+rg -Fq 'https://github.com/rmusser01/tldw_server/blob/dev/Docs/API-related/Personal_Context_API.md' \
+  "$profile_developer_guide"
 rg -Fq '| [Set up and manage your Personal Context Profile](settings/personal-context-profile.md) | Optional interviews, global/workspace context, agent proposals, synchronization boundaries, export, and removal. |' \
   Docs/User_Guide/index.md
 rg -Fq 'For Personal Context internals and extension work, see [Personal Context Profile](personal-context-profile.md).' \
@@ -1283,6 +1424,7 @@ Run:
 ```bash
 set -e -o pipefail
 profile_plan=Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md
+backlog task 27019 --plain | rg -q 'Status:.*In Progress'
 if profile_pending_steps=$(sed -n '/^### Task 1:/,/^### Task 6:/p' "$profile_plan" | rg -n '^- \[ \]'); then
   printf 'Unexecuted Task 1-5 plan steps:\n%s\n' "$profile_pending_steps"
   exit 1
@@ -1295,45 +1437,149 @@ git diff --check --cached
 git commit -m "docs: record Chatbook Personal Context verification"
 git diff --check origin/dev...HEAD
 test -z "$(git status --short)"
+backlog task 27019 --plain | rg -q 'Status:.*In Progress'
 ```
 
-Expected: Tasks 1-5 are checked and committed, and Task 6 starts with no uncommitted plan changes.
+Expected: all guide/index content and Tasks 1-5 execution checkboxes are committed, TASK-27019 remains **In Progress**, and Task 6 starts with no uncommitted plan changes.
 
-### Task 6: Close TASK-27019 and open the Chatbook PR
+### Task 6: Open, review, and close the Chatbook documentation PR
 
 **Files:**
 
 - Modify: `Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md`
 - Modify: `backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md`
 
-- [ ] **Step 1: Complete every acceptance criterion, record evidence, and mark Done as the final repository mutation**
+- [ ] **Step 1: Push and open the PR while TASK-27019 is In Progress**
 
-After all Task 5 evidence is recorded, mark Task 6 Step 1 `[x]`. Then run the following as the final repository mutation, replacing the bracketed evidence with the exact commands and results from Task 5:
+Prepare `/tmp/personal-context-chatbook-pr.md` with the documentation summary, current limitations, exact Task 5 evidence, and ADR result. Do not check this plan step yet; Task 6 execution checkboxes are recorded together in Step 3 after review completes.
 
 ```bash
 set -e -o pipefail
+backlog task 27019 --plain | rg -q 'Status:.*In Progress'
+test -z "$(git status --short)"
+git push -u origin codex/personal-context-docs
+profile_pr_url=$(gh pr create \
+  --base dev \
+  --head codex/personal-context-docs \
+  --title "docs: add Personal Context user and developer guides" \
+  --body-file /tmp/personal-context-chatbook-pr.md)
+test -n "$profile_pr_url"
+test "$(gh pr view "$profile_pr_url" --json baseRefName --jq .baseRefName)" = 'dev'
+test "$(gh pr view "$profile_pr_url" --json headRefName --jq .headRefName)" = \
+  'codex/personal-context-docs'
+backlog task 27019 --plain | rg -q 'Status:.*In Progress'
+```
+
+Expected: the PR is open against `dev` from `codex/personal-context-docs`, and TASK-27019 is still **In Progress**.
+
+- [ ] **Step 2: Wait for initial checks/review and address valid feedback while the task is open**
+
+Inspect the initial review comments and required checks. Address valid feedback only while TASK-27019 is **In Progress**. If feedback requires a rebase or repository edit, make that change while the task is open, rerun Task 5 Steps 1-5, commit it, push it, and restart this step. Do not edit Task 6 checkboxes during that loop.
+
+```bash
+set -e -o pipefail
+backlog task 27019 --plain | rg -q 'Status:.*In Progress'
+test -z "$(git status --short)"
+profile_pr_number=$(gh pr view --json number --jq .number)
+test -n "$profile_pr_number"
+gh pr view "$profile_pr_number" --comments
+gh pr checks "$profile_pr_number" --required --watch --fail-fast
+profile_review_decision=$(gh pr view "$profile_pr_number" --json reviewDecision --jq .reviewDecision)
+case "$profile_review_decision" in
+  ''|APPROVED) ;;
+  REVIEW_REQUIRED|CHANGES_REQUESTED)
+    echo "PR review is not complete: $profile_review_decision"
+    exit 1
+    ;;
+  *)
+    echo "Unknown PR review state: $profile_review_decision"
+    exit 1
+    ;;
+esac
+test "$(gh pr view "$profile_pr_number" --json baseRefName --jq .baseRefName)" = 'dev'
+test "$(gh pr view "$profile_pr_number" --json headRefName --jq .headRefName)" = \
+  'codex/personal-context-docs'
+test "$(gh pr view "$profile_pr_number" --json headRefOid --jq .headRefOid)" = \
+  "$(git rev-parse HEAD)"
+test "$(gh pr view "$profile_pr_number" --json isDraft --jq .isDraft)" = 'false'
+test "$(gh pr view "$profile_pr_number" --json mergeable --jq .mergeable)" = 'MERGEABLE'
+profile_pr_paths=$(gh pr view "$profile_pr_number" --json files --jq '.files[].path' | sort -u)
+profile_unexpected_pr_paths=$(
+  printf '%s\n' "$profile_pr_paths" | awk '
+    $0 == "Docs/Development/Developer_Guide.md" { next }
+    $0 == "Docs/Development/personal-context-profile.md" { next }
+    $0 == "Docs/User_Guide/index.md" { next }
+    $0 == "Docs/User_Guide/settings/personal-context-profile.md" { next }
+    $0 == "Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md" { next }
+    $0 == "backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md" { next }
+    NF { print }
+  '
+)
+if [ -n "$profile_unexpected_pr_paths" ]; then
+  printf 'Unexpected PR paths:\n%s\n' "$profile_unexpected_pr_paths"
+  exit 1
+fi
+backlog task 27019 --plain | rg -q 'Status:.*In Progress'
+```
+
+Expected: initial required checks pass, required review is approved or the repository has no required review decision, the PR is mergeable with the exact base/head and docs-only scope, and TASK-27019 remains **In Progress**. Repeat this step after every feedback commit.
+
+- [ ] **Step 3: Close TASK-27019 only after the PR is clean, then push final metadata**
+
+Rerun the exact Step 2 verification block immediately before closing. Then mark Task 6 Steps 1, 2, and 3 `[x]` together in this plan and run the following, replacing bracketed evidence with the exact Task 5/PR results. This plan-and-task commit is the final repository mutation when its post-push checks pass.
+
+```bash
+set -e -o pipefail
+profile_plan=Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md
+profile_task='backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md'
+profile_pr_url=$(gh pr view --json url --jq .url)
+profile_pr_number=$(gh pr view --json number --jq .number)
+test -n "$profile_pr_url"
+test -n "$profile_pr_number"
+backlog task 27019 --plain | rg -q 'Status:.*In Progress'
+if profile_pending_task6=$(sed -n '/^### Task 6:/,$p' "$profile_plan" | rg -n '^- \[ \]'); then
+  printf 'Unexecuted Task 6 plan steps:\n%s\n' "$profile_pending_task6"
+  exit 1
+else
+  profile_pending_status=$?
+  test "$profile_pending_status" -eq 1 || exit "$profile_pending_status"
+fi
 backlog task edit 27019 \
   --check-ac 1 --check-ac 2 --check-ac 3 --check-ac 4 --check-ac 5 \
-  --notes "Implemented the Chatbook Personal Context user and developer guides, discovery links, exact shared-contract parity block, current sync/non-sync matrix, seven failure states, and ten-item extension checklist. Verification: [exact Task 5 results]. ADR required: no new ADR required; existing ADR applies. ADR path: backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md. Reason: documentation only; the existing Personal Context authority, Sync, and encryption ADR applies. Lessons learned: [record a genuine lesson with its incident, or state none]." \
+  --ref Docs/superpowers/specs/2026-08-31-personal-context-documentation-design.md \
+  --ref backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md \
+  --ref "$profile_pr_url" \
+  --notes "Implemented the Chatbook Personal Context user and developer guides, discovery links, exact shared-contract parity block, current sync/non-sync matrix, seven structured failure states, and ten-item extension checklist. Verification: [exact Task 5 results]. PR checks/review/base/head/scope: [exact Step 2 results]. ADR required: no new ADR required; existing ADR applies. ADR path: backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md. Reason: documentation only; the existing Personal Context authority, Sync, and encryption ADR applies. Lessons learned: [record a genuine lesson with its incident, or state none]." \
   -s Done
-backlog task 27019 --plain
-git add \
-  Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md \
-  "backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md"
+backlog task 27019 --plain | rg -q 'Status:.*Done'
+if rg -n '^- \[ \]' "$profile_task"; then
+  echo 'TASK-27019 still has unchecked acceptance criteria'
+  exit 1
+fi
+rg -Fq "$profile_pr_url" "$profile_task"
+git add "$profile_plan" "$profile_task"
 git diff --check --cached
+test "$(git diff --cached --name-only | sort)" = \
+  "$(printf '%s\n' "$profile_plan" "$profile_task" | sort)"
 git commit -m "docs: close Chatbook Personal Context documentation task"
+git push
+gh pr checks "$profile_pr_number" --required --watch --fail-fast
+test "$(gh pr view "$profile_pr_number" --json baseRefName --jq .baseRefName)" = 'dev'
+test "$(gh pr view "$profile_pr_number" --json headRefOid --jq .headRefOid)" = \
+  "$(git rev-parse HEAD)"
+backlog task 27019 --plain | rg -q 'Status:.*Done'
+test -z "$(git status --short)"
 ```
 
-Expected: all ACs and Task 6 Step 1 are checked, Implementation Notes/evidence are present, and TASK-27019 is Done. The plan and task are staged together as the final repository mutation. Do not rebase or modify repository files after this commit.
+Expected: all ACs and executed plan steps are checked, implementation notes and the PR reference are recorded, TASK-27019 is **Done**, and the final plan/task metadata commit is pushed and green.
 
-- [ ] **Step 2: Push and open the PR against `dev`**
-
-Prepare `/tmp/personal-context-chatbook-pr.md` with summary, current limitations, and exact evidence, then run:
+If a final check exposes any required repository edit, do not edit docs/code while the task is Done. The status change below must be the first mutation; commit and push it, then return to Step 2 and repeat the review/close loop:
 
 ```bash
 set -e -o pipefail
-git push -u origin codex/personal-context-docs
-gh pr create --base dev --head codex/personal-context-docs --title "docs: add Personal Context user and developer guides" --body-file /tmp/personal-context-chatbook-pr.md
+backlog task edit 27019 -s "In Progress"
+git add "backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md"
+git diff --check --cached
+git commit -m "docs: reopen Chatbook Personal Context documentation task"
+git push
 ```
-
-Expected: a docs-only Chatbook PR against `dev` whose changed files match Task 5's inventory.
