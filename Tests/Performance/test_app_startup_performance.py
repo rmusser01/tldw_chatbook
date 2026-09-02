@@ -188,6 +188,7 @@ def test_tool_pack_implementation_imports_only_in_deferred_worker(
 
         import tldw_chatbook.app as app_module
         from tldw_chatbook.MCP.permission_store import MCPPermissionStore
+        from tldw_chatbook.Workspaces.registry_service import DeferredWorkspaceToolProfileGuard
 
         guarded = (
             "tldw_chatbook.Tool_Packs.service",
@@ -203,18 +204,22 @@ def test_tool_pack_implementation_imports_only_in_deferred_worker(
         app_module.get_user_data_dir = lambda: root
 
         class Registry:
-            def __init__(self): self.guard = None
+            def __init__(self, guard): self.guard = guard
             def list_workspaces(self, *, include_archived=False): return ()
             def get_workspace(self, workspace_id): return None
             def attach_tool_profile_guard(self, guard): self.guard = guard
+            @property
+            def tool_profile_guard(self): return self.guard
 
-        registry = Registry()
+        bootstrap = DeferredWorkspaceToolProfileGuard()
+        registry = Registry(bootstrap)
         fake = SimpleNamespace(
             unified_mcp_service=SimpleNamespace(
                 permission_store=MCPPermissionStore(root / "permissions.json")
             ),
             local_mcp_control_service=object(),
             workspace_registry_service=registry,
+            _tool_pack_guard_bootstrap=bootstrap,
             tool_pack_service=None,
             tool_pack_service_unavailable_reason="starting",
             tool_pack_receipt_reconciliation_unavailable_reason="not_run",
@@ -223,8 +228,15 @@ def test_tool_pack_implementation_imports_only_in_deferred_worker(
         fake._mark_tool_pack_service_unavailable = lambda category: (
             app_module.TldwCli._mark_tool_pack_service_unavailable(fake, category)
         )
-        fake._attach_tool_pack_service = lambda service, category: (
-            app_module.TldwCli._attach_tool_pack_service(fake, service, category)
+        fake._attach_tool_pack_service = lambda service, owner, guard_bootstrap: (
+            app_module.TldwCli._attach_tool_pack_service(
+                fake, service, owner, guard_bootstrap
+            )
+        )
+        fake._record_tool_pack_receipt_reconciliation = lambda service, category: (
+            app_module.TldwCli._record_tool_pack_receipt_reconciliation(
+                fake, service, category
+            )
         )
 
         app_module.TldwCli._compose_tool_pack_service_off_thread(fake)

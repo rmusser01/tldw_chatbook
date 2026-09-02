@@ -27,6 +27,7 @@ from tldw_chatbook.Tool_Packs.contracts import (
 RECEIPT_SCHEMA = "tldw.tool-pack-receipt/v1"
 MAX_RECEIPT_BYTES = 4 * 1024 * 1024
 MAX_RECEIPT_STORE_BYTES = 32 * 1024 * 1024
+MAX_RECONCILE_ENTRIES = 4096
 ORPHAN_GRACE = timedelta(hours=24)
 
 _RECEIPT_ID_RE = re.compile(r"tp-[0-9a-f]{32}\Z")
@@ -443,6 +444,7 @@ class ToolPackReceiptStore:
         *,
         max_receipt_bytes: int = MAX_RECEIPT_BYTES,
         max_total_bytes: int = MAX_RECEIPT_STORE_BYTES,
+        max_reconcile_entries: int = MAX_RECONCILE_ENTRIES,
         _fault: Callable[[str], None] | None = None,
         _id_source: Callable[[], bytes] | None = None,
     ) -> None:
@@ -450,13 +452,16 @@ class ToolPackReceiptStore:
             not isinstance(root, Path)
             or type(max_receipt_bytes) is not int
             or type(max_total_bytes) is not int
+            or type(max_reconcile_entries) is not int
             or max_receipt_bytes <= 0
             or max_total_bytes <= 0
+            or max_reconcile_entries <= 0
         ):
             raise _fail("payload_invalid")
         self.root = Path(os.path.abspath(root.expanduser()))
         self.max_receipt_bytes = max_receipt_bytes
         self.max_total_bytes = max_total_bytes
+        self.max_reconcile_entries = max_reconcile_entries
         self._fault = _fault
         self._id_source = _id_source or (lambda: secrets.token_bytes(16))
         self._ensure_root()
@@ -566,7 +571,15 @@ class ToolPackReceiptStore:
         removed: list[str] = []
         with self._state.lock:
             try:
-                entries = sorted(self.root.iterdir(), key=lambda path: path.name)
+                entries: list[Path] = []
+                with os.scandir(self.root) as scan:
+                    for entry in scan:
+                        if len(entries) >= self.max_reconcile_entries:
+                            raise _fail("capacity_exceeded")
+                        entries.append(Path(entry.path))
+                entries.sort(key=lambda path: path.name)
+            except ToolPackError:
+                raise
             except OSError:
                 raise _fail("activation_failed") from None
             for path in entries:

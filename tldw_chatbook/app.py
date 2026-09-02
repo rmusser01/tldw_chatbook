@@ -703,6 +703,7 @@ from tldw_chatbook.Web_Scraping_Interop import (  # noqa: E402
 )
 from tldw_chatbook.Workspaces import (  # noqa: E402
     ChangeReviewConsentService,
+    DeferredWorkspaceToolProfileGuard,
     LocalWorkspaceRegistryService,
 )
 # NOTE (boot budget, ADR-097): `Workspaces.agent_provisioning` is imported
@@ -9294,16 +9295,19 @@ class TldwCli(
             self.tool_pack_service_unavailable_reason = "composition_unavailable"
 
     def _compose_tool_pack_service_off_thread(self) -> None:
-        """Compose and reconcile Tool Packs away from the Textual event loop."""
+        """Compose, activate, then reconcile away from the Textual event loop."""
         try:
             unified = getattr(self, "unified_mcp_service", None)
             local_control = getattr(self, "local_mcp_control_service", None)
             registry = getattr(self, "workspace_registry_service", None)
+            bootstrap = getattr(self, "_tool_pack_guard_bootstrap", None)
             permission_store = getattr(unified, "permission_store", None)
             if (
                 permission_store is None
                 or local_control is None
                 or registry is None
+                or type(bootstrap) is not DeferredWorkspaceToolProfileGuard
+                or getattr(registry, "tool_profile_guard", None) is not bootstrap
             ):
                 self.call_from_thread(
                     self._mark_tool_pack_service_unavailable,
@@ -9331,9 +9335,17 @@ class TldwCli(
                 workspace_registry=registry,
                 receipt_root=get_user_data_dir() / "tool_pack_receipts",
             )
+            attached = self.call_from_thread(
+                self._attach_tool_pack_service,
+                service,
+                registry,
+                bootstrap,
+            )
+            if attached is not True:
+                return
             recovery = service.reconcile_receipts()
             self.call_from_thread(
-                self._attach_tool_pack_service,
+                self._record_tool_pack_receipt_reconciliation,
                 service,
                 recovery.unavailable_category,
             )
@@ -9344,25 +9356,44 @@ class TldwCli(
             )
 
     def _attach_tool_pack_service(
-        self, service: object, reconciliation_unavailable: str | None
-    ) -> None:
-        """Attach one already-complete service and its guard exactly once."""
+        self,
+        service: object,
+        registry: object,
+        bootstrap: object,
+    ) -> bool:
+        """Atomically activate one complete guard for the captured registry."""
         if getattr(self, "tool_pack_service", None) is not None:
-            return
-        registry = getattr(self, "workspace_registry_service", None)
-        if registry is None:
+            return False
+        if (
+            getattr(self, "workspace_registry_service", None) is not registry
+            or getattr(self, "_tool_pack_guard_bootstrap", None) is not bootstrap
+            or type(bootstrap) is not DeferredWorkspaceToolProfileGuard
+            or getattr(registry, "tool_profile_guard", None) is not bootstrap
+        ):
             self._mark_tool_pack_service_unavailable("prerequisites_unavailable")
-            return
+            return False
         try:
-            registry.attach_tool_profile_guard(service.binding_guard)
+            guard = service.binding_guard  # type: ignore[attr-defined]
+            if bootstrap.activate(guard) is not True:
+                raise RuntimeError("Tool Pack guard was already active")
+            if bootstrap.active_guard is not guard:
+                raise RuntimeError("Tool Pack guard activation was not atomic")
         except Exception:
             self._mark_tool_pack_service_unavailable("composition_unavailable")
-            return
+            return False
         self.tool_pack_service = service
         self.tool_pack_service_unavailable_reason = None
-        self.tool_pack_receipt_reconciliation_unavailable_reason = (
-            reconciliation_unavailable
-        )
+        self.tool_pack_receipt_reconciliation_unavailable_reason = "pending"
+        return True
+
+    def _record_tool_pack_receipt_reconciliation(
+        self, service: object, unavailable_category: str | None
+    ) -> None:
+        """Record recovery only for the service that still owns authority."""
+        if getattr(self, "tool_pack_service", None) is service:
+            self.tool_pack_receipt_reconciliation_unavailable_reason = (
+                unavailable_category
+            )
 
     def _mark_tool_pack_service_unavailable(self, category: str) -> None:
         """Expose one stable unavailable category without diagnostic detail."""
@@ -9741,6 +9772,7 @@ class TldwCli(
 
     def _wire_workspace_registry_services(self) -> None:
         self.change_review_consent_service = None
+        self._tool_pack_guard_bootstrap = None
         try:
             self.local_workspace_db = WorkspaceDB(
                 get_workspaces_db_path(),
@@ -9748,6 +9780,10 @@ class TldwCli(
             )
             self.workspace_registry_service = LocalWorkspaceRegistryService(
                 self.local_workspace_db,
+            )
+            self._tool_pack_guard_bootstrap = DeferredWorkspaceToolProfileGuard()
+            self.workspace_registry_service.attach_tool_profile_guard(
+                self._tool_pack_guard_bootstrap
             )
             self.workspace_registry_service.ensure_default_workspace()
             self.change_review_consent_service = ChangeReviewConsentService(
@@ -9762,6 +9798,7 @@ class TldwCli(
             )
             self.local_workspace_db = None
             self.workspace_registry_service = None
+            self._tool_pack_guard_bootstrap = None
 
     def _wire_research_source_association(self) -> None:
         """Compose durable post-ingest association services."""

@@ -84,9 +84,10 @@ def _safe_suggested_id(source_id: str, profile_id: str) -> str:
     return normalized
 
 
-def _state_for_tool(
+def resolve_portable_tool_state(
     payload: Mapping[str, object], item: PermissionInventoryTool, profile_id: str
 ) -> str:
+    """Resolve the effective portable state, including runtime safety floors."""
     tool = thaw_hub_tool(item.tool)
     if item.authority == "builtin":
         state = resolve_builtin_state(
@@ -335,7 +336,7 @@ class ToolPackExportService:
                 item.authority,
                 item.tool.server_key,
                 item.tool.name,
-                _state_for_tool(payload, item, profile_id),
+                resolve_portable_tool_state(payload, item, profile_id),
                 item.contract_sha256,
             )
             for item in inventory.tools
@@ -417,5 +418,6 @@ __all__ = [
     "ToolPackExportReview",
     "ToolPackExportService",
     "ToolPackExportSnapshot",
+    "resolve_portable_tool_state",
     "write_tool_pack_archive",
 ]

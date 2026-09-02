@@ -14,6 +14,7 @@ from tldw_chatbook.Workspaces.assistant_defaults import (
 )
 from tldw_chatbook.Workspaces.models import WorkspaceAssistantDefaults
 from tldw_chatbook.Workspaces.registry_service import (
+    DeferredWorkspaceToolProfileGuard,
     LocalWorkspaceRegistryService,
     WorkspaceRegistryServiceError,
 )
@@ -112,6 +113,78 @@ def test_every_assistant_defaults_writer_traverses_attached_guard(tmp_path):
     assert guard.calls[2]["current_defaults"] == second
     assert guard.calls[2]["intended_defaults"] is None
     assert all(call["workspace_id"] == "w-guarded" for call in guard.calls)
+
+
+def test_deferred_tool_profile_guard_blocks_profile_changes_until_activation(
+    tmp_path,
+):
+    """The app bootstrap cannot leave direct registry writers fail-open."""
+
+    class AllowingGuard:
+        @contextmanager
+        def mutation_scope(self, **_kwargs):
+            yield
+
+    registry = build_registry(tmp_path)
+    bootstrap = DeferredWorkspaceToolProfileGuard()
+    registry.attach_tool_profile_guard(bootstrap)
+    registry.create_workspace(workspace_id="w-bootstrap", name="Bootstrap")
+    defaults = WorkspaceAssistantDefaults(
+        assistant_id="p1", tool_policy_profile_id="research"
+    )
+
+    with pytest.raises(
+        WorkspaceRegistryServiceError, match="Tool profile authority is unavailable"
+    ):
+        registry.set_assistant_defaults("w-bootstrap", defaults)
+    with pytest.raises(WorkspaceRegistryServiceError):
+        registry.create_workspace(
+            workspace_id="w-inline",
+            name="Inline",
+            assistant_defaults=defaults,
+        )
+    assert registry.get_workspace("w-bootstrap").assistant_defaults is None
+    assert registry.get_workspace("w-inline") is None
+
+    delegate = AllowingGuard()
+    assert bootstrap.activate(delegate) is True
+    assert bootstrap.active_guard is delegate
+    assert (
+        registry.set_assistant_defaults("w-bootstrap", defaults).assistant_defaults
+        == defaults
+    )
+
+    assert bootstrap.activate(delegate) is False
+    with pytest.raises(WorkspaceRegistryServiceError):
+        bootstrap.activate(AllowingGuard())
+
+
+def test_deferred_tool_profile_guard_protects_persisted_profile_references(
+    tmp_path,
+):
+    registry = build_registry(tmp_path)
+    existing = WorkspaceAssistantDefaults(
+        assistant_id="p1", tool_policy_profile_id="research"
+    )
+    registry.create_workspace(
+        workspace_id="w-existing",
+        name="Existing",
+        assistant_defaults=existing,
+    )
+    bootstrap = DeferredWorkspaceToolProfileGuard()
+    registry.attach_tool_profile_guard(bootstrap)
+
+    with pytest.raises(WorkspaceRegistryServiceError):
+        registry.clear_assistant_defaults("w-existing")
+    with pytest.raises(WorkspaceRegistryServiceError):
+        registry.set_assistant_defaults(
+            "w-existing",
+            WorkspaceAssistantDefaults(
+                assistant_id="p2", tool_policy_profile_id="different"
+            ),
+        )
+
+    assert registry.get_workspace("w-existing").assistant_defaults == existing
 
 
 def test_inline_create_forwards_tool_profile_confirmation_token(tmp_path):

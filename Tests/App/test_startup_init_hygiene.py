@@ -16,6 +16,7 @@ the property that would go quietly wrong again:
 from __future__ import annotations
 
 import ast
+from contextlib import contextmanager
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -285,11 +286,30 @@ def test_apply_seeds_the_registry_and_attaches_the_store() -> None:
 # --------------------------------------------------------------------------
 
 
+def _guarded_tool_pack_registry():
+    from tldw_chatbook.Workspaces.registry_service import (
+        DeferredWorkspaceToolProfileGuard,
+    )
+
+    bootstrap = DeferredWorkspaceToolProfileGuard()
+    registry = SimpleNamespace(
+        tool_profile_guard=bootstrap,
+        attachments=[bootstrap],
+    )
+    registry.attach_tool_profile_guard = lambda guard: registry.attachments.append(
+        guard
+    )
+    return registry, bootstrap
+
+
 def test_tool_pack_wiring_schedules_one_post_ready_thread_worker() -> None:
     calls: list[dict[str, Any]] = []
+    registry, bootstrap = _guarded_tool_pack_registry()
     fake = SimpleNamespace(
         _ui_ready=False,
         _tool_pack_wiring_started=False,
+        _tool_pack_guard_bootstrap=bootstrap,
+        workspace_registry_service=registry,
         tool_pack_service=None,
         tool_pack_service_unavailable_reason="not_ready",
         _compose_tool_pack_service_off_thread=lambda: None,
@@ -307,6 +327,29 @@ def test_tool_pack_wiring_schedules_one_post_ready_thread_worker() -> None:
     assert calls[0]["thread"] is True
     assert calls[0]["exit_on_error"] is False
     assert fake.tool_pack_service_unavailable_reason == "starting"
+    assert bootstrap.active_guard is None
+
+
+def test_tool_pack_worker_start_failure_keeps_the_bootstrap_fail_closed() -> None:
+    registry, bootstrap = _guarded_tool_pack_registry()
+    fake = SimpleNamespace(
+        _ui_ready=True,
+        _tool_pack_wiring_started=False,
+        _tool_pack_guard_bootstrap=bootstrap,
+        workspace_registry_service=registry,
+        tool_pack_service=None,
+        tool_pack_service_unavailable_reason="not_ready",
+        _compose_tool_pack_service_off_thread=lambda: None,
+        run_worker=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("cancelled before start")
+        ),
+    )
+
+    TldwCli._deferred_wire_tool_pack_service(fake)
+
+    assert fake.tool_pack_service is None
+    assert fake.tool_pack_service_unavailable_reason == "composition_unavailable"
+    assert bootstrap.active_guard is None
 
 
 def test_tool_pack_composition_failure_attaches_no_partial_guard(
@@ -314,14 +357,12 @@ def test_tool_pack_composition_failure_attaches_no_partial_guard(
 ) -> None:
     from tldw_chatbook.Tool_Packs.service import ToolPackService
 
-    registry = SimpleNamespace(
-        attachments=[],
-        attach_tool_profile_guard=lambda guard: registry.attachments.append(guard),
-    )
+    registry, bootstrap = _guarded_tool_pack_registry()
     fake = SimpleNamespace(
         unified_mcp_service=SimpleNamespace(permission_store=object()),
         local_mcp_control_service=object(),
         workspace_registry_service=registry,
+        _tool_pack_guard_bootstrap=bootstrap,
         tool_pack_service=None,
         tool_pack_service_unavailable_reason="starting",
         call_from_thread=lambda callback, *args: callback(*args),
@@ -339,18 +380,17 @@ def test_tool_pack_composition_failure_attaches_no_partial_guard(
 
     assert fake.tool_pack_service is None
     assert fake.tool_pack_service_unavailable_reason == "composition_unavailable"
-    assert registry.attachments == []
+    assert registry.attachments == [bootstrap]
+    assert bootstrap.active_guard is None
 
 
 def test_tool_pack_prerequisite_failure_attaches_no_guard() -> None:
-    registry = SimpleNamespace(
-        attachments=[],
-        attach_tool_profile_guard=lambda guard: registry.attachments.append(guard),
-    )
+    registry, bootstrap = _guarded_tool_pack_registry()
     fake = SimpleNamespace(
         unified_mcp_service=None,
         local_mcp_control_service=object(),
         workspace_registry_service=registry,
+        _tool_pack_guard_bootstrap=bootstrap,
         tool_pack_service=None,
         tool_pack_service_unavailable_reason="starting",
         call_from_thread=lambda callback, *args: callback(*args),
@@ -363,7 +403,8 @@ def test_tool_pack_prerequisite_failure_attaches_no_guard() -> None:
 
     assert fake.tool_pack_service is None
     assert fake.tool_pack_service_unavailable_reason == "prerequisites_unavailable"
-    assert registry.attachments == []
+    assert registry.attachments == [bootstrap]
+    assert bootstrap.active_guard is None
 
 
 def test_complete_tool_pack_composition_attaches_exactly_once_at_user_data_root(
@@ -374,19 +415,23 @@ def test_complete_tool_pack_composition_attaches_exactly_once_at_user_data_root(
     from tldw_chatbook.Tool_Packs.service import ToolPackService
 
     calls: list[dict[str, object]] = []
-    guard = object()
+
+    class Guard:
+        @contextmanager
+        def mutation_scope(self, **_kwargs):
+            yield
+
+    guard = Guard()
     composed = SimpleNamespace(
         binding_guard=guard,
         reconcile_receipts=lambda: SimpleNamespace(unavailable_category=None),
     )
-    registry = SimpleNamespace(
-        attachments=[],
-        attach_tool_profile_guard=lambda value: registry.attachments.append(value),
-    )
+    registry, bootstrap = _guarded_tool_pack_registry()
     fake = SimpleNamespace(
         unified_mcp_service=SimpleNamespace(permission_store=object()),
         local_mcp_control_service=object(),
         workspace_registry_service=registry,
+        _tool_pack_guard_bootstrap=bootstrap,
         tool_pack_service=None,
         tool_pack_service_unavailable_reason="starting",
         tool_pack_receipt_reconciliation_unavailable_reason="not_run",
@@ -395,8 +440,11 @@ def test_complete_tool_pack_composition_attaches_exactly_once_at_user_data_root(
     fake._mark_tool_pack_service_unavailable = lambda category: (
         TldwCli._mark_tool_pack_service_unavailable(fake, category)
     )
-    fake._attach_tool_pack_service = lambda service, category: (
-        TldwCli._attach_tool_pack_service(fake, service, category)
+    fake._attach_tool_pack_service = lambda service, owner, guard_bootstrap: (
+        TldwCli._attach_tool_pack_service(fake, service, owner, guard_bootstrap)
+    )
+    fake._record_tool_pack_receipt_reconciliation = lambda service, category: (
+        TldwCli._record_tool_pack_receipt_reconciliation(fake, service, category)
     )
     monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
     monkeypatch.setattr(
@@ -409,13 +457,74 @@ def test_complete_tool_pack_composition_attaches_exactly_once_at_user_data_root(
     )
 
     TldwCli._compose_tool_pack_service_off_thread(fake)
-    TldwCli._attach_tool_pack_service(fake, composed, None)
+    TldwCli._attach_tool_pack_service(fake, composed, registry, bootstrap)
 
     assert calls[0]["inventory"] == "sealed"
     assert calls[0]["receipt_root"] == tmp_path / "tool_pack_receipts"
     assert fake.tool_pack_service is composed
     assert fake.tool_pack_service_unavailable_reason is None
-    assert registry.attachments == [guard]
+    assert fake.tool_pack_receipt_reconciliation_unavailable_reason is None
+    assert registry.attachments == [bootstrap]
+    assert bootstrap.active_guard is guard
+
+
+def test_tool_pack_attachment_rejects_registry_replacement() -> None:
+    registry_a, bootstrap_a = _guarded_tool_pack_registry()
+    registry_b, bootstrap_b = _guarded_tool_pack_registry()
+    composed = SimpleNamespace(
+        binding_guard=SimpleNamespace(mutation_scope=lambda **_: None)
+    )
+    fake = SimpleNamespace(
+        workspace_registry_service=registry_b,
+        _tool_pack_guard_bootstrap=bootstrap_b,
+        tool_pack_service=None,
+        tool_pack_service_unavailable_reason="starting",
+    )
+    fake._mark_tool_pack_service_unavailable = lambda category: (
+        TldwCli._mark_tool_pack_service_unavailable(fake, category)
+    )
+
+    attached = TldwCli._attach_tool_pack_service(
+        fake, composed, registry_a, bootstrap_a
+    )
+
+    assert attached is False
+    assert fake.tool_pack_service is None
+    assert fake.tool_pack_service_unavailable_reason == "prerequisites_unavailable"
+    assert bootstrap_a.active_guard is None and bootstrap_b.active_guard is None
+
+
+def test_completed_attachment_never_reinvokes_a_mutating_registry_setter() -> None:
+    class Guard:
+        @contextmanager
+        def mutation_scope(self, **_kwargs):
+            yield
+
+    registry, bootstrap = _guarded_tool_pack_registry()
+    setter_calls: list[object] = []
+
+    def mutate_then_raise(value: object) -> None:
+        setter_calls.append(value)
+        registry.tool_profile_guard = value
+        raise RuntimeError("partial")
+
+    registry.attach_tool_profile_guard = mutate_then_raise
+    service = SimpleNamespace(binding_guard=Guard())
+    fake = SimpleNamespace(
+        workspace_registry_service=registry,
+        _tool_pack_guard_bootstrap=bootstrap,
+        tool_pack_service=None,
+        tool_pack_service_unavailable_reason="starting",
+        tool_pack_receipt_reconciliation_unavailable_reason="not_run",
+    )
+    fake._mark_tool_pack_service_unavailable = lambda category: (
+        TldwCli._mark_tool_pack_service_unavailable(fake, category)
+    )
+
+    assert TldwCli._attach_tool_pack_service(fake, service, registry, bootstrap) is True
+    assert setter_calls == []
+    assert registry.tool_profile_guard is bootstrap
+    assert bootstrap.active_guard is service.binding_guard
 
 
 def test_apply_closes_the_store_instead_of_attaching_it_during_shutdown() -> None:

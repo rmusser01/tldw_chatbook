@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 import base64
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
 from secrets import token_urlsafe
 import sqlite3
+import threading
 from typing import Any, ContextManager, Protocol
 from uuid import NAMESPACE_URL, RFC_4122, UUID, uuid4, uuid5
 
@@ -132,6 +133,82 @@ class WorkspaceToolProfileGuard(Protocol):
         intended_defaults: WorkspaceAssistantDefaults | None,
         confirmation_token: str | None,
     ) -> ContextManager[None]: ...
+
+
+class DeferredWorkspaceToolProfileGuard:
+    """Fail closed until the deferred portable-profile authority is complete.
+
+    Ordinary assistant-default edits that leave the Tool Profile reference
+    unchanged may proceed during startup. Any create, replace, or clear that
+    changes that reference is rejected until one complete lifecycle guard is
+    activated. Activation validates before assignment and cannot replace a
+    different active guard.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._active_guard: WorkspaceToolProfileGuard | None = None
+
+    @property
+    def active_guard(self) -> WorkspaceToolProfileGuard | None:
+        """Return the complete delegate, or ``None`` while fail-closed."""
+        with self._lock:
+            return self._active_guard
+
+    def activate(self, guard: WorkspaceToolProfileGuard) -> bool:
+        """Install the complete guard once after validating its interface."""
+        if guard is self or not callable(getattr(guard, "mutation_scope", None)):
+            raise WorkspaceRegistryServiceError(
+                "Tool profile authority is unavailable."
+            )
+        with self._lock:
+            if self._active_guard is guard:
+                return False
+            if self._active_guard is not None:
+                raise WorkspaceRegistryServiceError(
+                    "Tool profile authority is already active."
+                )
+            self._active_guard = guard
+        return True
+
+    @contextmanager
+    def mutation_scope(
+        self,
+        *,
+        action: str,
+        workspace_id: str,
+        current_defaults: WorkspaceAssistantDefaults | None,
+        intended_defaults: WorkspaceAssistantDefaults | None,
+        confirmation_token: str | None,
+    ):
+        """Delegate when ready; otherwise reject Tool Profile changes."""
+        with self._lock:
+            active = self._active_guard
+        if active is None:
+            current_profile = (
+                current_defaults.tool_policy_profile_id
+                if current_defaults is not None
+                else None
+            )
+            intended_profile = (
+                intended_defaults.tool_policy_profile_id
+                if intended_defaults is not None
+                else None
+            )
+            if current_profile != intended_profile:
+                raise WorkspaceRegistryServiceError(
+                    "Tool profile authority is unavailable."
+                )
+            yield
+            return
+        with active.mutation_scope(
+            action=action,
+            workspace_id=workspace_id,
+            current_defaults=current_defaults,
+            intended_defaults=intended_defaults,
+            confirmation_token=confirmation_token,
+        ):
+            yield
 
 
 def _filesystem_binding_missing(locator: str) -> bool:
@@ -362,6 +439,11 @@ class LocalWorkspaceRegistryService:
     ) -> None:
         """Attach the app-owned Tool Profile lifecycle guard."""
         self._tool_profile_guard = guard
+
+    @property
+    def tool_profile_guard(self) -> WorkspaceToolProfileGuard | None:
+        """Return the currently attached app-owned lifecycle boundary."""
+        return self._tool_profile_guard
 
     def _tool_profile_mutation_scope(
         self,

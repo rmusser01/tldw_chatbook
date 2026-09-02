@@ -13,6 +13,7 @@ import pytest
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import MCPPermissionStore, definition_hash
 from tldw_chatbook.Tool_Packs import service as service_module
+from tldw_chatbook.Tool_Packs import export as export_module
 from tldw_chatbook.Tool_Packs.binding import (
     ToolProfileLifecycleCoordinator,
     profile_policy_digest,
@@ -22,6 +23,11 @@ from tldw_chatbook.Tool_Packs.catalog_snapshot import (
     PermissionInventoryTool,
 )
 from tldw_chatbook.Tool_Packs.contracts import ToolPackError
+from tldw_chatbook.Tool_Packs.export import ToolPackExportReview, ToolPackExportService
+from tldw_chatbook.Tool_Packs.publication import (
+    CapturedToolPackDestination,
+    publish_tool_pack,
+)
 from tldw_chatbook.Tool_Packs.receipt_store import (
     RECEIPT_SCHEMA,
     ToolPackReceipt,
@@ -238,7 +244,6 @@ def test_facade_exposes_separate_review_and_commit_operations(tmp_path: Path) ->
         service.capture_export("default", display_name="D", suggested_id="d")
         == "capture"
     )
-    assert service.publish_export("s", "d", overwrite_token="token") == "publish"
     assert (
         service.inspect_import(Path("x.tldw-tool-pack"), destination_id="research")
         == "inspect"
@@ -248,9 +253,41 @@ def test_facade_exposes_separate_review_and_commit_operations(tmp_path: Path) ->
     assert service.review_first_bind("w", defaults, action="set") == "bind"
     assert service.confirm_first_bind("review") == "bind"
     assert service.remove_profile("research", expected_revision=1) == "remove"
-    assert publications == [("s", "d", {"overwrite": True, "overwrite_token": "token"})]
+    assert publications == []
     assert not hasattr(service, "set_tool_state")
     assert not hasattr(service, "edit_profile")
+
+
+def test_real_capture_result_can_be_published_by_the_facade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = MCPPermissionStore(tmp_path / "permissions.json")
+    monkeypatch.setattr(
+        export_module, "capture_v1_inventory", lambda _registry: inventory()
+    )
+    service = facade(
+        tmp_path,
+        store=store,
+        exporter=ToolPackExportService(store, object()),
+        publisher=publish_tool_pack,
+    )
+    review = service.capture_export(
+        "default", display_name="Default", suggested_id="default"
+    )
+    destination = CapturedToolPackDestination.capture(
+        tmp_path / "default.tldw-tool-pack"
+    )
+
+    assert type(review) is ToolPackExportReview
+    result = service.publish_export(review, destination)
+
+    assert result.committed is True
+    assert destination.path.is_file()
+
+
+def test_publish_rejects_values_other_than_the_captured_review(tmp_path: Path) -> None:
+    with pytest.raises(ToolPackError, match=r"publication_failed$"):
+        facade(tmp_path).publish_export(object(), object())
 
 
 def test_listing_is_immutable_current_and_hides_tombstones(
@@ -382,6 +419,45 @@ def test_missing_receipt_degrades_provenance_but_not_first_bind(
     assert row.removal_blocker == "receipt_unavailable"
 
 
+def test_listing_applies_the_raw_shell_ask_floor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shell = tool("local:__local__", "shell_exec")
+    shell_inventory = PermissionInventorySnapshot(
+        (PermissionInventoryTool("mcp", shell, "f" * 64),),
+        (("mcp", "local:__local__"),),
+        (),
+        "i" * 64,
+    )
+    store = MCPPermissionStore(tmp_path / "permissions.json")
+    payload = store.load()
+    payload["profiles"]["raw-shell"] = {
+        "global_default": "deny",
+        "servers": {
+            "local:__local__": {
+                "default": "deny",
+                "tools": {
+                    "shell_exec": {
+                        "state": "allow",
+                        "definition_hash": definition_hash(
+                            shell.description, shell.input_schema
+                        ),
+                    }
+                },
+            }
+        },
+    }
+    store.save(payload)
+    monkeypatch.setattr(
+        service_module, "capture_v1_inventory", lambda _registry: shell_inventory
+    )
+
+    row = facade(tmp_path, store=store).list_profiles().by_id("raw-shell")
+
+    assert row is not None
+    assert row.posture_counts == (0, 1, 0)
+
+
 def test_compose_shares_lifecycle_reference_authority_and_receipt_root(
     tmp_path: Path,
 ) -> None:
@@ -456,6 +532,23 @@ def test_reconcile_failure_is_fail_safe_and_private(tmp_path: Path) -> None:
         result.removed_ids == ()
         and result.unavailable_category == "references_unavailable"
     )
+    assert orphan.path.exists()
+
+
+def test_reconcile_reports_a_stable_incomplete_result_at_the_entry_budget(
+    tmp_path: Path,
+) -> None:
+    receipts = ToolPackReceiptStore(tmp_path / "receipts", max_reconcile_entries=2)
+    orphan = receipt(receipts, "orphan")
+    old = (NOW - timedelta(days=2)).timestamp()
+    os.utime(orphan.path, (old, old))
+    for index in range(2):
+        (receipts.root / f"unknown-{index}").write_text("x")
+
+    result = facade(tmp_path, receipts=receipts).reconcile_receipts()
+
+    assert result.removed_ids == ()
+    assert result.unavailable_category == "receipt_store_incomplete"
     assert orphan.path.exists()
 
 

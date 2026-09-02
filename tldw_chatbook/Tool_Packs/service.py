@@ -10,12 +10,8 @@ import re
 from typing import Literal
 
 from tldw_chatbook.MCP.permission_store import (
-    BUILTIN_TOOL_SERVER_KEY,
-    GatedToolRef,
     PermissionStoreSnapshot,
     profile_lifecycle_disposition,
-    resolve_builtin_state,
-    resolve_effective_state,
 )
 from tldw_chatbook.Tool_Packs.activation import ToolPackActivationService
 from tldw_chatbook.Tool_Packs.binding import (
@@ -27,10 +23,13 @@ from tldw_chatbook.Tool_Packs.catalog_snapshot import (
     PermissionInventoryRegistry,
     PermissionInventorySnapshot,
     capture_v1_inventory,
-    thaw_hub_tool,
 )
 from tldw_chatbook.Tool_Packs.contracts import ToolPackError
-from tldw_chatbook.Tool_Packs.export import ToolPackExportService
+from tldw_chatbook.Tool_Packs.export import (
+    ToolPackExportReview,
+    ToolPackExportService,
+    resolve_portable_tool_state,
+)
 from tldw_chatbook.Tool_Packs.importer import ServerMapping, ToolPackImportService
 from tldw_chatbook.Tool_Packs.publication import publish_tool_pack
 from tldw_chatbook.Tool_Packs.receipt_store import ToolPackReceiptStore
@@ -223,16 +222,18 @@ class ToolPackService:
 
     def publish_export(
         self,
-        snapshot: object,
+        review: ToolPackExportReview,
         destination: object,
         *,
         overwrite_token: str | None = None,
     ) -> object:
+        if type(review) is not ToolPackExportReview:
+            raise ToolPackError("export", "publication_failed")
         return self._delegate(
             "export",
             "publication_failed",
             self._publisher,
-            snapshot,
+            review.snapshot,
             destination,
             overwrite=overwrite_token is not None,
             overwrite_token=overwrite_token,
@@ -420,23 +421,7 @@ class ToolPackService:
     ) -> tuple[int, int, int]:
         counts = {"allow": 0, "ask": 0, "deny": 0}
         for item in inventory.tools:
-            tool = thaw_hub_tool(item.tool)
-            if item.authority == "builtin":
-                state = resolve_builtin_state(
-                    payload,
-                    GatedToolRef(
-                        BUILTIN_TOOL_SERVER_KEY,
-                        tool.name,
-                        tool.description,
-                        tool.input_schema,
-                        tool.tags,
-                    ),
-                    profile_id=profile_id,
-                ).state
-            else:
-                state = resolve_effective_state(
-                    payload, tool, profile_id=profile_id
-                ).state
+            state = resolve_portable_tool_state(payload, item, profile_id)
             counts[state] += 1
         return counts["allow"], counts["ask"], counts["deny"]
 
@@ -471,6 +456,13 @@ class ToolPackService:
         try:
             now = self._now()
             removed = self._receipt_store.reconcile_orphans(referenced, live, now=now)
+        except ToolPackError as error:
+            category = (
+                "receipt_store_incomplete"
+                if error.category == "capacity_exceeded"
+                else "receipt_store_unavailable"
+            )
+            return ToolPackReceiptReconciliationResult(unavailable_category=category)
         except Exception:
             return ToolPackReceiptReconciliationResult(
                 unavailable_category="receipt_store_unavailable"

@@ -39,6 +39,7 @@ Expose the completed portable Tool Pack lifecycle behind one deferred app-owned 
 3. Add focused app-wiring tests for prerequisite ordering, exact guard attachment, unavailable/partial-failure behavior, user-data receipt placement, and deferred imports.
 4. Add bounded post-ready receipt reconciliation using current profile receipt links plus in-flight activation ownership; prove only eligible expired orphans are reclaimed.
 5. Run the prescribed targeted suites, scoped static/diff checks, self-review, and independent review before closeout.
+6. Remediate independent-review blockers at their owning seams: add the workspace registry's fail-closed deferred guard, share export's runtime-floor projection with listings, and give receipt reconciliation an entry budget. This expands the initial six-file boundary only because app-only wrappers cannot close direct registry writes or bound the store-owned traversal.
 
 ADR required: no new ADR
 ADR path: backlog/decisions/107-portable-tool-use-packs.md

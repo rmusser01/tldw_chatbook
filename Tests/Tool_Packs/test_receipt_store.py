@@ -560,6 +560,24 @@ def test_reconcile_grace_boundary_is_exactly_twenty_four_hours(tmp_path: Path) -
     assert before.exists() and not exact.exists()
 
 
+def test_reconcile_stops_before_mutation_when_entry_budget_is_exceeded(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "receipts"
+    store = ToolPackReceiptStore(root, max_reconcile_entries=3)
+    orphan = root / ("tp-" + "21" * 16)
+    orphan.write_bytes(_receipt_bytes())
+    old = (_NOW - timedelta(days=2)).timestamp()
+    os.utime(orphan, (old, old))
+    for index in range(3):
+        (root / f"unknown-{index}").write_text("x")
+
+    with pytest.raises(ToolPackError, match=r"capacity_exceeded$"):
+        store.reconcile_orphans(set(), set(), now=_NOW)
+
+    assert orphan.exists()
+
+
 def test_compaction_validates_source_lineage_and_is_smaller(tmp_path: Path) -> None:
     root = tmp_path / "receipts"
     store = _store(
