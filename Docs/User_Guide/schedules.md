@@ -270,6 +270,12 @@ immediately (shown as "(Waiting for server release)"); it stays inert
 until the server's release is acknowledged, at which point it arms and
 starts running here.
 
+When Schedules is showing a server owner's queue, each row's title also
+carries a "(server: \<id\>)" owner suffix — the same wording the Results
+tab uses for its own rows. It is hidden whenever the window is narrow
+enough to trigger the compact layout (side panes already hidden), so a
+squeezed terminal never truncates a title to make room for it.
+
 **While a move is in flight the task is read-only.** Edit, Delete and
 Enable/Disable are disabled with the reason stated, on the buttons and
 as text, for a queued local → server move, one already sent, and a
@@ -403,6 +409,13 @@ its answer, evidence (the stored source references), and review
 metadata (who reviewed it and when, plus any review note) in the detail
 pane below the table.
 
+While connected to a server, this tab also refreshes on its own the
+moment the server reports that an automation run finished — no need to
+press **s**. A short pause (well under a second) absorbs a burst of
+several finish notifications arriving close together into a single
+pull, so opening a chatty automation's run history does not fire one
+network round trip per event.
+
 Actions are keys, not buttons — the tab has no per-row detail widget
 here either:
 
@@ -449,11 +462,15 @@ bound entirely — every handler may then run as long as it likes, and a
 wedged handler will wedge the scheduler, which is why the default is on.
 
 *Verified against working tree — 2026-09-02 (schedules-handoff PR-6 task
-3: the new Results tab — unread badge, kind/owner/created/review-state
+4: the Queue tab's own "(server: \<id\>)" owner suffix, hidden at
+compact width; and the Results tab's automatic refresh on a server
+finish notification, debounced so a burst of notifications settles into
+one pull; supersedes the same-day PR-6 task 3 stamp, which covered the
+new Results tab — unread badge, kind/owner/created/review-state
 columns, failure styling, the answer/evidence/review-metadata detail
 pane, and the r/d/o/a read/dismiss/mark-solved/mark-all-read keys with
-their tab-scoping and refusal reasons; supersedes the earlier same-day
-stamp, which covered PR-5's final fix wave: the Automations tab's
+their tab-scoping and refusal reasons; and, before that, PR-5's final
+fix wave: the Automations tab's
 M/m/y/k transfer keys and their tab-scoping, the read-only-except-cancel
 rule on in-flight rows, and the corrected cancel copy; plus PR-5 task 7's
 the detail pane's Move to server/Move to local/Cancel transfer/Retry

@@ -60,6 +60,7 @@ from .task_detail import (
     TaskInspector,
     _format_next_run,
     _managed_elsewhere_notice,
+    _queue_owner_suffix,
     _task_status,
     _task_type_label,
     _transfer_row_suffix,
@@ -95,6 +96,26 @@ NEXT_RUN_REFRESH_SECONDS = 60.0
 #: exists so the tail of a large definition list is never silently hidden,
 #: not to render unbounded rows.
 AUTOMATIONS_LOAD_MAX_ROWS = 500
+
+#: Debounce before acting on a notification-triggered results pull
+#: (schedules-handoff PR-6 task 4) -- a burst of `automation_run_*` events
+#: collapses into ONE pull (plan ruling 3), same stop-and-restart timer
+#: shape as the queue filter's own debounce above.
+RESULTS_PULL_DEBOUNCE_SECONDS = 0.3
+
+#: How many transport reconnects `EventObserver.run()` absorbs internally
+#: (its own built-in exponential backoff, capped at 5s per attempt) before
+#: giving up and raising back to `_run_server_notification_observer`. That
+#: outer loop is the real "never give up for the life of this screen"
+#: layer -- see its docstring for the full failure-mode read.
+_NOTIFICATION_OBSERVER_MAX_RECONNECTS = 5
+
+#: Flat delay before `_run_server_notification_observer` restarts a fresh
+#: `observe()` call after one gave up (matches the inner backoff's own
+#: 5s cap -- no need to reimplement exponential backoff a second time for
+#: a rare outer-level restart). Interrupted immediately by unmount via
+#: `cancel_event`, never a blind sleep.
+_NOTIFICATION_OBSERVER_RESTART_DELAY_SECONDS = 5.0
 
 
 def automation_execution_target_label(definition: dict[str, Any]) -> str:
@@ -269,6 +290,15 @@ class SchedulesWorkbench(BaseAppScreen):
         self._latest_console_follow_item_id: str | None = None
         self._latest_console_launch_kwargs: dict[str, Any] | None = None
         self._latest_console_context_loaded = False
+        # schedules-handoff PR-6 task 4: notification-triggered results
+        # pull (single-flight -- `_results_pull_running` guards concurrent
+        # pulls, `_results_pull_rerun_requested` queues at most one
+        # follow-up) and the SSE observer's stop signal, workbench-scoped
+        # per plan ruling 3 (started in on_mount, cancelled in on_unmount).
+        self._results_pull_debounce_timer: Timer | None = None
+        self._results_pull_running = False
+        self._results_pull_rerun_requested = False
+        self._notification_cancel_event: asyncio.Event | None = None
 
     def _active_server_id(self) -> str | None:
         runtime_policy = getattr(self.app_instance, "runtime_policy", None)
@@ -435,6 +465,197 @@ class SchedulesWorkbench(BaseAppScreen):
         self._request_tasks_refresh()
         self._request_automations_refresh()
         self._refresh_scheduler_liveness()
+        self._start_server_notification_observer()
+
+    def on_unmount(self) -> None:
+        """Stop the notification observer + any pending pull debounce.
+
+        Workbench-scoped lifecycle (plan ruling 3): neither must outlive
+        this screen -- setting the cancel event is the observer's own
+        documented stop signal (`EventObserver.run` checks it at every
+        await point), so the background worker unwinds on its own instead
+        of being force-cancelled mid-stream.
+        """
+        if self._notification_cancel_event is not None:
+            self._notification_cancel_event.set()
+        self._notification_cancel_event = None
+        if self._results_pull_debounce_timer is not None:
+            self._results_pull_debounce_timer.stop()
+            self._results_pull_debounce_timer = None
+        super().on_unmount()
+
+    def _start_server_notification_observer(self) -> None:
+        """Start the SSE notification observer (schedules-handoff PR-6
+        task 4) -- workbench-scoped per plan ruling 3: begins here when a
+        server connection is configured; `on_unmount` above stops it.
+
+        This is the first real caller of
+        `ServerNotificationEventObserver.observe()` --
+        `NotificationsScopeService.observe_server_feed_events` has existed
+        since 18940 slice 3 with nothing invoking it (survey §3).
+        """
+        service = self._service()
+        scope_service = getattr(self.app_instance, "notifications_scope_service", None)
+        if (
+            service is None
+            or scope_service is None
+            or not self._server_available(service, self._active_server_id())
+        ):
+            return
+        self._notification_cancel_event = asyncio.Event()
+        self.run_worker(
+            self._run_server_notification_observer,
+            exclusive=True,
+            group="schedules-notification-observer",
+            exit_on_error=False,
+        )
+
+    async def _run_server_notification_observer(self) -> None:
+        """Supervise the SSE notification observer for this screen's life.
+
+        Reading `EventObserver.run()` end to end (event_observer.py),
+        `observe()` can leave us in exactly four ways:
+
+        1. **Cancelled** -- `cancel_event` was set (our `on_unmount`
+           signal). `run()` returns cleanly, `result.cancelled is True`,
+           checked at every await point (mid-stream-read AND mid-backoff-
+           sleep), so this is near-immediate. We return -- no retry.
+        2. **Clean stream end** -- the transport's async generator raises
+           `StopAsyncIteration` (the server closed the SSE connection
+           without error). `run()` returns normally, `cancelled=False`.
+           Not fatal for a long-lived feed; we restart `observe()` after
+           the flat backoff below.
+        3. **Stale/unsupported cursor exhausted** -- `StaleCursorError`/
+           `UnsupportedCursorError` are retried internally (with reset +
+           backoff) up to `max_reconnects` times; once exhausted, `run()`
+           STILL returns normally (`cancelled=False`) rather than raising.
+           Same handling as case 2: restart.
+        4. **Sustained transport failure** -- any other `Exception` from
+           the transport is retried internally the same way, but once
+           `max_reconnects` is exhausted `run()` RE-RAISES (after
+           `observe()` records status="error" via `_record_status`). This
+           is the one case that reaches our `except` below; we log and
+           restart after the same backoff, so a down/flaky server
+           degrades to "resumes once reachable again", never a
+           permanently dead observer for the rest of this screen's life.
+
+        A handler exception (case 5, hypothetical -- `_on_server_
+        notification_event` performs no I/O and cannot realistically
+        raise) would surface identically to case 4: `run()`'s inner loop
+        has no handler-specific try/except, so it falls into the same
+        generic `except Exception` path.
+
+        `exit_on_error=False` on the `run_worker` call that invokes this
+        coroutine is the backstop against a bug here still crashing the
+        app (the established run_worker(exit_on_error) trap).
+        """
+        scope_service = getattr(self.app_instance, "notifications_scope_service", None)
+        cancel_event = self._notification_cancel_event
+        if scope_service is None or cancel_event is None:
+            return
+        while not cancel_event.is_set():
+            try:
+                result = await scope_service.observe_server_feed_events(
+                    handler=self._on_server_notification_event,
+                    cancel_event=cancel_event,
+                    max_reconnects=_NOTIFICATION_OBSERVER_MAX_RECONNECTS,
+                )
+            except Exception:  # noqa: BLE001 - case 4/5 above, never fatal here
+                logger.exception(
+                    "Schedules notification observer connection failed; retrying"
+                )
+            else:
+                if result.cancelled:
+                    return
+            if cancel_event.is_set():
+                return
+            try:
+                await asyncio.wait_for(
+                    cancel_event.wait(),
+                    timeout=_NOTIFICATION_OBSERVER_RESTART_DELAY_SECONDS,
+                )
+            except TimeoutError:
+                pass
+
+    async def _on_server_notification_event(self, event: Any) -> bool:
+        """ACK every server notification; `automation_run_*` kinds
+        schedule a debounced results pull (plan ruling 3).
+
+        Always returns True (ack): a kind this screen doesn't act on must
+        still advance the observer's durable cursor, or an unrelated
+        notification stream would replay forever (`EventObserver.run`'s
+        ack-then-advance contract). The server puts the automation_run_*
+        vocabulary at `payload["data"]["kind"]` (ADR-077 phase-1
+        pass-back, survey §3) -- `event_kind`/`payload_kind` are the SSE
+        envelope's own generic fields, not this.
+        """
+        payload = getattr(event, "payload", None)
+        data = payload.get("data") if isinstance(payload, Mapping) else None
+        kind = data.get("kind") if isinstance(data, Mapping) else None
+        if isinstance(kind, str) and kind.startswith("automation_run_"):
+            self._schedule_results_pull()
+        return True
+
+    def _schedule_results_pull(self) -> None:
+        """Debounce a notification-triggered results pull (plan ruling
+        3): a burst of `automation_run_*` events collapses into ONE
+        pull, same stop-and-restart timer shape as the queue filter's
+        own debounce.
+        """
+        if self._results_pull_debounce_timer is not None:
+            self._results_pull_debounce_timer.stop()
+        self._results_pull_debounce_timer = self.set_timer(
+            RESULTS_PULL_DEBOUNCE_SECONDS, self._start_results_pull
+        )
+
+    def _start_results_pull(self) -> None:
+        self._results_pull_debounce_timer = None
+        if self._results_pull_running:
+            # A pull from an earlier debounce window is still in flight --
+            # absorb this trigger into a single follow-up pull instead of
+            # running two pulls concurrently (single-flight, no pile-up;
+            # the worker-collision lesson).
+            self._results_pull_rerun_requested = True
+            return
+        self._results_pull_running = True
+        self.run_worker(
+            self._pull_results_worker,
+            exclusive=True,
+            group="schedules-results-pull",
+            exit_on_error=False,
+        )
+
+    async def _pull_results_worker(self) -> None:
+        """Pull automation results once, then once more if a trigger
+        landed while the first pull was running (rerun flag) -- never
+        more than one queued follow-up.
+
+        Reuses `SyncEngine._run_phase` -- the same containment `sync_now`
+        uses for this exact phase (survey §2) -- rather than a full sync
+        (the brief: "the narrowest callable, not a full sync").
+        `_run_phase` never raises: a failure is recorded via
+        `_record_sync_error` onto the persisted sync-error state
+        `_refresh_owner_select` already renders, so a pull failure here
+        surfaces exactly like a failed "s" sync (the existing sync-error
+        path) -- and can never reach the observer's own coroutine, which
+        is a wholly separate worker/group.
+        """
+        try:
+            while True:
+                service = self._service()
+                if service is not None:
+                    await service.sync_engine._run_phase(
+                        service.owner_id,
+                        "Automation results pull (notification)",
+                        service.sync_engine._pull_results,
+                    )
+                    self._refresh_owner_select()
+                    self._refresh_results_tab()
+                if not self._results_pull_rerun_requested:
+                    return
+                self._results_pull_rerun_requested = False
+        finally:
+            self._results_pull_running = False
 
     def _refresh_scheduler_liveness(self) -> None:
         """Update the scheduler-liveness line from the durable heartbeat
@@ -593,12 +814,17 @@ class SchedulesWorkbench(BaseAppScreen):
             # user asking "what went wrong while I wasn't looking".
             or (_was_missed_while_away(task) and "missed" in text)
         ]
+        # Owner suffix (plan ruling 4): hidden at compact width, evaluated
+        # once per render pass -- `_sync_responsive_workbench` (on_mount/
+        # on_resize) always runs before this, so `self.size` is current.
+        compact_owner_suffix = self.size.width <= SCHEDULES_COMPACT_WORKBENCH_MAX_WIDTH
         rows: list[tuple[str, str, Text, str]] = [
             (
                 ("● " if task.id in self._marked_ids else "")
                 + ("◇ " if _was_missed_while_away(task) else "")
                 + task.title
-                + _transfer_row_suffix(task),
+                + _transfer_row_suffix(task)
+                + _queue_owner_suffix(task, compact=compact_owner_suffix),
                 _task_type_label(task),
                 status_badge_text(_task_status(task)),
                 # Compact: same relative form as the detail pane, without

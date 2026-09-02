@@ -439,6 +439,32 @@ def _transfer_row_suffix(task: ReminderTask | ScheduledTask) -> str:
     return f" ({label})" if label else ""
 
 
+def _queue_owner_suffix(task: ReminderTask | ScheduledTask, *, compact: bool) -> str:
+    """Return a queue-row title owner suffix, or ``""`` (plan ruling 4).
+
+    Same append-a-parenthetical idiom as `_transfer_row_suffix` above and
+    the same wording as `results_tab._result_owner_suffix` (schedules-
+    handoff PR-6 task 3) -- a local row says nothing, a server-scoped row
+    gets ``" (server: <id>)"``. Hidden at compact width: the compact
+    layout (`SCHEDULES_COMPACT_WORKBENCH_MAX_WIDTH`) already trims panes
+    to fit narrow terminals, and this suffix would be the next thing to
+    overflow the row.
+    """
+    if compact:
+        return ""
+    # ADR-097: scheduler.queue stays off the boot census -- imported
+    # function-locally everywhere else this helper is needed too
+    # (schedules_workbench.py, scheduling_service.py, results_tab.py).
+    from tldw_chatbook.Scheduling.scheduler.queue import is_server_scoped_owner
+
+    owner_id = task.owner_id
+    if not is_server_scoped_owner(owner_id):
+        return ""
+    owner_id = str(owner_id)
+    label = owner_id.split(":", 1)[1] if ":" in owner_id else owner_id
+    return f" (server: {label})"
+
+
 def status_badge_text(status: TaskStatus) -> Text:
     """Return a styled Rich Text badge for use in a DataTable cell."""
     label = _humanize_status(status)
