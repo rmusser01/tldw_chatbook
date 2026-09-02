@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from contextlib import contextmanager
 import sqlite3
 
 import pytest
 
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces.assistant_defaults import (
-    WorkspaceEffectiveAssistantDefault,
     resolve_effective_assistant_default,
 )
 from tldw_chatbook.Workspaces.models import WorkspaceAssistantDefaults
@@ -57,7 +57,9 @@ def test_v2_database_migrates_preserving_rows(tmp_path):
         assert row[0] == "Research"
     assert db.is_agent_backfill_complete() is False
     db.mark_agent_backfill_complete()
-    assert WorkspaceDB(legacy, client_id="client-1").is_agent_backfill_complete() is True
+    assert (
+        WorkspaceDB(legacy, client_id="client-1").is_agent_backfill_complete() is True
+    )
 
 
 def test_defaults_roundtrip_and_validation(tmp_path):
@@ -72,6 +74,68 @@ def test_defaults_roundtrip_and_validation(tmp_path):
     assert registry.get_workspace("w-9").assistant_defaults == defaults
     cleared = registry.clear_assistant_defaults("w-9")
     assert cleared.assistant_defaults is None
+
+
+def test_every_assistant_defaults_writer_traverses_attached_guard(tmp_path):
+    """A sibling create/set/replace/clear path must not bypass lifecycle locking."""
+
+    class RecordingGuard:
+        def __init__(self):
+            self.calls = []
+
+        @contextmanager
+        def mutation_scope(self, **kwargs):
+            self.calls.append(kwargs)
+            yield
+
+    guard = RecordingGuard()
+    registry = build_registry(tmp_path)
+    registry.attach_tool_profile_guard(guard)
+    first = WorkspaceAssistantDefaults(
+        assistant_id="p1", tool_policy_profile_id="local-one"
+    )
+    second = WorkspaceAssistantDefaults(
+        assistant_id="p2", tool_policy_profile_id="local-two"
+    )
+
+    registry.create_workspace(
+        workspace_id="w-guarded", name="Guarded", assistant_defaults=first
+    )
+    registry.set_assistant_defaults("w-guarded", second)
+    registry.clear_assistant_defaults("w-guarded")
+
+    assert [call["action"] for call in guard.calls] == ["create", "replace", "clear"]
+    assert guard.calls[0]["current_defaults"] is None
+    assert guard.calls[0]["intended_defaults"] == first
+    assert guard.calls[1]["current_defaults"] == first
+    assert guard.calls[1]["intended_defaults"] == second
+    assert guard.calls[2]["current_defaults"] == second
+    assert guard.calls[2]["intended_defaults"] is None
+    assert all(call["workspace_id"] == "w-guarded" for call in guard.calls)
+
+
+def test_inline_create_forwards_tool_profile_confirmation_token(tmp_path):
+    """Dropping the create token before the guard would preserve the inline bypass."""
+
+    class TokenGuard:
+        @contextmanager
+        def mutation_scope(self, **kwargs):
+            assert kwargs["confirmation_token"] == "opaque-token"
+            yield
+
+    registry = build_registry(tmp_path)
+    registry.attach_tool_profile_guard(TokenGuard())
+    defaults = WorkspaceAssistantDefaults(
+        assistant_id="p1", tool_policy_profile_id="research"
+    )
+
+    created = registry.create_workspace(
+        workspace_id="w-token",
+        name="Token",
+        assistant_defaults=defaults,
+        tool_profile_confirmation_token="opaque-token",
+    )
+    assert created.assistant_defaults == defaults
 
 
 def test_read_write_requires_confirmation(tmp_path):
@@ -113,7 +177,10 @@ def test_effective_resolution_reason_codes():
     deleted = resolve_effective_assistant_default(
         WorkspaceAssistantDefaults(assistant_id="gone"), lambda _id: None
     )
-    assert (deleted.status, deleted.degraded_reason) == ("unavailable", "persona_deleted")
+    assert (deleted.status, deleted.degraded_reason) == (
+        "unavailable",
+        "persona_deleted",
+    )
     ok = resolve_effective_assistant_default(
         WorkspaceAssistantDefaults(assistant_id="p"),
         lambda _id: {"id": "p", "name": "Lit Agent"},

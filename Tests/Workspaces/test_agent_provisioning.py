@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
@@ -144,3 +145,36 @@ def test_set_agent_provisioner_wires_post_construction(tmp_path):
     assert wired.assistant_defaults is not None
     assert wired.assistant_defaults.tool_policy_profile_id == "ws-w-7"
     assert [payload["name"] for payload in personas.created] == ["After Wire Agent"]
+
+
+def test_create_time_provisioning_and_backfill_traverse_tool_profile_guard(tmp_path):
+    """Provisioning helpers must persist only through the guarded registry writer."""
+
+    class RecordingGuard:
+        def __init__(self):
+            self.calls = []
+
+        @contextmanager
+        def mutation_scope(self, **kwargs):
+            self.calls.append(kwargs)
+            yield
+
+    personas = StubPersonaService()
+    registry, store = build(tmp_path)
+    guard = RecordingGuard()
+    registry.attach_tool_profile_guard(guard)
+    provisioner = WorkspaceAgentProvisioner(personas, store)
+    registry.set_agent_provisioner(provisioner.provision)
+
+    created = registry.create_workspace(workspace_id="w-live", name="Live")
+    assert created.assistant_defaults is not None
+    assert [call["action"] for call in guard.calls] == ["create", "set"]
+    assert guard.calls[0]["intended_defaults"] is None
+    assert guard.calls[1]["intended_defaults"].tool_policy_profile_id == "ws-w-live"
+
+    registry.set_agent_provisioner(None)
+    registry.create_workspace(workspace_id="w-backfill", name="Backfill")
+    guard.calls.clear()
+    assert run_workspace_agent_backfill(registry=registry, provisioner=provisioner) == 1
+    assert [call["action"] for call in guard.calls] == ["set"]
+    assert guard.calls[0]["intended_defaults"].tool_policy_profile_id == "ws-w-backfill"
