@@ -591,6 +591,27 @@ class SyncEngine:
         self.db.delete_pending_mutation(mutation_id)
         return "unknown"
 
+    @staticmethod
+    def _server_vocab_definition_payload(
+        definition_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Copy `definition_payload` with its `schedule` in server vocabulary.
+
+        The ONE shared call site for `to_server_schedule` (Task 3 review
+        note) -- locally authored/previewed schedules are in CLIENT
+        vocabulary (schedule_compute.py); the server's own preview only
+        validates `kind`, so an untranslated payload would pass preview
+        and then silently never arm server-side (schedule_vocabulary.py).
+        Used by `_push_definition_create`, `_push_definition_update`, and
+        `_push_definition_transfer` -- each still applies its own
+        mode/definition_id handling on top of the returned copy.
+        """
+        request = dict(definition_payload)
+        schedule = request.get("schedule")
+        if isinstance(schedule, dict):
+            request["schedule"] = to_server_schedule(schedule)
+        return request
+
     async def _push_definition_create(
         self,
         local_id: str,
@@ -609,7 +630,7 @@ class SyncEngine:
         orphan is discoverable. Deleting it server-side is not this method's
         call; definition lifecycle actions are a later phase.
         """
-        request = dict(definition_payload)
+        request = self._server_vocab_definition_payload(definition_payload)
         request["mode"] = "create"
         # The server's create-mode validator (mirrored locally by
         # automation_preview.py) rejects definition_id/definition_version
@@ -617,13 +638,6 @@ class SyncEngine:
         # update-shaped payload before this offline/404 conversion.
         request.pop("definition_id", None)
         request.pop("definition_version", None)
-        # Locally authored/previewed schedules are in CLIENT vocabulary
-        # (schedule_compute.py); the server's own preview only validates
-        # `kind`, so an untranslated payload would pass preview and then
-        # silently never arm server-side (schedule_vocabulary.py).
-        schedule = request.get("schedule")
-        if isinstance(schedule, dict):
-            request["schedule"] = to_server_schedule(schedule)
 
         assert self.server_client is not None
         preview = await self.server_client.preview_automation_definition(request)
@@ -665,12 +679,9 @@ class SyncEngine:
         definition_payload: dict[str, Any],
     ) -> str:
         """Preview(mode=update) then PATCH; converts to create on a 404."""
-        request = dict(definition_payload)
+        request = self._server_vocab_definition_payload(definition_payload)
         request["mode"] = "update"
         request["definition_id"] = server_definition_id
-        schedule = request.get("schedule")
-        if isinstance(schedule, dict):
-            request["schedule"] = to_server_schedule(schedule)
 
         assert self.server_client is not None
         try:
@@ -796,20 +807,17 @@ class SyncEngine:
             return "transfer_cas_skipped"
 
         definition_payload = payload.get("definition_payload") or {}
-        request = dict(definition_payload)
+        # `_server_vocab_definition_payload` (Task 3 review note): a
+        # transfer payload is stored client-vocab and never pre-translated
+        # at queue time -- this shared helper translates it exactly once,
+        # the same call `_push_definition_create` makes, without calling
+        # into that method itself, whose ack/failure handling (adopt +
+        # clear-on-invalid) differs from a transfer's (convert-or-merge +
+        # retain-with-errors-on-invalid).
+        request = self._server_vocab_definition_payload(definition_payload)
         request["mode"] = "create"
         request.pop("definition_id", None)
         request.pop("definition_version", None)
-        # Single translation site (Task 3 review note): a transfer payload
-        # is stored client-vocab and never pre-translated at queue time --
-        # translate it here, exactly once. This mirrors
-        # `_push_definition_create`'s own translation site rather than
-        # calling into that method, whose ack/failure handling (adopt +
-        # clear-on-invalid) differs from a transfer's (convert-or-merge +
-        # retain-with-errors-on-invalid).
-        schedule = request.get("schedule")
-        if isinstance(schedule, dict):
-            request["schedule"] = to_server_schedule(schedule)
 
         assert self.server_client is not None
         try:
@@ -888,9 +896,21 @@ class SyncEngine:
         -- recovery is a user retry/cancel action via Task 6's facade, not
         another sync cycle.
         """
-        self.db.set_transfer_state(
+        re_armed = self.db.set_transfer_state(
             table_kind, local_id, "to_server_failed", expected=("to_server_sent",)
         )
+        if not re_armed:
+            # Only plausible under multi-process concurrency -- nothing
+            # else touches this row's transfer_state within a single
+            # sync_now() call. The mutation is still retained with
+            # transfer_errors below regardless (that half of the contract
+            # always holds); this just makes the state-column half's
+            # silent no-op visible instead of swallowed.
+            logger.warning(
+                f"Transfer failure CAS to_server_sent->to_server_failed did "
+                f"not land for {table_kind} {local_id} (row no longer "
+                "to_server_sent -- likely a concurrent process)"
+            )
         self.db.record_pending_mutation(
             local_id, table_kind, owner_id, {**payload, "transfer_errors": errors}
         )

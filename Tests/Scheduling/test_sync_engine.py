@@ -2388,6 +2388,107 @@ async def test_sync_now_reminder_transfer_definitive_failure_no_auto_retry(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_sync_now_reminder_transfer_errors_skip_check_is_not_just_the_cas(
+    tmp_path,
+):
+    """Reminder-side equivalent of the definitions-side isolation test:
+    `_network_phase`'s own `transfer_errors` skip check must stop a replay
+    independently of the CAS guard inside `_push_reminder_transfer`. Force
+    the row back to `to_server_pending` while the mutation still carries
+    `transfer_errors` from a prior failure and confirm the server is still
+    never called."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_reminder_task(
+        owner_id="local", title="Standup", schedule_kind="one_time"
+    )
+    db.set_transfer_state(
+        "reminder_task", local_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        local_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "task_payload": {"title": "Standup", "schedule_kind": "one_time"},
+            "transfer_errors": ["field_required"],
+        },
+    )
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.create_reminder.assert_not_awaited()
+    assert len(db.get_pending_mutations("server:1", primitive="reminder_task")) == 1
+
+
+@pytest.mark.asyncio
+async def test_sync_now_reminder_transfer_poisoned_mutation_does_not_block_the_rest(
+    tmp_path,
+):
+    """Reminder-side equivalent of the definitions-side phase-discipline
+    test (PR-4 Qodo lesson): one poisoned transfer must not block a
+    healthy mutation queued alongside it."""
+    from tldw_chatbook.Scheduling.services.server_client import (
+        ServerClientValidationError,
+    )
+
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    poisoned_id = db.create_reminder_task(
+        owner_id="local", title="Poisoned", schedule_kind="one_time"
+    )
+    db.set_transfer_state(
+        "reminder_task", poisoned_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        poisoned_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "task_payload": {"title": "Poisoned", "schedule_kind": "one_time"},
+        },
+    )
+    healthy_id = db.create_reminder_task(
+        owner_id="local", title="Healthy", schedule_kind="one_time"
+    )
+    db.set_transfer_state(
+        "reminder_task", healthy_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        healthy_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "task_payload": {"title": "Healthy", "schedule_kind": "one_time"},
+        },
+    )
+
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    server_client.create_reminder.side_effect = [
+        ServerClientValidationError("field_required"),
+        {"id": "srv-rem-healthy"},
+    ]
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    assert db.get_reminder_task(healthy_id)["server_id"] == "srv-rem-healthy"
+    poisoned_row = db.get_reminder_task(poisoned_id)
+    assert poisoned_row["transfer_state"] == "to_server_failed"
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1
+    assert pending[0]["local_id"] == poisoned_id
+    assert "transfer_errors" in pending[0]["payload"]
+
+
+@pytest.mark.asyncio
 async def test_sync_now_pulls_and_upserts_definitions(tmp_path):
     db = ScheduledTasksDB(tmp_path / "db.db")
     server_client = _empty_reminders_client()
