@@ -161,11 +161,21 @@ cycles and is required before any controller can exist.
 - Start the `.git-blame-ignore-revs` list; every pure-move commit is appended, so
   blame keeps resolving to the scar tissue's real authors.
 
-**Per-subsystem series** — state PR (fields + shims), one-controller-per-PR moves,
-cleanup PR (shims and dead delegators deleted, tests retargeted, budgets lowered).
-Sequenced cold-to-hot so the exemplar never fights rebases and hot subsystems migrate
-in short, fast series once the recipe is rehearsed (churn = commits touching the file
-in the last 30 days whose subjects name the subsystem):
+**Per-subsystem series** — state PR (fields + shims), one-controller-per-PR moves
+(each move PR lowers the `library_screen.py` row in `_BUDGETS` to its own
+post-move measurement, per the ratchet file's lower-in-the-same-PR contract —
+not deferred to cleanup), cleanup PR (shims and dead delegators deleted, tests
+retargeted, budgets lowered — the cleanup PR's lowering is the series' final
+one, not its only one). Sequenced cold-to-hot so the exemplar never fights
+rebases and hot subsystems migrate in short, fast series once the recipe is
+rehearsed (churn = commits touching the file in the last 30 days whose
+subjects name the subsystem):
+
+(Corrected during execution of the conversations exemplar: the size-ratchet
+slack guard went red between the reader controller's move commit and its
+pin-lowering commit, because the pin lowering had been deferred to the
+cleanup PR instead of landing with the move — the per-move-PR lowering above
+is the fix.)
 
 1. **conversations** (exemplar: 68 methods, 19 fields, churn 10; lowest
    cross-coupling — 3 notes refs plus shared fields already handled above)
