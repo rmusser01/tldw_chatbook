@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import BaseModel, ValidationError
 from textual.css.query import NoMatches
 from textual.widgets import Input, Select, Static
 
@@ -33,6 +34,20 @@ def test_default_name_uses_first_normalized_unique_terminal_number() -> None:
     assert build_default_terminal_name(()) == "Terminal 1"
     assert build_default_terminal_name(("terminal 1", "TERMINAL 2")) == "Terminal 3"
     assert build_default_terminal_name(("Build", "Terminal 2")) == "Terminal 1"
+
+
+def test_form_result_is_a_strict_pydantic_boundary() -> None:
+    assert issubclass(TerminalSessionFormResult, BaseModel)
+
+    with pytest.raises(ValidationError):
+        TerminalSessionFormResult.model_validate(
+            {
+                "name": "Terminal 1",
+                "shell": None,
+                "start_directory": None,
+                "unexpected": "value",
+            }
+        )
 
 
 @pytest.mark.asyncio

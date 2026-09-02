@@ -828,7 +828,11 @@ async def test_controller_routes_successful_session_and_input_actions(
         runtime,
         sink,
         scheduled=scheduled,
-        modal_result=TerminalSessionFormResult("Renamed", None, None),
+        modal_result=TerminalSessionFormResult(
+            name="Renamed",
+            shell=None,
+            start_directory=None,
+        ),
     )
     controller.open_workspace()
     _run_one(scheduled)
@@ -863,7 +867,11 @@ async def test_controller_creates_from_revalidated_allowlisted_values(
     controller = _controller(
         runtime,
         sink,
-        modal_result=TerminalSessionFormResult("Terminal 1", "default", root),
+        modal_result=TerminalSessionFormResult(
+            name="Terminal 1",
+            shell="default",
+            start_directory=root,
+        ),
         selected_root=lambda: root,
         account_home=lambda: tmp_path,
         shell_choices=_shell_choices,

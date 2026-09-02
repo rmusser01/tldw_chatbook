@@ -84,7 +84,12 @@ class ConsoleTerminalController:
         return self._view is not None
 
     def open_workspace(self) -> bool:
-        """Attach one fresh view generation and queue its initial projection."""
+        """Attach one fresh view generation and queue its initial projection.
+
+        Returns:
+            ``True`` when a view is already open or attaches successfully;
+            ``False`` when attachment or subscription fails closed.
+        """
         if self._view is not None:
             return True
         runtime = self._terminal_runtime()

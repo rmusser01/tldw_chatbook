@@ -108,7 +108,15 @@ class ConsoleTerminalResizeRequested(Message):
 
 
 def terminal_key_bytes(key: str, character: str | None) -> bytes | None:
-    """Encode one supported focused-viewport key without shadowing globals."""
+    """Encode one supported focused-viewport key without shadowing globals.
+
+    Args:
+        key: Textual key identifier for the input event.
+        character: Textual character payload when the event carries text.
+
+    Returns:
+        Encoded terminal input, or ``None`` when the key must bubble locally.
+    """
     if key in _GLOBAL_KEYS or key == _RELEASE_KEY:
         return None
     fixed = _FIXED_KEY_BYTES.get(key)
@@ -297,6 +305,11 @@ class TerminalViewport(Static):
         self._notify_workspace()
 
     def on_key(self, event: Any) -> None:
+        """Route focused input or released-view navigation without stealing globals.
+
+        Args:
+            event: Textual key event to forward, handle locally, or leave bubbling.
+        """
         key = event.key
         if key in _GLOBAL_KEYS:
             return

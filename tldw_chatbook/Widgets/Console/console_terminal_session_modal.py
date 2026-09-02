@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    model_validator,
+)
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -22,13 +29,62 @@ from tldw_chatbook.Terminal.launch import (
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 
-@dataclass(frozen=True, slots=True)
-class TerminalSessionFormResult:
-    """Validated local form values returned to the controller."""
+class TerminalSessionFormResult(BaseModel):
+    """Strict validated local form values returned to the controller."""
 
-    name: str
-    shell: str | None
-    start_directory: Path | None
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    name: str = Field(min_length=1, max_length=1024)
+    shell: str | None = Field(default=None, max_length=255)
+    start_directory: Path | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_widget_values(
+        cls,
+        values: Any,
+        info: ValidationInfo,
+    ) -> Any:
+        context = info.context
+        if not context or "mode" not in context:
+            return values
+        if not isinstance(values, dict):
+            raise ValueError("invalid terminal session values")
+
+        name = normalize_session_name(
+            values.get("name"),
+            existing_names=context["existing_names"],
+        )
+        if context["mode"] == "rename":
+            return {"name": name, "shell": None, "start_directory": None}
+
+        selector = values.get("shell")
+        if not isinstance(selector, str):
+            raise ValueError("choose an available shell")
+        resolve_shell_choice(selector, context["shell_choices"])
+
+        raw_directory = values.get("start_directory")
+        if not isinstance(raw_directory, str) or len(raw_directory) > 4096:
+            raise ValueError("choose an absolute existing directory")
+        directory = resolve_start_directory(
+            None,
+            requested_directory=Path(raw_directory),
+            account_home=context["account_home"],
+        )
+        return {
+            "name": name,
+            "shell": selector,
+            "start_directory": directory,
+        }
+
+
+def _validation_message(error: ValidationError) -> str:
+    errors = error.errors(include_url=False, include_input=False)
+    if not errors:
+        return "invalid terminal session values"
+    return str(errors[0].get("msg", "invalid terminal session values")).removeprefix(
+        "Value error, "
+    )
 
 
 def build_default_terminal_name(existing_names: tuple[str, ...]) -> str:
@@ -139,27 +195,36 @@ class ConsoleTerminalSessionModal(
         event.stop()
         error = self.query_one("#console-terminal-session-error", Static)
         try:
-            name = normalize_session_name(
-                self.query_one("#console-terminal-session-name", Input).value,
-                existing_names=self._existing_names,
+            result = TerminalSessionFormResult.model_validate(
+                {
+                    "name": self.query_one(
+                        "#console-terminal-session-name", Input
+                    ).value,
+                    "shell": (
+                        self.query_one("#console-terminal-session-shell", Select).value
+                        if self.mode == "new"
+                        else None
+                    ),
+                    "start_directory": (
+                        self.query_one(
+                            "#console-terminal-session-directory", Input
+                        ).value
+                        if self.mode == "new"
+                        else None
+                    ),
+                },
+                context={
+                    "mode": self.mode,
+                    "existing_names": self._existing_names,
+                    "shell_choices": self._shell_choices,
+                    "account_home": self._start_directory,
+                },
             )
-            if self.mode == "rename":
-                self.dismiss(TerminalSessionFormResult(name, None, None))
-                return
-
-            selector = self.query_one("#console-terminal-session-shell", Select).value
-            if not isinstance(selector, str):
-                raise ValueError("choose an available shell")
-            resolve_shell_choice(selector, self._shell_choices)
-            directory = resolve_start_directory(
-                None,
-                requested_directory=Path(
-                    self.query_one("#console-terminal-session-directory", Input).value
-                ),
-                account_home=self._start_directory,
-            )
+        except ValidationError as exc:
+            error.update(_validation_message(exc))
+            return
         except (TypeError, ValueError) as exc:
             error.update(str(exc))
             return
         error.update("")
-        self.dismiss(TerminalSessionFormResult(name, selector, directory))
+        self.dismiss(result)
