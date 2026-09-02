@@ -3470,13 +3470,6 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 3,
-      "diagnostic_digest": "9788f180d63aa7939014",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/Widgets/Console/console_context_modal.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 6,
       "diagnostic_digest": "929b33e6cde9f4e4177c",
       "owner": "TASK-494",
@@ -10341,29 +10334,6 @@
     {
       "candidates": [
         {
-          "call_digest": "22d878a0bc6d38b3",
-          "method": "exception",
-          "path_expressions": [
-            "path"
-          ],
-          "scope": "ConsoleContextModal._save_json",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "d9ad4faf63c3b1e6",
-          "method": "warning",
-          "path_expressions": [
-            "path"
-          ],
-          "scope": "ConsoleContextModal._save_json",
-          "status": "legacy_unreviewed"
-        }
-      ],
-      "path": "tldw_chatbook/Widgets/Console/console_context_modal.py"
-    },
-    {
-      "candidates": [
-        {
           "call_digest": "0bce284e6744b7f9",
           "method": "error",
           "path_expressions": [
@@ -11269,10 +11239,10 @@
   "schema_version": 3,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 561,
-    "path_privacy_candidate_calls": 716,
+    "owner_files": 560,
+    "path_privacy_candidate_calls": 714,
     "persistent_sink_files": 10,
     "task_492_calls": 1323,
-    "task_494_calls": 7510
+    "task_494_calls": 7507
   }
 }
