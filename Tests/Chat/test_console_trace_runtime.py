@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import AsyncExitStack
 from types import SimpleNamespace
 
 import httpx
@@ -51,6 +52,19 @@ def make_database():
     yield create
     for database in reversed(databases):
         database.close()
+
+
+@pytest.fixture
+async def make_gateway():
+    """Create gateways whose owned clients close on every test exit path."""
+    async with AsyncExitStack() as resources:
+
+        def create(**kwargs: object) -> ConsoleProviderGateway:
+            gateway = ConsoleProviderGateway(**kwargs)
+            resources.push_async_callback(gateway.aclose)
+            return gateway
+
+        yield create
 
 
 def _saved_message(
@@ -134,6 +148,7 @@ async def test_console_runtime_wires_production_boundary_for_durable_database(
 async def test_production_factory_persists_append_only_calls_through_real_gateway(
     tmp_path,
     make_database,
+    make_gateway,
 ) -> None:
     database = make_database(tmp_path / "trace-runtime.sqlite", "trace-runtime")
     conversation_id = database.add_conversation({"title": "runtime trace"})
@@ -147,7 +162,7 @@ async def test_production_factory_persists_append_only_calls_through_real_gatewa
         return {"choices": [{"message": {"content": "ok"}}]}
 
     factory = ConsoleTraceBoundaryFactory(database)
-    gateway = ConsoleProviderGateway(
+    gateway = make_gateway(
         chat_api_call_fn=adapter,
         trace_call_boundary_factory=factory,
     )
@@ -195,13 +210,13 @@ async def test_production_factory_persists_append_only_calls_through_real_gatewa
         assert cursor.execute("SELECT COUNT(*) FROM console_trace_owners").fetchone()[0] == 1
         assert cursor.execute("SELECT COUNT(*) FROM message_exchanges").fetchone()[0] == 0
     assert len(calls) == 2
-    await gateway.aclose()
 
 
 @pytest.mark.asyncio
 async def test_dual_write_legacy_capture_reuses_normalized_call_identity(
     tmp_path,
     make_database,
+    make_gateway,
 ) -> None:
     database = make_database(tmp_path / "trace-dual-write.sqlite", "trace-dual")
     conversation_id = database.add_conversation({"title": "dual write"})
@@ -211,7 +226,7 @@ async def test_dual_write_legacy_capture_reuses_normalized_call_identity(
     factory = ConsoleTraceBoundaryFactory(database)
     signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
 
-    gateway = ConsoleProviderGateway(
+    gateway = make_gateway(
         chat_api_call_fn=lambda **_kwargs: {
             "choices": [{"message": {"content": "answer"}}]
         },
@@ -259,7 +274,6 @@ async def test_dual_write_legacy_capture_reuses_normalized_call_identity(
         normalized[0].run_id,
         normalized[0].call_sequence,
     )
-    await gateway.aclose()
 
 
 @pytest.mark.asyncio
@@ -337,6 +351,7 @@ async def test_dual_write_llamacpp_fallback_reuses_both_normalized_identities(
 async def test_production_factory_persists_one_item_bounded_replacement(
     tmp_path,
     make_database,
+    make_gateway,
 ) -> None:
     database = make_database(tmp_path / "trace-replacement.sqlite", "trace-replace")
     conversation_id = database.add_conversation({"title": "replacement trace"})
@@ -350,7 +365,7 @@ async def test_production_factory_persists_one_item_bounded_replacement(
     def adapter(**_kwargs):
         return {"choices": [{"message": {"content": "ok"}}]}
 
-    gateway = ConsoleProviderGateway(
+    gateway = make_gateway(
         chat_api_call_fn=adapter,
         trace_call_boundary_factory=ConsoleTraceBoundaryFactory(database),
     )
@@ -411,7 +426,6 @@ async def test_production_factory_persists_one_item_bounded_replacement(
         assert replacement is not None
         assert tuple(replacement) == (0, 1)
         assert cursor.execute("SELECT COUNT(*) FROM console_trace_surface_nodes").fetchone()[0] == 4
-    await gateway.aclose()
 
 
 def test_production_factory_uses_latest_message_revision_for_turn_identity(
@@ -671,6 +685,7 @@ def test_recreated_factories_atomically_reserve_distinct_chain_sequences(
 async def test_production_factory_accepts_active_ancestor_revisions_on_nested_fork(
     tmp_path,
     make_database,
+    make_gateway,
 ) -> None:
     database = make_database(tmp_path / "trace-fork-runtime.sqlite", "trace-fork")
     source_id = database.add_conversation({"title": "source"})
@@ -683,7 +698,7 @@ async def test_production_factory_accepts_active_ancestor_revisions_on_nested_fo
         return {"choices": [{"message": {"content": "ok"}}]}
 
     factory = ConsoleTraceBoundaryFactory(database)
-    gateway = ConsoleProviderGateway(
+    gateway = make_gateway(
         chat_api_call_fn=adapter,
         trace_call_boundary_factory=factory,
     )
@@ -805,4 +820,3 @@ async def test_production_factory_accepts_active_ancestor_revisions_on_nested_fo
         assert len(replacements) == 1
         assert replacements[0].replacement.start_sequence == 0
         assert replacements[0].replacement.end_sequence == 0
-    await gateway.aclose()

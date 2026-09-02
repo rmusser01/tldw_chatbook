@@ -9,9 +9,17 @@ import subprocess
 import sys
 from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import TypedDict
+from typing import Literal, Self, TypedDict
 
 import pytest
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from tldw_chatbook.Chat.console_prepared_request import build_console_request
 from tldw_chatbook.Chat.console_provider_gateway import (
@@ -70,10 +78,89 @@ class _RunResult(TypedDict):
     legacy_exchange_count: int
 
 
-def _fixture() -> dict[str, object]:
+class _TraceGrowthThresholds(BaseModel):
+    """Validated release thresholds for one trace-growth fixture."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    second_half_to_first_half_bytes_max: float = Field(gt=0)
+    second_half_to_first_half_rows_max: float = Field(gt=0)
+    total_trace_owned_bytes_max: int = Field(gt=0)
+
+
+class _TraceGrowthFixture(BaseModel):
+    """Typed, immutable boundary for the checksummed benchmark fixture."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    fixture_version: Literal[1]
+    seed: str = Field(min_length=1)
+    turns: int = Field(gt=0)
+    fresh_database_count: int = Field(gt=0)
+    checkpoint_turn: int = Field(gt=0)
+    message_bytes: int = Field(gt=0)
+    replacement_interval: int = Field(gt=0)
+    replacement_fraction: float = Field(gt=0, le=1)
+    thresholds: _TraceGrowthThresholds
+    coverage: dict[str, str]
+    measurement: str = Field(min_length=1)
+
+    @field_validator("coverage")
+    @classmethod
+    def _validate_coverage(cls, coverage: dict[str, str]) -> dict[str, str]:
+        if frozenset(coverage) != EXPECTED_SCENARIOS:
+            raise ValueError("coverage must declare every expected scenario exactly once")
+        if any(not node_id.strip() for node_id in coverage.values()):
+            raise ValueError("coverage node ids must be non-empty")
+        return coverage
+
+    @model_validator(mode="after")
+    def _validate_turn_relationships(self) -> Self:
+        if self.checkpoint_turn > self.turns:
+            raise ValueError("checkpoint_turn must not exceed turns")
+        if self.replacement_interval > self.turns:
+            raise ValueError("replacement_interval must not exceed turns")
+        return self
+
+
+def test_trace_growth_fixture_rejects_invalid_values() -> None:
+    valid = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    invalid_payloads = []
+    for key, value in (
+        ("turns", 0),
+        ("checkpoint_turn", valid["turns"] + 1),
+        ("replacement_fraction", 1.1),
+    ):
+        payload = dict(valid)
+        payload[key] = value
+        invalid_payloads.append(payload)
+
+    missing_coverage = dict(valid)
+    missing_coverage["coverage"] = {
+        key: value
+        for key, value in valid["coverage"].items()
+        if key != "credential_filtering"
+    }
+    invalid_payloads.append(missing_coverage)
+
+    invalid_threshold = dict(valid)
+    invalid_threshold["thresholds"] = {
+        **valid["thresholds"],
+        "total_trace_owned_bytes_max": 0,
+    }
+    invalid_payloads.append(invalid_threshold)
+
+    for payload in invalid_payloads:
+        with pytest.raises(ValidationError):
+            _TraceGrowthFixture.model_validate(payload)
+
+
+def _fixture() -> _TraceGrowthFixture:
     expected = FIXTURE_CHECKSUM_PATH.read_text(encoding="utf-8").split()[0]
     assert hashlib.sha256(FIXTURE_PATH.read_bytes()).hexdigest() == expected
-    return json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    return _TraceGrowthFixture.model_validate_json(
+        FIXTURE_PATH.read_text(encoding="utf-8")
+    )
 
 
 def _semi_incompressible_text(seed: str, turn: int, size: int) -> str:
@@ -220,17 +307,17 @@ async def _dispatch(
 
 async def _run_fixture(
     root: Path,
-    fixture: dict[str, object],
+    fixture: _TraceGrowthFixture,
     *,
     run_index: int,
     replacement_heavy: bool,
 ) -> _RunResult:
-    turns = int(fixture["turns"])
-    checkpoint_turn = int(fixture["checkpoint_turn"])
-    message_bytes = int(fixture["message_bytes"])
-    interval = int(fixture["replacement_interval"])
-    replacement_fraction = float(fixture["replacement_fraction"])
-    seed = str(fixture["seed"])
+    turns = fixture.turns
+    checkpoint_turn = fixture.checkpoint_turn
+    message_bytes = fixture.message_bytes
+    interval = fixture.replacement_interval
+    replacement_fraction = fixture.replacement_fraction
+    seed = fixture.seed
     database = CharactersRAGDB(
         root / f"trace-growth-{replacement_heavy}-{run_index}.sqlite",
         f"trace-growth-{run_index}",
@@ -402,11 +489,8 @@ async def test_run_fixture_closes_owned_resources_when_measurement_fails(
 @pytest.fixture(scope="module")
 def verified_scenario_evidence() -> tuple[str, ...]:
     fixture = _fixture()
-    coverage = fixture.get("coverage")
-    assert isinstance(coverage, dict)
-    assert frozenset(coverage) == EXPECTED_SCENARIOS
+    coverage = fixture.coverage
     node_ids = tuple(coverage[scenario] for scenario in sorted(coverage))
-    assert all(isinstance(node_id, str) and node_id for node_id in node_ids)
     result = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", *node_ids],
         cwd=Path(__file__).parents[2],
@@ -441,9 +525,8 @@ async def test_console_trace_growth_release_gate(
     verified_scenario_evidence: tuple[str, ...],
 ) -> None:
     fixture = _fixture()
-    database_count = int(fixture["fresh_database_count"])
-    thresholds = fixture["thresholds"]
-    assert isinstance(thresholds, dict)
+    database_count = fixture.fresh_database_count
+    thresholds = fixture.thresholds
     assert verified_scenario_evidence
     results = [
         await _run_fixture(
@@ -460,7 +543,7 @@ async def test_console_trace_growth_release_gate(
     second_rows = _median(results, "second_half", "rows")
     total_bytes = _median(results, "total", "bytes")
     artifact = {
-        "fixture_version": fixture["fixture_version"],
+        "fixture_version": fixture.fixture_version,
         "replacement_heavy": replacement_heavy,
         "runs": results,
         "medians": {
@@ -480,15 +563,14 @@ async def test_console_trace_growth_release_gate(
         json.dumps(artifact, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    expected_calls = int(fixture["turns"])
+    expected_calls = fixture.turns
     if replacement_heavy:
-        expected_calls += expected_calls // int(fixture["replacement_interval"])
+        expected_calls += expected_calls // fixture.replacement_interval
     assert all(result["adapter_call_count"] == expected_calls for result in results)
     assert all(result["legacy_exchange_count"] == 0 for result in results)
-    assert second_bytes / first_bytes <= float(
-        thresholds["second_half_to_first_half_bytes_max"]
+    assert (
+        second_bytes / first_bytes
+        <= thresholds.second_half_to_first_half_bytes_max
     )
-    assert second_rows / first_rows <= float(
-        thresholds["second_half_to_first_half_rows_max"]
-    )
-    assert total_bytes <= int(thresholds["total_trace_owned_bytes_max"])
+    assert second_rows / first_rows <= thresholds.second_half_to_first_half_rows_max
+    assert total_bytes <= thresholds.total_trace_owned_bytes_max
