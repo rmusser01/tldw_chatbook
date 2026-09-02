@@ -1164,6 +1164,132 @@ def test_adopt_server_definition_identity_unknown_local_id_returns_false(tmp_pat
     )
 
 
+# ----------------------------------------------------------------------
+# create/update_automation_definition pending_mutation +
+# get_automation_definition_by_server_id (schedules-handoff PR-4, task 4)
+# ----------------------------------------------------------------------
+
+
+def test_create_automation_definition_pending_mutation_recorded_in_same_transaction(
+    tmp_path,
+):
+    """The authoring facade's offline server-owned create: the INSERT and
+    its outbox mutation must land as one write, keyed by the id this call
+    generates (the caller cannot know it ahead of time)."""
+    db = _mk_db(tmp_path)
+
+    def_id = db.create_automation_definition(
+        "server:1",
+        "recurring_question",
+        "Draft name",
+        pending_mutation={
+            "primitive": "automation_definition",
+            "owner_id": "server:1",
+            "payload": {
+                "action": "create",
+                "definition_payload": {"family": "recurring_question"},
+                "server_definition_id": None,
+            },
+        },
+    )
+
+    row = db.get_automation_definition(def_id)
+    assert row is not None
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+    assert pending[0]["local_id"] == def_id
+    assert pending[0]["payload"]["action"] == "create"
+    assert pending[0]["payload"]["idempotency_key"]  # generated
+
+
+def test_create_automation_definition_pending_mutation_atomic_rollback_on_insert_failure(
+    tmp_path,
+):
+    """Fault-inject a genuine DB failure in the mutation INSERT (a NULL
+    owner_id violates pending_mutations' NOT NULL constraint) and confirm
+    the definition INSERT in the SAME transaction rolls back with it."""
+    db = _mk_db(tmp_path)
+
+    with pytest.raises(Exception):
+        db.create_automation_definition(
+            "server:1",
+            "recurring_question",
+            "Draft name",
+            pending_mutation={
+                "primitive": "automation_definition",
+                "owner_id": None,  # NOT NULL violation -> INSERT raises
+                "payload": {"action": "create"},
+            },
+        )
+
+    assert db.list_automation_definitions(owner_id="server:1") == []
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+
+
+def test_update_automation_definition_pending_mutation_recorded_in_same_transaction(
+    tmp_path,
+):
+    db = _mk_db(tmp_path)
+    def_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Original", server_id="srv-def-1"
+    )
+
+    updated = db.update_automation_definition(
+        def_id,
+        name="Updated",
+        pending_mutation={
+            "primitive": "automation_definition",
+            "owner_id": "server:1",
+            "payload": {
+                "action": "update",
+                "definition_payload": {"name": "Updated", "definition_version": 1},
+                "server_definition_id": "srv-def-1",
+            },
+        },
+    )
+
+    assert updated is True
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+    assert pending[0]["local_id"] == def_id
+    assert pending[0]["payload"]["server_definition_id"] == "srv-def-1"
+
+
+def test_update_automation_definition_pending_mutation_not_recorded_when_row_unknown(
+    tmp_path,
+):
+    """No row changed -> nothing to push; the mutation must not be queued
+    for a definition that was never actually written."""
+    db = _mk_db(tmp_path)
+
+    updated = db.update_automation_definition(
+        "does-not-exist",
+        name="Updated",
+        pending_mutation={
+            "primitive": "automation_definition",
+            "owner_id": "server:1",
+            "payload": {"action": "update"},
+        },
+    )
+
+    assert updated is False
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+
+
+def test_get_automation_definition_by_server_id_found_and_missing(tmp_path):
+    db = _mk_db(tmp_path)
+    def_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Mirrored", server_id="srv-def-7"
+    )
+
+    row = db.get_automation_definition_by_server_id("server:1", "srv-def-7")
+    assert row is not None
+    assert row["id"] == def_id
+
+    assert db.get_automation_definition_by_server_id("server:1", "no-such-id") is None
+    assert db.get_automation_definition_by_server_id("server:2", "srv-def-7") is None
+
+
 def _result_item(**overrides):
     item = {
         "id": "srv-res-1",
