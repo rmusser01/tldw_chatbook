@@ -2831,6 +2831,37 @@ class ScheduledTasksDB(BaseDB):
             )
             return self._rows_to_dicts(cursor.fetchall(), json_fields={"payload"})
 
+    def get_pending_mutation_for_local_id(
+        self, local_id: str, primitive: str
+    ) -> Optional[dict[str, Any]]:
+        """Return the pending mutation for ``local_id``/``primitive``, if
+        any, regardless of which ``owner_id`` it is filed under.
+
+        `get_pending_mutations` above requires the caller to already know
+        `owner_id` -- fine for its own callers, which always read it off
+        the row they already have. A `to_server_failed` row's UI display
+        (schedules-handoff PR-5, Task 7 fix round finding 3) has no such
+        row-derived owner_id to key off: the mutation was recorded under
+        WHATEVER server was active at the time of the (failed) attempt,
+        which is not necessarily the CURRENTLY active server, so guessing
+        via "today's active server" silently misses the mutation after a
+        server switch. Reading the row directly sidesteps the guess
+        entirely -- its own `owner_id` column is the actual answer.
+        """
+        with closing(self._get_connection()) as conn:
+            cursor = conn.execute(
+                """
+                SELECT * FROM pending_mutations
+                WHERE local_id = ? AND primitive = ?
+                ORDER BY created_at
+                LIMIT 1
+                """,
+                (local_id, primitive),
+            )
+            return self._row_to_dict(
+                cursor.fetchone(), json_fields={"payload"}
+            )
+
     def delete_pending_mutation(self, mutation_id: int) -> None:
         """Delete a pending mutation by its row id."""
         with self.transaction() as conn:

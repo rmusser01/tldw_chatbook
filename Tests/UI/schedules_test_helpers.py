@@ -73,6 +73,12 @@ class MockSchedulingDB:
         `to_server_failed` row; unused otherwise)."""
         return []
 
+    def get_pending_mutation_for_local_id(self, local_id: str, primitive: str):
+        """Stub: no pending mutation (Task 7 fix round finding 3 --
+        owner-agnostic retry-error lookup for a `to_server_failed` row;
+        unused otherwise)."""
+        return None
+
     def upsert_automation_definitions_from_server(self, owner_id: str, items: list[dict]):
         inserted = 0
         updated = 0
@@ -136,6 +142,20 @@ class MockSchedulingServiceMixin:
         if getattr(self.server_client, "notifications_service", None) is None:
             return "No server connection is configured."
         return None
+
+    def cancel_refusal(self, row: dict) -> str | None:
+        """Mirrors the real facade's `cancel_refusal` (Task 7 fix round
+        finding 1): honest state-branching, no server-connection gate --
+        cancel never needed one."""
+        state = row.get("transfer_state")
+        if state in ("to_server_pending", "to_server_failed", "from_server_pending"):
+            return None
+        if state == "to_server_sent":
+            return "Too late to cancel -- start a reverse transfer instead."
+        return (
+            "No transfer in progress on this row -- if it already moved, "
+            "start a reverse transfer instead."
+        )
 
     def transfer_warnings(self, row: dict, direction: str) -> list[str]:
         return []

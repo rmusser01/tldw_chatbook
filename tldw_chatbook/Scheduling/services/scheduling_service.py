@@ -106,6 +106,17 @@ _REMINDER_SERVER_CREATE_FIELDS = {
 #: the same way rather than trying to guess which side is safe.
 _TRANSFER_IMMINENT_WINDOW = timedelta(minutes=5)
 
+#: spec §6.3 cancel-table reason text -- module constants so
+#: `cancel_refusal` (a side-effect-free preview) and `cancel_transfer`
+#: (the actual mutation) share exactly one source of truth instead of
+#: two copies of the same branching drifting apart (Task 7 fix round
+#: finding 1: the UI used to re-derive this locally).
+_CANCEL_TOO_LATE_REASON = "Too late to cancel -- start a reverse transfer instead."
+_CANCEL_NOT_IN_PROGRESS_REASON = (
+    "No transfer in progress on this row -- if it already moved, start a "
+    "reverse transfer instead."
+)
+
 
 @dataclass(slots=True)
 class SaveDefinitionOutcome:
@@ -1002,6 +1013,28 @@ class SchedulingService:
                 return mutation
         return None
 
+    def cancel_refusal(self, row: dict[str, Any]) -> str | None:
+        """Preview whether `cancel_transfer` would refuse ``row``, without
+        mutating anything (spec §6.3) -- the UI's Cancel-button disabled-
+        reason source of truth (Task 7 fix round finding 1: the UI used
+        to re-derive this same state branching locally with no shared
+        source, risking silent drift if `cancel_transfer`'s branching
+        ever changed).
+
+        Mirrors `cancel_transfer`'s own branching exactly (same module
+        constants back both), with one necessary gap: a losing
+        compare-and-set race (a concurrent push disarming the row between
+        this call and an actual `cancel_transfer`) is a live race, not
+        something a row snapshot can predict -- same limitation
+        `transfer_refusal` already has for its own CAS backstop.
+        """
+        state = row.get("transfer_state")
+        if state in ("to_server_pending", "to_server_failed", "from_server_pending"):
+            return None
+        if state == "to_server_sent":
+            return _CANCEL_TOO_LATE_REASON
+        return _CANCEL_NOT_IN_PROGRESS_REASON
+
     async def cancel_transfer(self, table_kind: str, row_id: str) -> "TransferOutcome":
         """Cancel an in-progress transfer (spec §6.3 table, exactly).
 
@@ -1032,10 +1065,7 @@ class SchedulingService:
             return TransferOutcome(status="not_found", reason="No such row.")
 
         state = row.get("transfer_state")
-        too_late = TransferOutcome(
-            status="refused",
-            reason="Too late to cancel -- start a reverse transfer instead.",
-        )
+        too_late = TransferOutcome(status="refused", reason=_CANCEL_TOO_LATE_REASON)
 
         if state in ("to_server_pending", "to_server_failed"):
             cleared = self.db.clear_transfer_state(
@@ -1063,9 +1093,7 @@ class SchedulingService:
             return too_late
 
         return TransferOutcome(
-            status="refused",
-            reason="No transfer in progress on this row -- if it already "
-            "moved, start a reverse transfer instead.",
+            status="refused", reason=_CANCEL_NOT_IN_PROGRESS_REASON
         )
 
     async def recover_inflight_transfers(self) -> None:

@@ -24,12 +24,15 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button, DataTable, Static
+from textual.widgets import Button, DataTable, Static, TabbedContent
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind
 from tldw_chatbook.Scheduling.services import SchedulingService
+from tldw_chatbook.Scheduling.services import (
+    scheduling_service as scheduling_service_module,
+)
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
 from tldw_chatbook.UI.Screens.scheduling.task_detail import TaskDetail
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
@@ -245,16 +248,20 @@ class TransferWorkbenchTestApp(ConsolidatedCSSApp):
     right and renders what they say.
     """
 
-    def __init__(self, db, *args, connected: bool = True, **kwargs) -> None:
+    def __init__(
+        self, db, *args, connected: bool = True, server_client=None, **kwargs
+    ) -> None:
         super().__init__(*args, **kwargs)
         active_server_id = "1" if connected else None
         self.active_server_id = active_server_id
         self.runtime_policy = SimpleNamespace(
             state=SimpleNamespace(active_server_id=active_server_id)
         )
+        if server_client is None and connected:
+            server_client = _FakeServerClient()
         self.scheduling_service = SchedulingService(
             db=db,
-            server_client=_FakeServerClient() if connected else None,
+            server_client=server_client,
             runtime_source="local",
             app_getter=lambda: self,
         )
@@ -541,3 +548,249 @@ async def test_queue_row_shows_transfer_badge_suffix(transfer_db):
         table = pilot.app.screen.query_one("#scheduling-task-table", DataTable)
         row = table.get_row_at(0)
         assert "Moving to server" in str(row[0])
+
+
+# ---------------------------------------------------------------------------
+# Automations-tab transfer actions (Task 7 fix round item 1)
+#
+# The tab has no per-row detail widget -- Move-to-local/Retry/Cancel are
+# keybindings routed by active tab (`m`/`y`/`k`), same idiom as the tab's
+# existing Run-now/Edit (`r`/`e`). A REAL `SchedulingService` + tmp_path DB
+# throughout, same rationale as the reminder-side tests above.
+# ---------------------------------------------------------------------------
+
+
+def _stub_ready_health(monkeypatch) -> None:
+    """A `recurring_question` `to_local` refusal also gates on local
+    health (spec §6.4/§7.4) -- irrelevant to what THIS file tests (Task
+    6 owns health-quoting correctness), so stubbed ready, mirroring Task
+    6's own `_stub_health` test helper exactly."""
+    monkeypatch.setattr(
+        scheduling_service_module,
+        "compute_local_health",
+        lambda app, row: ("ready", ""),
+    )
+
+
+def _local_definition(db, **overrides):
+    """A local `automation_definitions` row, mirroring Task 6's own
+    `_make_definition` test helper exactly (same required fields)."""
+    kwargs = dict(
+        owner_id="local",
+        family="recurring_question",
+        name="Daily digest",
+        schedule={"kind": "interval", "every_seconds": 3600},
+        input={"question": "What happened today?"},
+        config={},
+    )
+    kwargs.update(overrides)
+    return db.create_automation_definition(**kwargs)
+
+
+class _FakeAutomationsServerClient(_FakeServerClient):
+    """Adds a minimal `list_automation_definitions` server-fetch stub on
+    top of the reminder-transfer fake -- the Automations tab's server
+    half is a live fetch (`_load_server_automations`), never read off a
+    local mirror row directly, so a server-owned row reaches the UI
+    exactly this way in real usage too."""
+
+    def __init__(self, items: list[dict]) -> None:
+        super().__init__()
+        self._items = items
+
+    async def list_automation_definitions(self, limit: int, offset: int):
+        page = self._items[offset : offset + limit]
+        return {"items": page, "total": len(self._items), "has_more": False}
+
+    async def list_automation_definition_audit(self, definition_id: str):
+        # Selecting a row fires the run-history fetch; empty is a valid,
+        # honest response and keeps this fake minimal.
+        return {"items": [], "total": 0}
+
+
+async def _select_automations_tab_row(pilot, index: int = 0) -> None:
+    workbench = pilot.app.screen
+    tabs = workbench.query_one("#scheduling-tabs", TabbedContent)
+    tabs.active = "scheduling-automations-tab"
+    table = workbench.query_one("#scheduling-automations-table", DataTable)
+    table.cursor_coordinate = (index, 0)
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_begin_to_local_from_a_server_mirror_row(transfer_db, monkeypatch):
+    """Selecting a live server-fetched definition and pressing `m` mirrors
+    it locally (same seam `_edit_selected_automation` already uses), then
+    starts a real `begin_transfer_to_local`: a dormant local copy is
+    created and the mirror itself stays untouched (spec §6.2)."""
+    _stub_ready_health(monkeypatch)
+    db = transfer_db
+    server_client = _FakeAutomationsServerClient(
+        [{"id": "srv-9", "name": "Nightly digest", "family": "recurring_question"}]
+    )
+    app = TransferWorkbenchTestApp(db, server_client=server_client)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        await _select_automations_tab_row(pilot)
+        assert pilot.app.screen._selected_automation_id == "srv-9"
+
+        pilot.app.screen.action_move_automation_to_local()
+        await pilot.pause()
+
+        assert isinstance(pilot.app.screen, ConfirmationDialog)
+        assert "Nightly digest" in pilot.app.screen.message
+        pilot.app.screen.dismiss(True)
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        rows = db.list_automation_definitions(owner_id="server:1")
+        assert len(rows) == 1
+        mirror = rows[0]
+        assert mirror["server_id"] == "srv-9"
+        assert mirror["transfer_state"] is None  # untouched by the release
+
+        local_rows = db.list_automation_definitions(owner_id="local")
+        assert len(local_rows) == 1
+        copy = local_rows[0]
+        assert copy["server_id"] is None
+        assert copy["transfer_state"] == "from_server_pending"
+
+
+@pytest.mark.asyncio
+async def test_automation_move_to_local_refusal_renders_inline(transfer_db):
+    """A row that isn't server-owned refuses `to_local` -- the reason
+    renders inline in the tab's notice Static (fix round item 1's
+    "refusal -> inline reason" flow; the tab has no per-row Static)."""
+    db = transfer_db
+    _local_definition(db, name="Local only")
+    app = TransferWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        await _select_automations_tab_row(pilot)
+
+        pilot.app.screen.action_move_automation_to_local()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        notice = pilot.app.screen.query_one("#scheduling-automations-notice", Static)
+        assert "not server-owned" in notice.visual.plain
+        # No dialog opened -- refused before ever confirming.
+        assert not isinstance(pilot.app.screen, ConfirmationDialog)
+
+
+@pytest.mark.asyncio
+async def test_cancel_automation_transfer_routes_to_dormant_copy(
+    transfer_db, monkeypatch
+):
+    """Cancel on the selected (dormant-copy) row deletes exactly that
+    copy and leaves the mirror's transfer_state untouched -- same
+    critical case as the reminder side's cancel-row-id test, driven
+    through the Automations tab's own keybinding this time."""
+    _stub_ready_health(monkeypatch)
+    db = transfer_db
+    mirror_id = db.create_automation_definition(
+        owner_id="server:1",
+        server_id="srv-7",
+        family="recurring_question",
+        name="Weekly roundup",
+        schedule={"kind": "interval", "every_seconds": 604800},
+        input={"question": "What happened this week?"},
+        config={},
+    )
+    app = TransferWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+
+        service = app.scheduling_service
+        outcome = await service.begin_transfer_to_local(
+            "automation_definition", mirror_id
+        )
+        assert outcome.status == "pending"
+        copy_id = outcome.row_id
+        assert copy_id is not None and copy_id != mirror_id
+
+        await pilot.app.screen.load_automations()
+        await pilot.pause()
+        await _select_automations_tab_row(pilot)
+        assert pilot.app.screen._selected_automation_id == copy_id
+
+        pilot.app.screen.action_cancel_automation_transfer()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert db.get_automation_definition(copy_id) is None
+        mirror_row = db.get_automation_definition(mirror_id)
+        assert mirror_row is not None
+        assert mirror_row["transfer_state"] is None
+
+
+@pytest.mark.asyncio
+async def test_retry_automation_transfer_only_on_failed(transfer_db):
+    """Retry re-arms a definitively-failed local -> server transfer
+    (spec §6.1.5) -- same retry leg Task 6 built for reminders, exercised
+    here through the Automations tab's `y` keybinding."""
+    db = transfer_db
+    definition_id = _local_definition(db, name="Flaky automation")
+    db.set_transfer_state(
+        "automation_definition", definition_id, "to_server_pending", expected=(None,)
+    )
+    db.set_transfer_state(
+        "automation_definition",
+        definition_id,
+        "to_server_sent",
+        expected=("to_server_pending",),
+    )
+    db.set_transfer_state(
+        "automation_definition",
+        definition_id,
+        "to_server_failed",
+        expected=("to_server_sent",),
+    )
+    app = TransferWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        await _select_automations_tab_row(pilot)
+        assert pilot.app.screen._selected_automation_id == definition_id
+
+        pilot.app.screen.action_retry_automation_transfer()
+        await pilot.pause()
+        assert isinstance(pilot.app.screen, ConfirmationDialog)
+        pilot.app.screen.dismiss(True)
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        row = db.get_automation_definition(definition_id)
+        assert row["transfer_state"] == "to_server_pending"
+
+
+@pytest.mark.asyncio
+async def test_automation_transfer_actions_no_op_outside_automations_tab(
+    transfer_db,
+):
+    """Pressing m/y/k while the Queue tab is active refuses with a
+    switch-tabs notice rather than acting on a stale selection."""
+    db = transfer_db
+    _local_definition(db)
+    app = TransferWorkbenchTestApp(db)
+    notifications: list[str] = []
+    async with app.run_test() as pilot:
+        pilot.app.notify = lambda message, **kw: notifications.append(message)
+        await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
+        await pilot.pause()
+        # Queue tab is active by default -- never switched.
+
+        pilot.app.screen.action_move_automation_to_local()
+        pilot.app.screen.action_retry_automation_transfer()
+        pilot.app.screen.action_cancel_automation_transfer()
+        await pilot.pause()
+
+        assert len(notifications) == 3
+        assert all("Automations tab" in message for message in notifications)
