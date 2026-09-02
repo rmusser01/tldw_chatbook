@@ -1536,6 +1536,19 @@ profile_pr_url=$(gh pr view --json url --jq .url)
 profile_pr_number=$(gh pr view --json number --jq .number)
 test -n "$profile_pr_url"
 test -n "$profile_pr_number"
+profile_expected_base_oid=$(gh pr view "$profile_pr_number" --json baseRefOid --jq .baseRefOid)
+profile_expected_review_decision=$(gh pr view "$profile_pr_number" --json reviewDecision --jq .reviewDecision)
+test "$profile_expected_base_oid" = "$(git rev-parse origin/dev)"
+test "$profile_expected_base_oid" = "$(git merge-base origin/dev HEAD)"
+test "$(gh pr view "$profile_pr_number" --json mergeable --jq .mergeable)" = 'MERGEABLE'
+test "$(gh pr view "$profile_pr_number" --json mergeStateStatus --jq .mergeStateStatus)" = 'CLEAN'
+case "$profile_expected_review_decision" in
+  ''|APPROVED) ;;
+  *)
+    echo "PR review is not clean: $profile_expected_review_decision"
+    exit 1
+    ;;
+esac
 backlog task 27019 --plain | rg -q 'Status:.*In Progress'
 if profile_pending_task6=$(sed -n '/^### Task 6:/,$p' "$profile_plan" | rg -n '^- \[ \]'); then
   printf 'Unexecuted Task 6 plan steps:\n%s\n' "$profile_pending_task6"
@@ -1563,17 +1576,85 @@ test "$(git diff --cached --name-only | sort)" = \
   "$(printf '%s\n' "$profile_plan" "$profile_task" | sort)"
 git commit -m "docs: close Chatbook Personal Context documentation task"
 git push
+profile_local_final_head=$(git rev-parse HEAD)
+profile_published_final_head=
+for _profile_wait in $(seq 1 30); do
+  profile_published_final_head=$(gh pr view "$profile_pr_number" --json headRefOid --jq .headRefOid)
+  if [ "$profile_published_final_head" = "$profile_local_final_head" ]; then
+    break
+  fi
+  sleep 2
+done
+test "$profile_published_final_head" = "$profile_local_final_head"
 gh pr checks "$profile_pr_number" --required --watch --fail-fast
 test "$(gh pr view "$profile_pr_number" --json baseRefName --jq .baseRefName)" = 'dev'
-test "$(gh pr view "$profile_pr_number" --json headRefOid --jq .headRefOid)" = \
-  "$(git rev-parse HEAD)"
+test "$(gh pr view "$profile_pr_number" --json headRefName --jq .headRefName)" = \
+  'codex/personal-context-docs'
+profile_final_head_oid=$(gh pr view "$profile_pr_number" --json headRefOid --jq .headRefOid)
+profile_final_base_oid=$(gh pr view "$profile_pr_number" --json baseRefOid --jq .baseRefOid)
+profile_final_mergeable=$(gh pr view "$profile_pr_number" --json mergeable --jq .mergeable)
+profile_final_merge_state=$(gh pr view "$profile_pr_number" --json mergeStateStatus --jq .mergeStateStatus)
+profile_final_review_decision=$(gh pr view "$profile_pr_number" --json reviewDecision --jq .reviewDecision)
+test "$profile_final_head_oid" = "$profile_local_final_head"
+test "$profile_final_base_oid" = "$profile_expected_base_oid"
+test "$profile_final_mergeable" = 'MERGEABLE'
+test "$profile_final_merge_state" = 'CLEAN'
+case "$profile_expected_review_decision:$profile_final_review_decision" in
+  APPROVED:APPROVED|:APPROVED|:) ;;
+  *)
+    echo "PR review was dismissed or is no longer clean: $profile_final_review_decision"
+    exit 1
+    ;;
+esac
+profile_final_pr_paths=$(gh pr view "$profile_pr_number" --json files --jq '.files[].path' | sort -u)
+profile_expected_pr_paths=$(printf '%s\n' \
+  Docs/Development/Developer_Guide.md \
+  Docs/Development/personal-context-profile.md \
+  Docs/User_Guide/index.md \
+  Docs/User_Guide/settings/personal-context-profile.md \
+  Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md \
+  'backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md' | \
+  sort
+)
+if [ "$profile_final_pr_paths" != "$profile_expected_pr_paths" ]; then
+  printf 'Expected final PR paths:\n%s\nActual final PR paths:\n%s\n' \
+    "$profile_expected_pr_paths" "$profile_final_pr_paths"
+  exit 1
+fi
+profile_repo_slug=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+profile_thread_state=$(gh api graphql \
+  -F owner="${profile_repo_slug%%/*}" \
+  -F name="${profile_repo_slug#*/}" \
+  -F number="$profile_pr_number" \
+  -f query='query($owner: String!, $name: String!, $number: Int!) {
+    repository(owner: $owner, name: $name) {
+      pullRequest(number: $number) {
+        reviewThreads(first: 100) {
+          nodes { isResolved }
+          pageInfo { hasNextPage }
+        }
+      }
+    }
+  }' \
+  --jq '[.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage, ([.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length)] | @tsv')
+IFS=$'\t' read -r profile_more_threads profile_unresolved_threads <<< "$profile_thread_state"
+test "$profile_more_threads" = 'false'
+test "$profile_unresolved_threads" = '0'
+gh pr view "$profile_pr_number" --comments
+gh api "repos/$profile_repo_slug/pulls/$profile_pr_number/reviews" --paginate \
+  --jq '.[] | select(.body != "") | [.state, .commit_id, .user.login, .html_url, .body] | @tsv'
+gh api "repos/$profile_repo_slug/issues/$profile_pr_number/comments" --paginate \
+  --jq '.[] | [.user.login, .html_url, .body] | @tsv'
+printf 'After reviewing final-head comments/reviews, type exactly "no actionable feedback": ' >&2
+IFS= read -r profile_feedback_confirmation
+test "$profile_feedback_confirmation" = 'no actionable feedback'
 backlog task 27019 --plain | rg -q 'Status:.*Done'
 test -z "$(git status --short)"
 ```
 
-Expected: all ACs and executed plan steps are checked, implementation notes and the PR reference are recorded, TASK-27019 is **Done**, and the final plan/task metadata commit is pushed and green.
+Expected: all ACs and executed plan steps are checked, implementation notes and the PR reference are recorded, and the final metadata head is pushed and green. The PR must still point at that exact head and the unchanged rebased `dev` OID, remain mergeable and `CLEAN`, retain its clean review state, contain only the exact documentation allowlist, have no unresolved review threads, and have no actionable final-head feedback. TASK-27019 is **Done** only while all of those assertions remain true.
 
-If a final check exposes any required repository edit, do not edit docs/code while the task is Done. The status change below must be the first mutation; commit and push it, then return to Step 2 and repeat the review/close loop:
+If a final check fails because the base advanced, the PR is behind/conflicting, review was dismissed or requests changes, scope changed, checks are pending/failing, a review thread is unresolved, actionable feedback remains, or any repository edit is required, TASK-27019 cannot silently remain Done. Do not edit docs/code while the task is Done. The status change below must be the first mutation; commit and push it, then return to Step 2 and repeat the review/close loop:
 
 ```bash
 set -e -o pipefail
