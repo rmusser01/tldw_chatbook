@@ -630,3 +630,98 @@ async def test_edit_mode_payload_targets_server_definition_id_when_mirrored(
         payload = app.screen._build_payload()
         assert payload["definition_id"] == "srv-def-42"
         assert payload["definition_version"] == row["version"]
+
+
+@pytest.mark.parametrize("stored_zone", ["Pacific/Apia", "Mars/Olympus_Mons"])
+@pytest.mark.asyncio
+async def test_edit_mode_prefills_a_non_curated_stored_timezone(
+    local_service, db, stored_zone
+):
+    """Qodo HIGH: a definition saved with a valid-but-non-curated zone
+    (`Pacific/Apia`) assigned a Select value outside its own options and
+    raised `InvalidSelectValueError`, taking the whole edit modal down.
+
+    Mirrors `ReminderForm._timezone_options` (review F4): the row's own zone
+    is always offered, and a zone that does not even resolve locally is
+    offered with an honest label so an unrelated edit round-trips it rather
+    than silently rewriting it to the system zone."""
+    outcome = await local_service.save_definition(
+        {
+            "family": "recurring_question",
+            "mode": "create",
+            "name": "Apia digest",
+            "input": {"question": "What shipped?"},
+            "schedule": {"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
+            "config": {},
+        },
+        "local",
+    )
+    assert outcome.status == "saved"
+    # Write the awkward zone straight onto the row: the normalizer may or
+    # may not accept it as authoring input, but the row can already hold it
+    # (a server mirror or an older client wrote it), and prefill must cope.
+    stored = db.get_automation_definition(outcome.definition_id)
+    stored["schedule"] = {**stored["schedule"], "timezone": stored_zone}
+
+    app = _FormHost(
+        local_service, definition_row=stored, definition_id=stored["id"]
+    )
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+        tz_select = app.screen.query_one("#automation-timezone", Select)
+        assert tz_select.value == stored_zone
+        assert stored_zone in [value for _label, value in tz_select._options]
+
+
+@pytest.mark.asyncio
+async def test_preview_renders_junk_occurrences_instead_of_crashing(local_service):
+    """Qodo MEDIUM: `next_occurrences` crosses the network boundary from the
+    server preview, so entries are not guaranteed to be ISO-8601 strings --
+    or strings at all. `datetime.fromisoformat` raises `TypeError` (not
+    `ValueError`) on a non-string, which took the whole preview render down.
+    """
+    from tldw_chatbook.Scheduling.models import AutomationFamily, AutomationPreview
+    from tldw_chatbook.UI.Screens.scheduling.forms.automation_definition_form import (
+        _format_occurrence,
+    )
+
+    assert _format_occurrence("not-a-date") == "not-a-date"
+    assert _format_occurrence(12345) == "12345"
+    assert _format_occurrence(None) == "None"
+
+    app = _FormHost(local_service)
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen._render_preview(
+            AutomationPreview(
+                mode="create",
+                family=AutomationFamily.RECURRING_QUESTION,
+                status="valid",
+                schedule_preview={
+                    "next_occurrences": [
+                        "2099-01-01T09:00:00+00:00",
+                        {"nope": 1},
+                        None,
+                    ]
+                },
+            )
+        )
+        await pilot.pause()
+        rendered = str(screen.query_one("#automation-preview-text", Static).render())
+        assert "Next runs:" in rendered
+        assert "{'nope': 1}" in rendered
+
+        # A non-list `next_occurrences` must not be sliced/iterated either.
+        screen._render_preview(
+            AutomationPreview(
+                mode="create",
+                family=AutomationFamily.RECURRING_QUESTION,
+                status="valid",
+                schedule_preview={"next_occurrences": "junk"},
+            )
+        )
+        await pilot.pause()
+        assert "Valid." in str(
+            screen.query_one("#automation-preview-text", Static).render()
+        )

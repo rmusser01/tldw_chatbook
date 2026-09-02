@@ -494,7 +494,7 @@ class SyncEngine:
 
         Returns:
             Counts of what happened this cycle (``created``/``updated``/
-            ``invalid``), for the caller's info log.
+            ``invalid``/``orphaned``), for the caller's info log.
         """
         assert self.server_client is not None
         mutations = self.db.get_pending_mutations(
@@ -578,7 +578,16 @@ class SyncEngine:
         definition_payload: dict[str, Any],
     ) -> str:
         """Preview(mode=create) then create; shared by `create` mutations and
-        `update` mutations converted to create (offline-authored or 404'd)."""
+        `update` mutations converted to create (offline-authored or 404'd).
+
+        If the local row is gone by the time the server echoes back (deleted
+        between queueing and replay), the adopt finds nothing to write and the
+        new server definition has no local home. The mutation is still cleared
+        -- replaying it would create a SECOND server definition, not recover
+        the first -- and a sync error naming both ids is recorded so the
+        orphan is discoverable. Deleting it server-side is not this method's
+        call; definition lifecycle actions are a later phase.
+        """
         request = dict(definition_payload)
         request["mode"] = "create"
         # The server's create-mode validator (mirrored locally by
@@ -600,8 +609,23 @@ class SyncEngine:
             preview.get("id"), initial_lifecycle=initial_lifecycle
         )
         created = created if isinstance(created, dict) else {}
-        self.db.adopt_server_definition_identity(local_id, created)
+        adopted = self.db.adopt_server_definition_identity(local_id, created)
         self.db.delete_pending_mutation(mutation_id)
+        if not adopted:
+            server_definition_id = created.get("id") or "unknown"
+            logger.warning(
+                f"Automation definition {local_id} vanished locally before its "
+                f"create push landed; server definition {server_definition_id} "
+                f"has no local row"
+            )
+            self._record_sync_error(
+                f"Automation definition {local_id} was removed while it was "
+                f"being created on the server; the server copy "
+                f"({server_definition_id}) is still there and is not linked "
+                f"to any local automation",
+                owner_id,
+            )
+            return "orphaned"
         return "created"
 
     async def _push_definition_update(

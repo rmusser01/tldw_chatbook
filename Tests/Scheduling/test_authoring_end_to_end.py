@@ -304,3 +304,92 @@ async def test_server_owned_authoring_offline_queue_then_online_sync_replay(db):
     assert refreshed["server_id"] == created_echo["id"]
     assert db.get_pending_mutations(owner, primitive="automation_definition") == []
     assert len(db.list_automation_definitions(owner_id=owner)) == 1
+
+
+@pytest.mark.parametrize("owner_kind", ["local", "offline_server"])
+@pytest.mark.asyncio
+async def test_authored_finding_policy_reaches_its_own_db_column(db, owner_kind):
+    """Qodo HIGH: the chosen finding/retention policy must land on the ROW's
+    dedicated columns, not only inside `config`.
+
+    `automation_execution._resolve_finding_policy` reads
+    `row["finding_policy"]` and `automation_handler` snapshots
+    `task["finding_policy"]` -- a policy stored only under `config` left
+    every authored definition running the column DEFAULT
+    (`balanced_findings`) whatever the author picked. Asserted on the row
+    (and through the real resolver), never through a faked executor.
+    """
+    from tldw_chatbook.Scheduling.automation_execution import _resolve_finding_policy
+
+    payload = _local_definition_payload(
+        config={
+            "generation_mode": "optional",
+            "finding_policy": {"preset": "high_confidence_only"},
+            "retention_policy": {"mode": "custom"},
+        }
+    )
+
+    if owner_kind == "local":
+        owner = "local"
+        svc = SchedulingService(db=db, runtime_source="local")
+        expected_status = "saved"
+    else:
+        # The offline server-owned path writes the local row through the same
+        # helper; it queues a mutation rather than reaching the server (the
+        # fake client is DOWN by default). `visibility_policy` is sent in the
+        # server request's own dict shape, which the fake validates.
+        owner = "server:42"
+        payload["visibility_policy"] = {"mode": "findings_only"}
+        server_client = _ToggleableDefinitionServerClient(
+            _load_preview_response(), _load_created_definition_echo()
+        )
+        svc = SchedulingService(
+            db=db, server_client=server_client, runtime_source=owner
+        )
+        expected_status = "queued"
+
+    outcome = await svc.save_definition(payload, owner)
+    assert outcome.status == expected_status
+
+    row = db.get_automation_definition(outcome.definition_id)
+    assert row["finding_policy"] == {"preset": "high_confidence_only"}
+    assert row["retention_policy"] == {"mode": "custom"}
+    # The real resolver, on the real row: this is what a scheduled run sees.
+    top_k, high_confidence_only = _resolve_finding_policy(row.get("finding_policy"))
+    assert high_confidence_only is True
+    assert top_k == 10
+
+
+@pytest.mark.asyncio
+async def test_editing_a_definition_updates_its_finding_policy_column(db):
+    """The update branch carries the policy too -- switching the preset on an
+    existing definition must move the column, not just `config`."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    created = await svc.save_definition(
+        _local_definition_payload(
+            config={
+                "generation_mode": "optional",
+                "finding_policy": {"preset": "balanced_findings"},
+            }
+        ),
+        "local",
+    )
+    assert created.status == "saved"
+    assert db.get_automation_definition(created.definition_id)["finding_policy"] == {
+        "preset": "balanced_findings"
+    }
+
+    edited = await svc.save_definition(
+        _local_definition_payload(
+            config={
+                "generation_mode": "optional",
+                "finding_policy": {"preset": "high_confidence_only"},
+            }
+        ),
+        "local",
+        definition_id=created.definition_id,
+    )
+    assert edited.status == "saved"
+    assert db.get_automation_definition(created.definition_id)["finding_policy"] == {
+        "preset": "high_confidence_only"
+    }

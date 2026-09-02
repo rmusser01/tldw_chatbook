@@ -1212,6 +1212,68 @@ async def test_sync_now_replays_definition_create_and_dedupes_same_cycle_pull(tm
 
 
 @pytest.mark.asyncio
+async def test_sync_now_definition_create_orphan_clears_mutation_and_reports_both_ids(
+    tmp_path,
+):
+    """Qodo MEDIUM: the local row is deleted between queueing the create and
+    replaying it, so `adopt_server_definition_identity` finds nothing to
+    write and the fresh server definition has no local home.
+
+    The mutation is still cleared -- replaying it would create a SECOND
+    server definition, not recover the first -- and a sync error naming BOTH
+    ids makes the orphan discoverable. (Deleting it server-side is a
+    lifecycle action, out of scope here.)"""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Draft"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "create",
+            "definition_payload": {
+                "family": "recurring_question",
+                "name": "Daily digest",
+                "schedule": {"kind": "cron", "expression": "0 9 * * 1-5"},
+            },
+            "server_definition_id": None,
+        },
+    )
+
+    server_client = _empty_reminders_client()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.create_automation_definition.return_value = {
+        "id": "srv-def-9",
+        "family": "recurring_question",
+        "name": "Daily digest",
+        "lifecycle": "configured",
+    }
+    server_client.list_automation_definitions.return_value = _definition_page([])
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    # The row vanishes after the mutation is queued but before the replay.
+    assert db.delete_automation_definition(local_id) is True
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    ), "replaying would create a duplicate server definition"
+    state = db.get_sync_state("server:1")
+    messages = [err["message"] for err in (state["sync_errors"] or [])]
+    assert any(
+        local_id in message and "srv-def-9" in message for message in messages
+    ), f"the orphan error must name both ids; got {messages}"
+
+
+@pytest.mark.asyncio
 async def test_sync_now_definition_create_invalid_preview_clears_and_records_error(
     tmp_path,
 ):

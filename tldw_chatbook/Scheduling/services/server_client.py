@@ -537,11 +537,23 @@ class SchedulingServerClient:
     ) -> dict[str, Any]:
         """Apply a consumed update-mode preview to an existing definition.
 
-        Retryable: a retried PATCH after an unobserved success fails clean
-        rather than double-applying anything -- the preview is already
-        consumed, so the replay gets the server's preview-already-consumed
-        409 back, which maps to ``ServerClientValidationError`` instead of
-        silently re-patching.
+        NOT retryable at this level (``retry=False``, same precedent as
+        ``create_reminder``). The PATCH consumes the preview, so a retry
+        after an unobserved success does not double-apply -- but it does
+        get the server's preview-already-consumed 409, which maps to
+        ``ServerClientValidationError``: the caller then reports "the
+        server refused your edit" for an edit the server actually applied,
+        and the offline queue never gets the chance to sort it out.
+
+        Failing on the first ambiguous transport error instead routes the
+        save into ``SchedulingService.save_definition``'s existing
+        offline-queue fallback, whose replay runs a FRESH update-mode
+        preview before patching (``SyncEngine._push_definition_update``).
+        That is the only safe retry of this call: a new preview against
+        the definition's current version either succeeds or reports a real
+        conflict, and if the first PATCH did land the replay's preview
+        carries the already-applied fields, so it converges rather than
+        lying.
 
         Args:
             definition_id: The definition to update.
@@ -556,13 +568,12 @@ class SchedulingServerClient:
                 server-side.
             ServerClientValidationError: If the preview is invalid,
                 expired, or already consumed, or policy denies the action.
-            ServerClientServerError: If the server returns a server error
-                after retries are exhausted.
-            ServerClientTimeoutError: If the request times out after
-                retries.
+            ServerClientServerError: If the server returns a server error.
+            ServerClientTimeoutError: If the request times out.
         """
         return await self._call_with_retry(
             "update_scheduled_automation_definition",
             definition_id,
             preview_id,
+            retry=False,
         )

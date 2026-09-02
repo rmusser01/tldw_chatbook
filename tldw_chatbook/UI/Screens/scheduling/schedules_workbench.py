@@ -898,33 +898,34 @@ class SchedulesWorkbench(BaseAppScreen):
         # so a form built before this selector existed (or a caller that
         # omits it) behaves exactly as before.
         target_owner = form_data.pop("owner_id", None) or service.owner_id
+        # This list is owner-scoped, so a save aimed elsewhere cannot appear
+        # in it -- say where it went instead of a bare "created" that reads
+        # as a lost save. Label, not raw id: same vocabulary as the "Runs on"
+        # selector the owner was picked from.
+        owner_label = {
+            value: label for label, value in self._runs_on_options()[0]
+        }.get(target_owner, target_owner)
+        created_message = (
+            "Scheduled task created."
+            if target_owner == service.owner_id
+            else f"Scheduled task created for {owner_label} — switch to that "
+            "owner to see it."
+        )
 
         async def _save_and_refresh() -> None:
-            # ponytail: momentarily flipping the service's shared owner_id
-            # around the single create/update call (the EXISTING owner-
-            # switch path -- `set_owner`, also used by the Local/Server
-            # buttons) is the smallest way to let one save target a
-            # DIFFERENT owner than the screen's current one, reusing
-            # `create_reminder`/`update_reminder` completely unmodified.
-            # Ceiling: another worker reading `service.owner_id` during
-            # the awaited network call would transiently see the flipped
-            # owner. Upgrade path if that ever bites: thread an explicit
-            # `owner_id` parameter through `create_reminder`/
-            # `update_reminder`, mirroring `_owner_uses_server(owner_id)`
-            # (Task 4's precedent for `preview_definition`/
-            # `save_definition`).
-            original_owner = service.owner_id
-            switched = target_owner != original_owner
-            if switched:
-                service.set_owner(target_owner)
+            # The owner is threaded through the call rather than flipped onto
+            # the service around it: `service.owner_id` is shared mutable
+            # state that the sync/refresh/run-now workers also read, and a
+            # flip held across an awaited network round-trip is visible to
+            # every one of them.
             try:
                 if task_id is None:
-                    await service.create_reminder(form_data)
-                    self.app_instance.notify(
-                        "Scheduled task created.", severity="information"
-                    )
+                    await service.create_reminder(form_data, owner_id=target_owner)
+                    self.app_instance.notify(created_message, severity="information")
                 else:
-                    await service.update_reminder(task_id, form_data)
+                    await service.update_reminder(
+                        task_id, form_data, owner_id=target_owner
+                    )
                     self.app_instance.notify(
                         "Scheduled task updated.", severity="information"
                     )
@@ -934,9 +935,6 @@ class SchedulesWorkbench(BaseAppScreen):
                     "Failed to save the scheduled task. Check the form values and try again.",
                     severity="error",
                 )
-            finally:
-                if switched:
-                    service.set_owner(original_owner)
             self._request_tasks_refresh()
 
         self.run_worker(

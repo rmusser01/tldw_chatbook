@@ -95,10 +95,19 @@ _FIELD_ERROR_WIDGET_IDS: dict[str, str] = {
 }
 
 
-def _format_occurrence(raw: str) -> str:
-    """Render one ISO-8601 `next_occurrences` entry as compact local text."""
+def _format_occurrence(raw: Any) -> str:
+    """Render one `next_occurrences` entry as compact local text.
+
+    `next_occurrences` crosses the network boundary from the server preview,
+    so entries are not guaranteed to be ISO-8601 strings -- or strings at
+    all. Anything unparseable renders as its own text rather than raising
+    (`datetime.fromisoformat` raises `TypeError`, not `ValueError`, on a
+    non-string) and taking the whole preview render down with it.
+    """
     from datetime import datetime
 
+    if not isinstance(raw, str):
+        return str(raw)
     try:
         parsed = datetime.fromisoformat(raw)
     except ValueError:
@@ -499,23 +508,46 @@ class AutomationDefinitionForm(ModalScreen):
             if time_text:
                 self.query_one("#automation-preset-time", Input).value = time_text
             self._update_preset_field_visibility(preset_key)
-            tz = schedule.get("timezone")
-            if tz and _is_valid_zone(str(tz)):
-                self.query_one("#automation-timezone", Select).value = str(tz)
+            tz = self._stored_timezone()
+            if tz:
+                self.query_one("#automation-timezone", Select).value = tz
             self._update_schedule_field_visibility(ScheduleKind.RECURRING.value)
 
     # -- timezone helpers (reuse reminder_form's pure functions) -------------
 
+    def _stored_timezone(self) -> str | None:
+        """The edited row's own `schedule.timezone`, if it has one."""
+        row = self._definition_row or {}
+        schedule = row.get("schedule") if isinstance(row.get("schedule"), dict) else {}
+        tz = schedule.get("timezone")
+        return str(tz) if tz else None
+
     def _timezone_options(self) -> list[tuple[str, str]]:
+        """System zone, then the curated list, then this row's stored zone.
+
+        The edited row's OWN zone is always offered, even when it is not in
+        the curated list and even when it does not resolve in local tzdata
+        (labeled honestly then) -- mirrors `ReminderForm._timezone_options`
+        (review F4). Without it, prefilling a definition saved with a valid
+        but non-curated zone (`Pacific/Apia`) assigned a value outside the
+        Select's own options and raised `InvalidSelectValueError`, taking
+        the whole edit modal down.
+        """
         detected = detect_system_timezone()
         zones = [detected or _DEFAULT_TIMEZONE]
-        for zone in _CURATED_TIMEZONES:
+        stored = self._stored_timezone()
+        for zone in list(_CURATED_TIMEZONES) + ([stored] if stored else []):
             if zone not in zones and _is_valid_zone(zone):
                 zones.append(zone)
-        return [(zone, zone) for zone in zones]
+        options = [(zone, zone) for zone in zones]
+        if stored and stored not in zones:
+            options.append(
+                (f"{stored} — stored on this automation, not recognized here", stored)
+            )
+        return options
 
     def _initial_timezone(self) -> str:
-        return system_timezone_name()
+        return self._stored_timezone() or system_timezone_name()
 
     # -- field visibility ------------------------------------------------------
 
@@ -622,6 +654,10 @@ class AutomationDefinitionForm(ModalScreen):
         timezone = str(self.query_one("#automation-timezone", Select).value)
         return {"kind": "cron", "cron": cron, "timezone": timezone}
 
+    def _save_mode(self) -> str:
+        """`"update"` when editing an existing definition, else `"create"`."""
+        return "update" if self._definition_id is not None else "create"
+
     def _build_payload(self) -> dict[str, Any]:
         """Build a `ScheduledTaskPreviewCreateRequest`-shaped payload.
 
@@ -662,7 +698,7 @@ class AutomationDefinitionForm(ModalScreen):
 
         payload: dict[str, Any] = {
             "family": _FAMILY,
-            "mode": "update" if self._definition_id is not None else "create",
+            "mode": self._save_mode(),
             "name": name,
             "input": input_fields,
             "schedule": self._schedule_payload(),
@@ -778,7 +814,15 @@ class AutomationDefinitionForm(ModalScreen):
                 payload, owner
             )
         except Exception:  # noqa: BLE001 - never let a preview crash the modal
-            logger.exception("Automation preview failed")
+            # Routing context only -- owner, which mode, which definition.
+            # NEVER the payload: it carries the user's question text.
+            logger.exception(
+                "Automation preview failed for owner {owner} "
+                "(mode={mode}, definition_id={definition_id})",
+                owner=owner,
+                mode=self._save_mode(),
+                definition_id=self._definition_id,
+            )
             self._set_form_error("Preview failed — check the log and try again.")
             return
         self._render_preview(preview)
@@ -789,7 +833,11 @@ class AutomationDefinitionForm(ModalScreen):
         if preview.status != PreviewStatus.VALID:
             preview_text.update("")
             return
-        occurrences = (preview.schedule_preview or {}).get("next_occurrences") or []
+        raw_occurrences = (preview.schedule_preview or {}).get("next_occurrences")
+        # `schedule_preview` is an untyped `dict[str, Any]` straight off the
+        # server response; a non-list here would otherwise be sliced and
+        # iterated (a str renders one character per "occurrence").
+        occurrences = raw_occurrences if isinstance(raw_occurrences, list) else []
         warnings = [str(w.get("message", "")) for w in (preview.warnings or []) if w.get("message")]
         lines = []
         if occurrences:
@@ -822,7 +870,14 @@ class AutomationDefinitionForm(ModalScreen):
                 payload, owner, definition_id=self._definition_id
             )
         except Exception:  # noqa: BLE001 - never let a save crash the modal
-            logger.exception("Automation save failed")
+            # Same rule as the preview log: routing context, never payload.
+            logger.exception(
+                "Automation save failed for owner {owner} "
+                "(mode={mode}, definition_id={definition_id})",
+                owner=owner,
+                mode=self._save_mode(),
+                definition_id=self._definition_id,
+            )
             self._set_form_error("Save failed — check the log and try again.")
             return
         if outcome.status in ("saved", "queued"):

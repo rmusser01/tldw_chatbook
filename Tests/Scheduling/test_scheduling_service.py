@@ -1652,3 +1652,70 @@ async def test_save_definition_online_success_clears_stale_offline_mutation(db):
     rows = db.list_automation_definitions(owner_id="server:1")
     assert len(rows) == 1
     assert rows[0]["server_id"] == "srv-def-1"
+
+
+@pytest.mark.asyncio
+async def test_create_reminder_targets_another_owner_without_flipping_owner_id(db):
+    """Qodo HIGH: a cross-owner save threads its owner through the call
+    instead of flipping the service's shared `owner_id` around the awaited
+    network round-trip -- concurrent workers (sync, refresh, run-now) read
+    that attribute and must never observe the temporary owner."""
+    observed: list[str] = []
+
+    class _ObservingClient:
+        notifications_service = object()
+
+        async def create_reminder(self, **payload):
+            # Stands in for any concurrent worker reading the shared owner
+            # while this call is in flight.
+            observed.append(svc.owner_id)
+            raise ServerUnavailableError("offline")
+
+    svc = SchedulingService(
+        db=db, server_client=_ObservingClient(), runtime_source="local"
+    )
+
+    task = await svc.create_reminder(
+        _reminder_payload("Server reminder"), owner_id="server:1"
+    )
+
+    assert observed == ["local"], "the active owner must stay untouched"
+    assert svc.owner_id == "local"
+    assert svc.sync_engine.owner_id == "local"
+    # The row and its queued push both land under the TARGET owner.
+    rows = db.list_reminder_tasks(owner_id="server:1")
+    assert [row["id"] for row in rows] == [task.id]
+    assert db.list_reminder_tasks(owner_id="local") == []
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1
+    assert pending[0]["payload"]["action"] == "create"
+
+
+@pytest.mark.asyncio
+async def test_update_reminder_targets_another_owner_without_flipping_owner_id(db):
+    """Same threading rule on the update path."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    created = await svc.create_reminder(_reminder_payload("Server reminder"))
+    # Already known to the server, so the update takes the PATCH branch.
+    db.update_reminder_task(created.id, server_id="srv-1")
+
+    offline_client = AsyncMock()
+    offline_client.notifications_service = object()
+    offline_client.update_reminder.side_effect = ServerUnavailableError("offline")
+    svc.server_client = offline_client
+
+    await svc.update_reminder(created.id, {"title": "Renamed"}, owner_id="server:1")
+
+    assert svc.owner_id == "local"
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1
+    assert pending[0]["payload"]["action"] == "update"
+    assert db.get_reminder_task(created.id)["title"] == "Renamed"
+
+
+@pytest.mark.asyncio
+async def test_reminder_owner_defaults_to_the_active_owner(db):
+    """The new parameter is optional: every pre-existing caller is unchanged."""
+    svc = SchedulingService(db=db, runtime_source="local")
+    task = await svc.create_reminder(_reminder_payload("Default owner"))
+    assert db.get_reminder_task(task.id)["owner_id"] == "local"

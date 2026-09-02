@@ -265,13 +265,28 @@ class SchedulingService:
         self.owner_id = owner_id
         self.sync_engine.owner_id = owner_id
 
-    async def create_reminder(self, payload: dict[str, Any]) -> ReminderTask:
+    async def create_reminder(
+        self, payload: dict[str, Any], *, owner_id: str | None = None
+    ) -> ReminderTask:
         """Create a reminder, preferring the server API when connected.
 
         If the server is unreachable or returns an error, the reminder is stored
         locally and a pending mutation is recorded so the sync engine can push it
         later.
+
+        Args:
+            payload: `ReminderTask` fields to create.
+            owner_id: Write this one reminder under a DIFFERENT owner than
+                the service's active one (the form's "Runs on" selector);
+                defaults to `self.owner_id`, so every existing caller is
+                unchanged. Explicit rather than a `set_owner` flip around
+                the awaited call: `owner_id` is shared mutable state that
+                concurrent workers (sync, refresh, run-now) read, and a
+                flip held across a network round-trip is visible to all of
+                them. Mirrors `_owner_uses_server(owner_id)`, the same
+                precedent `preview_definition`/`save_definition` use.
         """
+        owner_id = owner_id or self.owner_id
         task = ReminderTask(**payload)
         task.next_run_at = self._compute_next_run_at(task)
         server_payload = self._server_create_payload(task)
@@ -286,27 +301,29 @@ class SchedulingService:
             }
         )
 
-        use_server = self._use_server()
+        use_server = self._owner_uses_server(owner_id)
         if use_server:
             assert self.server_client is not None
             try:
                 response = await self.server_client.create_reminder(**server_payload)
-                return await self._persist_server_reminder_response(response)
+                return await self._persist_server_reminder_response(
+                    response, owner_id=owner_id
+                )
             except ServerUnavailableError:
                 logger.warning(
-                    f"Server unavailable while creating reminder for {self.owner_id}"
+                    f"Server unavailable while creating reminder for {owner_id}"
                 )
             except Exception as exc:  # noqa: BLE001 - server errors should fall back
                 logger.exception(
-                    f"Server create_reminder failed for {self.owner_id}: {exc}"
+                    f"Server create_reminder failed for {owner_id}: {exc}"
                 )
 
-        task_id = self.db.create_reminder_task(owner_id=self.owner_id, **db_fields)
+        task_id = self.db.create_reminder_task(owner_id=owner_id, **db_fields)
         if use_server:
             self.db.record_pending_mutation(
                 task_id,
                 _REMINDER_PRIMITIVE,
-                self.owner_id,
+                owner_id,
                 {"action": "create", "fields": server_payload},
             )
         self._notify_queue_changed()
@@ -341,18 +358,27 @@ class SchedulingService:
         return self._row_to_reminder(row)
 
     async def update_reminder(
-        self, task_id: str, payload: dict[str, Any]
+        self, task_id: str, payload: dict[str, Any], *, owner_id: str | None = None
     ) -> ReminderTask | None:
         """Update a reminder, preferring the server API when connected.
 
         Falls back to a local update plus a pending mutation if the server is
         unavailable or returns an error.
+
+        Args:
+            task_id: The local reminder row to update.
+            payload: The fields to change.
+            owner_id: The owner this update belongs to; defaults to
+                `self.owner_id`. Same rationale as `create_reminder`'s --
+                threaded explicitly so a cross-owner save never has to flip
+                the service's shared `owner_id` around an awaited call.
         """
+        owner_id = owner_id or self.owner_id
         row = self.db.get_reminder_task(task_id)
         if row is None:
             return None
 
-        use_server = self._use_server()
+        use_server = self._owner_uses_server(owner_id)
         if use_server:
             assert self.server_client is not None
             server_id = row.get("server_id")
@@ -368,15 +394,15 @@ class SchedulingService:
                         **merged_payload
                     )
                 return await self._persist_server_reminder_response(
-                    response, local_id=task_id
+                    response, local_id=task_id, owner_id=owner_id
                 )
             except ServerUnavailableError:
                 logger.warning(
-                    f"Server unavailable while updating reminder {task_id} for {self.owner_id}"
+                    f"Server unavailable while updating reminder {task_id} for {owner_id}"
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.exception(
-                    f"Server update_reminder failed for {task_id} ({self.owner_id}): {exc}"
+                    f"Server update_reminder failed for {task_id} ({owner_id}): {exc}"
                 )
 
         # Local path: compute next_run_at and clear stale schedule fields
@@ -399,7 +425,7 @@ class SchedulingService:
             self.db.record_pending_mutation(
                 task_id,
                 _REMINDER_PRIMITIVE,
-                self.owner_id,
+                owner_id,
                 {"action": "update", "fields": dict(payload)},
             )
         self._notify_queue_changed()
@@ -1164,6 +1190,16 @@ class SchedulingService:
             "visibility_policy": preview.visibility_policy or {},
             "notification_policy": normalized.get("notification_policy") or {},
             "approval_policy": normalized.get("approval_policy") or {},
+            # Dedicated DB columns, not merely `config` members: the executor
+            # reads `row["finding_policy"]` (`automation_execution.py`'s
+            # `_resolve_finding_policy`) and the run snapshot copies
+            # `task["finding_policy"]` (`automation_handler.py`), so a policy
+            # left only inside `config` reaches neither -- every locally
+            # authored or offline-queued definition ran with the column
+            # DEFAULT (`balanced_findings`) whatever the author picked.
+            # `retention_policy` has the same column and the same exposure.
+            "finding_policy": config.get("finding_policy") or {},
+            "retention_policy": config.get("retention_policy") or {},
             "next_run_at": compute_next_run_at(schedule, now=datetime.now(timezone.utc)),
         }
 
@@ -1290,8 +1326,16 @@ class SchedulingService:
         self,
         response: dict[str, Any],
         local_id: str | None = None,
+        *,
+        owner_id: str | None = None,
     ) -> ReminderTask:
-        """Insert or update the local cache from a server reminder response."""
+        """Insert or update the local cache from a server reminder response.
+
+        `owner_id` defaults to the service's active owner; `create_reminder`/
+        `update_reminder` pass their own so a cross-owner save lands under
+        the owner it was authored for.
+        """
+        owner_id = owner_id or self.owner_id
         local_fields = self._map_server_response_to_local(response)
         server_id = response.get("id")
 
@@ -1301,24 +1345,20 @@ class SchedulingService:
         else:
             existing = None
             if server_id:
-                existing = self.db.get_reminder_task_by_server_id(
-                    self.owner_id, server_id
-                )
+                existing = self.db.get_reminder_task_by_server_id(owner_id, server_id)
             if existing is not None:
                 task_id = existing["id"]
                 self.db.update_reminder_task(task_id, **local_fields)
             else:
                 task_id = self.db.create_reminder_task(
-                    owner_id=self.owner_id, **local_fields
+                    owner_id=owner_id, **local_fields
                 )
 
         if server_id:
-            self.db.set_sync_mapping(
-                task_id, server_id, _REMINDER_PRIMITIVE, self.owner_id
-            )
+            self.db.set_sync_mapping(task_id, server_id, _REMINDER_PRIMITIVE, owner_id)
 
         self.db.delete_pending_mutation_for_record(
-            task_id, _REMINDER_PRIMITIVE, self.owner_id
+            task_id, _REMINDER_PRIMITIVE, owner_id
         )
         self._notify_queue_changed()
 

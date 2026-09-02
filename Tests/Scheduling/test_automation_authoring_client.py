@@ -164,6 +164,31 @@ async def test_preview_and_create_are_retried_on_server_error():
 
 
 @pytest.mark.asyncio
+async def test_update_automation_definition_is_not_retried():
+    """Qodo HIGH: the update PATCH consumes its preview, so a transport-level
+    retry after an unobserved success gets the preview-already-consumed 409
+    back and the save reports "the server refused your edit" for an edit the
+    server actually APPLIED. One attempt only -- an ambiguous transport
+    failure then falls through to `save_definition`'s offline queue, whose
+    replay takes a FRESH update-mode preview (the only safe retry here)."""
+    attempts = {"count": 0}
+
+    class AlwaysFailing:
+        async def update_scheduled_automation_definition(self, definition_id, preview_id):
+            attempts["count"] += 1
+            raise ServerClientServerError("boom")
+
+    client = SchedulingServerClient(
+        AlwaysFailing(), config=ServerClientConfig(retry_delay=0.0)
+    )
+
+    with pytest.raises(ServerClientServerError):
+        await client.update_automation_definition("def-1", "prev-1")
+
+    assert attempts["count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_update_automation_definition_not_found_maps_to_typed_error():
     class DeletedService:
         async def update_scheduled_automation_definition(self, definition_id, preview_id):

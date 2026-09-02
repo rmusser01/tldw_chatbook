@@ -71,6 +71,10 @@ class MockSchedulingService(_MockSchedulingServiceMixin):
         self.updated: list[tuple[str, dict]] = []
         self.created: list[dict] = []
         self.deleted_ids: list[str] = []
+        # Mirrors the real signature's threaded owner (never a `set_owner`
+        # flip), so a cross-owner save is observable here.
+        self.created_owners: list[str | None] = []
+        self.updated_owners: list[str | None] = []
 
     async def list_reminders(self):
         return [
@@ -86,12 +90,16 @@ class MockSchedulingService(_MockSchedulingServiceMixin):
     async def list_tasks(self):
         return await self.list_reminders()
 
-    async def create_reminder(self, payload: dict):
+    async def create_reminder(self, payload: dict, *, owner_id: str | None = None):
         self.created.append(payload)
+        self.created_owners.append(owner_id)
         return ReminderTask(**payload)
 
-    async def update_reminder(self, task_id: str, fields: dict):
+    async def update_reminder(
+        self, task_id: str, fields: dict, *, owner_id: str | None = None
+    ):
         self.updated.append((task_id, fields))
+        self.updated_owners.append(owner_id)
         reminders = await self.list_reminders()
         task = reminders[0]
         for key, value in fields.items():
@@ -941,7 +949,10 @@ async def test_create_reminder_action_saves_new_reminder():
         assert len(service.created) == 1
         assert service.created[0]["title"] == "New reminder"
         assert service.created[0]["schedule_kind"] == "one_time"
+        # Owner threaded through the call, never a `set_owner` flip.
+        assert service.created_owners == [service.owner_id]
         notifications = list(pilot.app._notifications)
+        # Same-owner save: the plain toast, no "switch owner" hint.
         assert any(n.message == "Scheduled task created." for n in notifications)
 
 
@@ -983,8 +994,13 @@ async def test_create_reminder_for_a_different_runs_on_owner_queues_a_mutation(
     """task-5: picking a non-default "Runs on" owner in the create form
     rides the EXISTING `create_reminder` server-fallback/mutation path
     (no new persistence code) -- and the service's shared `owner_id` is
-    restored afterwards, not left pointed at the owner that was only
-    meant for this one save."""
+    never repointed at the owner that was only meant for this one save
+    (Qodo HIGH: the owner is threaded through the call, so no concurrent
+    worker can observe a temporary flip).
+
+    The toast is also checked here (Qodo MEDIUM): this list is owner-scoped,
+    so a reminder created for another owner cannot appear in it -- a bare
+    "Scheduled task created." reads as a lost save."""
     from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
     from tldw_chatbook.Scheduling.services.scheduling_service import SchedulingService
     from tldw_chatbook.Scheduling.services.server_client import ServerUnavailableError
@@ -1031,7 +1047,15 @@ async def test_create_reminder_for_a_different_runs_on_owner_queues_a_mutation(
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
-        assert service.owner_id == "local"  # flipped back after the save
+            toasts = [n.message for n in pilot.app._notifications]
+            assert any(
+                "Server (example.com)" in message
+                and "switch to that owner" in message
+                for message in toasts
+            ), f"the toast must name the owner it was created for; got {toasts}"
+
+        assert service.owner_id == "local"  # never repointed by the save
+        assert service.sync_engine.owner_id == "local"
         pending = db.get_pending_mutations(
             "server:example.com", primitive="reminder_task"
         )
