@@ -14,10 +14,9 @@ from collections.abc import Mapping
 from typing import Any
 
 from tldw_chatbook.Scheduling.models import Health
-from tldw_chatbook.Scheduling.recurring_question_scope import (
-    library_source_types,
-    normalize_recurring_question_scope,
-)
+
+# ADR-097: recurring_question_scope is imported function-level below -- this
+# module is boot-resident and the eager import tipped the ui-ready census.
 
 _CAPABILITY_UNAVAILABLE_REASON = (
     "Library RAG search is not available in this app instance."
@@ -64,6 +63,11 @@ def _unreadable_scoped_source(app: Any, definition_row: dict) -> str | None:
     config = definition_row.get("config") if isinstance(definition_row, Mapping) else None
     if not isinstance(config, Mapping):
         config = {}
+    from tldw_chatbook.Scheduling.recurring_question_scope import (
+        library_source_types,
+        normalize_recurring_question_scope,
+    )
+
     normalized_scope, _errors, _warnings = normalize_recurring_question_scope(config.get("scope"))
     for source_type in library_source_types(normalized_scope):
         attr = _SOURCE_DB_ATTR.get(source_type)
