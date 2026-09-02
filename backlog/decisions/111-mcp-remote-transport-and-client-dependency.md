@@ -2,11 +2,31 @@
 
 Status: **Accepted**
 Date: 2026-09-01
-Accepted: 2026-09-02 — owner chose **Option B** (hand-roll Streamable HTTP + SSE
-on the already-present httpx; no new core dependency, single asyncio
-concurrency model, transports reuse the existing permission gate, rug-pull
-hash, and execution log). TASK-25900 is unblocked; TASK-26032 builds OAuth on
-this transport.
+Accepted: 2026-09-02 — **Option C** (see below). An earlier same-day acceptance
+of Option B was withdrawn within hours: it was made without inspecting the
+owner's own `mcp-unified` package (tldw_server `apps/mcp-unified`, already the
+`mcp` extra's dependency), whose `federation` layer ALREADY defines the exact
+client-transport seam this ADR exists to place — an `ExternalFederationTransport`
+protocol (connect/list_tools/list_resources/read_resource/call_tool) with stdio
+and fake implementations, missing only the network transports. Hand-rolling a
+parallel transport stack in chatbook (B) would duplicate that seam.
+
+## Option C — the accepted decision
+
+Streamable HTTP / SSE (and optionally WebSocket — the mcp-unified GATEWAY
+already serves WebSocket via `gateway/fastapi.py`) are implemented as
+`ExternalFederationTransport` implementations **inside mcp-unified**, in the
+tldw_server repository, released, and the `mcp-unified` pin here bumped.
+Chatbook's half of TASK-25900 becomes WIRING, not transport code: route remote
+server records through `mcp_unified.federation`'s manager under the SAME
+permission gate, definition-hash rug-pull guard, and execution log the stdio
+path uses, with the distinct readiness states AC#6 requires. Consequences:
+- Remote MCP servers require the `mcp` extra (mcp-unified installed); the
+  built-in stdio path stays dependency-free and byte-identical (AC#5).
+- TASK-26032 (OAuth 2.1) is built at the mcp-unified transport layer, where
+  tldw_server's gateway can share it.
+- Cross-repo sequencing: the transport implementations land in tldw_server
+  first; chatbook wiring follows the pin bump.
 Related Task: [TASK-25900](../tasks/task-25900%20-%20MCP-client-Streamable-HTTP-and-SSE-transports.md)
 Number swept against local decisions and origin/dev 2026-09-01; 107–109 and 111 were free (max in use locally: 110; on origin/dev: 106). Re-verify at merge time — ADR numbers collide constantly in this repo.
 
@@ -85,9 +105,9 @@ gate/hash/log machinery unchanged.
   POST-that-may-return-a-stream), and we track MCP transport spec changes by
   hand. OAuth (TASK-26032) is then also ours to build on top.
 
-## Recommendation
+## Superseded recommendation (historical)
 
-**Option B.** For a local-first TUI whose client already hand-rolls JSON-RPC
+**Option B** was the pre-inspection recommendation. For a local-first TUI whose client already hand-rolls JSON-RPC
 by deliberate choice, reusing the existing asyncio connection machinery over
 the already-present `httpx` is the smaller, more coherent change and lands
 squarely on AC#4/#5 (same gate/hash/log, untouched stdio). The transport
