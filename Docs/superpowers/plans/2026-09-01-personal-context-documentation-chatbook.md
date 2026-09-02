@@ -27,6 +27,7 @@
 - `Docs/Development/Developer_Guide.md` — add a concise pointer to the focused guide.
 - `Docs/superpowers/specs/2026-08-31-personal-context-documentation-design.md` — correct review-status metadata only after the shipped-behavior correction has been reviewed and merged; do not alter the authoritative TASK-27016 record.
 - `Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md` — this executable plan.
+- `backlog/docs/lessons-backlog-hygiene.md` — record why merge-candidate uniqueness, not historical-ref uniqueness, is the correct closeout gate after an explicit collision rename.
 - `backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md` — plan, acceptance criteria, evidence, ADR result, and implementation notes.
 
 **Inspect but normally do not modify**
@@ -1460,6 +1461,7 @@ profile_unexpected_paths=$(
     $0 == "Docs/User_Guide/settings/personal-context-profile.md" { next }
     $0 == "Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md" { next }
     $0 == "Docs/superpowers/specs/2026-08-31-personal-context-documentation-design.md" { next }
+    $0 == "backlog/docs/lessons-backlog-hygiene.md" { next }
     $0 == "backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md" { next }
     $0 == "backlog/tasks/task-27019 - MCP-wire-server-initiated-sampling-elicitation-to-the-live-chat-provider-and-approval-surface.md" { next }
     $0 == "backlog/tasks/task-28228 - MCP-wire-server-initiated-sampling-elicitation-to-the-live-chat-provider-and-approval-surface.md" { next }
@@ -1479,7 +1481,7 @@ git diff --stat origin/dev...HEAD
 git diff --stat --cached
 ```
 
-Expected: each guide independently proves its required shared-contract and current-limit claims; all eleven user failure-state labels are explicit; every new discovery link and every internal/server target is checked independently; and the allowed-path assertion accepts only the two guides, two discovery indexes, specification metadata, plan, TASK-27019, and the reviewed MCP task-ID rename across committed, staged, unstaged, and untracked paths.
+Expected: each guide independently proves its required shared-contract and current-limit claims; all eleven user failure-state labels are explicit; every new discovery link and every internal/server target is checked independently; and the allowed-path assertion accepts only the two guides, two discovery indexes, specification metadata, plan, backlog-hygiene lesson, TASK-27019, and the reviewed MCP task-ID rename across committed, staged, unstaged, and untracked paths.
 
 - [x] **Step 6: Commit the completed Task 5 execution record**
 
@@ -1579,7 +1581,10 @@ profile_unexpected_pr_paths=$(
     $0 == "Docs/User_Guide/settings/personal-context-profile.md" { next }
     $0 == "Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md" { next }
     $0 == "Docs/superpowers/specs/2026-08-31-personal-context-documentation-design.md" { next }
+    $0 == "backlog/docs/lessons-backlog-hygiene.md" { next }
     $0 == "backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md" { next }
+    $0 == "backlog/tasks/task-26029 - MCP-client-sampling-and-elicitation-handlers.md" { next }
+    $0 == "backlog/tasks/task-28228 - MCP-wire-server-initiated-sampling-elicitation-to-the-live-chat-provider-and-approval-surface.md" { next }
     NF { print }
   '
 )
@@ -1630,7 +1635,7 @@ backlog task edit 27019 \
   --ref Docs/superpowers/specs/2026-08-31-personal-context-documentation-design.md \
   --ref backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md \
   --ref "$profile_pr_url" \
-  --notes "Implemented the Chatbook Personal Context user and developer guides, discovery links, exact shared-contract parity block, current sync/non-sync matrix, seven structured failure states, and ten-item extension checklist. Verification: [exact Task 5 results]. PR checks/review/base/head/scope: [exact Step 2 results]. ADR required: no new ADR required; existing ADR applies. ADR path: backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md. Reason: documentation only; the existing Personal Context authority, Sync, and encryption ADR applies. Lessons learned: [record a genuine lesson with its incident, or state none]." \
+  --notes "Implemented the Chatbook Personal Context user and developer guides, discovery links, exact shared-contract parity block, current sync/non-sync matrix, eleven structured failure states, and ten-item extension checklist. Verification: [exact Task 5 results]. PR checks/review/base/head/scope: [exact Step 2 results]. ADR required: no new ADR required; existing ADR applies. ADR path: backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md. Reason: documentation only; the existing Personal Context authority, Sync, and encryption ADR applies. Lessons learned: [record a genuine lesson with its incident, or state none]." \
   -s Done
 backlog task 27019 --plain | rg -q 'Status:.*Done'
 if rg -n '^- \[ \]' "$profile_task"; then
@@ -1681,7 +1686,11 @@ profile_expected_pr_paths=$(printf '%s\n' \
   Docs/User_Guide/index.md \
   Docs/User_Guide/settings/personal-context-profile.md \
   Docs/superpowers/plans/2026-09-01-personal-context-documentation-chatbook.md \
-  'backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md' | \
+  Docs/superpowers/specs/2026-08-31-personal-context-documentation-design.md \
+  backlog/docs/lessons-backlog-hygiene.md \
+  'backlog/tasks/task-26029 - MCP-client-sampling-and-elicitation-handlers.md' \
+  'backlog/tasks/task-27019 - Document-Personal-Context-Profile-for-Chatbook-users-and-developers.md' \
+  'backlog/tasks/task-28228 - MCP-wire-server-initiated-sampling-elicitation-to-the-live-chat-provider-and-approval-surface.md' | \
   sort
 )
 if [ "$profile_final_pr_paths" != "$profile_expected_pr_paths" ]; then
