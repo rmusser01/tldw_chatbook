@@ -772,7 +772,25 @@ class LocalMCPControlService:
 
     def _get_client(self) -> MCPClient:
         if self.client is None:
-            self.client = MCPClient()
+            client = MCPClient()
+            # TASK-27019 (AC#4): every connection gets a per-server dispatcher
+            # for server-initiated sampling/elicitation -- policy from config
+            # (default deny), sampling through the live chat provider,
+            # elicitation as a confirmation through this store's approvals.
+            try:
+                from tldw_chatbook.MCP.live_server_request_wiring import (
+                    build_server_request_dispatcher_factory,
+                )
+
+                client._server_request_dispatcher_factory = (
+                    build_server_request_dispatcher_factory(self.store)
+                )
+            except Exception:  # noqa: BLE001 - wiring failure degrades to -32601
+                logger.opt(exception=True).warning(
+                    "could not wire MCP server-request handlers; "
+                    "server-initiated requests will get method-not-found"
+                )
+            self.client = client
         return self.client
 
     def _build_spawn_env(self, profile: LocalExternalMCPProfile) -> dict[str, str]:

@@ -903,6 +903,11 @@ class MCPClient:
         self._server_request_dispatcher: Optional[
             Callable[[str, Dict[str, Any]], Awaitable[Any]]
         ] = None
+        # TASK-27019: preferred over the single dispatcher -- called with the
+        # server_id at connect time so policy/budget are PER SERVER.
+        self._server_request_dispatcher_factory: Optional[
+            Callable[[str], Any]
+        ] = None
 
         logger.info("MCP Client '{}' initialized", name)
 
@@ -991,10 +996,22 @@ class MCPClient:
                         server_id, session=session, pending=pending
                     )
 
+            connection_dispatcher = self._server_request_dispatcher
+            if self._server_request_dispatcher_factory is not None:
+                try:
+                    per_server = self._server_request_dispatcher_factory(server_id)
+                except Exception:  # noqa: BLE001 - factory failure = no handler
+                    logger.opt(exception=True).warning(
+                        "MCP server-request dispatcher factory failed; "
+                        "server-initiated requests will get method-not-found"
+                    )
+                    per_server = None
+                if per_server is not None:
+                    connection_dispatcher = per_server.handle
             session = _StdioJSONRPCConnection(
                 process,
                 client_name=self.name,
-                server_request_dispatcher=self._server_request_dispatcher,
+                server_request_dispatcher=connection_dispatcher,
             )
             pending.session = session
             session._on_transport_failure = cleanup_failed_transport
