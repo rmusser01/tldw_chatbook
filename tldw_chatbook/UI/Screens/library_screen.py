@@ -24106,7 +24106,13 @@ class LibraryScreen(BaseAppScreen):
         """Select mode: toggle the row's checkbox. Normal mode: select the row.
 
         In select mode, a row press toggles that row's id in
-        ``_library_conversations_row_selection`` and patches the row's
+        ``self._conversations_state.row_selection`` (conversations resolves
+        its selection state through the dotted ``_conversations_state``
+        path, not a flat ``_library_conversations_row_selection`` attribute
+        -- see ``_apply_library_row_toggle``'s docstring in
+        ``UI/Library_Modules/canvas_sync.py`` for the attrgetter dispatch
+        that routes each not-yet-extracted subsystem's flat name versus
+        conversations' dotted one) and patches the row's
         marker, the "N selected" Static, and export-selected's disabled
         state in place (task-252 Tier 1) -- it never sets the normal-mode
         selection/detail while in select mode. Outside select mode,

@@ -5,11 +5,22 @@ exemplar; ``backlog/docs/library-decomposition-recipe.md``,
 ``.superpowers/sdd/2026-09-01-library-decomposition-foundation`` task 6).
 Every field here was moved verbatim out of ``LibraryScreen.__init__`` in
 ``tldw_chatbook/UI/Screens/library_screen.py`` -- same default, same type.
-``library_screen.py`` keeps every original ``_library_conversation*``
+``library_screen.py`` originally kept every original ``_library_conversation*``
 attribute name alive as a generated getter/setter ``@property`` shim
-pointing at ``self._conversations_state.<field>`` (see the sentinel-wrapped
-block right after the ``LibraryScreen`` class body); a later controller PR
-in this series moves the subsystem's methods here too.
+pointing at ``self._conversations_state.<field>`` (a sentinel-wrapped block
+right after the ``LibraryScreen`` class body). The conversations cleanup PR
+(task 9) deleted that screen-side shim block entirely once the subsystem's
+methods had all moved to controllers and the screen's own remaining
+references were retargeted to call through those controllers instead. The
+two controllers that took over the subsystem's methods
+(``LibraryConversationReaderController``, task 7;
+``LibraryConversationsController``, task 8) each carry their OWN generated
+shim block in its place -- reading/writing through an injected
+``conversations_state_accessor`` rather than a direct
+``self._conversations_state`` attribute, since neither controller holds the
+state object itself. See each controller module's own shim-block comment
+for why those blocks are permanent (not cleanup-PR deletion targets, unlike
+the one this class's own state PR originally shared).
 
 Three fields (``reader_preferences``, ``reader_persistence_locks``,
 ``reader_layout``) keep their *original* ``__init__`` assignment line
@@ -27,21 +38,26 @@ outside Conversations' ownership:
 - ``reader_layout`` is derived from ``reader_preferences`` after it settles
   from the shared snapshot above.
 
-Those three lines keep assigning through the original attribute name
-(e.g. ``self._library_conversation_reader_preferences = ...``); the
-generated property shim silently routes the assignment into this
-dataclass's field, so the observable end-of-``__init__`` state is
-unchanged. Their dataclass defaults below are therefore momentary
-placeholders, overwritten before anything else in ``__init__`` reads them.
+Those three lines originally kept assigning through the original attribute
+name (e.g. ``self._library_conversation_reader_preferences = ...``), routed
+into this dataclass's field by the screen's property shim. The
+conversations cleanup PR retargeted all three to assign directly through
+``self._conversations_state.<field>`` (e.g.
+``self._conversations_state.reader_preferences = ...``) once that shim
+block was deleted (see above), so the observable end-of-``__init__`` state
+is unchanged but the routing is now direct rather than shim-mediated.
+Their dataclass defaults below are therefore momentary placeholders,
+overwritten before anything else in ``__init__`` reads them.
 
 ``CONVERSATIONS_PLURAL_STATE_FIELDS`` (added task 8): the single
 authoritative home for which field names use the plural
 ``_library_conversations_<name>`` shim prefix versus the singular
 ``_library_conversation_<name>`` prefix every other field uses.
-``LibraryScreen``'s own generated shim block (task 6),
-``LibraryConversationReaderController``'s shim block (task 7), and
-``LibraryConversationsController``'s shim block (task 8) all import this
-constant instead of each keeping its own literal copy -- task 7's fix
+``LibraryScreen``'s own generated shim block (task 6) imported this
+constant while it existed (it was deleted at cleanup -- see above);
+``LibraryConversationReaderController``'s shim block (task 7) and
+``LibraryConversationsController``'s shim block (task 8) still do, instead
+of each keeping its own literal copy -- task 7's fix
 round 1 flagged the screen's and the reader controller's independent
 copies of this same two-name set as a concrete, reviewer-identified drift
 risk: a future field added to one copy and not the other fails silently,
@@ -109,8 +125,9 @@ class LibraryConversationsState:
     deleted_selection_id: str = ""
 
     # Placeholder defaults only -- see module docstring: the original
-    # `__init__` line for each of these three still runs (through the
-    # property shim) before anything reads it.
+    # `__init__` line for each of these three still runs (assigning
+    # directly through `self._conversations_state.<field>` since the
+    # cleanup PR deleted the property shim) before anything reads it.
     reader_preferences: AdaptiveReaderLayoutPreferences = field(
         default_factory=AdaptiveReaderLayoutPreferences
     )

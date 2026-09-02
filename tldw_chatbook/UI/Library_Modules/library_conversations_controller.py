@@ -12,6 +12,23 @@ selection/multiselect, export, filter, empty/retry states, and the
 label helpers those clusters share. ``LibraryScreen`` keeps one-line
 delegators under every one of these original names.
 
+Note: the ``@on(...)`` decorators kept on this controller's own ten moved
+methods (``handle_library_conversations_select_toggle``/``_select_all``/
+``_select_clear``, ``handle_library_conversations_export``,
+``handle_library_conversations_filter_submitted``,
+``handle_library_conversations_retry``,
+``handle_library_conversations_previous``/``_next``,
+``open_selected_conversation_in_console``,
+``use_selected_conversation_as_source``) are inert here -- Textual
+dispatches ``@on`` handlers against the mounted widget/screen that receives
+the message, and this controller is neither. Real dispatch happens on
+``LibraryScreen``'s own ``@on``-decorated delegator (the copy that actually
+receives the message), which then calls this controller's method directly
+by name. The decorator survives the move only because the byte-for-byte
+canon (recipe §1) forbids editing a moved body, decorator line included --
+see ``LibraryConversationReaderController``'s module docstring (task 7) for
+the sibling note on this same pattern.
+
 **Ownership decision recorded per the recipe's brief:**
 ``_set_library_destination_with_conversation_fence`` stays on the screen,
 UNMOVED. Despite its name, it is the shared rail/destination-switch helper
@@ -122,8 +139,11 @@ ONE class-level rebinding, done from ``library_screen.py`` after both
 classes are fully defined (avoiding the circular import a controller-side
 ``from ..Screens.library_screen import LibraryScreen`` would create):
 ``LibraryConversationsController._safe_text = staticmethod(LibraryScreen._safe_text)``.
-See ``library_screen.py``'s own trailing module-level code, next to the
-generated state-shim block, for that one line. This ALSO serves the
+See ``library_screen.py``'s own trailing module-level code -- the last
+statement in the file -- for that one line. (It no longer sits next to a
+generated state-shim block: the conversations cleanup PR deleted the
+screen's own shim block entirely, so this rebinding is now the last thing
+in the module.) This ALSO serves the
 cluster's three regular (non-classmethod) ``self._safe_text(...)`` call
 sites -- there is deliberately no separate instance-level ``@property``/
 constructor-dependency for ``_safe_text`` (an earlier version of this
@@ -1672,7 +1692,18 @@ class LibraryConversationsController:
         event.stop()
         self._open_selected_conversation_handoff()
 
-# --- BEGIN generated conversations-state shims (delete wholesale at cleanup) ---
+# --- BEGIN generated conversations-state shims ---
+# Permanent, not a cleanup-PR deletion target: the conversations cleanup PR
+# landed (shims and dead delegators removed on `LibraryScreen`) and
+# deliberately KEPT this block. Deleting it would mean editing this
+# controller's own moved-method bodies to read `self._conversations_state.*`
+# directly, which the byte-for-byte canon (recipe §1,
+# `backlog/docs/library-decomposition-recipe.md`) forbids -- moved bodies
+# are never edited, so the attribute names they already use have to keep
+# resolving through *something*. This block is that something, and it stays
+# byte-for-byte-canon-permanent until a phase-C rewrite of this cluster
+# (see the design doc's Phase C) actually rewrites the bodies.
+#
 # task 8: exposes every `LibraryConversationsState` field under its original
 # `_library_conversation*`/`_library_conversations_*` name on THIS
 # controller too, reading/writing through the injected

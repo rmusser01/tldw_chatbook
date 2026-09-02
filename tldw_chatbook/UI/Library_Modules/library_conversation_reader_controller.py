@@ -894,7 +894,18 @@ class LibraryConversationReaderController:
         event.stop()
         self._retry_library_conversation_reader()
 
-# --- BEGIN generated conversations-state shims (delete wholesale at cleanup) ---
+# --- BEGIN generated conversations-state shims ---
+# Permanent, not a cleanup-PR deletion target: the conversations cleanup PR
+# landed (shims and dead delegators removed on `LibraryScreen`) and
+# deliberately KEPT this block. Deleting it would mean editing this
+# controller's own moved-method bodies to read `self._conversations_state.*`
+# directly, which the byte-for-byte canon (recipe §1,
+# `backlog/docs/library-decomposition-recipe.md`) forbids -- moved bodies
+# are never edited, so the attribute names they already use have to keep
+# resolving through *something*. This block is that something, and it stays
+# byte-for-byte-canon-permanent until a phase-C rewrite of this cluster
+# (see the design doc's Phase C) actually rewrites the bodies.
+#
 # task 7: exposes every `LibraryConversationsState` field under its original
 # `_library_conversation*`/`_library_conversations_*` name on THIS controller
 # too, reading/writing through the injected `conversations_state_accessor`

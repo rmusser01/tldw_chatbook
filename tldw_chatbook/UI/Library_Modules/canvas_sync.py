@@ -160,20 +160,29 @@ def _apply_library_row_toggle(
 
     Args:
         screen: The Library screen instance driving the update.
-        kind: One of "conversations", "media", "notes" -- selects
-            ``screen._library_<kind>_row_selection`` and the
+        kind: One of "conversations", "media", "notes" -- selects the
             ``#library-<kind>-selected-count`` /
-            ``#library-<kind>-export-selected`` action-strip ids.
+            ``#library-<kind>-export-selected`` action-strip ids, plus the
+            row-selection object: for "conversations" that is the dotted
+            path ``screen._conversations_state.row_selection`` (extracted
+            to ``LibraryConversationsState``, task 6/9); for every other,
+            not-yet-extracted kind it is still the flat attribute
+            ``screen._library_<kind>_row_selection``. ``operator.attrgetter``
+            resolves both shapes identically -- see the dispatch comment in
+            this function's body.
         button: The pressed row's Button, rendered with the marker at
             position 0 (``f"{marker} {title}..."`` / notes'
             ``f"{marker} {title}..."`` glyph shape) -- only that leading
             character is replaced; the rest of the label (title,
             secondary line) is untouched since a selection toggle never
             changes it.
-        row_id: The row's id, already toggled into/out of
-            ``screen._library_<kind>_row_selection`` by the caller --
-            read back here (single source of truth) rather than inferred
-            by flipping the old marker text.
+        row_id: The row's id, already toggled into/out of the same
+            row-selection object described under ``kind`` above (dotted
+            ``screen._conversations_state.row_selection`` for
+            conversations, flat ``screen._library_<kind>_row_selection``
+            for every other kind) by the caller -- read back here (single
+            source of truth) rather than inferred by flipping the old
+            marker text.
 
     Returns:
         None.
