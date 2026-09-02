@@ -184,7 +184,9 @@ def test_the_skills_stack_defers_only_the_trust_service(
     local = app.local_skills_service
 
     assert scope is not None and local is not None
-    assert keyring_spy == [], f"building the skills facade hit the keyring: {keyring_spy}"
+    assert keyring_spy == [], (
+        f"building the skills facade hit the keyring: {keyring_spy}"
+    )
 
     assert local.trust_service is not None
     assert "get_keyring" in keyring_spy, (
@@ -276,6 +278,144 @@ def test_apply_seeds_the_registry_and_attaches_the_store() -> None:
     assert app.library_ingest_jobs.merged == (["j1"], 7)
     assert app.library_ingest_jobs.attached is store
     assert app._library_ingest_jobs_store is store
+
+
+# --------------------------------------------------------------------------
+# Portable Tool Pack service stays post-ready and all-or-nothing
+# --------------------------------------------------------------------------
+
+
+def test_tool_pack_wiring_schedules_one_post_ready_thread_worker() -> None:
+    calls: list[dict[str, Any]] = []
+    fake = SimpleNamespace(
+        _ui_ready=False,
+        _tool_pack_wiring_started=False,
+        tool_pack_service=None,
+        tool_pack_service_unavailable_reason="not_ready",
+        _compose_tool_pack_service_off_thread=lambda: None,
+        run_worker=lambda work, **kwargs: calls.append({"work": work, **kwargs}),
+    )
+
+    TldwCli._deferred_wire_tool_pack_service(fake)
+    assert calls == []
+
+    fake._ui_ready = True
+    TldwCli._deferred_wire_tool_pack_service(fake)
+    TldwCli._deferred_wire_tool_pack_service(fake)
+
+    assert len(calls) == 1
+    assert calls[0]["thread"] is True
+    assert calls[0]["exit_on_error"] is False
+    assert fake.tool_pack_service_unavailable_reason == "starting"
+
+
+def test_tool_pack_composition_failure_attaches_no_partial_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Tool_Packs.service import ToolPackService
+
+    registry = SimpleNamespace(
+        attachments=[],
+        attach_tool_profile_guard=lambda guard: registry.attachments.append(guard),
+    )
+    fake = SimpleNamespace(
+        unified_mcp_service=SimpleNamespace(permission_store=object()),
+        local_mcp_control_service=object(),
+        workspace_registry_service=registry,
+        tool_pack_service=None,
+        tool_pack_service_unavailable_reason="starting",
+        call_from_thread=lambda callback, *args: callback(*args),
+    )
+    fake._mark_tool_pack_service_unavailable = lambda category: (
+        TldwCli._mark_tool_pack_service_unavailable(fake, category)
+    )
+    monkeypatch.setattr(
+        ToolPackService,
+        "compose",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("/private secret")),
+    )
+
+    TldwCli._compose_tool_pack_service_off_thread(fake)
+
+    assert fake.tool_pack_service is None
+    assert fake.tool_pack_service_unavailable_reason == "composition_unavailable"
+    assert registry.attachments == []
+
+
+def test_tool_pack_prerequisite_failure_attaches_no_guard() -> None:
+    registry = SimpleNamespace(
+        attachments=[],
+        attach_tool_profile_guard=lambda guard: registry.attachments.append(guard),
+    )
+    fake = SimpleNamespace(
+        unified_mcp_service=None,
+        local_mcp_control_service=object(),
+        workspace_registry_service=registry,
+        tool_pack_service=None,
+        tool_pack_service_unavailable_reason="starting",
+        call_from_thread=lambda callback, *args: callback(*args),
+    )
+    fake._mark_tool_pack_service_unavailable = lambda category: (
+        TldwCli._mark_tool_pack_service_unavailable(fake, category)
+    )
+
+    TldwCli._compose_tool_pack_service_off_thread(fake)
+
+    assert fake.tool_pack_service is None
+    assert fake.tool_pack_service_unavailable_reason == "prerequisites_unavailable"
+    assert registry.attachments == []
+
+
+def test_complete_tool_pack_composition_attaches_exactly_once_at_user_data_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import tldw_chatbook.app as app_module
+    from tldw_chatbook.Tool_Packs.catalog_snapshot import PermissionInventoryRegistry
+    from tldw_chatbook.Tool_Packs.service import ToolPackService
+
+    calls: list[dict[str, object]] = []
+    guard = object()
+    composed = SimpleNamespace(
+        binding_guard=guard,
+        reconcile_receipts=lambda: SimpleNamespace(unavailable_category=None),
+    )
+    registry = SimpleNamespace(
+        attachments=[],
+        attach_tool_profile_guard=lambda value: registry.attachments.append(value),
+    )
+    fake = SimpleNamespace(
+        unified_mcp_service=SimpleNamespace(permission_store=object()),
+        local_mcp_control_service=object(),
+        workspace_registry_service=registry,
+        tool_pack_service=None,
+        tool_pack_service_unavailable_reason="starting",
+        tool_pack_receipt_reconciliation_unavailable_reason="not_run",
+        call_from_thread=lambda callback, *args: callback(*args),
+    )
+    fake._mark_tool_pack_service_unavailable = lambda category: (
+        TldwCli._mark_tool_pack_service_unavailable(fake, category)
+    )
+    fake._attach_tool_pack_service = lambda service, category: (
+        TldwCli._attach_tool_pack_service(fake, service, category)
+    )
+    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        PermissionInventoryRegistry, "v1", lambda *_args, **_kwargs: "sealed"
+    )
+    monkeypatch.setattr(
+        ToolPackService,
+        "compose",
+        lambda **kwargs: calls.append(kwargs) or composed,
+    )
+
+    TldwCli._compose_tool_pack_service_off_thread(fake)
+    TldwCli._attach_tool_pack_service(fake, composed, None)
+
+    assert calls[0]["inventory"] == "sealed"
+    assert calls[0]["receipt_root"] == tmp_path / "tool_pack_receipts"
+    assert fake.tool_pack_service is composed
+    assert fake.tool_pack_service_unavailable_reason is None
+    assert registry.attachments == [guard]
 
 
 def test_apply_closes_the_store_instead_of_attaching_it_during_shutdown() -> None:

@@ -806,6 +806,9 @@ DEFERRED_NOTES_ORGANIZATION_WIRING_DELAY_SECONDS = 5.0
 #: `Workspaces.agent_provisioning` stays out of the UI-ready census
 #: (ADR-097); same 0.1-0.2 s non-essential-startup window as audio.
 DEFERRED_WORKSPACE_AGENT_PROVISIONING_DELAY_SECONDS = 0.2
+#: Tool Pack policy services and receipt recovery perform optional filesystem
+#: work and are composed only after the first interactive frame.
+DEFERRED_TOOL_PACK_WIRING_DELAY_SECONDS = 0.2
 DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS = 0.1
 DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS = 5.0
 
@@ -7871,6 +7874,14 @@ class TldwCli(
         self._tts_initialization_task: asyncio.Task | None = None
         self._stts_initialization_task: asyncio.Task | None = None
         self._deferred_startup_tasks: set[asyncio.Task] = set()
+        # Portable Tool Packs are unavailable until their post-ready worker
+        # composes every authority owner and attaches one complete guard.
+        self.tool_pack_service: Any | None = None
+        self.tool_pack_service_unavailable_reason: str | None = "not_ready"
+        self.tool_pack_receipt_reconciliation_unavailable_reason: str | None = (
+            "not_run"
+        )
+        self._tool_pack_wiring_started = False
         self._screen_preimport_thread: threading.Thread | None = None
         # task-21110: the splash-overlapped warm-up of the INITIAL route's
         # module. Separate from `_screen_preimport_thread` (the whole-registry
@@ -9259,6 +9270,104 @@ class TldwCli(
                 "Deferred workspace agent provisioning wiring failed; error_type={}",
                 type(exc).__name__,
             )
+
+    def _deferred_wire_tool_pack_service(self) -> None:
+        """Schedule one complete Tool Pack composition after UI readiness."""
+        if (
+            not getattr(self, "_ui_ready", False)
+            or getattr(self, "_tool_pack_wiring_started", False)
+            or getattr(self, "tool_pack_service", None) is not None
+        ):
+            return
+        self._tool_pack_wiring_started = True
+        self.tool_pack_service_unavailable_reason = "starting"
+        try:
+            self.run_worker(
+                self._compose_tool_pack_service_off_thread,
+                name="deferred_tool_pack_service_composition",
+                group="tool-pack-service-composition",
+                thread=True,
+                exclusive=True,
+                exit_on_error=False,
+            )
+        except Exception:
+            self.tool_pack_service_unavailable_reason = "composition_unavailable"
+
+    def _compose_tool_pack_service_off_thread(self) -> None:
+        """Compose and reconcile Tool Packs away from the Textual event loop."""
+        try:
+            unified = getattr(self, "unified_mcp_service", None)
+            local_control = getattr(self, "local_mcp_control_service", None)
+            registry = getattr(self, "workspace_registry_service", None)
+            permission_store = getattr(unified, "permission_store", None)
+            if (
+                permission_store is None
+                or local_control is None
+                or registry is None
+            ):
+                self.call_from_thread(
+                    self._mark_tool_pack_service_unavailable,
+                    "prerequisites_unavailable",
+                )
+                return
+
+            # Deferred imports are intentional: service composition pulls in
+            # archive, receipt, import, activation, and removal owners.
+            from tldw_chatbook.MCP.local_server_tools import (
+                resolve_server_workspace_root,
+            )
+            from tldw_chatbook.Tool_Packs.catalog_snapshot import (
+                PermissionInventoryRegistry,
+            )
+            from tldw_chatbook.Tool_Packs.service import ToolPackService
+
+            inventory = PermissionInventoryRegistry.v1(
+                local_control,
+                fallback_root=resolve_server_workspace_root(),
+            )
+            service = ToolPackService.compose(
+                permission_store=permission_store,
+                inventory=inventory,
+                workspace_registry=registry,
+                receipt_root=get_user_data_dir() / "tool_pack_receipts",
+            )
+            recovery = service.reconcile_receipts()
+            self.call_from_thread(
+                self._attach_tool_pack_service,
+                service,
+                recovery.unavailable_category,
+            )
+        except Exception:
+            self.call_from_thread(
+                self._mark_tool_pack_service_unavailable,
+                "composition_unavailable",
+            )
+
+    def _attach_tool_pack_service(
+        self, service: object, reconciliation_unavailable: str | None
+    ) -> None:
+        """Attach one already-complete service and its guard exactly once."""
+        if getattr(self, "tool_pack_service", None) is not None:
+            return
+        registry = getattr(self, "workspace_registry_service", None)
+        if registry is None:
+            self._mark_tool_pack_service_unavailable("prerequisites_unavailable")
+            return
+        try:
+            registry.attach_tool_profile_guard(service.binding_guard)
+        except Exception:
+            self._mark_tool_pack_service_unavailable("composition_unavailable")
+            return
+        self.tool_pack_service = service
+        self.tool_pack_service_unavailable_reason = None
+        self.tool_pack_receipt_reconciliation_unavailable_reason = (
+            reconciliation_unavailable
+        )
+
+    def _mark_tool_pack_service_unavailable(self, category: str) -> None:
+        """Expose one stable unavailable category without diagnostic detail."""
+        if getattr(self, "tool_pack_service", None) is None:
+            self.tool_pack_service_unavailable_reason = category
 
     def _deferred_wire_notes_sync_services(self) -> None:
         """Compose Notes organization Sync after the first interactive frame."""
@@ -15421,6 +15530,10 @@ class TldwCli(
         self.set_timer(
             DEFERRED_WORKSPACE_AGENT_PROVISIONING_DELAY_SECONDS,
             self._deferred_wire_workspace_agent_provisioning,
+        )
+        self.set_timer(
+            DEFERRED_TOOL_PACK_WIRING_DELAY_SECONDS,
+            self._deferred_wire_tool_pack_service,
         )
         self.set_timer(
             DEFERRED_SCREEN_PREIMPORT_DELAY_SECONDS,
