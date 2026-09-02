@@ -11,12 +11,16 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
 from ....Scheduling.events import (
+    CancelTransferRequested,
     DeleteTaskRequested,
     DisableTaskRequested,
     AcknowledgeIncidentRequested,
     EditTaskRequested,
     EnableTaskRequested,
+    RetryTransferRequested,
     RunReminderNowRequested,
+    TransferToLocalRequested,
+    TransferToServerRequested,
 )
 from ....Scheduling.models import ReminderTask, ScheduledTask, ScheduleKind, TaskStatus
 from ....Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
@@ -394,6 +398,47 @@ def _task_owner_label(task: ReminderTask | ScheduledTask) -> str:
     return owner
 
 
+def transfer_row_dict(task: ReminderTask) -> dict[str, Any]:
+    """Build the raw-row dict `SchedulingService.transfer_refusal`/
+    `transfer_warnings` expect from an already-loaded `ReminderTask`
+    (schedules-handoff spec §6.4, PR-5 task 7).
+
+    Both facade functions were written against real DB rows (ISO date
+    strings, plain enum values) -- this reshapes the in-memory Pydantic
+    model to match without a DB round-trip, since every field they read
+    (`owner_id`, `server_id`, `transfer_state`, `schedule_kind`, `run_at`,
+    `timeout_seconds`) is already on the model.
+    """
+    return {
+        "owner_id": task.owner_id,
+        "server_id": task.server_id,
+        "transfer_state": task.transfer_state,
+        "schedule_kind": task.schedule_kind.value,
+        "run_at": task.run_at.isoformat() if task.run_at else None,
+        "timeout_seconds": task.timeout_seconds,
+    }
+
+
+#: Minimal queue-row signal that a transfer is in flight (spec §9's badge
+#: language, pulled forward from PR-6 only far enough to keep PR-5's state
+#: machine from being silently inert -- plan ruling 1 keeps full badge/
+#: owner-column polish out of scope here).
+_TRANSFER_STATE_ROW_LABELS: dict[str, str] = {
+    "to_server_pending": "Moving to server…",
+    "to_server_sent": "Moving to server…",
+    "from_server_pending": "Waiting for server release",
+    "to_server_failed": "Transfer failed — retry/cancel",
+}
+
+
+def _transfer_row_suffix(task: ReminderTask | ScheduledTask) -> str:
+    """Return a queue-row title suffix for an in-flight transfer, or ``""``."""
+    if not isinstance(task, ReminderTask):
+        return ""
+    label = _TRANSFER_STATE_ROW_LABELS.get(task.transfer_state or "")
+    return f" ({label})" if label else ""
+
+
 def status_badge_text(status: TaskStatus) -> Text:
     """Return a styled Rich Text badge for use in a DataTable cell."""
     label = _humanize_status(status)
@@ -573,6 +618,41 @@ class TaskDetail(Vertical):
             ),
             id="scheduling-task-detail-lifecycle",
         )
+        # schedules-handoff spec §6: per-task ownership transfer. All four
+        # buttons stay visible per-row per UX-059 (only the state-changing
+        # action is enabled); `_update_transfer_buttons` toggles `.display`
+        # per row structure, `set_transfer_reasons` toggles `.disabled` +
+        # the reason text (UX-073).
+        yield Horizontal(
+            Button(
+                "Move to server",
+                id="scheduling-transfer-to-server",
+                variant="primary",
+                tooltip="Queue this task to move to the connected server.",
+            ),
+            Button(
+                "Move to local",
+                id="scheduling-transfer-to-local",
+                variant="primary",
+                tooltip="Queue this server-owned task to move to this device.",
+            ),
+            Button(
+                "Retry transfer",
+                id="scheduling-retry-transfer",
+                variant="warning",
+                tooltip="Retry the failed transfer to the server.",
+            ),
+            Button(
+                "Cancel transfer",
+                id="scheduling-cancel-transfer",
+                variant="warning",
+                tooltip="Cancel this task's in-progress transfer.",
+            ),
+            id="scheduling-task-detail-transfer",
+        )
+        # Visible when a transfer action is disabled: keyboard users can't
+        # see hover tooltips, so the reason must live in text (UX-073).
+        yield Static("", id="scheduling-transfer-why", classes="follow-why")
         yield Button(
             "Follow in Console",
             id="schedules-follow-in-console",
@@ -593,6 +673,10 @@ class TaskDetail(Vertical):
             "scheduling-disable-task",
             "scheduling-delete-task",
             "scheduling-ack-incident",
+            "scheduling-transfer-to-server",
+            "scheduling-transfer-to-local",
+            "scheduling-retry-transfer",
+            "scheduling-cancel-transfer",
         }:
             event.stop()
         if button_id == "scheduling-edit-task":
@@ -605,6 +689,14 @@ class TaskDetail(Vertical):
             self._request_disable()
         elif button_id == "scheduling-delete-task":
             self.request_delete()
+        elif button_id == "scheduling-transfer-to-server":
+            self._request_transfer_to_server()
+        elif button_id == "scheduling-transfer-to-local":
+            self._request_transfer_to_local()
+        elif button_id == "scheduling-retry-transfer":
+            self._request_retry_transfer()
+        elif button_id == "scheduling-cancel-transfer":
+            self._request_cancel_transfer()
         elif button_id == "scheduling-ack-incident":
             self._request_acknowledge()
 
@@ -653,6 +745,26 @@ class TaskDetail(Vertical):
         if isinstance(self._current_task, ReminderTask):
             self.post_message(RunReminderNowRequested(self._current_task))
 
+    def _request_transfer_to_server(self) -> None:
+        """Post a local -> server transfer request (spec §6.1)."""
+        if isinstance(self._current_task, ReminderTask):
+            self.post_message(TransferToServerRequested(self._current_task))
+
+    def _request_transfer_to_local(self) -> None:
+        """Post a server -> local release request (spec §6.2)."""
+        if isinstance(self._current_task, ReminderTask):
+            self.post_message(TransferToLocalRequested(self._current_task))
+
+    def _request_retry_transfer(self) -> None:
+        """Post a retry request for a definitively-failed transfer."""
+        if isinstance(self._current_task, ReminderTask):
+            self.post_message(RetryTransferRequested(self._current_task))
+
+    def _request_cancel_transfer(self) -> None:
+        """Post a cancel request for the current task's in-flight transfer."""
+        if isinstance(self._current_task, ReminderTask):
+            self.post_message(CancelTransferRequested(self._current_task))
+
     def request_delete(self) -> None:
         """Open the delete confirmation modal for the current task."""
         if self._current_task is None:
@@ -686,6 +798,7 @@ class TaskDetail(Vertical):
         lifecycle = self.query_one("#scheduling-task-detail-lifecycle", Horizontal)
         self.query_one("#schedules-follow-in-console", Button)
         empty_state = self.query_one("#scheduling-task-detail-empty-state", Static)
+        transfer_row = self.query_one("#scheduling-task-detail-transfer", Horizontal)
 
         if task is None:
             empty_copy = (
@@ -697,6 +810,8 @@ class TaskDetail(Vertical):
             empty_state.display = True
             metadata.display = False
             lifecycle.display = False
+            transfer_row.display = False
+            self.query_one("#scheduling-transfer-why", Static).update("")
             missed_notice = self.query_one("#scheduling-task-detail-missed", Static)
             missed_notice.update("")
             missed_notice.display = False
@@ -713,6 +828,32 @@ class TaskDetail(Vertical):
         empty_state.display = False
         metadata.display = True
         lifecycle.display = isinstance(task, ReminderTask)
+        transfer_row.display = isinstance(task, ReminderTask)
+        if isinstance(task, ReminderTask):
+            # Structural visibility only (spec §6, PR-5 task 7): Move to
+            # server on any local row, Move to local on any server mirror,
+            # Cancel on any in-flight state, Retry only alongside a
+            # definitively-failed to_server transfer (it re-triggers the
+            # SAME facade call as Move to server, but carries the stored
+            # `transfer_errors` beside it -- worth the redundancy). Which
+            # of the always-shown buttons are ENABLED is `set_transfer_
+            # reasons`' job (workbench-computed, via `transfer_refusal`).
+            is_server_owned = str(task.owner_id or "").startswith("server:")
+            transfer_state = task.transfer_state
+            self.query_one("#scheduling-transfer-to-server", Button).display = (
+                not is_server_owned
+            )
+            self.query_one("#scheduling-transfer-to-local", Button).display = (
+                is_server_owned
+            )
+            self.query_one("#scheduling-retry-transfer", Button).display = (
+                transfer_state == "to_server_failed"
+            )
+            self.query_one("#scheduling-cancel-transfer", Button).display = (
+                transfer_state is not None
+            )
+        else:
+            self.query_one("#scheduling-transfer-why", Static).update("")
 
         # task-23106: a row Schedules does not own says who owns it and
         # where to edit it, instead of only hiding the action row.
@@ -855,6 +996,106 @@ class TaskDetail(Vertical):
             )
         except Exception:  # noqa: BLE001 - widget not mounted yet
             pass
+
+    def set_transfer_reasons(
+        self,
+        *,
+        to_server_reason: str | None,
+        to_local_reason: str | None,
+        retry_reason: str | None,
+        cancel_reason: str | None,
+        retry_errors: list[str],
+    ) -> None:
+        """Apply disabled-with-reason state to the transfer buttons (UX-073).
+
+        Called by the workbench right after `set_task` -- it holds the
+        `SchedulingService` this widget doesn't reach into, so it computes
+        each reason via `transfer_refusal` (spec §6.4, quoting local
+        health verbatim for a refused `recurring_question` release) and
+        passes only the reason relevant to a button `set_task` already
+        decided to show; `None` means the action is allowed. Each reason
+        is BOTH the button's tooltip and a line in the always-visible
+        Static below the row -- keyboard users can't see hover tooltips.
+        """
+        to_server_btn = self.query_one("#scheduling-transfer-to-server", Button)
+        to_local_btn = self.query_one("#scheduling-transfer-to-local", Button)
+        retry_btn = self.query_one("#scheduling-retry-transfer", Button)
+        cancel_btn = self.query_one("#scheduling-cancel-transfer", Button)
+
+        to_server_btn.disabled = to_server_reason is not None
+        to_server_btn.tooltip = (
+            to_server_reason or "Queue this task to move to the connected server."
+        )
+        to_local_btn.disabled = to_local_reason is not None
+        to_local_btn.tooltip = (
+            to_local_reason
+            or "Queue this server-owned task to move to this device."
+        )
+        retry_btn.disabled = retry_reason is not None
+        retry_btn.tooltip = retry_reason or "Retry the failed transfer to the server."
+        cancel_btn.disabled = cancel_reason is not None
+        cancel_btn.tooltip = (
+            cancel_reason or "Cancel this task's in-progress transfer."
+        )
+
+        reason_lines: list[str] = []
+        if to_server_reason:
+            reason_lines.append(f"Move to server: {to_server_reason}")
+        if to_local_reason:
+            reason_lines.append(f"Move to local: {to_local_reason}")
+        if retry_reason:
+            reason_lines.append(f"Retry transfer: {retry_reason}")
+        if cancel_reason:
+            reason_lines.append(f"Cancel transfer: {cancel_reason}")
+        if retry_errors:
+            reason_lines.append("Last transfer error: " + "; ".join(retry_errors))
+        self.query_one("#scheduling-transfer-why", Static).update(
+            "\n".join(reason_lines)
+        )
+
+    def set_lifecycle_lock(self, reason: str | None) -> None:
+        """Freeze Edit/Enable/Disable/Delete while a transfer is in flight.
+
+        Spec §6.3's "dormant and in-flight rows are read-only except
+        cancel" (final review I7): the transfer snapshotted this row's
+        payload at begin time, so an edit made now ships the PRE-edit
+        content to the server and is then overwritten locally by the
+        first mirror pull -- the user's edit vanishes with no warning.
+        ``reason`` comes from `SchedulingService.transfer_lock_reason`
+        (never re-derived here) and is both each button's tooltip and a
+        line in the always-visible Static, since keyboard users cannot
+        see tooltips (UX-073). ``None`` restores the row's normal
+        enabled/disabled logic, which `set_task` has already applied.
+        """
+        locked = reason is not None
+        for button_id, tooltip in (
+            ("scheduling-edit-task", "Edit this scheduled task."),
+            ("scheduling-delete-task", "Delete this scheduled task."),
+        ):
+            button = self.query_one(f"#{button_id}", Button)
+            button.disabled = locked
+            button.tooltip = reason or tooltip
+        enable_btn = self.query_one("#scheduling-enable-task", Button)
+        disable_btn = self.query_one("#scheduling-disable-task", Button)
+        if locked:
+            enable_btn.disabled = True
+            disable_btn.disabled = True
+            enable_btn.tooltip = reason
+            disable_btn.tooltip = reason
+        else:
+            enable_btn.tooltip = "Enable this scheduled task."
+            disable_btn.tooltip = "Disable this scheduled task."
+
+        why = self.query_one("#scheduling-transfer-why", Static)
+        line = f"Edit/Enable/Disable/Delete: {reason}" if reason else ""
+        existing = [
+            text
+            for text in str(why.renderable).split("\n")
+            if text and not text.startswith("Edit/Enable/Disable/Delete:")
+        ]
+        if line:
+            existing.append(line)
+        why.update("\n".join(existing))
 
     def _update_static(self, widget_id: str, content: str) -> None:
         """Update a child Static widget by id."""

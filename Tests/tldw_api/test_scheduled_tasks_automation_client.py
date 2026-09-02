@@ -449,3 +449,82 @@ def test_definition_create_and_update_request_schemas_round_trip():
     assert create.initial_lifecycle == "configured"
     update = ScheduledTaskDefinitionUpdateRequest(preview_id="prev-2")
     assert update.preview_id == "prev-2"
+
+
+# ----------------------------------------------------------------------
+# Definition lifecycle (pause/resume/archive) -- schedules-handoff PR-5,
+# task 2. Mirrors run-now's bare-POST construction (no request body); the
+# response schema is the same `ScheduledTaskDefinitionResponse` create/
+# update/list already validate as `ScheduledTaskAutomationDefinition`.
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pause_definition_posts_to_pause_route(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "id": "def-1",
+            "family": "recurring_question",
+            "name": "Daily stand-up summary",
+            "lifecycle": "paused",
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    result = await client.pause_scheduled_task_definition("def-1")
+
+    assert mocked.await_args.args[:2] == (
+        "POST",
+        "/api/v1/scheduled-tasks/definitions/def-1/pause",
+    )
+    assert isinstance(result, ScheduledTaskAutomationDefinition)
+    assert result.id == "def-1"
+    assert result.lifecycle == "paused"
+
+
+@pytest.mark.asyncio
+async def test_resume_definition_posts_to_resume_route(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "id": "def-1",
+            "family": "recurring_question",
+            "name": "Daily stand-up summary",
+            "lifecycle": "configured",
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    result = await client.resume_scheduled_task_definition("def-1")
+
+    assert mocked.await_args.args[:2] == (
+        "POST",
+        "/api/v1/scheduled-tasks/definitions/def-1/resume",
+    )
+    assert isinstance(result, ScheduledTaskAutomationDefinition)
+    assert result.lifecycle == "configured"
+
+
+@pytest.mark.asyncio
+async def test_archive_definition_posts_to_archive_route(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "id": "def-1",
+            "family": "recurring_question",
+            "name": "Daily stand-up summary",
+            "lifecycle": "archived",
+            "archived_at": "2026-09-01T00:00:00+00:00",
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    result = await client.archive_scheduled_task_definition("def-1")
+
+    assert mocked.await_args.args[:2] == (
+        "POST",
+        "/api/v1/scheduled-tasks/definitions/def-1/archive",
+    )
+    assert isinstance(result, ScheduledTaskAutomationDefinition)
+    assert result.lifecycle == "archived"

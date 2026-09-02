@@ -66,6 +66,42 @@ class RunReminderNowRequested(Message):
         self.task = task
 
 
+class TransferToServerRequested(Message):
+    """Posted when the user asks to move a local reminder to the server
+    (schedules-handoff spec §6.1, PR-5 task 7)."""
+
+    def __init__(self, task: ReminderTask) -> None:
+        super().__init__()
+        self.task = task
+
+
+class TransferToLocalRequested(Message):
+    """Posted when the user asks to move a server-owned reminder mirror to
+    this device (schedules-handoff spec §6.2, PR-5 task 7)."""
+
+    def __init__(self, task: ReminderTask) -> None:
+        super().__init__()
+        self.task = task
+
+
+class CancelTransferRequested(Message):
+    """Posted when the user cancels a reminder's in-progress transfer
+    (schedules-handoff spec §6.3, PR-5 task 7)."""
+
+    def __init__(self, task: ReminderTask) -> None:
+        super().__init__()
+        self.task = task
+
+
+class RetryTransferRequested(Message):
+    """Posted when the user retries a definitively-failed local -> server
+    transfer (schedules-handoff spec §6.1.5, PR-5 task 7)."""
+
+    def __init__(self, task: ReminderTask) -> None:
+        super().__init__()
+        self.task = task
+
+
 class SyncCompleted(Message):
     """Posted when a non-failing sync attempt completes.
 

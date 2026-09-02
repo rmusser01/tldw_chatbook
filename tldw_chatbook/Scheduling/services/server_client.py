@@ -577,3 +577,88 @@ class SchedulingServerClient:
             preview_id,
             retry=False,
         )
+
+    async def pause_automation_definition(self, definition_id: str) -> dict[str, Any]:
+        """Pause a server-side automation definition, retried on failure.
+
+        Retryable: lifecycle transitions are idempotent by nature --
+        pausing an already-paused definition is a no-op server-side, so a
+        retry after an ambiguous transport failure just re-confirms the
+        same state rather than double-applying anything. This keeps the
+        default retry behavior, unlike ``update_automation_definition``.
+
+        Args:
+            definition_id: The server definition to pause.
+
+        Returns:
+            The updated definition row.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientNotFoundError: If the definition does not exist
+                server-side.
+            ServerClientValidationError: If the transition is invalid
+                (e.g. an archived definition can't be paused) or policy
+                denies the action.
+            ServerClientServerError: If the server returns a server error
+                after retries are exhausted.
+            ServerClientTimeoutError: If the request times out after
+                retries.
+        """
+        return await self._call_with_retry(
+            "pause_scheduled_automation_definition", definition_id
+        )
+
+    async def resume_automation_definition(self, definition_id: str) -> dict[str, Any]:
+        """Resume a paused server-side automation definition, retried on failure.
+
+        Retryable for the same reason as ``pause_automation_definition``:
+        resuming an already-configured definition is a no-op server-side.
+
+        Args:
+            definition_id: The server definition to resume.
+
+        Returns:
+            The updated definition row.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientNotFoundError: If the definition does not exist
+                server-side.
+            ServerClientValidationError: If the transition is invalid or
+                policy denies the action.
+            ServerClientServerError: If the server returns a server error
+                after retries are exhausted.
+            ServerClientTimeoutError: If the request times out after
+                retries.
+        """
+        return await self._call_with_retry(
+            "resume_scheduled_automation_definition", definition_id
+        )
+
+    async def archive_automation_definition(self, definition_id: str) -> dict[str, Any]:
+        """Archive a server-side automation definition, retried on failure.
+
+        Retryable for the same reason as ``pause_automation_definition``:
+        archiving an already-archived definition is a no-op server-side.
+
+        Args:
+            definition_id: The server definition to archive.
+
+        Returns:
+            The updated definition row.
+
+        Raises:
+            ServerUnavailableError: If no scheduling server is connected.
+            ServerClientNotFoundError: If the definition does not exist
+                server-side.
+            ServerClientValidationError: If the transition is invalid or
+                policy denies the action.
+            ServerClientServerError: If the server returns a server error
+                after retries are exhausted.
+            ServerClientTimeoutError: If the request times out after
+                retries.
+        """
+        return await self._call_with_retry(
+            "archive_scheduled_automation_definition", definition_id
+        )

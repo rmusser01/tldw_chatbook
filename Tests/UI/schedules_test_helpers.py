@@ -13,6 +13,8 @@ from typing import Any
 
 import pytest
 
+from tldw_chatbook.Scheduling.services.scheduling_service import SchedulingService
+
 
 class MockServerClient:
     """Stub server client for test scheduling services."""
@@ -67,6 +69,18 @@ class MockSchedulingDB:
                 return dict(row)
         return None
 
+    def get_pending_mutations(self, owner_id: str, primitive: str | None = None):
+        """Stub: no pending mutations (schedules-handoff PR-5 task 7 --
+        the detail pane's retry-errors lookup calls this for a
+        `to_server_failed` row; unused otherwise)."""
+        return []
+
+    def get_pending_mutation_for_local_id(self, local_id: str, primitive: str):
+        """Stub: no pending mutation (Task 7 fix round finding 3 --
+        owner-agnostic retry-error lookup for a `to_server_failed` row;
+        unused otherwise)."""
+        return None
+
     def upsert_automation_definitions_from_server(self, owner_id: str, items: list[dict]):
         inserted = 0
         updated = 0
@@ -113,6 +127,74 @@ class MockSchedulingServiceMixin:
 
     async def sync_now(self, owner_id: str | None = None):
         return None
+
+    # -- transfer machine facade (schedules-handoff PR-5 task 7) -----------
+    #
+    # `SchedulesWorkbench._update_transfer_actions` calls `transfer_refusal`
+    # on EVERY row selection, so every existing scheduling-service stub
+    # needs these even when a test never touches a transfer button.
+    # Mirrors the real facade's first gate honestly: no `notifications_
+    # service` wired reads as "no server connection is configured" --
+    # every button renders disabled-with-reason but nothing crashes. A
+    # test that wants transfer buttons enabled overrides this (or wires a
+    # `server_client` whose `notifications_service` is not None and
+    # overrides `transfer_refusal` to return ``None``).
+
+    def transfer_refusal(self, row: dict, direction: str) -> str | None:
+        if getattr(self.server_client, "notifications_service", None) is None:
+            return "No server connection is configured."
+        return None
+
+    #: Delegates to the REAL implementation rather than restating the
+    #: state set (final review I7): `transfer_lock_reason` is a
+    #: `@staticmethod` reading only the row dict, so there is nothing to
+    #: fake -- and a second copy of the in-flight state list here is
+    #: exactly the drift the shared constant was introduced to kill.
+    transfer_lock_reason = staticmethod(SchedulingService.transfer_lock_reason)
+
+    def cancel_refusal(self, row: dict) -> str | None:
+        """Mirrors the real facade's `cancel_refusal` (Task 7 fix round
+        finding 1): honest state-branching, no server-connection gate --
+        cancel never needed one."""
+        state = row.get("transfer_state")
+        if state in ("to_server_pending", "to_server_failed", "from_server_pending"):
+            return None
+        if state == "to_server_sent":
+            return "Too late to cancel -- start a reverse transfer instead."
+        return (
+            "No transfer in progress on this row -- if it already moved, "
+            "start a reverse transfer instead."
+        )
+
+    def transfer_warnings(self, row: dict, direction: str) -> list[str]:
+        return []
+
+    async def begin_transfer_to_server(self, table_kind: str, row_id: str):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            status="refused",
+            reason="Stub scheduling service: transfer not implemented.",
+            row_id=None,
+        )
+
+    async def begin_transfer_to_local(self, table_kind: str, row_id: str):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            status="refused",
+            reason="Stub scheduling service: transfer not implemented.",
+            row_id=None,
+        )
+
+    async def cancel_transfer(self, table_kind: str, row_id: str):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            status="refused",
+            reason="Stub scheduling service: transfer not implemented.",
+            row_id=None,
+        )
 
 
 # --- compositor paint oracles ---------------------------------------------

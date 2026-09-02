@@ -22,6 +22,7 @@ from tldw_chatbook.Scheduling.constants import (
     SCHEDULER_POLL_INTERVAL_SECONDS,
     coerce_positive_float,
 )
+from tldw_chatbook.Scheduling.db.scheduled_tasks_db import DORMANT_TRANSFER_STATES
 from tldw_chatbook.Scheduling.scheduler.queue import (
     PriorityQueue,
     is_server_scoped_owner,
@@ -467,7 +468,83 @@ class SchedulerLoop:
                     task_id=task_id,
                 )
                 continue
+            if not await self._still_armable(task, task_type):
+                continue
             await self.dispatch_reminder(task, handler, task_type, now)
+
+    #: Which DB reader re-validates a queued row at dispatch time, per
+    #: queue task type. Projection rows (watchlist/briefing jobs) have no
+    #: DB row of their own and are absent here -- they are never
+    #: transferable, so there is nothing to re-check.
+    _ARMABILITY_READERS = {
+        "reminder": "get_reminder_task",
+        "automation_definition": "get_automation_definition",
+    }
+
+    async def _still_armable(self, task: dict[str, Any], task_type: str) -> bool:
+        """Re-read a due row's ownership/transfer state right before firing.
+
+        `PriorityQueue.load()` snapshots armable rows and `pop_due` then
+        filters that in-memory list by `next_run_at` alone, so
+        `owner_id`/`transfer_state` are never re-read between the snapshot
+        and the actual dispatch. A transfer push landing inside that
+        window -- it CASes the row to `to_server_sent` and creates the
+        server task while an earlier task in the same due list is being
+        awaited -- left the loop dispatching a row that was, by then, live
+        on the server: one local fire plus one server fire, the exact
+        double execution §3 exists to prevent (final review I6). The
+        manual run-now path already had this guard
+        (`run_reminder_now`/`SchedulingService.run_reminder_now`); this is
+        the same check on the scheduled path.
+
+        Refuses ONLY on a positively-read disqualifying row. A missing row
+        or a failed read falls through to dispatch, so this guard can
+        never silently swallow firings it was not written to stop.
+
+        Deliberately NOT atomic with the dispatch that follows: a run
+        that starts before the disarming CAS completes is the case spec
+        §6.4 closes on -- "an in-flight local run at transfer time
+        completes and writes its result locally -- disarming stops *new*
+        dispatches only. Harmless and stated." This guard minimizes new
+        dispatches; making check+dispatch a single critical section would
+        buy nothing the spec asks for, at the cost of holding a lock
+        across a handler's whole runtime.
+        """
+        reader_name = self._ARMABILITY_READERS.get(task_type)
+        task_id = task.get("id")
+        if reader_name is None or not task_id:
+            return True
+        reader = getattr(self.db, reader_name, None)
+        if reader is None:
+            return True
+        try:
+            row = await asyncio.to_thread(reader, task_id)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Dispatch-time re-check failed for task {task_id}; dispatching anyway",
+                task_id=task_id,
+            )
+            return True
+        if not row:
+            return True
+
+        if is_server_scoped_owner(row.get("owner_id")):
+            reason = "ownership moved to the server"
+        elif row.get("transfer_state") in DORMANT_TRANSFER_STATES:
+            reason = "a transfer is in progress"
+        else:
+            return True
+
+        log_counter(
+            "scheduler_tasks_skipped",
+            labels={"task_type": task_type, "cause": "transfer"},
+        )
+        logger.info(
+            "Skipping due task {task_id}: {reason} since the queue snapshot",
+            task_id=task_id,
+            reason=reason,
+        )
+        return False
 
     async def dispatch_reminder(
         self,
@@ -824,6 +901,19 @@ class SchedulerLoop:
             logger.warning(
                 "Manual reminder run refused for task {task_id}: "
                 "server-scoped rows are executed by the server (ADR-077)",
+                task_id=task_id,
+            )
+            return False
+
+        # spec §6.1 ruling 2: a row actually sent to the server (or a
+        # dormant server-release copy) is not this side's to run. Same
+        # guard `SchedulingService.run_reminder_now` applies -- defense in
+        # depth, since this loop method is itself a public entry point,
+        # not exclusively reached through the service.
+        if row.get("transfer_state") in DORMANT_TRANSFER_STATES:
+            logger.warning(
+                "Manual reminder run refused for task {task_id}: "
+                "a transfer is in progress",
                 task_id=task_id,
             )
             return False

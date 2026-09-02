@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.services.server_client import (
     ServerClientNotFoundError,
+    ServerClientValidationError,
     ServerUnavailableError,
 )
 from tldw_chatbook.Scheduling.services.sync_engine import SyncEngine
@@ -1169,7 +1170,10 @@ async def test_sync_now_replays_definition_create_and_dedupes_same_cycle_pull(tm
             "definition_payload": {
                 "family": "recurring_question",
                 "name": "Daily digest",
-                "schedule": {"kind": "cron", "expression": "0 9 * * 1-5"},
+                # Client vocabulary (schedule_compute.py): `every_seconds`,
+                # not the server's `seconds` -- the push must translate
+                # this onto the wire (schedule_vocabulary.py, task 3).
+                "schedule": {"kind": "interval", "every_seconds": 3600},
             },
             "server_definition_id": None,
         },
@@ -1199,6 +1203,9 @@ async def test_sync_now_replays_definition_create_and_dedupes_same_cycle_pull(tm
     request = server_client.preview_automation_definition.await_args.args[0]
     assert request["mode"] == "create"
     assert "definition_id" not in request
+    assert request["schedule"] == {"kind": "interval", "seconds": 3600}, (
+        "schedule must be translated to server vocabulary on the wire"
+    )
     server_client.create_automation_definition.assert_awaited_once_with(
         "prev-1", initial_lifecycle="configured"
     )
@@ -1236,7 +1243,10 @@ async def test_sync_now_definition_create_orphan_clears_mutation_and_reports_bot
             "definition_payload": {
                 "family": "recurring_question",
                 "name": "Daily digest",
-                "schedule": {"kind": "cron", "expression": "0 9 * * 1-5"},
+                # Client vocabulary (schedule_compute.py): `time_of_day`,
+                # not the server's `at` -- the push must translate this
+                # onto the wire (schedule_vocabulary.py, task 3).
+                "schedule": {"kind": "daily", "time_of_day": "09:00"},
             },
             "server_definition_id": None,
         },
@@ -1263,6 +1273,10 @@ async def test_sync_now_definition_create_orphan_clears_mutation_and_reports_bot
     outcome = await engine.sync_now()
 
     assert outcome.status == "ok"
+    request = server_client.preview_automation_definition.await_args.args[0]
+    assert request["schedule"] == {"kind": "daily", "at": "09:00"}, (
+        "schedule must be translated to server vocabulary on the wire"
+    )
     assert (
         db.get_pending_mutations("server:1", primitive="automation_definition") == []
     ), "replaying would create a duplicate server definition"
@@ -1548,6 +1562,1172 @@ async def test_sync_now_definition_poisoned_mutation_does_not_block_the_rest(tmp
     assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
     errors = (db.get_sync_state("server:1") or {}).get("sync_errors") or []
     assert any("version_conflict" in error["message"] for error in errors)
+
+
+
+# ----------------------------------------------------------------------
+# Definition lifecycle mutation replay (pause/resume/archive) --
+# schedules-handoff PR-5, task 2. Direct endpoint calls (no preview):
+# success mirrors the response echo via `upsert_automation_definitions_
+# from_server` and clears the mutation; `ServerClientNotFoundError` clears
+# it with an info log (nothing left server-side to transition, no local
+# edit to preserve by converting to a create like the update leg does);
+# `ServerClientValidationError` settles via the existing per-mutation
+# rejection path (final review I3 -- one poisoned mutation never blocks
+# the rest); a retryable error leaves the mutation queued.
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sync_now_replays_definition_pause_and_mirrors_echo(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Daily digest", server_id="srv-def-1"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {"action": "pause", "server_definition_id": "srv-def-1"},
+    )
+    server_client = _empty_reminders_client()
+    server_client.pause_automation_definition.return_value = {
+        "id": "srv-def-1",
+        "family": "recurring_question",
+        "name": "Daily digest",
+        "lifecycle": "paused",
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.pause_automation_definition.assert_awaited_once_with("srv-def-1")
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    )
+    row = db.get_automation_definition(local_id)
+    assert row["lifecycle"] == "paused"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_replays_definition_resume(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1",
+        "recurring_question",
+        "Daily digest",
+        server_id="srv-def-1",
+        lifecycle="paused",
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {"action": "resume", "server_definition_id": "srv-def-1"},
+    )
+    server_client = _empty_reminders_client()
+    server_client.resume_automation_definition.return_value = {
+        "id": "srv-def-1",
+        "family": "recurring_question",
+        "name": "Daily digest",
+        "lifecycle": "configured",
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.resume_automation_definition.assert_awaited_once_with("srv-def-1")
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    )
+    assert db.get_automation_definition(local_id)["lifecycle"] == "configured"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_replays_definition_archive(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Daily digest", server_id="srv-def-1"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {"action": "archive", "server_definition_id": "srv-def-1"},
+    )
+    server_client = _empty_reminders_client()
+    server_client.archive_automation_definition.return_value = {
+        "id": "srv-def-1",
+        "family": "recurring_question",
+        "name": "Daily digest",
+        "lifecycle": "archived",
+        "archived_at": "2026-09-01T00:00:00+00:00",
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.archive_automation_definition.assert_awaited_once_with("srv-def-1")
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    )
+    row = db.get_automation_definition(local_id)
+    assert row["lifecycle"] == "archived"
+    assert row["archived_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_lifecycle_not_found_clears_without_sync_error(
+    tmp_path, captured_logs
+):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Gone", server_id="srv-def-gone"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {"action": "archive", "server_definition_id": "srv-def-gone"},
+    )
+    server_client = _empty_reminders_client()
+    server_client.archive_automation_definition.side_effect = ServerClientNotFoundError(
+        "gone"
+    )
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    ), "nothing left server-side to transition -- clear rather than retry forever"
+    state = db.get_sync_state("server:1") or {}
+    assert not (state.get("sync_errors") or []), "a 404 here is not a user-facing error"
+    assert any(
+        level == "INFO" and "srv-def-gone" in message for level, message in captured_logs
+    )
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_lifecycle_validation_error_does_not_block_the_rest(
+    tmp_path,
+):
+    from tldw_chatbook.Scheduling.services.server_client import (
+        ServerClientValidationError,
+    )
+
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    poisoned_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Archived already", server_id="srv-def-old"
+    )
+    db.record_pending_mutation(
+        poisoned_id,
+        "automation_definition",
+        "server:1",
+        {"action": "pause", "server_definition_id": "srv-def-old"},
+    )
+    healthy_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Healthy", server_id="srv-def-healthy"
+    )
+    db.record_pending_mutation(
+        healthy_id,
+        "automation_definition",
+        "server:1",
+        {"action": "resume", "server_definition_id": "srv-def-healthy"},
+    )
+    server_client = _empty_reminders_client()
+    server_client.pause_automation_definition.side_effect = ServerClientValidationError(
+        "scheduled_task_lifecycle_transition_invalid"
+    )
+    server_client.resume_automation_definition.return_value = {
+        "id": "srv-def-healthy",
+        "family": "recurring_question",
+        "name": "Healthy",
+        "lifecycle": "configured",
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    # The healthy resume went through despite the poisoned pause ahead of it.
+    assert db.get_automation_definition(healthy_id)["lifecycle"] == "configured"
+    # And the poisoned one is settled, not left to jam the queue forever.
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    errors = (db.get_sync_state("server:1") or {}).get("sync_errors") or []
+    assert any("lifecycle_transition_invalid" in error["message"] for error in errors)
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_lifecycle_retryable_error_retains_mutation(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Daily digest", server_id="srv-def-1"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {"action": "pause", "server_definition_id": "srv-def-1"},
+    )
+    server_client = _empty_reminders_client()
+    server_client.pause_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "error"
+    assert "offline" in (outcome.error or "")
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1, "the mutation must be left queued for retry"
+    assert db.get_automation_definition(local_id)["lifecycle"] == "configured"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_lifecycle_without_server_id_drops_mutation(tmp_path):
+    """A lifecycle action can't apply to a definition the server has never
+    seen -- unlike `update`, there is no create to convert this into, so an
+    (unreachable via the current queuing path, but defensively guarded)
+    missing `server_definition_id` just drops the mutation rather than
+    retrying forever."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Offline draft"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {"action": "pause", "server_definition_id": None},
+    )
+    server_client = _empty_reminders_client()
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.pause_automation_definition.assert_not_awaited()
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    )
+
+
+# ----------------------------------------------------------------------
+# Local -> server transfer replay (schedules-handoff PR-5, task 4) --
+# spec §6.1. Both primitives share the same disarm-before-send / convert-
+# or-merge / definitive-failure shape; see `_push_definition_transfer`/
+# `_push_reminder_transfer`'s docstrings for the full reasoning.
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_transfer_disarms_before_send_then_converts(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "local", "recurring_question", "Daily digest", lifecycle="paused"
+    )
+    db.set_transfer_state(
+        "automation_definition", local_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "definition_payload": {
+                "family": "recurring_question",
+                "name": "Daily digest",
+                # Client vocabulary -- the push must translate this onto
+                # the wire exactly once (schedule_vocabulary.py, task 3).
+                "schedule": {"kind": "interval", "every_seconds": 3600},
+            },
+        },
+    )
+
+    observed_state_at_send: list[object] = []
+    server_client = _empty_reminders_client()
+
+    async def _preview(request):
+        observed_state_at_send.append(
+            db.get_automation_definition(local_id)["transfer_state"]
+        )
+        return {"id": "prev-1", "status": "valid", "validation_errors": []}
+
+    server_client.preview_automation_definition.side_effect = _preview
+    server_client.create_automation_definition.return_value = {
+        "id": "srv-def-1",
+        "family": "recurring_question",
+        "name": "Daily digest",
+        "lifecycle": "paused",
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    assert observed_state_at_send == ["to_server_sent"], (
+        "the row must be disarmed (to_server_sent) BEFORE the network "
+        "request fires"
+    )
+    request = server_client.preview_automation_definition.await_args.args[0]
+    assert request["mode"] == "create"
+    assert request["schedule"] == {"kind": "interval", "seconds": 3600}
+    server_client.create_automation_definition.assert_awaited_once_with(
+        "prev-1", initial_lifecycle="paused"
+    ), "initial_lifecycle must match the source row's own lifecycle"
+    row = db.get_automation_definition(local_id)
+    assert row["server_id"] == "srv-def-1"
+    assert row["owner_id"] == "server:1"
+    assert row["transfer_state"] is None
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    )
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_transfer_cas_skip_when_not_pending(tmp_path):
+    """A concurrent cancel (or a prior attempt still awaiting Task 6's
+    startup recovery) leaves the row NOT in to_server_pending -- the CAS
+    fails and this replay must not touch the server or the mutation."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "local", "recurring_question", "Daily digest"
+    )
+    # No transfer_state set at all (simulates a cancelled/never-armed row)
+    # despite a queued transfer mutation.
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "definition_payload": {"family": "recurring_question", "name": "X"},
+        },
+    )
+    server_client = _empty_reminders_client()
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.preview_automation_definition.assert_not_awaited()
+    server_client.create_automation_definition.assert_not_awaited()
+    assert (
+        len(db.get_pending_mutations("server:1", primitive="automation_definition"))
+        == 1
+    ), "the mutation is left for whichever process owns the state change to clean up"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_transfer_timeout_retains_sent_and_mutation(
+    tmp_path,
+):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "local", "recurring_question", "Daily digest"
+    )
+    db.set_transfer_state(
+        "automation_definition", local_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "definition_payload": {"family": "recurring_question", "name": "X"},
+        },
+    )
+    server_client = _empty_reminders_client()
+    server_client.preview_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "error"
+    row = db.get_automation_definition(local_id)
+    assert row["transfer_state"] == "to_server_sent", (
+        "disarm precedes the request -- an ambiguous failure leaves the "
+        "row dormant, not re-armed"
+    )
+    assert row["server_id"] is None
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1, "the mutation must be left queued for recovery"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_transfer_merges_with_existing_pulled_mirror(
+    tmp_path,
+):
+    """§4 UNIQUE(owner_id, server_id) race: a pull lands the same server
+    row between this transfer's send and its ack."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    mirror_id = db.create_automation_definition(
+        "server:1",
+        "recurring_question",
+        "Daily digest",
+        server_id="srv-def-1",
+        created_at="2026-08-01T00:00:00+00:00",
+    )
+    local_id = db.create_automation_definition(
+        "local",
+        "recurring_question",
+        "Daily digest (local)",
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+    db.set_transfer_state(
+        "automation_definition", local_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "definition_payload": {
+                "family": "recurring_question",
+                "name": "Daily digest (local)",
+            },
+        },
+    )
+    server_client = _empty_reminders_client()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.create_automation_definition.return_value = {"id": "srv-def-1"}
+    server_client.list_automation_definitions.return_value = _definition_page([])
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    assert db.get_automation_definition(local_id) is None, (
+        "the local transferring row must be deleted on merge"
+    )
+    mirror = db.get_automation_definition(mirror_id)
+    assert mirror is not None
+    assert mirror["created_at"] == "2026-01-01T00:00:00+00:00"
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    )
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_transfer_definitive_failure_no_auto_retry(
+    tmp_path,
+):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "local", "recurring_question", "Daily digest"
+    )
+    db.set_transfer_state(
+        "automation_definition", local_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "definition_payload": {"family": "recurring_question", "name": "X"},
+        },
+    )
+    server_client = _empty_reminders_client()
+    server_client.preview_automation_definition.return_value = {
+        "id": None,
+        "status": "invalid",
+        "validation_errors": [
+            {"field": "schedule.kind", "code": "required", "message": "required"}
+        ],
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.create_automation_definition.assert_not_awaited()
+    row = db.get_automation_definition(local_id)
+    assert row["transfer_state"] == "to_server_failed", (
+        "a definitive failure re-arms the row locally (Task 1: not a "
+        "dormant state)"
+    )
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1, "the mutation is RETAINED, not cleared"
+    assert pending[0]["payload"]["transfer_errors"] == ["schedule.kind:required"]
+    state = db.get_sync_state("server:1") or {}
+    errors = state.get("sync_errors") or []
+    assert any("schedule.kind:required" in error["message"] for error in errors)
+
+    # A second sync cycle must NOT auto-retry the failed transfer.
+    server_client.preview_automation_definition.reset_mock()
+    outcome_2 = await engine.sync_now()
+    assert outcome_2.status == "ok"
+    server_client.preview_automation_definition.assert_not_awaited()
+    assert (
+        len(db.get_pending_mutations("server:1", primitive="automation_definition"))
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_transfer_errors_skip_check_is_not_just_the_cas(
+    tmp_path,
+):
+    """`_replay_definition_mutations`'s own `transfer_errors` skip check
+    (ruling 3: "encode the skip") must stop a replay independently of the
+    CAS guard inside `_push_definition_transfer` -- not merely happen to
+    be covered by it. Force the inconsistent state a plain CAS check alone
+    would NOT catch (row back at `to_server_pending`, but the mutation
+    still carries `transfer_errors` from a prior failure) and confirm the
+    server is still never called."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_automation_definition(
+        "local", "recurring_question", "Daily digest"
+    )
+    db.set_transfer_state(
+        "automation_definition", local_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        local_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "definition_payload": {"family": "recurring_question", "name": "X"},
+            "transfer_errors": ["schedule.kind:required"],
+        },
+    )
+    server_client = _empty_reminders_client()
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.preview_automation_definition.assert_not_awaited()
+    server_client.create_automation_definition.assert_not_awaited()
+    assert (
+        len(db.get_pending_mutations("server:1", primitive="automation_definition"))
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_transfer_poisoned_mutation_does_not_block_the_rest(
+    tmp_path,
+):
+    """Phase discipline (PR-4 Qodo lesson): one poisoned transfer must not
+    block a healthy mutation queued alongside it."""
+    from tldw_chatbook.Scheduling.services.server_client import (
+        ServerClientValidationError,
+    )
+
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    poisoned_id = db.create_automation_definition(
+        "local", "recurring_question", "Poisoned"
+    )
+    db.set_transfer_state(
+        "automation_definition", poisoned_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        poisoned_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "definition_payload": {"family": "recurring_question", "name": "Poisoned"},
+        },
+    )
+    healthy_id = db.create_automation_definition(
+        "local", "recurring_question", "Healthy"
+    )
+    db.set_transfer_state(
+        "automation_definition", healthy_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        healthy_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "definition_payload": {"family": "recurring_question", "name": "Healthy"},
+        },
+    )
+
+    server_client = _empty_reminders_client()
+    server_client.preview_automation_definition.return_value = {
+        "id": "prev-1",
+        "status": "valid",
+        "validation_errors": [],
+    }
+    server_client.create_automation_definition.side_effect = [
+        ServerClientValidationError("scheduled_task_definition_conflict"),
+        {"id": "srv-def-healthy"},
+    ]
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    assert db.get_automation_definition(healthy_id)["server_id"] == "srv-def-healthy"
+    poisoned_row = db.get_automation_definition(poisoned_id)
+    assert poisoned_row["transfer_state"] == "to_server_failed"
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1
+    assert pending[0]["local_id"] == poisoned_id
+    assert "transfer_errors" in pending[0]["payload"]
+
+
+# --- Reminder-side transfer (same shape, no preview step) -------------
+
+
+@pytest.mark.asyncio
+async def test_sync_now_reminder_transfer_disarms_before_send_then_converts(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_reminder_task(
+        owner_id="local", title="Standup", schedule_kind="one_time"
+    )
+    db.set_transfer_state(
+        "reminder_task", local_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        local_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "task_payload": {"title": "Standup", "schedule_kind": "one_time"},
+        },
+    )
+
+    observed_state_at_send: list[object] = []
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+
+    async def _create_reminder(**kwargs):
+        observed_state_at_send.append(
+            db.get_reminder_task(local_id)["transfer_state"]
+        )
+        return {"id": "srv-rem-1", "title": kwargs.get("title")}
+
+    server_client.create_reminder.side_effect = _create_reminder
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    assert observed_state_at_send == ["to_server_sent"], (
+        "the row must be disarmed BEFORE the network request fires"
+    )
+    call_kwargs = server_client.create_reminder.await_args.kwargs
+    assert call_kwargs["link_type"] == "chatbook_transfer"
+    assert call_kwargs["link_id"] == local_id
+    row = db.get_reminder_task(local_id)
+    assert row["server_id"] == "srv-rem-1"
+    assert row["owner_id"] == "server:1"
+    assert row["transfer_state"] is None
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+
+
+@pytest.mark.asyncio
+async def test_sync_now_reminder_transfer_cas_skip_when_not_pending(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_reminder_task(
+        owner_id="local", title="Standup", schedule_kind="one_time"
+    )
+    db.record_pending_mutation(
+        local_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "task_payload": {"title": "Standup", "schedule_kind": "one_time"},
+        },
+    )
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.create_reminder.assert_not_awaited()
+    assert (
+        len(db.get_pending_mutations("server:1", primitive="reminder_task")) == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_sync_now_reminder_transfer_timeout_retains_sent_and_mutation(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_reminder_task(
+        owner_id="local", title="Standup", schedule_kind="one_time"
+    )
+    db.set_transfer_state(
+        "reminder_task", local_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        local_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "task_payload": {"title": "Standup", "schedule_kind": "one_time"},
+        },
+    )
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    server_client.create_reminder.side_effect = ServerUnavailableError("offline")
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "error"
+    row = db.get_reminder_task(local_id)
+    assert row["transfer_state"] == "to_server_sent"
+    assert row["server_id"] is None
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1
+
+
+@pytest.mark.asyncio
+async def test_sync_now_reminder_transfer_merges_with_existing_pulled_mirror(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    mirror_id = db.create_reminder_task(
+        owner_id="server:1",
+        title="Standup",
+        schedule_kind="one_time",
+        server_id="srv-rem-1",
+        created_at="2026-08-01T00:00:00+00:00",
+    )
+    local_id = db.create_reminder_task(
+        owner_id="local",
+        title="Standup (local)",
+        schedule_kind="one_time",
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+    db.set_transfer_state(
+        "reminder_task", local_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        local_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "task_payload": {"title": "Standup (local)", "schedule_kind": "one_time"},
+        },
+    )
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    server_client.create_reminder.return_value = {"id": "srv-rem-1", "title": "Standup"}
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    assert db.get_reminder_task(local_id) is None
+    mirror = db.get_reminder_task(mirror_id)
+    assert mirror is not None
+    assert mirror["created_at"] == "2026-01-01T00:00:00+00:00"
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+
+
+@pytest.mark.asyncio
+async def test_sync_now_reminder_transfer_definitive_failure_no_auto_retry(tmp_path):
+    from tldw_chatbook.Scheduling.services.server_client import (
+        ServerClientValidationError,
+    )
+
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_reminder_task(
+        owner_id="local", title="Standup", schedule_kind="one_time"
+    )
+    db.set_transfer_state(
+        "reminder_task", local_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        local_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "task_payload": {"title": "Standup", "schedule_kind": "one_time"},
+        },
+    )
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    server_client.create_reminder.side_effect = ServerClientValidationError(
+        "field_required"
+    )
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    row = db.get_reminder_task(local_id)
+    assert row["transfer_state"] == "to_server_failed"
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1
+    assert pending[0]["payload"]["transfer_errors"] == ["field_required"]
+
+    server_client.create_reminder.reset_mock(side_effect=True)
+    outcome_2 = await engine.sync_now()
+    assert outcome_2.status == "ok"
+    server_client.create_reminder.assert_not_awaited()
+    assert len(db.get_pending_mutations("server:1", primitive="reminder_task")) == 1
+
+
+@pytest.mark.asyncio
+async def test_sync_now_reminder_transfer_errors_skip_check_is_not_just_the_cas(
+    tmp_path,
+):
+    """Reminder-side equivalent of the definitions-side isolation test:
+    `_network_phase`'s own `transfer_errors` skip check must stop a replay
+    independently of the CAS guard inside `_push_reminder_transfer`. Force
+    the row back to `to_server_pending` while the mutation still carries
+    `transfer_errors` from a prior failure and confirm the server is still
+    never called."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_reminder_task(
+        owner_id="local", title="Standup", schedule_kind="one_time"
+    )
+    db.set_transfer_state(
+        "reminder_task", local_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        local_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "task_payload": {"title": "Standup", "schedule_kind": "one_time"},
+            "transfer_errors": ["field_required"],
+        },
+    )
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.create_reminder.assert_not_awaited()
+    assert len(db.get_pending_mutations("server:1", primitive="reminder_task")) == 1
+
+
+@pytest.mark.asyncio
+async def test_sync_now_reminder_transfer_poisoned_mutation_does_not_block_the_rest(
+    tmp_path,
+):
+    """Reminder-side equivalent of the definitions-side phase-discipline
+    test (PR-4 Qodo lesson): one poisoned transfer must not block a
+    healthy mutation queued alongside it."""
+    from tldw_chatbook.Scheduling.services.server_client import (
+        ServerClientValidationError,
+    )
+
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    poisoned_id = db.create_reminder_task(
+        owner_id="local", title="Poisoned", schedule_kind="one_time"
+    )
+    db.set_transfer_state(
+        "reminder_task", poisoned_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        poisoned_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "task_payload": {"title": "Poisoned", "schedule_kind": "one_time"},
+        },
+    )
+    healthy_id = db.create_reminder_task(
+        owner_id="local", title="Healthy", schedule_kind="one_time"
+    )
+    db.set_transfer_state(
+        "reminder_task", healthy_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        healthy_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "task_payload": {"title": "Healthy", "schedule_kind": "one_time"},
+        },
+    )
+
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    server_client.create_reminder.side_effect = [
+        ServerClientValidationError("field_required"),
+        {"id": "srv-rem-healthy"},
+    ]
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    assert db.get_reminder_task(healthy_id)["server_id"] == "srv-rem-healthy"
+    poisoned_row = db.get_reminder_task(poisoned_id)
+    assert poisoned_row["transfer_state"] == "to_server_failed"
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1
+    assert pending[0]["local_id"] == poisoned_id
+    assert "transfer_errors" in pending[0]["payload"]
+
+
+# ----------------------------------------------------------------------
+# Server -> local release replay (schedules-handoff PR-5, task 5) --
+# spec §6.2. `local_id` on the pending mutation is the SERVER-OWNED
+# MIRROR row the release targets; `payload["local_copy_id"]` is the
+# dormant local-owner copy `create_local_copy_from_mirror` already
+# created, which is what actually arms once the release acks. See
+# `_push_definition_release`/`_push_reminder_release`'s docstrings for
+# the full reasoning.
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_release_archives_and_arms_local_copy(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    mirror_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Daily digest", server_id="srv-def-1"
+    )
+    copy_id = db.create_local_copy_from_mirror("automation_definition", mirror_id)
+    db.record_pending_mutation(
+        mirror_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "release_from_server",
+            "server_definition_id": "srv-def-1",
+            "local_copy_id": copy_id,
+        },
+    )
+    server_client = _empty_reminders_client()
+    server_client.archive_automation_definition.return_value = {
+        "id": "srv-def-1",
+        "family": "recurring_question",
+        "name": "Daily digest",
+        "lifecycle": "archived",
+        "archived_at": "2026-09-01T00:00:00+00:00",
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.archive_automation_definition.assert_awaited_once_with("srv-def-1")
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    )
+    mirror_row = db.get_automation_definition(mirror_id)
+    assert mirror_row["lifecycle"] == "archived", (
+        "the archive echo mirrors onto the server-mirror row"
+    )
+    copy_row = db.get_automation_definition(copy_id)
+    assert copy_row["transfer_state"] is None, "ack arms the local copy"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_release_not_found_treated_as_ack(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    mirror_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Gone", server_id="srv-def-gone"
+    )
+    copy_id = db.create_local_copy_from_mirror("automation_definition", mirror_id)
+    db.record_pending_mutation(
+        mirror_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "release_from_server",
+            "server_definition_id": "srv-def-gone",
+            "local_copy_id": copy_id,
+        },
+    )
+    server_client = _empty_reminders_client()
+    server_client.archive_automation_definition.side_effect = ServerClientNotFoundError(
+        "gone"
+    )
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_definition") == []
+    ), "the server row is already gone -- settle rather than retry forever"
+    copy_row = db.get_automation_definition(copy_id)
+    assert copy_row["transfer_state"] is None, "a 404 release is treated exactly as an ack"
+    state = db.get_sync_state("server:1") or {}
+    assert not (state.get("sync_errors") or []), "a 404 here is not a user-facing error"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_definition_release_retryable_error_keeps_copy_dormant(
+    tmp_path,
+):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    mirror_id = db.create_automation_definition(
+        "server:1", "recurring_question", "Daily digest", server_id="srv-def-1"
+    )
+    copy_id = db.create_local_copy_from_mirror("automation_definition", mirror_id)
+    db.record_pending_mutation(
+        mirror_id,
+        "automation_definition",
+        "server:1",
+        {
+            "action": "release_from_server",
+            "server_definition_id": "srv-def-1",
+            "local_copy_id": copy_id,
+        },
+    )
+    server_client = _empty_reminders_client()
+    server_client.archive_automation_definition.side_effect = ServerUnavailableError(
+        "offline"
+    )
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "error"
+    pending = db.get_pending_mutations("server:1", primitive="automation_definition")
+    assert len(pending) == 1, "the mutation must be left queued for retry"
+    copy_row = db.get_automation_definition(copy_id)
+    assert copy_row["transfer_state"] == "from_server_pending", (
+        "dormant until an actual ack -- a failed release attempt must not arm it"
+    )
+    mirror_row = db.get_automation_definition(mirror_id)
+    assert mirror_row["lifecycle"] == "configured", "the mirror is untouched too"
+
+
+@pytest.mark.asyncio
+async def test_sync_now_reminder_release_deletes_and_arms_local_copy(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    mirror_id = db.create_reminder_task(
+        owner_id="server:1",
+        title="Standup",
+        schedule_kind="one_time",
+        server_id="srv-rem-1",
+    )
+    copy_id = db.create_local_copy_from_mirror("reminder_task", mirror_id)
+    db.record_pending_mutation(
+        mirror_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "release_from_server",
+            "server_task_id": "srv-rem-1",
+            "local_copy_id": copy_id,
+        },
+    )
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    server_client.delete_reminder.assert_awaited_once_with("srv-rem-1")
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+    copy_row = db.get_reminder_task(copy_id)
+    assert copy_row["transfer_state"] is None, "ack arms the local copy"
+    # Final review I4: the mirror is torn down HERE, on the ack. Deferring
+    # it to the pull's full-set reconciliation did not delete it -- that
+    # scan only deletes rows carrying a local tombstone, so a released
+    # mirror instead became a permanent bogus "the server deleted this"
+    # conflict beside the armed local copy.
+    assert db.get_reminder_task(mirror_id) is None
+    assert (
+        db.get_sync_mapping_by_local_id(mirror_id, "reminder_task", "server:1") is None
+    )
+    assert db.get_conflicts("server:1") == []
+
+
+@pytest.mark.asyncio
+async def test_sync_now_reminder_release_not_found_treated_as_ack(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    mirror_id = db.create_reminder_task(
+        owner_id="server:1",
+        title="Standup",
+        schedule_kind="one_time",
+        server_id="srv-rem-gone",
+    )
+    copy_id = db.create_local_copy_from_mirror("reminder_task", mirror_id)
+    db.record_pending_mutation(
+        mirror_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "release_from_server",
+            "server_task_id": "srv-rem-gone",
+            "local_copy_id": copy_id,
+        },
+    )
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    server_client.delete_reminder.side_effect = ServerClientNotFoundError("gone")
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+    copy_row = db.get_reminder_task(copy_id)
+    assert copy_row["transfer_state"] is None, "a 404 release is treated exactly as an ack"
+    state = db.get_sync_state("server:1") or {}
+    assert not (state.get("sync_errors") or [])
+
+
+@pytest.mark.asyncio
+async def test_sync_now_reminder_release_retryable_error_keeps_copy_dormant(tmp_path):
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    mirror_id = db.create_reminder_task(
+        owner_id="server:1",
+        title="Standup",
+        schedule_kind="one_time",
+        server_id="srv-rem-1",
+    )
+    copy_id = db.create_local_copy_from_mirror("reminder_task", mirror_id)
+    db.record_pending_mutation(
+        mirror_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "release_from_server",
+            "server_task_id": "srv-rem-1",
+            "local_copy_id": copy_id,
+        },
+    )
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    server_client.delete_reminder.side_effect = ServerUnavailableError("offline")
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "error"
+    pending = db.get_pending_mutations("server:1", primitive="reminder_task")
+    assert len(pending) == 1, "the mutation must be left queued for retry"
+    copy_row = db.get_reminder_task(copy_id)
+    assert copy_row["transfer_state"] == "from_server_pending", (
+        "dormant until an actual ack -- a failed release attempt must not arm it"
+    )
+    assert db.get_reminder_task(mirror_id) is not None
 
 
 @pytest.mark.asyncio
@@ -1895,3 +3075,158 @@ async def test_sync_now_all_policy_refusal_stays_not_applicable(tmp_path):
     assert outcome.status == "not_applicable"
     state = db.get_sync_state("local") or {}
     assert not (state.get("sync_errors") or [])
+
+
+# ---------------------------------------------------------------------------
+# Final whole-branch review fixes (2026-09-02)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reminder_transfer_does_not_fabricate_a_deletion_conflict(tmp_path):
+    """C1: `_network_phase` pulls BEFORE it pushes, so the transfer's
+    brand-new server_id is absent from the pull snapshot -- and
+    `convert_row_to_server_mirror` flips owner_id into the scan's own
+    (owner_id, server_id) window. A SUCCESSFUL move used to light up the
+    Conflicts tab claiming the server had deleted the row."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_reminder_task(
+        owner_id="local", title="Ping", schedule_kind="one_time"
+    )
+    db.set_transfer_state(
+        "reminder_task", local_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        local_id,
+        "reminder_task",
+        "server:1",
+        {"action": "transfer_to_server", "task_payload": {"title": "Ping"}},
+    )
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    server_client.create_reminder.return_value = {"id": "srv-rem-1", "title": "Ping"}
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    row = db.get_reminder_task(local_id)
+    assert row["owner_id"] == "server:1" and row["server_id"] == "srv-rem-1"
+    assert db.get_conflicts("server:1") == [], (
+        "a successful move must not report itself as a server-side deletion"
+    )
+
+
+@pytest.mark.asyncio
+async def test_reminder_transfer_keeps_an_existing_link(tmp_path):
+    """L12: a reminder that already carries a link (a watchlist run, say)
+    keeps it -- the transfer marker is only stamped when there is none."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    local_id = db.create_reminder_task(
+        owner_id="local", title="Ping", schedule_kind="one_time"
+    )
+    db.set_transfer_state(
+        "reminder_task", local_id, "to_server_pending", expected=(None,)
+    )
+    db.record_pending_mutation(
+        local_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "transfer_to_server",
+            "task_payload": {
+                "title": "Ping",
+                "link_type": "watchlist_run",
+                "link_id": "wl-9",
+            },
+        },
+    )
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    server_client.create_reminder.return_value = {"id": "srv-rem-1"}
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    await engine.sync_now()
+
+    sent = server_client.create_reminder.await_args.kwargs
+    assert sent["link_type"] == "watchlist_run"
+    assert sent["link_id"] == "wl-9"
+
+
+@pytest.mark.asyncio
+async def test_reminder_release_raises_no_conflict_while_the_mirror_is_listed(tmp_path):
+    """I4: the release mutation is keyed on the MIRROR, so the pull that
+    still lists that (not yet released) server row used to hit the
+    unconditional "local mutation pending => conflict" rule -- every
+    server -> local move raised a bogus conflict on its own cycle."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    mirror_id = db.create_reminder_task(
+        owner_id="server:1",
+        title="Standup",
+        schedule_kind="one_time",
+        server_id="srv-rem-9",
+    )
+    db.set_sync_mapping(mirror_id, "srv-rem-9", "reminder_task", "server:1")
+    copy_id = db.create_local_copy_from_mirror("reminder_task", mirror_id)
+    db.record_pending_mutation(
+        mirror_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "release_from_server",
+            "server_task_id": "srv-rem-9",
+            "local_copy_id": copy_id,
+        },
+    )
+    server_client = AsyncMock()
+    # The pull still lists the server row: the release has not run yet.
+    server_client.list_reminders.return_value = {
+        "items": [{"id": "srv-rem-9", "title": "Standup"}]
+    }
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok"
+    assert db.get_conflicts("server:1") == []
+    assert db.get_reminder_task(copy_id)["transfer_state"] is None, "copy armed"
+    assert db.get_reminder_task(mirror_id) is None, "mirror torn down on the ack"
+
+
+@pytest.mark.asyncio
+async def test_rejected_reminder_release_settles_per_mutation(tmp_path):
+    """L15: a definitively rejected release used to re-raise through
+    `_push_mutation`'s blanket `except ServerClientError: raise`, aborting
+    the whole reminder push phase every cycle, forever."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    mirror_id = db.create_reminder_task(
+        owner_id="server:1",
+        title="Standup",
+        schedule_kind="one_time",
+        server_id="srv-rem-9",
+    )
+    copy_id = db.create_local_copy_from_mirror("reminder_task", mirror_id)
+    db.record_pending_mutation(
+        mirror_id,
+        "reminder_task",
+        "server:1",
+        {
+            "action": "release_from_server",
+            "server_task_id": "srv-rem-9",
+            "local_copy_id": copy_id,
+        },
+    )
+    server_client = AsyncMock()
+    server_client.list_reminders.return_value = {"items": []}
+    server_client.delete_reminder.side_effect = ServerClientValidationError("refused")
+    engine = SyncEngine(db, server_client, owner_id="server:1")
+
+    outcome = await engine.sync_now()
+
+    assert outcome.status == "ok", "one poisoned release must not abort the phase"
+    assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
+    assert db.get_reminder_task(copy_id)["transfer_state"] == "from_server_pending", (
+        "nothing was released, so nothing may arm -- cancel is its recovery"
+    )
+    state = db.get_sync_state("server:1") or {}
+    assert state.get("sync_errors"), "the refusal must be reported, not swallowed"

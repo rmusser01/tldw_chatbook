@@ -10,7 +10,10 @@ from unittest import mock
 
 import pytest
 
-from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+from tldw_chatbook.Scheduling.db.scheduled_tasks_db import (
+    DORMANT_TRANSFER_STATES,
+    ScheduledTasksDB,
+)
 from tldw_chatbook.Scheduling.models import AutomationRun
 from tldw_chatbook.config import get_scheduled_tasks_db_path
 
@@ -188,6 +191,48 @@ def test_list_reminder_tasks_filters(db: ScheduledTasksDB) -> None:
     assert filtered[0]["title"] == "Local enabled"
 
 
+@pytest.mark.parametrize("dormant_state", list(DORMANT_TRANSFER_STATES))
+def test_list_reminder_tasks_armable_only_excludes_dormant_transfer_states(
+    db: ScheduledTasksDB, dormant_state: str
+) -> None:
+    """armable_only=True is the DB-query layer of PriorityQueue.load's
+    defense-in-depth pair (spec §6.1 ruling 2). Non-armable_only listing
+    (the workbench display) still returns dormant rows -- unaffected."""
+    now = _utc(2026, 7, 20, 12, 0)
+    armed_id = db.create_reminder_task(
+        owner_id="local", title="Armed", schedule_kind="one_time",
+        next_run_at=now, enabled=True,
+    )
+    dormant_id = db.create_reminder_task(
+        owner_id="local", title="Dormant", schedule_kind="one_time",
+        next_run_at=now, enabled=True,
+    )
+    db.update_reminder_task(dormant_id, transfer_state=dormant_state)
+
+    armable = db.list_reminder_tasks(enabled=True, armable_only=True)
+    assert {t["id"] for t in armable} == {armed_id}
+
+    # Plain listing (no armable_only) still shows the dormant row.
+    all_enabled = db.list_reminder_tasks(enabled=True)
+    assert {t["id"] for t in all_enabled} == {armed_id, dormant_id}
+
+
+@pytest.mark.parametrize("armed_state", [None, "to_server_pending", "to_server_failed"])
+def test_list_reminder_tasks_armable_only_arms_non_dormant_transfer_states(
+    db: ScheduledTasksDB, armed_state: str | None
+) -> None:
+    now = _utc(2026, 7, 20, 12, 0)
+    task_id = db.create_reminder_task(
+        owner_id="local", title="Queued or failed handoff", schedule_kind="one_time",
+        next_run_at=now, enabled=True,
+    )
+    if armed_state is not None:
+        db.update_reminder_task(task_id, transfer_state=armed_state)
+
+    armable = db.list_reminder_tasks(enabled=True, armable_only=True)
+    assert {t["id"] for t in armable} == {task_id}
+
+
 def test_update_reminder_task(db: ScheduledTasksDB) -> None:
     now = _utc(2026, 7, 20, 12, 0)
     task_id = db.create_reminder_task(
@@ -289,6 +334,27 @@ def test_reminders_due_before(db: ScheduledTasksDB) -> None:
     assert len(due) == 2
     assert {t["id"] for t in due} == {due_id, past_id}
     assert due[0]["next_run_at"] <= due[1]["next_run_at"]
+
+
+@pytest.mark.parametrize("dormant_state", list(DORMANT_TRANSFER_STATES))
+def test_reminders_due_before_excludes_dormant_transfer_states(
+    db: ScheduledTasksDB, dormant_state: str
+) -> None:
+    """reminders_due_before is armable-only unconditionally (its sole
+    caller is the queue) -- spec §6.1 ruling 2."""
+    now = _utc(2026, 7, 20, 12, 0)
+    armed_id = db.create_reminder_task(
+        owner_id="local", title="Armed", schedule_kind="one_time",
+        run_at=now, next_run_at=now, enabled=True,
+    )
+    dormant_id = db.create_reminder_task(
+        owner_id="local", title="Dormant", schedule_kind="one_time",
+        run_at=now, next_run_at=now, enabled=True,
+    )
+    db.update_reminder_task(dormant_id, transfer_state=dormant_state)
+
+    due = db.reminders_due_before(now)
+    assert {t["id"] for t in due} == {armed_id}
 
 
 def test_to_utc_iso_naive_datetime_assumed_utc(db: ScheduledTasksDB) -> None:
@@ -517,18 +583,38 @@ def test_list_armable_automation_definitions_excludes_missing_next_run_at(
     assert db.list_armable_automation_definitions() == []
 
 
-def test_list_armable_automation_definitions_excludes_transfer_pending(
-    db: ScheduledTasksDB,
+@pytest.mark.parametrize("dormant_state", list(DORMANT_TRANSFER_STATES))
+def test_list_armable_automation_definitions_excludes_dormant_transfer_states(
+    db: ScheduledTasksDB, dormant_state: str
 ) -> None:
+    """spec §6.1 ruling 2: only DORMANT_TRANSFER_STATES sit out."""
     def_id = db.create_automation_definition(
         owner_id="local",
         family="recurring_question",
         name="Mid-handoff",
         next_run_at=_utc(2026, 1, 1),
     )
-    db.update_automation_definition(def_id, transfer_state="to_server_sent")
+    db.update_automation_definition(def_id, transfer_state=dormant_state)
 
     assert db.list_armable_automation_definitions() == []
+
+
+@pytest.mark.parametrize("armed_state", [None, "to_server_pending", "to_server_failed"])
+def test_list_armable_automation_definitions_arms_non_dormant_transfer_states(
+    db: ScheduledTasksDB, armed_state: str | None
+) -> None:
+    """Corrects the pre-PR-5 "any non-NULL transfer_state excludes" behavior
+    (spec §6.1 ruling 2): merely-queued and failed transfers keep arming."""
+    def_id = db.create_automation_definition(
+        owner_id="local",
+        family="recurring_question",
+        name="Queued or failed handoff",
+        next_run_at=_utc(2026, 1, 1),
+    )
+    if armed_state is not None:
+        db.update_automation_definition(def_id, transfer_state=armed_state)
+
+    assert [row["id"] for row in db.list_armable_automation_definitions()] == [def_id]
 
 
 def test_list_armable_automation_definitions_excludes_other_owner(
@@ -588,6 +674,491 @@ def test_list_armable_automation_definitions_caps_at_500(
     # the newest-scheduled row (last inserted) is the one dropped.
     assert [row["id"] for row in armable] == ids[:cap]
     assert ids[-1] not in {row["id"] for row in armable}
+
+
+# ---------------------------------------------------------------------------
+# set_transfer_state / clear_transfer_state (spec §6, Task 1)
+# ---------------------------------------------------------------------------
+
+
+def test_set_transfer_state_compare_and_set_succeeds_on_expected_match(
+    db: ScheduledTasksDB,
+) -> None:
+    def_id = db.create_automation_definition(
+        owner_id="local", family="recurring_question", name="Handoff candidate"
+    )
+
+    ok = db.set_transfer_state(
+        "automation_definition", def_id, "to_server_pending", expected=(None,)
+    )
+
+    assert ok is True
+    assert db.get_automation_definition(def_id)["transfer_state"] == "to_server_pending"
+
+
+def test_set_transfer_state_rejects_wrong_expected_state(db: ScheduledTasksDB) -> None:
+    """The compare-and-set half of the race-safety contract: a caller
+    racing an already-transitioned row (e.g. UI cancel racing SyncEngine's
+    push) must not blindly overwrite it."""
+    def_id = db.create_automation_definition(
+        owner_id="local", family="recurring_question", name="Handoff candidate"
+    )
+    db.update_automation_definition(def_id, transfer_state="to_server_sent")
+
+    ok = db.set_transfer_state(
+        "automation_definition", def_id, "to_server_pending", expected=(None,)
+    )
+
+    assert ok is False
+    # Untouched -- the wrong-expected-state call made no write.
+    assert db.get_automation_definition(def_id)["transfer_state"] == "to_server_sent"
+
+
+def test_set_transfer_state_rejects_missing_row(db: ScheduledTasksDB) -> None:
+    ok = db.set_transfer_state(
+        "automation_definition", "no-such-id", "to_server_pending", expected=(None,)
+    )
+    assert ok is False
+
+
+def test_set_transfer_state_unknown_table_kind_raises(db: ScheduledTasksDB) -> None:
+    with pytest.raises(ValueError, match="table_kind"):
+        db.set_transfer_state("bogus", "any-id", "x", expected=(None,))
+
+
+def test_set_transfer_state_works_on_reminder_tasks_too(db: ScheduledTasksDB) -> None:
+    task_id = db.create_reminder_task(
+        owner_id="local", title="Handoff candidate", schedule_kind="one_time"
+    )
+
+    ok = db.set_transfer_state(
+        "reminder_task", task_id, "to_server_pending", expected=(None,)
+    )
+
+    assert ok is True
+    assert db.get_reminder_task(task_id)["transfer_state"] == "to_server_pending"
+
+
+def test_clear_transfer_state_is_set_transfer_state_none_sugar(
+    db: ScheduledTasksDB,
+) -> None:
+    def_id = db.create_automation_definition(
+        owner_id="local", family="recurring_question", name="Handoff candidate"
+    )
+    db.update_automation_definition(def_id, transfer_state="to_server_sent")
+
+    ok = db.clear_transfer_state(
+        "automation_definition", def_id, expected=("to_server_sent",)
+    )
+
+    assert ok is True
+    assert db.get_automation_definition(def_id)["transfer_state"] is None
+
+    # And it is subject to the same compare-and-set guard.
+    rejected = db.clear_transfer_state(
+        "automation_definition", def_id, expected=("to_server_sent",)
+    )
+    assert rejected is False
+
+
+def test_set_transfer_state_concurrent_callers_do_not_both_succeed(tmp_path) -> None:
+    """Genuine two-connection race (fix-round-1 finding): the pre-fix
+    read-then-write implementation let two real callers both observe the
+    pre-transition state and both commit, the second silently clobbering
+    the first. Modeled on the repo's existing TOCTOU-race technique
+    (test_upsert_results_pending_mutation_recorded_mid_loop_still_blocks_
+    update, above): `set_trace_callback` injects a second real connection's
+    FULL `set_transfer_state` call at the exact moment the first call's
+    guarded UPDATE is about to run -- i.e. after the first call has
+    already decided the row is eligible but before either write lands --
+    which is the only way to force two callers' "current state" reads to
+    both land before either write in a single-threaded test.
+
+    The fixed implementation is one guarded `UPDATE ... WHERE id = ? AND
+    (transfer_state ...)`: whichever caller's UPDATE actually runs first
+    wins (SQLite's writer lock makes a single UPDATE statement atomic
+    against other writers) and commits; the second caller's UPDATE no
+    longer matches the WHERE guard (the row already changed), so its
+    `rowcount` is 0 and it returns False. Exactly one of the two racing
+    calls succeeds, and the persisted value is always the WINNER's --
+    never silently overwritten by a loser that also reported success.
+    """
+    db_path = tmp_path / "race.db"
+    db = ScheduledTasksDB(str(db_path))
+    def_id = db.create_automation_definition(
+        owner_id="local", family="recurring_question", name="Race target"
+    )
+
+    results: dict[str, bool] = {}
+    injected = {"done": False}
+    real_get_connection = ScheduledTasksDB._get_connection
+
+    def _get_connection_with_injector(self):
+        conn = real_get_connection(self)
+
+        def _on_statement(sql):
+            if injected["done"] or "UPDATE automation_definitions SET transfer_state" not in sql:
+                return
+            injected["done"] = True
+            # A second real connection races in right as the first call's
+            # UPDATE is about to run -- before it has committed -- and
+            # completes its own full set_transfer_state call first.
+            side_db = ScheduledTasksDB(str(db_path))
+            try:
+                results["second"] = side_db.set_transfer_state(
+                    "automation_definition", def_id, "to_server_sent",
+                    expected=(None,),
+                )
+            finally:
+                side_db.close()
+
+        conn.set_trace_callback(_on_statement)
+        return conn
+
+    with mock.patch.object(
+        ScheduledTasksDB, "_get_connection", _get_connection_with_injector
+    ):
+        results["first"] = db.set_transfer_state(
+            "automation_definition", def_id, "to_server_pending", expected=(None,)
+        )
+
+    assert injected["done"], "the spy never saw the expected UPDATE -- test setup is stale"
+    # Exactly one of the two racing callers succeeds -- never both.
+    assert results["first"] != results["second"]
+
+    # The persisted value is the WINNER's -- never silently overwritten by
+    # a loser that also reported success.
+    final_state = db.get_automation_definition(def_id)["transfer_state"]
+    if results["first"]:
+        assert final_state == "to_server_pending"
+    else:
+        assert final_state == "to_server_sent"
+
+
+# ----------------------------------------------------------------------
+# convert_row_to_server_mirror (schedules-handoff PR-5, task 4) -- spec
+# §6.1.4 convert-or-merge, called by SyncEngine right after a
+# transfer_to_server create call acks.
+# ----------------------------------------------------------------------
+
+
+def test_convert_row_to_server_mirror_converts_definition_in_place(
+    db: ScheduledTasksDB,
+) -> None:
+    def_id = db.create_automation_definition(
+        owner_id="local", family="recurring_question", name="Daily digest"
+    )
+    db.set_transfer_state(
+        "automation_definition", def_id, "to_server_sent", expected=(None,)
+    )
+
+    result = db.convert_row_to_server_mirror(
+        "automation_definition", def_id, {"id": "srv-def-1"}, "server:1"
+    )
+
+    assert result == "converted"
+    row = db.get_automation_definition(def_id)
+    assert row["server_id"] == "srv-def-1"
+    assert row["owner_id"] == "server:1"
+    assert row["transfer_state"] is None
+
+
+def test_convert_row_to_server_mirror_converts_reminder_in_place_and_maps(
+    db: ScheduledTasksDB,
+) -> None:
+    task_id = db.create_reminder_task(
+        owner_id="local", title="Standup", schedule_kind="one_time"
+    )
+    db.set_transfer_state(
+        "reminder_task", task_id, "to_server_sent", expected=(None,)
+    )
+
+    result = db.convert_row_to_server_mirror(
+        "reminder_task", task_id, {"id": "srv-rem-1"}, "server:1"
+    )
+
+    assert result == "converted"
+    row = db.get_reminder_task(task_id)
+    assert row["server_id"] == "srv-rem-1"
+    assert row["owner_id"] == "server:1"
+    assert row["transfer_state"] is None
+    mapping = db.get_sync_mapping_by_server_id("srv-rem-1", "reminder_task", "server:1")
+    assert mapping is not None
+    assert mapping["local_id"] == task_id
+
+
+def test_convert_row_to_server_mirror_merges_with_existing_pulled_definition_mirror(
+    db: ScheduledTasksDB,
+) -> None:
+    """§4 UNIQUE(owner_id, server_id) race: a background pull already
+    mirrored the same server row while the transfer was in flight. Keep
+    the pulled mirror, delete the local transferring row, and transplant
+    provenance (created_at + audit linkage) onto the mirror."""
+    mirror_id = db.create_automation_definition(
+        owner_id="server:1",
+        family="recurring_question",
+        name="Daily digest",
+        server_id="srv-def-1",
+        created_at="2026-08-01T00:00:00+00:00",
+    )
+    local_id = db.create_automation_definition(
+        owner_id="local",
+        family="recurring_question",
+        name="Daily digest (local)",
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+    db.set_transfer_state(
+        "automation_definition", local_id, "to_server_sent", expected=(None,)
+    )
+    db.log_automation_audit_event(
+        local_id, "local", "created", "user", "Created locally"
+    )
+
+    result = db.convert_row_to_server_mirror(
+        "automation_definition", local_id, {"id": "srv-def-1"}, "server:1"
+    )
+
+    assert result == "merged"
+    assert db.get_automation_definition(local_id) is None, (
+        "the local transferring row must be deleted, not left orphaned"
+    )
+    mirror = db.get_automation_definition(mirror_id)
+    assert mirror is not None
+    assert mirror["created_at"] == "2026-01-01T00:00:00+00:00", (
+        "created_at must transplant from the local row onto the surviving mirror"
+    )
+    with closing(db._get_connection()) as conn:
+        rows = conn.execute(
+            "SELECT definition_id FROM automation_audit_events"
+        ).fetchall()
+    assert [row["definition_id"] for row in rows] == [mirror_id], (
+        "audit linkage must re-point to the surviving mirror"
+    )
+
+
+def test_convert_row_to_server_mirror_merges_with_existing_pulled_reminder_mirror(
+    db: ScheduledTasksDB,
+) -> None:
+    mirror_id = db.create_reminder_task(
+        owner_id="server:1",
+        title="Standup",
+        schedule_kind="one_time",
+        server_id="srv-rem-1",
+        created_at="2026-08-01T00:00:00+00:00",
+    )
+    local_id = db.create_reminder_task(
+        owner_id="local",
+        title="Standup (local)",
+        schedule_kind="one_time",
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+    db.set_transfer_state(
+        "reminder_task", local_id, "to_server_sent", expected=(None,)
+    )
+
+    result = db.convert_row_to_server_mirror(
+        "reminder_task", local_id, {"id": "srv-rem-1"}, "server:1"
+    )
+
+    assert result == "merged"
+    assert db.get_reminder_task(local_id) is None
+    mirror = db.get_reminder_task(mirror_id)
+    assert mirror is not None
+    assert mirror["created_at"] == "2026-01-01T00:00:00+00:00"
+
+
+def test_convert_row_to_server_mirror_vanished_row_is_a_no_op(
+    db: ScheduledTasksDB,
+) -> None:
+    result = db.convert_row_to_server_mirror(
+        "automation_definition", "no-such-id", {"id": "srv-def-9"}, "server:1"
+    )
+    assert result == "vanished"
+
+
+def test_convert_row_to_server_mirror_unknown_table_kind_raises(
+    db: ScheduledTasksDB,
+) -> None:
+    with pytest.raises(ValueError, match="table_kind"):
+        db.convert_row_to_server_mirror("bogus", "any-id", {"id": "srv-1"}, "server:1")
+
+
+def test_convert_row_to_server_mirror_requires_server_item_id(
+    db: ScheduledTasksDB,
+) -> None:
+    def_id = db.create_automation_definition(
+        owner_id="local", family="recurring_question", name="No id"
+    )
+    with pytest.raises(ValueError, match="id"):
+        db.convert_row_to_server_mirror("automation_definition", def_id, {}, "server:1")
+
+
+# ----------------------------------------------------------------------
+# create_local_copy_from_mirror (schedules-handoff PR-5, task 5) --
+# spec §6.2.1.
+# ----------------------------------------------------------------------
+
+
+def test_create_local_copy_from_mirror_definition_translates_schedule(
+    db: ScheduledTasksDB,
+) -> None:
+    mirror_id = db.create_automation_definition(
+        owner_id="server:1",
+        family="recurring_question",
+        name="Daily digest",
+        description="A digest",
+        server_id="srv-def-1",
+        lifecycle="paused",
+        # Server vocabulary (`every_seconds` -> `seconds`).
+        schedule={"kind": "interval", "seconds": 3600},
+        finding_policy={"mode": "balanced_findings"},
+    )
+
+    copy_id = db.create_local_copy_from_mirror("automation_definition", mirror_id)
+
+    assert copy_id != mirror_id
+    copy_row = db.get_automation_definition(copy_id)
+    assert copy_row["owner_id"] == "local"
+    assert copy_row["server_id"] is None
+    assert copy_row["transfer_state"] == "from_server_pending"
+    assert copy_row["family"] == "recurring_question"
+    assert copy_row["name"] == "Daily digest"
+    assert copy_row["description"] == "A digest"
+    assert copy_row["lifecycle"] == "paused", "the source row's lifecycle is preserved"
+    # Client vocabulary (`seconds` -> `every_seconds`).
+    assert copy_row["schedule"] == {"kind": "interval", "every_seconds": 3600}
+    assert copy_row["finding_policy"] == {"mode": "balanced_findings"}
+    assert copy_row["next_run_at"] is not None, (
+        "next_run_at must be computed fresh, not left null"
+    )
+
+    # The mirror row is untouched.
+    mirror_row = db.get_automation_definition(mirror_id)
+    assert mirror_row["owner_id"] == "server:1"
+    assert mirror_row["server_id"] == "srv-def-1"
+    assert mirror_row["transfer_state"] is None
+
+
+def test_create_local_copy_from_mirror_definition_normalizes_weekday_name(
+    db: ScheduledTasksDB,
+) -> None:
+    """`to_local_schedule` must run BEFORE `next_run_at` is computed: a
+    raw server-vocab ``weekday: "wed"`` makes `compute_next_run_at`
+    silently return ``None`` (schedule_compute.py's `_compute_weekly`
+    requires a plain int), so this also pins the translate-then-compute
+    ordering, not just the stored value."""
+    mirror_id = db.create_automation_definition(
+        owner_id="server:1",
+        family="recurring_question",
+        name="Weekly digest",
+        server_id="srv-def-2",
+        schedule={"kind": "weekly", "at": "09:00", "weekday": "wed"},
+    )
+
+    copy_id = db.create_local_copy_from_mirror("automation_definition", mirror_id)
+
+    copy_row = db.get_automation_definition(copy_id)
+    assert copy_row["schedule"] == {
+        "kind": "weekly",
+        "time_of_day": "09:00",
+        "weekday": 2,
+    }
+    assert copy_row["next_run_at"] is not None
+
+
+def test_create_local_copy_from_mirror_definition_unknown_mirror_raises(
+    db: ScheduledTasksDB,
+) -> None:
+    with pytest.raises(ValueError, match="mirror"):
+        db.create_local_copy_from_mirror("automation_definition", "no-such-id")
+
+
+def test_create_local_copy_from_mirror_unknown_table_kind_raises(
+    db: ScheduledTasksDB,
+) -> None:
+    with pytest.raises(ValueError, match="table_kind"):
+        db.create_local_copy_from_mirror("bogus", "any-id")
+
+
+def test_create_local_copy_from_mirror_reminder_one_time_copies_run_at(
+    db: ScheduledTasksDB,
+) -> None:
+    run_at = _utc(2026, 12, 25, 9, 0)
+    mirror_id = db.create_reminder_task(
+        owner_id="server:1",
+        title="Standup",
+        body="Don't be late",
+        schedule_kind="one_time",
+        run_at=run_at,
+        server_id="srv-rem-1",
+    )
+
+    copy_id = db.create_local_copy_from_mirror("reminder_task", mirror_id)
+
+    assert copy_id != mirror_id
+    copy_row = db.get_reminder_task(copy_id)
+    assert copy_row["owner_id"] == "local"
+    assert copy_row["server_id"] is None
+    assert copy_row["transfer_state"] == "from_server_pending"
+    assert copy_row["title"] == "Standup"
+    assert copy_row["body"] == "Don't be late"
+    assert copy_row["schedule_kind"] == "one_time"
+    assert copy_row["run_at"] == run_at.isoformat()
+    assert copy_row["next_run_at"] == run_at.isoformat(), (
+        "a one_time schedule's next_run_at is the run_at itself"
+    )
+
+    mirror_row = db.get_reminder_task(mirror_id)
+    assert mirror_row["owner_id"] == "server:1"
+    assert mirror_row["transfer_state"] is None
+
+
+def test_create_local_copy_from_mirror_reminder_preserves_disabled(
+    db: ScheduledTasksDB,
+) -> None:
+    """Final review M11: a DISABLED server reminder released to this
+    device must not arm and fire the moment the release acks -- the copy
+    carries the mirror's own `enabled` flag, the way the definitions leg
+    already carried `lifecycle`."""
+    mirror_id = db.create_reminder_task(
+        owner_id="server:1",
+        title="Standup",
+        schedule_kind="one_time",
+        run_at=_utc(2026, 12, 25, 9, 0),
+        server_id="srv-rem-off",
+        enabled=False,
+    )
+
+    copy_id = db.create_local_copy_from_mirror("reminder_task", mirror_id)
+
+    assert db.get_reminder_task(copy_id)["enabled"] == 0
+
+
+def test_create_local_copy_from_mirror_reminder_recurring_computes_next_run(
+    db: ScheduledTasksDB,
+) -> None:
+    mirror_id = db.create_reminder_task(
+        owner_id="server:1",
+        title="Standup",
+        schedule_kind="recurring",
+        cron="0 9 * * *",
+        timezone="UTC",
+        server_id="srv-rem-2",
+    )
+
+    copy_id = db.create_local_copy_from_mirror("reminder_task", mirror_id)
+
+    copy_row = db.get_reminder_task(copy_id)
+    assert copy_row["schedule_kind"] == "recurring"
+    assert copy_row["cron"] == "0 9 * * *"
+    assert copy_row["next_run_at"] is not None
+
+
+def test_create_local_copy_from_mirror_reminder_unknown_mirror_raises(
+    db: ScheduledTasksDB,
+) -> None:
+    with pytest.raises(ValueError, match="mirror"):
+        db.create_local_copy_from_mirror("reminder_task", "no-such-id")
 
 
 def test_update_automation_definition(db: ScheduledTasksDB) -> None:
@@ -808,6 +1379,38 @@ def test_bulk_apply_pulled_reminders_records_conflict_for_pending_mutation(tmp_p
     assert conflicts[0]["local_id"] == local_id
     row = db.get_reminder_task(local_id)
     assert row["title"] == "Local"  # server state is not applied
+
+
+def test_apply_pulled_reminders_never_clears_local_transfer_state(tmp_path):
+    """Mirrors test_upsert_definitions_never_clears_local_transfer_state:
+    a server pull must never overwrite a local reminder's transfer_state
+    (spec §6.1 ruling 2), even though a real server payload never carries
+    one -- _apply_pulled_reminders pops it, same as the definitions-side
+    upsert already does."""
+    db = ScheduledTasksDB(tmp_path / "db.db")
+    owner_id = "server:1"
+    local_id = db.create_reminder_task(
+        owner_id=owner_id,
+        server_id="srv-1",
+        title="Local",
+        schedule_kind="one_time",
+    )
+    db.update_reminder_task(local_id, transfer_state="to_server_pending")
+
+    # Even if a server payload somehow carried transfer_state, it must
+    # still lose to the local marker.
+    with db.transaction() as conn:
+        db._apply_pulled_reminders(conn, owner_id, [
+            {
+                "id": "srv-1",
+                "title": "Server",
+                "schedule_kind": "one_time",
+                "transfer_state": "server_side_value",
+            },
+        ])
+
+    row = db.get_reminder_task(local_id)
+    assert row["transfer_state"] == "to_server_pending"
 
 
 def test_record_sync_error_appends_and_caps(tmp_path):
@@ -1564,3 +2167,16 @@ def test_upsert_results_skips_item_missing_id(tmp_path):
     counts = db.upsert_automation_results_from_server("server:42", [item])
     assert counts == {"inserted": 0, "updated": 0, "skipped_dedupe": 0}
     assert db.list_automation_results("server:42") == []
+
+
+def test_get_pending_mutation_for_local_id_returns_newest_across_owners(tmp_path):
+    """A row that failed-and-retried under two different server scopes must
+    surface the NEWEST mutation's error, not a stale one (re-review residual:
+    ascending ORDER BY returned the oldest)."""
+    db = ScheduledTasksDB(tmp_path / "t.db")
+    rid = "row-1"
+    db.record_pending_mutation(rid, "automation_definition", "server:a", {"transfer_errors": ["old"]})
+    db.record_pending_mutation(rid, "automation_definition", "server:b", {"transfer_errors": ["new"]})
+    row = db.get_pending_mutation_for_local_id(rid, "automation_definition")
+    assert row is not None
+    assert row["owner_id"] == "server:b"

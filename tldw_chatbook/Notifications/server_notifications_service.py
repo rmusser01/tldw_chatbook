@@ -492,3 +492,69 @@ class ServerNotificationsService:
                 definition_id, preview_id
             )
         )
+
+    async def pause_scheduled_automation_definition(
+        self, definition_id: str
+    ) -> dict[str, Any]:
+        """Pause a server-side automation definition.
+
+        Same CONFIGURE-class reasoning as preview/create/update above --
+        a lifecycle transition, gated on the same action id.
+
+        Args:
+            definition_id: The server definition to pause.
+
+        Returns:
+            The updated definition row as a JSON-mode dict.
+
+        Raises:
+            PolicyDeniedError: If the runtime policy refuses the action.
+        """
+        self._enforce("scheduler.automations.configure.server")
+        return self._dump(
+            await self._require_client().pause_scheduled_task_definition(
+                definition_id
+            )
+        )
+
+    async def resume_scheduled_automation_definition(
+        self, definition_id: str
+    ) -> dict[str, Any]:
+        """Resume a paused server-side automation definition.
+
+        Args:
+            definition_id: The server definition to resume.
+
+        Returns:
+            The updated definition row as a JSON-mode dict.
+
+        Raises:
+            PolicyDeniedError: If the runtime policy refuses the action.
+        """
+        self._enforce("scheduler.automations.configure.server")
+        return self._dump(
+            await self._require_client().resume_scheduled_task_definition(
+                definition_id
+            )
+        )
+
+    async def archive_scheduled_automation_definition(
+        self, definition_id: str
+    ) -> dict[str, Any]:
+        """Archive a server-side automation definition.
+
+        Args:
+            definition_id: The server definition to archive.
+
+        Returns:
+            The updated definition row as a JSON-mode dict.
+
+        Raises:
+            PolicyDeniedError: If the runtime policy refuses the action.
+        """
+        self._enforce("scheduler.automations.configure.server")
+        return self._dump(
+            await self._require_client().archive_scheduled_task_definition(
+                definition_id
+            )
+        )

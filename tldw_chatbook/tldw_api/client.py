@@ -8103,6 +8103,58 @@ class TLDWAPIClient:
         )
         return ScheduledTaskAutomationRunNowResponse.model_validate(response)
 
+    async def pause_scheduled_task_definition(
+        self, definition_id: str
+    ) -> ScheduledTaskAutomationDefinition:
+        """Pause a server-side automation definition (spec §5.1 lifecycle).
+
+        Args:
+            definition_id: The server definition to pause.
+
+        Returns:
+            The definition row with its post-pause lifecycle state.
+        """
+        response = await self._request(
+            "POST",
+            f"/api/v1/scheduled-tasks/definitions/{definition_id}/pause",
+        )
+        return ScheduledTaskAutomationDefinition.model_validate(response)
+
+    async def resume_scheduled_task_definition(
+        self, definition_id: str
+    ) -> ScheduledTaskAutomationDefinition:
+        """Resume a paused server-side automation definition.
+
+        Args:
+            definition_id: The server definition to resume.
+
+        Returns:
+            The definition row with its post-resume lifecycle state.
+        """
+        response = await self._request(
+            "POST",
+            f"/api/v1/scheduled-tasks/definitions/{definition_id}/resume",
+        )
+        return ScheduledTaskAutomationDefinition.model_validate(response)
+
+    async def archive_scheduled_task_definition(
+        self, definition_id: str
+    ) -> ScheduledTaskAutomationDefinition:
+        """Archive a server-side automation definition.
+
+        Args:
+            definition_id: The server definition to archive.
+
+        Returns:
+            The definition row with its post-archive lifecycle state
+            (``lifecycle="archived"``, ``archived_at`` set).
+        """
+        response = await self._request(
+            "POST",
+            f"/api/v1/scheduled-tasks/definitions/{definition_id}/archive",
+        )
+        return ScheduledTaskAutomationDefinition.model_validate(response)
+
     async def list_scheduled_task_automation_definition_audit(
         self,
         definition_id: str,
