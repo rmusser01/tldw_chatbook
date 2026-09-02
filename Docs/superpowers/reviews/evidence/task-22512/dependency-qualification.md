@@ -684,7 +684,7 @@ does not claim containment of deliberately detached host-authority processes.
 ## Task 15 final implementation qualification
 
 The final source was rebased onto `origin/dev`
-`822aae341b18808c36f67af1b9dcd87d2957924b`. The formatter snapshot was
+`fce1774490cad498a1bd4d6788b2fce06d478690`. The formatter snapshot was
 regenerated against that immutable base before closeout. Task 15 added the
 app-owned runtime bridge after a source audit found that earlier component
 tests manually moved input/output bytes and therefore did not prove production
@@ -773,10 +773,10 @@ owned Job immediately, and retains at most the configured ceiling plus one
 fixed 8-KiB read chunk. Collection rejects any missing, extra, duplicate, or
 mixed-generation sibling before publication.
 
-- The formatter baseline was regenerated after rebasing the PR. The exact
+- The formatter baseline was regenerated after the final pre-PR rebase. The exact
   `verify --head HEAD` command accepted its immutable base hashes, normalized
   formatter-diff hashes, debt facts, red-path set, and recorded Ruff version.
-  Its base is `822aae341b18808c36f67af1b9dcd87d2957924b`; verification does not modify
+  Its base is `fce1774490cad498a1bd4d6788b2fce06d478690`; verification does not modify
   source.
 - This artifact adds no product code, workflow, or adapted third-party terminal
   source beyond the reviewed `regex==2026.4.4` validation dependency pin.
