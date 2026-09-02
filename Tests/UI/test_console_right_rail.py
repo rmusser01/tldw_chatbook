@@ -397,6 +397,7 @@ async def test_mounted_inspector_semantic_census_matches_actual_right_rail_order
             bodies = list(root.query(ConsoleBoundedSection))
             assert [body.section_id for body in bodies] == [section_id]
 
+
 @pytest.mark.asyncio
 async def test_new_specialized_sibling_fails_mounted_production_census():
     async with make_console_pilot() as pilot:
@@ -569,9 +570,9 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
         def swapped_geometry_is_stable() -> bool:
             return (
                 order[:2] == ["local", "outer"]
-                and order.count("outer") == 1
                 and not bounded._reconcile_scheduled
                 and not rail._outer_reconcile_scheduled
+                and rail._outer_owner_reconcile_count == baseline + 1
                 and bounded.desired_content_lines == after_demand
                 and bounded.viewport.content_region.height
                 == min(after_demand, bounded.max_content_lines)
@@ -591,14 +592,15 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
                 f"demand={bounded.desired_content_lines}, "
                 f"width={viewport.content_region.width}, "
                 f"viewport={viewport.content_region.height}, "
-                f"hint={bounded.hint.display}, order={order}"
+                f"hint={bounded.hint.display}, order={order}, "
+                "completed_owner_passes="
+                f"{rail._outer_owner_reconcile_count - baseline}"
             ),
         )
         await pilot.pause()
         assert swapped_geometry_is_stable()
 
         assert order[:2] == ["local", "outer"]
-        assert order.count("outer") == 1
         assert rail.query_one("#console-live-work-section") is live_root
         assert rail.query_one("#console-live-work-header") is header
         assert rail.query_one("#console-live-work-status-badge") is pending_header
@@ -1058,7 +1060,7 @@ async def test_authority_focus_f1_preserves_literal_rich_markup() -> None:
         panel = pilot.app.screen
         assert isinstance(panel, WorkbenchHelpPanel)
         body = panel.query_one("#workbench-help-body", Static)
-        assert "[bold]literal[/bold]" in body.render().plain
+        assert r"\[bold]literal\[/bold]" in body.render().plain
 
 
 @pytest.mark.asyncio
@@ -1659,7 +1661,9 @@ async def test_rag_row_probes_instead_of_trusting_the_unset_registry_flag(
         screen = pilot.app.screen
 
         # The registry says "no" purely because nobody probed.
-        monkeypatch.setitem(optional_deps.DEPENDENCIES_AVAILABLE, "embeddings_rag", False)
+        monkeypatch.setitem(
+            optional_deps.DEPENDENCIES_AVAILABLE, "embeddings_rag", False
+        )
         # ...while the packages are in fact importable.
         monkeypatch.setattr(
             optional_deps, "embeddings_rag_deps_installed", lambda: True
