@@ -17,7 +17,7 @@ priority: low
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Live-reproduced: after restoring an item from Trash, the canvas title showed Media (3) while the rail row still said Media (2) and the rail Details section still said Media 2. The rail count refresh is not triggered by the restore mutation.
+Re-verified 2026-09-02 live on dev tip (worktree media-ux-fixes @ b7e89b6de, tmux scratch-profile run). Confirmed and worse than filed: deleting updates rail and canvas counts together, but after RESTORE from Trash the media canvas enters a degraded state - header shows bare "Media" with "Media changed; retry to load a current page", the restored item is missing from the list, and the pager shows "List may be out of date / Page boundary is unknown" with a manual Retry button. After clicking Retry the canvas shows Media (3) but the rail STILL says Media (2) - rail and canvas disagree even post-retry.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

@@ -20,6 +20,8 @@ priority: high
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
 The viewer has no forward path between items: no next/prev buttons or bindings exist (BINDINGS audit library_screen.py:1780-1871; live-tested n, p, brackets and arrows all dead). Sequentially reviewing N items - a conference, a tag-filtered set, or hand-picked videos - costs Escape, arrows, Enter per item, quadratic in list position. Add Prev/Next controls in the viewer header plus keys that walk the browse controller retained ordered page, respecting whatever scope produced the list (type filter, future tag/keyword query), so reviewing a whole set in order is one keypress per item.
+
+Re-verified 2026-09-02 live on dev tip: still absent (n, p, ], [, Left, Right all inert; Reader controls are exactly Back / Find / Read later / Use in Console / More plus the Read-Analysis-Highlights-Info tabs; no footer hint). Two dev-tip foundations make this cheap and complete the sequential-review flow: (1) moving the LIST selection auto-loads the item in the Reader, so next/prev can simply move the selection programmatically; (2) Reader mode persists across selections (begin_selection in Library/library_media_reader_state.py preserves mode), so next/prev while in the Analysis tab reads every analysis in sequence.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

@@ -17,7 +17,7 @@ priority: high
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Live-reproduced: opening an item then pressing Down/PageDown (and Tab plus arrows) does not scroll the content box; after one mouse click inside the box, PageDown scrolls fine. Keyboard-only users cannot read past the first visible lines of a transcript. Root cause untraced - initial focus does not land on (or route keys to) the scrollable content container.
+Re-verified 2026-09-02 live on dev tip (worktree media-ux-fixes @ b7e89b6de, tmux scratch-profile run). Still broken: freshly loading an item then pressing Down x3 and PageDown scrolls nothing; after one mouse click inside the content box (inner focus border appears) the same keys scroll fine. Constraint discovered live: when the LIST has focus, Down moves the selection and auto-loads the adjacent item (desired behavior owned by the list) - so the fix must place focus INSIDE the Reader content at load/open time (or provide an advertised key such as F6 pane cycling that actually reaches the content) without stealing the list's arrow keys.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

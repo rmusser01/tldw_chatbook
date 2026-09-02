@@ -17,7 +17,7 @@ priority: low
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Live-observed: the Trash view's only action, Restore, renders at the very bottom of the canvas with roughly 40 blank rows between the item rows and the button; clicking a row or pressing Enter reveals no per-item actions. Permanent delete / Empty Trash is already tracked as task-15130 - this task covers only the layout and association defect.
+Re-verified 2026-09-02 live on dev tip (worktree media-ux-fixes @ b7e89b6de, tmux scratch-profile run). Layout defect confirmed: the Trash view renders the item row near the top (pane rows 10-11) and pins its controls (pager + "Restore Delete permanently") to the panel bottom (~rows 47-49) with ~36 empty rows between - Restore is visually detached from the row it acts on. Two updates since filing: "Delete permanently" now EXISTS (task-15130's gap shipped), and the Trash ENTRY button itself is one of the clipped-invisible toolbar buttons (see the toolbar-clipping task from the same run); no palette command reaches Trash either ("trash" query returns only tab-nav entries).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

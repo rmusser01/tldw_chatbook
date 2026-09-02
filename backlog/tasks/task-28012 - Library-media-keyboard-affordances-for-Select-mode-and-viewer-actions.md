@@ -17,7 +17,7 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Select mode is a mouse-only header button; Space on a row does nothing (live-tested) and no footer hint advertises any key. The viewer five-button action row (Edit, Use in Console, Read it later, Open in Library, Delete) has no accelerators - every action is a Tab-walk. Add a key to toggle row selection with a footer hint, and accelerator keys for the viewer actions.
+Originally covered both the old viewer's five-button action row (now obsolete - the Reader has a More overflow menu) and the list's Select mode. Re-verified 2026-09-02 live on dev tip (worktree media-ux-fixes @ b7e89b6de, tmux scratch-profile run). The Select-mode half stands: Space on a focused row toggles nothing in either normal or select mode, no key is advertised for entering Select mode or toggling rows, and the counter stays "0 selected". Related but distinct rendering defect (clipped-invisible Select/Trash/bulk buttons) is tracked separately - see the toolbar-clipping task filed from the same run. Scope here: a keyboard path to enter Select mode, toggle rows (Space), and reach the bulk actions, advertised in the footer.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

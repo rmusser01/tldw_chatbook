@@ -18,6 +18,8 @@ priority: medium
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Nothing marks an item as opened or reviewed; a user reviewing a whole set keeps the which-ones-are-left ledger in their head across pager pages. Persist a lightweight viewed state per item and render it as a row glyph, so a sequential pass over a conference, a tag-filtered set, or a hand-picked collection has visible progress. The reading-scope service (read-it-later flag) is the persistence precedent.
+
+Dev-tip foundations noted 2026-09-02: per-item reading POSITION is already persisted (library_media_reading_progress worker drain, library_screen.py ~42510), and the loaded row carries a "Loaded in Reader" tag - a read/reviewed marker can build on both precedents.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

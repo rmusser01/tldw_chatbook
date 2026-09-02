@@ -17,7 +17,7 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-MediaBrowseScope supports seven sorts and a query (library_media_state.py:41-51) but the canvas exposes only the type filter and pager; the rail search box routes to the Search/RAG canvas instead of filtering the list (library_screen.py:31234-31263). Finding one item among dozens means paging or a Search-canvas detour. Add an in-canvas filter input (the conversations canvas filter is the template) and expose sort via the existing choice-strip idiom (task-14902 type chooser).
+Narrowed after live re-verification 2026-09-02: the in-canvas filter SHIPPED on dev (a "Filter media" input narrows the list in place; pager updates; Ctrl+U clears). Remaining scope is the SORT control: MediaBrowseScope supports seven sorts (library_media_state.py:72) but the canvas exposes none of them. Side observation from the run, worth a look while here: narrowing the filter also switches which item is loaded in the Reader (filtering to talk2 loaded talk2; clearing restored talk1) - confirm that is intended.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

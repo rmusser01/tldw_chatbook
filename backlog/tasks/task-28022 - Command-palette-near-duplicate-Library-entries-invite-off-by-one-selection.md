@@ -17,6 +17,8 @@ priority: low
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Querying library yields four near-identical entries (Tab Navigation: Switch to Library; Tab Navigation: Library - Skills; Media and Content: Open Media Library; Library: Import). The 2026-09-01 live UX run's arrow-count selection landed on the wrong entry. Dedupe, reorder, or differentiate so the most common destination is the obvious first pick.
+
+Also from the 2026-09-02 run: no palette command reaches the media Trash view at all (a "trash" query returns only tab-navigation fuzz).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
