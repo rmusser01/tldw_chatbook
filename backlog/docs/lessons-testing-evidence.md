@@ -9,6 +9,25 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## POSIX availability does not prove a memory limit is enforceable
+
+**TASK-23113.10, 2026-09-01.** The custom-PII worker initially treated Python's
+`resource` module as evidence that its memory cap was active on every POSIX
+host. Real-process tests on macOS showed that `RLIMIT_RSS`, `RLIMIT_DATA`, and
+`RLIMIT_AS` were present, but every attempt to lower their effectively-unlimited
+values failed with `ValueError: current limit exceeds maximum limit`. CPU and
+output-file limits were enforceable there; the address-space limit was
+enforceable in the Linux qualification path. Reporting the memory cap merely
+because the constants existed would have made the security evidence false.
+
+**What to do.** Treat an OS resource bound as enforced only after the child
+successfully applies it, return content-free metadata naming the limits that
+actually took effect, and assert platform capabilities in a real child process.
+Keep parent-enforced deadline and byte/count ceilings on every platform; qualify
+memory enforcement only where the host proves it can apply the limit.
+
+---
+
 ## Current-version repair hooks must gate on the schema that introduced their columns
 
 **TASK-23113.8, 2026-08-31.** The trace-GC migration matrix reopened a genuine

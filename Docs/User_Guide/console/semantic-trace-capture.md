@@ -70,6 +70,50 @@ artifacts. For saved conversation messages, the trace stores masks over the
 referenced revision; it does not rewrite what you see in the conversation.
 Both Safe and Full apply the frozen credential and PII policy of each call.
 
+### Custom PII patterns
+
+Advanced users can add application-specific PII patterns in the configuration
+file. Each ruleset has an opaque UUID revision. Change that revision whenever a
+pattern, flag, category, or enabled state changes; reusing one revision for
+different rule content disables the custom rules rather than silently changing
+the meaning of an existing trace policy.
+
+```toml
+[console.trace_custom_pii_rules]
+version = 1
+revision_id = "11111111-1111-4111-8111-111111111111"
+
+[[console.trace_custom_pii_rules.rules]]
+id = "customer-id"
+label = "Customer ID"
+category = "customer_id"
+pattern = '''customer-[A-Z]{8}'''
+flags = ["ignorecase"]
+enabled = true
+priority = 10
+```
+
+Rule IDs and categories use lowercase letters, numbers, hyphens, or
+underscores. Supported flags are `ascii`, `dotall`, `ignorecase`, and
+`multiline`; put flags in the list instead of embedding them in the pattern.
+Settings reports enabled, disabled, and rejected rule counts plus content-free
+error codes. It never includes the pattern or matched text in diagnostics.
+
+Custom patterns never run in the Console process. One disposable worker handles
+the whole capture component, with a 500 ms deadline, 1 MiB input and output
+caps, at most 512 text fields, 64 rules, and 10,000 candidate matches. The
+worker also applies CPU, output-file, and memory resource limits where the host
+operating system supports them. Invalid input, a crash, malformed output,
+resource exhaustion, or catastrophic backtracking omits the affected component
+with a content-free reason code. The rest of the saved trace remains viewable,
+copyable, and exportable.
+
+Pattern text remains only in the user's settings and bounded process memory.
+Durable traces store the opaque ruleset revision, irreversibly masked artifacts,
+and content-free codepoint spans. Once those masks exist, later viewing and
+export do not rerun or require the custom pattern. Saved conversation text is
+still unchanged.
+
 ## Edits, regeneration, retries, compaction, and forks
 
 Trace history follows the provider-visible history, not just today's active

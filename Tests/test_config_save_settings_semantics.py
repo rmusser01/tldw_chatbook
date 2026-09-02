@@ -7,6 +7,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
+from tldw_chatbook.Chat.console_trace_custom_pii import (
+    custom_pii_ruleset_for_revision,
+)
 from tldw_chatbook.config import ConfigMutationResult
 
 
@@ -290,7 +293,9 @@ def test_runtime_capture_policy_concurrent_generation_refresh_is_equivalent(
     )
 
     with ThreadPoolExecutor(max_workers=8) as pool:
-        policies = list(pool.map(lambda _index: config_module.runtime_capture_policy(), range(32)))
+        policies = list(
+            pool.map(lambda _index: config_module.runtime_capture_policy(), range(32))
+        )
 
     assert set(policies) == {
         config_module.RuntimeCapturePolicy(False, CaptureDetail.SAFE, 51)
@@ -516,6 +521,10 @@ def test_runtime_capture_policy_freezes_valid_custom_pii_rules(monkeypatch) -> N
     assert [rule.rule_id for rule in policy.custom_pii_ruleset.runnable_rules] == [
         "customer-id"
     ]
+    assert (
+        custom_pii_ruleset_for_revision(policy.custom_pii_ruleset.revision_id)
+        == policy.custom_pii_ruleset
+    )
     assert secret_pattern not in repr(policy)
 
 

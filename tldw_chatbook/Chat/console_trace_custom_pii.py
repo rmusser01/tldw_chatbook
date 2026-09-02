@@ -3,18 +3,33 @@
 from __future__ import annotations
 
 import re
-from collections import Counter
+from collections import Counter, OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from threading import RLock
+from typing import TYPE_CHECKING
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from tldw_chatbook.Chat.console_trace_regex_worker import (
+    CustomPIIWorkerLimits,
+    run_custom_pii_batch,
+)
+from tldw_chatbook.Chat.console_trace_redaction import (
+    BUILTIN_PII_RULESET_REVISION_ID,
+)
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_trace_redaction import PIIValueRedactionResult
+
 CUSTOM_PII_RULESET_VERSION = 1
 CUSTOM_PII_DETECTOR_VERSION = "custom-pii-v1"
 MAX_CUSTOM_PII_RULES = 64
 MAX_CUSTOM_PII_PATTERN_CHARS = 2_048
+MAX_EPHEMERAL_CUSTOM_PII_RULESETS = 32
+CUSTOM_PII_RULESET_UNAVAILABLE = "custom_pii_ruleset_unavailable"
 _TOKEN_PATTERN = re.compile(r"[a-z][a-z0-9]*(?:[_-][a-z0-9]+)*\Z", re.ASCII)
 _INLINE_FLAG_PATTERN = re.compile(r"(?<!\\)\(\?[aiLmsux-]+(?::|\))")
 _FLAG_BITS = {
@@ -31,6 +46,7 @@ _DIAGNOSTIC_MESSAGES = {
     "invalid_revision_id": "Set revision_id to a canonical UUIDv4 value.",
     "invalid_rule": "Check the rule ID, label, category, enabled state, and priority.",
     "invalid_ruleset": "Use a versioned ruleset mapping with only supported fields.",
+    "reserved_revision_id": "Choose a revision ID that is not reserved by built-in rules.",
     "rule_count_limit": "Configure no more than 64 rules.",
     "unsupported_construct": "Move inline flags to the rule's flags list.",
     "unsupported_flag": "Use only ascii, dotall, ignorecase, or multiline.",
@@ -48,10 +64,14 @@ class _RuleModel(BaseModel):
         strict=True,
     )
 
-    rule_id: str = Field(alias="id", min_length=1, max_length=64, pattern=_TOKEN_PATTERN)
+    rule_id: str = Field(
+        alias="id", min_length=1, max_length=64, pattern=_TOKEN_PATTERN
+    )
     label: str = Field(min_length=1, max_length=80)
     category: str = Field(min_length=1, max_length=64, pattern=_TOKEN_PATTERN)
-    pattern: str = Field(min_length=1, max_length=MAX_CUSTOM_PII_PATTERN_CHARS, repr=False)
+    pattern: str = Field(
+        min_length=1, max_length=MAX_CUSTOM_PII_PATTERN_CHARS, repr=False
+    )
     flags: tuple[Literal["ascii", "dotall", "ignorecase", "multiline"], ...] = ()
     enabled: bool = True
     priority: int = Field(default=100, ge=0, le=1_000)
@@ -79,7 +99,7 @@ class CustomPIIRule:
     """One validated rule whose source pattern stays out of representations."""
 
     rule_id: str
-    label: str
+    label: str = field(repr=False)
     category: str
     pattern: str = field(repr=False)
     flags: tuple[str, ...] = ()
@@ -125,6 +145,10 @@ class CustomPIIRulesValidation:
     diagnostics: tuple[CustomPIIRuleDiagnostic, ...]
 
 
+_RULESET_REGISTRY_LOCK = RLock()
+_RULESET_REGISTRY: OrderedDict[str, CustomPIIRuleset] = OrderedDict()
+
+
 def _diagnostic(code: str, rule_id: str | None = None) -> CustomPIIRuleDiagnostic:
     return CustomPIIRuleDiagnostic(rule_id, code, _DIAGNOSTIC_MESSAGES[code])
 
@@ -149,7 +173,7 @@ def _canonical_uuid4(value: object) -> str | None:
     return value if parsed.version == 4 and str(parsed) == value else None
 
 
-def _pattern_diagnostic(raw: Mapping[object, object], rule_id: str | None) -> str | None:
+def _pattern_diagnostic(raw: Mapping[object, object]) -> str | None:
     flags = raw.get("flags", ())
     if not isinstance(flags, Sequence) or isinstance(flags, (str, bytes, bytearray)):
         return "invalid_rule"
@@ -181,7 +205,7 @@ def _validated_rule(
     if not isinstance(raw, Mapping):
         return None, _diagnostic("invalid_rule")
     rule_id = _safe_rule_id(raw.get("id"))
-    pattern_problem = _pattern_diagnostic(raw, rule_id)
+    pattern_problem = _pattern_diagnostic(raw)
     if pattern_problem is not None:
         return None, _diagnostic(pattern_problem, rule_id)
     try:
@@ -221,13 +245,16 @@ def validate_custom_pii_rules_config(value: object) -> CustomPIIRulesValidation:
         "rules",
     }:
         return CustomPIIRulesValidation(None, (_diagnostic("invalid_ruleset"),))
-    if value.get("version") != CUSTOM_PII_RULESET_VERSION or type(
-        value.get("version")
-    ) is not int:
+    if (
+        value.get("version") != CUSTOM_PII_RULESET_VERSION
+        or type(value.get("version")) is not int
+    ):
         return CustomPIIRulesValidation(None, (_diagnostic("unsupported_version"),))
     revision_id = _canonical_uuid4(value.get("revision_id"))
     if revision_id is None:
         return CustomPIIRulesValidation(None, (_diagnostic("invalid_revision_id"),))
+    if revision_id == BUILTIN_PII_RULESET_REVISION_ID:
+        return CustomPIIRulesValidation(None, (_diagnostic("reserved_revision_id"),))
     raw_rules = value.get("rules")
     if not isinstance(raw_rules, Sequence) or isinstance(
         raw_rules, (str, bytes, bytearray)
@@ -246,7 +273,9 @@ def validate_custom_pii_rules_config(value: object) -> CustomPIIRulesValidation:
             diagnostics.append(diagnostic)
 
     duplicate_ids = {
-        rule_id for rule_id, count in Counter(rule.rule_id for rule in valid).items() if count > 1
+        rule_id
+        for rule_id, count in Counter(rule.rule_id for rule in valid).items()
+        if count > 1
     }
     if duplicate_ids:
         valid = [rule for rule in valid if rule.rule_id not in duplicate_ids]
@@ -258,4 +287,115 @@ def validate_custom_pii_rules_config(value: object) -> CustomPIIRulesValidation:
     return CustomPIIRulesValidation(
         CustomPIIRuleset(CUSTOM_PII_RULESET_VERSION, revision_id, ordered),
         tuple(diagnostics),
+    )
+
+
+def register_custom_pii_ruleset(ruleset: CustomPIIRuleset) -> bool:
+    """Retain one bounded process-local ruleset without revising its identity.
+
+    Args:
+        ruleset: Validated immutable ruleset to make available for new masks.
+
+    Returns:
+        True when the revision is registered or already identical. False when
+        the revision ID was reused for different rule content.
+    """
+
+    if not isinstance(ruleset, CustomPIIRuleset):
+        raise TypeError("ruleset")
+    with _RULESET_REGISTRY_LOCK:
+        existing = _RULESET_REGISTRY.get(ruleset.revision_id)
+        if existing is not None and existing != ruleset:
+            return False
+        _RULESET_REGISTRY[ruleset.revision_id] = ruleset
+        _RULESET_REGISTRY.move_to_end(ruleset.revision_id)
+        while len(_RULESET_REGISTRY) > MAX_EPHEMERAL_CUSTOM_PII_RULESETS:
+            _RULESET_REGISTRY.popitem(last=False)
+    return True
+
+
+def custom_pii_ruleset_for_revision(
+    revision_id: str,
+) -> CustomPIIRuleset | None:
+    """Return one process-local immutable ruleset without exposing its source."""
+
+    if type(revision_id) is not str:
+        raise TypeError("revision_id")
+    with _RULESET_REGISTRY_LOCK:
+        return _RULESET_REGISTRY.get(revision_id)
+
+
+def redact_pii_value_with_custom_rules(
+    value: object,
+    ruleset: CustomPIIRuleset,
+    *,
+    worker_limits: CustomPIIWorkerLimits | None = None,
+) -> PIIValueRedactionResult:
+    """Mask built-in and custom PII, failing closed as one component.
+
+    Args:
+        value: JSON-like capture component to inspect without mutation.
+        ruleset: Validated, frozen custom rules for this capture.
+        worker_limits: Optional process and structural limits for the custom batch.
+
+    Returns:
+        A :class:`PIIValueRedactionResult` containing merged content-free spans,
+        or the worker's content-free omission reason when custom detection fails.
+    """
+
+    from tldw_chatbook.Chat.console_trace_redaction import (
+        PIIValueRedactionResult,
+        redact_pii_value,
+    )
+
+    if not isinstance(ruleset, CustomPIIRuleset):
+        raise TypeError("ruleset")
+    if not ruleset.runnable_rules:
+        return redact_pii_value(value)
+    custom = run_custom_pii_batch(
+        value,
+        ruleset.runnable_rules,
+        limits=worker_limits,
+    )
+    if not custom.available:
+        return PIIValueRedactionResult(
+            available=False,
+            value=None,
+            field_redactions=(),
+            omission_reason_code=custom.omission_reason_code,
+        )
+    return redact_pii_value(
+        value,
+        additional_field_redactions=custom.field_redactions,
+    )
+
+
+def redact_pii_value_for_ruleset_revision(
+    value: object,
+    revision_id: str,
+    *,
+    worker_limits: CustomPIIWorkerLimits | None = None,
+) -> PIIValueRedactionResult:
+    """Apply the exact built-in or registered custom frozen policy revision."""
+
+    from tldw_chatbook.Chat.console_trace_redaction import (
+        BUILTIN_PII_RULESET_REVISION_ID,
+        PIIValueRedactionResult,
+        redact_pii_value,
+    )
+
+    if revision_id == BUILTIN_PII_RULESET_REVISION_ID:
+        return redact_pii_value(value)
+    ruleset = custom_pii_ruleset_for_revision(revision_id)
+    if ruleset is None or not ruleset.runnable_rules:
+        return PIIValueRedactionResult(
+            available=False,
+            value=None,
+            field_redactions=(),
+            omission_reason_code=CUSTOM_PII_RULESET_UNAVAILABLE,
+        )
+    return redact_pii_value_with_custom_rules(
+        value,
+        ruleset,
+        worker_limits=worker_limits,
     )

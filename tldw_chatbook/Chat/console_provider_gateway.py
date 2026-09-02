@@ -80,9 +80,12 @@ from tldw_chatbook.Chat.console_trace_final_values import (
     verify_provider_request_shadow,
 )
 from tldw_chatbook.Chat.console_trace_redaction import (
+    BUILTIN_PII_RULESET_REVISION_ID,
     CredentialSanitizer,
     PII_DETECTOR_UNAVAILABLE,
-    redact_pii_value,
+)
+from tldw_chatbook.Chat.console_trace_custom_pii import (
+    redact_pii_value_for_ruleset_revision,
 )
 from tldw_chatbook.Chat.console_trace_models import TraceCallState
 from tldw_chatbook.Chat.console_trace_errors import (  # ADR-097 boot ratchet
@@ -663,6 +666,7 @@ class ConsoleProviderStreamSignals:
     exchange_capture_enabled: bool = False
     capture_detail: CaptureDetail = field(default=CaptureDetail.SAFE, repr=False)
     pii_redaction_enabled: bool = field(default=False, repr=False)
+    pii_ruleset_revision_id: str | None = field(default=None, repr=False)
     completed_exchanges: list["ExchangeCapture"] = field(
         default_factory=list, repr=False
     )
@@ -995,6 +999,7 @@ class ConsoleProviderCallSignals:
                 "known_credentials": known_credentials,
                 "capture_detail": self.capture_detail,
                 "pii_redaction_enabled": self._aggregate.pii_redaction_enabled,
+                "pii_ruleset_revision_id": (self._aggregate.pii_ruleset_revision_id),
                 "capture_budget": capture_budget or CaptureBudget(),
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "trace_run_tag": self._trace_run_tag,
@@ -1121,31 +1126,37 @@ def _flight_capture(
         credential_omissions.append("response.tool_calls")
     request = flight["request"]
     if flight.get("pii_redaction_enabled") is True:
-        request_redaction = redact_pii_value(request)
-        content_redaction = redact_pii_value(content)
-        tool_redaction = redact_pii_value(tool_calls)
-        request = (
-            request_redaction.value
-            if request_redaction.available
-            else {"omitted": PII_DETECTOR_UNAVAILABLE}
+        redaction = redact_pii_value_for_ruleset_revision(
+            {
+                "request": request,
+                "response_content": content,
+                "response_tool_calls": tool_calls,
+            },
+            flight.get("pii_ruleset_revision_id") or BUILTIN_PII_RULESET_REVISION_ID,
         )
-        content = (
-            content_redaction.value
-            if content_redaction.available
-            else f"[omitted: {PII_DETECTOR_UNAVAILABLE}]"
-        )
-        tool_calls = (
-            tool_redaction.value
-            if tool_redaction.available
-            else [{"omitted": PII_DETECTOR_UNAVAILABLE}]
-        )
-        for path, result in (
-            ("request", request_redaction),
-            ("response.content", content_redaction),
-            ("response.tool_calls", tool_redaction),
+        projected = redaction.value
+        if (
+            redaction.available
+            and isinstance(projected, Mapping)
+            and set(projected)
+            == {"request", "response_content", "response_tool_calls"}
         ):
-            if not result.available:
-                credential_omissions.append(path + ".pii_unavailable")
+            request = projected["request"]
+            content = projected["response_content"]
+            tool_calls = projected["response_tool_calls"]
+        else:
+            reason = redaction.omission_reason_code or PII_DETECTOR_UNAVAILABLE
+            request = {"omitted": reason}
+            content = f"[omitted: {reason}]"
+            tool_calls = [{"omitted": reason}]
+            credential_omissions.extend(
+                path + ".pii_unavailable"
+                for path in (
+                    "request",
+                    "response.content",
+                    "response.tool_calls",
+                )
+            )
     return ExchangeCapture(
         run_tag=run_tag,
         seq=seq,
@@ -1417,9 +1428,7 @@ def _validate_auxiliary_content(role: str, content: Any) -> None:
             raise TypeError("Auxiliary content parts must be mappings.")
         part_type = part.get("type")
         if part_type == "text":
-            if set(part) != {"type", "text"} or not isinstance(
-                part.get("text"), str
-            ):
+            if set(part) != {"type", "text"} or not isinstance(part.get("text"), str):
                 raise ValueError("Auxiliary text parts are invalid.")
             continue
         if part_type != "image_url" or set(part) != {"type", "image_url"}:

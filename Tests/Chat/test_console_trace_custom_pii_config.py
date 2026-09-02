@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from tldw_chatbook.Chat.console_trace_custom_pii import (
     CUSTOM_PII_RULESET_VERSION,
+    custom_pii_ruleset_for_revision,
+    register_custom_pii_ruleset,
     validate_custom_pii_rules_config,
+)
+from tldw_chatbook.Chat.console_trace_redaction import (
+    BUILTIN_PII_RULESET_REVISION_ID,
 )
 
 REVISION_ID = "11111111-1111-4111-8111-111111111111"
@@ -119,11 +124,41 @@ def test_ruleset_envelope_requires_v1_and_canonical_opaque_revision() -> None:
     bad_revision = validate_custom_pii_rules_config(
         {"version": 1, "revision_id": "ruleset-from-pattern-hash", "rules": []}
     )
+    reserved_revision = validate_custom_pii_rules_config(
+        {
+            "version": 1,
+            "revision_id": BUILTIN_PII_RULESET_REVISION_ID,
+            "rules": [_rule("custom")],
+        }
+    )
     absent = validate_custom_pii_rules_config(None)
 
     assert bad_version.ruleset is None
     assert bad_version.diagnostics[0].code == "unsupported_version"
     assert bad_revision.ruleset is None
     assert bad_revision.diagnostics[0].code == "invalid_revision_id"
+    assert reserved_revision.ruleset is None
+    assert reserved_revision.diagnostics[0].code == "reserved_revision_id"
     assert absent.ruleset is None
     assert absent.diagnostics == ()
+
+
+def test_ephemeral_registry_rejects_revision_reuse_with_different_rules() -> None:
+    revision_id = "22222222-2222-4222-8222-222222222222"
+    first = validate_custom_pii_rules_config(
+        {"version": 1, "revision_id": revision_id, "rules": [_rule("account")]}
+    ).ruleset
+    conflicting = validate_custom_pii_rules_config(
+        {
+            "version": 1,
+            "revision_id": revision_id,
+            "rules": [_rule("account", pattern=r"different-[A-Z]+")],
+        }
+    ).ruleset
+    assert first is not None
+    assert conflicting is not None
+
+    assert register_custom_pii_ruleset(first) is True
+    assert register_custom_pii_ruleset(conflicting) is False
+    assert custom_pii_ruleset_for_revision(revision_id) == first
+    assert SECRET_PATTERN not in repr(custom_pii_ruleset_for_revision(revision_id))

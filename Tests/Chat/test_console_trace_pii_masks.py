@@ -7,6 +7,13 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
+from tldw_chatbook.Chat.console_trace_custom_pii import (
+    CUSTOM_PII_RULESET_UNAVAILABLE,
+    redact_pii_value_for_ruleset_revision,
+    redact_pii_value_with_custom_rules,
+    register_custom_pii_ruleset,
+    validate_custom_pii_rules_config,
+)
 from tldw_chatbook.Chat.console_trace_redaction import (
     BUILTIN_PII_RULESET_REVISION_ID,
     BUILTIN_PII_RULESET_VERSION,
@@ -19,7 +26,12 @@ from tldw_chatbook.Chat.console_trace_redaction import (
     merge_pii_spans,
     redact_pii_value,
 )
+from tldw_chatbook.Chat.console_trace_regex_worker import (
+    CUSTOM_PII_WORKER_TIMEOUT,
+    CustomPIIWorkerLimits,
+)
 from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
+from tldw_chatbook.Chat.console_trace_service import ConsoleTraceService
 from tldw_chatbook.Chat.console_semantic_revision import (
     SemanticRevisionCoordinator,
     project_semantic_revision_trace_message,
@@ -93,10 +105,89 @@ def test_pii_in_mapping_keys_is_masked_with_content_free_ordinal_path() -> None:
     assert redacted.value == {"[PII omitted]": {"value": "keep"}}
     assert [item.field_path for item in redacted.field_redactions] == ["$/@0#key"]
     assert "person@example.test" not in repr(redacted.field_redactions)
-    masks = {
-        item.field_path: (item.span,) for item in redacted.field_redactions
-    }
+    masks = {item.field_path: (item.span,) for item in redacted.field_redactions}
     assert apply_frozen_pii_masks(source, masks) == redacted.value
+
+
+def test_custom_spans_merge_with_builtins_without_mutating_source() -> None:
+    source = {"content": "Email elise@example.test; customer-ABCDWXYZ"}
+    ruleset = validate_custom_pii_rules_config(
+        {
+            "version": 1,
+            "revision_id": "11111111-1111-4111-8111-111111111111",
+            "rules": [
+                {
+                    "id": "customer-id",
+                    "label": "Customer ID",
+                    "category": "customer_id",
+                    "pattern": r"customer-[A-Z]{8}",
+                    "flags": [],
+                    "enabled": True,
+                    "priority": 10,
+                }
+            ],
+        }
+    ).ruleset
+    assert ruleset is not None
+
+    redacted = redact_pii_value_with_custom_rules(source, ruleset)
+
+    assert redacted.available is True
+    assert redacted.value == {"content": "Email [PII omitted]; [PII omitted]"}
+    assert [item.span.rule_id for item in redacted.field_redactions] == [
+        "builtin-email",
+        "customer-id",
+    ]
+    assert source == {"content": "Email elise@example.test; customer-ABCDWXYZ"}
+
+
+def test_custom_worker_timeout_makes_the_component_content_free_unavailable() -> None:
+    source = {"content": "a" * 30_000 + "!"}
+    ruleset = validate_custom_pii_rules_config(
+        {
+            "version": 1,
+            "revision_id": "11111111-1111-4111-8111-111111111111",
+            "rules": [
+                {
+                    "id": "pathological",
+                    "label": "Pathological",
+                    "category": "custom",
+                    "pattern": r"(a+)+$",
+                    "flags": [],
+                    "enabled": True,
+                    "priority": 10,
+                }
+            ],
+        }
+    ).ruleset
+    assert ruleset is not None
+
+    redacted = redact_pii_value_with_custom_rules(
+        source,
+        ruleset,
+        worker_limits=CustomPIIWorkerLimits(deadline_ms=50),
+    )
+
+    assert redacted.available is False
+    assert redacted.value is None
+    assert redacted.field_redactions == ()
+    assert redacted.omission_reason_code == CUSTOM_PII_WORKER_TIMEOUT
+    assert "a" * 100 not in repr(redacted)
+
+
+def test_missing_custom_ruleset_revision_fails_closed_without_source_content() -> None:
+    source = {"content": "customer-ABCDWXYZ"}
+
+    redacted = redact_pii_value_for_ruleset_revision(
+        source,
+        "33333333-3333-4333-8333-333333333333",
+    )
+
+    assert redacted.available is False
+    assert redacted.value is None
+    assert redacted.field_redactions == ()
+    assert redacted.omission_reason_code == CUSTOM_PII_RULESET_UNAVAILABLE
+    assert "customer" not in repr(redacted)
 
 
 def test_repository_reuses_content_free_masks_per_frozen_policy() -> None:
@@ -147,9 +238,11 @@ def test_repository_reuses_content_free_masks_per_frozen_policy() -> None:
 
         assert second == first
         assert len(first) == 1
-        durable = database.get_connection().execute(
-            "SELECT * FROM console_trace_redaction_spans"
-        ).fetchone()
+        durable = (
+            database.get_connection()
+            .execute("SELECT * FROM console_trace_redaction_spans")
+            .fetchone()
+        )
         assert "elise" not in " ".join(str(item) for item in durable)
         assert "example.test" not in " ".join(str(item) for item in durable)
         assert BUILTIN_PII_RULESET_VERSION not in {policy.pii_ruleset_revision_id}
@@ -275,5 +368,146 @@ def test_retired_revision_remains_available_through_masked_trace_artifact() -> N
 
         assert projected == {"role": "user", "content": "Contact [PII omitted]"}
         assert canonical == "Replacement without PII"
+    finally:
+        database.close_connection()
+
+
+def test_retired_revision_uses_registered_custom_rules_then_needs_no_pattern() -> None:
+    database = CharactersRAGDB(":memory:", "trace-custom-pii-retired-test")
+    repository = ConsoleTraceRepository()
+    coordinator = SemanticRevisionCoordinator(database, repository=repository)
+    conversation_id = database.add_conversation({"title": "Retired custom PII"})
+    assert conversation_id is not None
+    source = "Account customer-ABCDWXYZ"
+    message_id = database.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "role": "user",
+            "content": source,
+        }
+    )
+    assert message_id is not None
+    revision_id = "44444444-4444-4444-8444-444444444444"
+    ruleset = validate_custom_pii_rules_config(
+        {
+            "version": 1,
+            "revision_id": revision_id,
+            "rules": [
+                {
+                    "id": "customer-id",
+                    "label": "Customer ID",
+                    "category": "customer_id",
+                    "pattern": r"customer-[A-Z]{8}",
+                    "flags": [],
+                    "enabled": True,
+                    "priority": 10,
+                }
+            ],
+        }
+    ).ruleset
+    assert ruleset is not None
+    assert register_custom_pii_ruleset(ruleset) is True
+    policy = FrozenTracePolicy(
+        policy_id=new_opaque_id(),
+        credential_filter_version=CREDENTIAL_FILTER_VERSION,
+        pii_redaction_enabled=True,
+        pii_ruleset_revision_id=revision_id,
+    )
+    try:
+        with database.transaction(immediate=True) as cursor:
+            revision = coordinator.ensure_current_revision(
+                cursor, message_id=message_id
+            )
+            repository.ensure_policy(cursor, policy)
+            coordinator._materialize_policies(
+                cursor,
+                revision_id=revision.revision_id,
+                policy_ids=(policy.policy_id,),
+                envelope=coordinator._message_envelope(cursor, message_id),
+            )
+            coordinator.mutate_message(
+                cursor,
+                message_id=message_id,
+                creation_reason="message_edit",
+                mutate=lambda mutation_cursor: mutation_cursor.execute(
+                    "UPDATE messages SET content = ? WHERE id = ?",
+                    ("Replacement", message_id),
+                ),
+            )
+            projected = project_semantic_revision_trace_message(
+                cursor,
+                revision_id=revision.revision_id,
+                expected_conversation_id=conversation_id,
+                policy_id=policy.policy_id,
+            )
+
+        assert projected == {"role": "user", "content": "Account [PII omitted]"}
+        assert source not in repr(projected)
+    finally:
+        database.close_connection()
+
+
+def test_trace_artifact_runs_custom_worker_once_and_persists_only_spans(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.Chat.console_trace_custom_pii as custom_pii
+
+    database = CharactersRAGDB(":memory:", "trace-custom-pii-artifact-test")
+    repository = ConsoleTraceRepository()
+    service = ConsoleTraceService(repository)
+    revision_id = "55555555-5555-4555-8555-555555555555"
+    ruleset = validate_custom_pii_rules_config(
+        {
+            "version": 1,
+            "revision_id": revision_id,
+            "rules": [
+                {
+                    "id": "customer-id",
+                    "label": "Customer ID",
+                    "category": "customer_id",
+                    "pattern": r"customer-[A-Z]{8}",
+                    "flags": [],
+                    "enabled": True,
+                    "priority": 10,
+                }
+            ],
+        }
+    ).ruleset
+    assert ruleset is not None
+    assert register_custom_pii_ruleset(ruleset) is True
+    policy = FrozenTracePolicy(
+        policy_id=new_opaque_id(),
+        credential_filter_version=CREDENTIAL_FILTER_VERSION,
+        pii_redaction_enabled=True,
+        pii_ruleset_revision_id=revision_id,
+    )
+    calls = 0
+    real_run = custom_pii.run_custom_pii_batch
+
+    def counted_run(*args: object, **kwargs: object):
+        nonlocal calls
+        calls += 1
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(custom_pii, "run_custom_pii_batch", counted_run)
+    try:
+        with database.transaction(immediate=True) as cursor:
+            repository.ensure_policy(cursor, policy)
+            reference = service._store_artifact(
+                cursor,
+                {"argument": "customer-ABCDWXYZ"},
+                policy=policy,
+            )
+            artifact = repository.get_artifact(cursor, reference.content_id)
+            spans = cursor.execute(
+                "SELECT field_path, rule_id FROM console_trace_redaction_spans"
+            ).fetchall()
+
+        assert calls == 1
+        assert artifact is not None
+        assert b"customer-ABCDWXYZ" not in artifact.sanitized_bytes
+        assert b"[PII omitted]" in artifact.sanitized_bytes
+        assert [tuple(row) for row in spans] == [("$/@0", "customer-id")]
     finally:
         database.close_connection()

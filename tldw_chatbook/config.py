@@ -6762,7 +6762,9 @@ def _validate_literal_config_mutation_targets(
             raise TypeError("Literal configuration delete keys must be collections")
         for key in keys:
             if type(key) is not str or not key:
-                raise TypeError("Literal configuration delete keys must be non-empty strings")
+                raise TypeError(
+                    "Literal configuration delete keys must be non-empty strings"
+                )
             delete_targets.add((path, key))
 
     if set_targets.intersection(delete_targets):
@@ -6926,9 +6928,7 @@ def _apply_literal_settings_transaction_locked(
                     "(phase=precondition, error_type={}).",
                     type(error).__name__,
                 )
-                return LiteralConfigMutationResult(
-                    False, False, None, "before_replace"
-                )
+                return LiteralConfigMutationResult(False, False, None, "before_replace")
 
         try:
             effective_values = _atomic_config_values_from_raw(config_data)
@@ -6951,8 +6951,7 @@ def _apply_literal_settings_transaction_locked(
                 _validate_literal_config_mutation_targets(mutation)
             logged_sets, logged_deletes = _literal_mutation_log_shape(mutation)
             logger.info(
-                "Attempting to apply literal settings mutation: "
-                "sets={}, deletes={}",
+                "Attempting to apply literal settings mutation: sets={}, deletes={}",
                 logged_sets,
                 logged_deletes,
             )
@@ -7005,9 +7004,7 @@ def _apply_literal_settings_transaction_locked(
                     config_path,
                     type(error).__name__,
                 )
-                return LiteralConfigMutationResult(
-                    False, False, None, "before_replace"
-                )
+                return LiteralConfigMutationResult(False, False, None, "before_replace")
             logger.success(f"Successfully replaced settings file at {config_path}")
         else:
             _invalidate_config_caches()
@@ -7299,6 +7296,23 @@ def resolve_trace_rollout_settings(
     )
 
 
+def _register_runtime_custom_pii_ruleset(
+    ruleset: CustomPIIRuleset | None,
+) -> CustomPIIRuleset | None:
+    """Register valid rules for future masks or disable a reused revision."""
+
+    if ruleset is None or not ruleset.runnable_rules:
+        return ruleset
+    from tldw_chatbook.Chat.console_trace_custom_pii import (
+        register_custom_pii_ruleset,
+    )
+
+    if register_custom_pii_ruleset(ruleset):
+        return ruleset
+    logger.warning("custom_pii_ruleset_revision_conflict")
+    return None
+
+
 def _publish_runtime_capture_policy(
     enabled: bool,
     detail: CaptureDetail,
@@ -7322,6 +7336,7 @@ def _publish_runtime_capture_policy(
         custom_pii_ruleset, CustomPIIRuleset
     ):
         raise TypeError("custom_pii_ruleset")
+    custom_pii_ruleset = _register_runtime_custom_pii_ruleset(custom_pii_ruleset)
     rollout_environment = _trace_rollout_environment()
     rollout = resolve_trace_rollout_settings(
         {
@@ -7393,6 +7408,7 @@ def runtime_capture_policy() -> RuntimeCapturePolicy:
         custom_pii_ruleset = validate_custom_pii_rules_config(
             console.get("trace_custom_pii_rules")
         ).ruleset
+        custom_pii_ruleset = _register_runtime_custom_pii_ruleset(custom_pii_ruleset)
         rollout = resolve_trace_rollout_settings(
             console,
             environ=_trace_rollout_environment_mapping(rollout_environment),
@@ -7450,7 +7466,9 @@ def apply_console_capture_settings(
         if pii_redaction_enabled is None
         else pii_redaction_enabled
     )
-    resolved_viewer = current.viewer_profile if viewer_profile is None else viewer_profile
+    resolved_viewer = (
+        current.viewer_profile if viewer_profile is None else viewer_profile
+    )
 
     def generation_is_current(snapshot: AtomicConfigSnapshot) -> bool:
         return snapshot.generation == expected_generation
@@ -7489,10 +7507,7 @@ def apply_console_capture_settings(
 
     more_revealing = (
         (enabled and not current.enabled)
-        or (
-            detail is CaptureDetail.FULL
-            and current.detail is CaptureDetail.SAFE
-        )
+        or (detail is CaptureDetail.FULL and current.detail is CaptureDetail.SAFE)
         or (not resolved_pii and current.pii_redaction_enabled)
         or (resolved_viewer == "full" and current.viewer_profile == "safe")
     )
